@@ -445,6 +445,15 @@ pub(crate) struct PlannerCatalog {
     latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
 }
 
+/// Whether `database`.`name` is one of the virtual tables Go serves as a
+/// memory table: every `information_schema` table and the predefined
+/// `performance_schema` ones.
+fn is_virtual_schema_table(database: &str, name: &str) -> bool {
+    database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+        || (database.eq_ignore_ascii_case(crate::driver::perfschema::PERFORMANCE_SCHEMA)
+            && crate::driver::perfschema::is_predefined_table(name))
+}
+
 /// The planner's view of one schema image: the position Go's immutable
 /// `infoschema.InfoSchema` holds. Go builds it once per schema version and
 /// every statement plans against the shared value; this tier builds it once
@@ -456,6 +465,9 @@ pub(crate) struct PlannerSchemaView {
     databases: std::collections::HashSet<String>,
     tables: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceTable>,
     views: HashMap<CatalogTableKey, tidb_planner::plan_builder::catalog::SourceView>,
+    /// The sequences (Go `TableInfo.IsSequence()`), which a FROM reads as a
+    /// one-row dual and so carry no planner table.
+    sequences: HashMap<CatalogTableKey, String>,
     /// The same image with the session's local temporary tables detached
     /// (Go `temptable.DetachLocalTemporaryTableInfoSchema`), present only
     /// while one is attached.
@@ -519,6 +531,13 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         self.view
             .views
             .get(&CatalogTableKey::new(db_name, view_name))
+    }
+
+    fn find_sequence(&self, db_name: &str, table_name: &str) -> Option<&str> {
+        self.view
+            .sequences
+            .get(&CatalogTableKey::new(db_name, table_name))
+            .map(String::as_str)
     }
 }
 
@@ -1926,6 +1945,7 @@ impl Catalog {
         let databases = self.databases.keys().cloned().collect();
         let mut tables = HashMap::new();
         let mut views = HashMap::new();
+        let mut sequences = HashMap::new();
         // A memory table's ID is Go's `TableInfo.ID` where the schema has one
         // (`information_schema`'s `tableIDMap`), and otherwise a negative id
         // fixed by its schema and name: two views of one catalog must agree
@@ -1935,8 +1955,9 @@ impl Catalog {
             .values()
             .flat_map(|database| {
                 database.tables.iter().filter_map(move |(name, entry)| {
-                    matches!(**entry, TableEntry::Mem(_))
-                        .then(|| (database.name.go_to_lower(), name.go_to_lower()))
+                    (matches!(**entry, TableEntry::Mem(_))
+                        || is_virtual_schema_table(&database.name, name))
+                    .then(|| (database.name.go_to_lower(), name.go_to_lower()))
                 })
             })
             .collect();
@@ -1969,6 +1990,54 @@ impl Catalog {
                     table: entry_name.clone(),
                 };
                 match &**entry {
+                    // Go plans every `information_schema` and
+                    // `performance_schema` table as a memory table
+                    // (`buildDataSource`'s `LogicalMemTable`). The stored
+                    // objects here carry the schema SHOW and DESCRIBE answer
+                    // from; a plan reads one through a `MemTableScan` of the
+                    // rows the session generates for the statement. Planned
+                    // as stored tables, all the `information_schema` ones
+                    // shared table ID 0, so a scan read whichever table that
+                    // ID found.
+                    TableEntry::Kv(table)
+                        if is_virtual_schema_table(&database.name, entry_name) =>
+                    {
+                        let table_name = if database.name.eq_ignore_ascii_case(
+                            crate::driver::infoschema_meta::INFORMATION_SCHEMA,
+                        ) {
+                            crate::driver::infoschema_meta::canonical_table_name(entry_name)
+                                .map_or_else(|| entry_name.clone(), str::to_owned)
+                        } else {
+                            table.name.clone()
+                        };
+                        let table_id = if table.table_id != 0 {
+                            table.table_id
+                        } else {
+                            memory_table_id(&database.name, entry_name)
+                        };
+                        let mut source_table = SourceTable {
+                            is_memory_table: true,
+                            table_id,
+                            table_name,
+                            db_name: database.name.clone(),
+                            physical_table_id: table_id,
+                            columns: table
+                                .columns()
+                                .iter()
+                                .enumerate()
+                                .map(|(offset, column)| SourceColumn {
+                                    id: offset as i64 + 1,
+                                    name: column.name.clone(),
+                                    offset,
+                                    ret_type: column.field_type.clone(),
+                                    ..SourceColumn::default()
+                                })
+                                .collect(),
+                            ..SourceTable::default()
+                        };
+                        source_table.attach_resolve_metadata(resolve_db_info.clone());
+                        tables.insert(key(), source_table);
+                    }
                     TableEntry::Kv(table) => {
                         let columns = table
                             .columns
@@ -2172,7 +2241,9 @@ impl Catalog {
                             },
                         );
                     }
-                    TableEntry::Sequence(_) => {}
+                    TableEntry::Sequence(sequence) => {
+                        sequences.insert(key(), sequence.name.clone());
+                    }
                 }
             }
         }
@@ -2190,6 +2261,7 @@ impl Catalog {
             databases,
             tables,
             views,
+            sequences,
             detached,
         }
     }

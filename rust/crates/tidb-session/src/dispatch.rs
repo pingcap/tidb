@@ -264,15 +264,33 @@ fn perfschema_rows_served(table_name: &str) -> bool {
 }
 
 /// The virtual tables a query reads, in every scope Go's `buildDataSource`
-/// reaches: FROM clauses, derived tables, CTE bodies and the subqueries of
-/// any expression. A subquery-only reference used to be missed, sending the
-/// statement down the stored-table path with no memory table to plan.
+/// reaches: FROM clauses, derived tables, CTE bodies, the subqueries of any
+/// expression, and the bodies of the views it reads (`view_body` gives a
+/// view's stored `SELECT`; Go plans the expanded body,
+/// `BuildDataSourceFromView`). A subquery-only reference used to be missed,
+/// sending the statement down the stored-table path with no memory table to
+/// plan, and a view over one still was: it read an unrelated table's rows.
 pub(crate) fn information_schema_tables_in_query(
     query: &tidb_ast::QueryStmt,
     current_db: &str,
     out: &mut Vec<String>,
     written_db: &mut Option<String>,
+    view_body: &dyn Fn(&str, &str) -> Option<String>,
 ) {
+    information_schema_tables_in_query_at(query, current_db, out, written_db, view_body, 0);
+}
+
+fn information_schema_tables_in_query_at(
+    query: &tidb_ast::QueryStmt,
+    current_db: &str,
+    out: &mut Vec<String>,
+    written_db: &mut Option<String>,
+    view_body: &dyn Fn(&str, &str) -> Option<String>,
+    view_depth: usize,
+) {
+    // A view cannot read itself (creation resolves its body), so this only
+    // bounds a catalog that is inconsistent.
+    const MAX_VIEW_DEPTH: usize = 64;
     let stmt = Stmt::Query(tidb_ast::NodeBox::new(query.clone()));
     for path in crate::binding::collect_physical_table_refs(&stmt) {
         match path.as_slice() {
@@ -297,8 +315,57 @@ pub(crate) fn information_schema_tables_in_query(
                 }
                 out.push(name.clone());
             }
+            [name] | [_, name] if view_depth < MAX_VIEW_DEPTH => {
+                let schema = match path.as_slice() {
+                    [schema, _] => schema.as_str(),
+                    _ => current_db,
+                };
+                let Some(select_sql) = view_body(schema, name) else {
+                    continue;
+                };
+                let Ok(Stmt::Query(body)) = tidb_parser::parse(&select_sql) else {
+                    continue;
+                };
+                // A missing table inside a view is the view's own error, not
+                // one naming the statement's written schema.
+                let mut view_written_db = None;
+                information_schema_tables_in_query_at(
+                    &body,
+                    schema,
+                    out,
+                    &mut view_written_db,
+                    view_body,
+                    view_depth + 1,
+                );
+            }
             _ => {}
         }
+    }
+}
+
+impl Session {
+    /// [`information_schema_tables_in_query`] over the views of the catalog
+    /// this statement sees.
+    pub(crate) fn information_schema_tables_read_by(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+        current_db: &str,
+        out: &mut Vec<String>,
+        written_db: &mut Option<String>,
+    ) -> Result<(), DriverError> {
+        self.with_catalog_mut(|catalog| {
+            information_schema_tables_in_query(
+                query,
+                current_db,
+                out,
+                written_db,
+                &|schema, name| match catalog.table_in(schema, name) {
+                    Some(tidb_executor::TableEntry::View(view)) => Some(view.select_sql.clone()),
+                    _ => None,
+                },
+            );
+            Ok(())
+        })
     }
 }
 
@@ -1544,43 +1611,8 @@ impl Session {
         internal: bool,
         digests: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        use tidb_ast::CiString;
-        use tidb_model::ColumnInfo;
         use tidb_parser::auth::UserIdentity;
-        use tidb_stmtsummary::reader::{StmtSummaryChecker, StmtSummaryReader};
         let has_process = internal || self.has_process_privilege();
-
-        if table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_EVICTED") {
-            if !has_process {
-                return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
-            }
-            return Ok(
-                if tidb_config::config_tree::config::get_global_config()
-                    .instance
-                    .stmt_summary_enable_persistent
-                {
-                    tidb_stmtsummary::v2::stmtsummary::global_stmt_summary()
-                        .map(|summary| summary.evicted())
-                        .filter(|row| !row.is_empty())
-                        .into_iter()
-                        .collect()
-                } else {
-                    tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP
-                        .to_evicted_count_datum()
-                },
-            );
-        }
-
-        let columns: Vec<ColumnInfo> = columns
-            .iter()
-            .enumerate()
-            .map(|(offset, (name, _))| ColumnInfo {
-                id: i64::try_from(offset).expect("information-schema column count fits i64"),
-                name: CiString::new(name),
-                offset: i64::try_from(offset).expect("information-schema column count fits i64"),
-                ..ColumnInfo::default()
-            })
-            .collect();
         let user = self
             .login_user
             .as_deref()
@@ -1597,71 +1629,25 @@ impl Session {
                     auth_plugin: String::new(),
                 }
             });
-        let persistent = tidb_config::config_tree::config::get_global_config()
-            .instance
-            .stmt_summary_enable_persistent;
-        let cumulative = table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS");
-        let history = table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY");
-        if persistent {
-            // Go refuses cumulative retrieval in v2; never silently substitute
-            // an unrelated v1 map for the selected persistent owner.
-            if cumulative {
-                return Err(DriverError::NotSupportedYet(
-                    "cumulative statement summary table with persistent mode (v2)".into(),
-                ));
-            }
-            let mut rows = tidb_stmtsummary::v2::reader::new_mem_reader(
-                tidb_stmtsummary::v2::stmtsummary::global_stmt_summary(),
-                &columns,
-                String::new(),
-                zone.clone(),
-                user.clone(),
-                has_process,
-                digests.cloned(),
-                Vec::new(),
-            )
-            .rows();
-            if history {
-                let mut reader = tidb_stmtsummary::v2::reader::HistoryReader::new(
-                    None,
-                    &columns,
-                    String::new(),
-                    zone.clone(),
-                    user,
-                    has_process,
-                    digests.cloned(),
-                    Vec::new(),
-                    self.vars
-                        .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
-                        .expect("registered DistSQL scan concurrency")
-                        .parse::<usize>()
-                        .expect("validated positive scan concurrency"),
-                )
-                .map_err(|error| DriverError::Unsupported(error.into()))?;
-                let result = (|| {
-                    while let Some(batch) = reader
-                        .rows()
-                        .map_err(|error| DriverError::Unsupported(error.into()))?
-                    {
-                        rows.extend(batch);
-                    }
-                    Ok(rows)
-                })();
-                let _ = reader.close();
-                return result;
-            }
-            return Ok(rows);
-        }
-        let mut reader =
-            StmtSummaryReader::new(user, has_process, columns, String::new(), zone.clone());
-        reader.set_checker(digests.cloned().map(StmtSummaryChecker::new));
-        Ok(if cumulative {
-            reader.get_stmt_summary_cumulative_rows()
-        } else if history {
-            reader.get_stmt_summary_history_rows()
-        } else {
-            reader.get_stmt_summary_current_rows()
-        })
+        statement_summary_rows(
+            table_name,
+            columns,
+            zone,
+            user,
+            has_process,
+            digests,
+            self.dist_sql_scan_concurrency(),
+        )
+    }
+
+    /// `@@tidb_distsql_scan_concurrency`, the statement-summary history
+    /// reader's worker count.
+    pub(crate) fn dist_sql_scan_concurrency(&self) -> usize {
+        self.vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
+            .expect("registered DistSQL scan concurrency")
+            .parse::<usize>()
+            .expect("validated positive scan concurrency")
     }
 
     /// Pinned Go `tidbTrxTableRetriever.retrieve` for this node.
@@ -3263,12 +3249,12 @@ impl Session {
                 }
                 let mut table_names = Vec::new();
                 let mut written_db = None;
-                information_schema_tables_in_query(
+                self.information_schema_tables_read_by(
                     query,
                     &current_db,
                     &mut table_names,
                     &mut written_db,
-                );
+                )?;
                 if !table_names.is_empty() {
                     let record_set = self.open_information_schema_query(
                         query,
@@ -4209,4 +4195,114 @@ impl Session {
         // clamped to now, the current read. Any other statement ignores it.
         Ok(())
     }
+}
+
+/// The rows of a statement-summary table for `user` (`None`: every user,
+/// as Go's restricted SQL reads them), over the v1 map or the persistent v2
+/// owner the instance configuration selects.
+pub(crate) fn statement_summary_rows(
+    table_name: &str,
+    columns: &[(String, tidb_datatype::FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+    user: Option<tidb_parser::auth::UserIdentity>,
+    has_process: bool,
+    digests: Option<&std::collections::HashSet<String>>,
+    scan_concurrency: usize,
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+    use tidb_ast::CiString;
+    use tidb_model::ColumnInfo;
+    use tidb_stmtsummary::reader::{StmtSummaryChecker, StmtSummaryReader};
+
+    if table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_EVICTED") {
+        if !has_process {
+            return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
+        }
+        return Ok(
+            if tidb_config::config_tree::config::get_global_config()
+                .instance
+                .stmt_summary_enable_persistent
+            {
+                tidb_stmtsummary::v2::stmtsummary::global_stmt_summary()
+                    .map(|summary| summary.evicted())
+                    .filter(|row| !row.is_empty())
+                    .into_iter()
+                    .collect()
+            } else {
+                tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP
+                    .to_evicted_count_datum()
+            },
+        );
+    }
+
+    let columns: Vec<ColumnInfo> = columns
+        .iter()
+        .enumerate()
+        .map(|(offset, (name, _))| ColumnInfo {
+            id: i64::try_from(offset).expect("information-schema column count fits i64"),
+            name: CiString::new(name),
+            offset: i64::try_from(offset).expect("information-schema column count fits i64"),
+            ..ColumnInfo::default()
+        })
+        .collect();
+    let persistent = tidb_config::config_tree::config::get_global_config()
+        .instance
+        .stmt_summary_enable_persistent;
+    let cumulative = table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS");
+    let history = table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY");
+    if persistent {
+        // Go refuses cumulative retrieval in v2; never silently substitute
+        // an unrelated v1 map for the selected persistent owner.
+        if cumulative {
+            return Err(DriverError::NotSupportedYet(
+                "cumulative statement summary table with persistent mode (v2)".into(),
+            ));
+        }
+        let mut rows = tidb_stmtsummary::v2::reader::new_mem_reader(
+            tidb_stmtsummary::v2::stmtsummary::global_stmt_summary(),
+            &columns,
+            String::new(),
+            zone.clone(),
+            user.clone(),
+            has_process,
+            digests.cloned(),
+            Vec::new(),
+        )
+        .rows();
+        if history {
+            let mut reader = tidb_stmtsummary::v2::reader::HistoryReader::new(
+                None,
+                &columns,
+                String::new(),
+                zone.clone(),
+                user,
+                has_process,
+                digests.cloned(),
+                Vec::new(),
+                scan_concurrency,
+            )
+            .map_err(|error| DriverError::Unsupported(error.into()))?;
+            let result = (|| {
+                while let Some(batch) = reader
+                    .rows()
+                    .map_err(|error| DriverError::Unsupported(error.into()))?
+                {
+                    rows.extend(batch);
+                }
+                Ok(rows)
+            })();
+            let _ = reader.close();
+            return result;
+        }
+        return Ok(rows);
+    }
+    let mut reader =
+        StmtSummaryReader::new(user, has_process, columns, String::new(), zone.clone());
+    reader.set_checker(digests.cloned().map(StmtSummaryChecker::new));
+    Ok(if cumulative {
+        reader.get_stmt_summary_cumulative_rows()
+    } else if history {
+        reader.get_stmt_summary_history_rows()
+    } else {
+        reader.get_stmt_summary_current_rows()
+    })
 }

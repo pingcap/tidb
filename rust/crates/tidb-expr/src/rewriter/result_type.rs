@@ -1981,6 +1981,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         {
             text()
         }
+        "tidb_decode_sql_digests" if matches!(args.len(), 1 | 2) => text(),
         // Go `timeFormatFunctionClass` (`pkg/expression/builtin_time.go`):
         // a DURATION and a format string in, text out, with the flen sized
         // from the FORMAT argument's -- `(flen + 1) / 2 * 11`, an upper bound

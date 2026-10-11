@@ -205,33 +205,10 @@ impl Session {
         table_name: &str,
         columns: &[(String, FieldType)],
         offsets: &[usize],
-        mut rows: Vec<Vec<Datum>>,
+        rows: Vec<Vec<Datum>>,
         internal: bool,
         digests: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let Some(syncer) = &self.server_info_syncer else {
-            return Ok(rows);
-        };
-        let local_id = syncer.local_server_info().static_info.id;
-        let discovered = syncer.all_server_info().map_err(DriverError::unsupported)?;
-        if !discovered
-            .values()
-            .any(|server| server.static_info.id == local_id && server.static_info.ip != "<nil>")
-        {
-            rows.clear();
-        }
-        let servers: Vec<_> = discovered
-            .into_values()
-            .filter(|server| server.static_info.id != local_id && server.static_info.ip != "<nil>")
-            .collect();
-        if servers.is_empty() {
-            return Ok(rows);
-        }
-        let client = self
-            .cluster_peer
-            .as_ref()
-            .ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
-        let ctx = self.statement_context(false);
         // Go carries Username/Hostname (the presented login), not AuthHostname.
         let user = if internal {
             None
@@ -240,116 +217,55 @@ impl Session {
                 .as_deref()
                 .and_then(|identity| identity.split_once('@'))
         };
-        let result = client.scan_projected(
-            &servers,
-            infoschema::memory_table_id(table_name).expect("registered memory table"),
+        let (rows, warnings) = peer_cluster_table_rows(
+            self.server_info_syncer.as_deref(),
+            self.cluster_peer.as_deref(),
+            &self.statement_context(false),
+            user,
+            &self.session_time_zone(),
+            table_name,
             columns,
             offsets,
-            user,
-            &ctx,
-            &self.session_time_zone(),
-            ctx.dist_sql_scan_concurrency() as usize,
+            rows,
             digests,
         )?;
-        for (code, message) in result.warnings {
+        for (code, message) in warnings {
             self.append_warning(WarningLevel::Warning, code, message);
         }
-        rows.extend(result.rows);
         Ok(rows)
     }
 
-    /// Go expression.SQLDigestTextRetriever: current plus history, then peers
-    /// only for unknown digests. Restricted lookup does not change SQL identity.
+    /// Go `expression.SQLDigestTextRetriever` over this session's node and,
+    /// with `global`, its peers (`RetrieveGlobal`).
     pub(crate) fn sql_digest_texts(
         &mut self,
         digests: impl IntoIterator<Item = String>,
         global: bool,
     ) -> Result<std::collections::HashMap<String, String>, DriverError> {
-        use std::collections::{HashMap, HashSet};
-        let mut texts: HashMap<String, String> = digests
-            .into_iter()
-            .map(|digest| (digest, String::new()))
-            .collect();
-        if texts.is_empty() {
-            return Ok(texts);
+        self.sql_digest_text_retriever()
+            .retrieve(&self.statement_context(false), digests, global)
+    }
+
+    /// [`Self::sql_digest_text_retriever`] as `TIDB_DECODE_SQL_DIGESTS` runs
+    /// it from the statement context (Go `RetrieveGlobal`).
+    pub(crate) fn sql_digest_text_retrieval(&self) -> tidb_executor::SqlDigestTextRetrieval {
+        let retriever = self.sql_digest_text_retriever();
+        std::sync::Arc::new(move |ctx, digests| {
+            retriever
+                .retrieve(ctx, digests.iter().cloned(), true)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// An owned [`SqlDigestTextRetriever`] over this session's node, for a
+    /// builtin that retrieves while evaluating with the session out of reach.
+    pub(crate) fn sql_digest_text_retriever(&self) -> SqlDigestTextRetriever {
+        SqlDigestTextRetriever {
+            zone: self.session_time_zone(),
+            scan_concurrency: self.dist_sql_scan_concurrency(),
+            server_info_syncer: self.server_info_syncer.clone(),
+            cluster_peer: self.cluster_peer.clone(),
         }
-        let requested: HashSet<_> = texts.keys().cloned().collect();
-        // Go limits the WHERE IN list to512 digests, otherwise fetching all.
-        let filter = (requested.len() <= 512).then_some(&requested);
-        let columns = infoschema::table_schema("STATEMENTS_SUMMARY").expect("summary schema");
-        let columns: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
-            .iter()
-            .map(|name| {
-                columns
-                    .iter()
-                    .find(|(column, _)| column == name)
-                    .expect("digest column")
-                    .clone()
-            })
-            .collect();
-        fn merge(texts: &mut HashMap<String, String>, rows: Vec<Vec<Datum>>) {
-            for row in rows {
-                let (Some(digest), Some(text)) = (row[0].as_raw_bytes(), row[1].as_raw_bytes())
-                else {
-                    continue;
-                };
-                if let Some(known) = texts.get_mut(String::from_utf8_lossy(digest).as_ref()) {
-                    if known.is_empty() {
-                        *known = String::from_utf8_lossy(text).into_owned();
-                    }
-                }
-            }
-        }
-        for table in ["STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY_HISTORY"] {
-            merge(
-                &mut texts,
-                self.statement_summary_rows_for(
-                    table,
-                    &columns,
-                    &self.session_time_zone(),
-                    true,
-                    filter,
-                )?,
-            );
-        }
-        let unknown: HashSet<_> = texts
-            .iter()
-            .filter(|(_, text)| text.is_empty())
-            .map(|(digest, _)| digest.clone())
-            .collect();
-        if !global || unknown.is_empty() {
-            return Ok(texts);
-        }
-        let filter = (requested.len() <= 512).then_some(&unknown);
-        for (table, source) in [
-            ("CLUSTER_STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY"),
-            (
-                "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
-                "STATEMENTS_SUMMARY_HISTORY",
-            ),
-        ] {
-            let schema = infoschema::table_schema(table).expect("cluster summary schema");
-            let offsets: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
-                .iter()
-                .map(|name| {
-                    schema
-                        .iter()
-                        .position(|(column, _)| column == name)
-                        .expect("digest column")
-                })
-                .collect();
-            let local = self.statement_summary_rows_for(
-                source,
-                &columns,
-                &self.session_time_zone(),
-                true,
-                filter,
-            )?;
-            let rows =
-                self.cluster_table_rows_with_rows(table, &schema, &offsets, local, true, filter)?;
-            merge(&mut texts, rows);
-        }
-        Ok(texts)
     }
 
     /// The rows of `SHOW [FULL] PROCESSLIST`.
@@ -641,4 +557,183 @@ impl Session {
             Ok(render(None))
         }
     }
+}
+
+/// Go `expression.SQLDigestTextRetriever`: the normalized statement text of
+/// each requested digest, read the way Go's `ExecRestrictedSQL` reads it --
+/// from this node's `statements_summary` and its history, then, for
+/// `RetrieveGlobal`, from the peers' cluster tables for the digests still
+/// unknown. Owned, so `TIDB_DECODE_SQL_DIGESTS` can retrieve while it
+/// evaluates.
+#[derive(Clone)]
+pub(crate) struct SqlDigestTextRetriever {
+    zone: tidb_datatype::SessionTimeZone,
+    scan_concurrency: usize,
+    server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    cluster_peer: Option<std::sync::Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+}
+
+impl SqlDigestTextRetriever {
+    /// Go `RetrieveLocal`, then with `global` `RetrieveGlobal`'s peer pass.
+    /// A digest the summaries do not know maps to the empty text.
+    pub(crate) fn retrieve(
+        &self,
+        ctx: &tidb_executor::StmtContext,
+        digests: impl IntoIterator<Item = String>,
+        global: bool,
+    ) -> Result<std::collections::HashMap<String, String>, DriverError> {
+        use std::collections::{HashMap, HashSet};
+        let mut texts: HashMap<String, String> = digests
+            .into_iter()
+            .map(|digest| (digest, String::new()))
+            .collect();
+        if texts.is_empty() {
+            return Ok(texts);
+        }
+        let requested: HashSet<_> = texts.keys().cloned().collect();
+        // Go limits the WHERE IN list to512 digests, otherwise fetching all.
+        let filter = (requested.len() <= 512).then_some(&requested);
+        let columns = infoschema::table_schema("STATEMENTS_SUMMARY").expect("summary schema");
+        let columns: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
+            .iter()
+            .map(|name| {
+                columns
+                    .iter()
+                    .find(|(column, _)| column == name)
+                    .expect("digest column")
+                    .clone()
+            })
+            .collect();
+        fn merge(texts: &mut HashMap<String, String>, rows: Vec<Vec<Datum>>) {
+            for row in rows {
+                let (Some(digest), Some(text)) = (row[0].as_raw_bytes(), row[1].as_raw_bytes())
+                else {
+                    continue;
+                };
+                if let Some(known) = texts.get_mut(String::from_utf8_lossy(digest).as_ref()) {
+                    if known.is_empty() {
+                        *known = String::from_utf8_lossy(text).into_owned();
+                    }
+                }
+            }
+        }
+        for table in ["STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY_HISTORY"] {
+            merge(
+                &mut texts,
+                crate::dispatch::statement_summary_rows(
+                    table,
+                    &columns,
+                    &self.zone,
+                    None,
+                    true,
+                    filter,
+                    self.scan_concurrency,
+                )?,
+            );
+        }
+        let unknown: HashSet<_> = texts
+            .iter()
+            .filter(|(_, text)| text.is_empty())
+            .map(|(digest, _)| digest.clone())
+            .collect();
+        if !global || unknown.is_empty() {
+            return Ok(texts);
+        }
+        let filter = (requested.len() <= 512).then_some(&unknown);
+        for (table, source) in [
+            ("CLUSTER_STATEMENTS_SUMMARY", "STATEMENTS_SUMMARY"),
+            (
+                "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
+                "STATEMENTS_SUMMARY_HISTORY",
+            ),
+        ] {
+            let schema = infoschema::table_schema(table).expect("cluster summary schema");
+            let offsets: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
+                .iter()
+                .map(|name| {
+                    schema
+                        .iter()
+                        .position(|(column, _)| column == name)
+                        .expect("digest column")
+                })
+                .collect();
+            let local = crate::dispatch::statement_summary_rows(
+                source,
+                &columns,
+                &self.zone,
+                None,
+                true,
+                filter,
+                self.scan_concurrency,
+            )?;
+            // Go reads the peers through `ExecRestrictedSQL`, whose warnings
+            // stay on the internal session.
+            let (rows, _) = peer_cluster_table_rows(
+                self.server_info_syncer.as_deref(),
+                self.cluster_peer.as_deref(),
+                ctx,
+                None,
+                &self.zone,
+                table,
+                &schema,
+                &offsets,
+                local,
+                filter,
+            )?;
+            merge(&mut texts, rows);
+        }
+        Ok(texts)
+    }
+}
+
+/// The rows the discovered peers answer for a cluster memory table, after
+/// `rows` (this node's own, dropped when discovery does not list this node).
+/// Without a server-info syncer there are no peers and `rows` is the answer.
+/// The second value is the warnings the peers reported.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn peer_cluster_table_rows(
+    syncer: Option<&tidb_domain::serverinfo_syncer::Syncer>,
+    peer: Option<&tidb_exec::cluster_peer::ClusterPeerClient>,
+    ctx: &tidb_executor::StmtContext,
+    user: Option<(&str, &str)>,
+    zone: &tidb_datatype::SessionTimeZone,
+    table_name: &str,
+    columns: &[(String, FieldType)],
+    offsets: &[usize],
+    mut rows: Vec<Vec<Datum>>,
+    digests: Option<&std::collections::HashSet<String>>,
+) -> Result<(Vec<Vec<Datum>>, Vec<(u16, String)>), DriverError> {
+    let Some(syncer) = syncer else {
+        return Ok((rows, Vec::new()));
+    };
+    let local_id = syncer.local_server_info().static_info.id;
+    let discovered = syncer.all_server_info().map_err(DriverError::unsupported)?;
+    if !discovered
+        .values()
+        .any(|server| server.static_info.id == local_id && server.static_info.ip != "<nil>")
+    {
+        rows.clear();
+    }
+    let servers: Vec<_> = discovered
+        .into_values()
+        .filter(|server| server.static_info.id != local_id && server.static_info.ip != "<nil>")
+        .collect();
+    if servers.is_empty() {
+        return Ok((rows, Vec::new()));
+    }
+    let client =
+        peer.ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
+    let result = client.scan_projected(
+        &servers,
+        infoschema::memory_table_id(table_name).expect("registered memory table"),
+        columns,
+        offsets,
+        user,
+        ctx,
+        zone,
+        ctx.dist_sql_scan_concurrency() as usize,
+        digests,
+    )?;
+    rows.extend(result.rows);
+    Ok((rows, result.warnings))
 }

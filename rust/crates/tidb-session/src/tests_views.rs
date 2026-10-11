@@ -1628,3 +1628,58 @@ fn view_renames_duplicated_anonymous_columns_like_go() {
         ["Name_exp_t", "Name_exp_1_t", "t"]
     );
 }
+
+/// Go plans a view's body in place (`BuildDataSourceFromView`), so a view over
+/// an `information_schema` table reads the memory table's rows like the same
+/// SELECT would, and DESCRIBE and `information_schema.columns` re-plan its
+/// body against the memory table's schema. The statement used to plan the
+/// view's body as stored tables, where every `information_schema` table had
+/// ID 0: the scan read an unrelated table and the count was 0, and the
+/// metadata reads failed or omitted the view.
+#[test]
+fn a_view_over_an_information_schema_table_reads_its_rows() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create view test.mysql_objects as select table_name, table_type \
+             from information_schema.tables where table_schema = 'mysql'",
+        )
+        .unwrap();
+    session
+        .run("create view test.mysql_count as select count(*) c from test.mysql_objects")
+        .unwrap();
+    let (_, direct) = query_text(
+        &mut session,
+        "select count(*) from information_schema.tables where table_schema = 'mysql'",
+    );
+    assert_ne!(direct[0][0], "0");
+    let (_, through_view) = query_text(&mut session, "select count(*) from test.mysql_objects");
+    assert_eq!(through_view, direct);
+    let (_, nested) = query_text(&mut session, "select c from test.mysql_count");
+    assert_eq!(nested, direct);
+    let (_, plan) = query_text(
+        &mut session,
+        "explain format='brief' select * from test.mysql_objects",
+    );
+    assert!(
+        plan.iter()
+            .any(|row| row[0].starts_with("MemTableScan") && row[3] == "table:TABLES"),
+        "{plan:?}"
+    );
+    assert_eq!(
+        row_text(session.run("desc test.mysql_objects"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+        ["table_name", "table_type"]
+    );
+    assert_eq!(
+        query_text(
+            &mut session,
+            "select count(*) from information_schema.columns \
+             where table_schema = 'test' and table_name = 'mysql_objects'",
+        )
+        .1,
+        [["2"]]
+    );
+}

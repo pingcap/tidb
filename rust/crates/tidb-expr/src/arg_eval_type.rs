@@ -241,6 +241,9 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         b"TIDB_PARSE_TSO" | b"TIDB_PARSE_TSO_LOGICAL" => 1 << 0,
         // `lockFunctionClass`: lock name is ETString and timeout is ETInt.
         b"GET_LOCK" => 1 << 1,
+        // `tidbDecodeSQLDigestsFunctionClass`: the optional statement
+        // truncation length is `types.ETInt`.
+        b"TIDB_DECODE_SQL_DIGESTS" => 1 << 1,
         // `getParamFunctionClass`: the parameter selector is the sole
         // `types.ETInt` argument (`builtin_other.go:1911`).
         b"GETPARAM" => 1 << 0,
@@ -366,6 +369,9 @@ const fn string_arg_mask(name: &str) -> ArgMask {
         | b"TIDB_DECODE_KEY"
         | b"TIDB_ENCODE_SQL_DIGEST"
         | b"VEC_FROM_TEXT" => 1 << 0,
+        // `tidbDecodeSQLDigestsFunctionClass`: the digest list is
+        // `types.ETString`, its optional truncation length an int.
+        b"TIDB_DECODE_SQL_DIGESTS" => 1 << 0,
         // `getFormatFunctionClass`: the selector is lowered to a string
         // constant and the location is the caller's ETString argument.
         b"GET_FORMAT" => (1 << 0) | (1 << 1),

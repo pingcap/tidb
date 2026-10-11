@@ -282,8 +282,8 @@ pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
     ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo,
-    RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, StatementClass,
-    StatementPhase, StmtContext, StmtContextSessionState,
+    RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot,
+    SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState,
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;

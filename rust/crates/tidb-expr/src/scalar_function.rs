@@ -234,6 +234,7 @@ pub fn is_unfoldable_function(name: &str) -> bool {
                 | "row_count"
                 | "version"
                 | "tidb_version"
+                | "tidb_decode_sql_digests"
                 | "nextval"
                 | "lastval"
                 | "setval"

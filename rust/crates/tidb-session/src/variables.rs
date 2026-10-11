@@ -335,12 +335,12 @@ impl Session {
                     // virtual tables, as the same SELECT would on its own.
                     let mut table_names = Vec::new();
                     let mut written_db = None;
-                    crate::dispatch::information_schema_tables_in_query(
+                    self.information_schema_tables_read_by(
                         &query,
                         &database,
                         &mut table_names,
                         &mut written_db,
-                    );
+                    )?;
                     let (physical, virtual_catalog) = if table_names.is_empty() {
                         let physical = self.with_catalog_mut(|catalog| {
                             tidb_executor::plan_query_meta_stmt(&query, catalog, &database, &ctx)
@@ -1466,12 +1466,12 @@ impl Session {
             let current_db = self.current_db.clone();
             let mut table_names = Vec::new();
             let mut written_db = None;
-            crate::dispatch::information_schema_tables_in_query(
+            self.information_schema_tables_read_by(
                 &query,
                 &current_db,
                 &mut table_names,
                 &mut written_db,
-            );
+            )?;
             if !table_names.is_empty() {
                 let record_set = self.open_information_schema_query(
                     &query,

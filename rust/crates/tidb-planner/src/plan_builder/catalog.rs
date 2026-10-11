@@ -372,6 +372,14 @@ pub trait TableSource {
         None
     }
 
+    /// Go `tableInfo.IsSequence()` for the table `db_name`.`table_name`: the
+    /// sequence's stored name (Go `TableInfo.Name`) when it is one, which
+    /// `buildDataSource` reads as a one-row `TableDual`. Sequences are not in
+    /// [`Self::find_table`], whose hits are tables with rows and columns.
+    fn find_sequence(&self, _db_name: &str, _table_name: &str) -> Option<&str> {
+        None
+    }
+
     /// [`Self::find_table`] over Go's `temptable.DetachLocalTemporaryTableInfoSchema`:
     /// a session's local temporary table neither resolves nor hides the
     /// permanent table it shadows. Tables inside a view resolve this way.

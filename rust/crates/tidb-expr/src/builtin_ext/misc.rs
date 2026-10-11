@@ -56,6 +56,10 @@ pub(crate) fn dispatch_in(
         ("BIN_TO_UUID", [value, flag]) => Some(bin_to_uuid(ctx, value, Some(flag))),
         ("TIDB_SHARD", [value]) => Some(tidb_shard(value, ctx)),
         ("TIDB_DECODE_KEY", [value]) => Some(tidb_decode_key(value, ctx)),
+        ("TIDB_DECODE_SQL_DIGESTS", [digests]) => Some(tidb_decode_sql_digests(digests, None, ctx)),
+        ("TIDB_DECODE_SQL_DIGESTS", [digests, truncate_length]) => {
+            Some(tidb_decode_sql_digests(digests, Some(truncate_length), ctx))
+        }
         ("VITESS_HASH", [value]) => Some(vitess_hash(value, ctx)),
         _ => None,
     }
@@ -69,6 +73,105 @@ fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, Eva
         .sql_bytes()
         .map_err(|_| EvalError::IncorrectArguments("tidb_decode_key".to_owned()))?;
     Ok(Datum::new_string(ctx.tidb_decode_key(&input)))
+}
+
+/// Go `ErrSpecificAccessDenied` (1227) for the PROCESS privilege
+/// `TIDB_DECODE_SQL_DIGESTS` requires, at build time and at evaluation.
+pub(crate) fn process_privilege_denied() -> EvalError {
+    EvalError::Conversion(
+        tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+            .generate_with_stack_by_args(&[tidb_error::mysql::FormatArg::from("PROCESS")]),
+    )
+}
+
+/// Go `builtinTiDBDecodeSQLDigestsSig.evalString`: the JSON array of
+/// statement texts for a JSON array of digests, `null` for each item that is
+/// not a string or whose digest no statement summary knows, each text cut to
+/// `truncate_length` bytes plus `...` when that is positive. A digest list
+/// that is not a JSON array is a 1210 warning and NULL.
+fn tidb_decode_sql_digests(
+    digests: &Datum,
+    truncate_length: Option<&Datum>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    if !ctx.has_process_privilege() {
+        return Err(process_privilege_denied());
+    }
+    let Some(digests_str) = crate::arg_eval_type::eval_string(digests)? else {
+        return Ok(Datum::Null);
+    };
+    let stmt_truncate_length = match truncate_length {
+        Some(value) => crate::arg_eval_type::eval_int(value)?.unwrap_or(0),
+        None => 0,
+    };
+    // Go `json.Unmarshal(digestsStr, &digests)` into `[]any`: invalid UTF-8
+    // decodes to U+FFFD byte by byte, and a JSON `null` is the empty list.
+    let decoded = serde_json::from_str::<Option<Vec<serde_json::Value>>>(
+        &tidb_datatype::decode_go_utf8_lossy(digests_str.as_slice()),
+    );
+    let Ok(items) = decoded.map(Option::unwrap_or_default) else {
+        const ERR_MSG_MAX_LENGTH: usize = 32;
+        let mut shown = digests_str;
+        if shown.len() > ERR_MSG_MAX_LENGTH {
+            shown.truncate(ERR_MSG_MAX_LENGTH);
+            shown.extend_from_slice(b"...");
+        }
+        // Go `errIncorrectArgs.FastGen(...)` (`ErrWrongArguments`, 1210).
+        ctx.append_warning(
+            1210,
+            &format!(
+                "The argument can't be unmarshalled as JSON array: '{}'",
+                String::from_utf8_lossy(&shown)
+            ),
+        );
+        return Ok(Datum::Null);
+    };
+    let mut requested: Vec<String> = items
+        .iter()
+        .filter_map(|item| item.as_str().map(str::to_owned))
+        .collect();
+    requested.sort_unstable();
+    requested.dedup();
+    let texts = match ctx.retrieve_sql_digest_texts(&requested) {
+        Some(Ok(texts)) => texts,
+        // Go `errUnknown.FastGen(...)` (1105), the builtin answering NULL.
+        Some(Err(message)) => {
+            ctx.append_warning(
+                1105,
+                &format!("Retrieving statements information failed with error: {message}"),
+            );
+            return Ok(Datum::Null);
+        }
+        None => {
+            return Err(EvalError::Unsupported(
+                "TIDB_DECODE_SQL_DIGESTS needs a session to read statement summaries",
+            ))
+        }
+    };
+    // Go `json.Marshal(result)` over `[]any` holding nil or the texts.
+    let mut result = String::from("[");
+    for (position, item) in items.iter().enumerate() {
+        if position > 0 {
+            result.push(',');
+        }
+        let text = item
+            .as_str()
+            .and_then(|digest| texts.get(digest))
+            .filter(|text| !text.is_empty());
+        match text {
+            Some(text) => {
+                let mut stmt = text.as_bytes().to_vec();
+                if stmt_truncate_length > 0 && stmt.len() as i64 > stmt_truncate_length {
+                    stmt.truncate(stmt_truncate_length as usize);
+                    stmt.extend_from_slice(b"...");
+                }
+                result.push_str(&tidb_datatype::GoString::from_bytes(stmt).to_go_json_literal());
+            }
+            None => result.push_str("null"),
+        }
+    }
+    result.push(']');
+    Ok(Datum::new_string(result.into_bytes()))
 }
 
 #[derive(Default)]

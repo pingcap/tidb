@@ -847,8 +847,9 @@ pub fn view_column_list(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
-    let (body_columns, _) =
-        crate::driver::run_select_meta_in(&view.select_sql, catalog, database, ctx)?;
+    // Go builds the body's plan and reads its schema; the body never runs.
+    let body_columns =
+        crate::driver::plan_select_meta_in(&view.select_sql, catalog, database, ctx)?;
     if body_columns.len() != view.columns.len() {
         return Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(format!(
             "{database}.{}",

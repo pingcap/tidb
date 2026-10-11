@@ -432,6 +432,13 @@ pub struct StmtContextSessionState {
     /// The session's privilege answer for the sequence builtins; `None` is an
     /// unrestricted session.
     pub sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// Go `RequestVerification("", "", "", mysql.ProcessPriv)` as
+    /// `TIDB_DECODE_SQL_DIGESTS` asks it: whether the session holds PROCESS.
+    pub process_privilege: bool,
+    /// The session's `SQLDigestTextRetriever`, which `TIDB_DECODE_SQL_DIGESTS`
+    /// runs through Go's SQL-executor property; `None` is a context with no
+    /// session to run it.
+    pub sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
     /// The session's `CheckTableLock` over a foreign-key cascade's child
     /// table; `None` when no table lock can be involved.
     pub fk_cascade_table_lock: Option<ForeignKeyCascadeLockCheck>,
@@ -463,6 +470,8 @@ impl Default for StmtContextSessionState {
             connection_collation: "utf8mb4_bin".to_owned(),
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
             sequence_privilege: None,
+            process_privilege: true,
+            sql_digest_text_retriever: None,
             fk_cascade_table_lock: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .map_or(0, |mode| mode.0),
@@ -474,6 +483,16 @@ impl Default for StmtContextSessionState {
 /// while evaluating: `(schema, sequence, insert)` answers whether the session
 /// holds INSERT (`insert`) or SELECT on the sequence.
 pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
+
+/// Go `SQLDigestTextRetriever.RetrieveGlobal` as `TIDB_DECODE_SQL_DIGESTS`
+/// runs it while evaluating in `StmtContext`: each requested digest's
+/// normalized text (empty when no summary knows it), or the retrieval's
+/// failure, which the builtin reports as a warning.
+pub type SqlDigestTextRetrieval = Arc<
+    dyn Fn(&StmtContext, &[String]) -> Result<std::collections::HashMap<String, String>, String>
+        + Send
+        + Sync,
+>;
 
 /// Go `planner.OptimizeForForeignKeyCascade`'s `CheckTableLock` over the
 /// cascade sub-statement it builds: `(catalog, schema, table, delete)` checks
@@ -635,6 +654,10 @@ pub struct StmtContextData {
     default_collation_for_utf8mb4: String,
     /// See [`StmtContextSessionState::sequence_privilege`].
     sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// See [`StmtContextSessionState::process_privilege`].
+    process_privilege: bool,
+    /// See [`StmtContextSessionState::sql_digest_text_retriever`].
+    sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
     /// See [`StmtContextSessionState::fk_cascade_table_lock`].
     fk_cascade_table_lock: Option<ForeignKeyCascadeLockCheck>,
     /// Go expression BuildContext.NewCollationEnabled, captured for this task.
@@ -2194,6 +2217,8 @@ impl StmtContext {
             connection_collation: session.connection_collation,
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
             sequence_privilege: session.sequence_privilege,
+            process_privilege: session.process_privilege,
+            sql_digest_text_retriever: session.sql_digest_text_retriever,
             fk_cascade_table_lock: session.fk_cascade_table_lock,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
             rand_session: None,
@@ -4844,6 +4869,19 @@ impl Columns for StmtContext {
 
     fn found_rows(&self) -> Option<u64> {
         self.last_found_rows
+    }
+
+    fn has_process_privilege(&self) -> bool {
+        self.process_privilege
+    }
+
+    fn retrieve_sql_digest_texts(
+        &self,
+        digests: &[String],
+    ) -> Option<Result<std::collections::HashMap<String, String>, String>> {
+        self.sql_digest_text_retriever
+            .as_ref()
+            .map(|retrieve| retrieve(self, digests))
     }
 
     fn current_tso(&self) -> i64 {

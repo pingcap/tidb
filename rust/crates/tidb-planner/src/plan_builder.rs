@@ -2527,6 +2527,30 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         LogicalPlan::TableDual(dual)
     }
 
+    /// Go `buildDataSource`'s `tableInfo.IsSequence()` arm: "When the source
+    /// is a Sequence, we convert it to a TableDual, as what most databases
+    /// do." The checks Go makes before it still apply: a partition clause on
+    /// the unpartitioned sequence, and `getPossibleAccessPaths` failing on an
+    /// SQL index hint (a sequence has no index).
+    fn build_sequence_data_source(
+        &mut self,
+        table_ref: &TableRef,
+        sequence_name: String,
+    ) -> Result<LogicalPlan, PlanError> {
+        if !table_ref.partitions.is_empty() {
+            return Err(PlanError::partition_clause_on_nonpartitioned());
+        }
+        if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
+            return Err(PlanError::key_not_exists(index.clone(), sequence_name));
+        }
+        if table_ref.sample.is_some() {
+            return Err(PlanError::invalid_table_sample(
+                "Unsupported TABLESAMPLE in sequences",
+            ));
+        }
+        Ok(self.build_table_dual())
+    }
+
     /// Go `buildDataSource(ctx, tn, asName)`
     /// (`logical_plan_builder.go:4927`), over [`TableSource`].
     ///
@@ -2607,13 +2631,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 inherited,
             );
         }
-        let table = if in_view {
+        let found = if in_view {
             self.source
                 .find_table_ignoring_local_temporary(&db_name, &table_name)
         } else {
             self.source.find_table(&db_name, &table_name)
-        }
-        .ok_or_else(|| PlanError::unknown_table(format!("{db_name}.{table_name}")))?;
+        };
+        let Some(table) = found else {
+            if let Some(sequence_name) = self.source.find_sequence(&db_name, &table_name) {
+                let sequence_name = sequence_name.to_owned();
+                return self.build_sequence_data_source(table_ref, sequence_name);
+            }
+            return Err(PlanError::unknown_table(format!("{db_name}.{table_name}")));
+        };
 
         if self.resolve_ctx.read().table_name(table_ref).is_none() {
             self.resolve_ctx

@@ -967,3 +967,108 @@ fn sensitive_statements_reach_the_summary_redacted() {
         ]
     );
 }
+
+/// Go `TestFunctionDecodeSQLDigests` (`tests/integrationtest/t/executor/
+/// cluster_table.test`): `TIDB_DECODE_SQL_DIGESTS` reads each digest's text
+/// back from the statement summaries the session's own statements filled,
+/// `null` for a non-string item or a digest no summary knows; a positive
+/// length cuts each text to that many bytes plus `...`; a list that is not a
+/// JSON array is NULL with a 1210 warning. Without PROCESS it is 1227, at
+/// build time as in Go, so even a call over no rows refuses.
+#[test]
+fn tidb_decode_sql_digests_reads_the_statement_summaries() {
+    let registry = privilege::PrivilegeRegistry::default();
+    let catalog: SharedCatalog = std::sync::Arc::new(std::sync::Mutex::new(Catalog::default()));
+    let mut session = tests_support::session_as(&registry, catalog, "root", "%");
+    session
+        .run("create table test_func_decode_sql_digests(id int primary key, v int)")
+        .unwrap();
+    for sql in [
+        "begin",
+        "select @@tidb_current_ts",
+        "select id, v from test_func_decode_sql_digests where id = 1 for update",
+        "rollback",
+    ] {
+        session.run(sql).unwrap();
+    }
+    const BEGIN: &str = "e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5";
+    const CURRENT_TS: &str = "58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44";
+    const FOR_UPDATE: &str = "7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9";
+    fn decode_in(session: &mut Session, args: &str) -> String {
+        let (_, rows) =
+            tests_support::query_text(session, &format!("select tidb_decode_sql_digests({args})"));
+        rows[0][0].clone()
+    }
+    assert_eq!(
+        decode_in(
+            &mut session,
+            &format!(r#"'["{BEGIN}","{CURRENT_TS}","{FOR_UPDATE}"]', 0"#)
+        ),
+        r#"["begin","select @@tidb_current_ts","select `id` , `v` from `test_func_decode_sql_digests` where `id` = ? for update"]"#
+    );
+    assert_eq!(
+        decode_in(
+            &mut session,
+            &format!(r#"'["{BEGIN}","{CURRENT_TS}","{FOR_UPDATE}"]', 24"#)
+        ),
+        r#"["begin","select @@tidb_current_ts","select `id` , `v` from `..."]"#
+    );
+    assert_eq!(
+        decode_in(
+            &mut session,
+            &format!(
+                r#"'["{BEGIN}",1,null,"{CURRENT_TS}",{{"a":1}},[2],"{FOR_UPDATE}","","abcde"]'"#
+            )
+        ),
+        r#"["begin",null,null,"select @@tidb_current_ts",null,null,"select `id` , `v` from `test_func_decode_sql_digests` where `id` = ? for update",null,null]"#
+    );
+    assert_eq!(decode_in(&mut session, "'[]'"), "[]");
+    assert_eq!(decode_in(&mut session, "'null'"), "[]");
+    assert_eq!(decode_in(&mut session, "null"), "<nil>");
+    assert_eq!(decode_in(&mut session, r#"'{"a":1}'"#), "<nil>");
+    let (_, warnings) = tests_support::query_text(&mut session, "show warnings");
+    assert_eq!(
+        warnings,
+        [[
+            "Warning",
+            "1210",
+            r#"The argument can't be unmarshalled as JSON array: '{"a":1}'"#
+        ]]
+    );
+    assert_eq!(
+        decode_in(&mut session, "'aabbccddaabbccddaabbccddaabbccddaabbccdd'"),
+        "<nil>"
+    );
+    let (_, warnings) = tests_support::query_text(&mut session, "show warnings");
+    assert_eq!(
+        warnings[0][2],
+        "The argument can't be unmarshalled as JSON array: 'aabbccddaabbccddaabbccddaabbccdd...'"
+    );
+
+    session
+        .run("create user 'decode_digests_user'@'%'")
+        .unwrap();
+    session
+        .run("grant select on test.* to 'decode_digests_user'@'%'")
+        .unwrap();
+    let mut user = tests_support::session_as(
+        &registry,
+        session.shared_catalog(),
+        "decode_digests_user",
+        "%",
+    );
+    for sql in [
+        r#"select tidb_decode_sql_digests('["aa"]')"#,
+        "select tidb_decode_sql_digests(cast(id as char)) from test.test_func_decode_sql_digests",
+    ] {
+        let error = user.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                1227,
+                "Access denied; you need (at least one of) the PROCESS privilege(s) for this operation"
+            ),
+            "{sql}"
+        );
+    }
+}

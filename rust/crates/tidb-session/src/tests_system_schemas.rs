@@ -189,10 +189,9 @@ fn the_system_schema_is_listed_among_the_databases() {
     );
 }
 
-/// Enumerating `mysql` lists the tables Go's bootstrap creates. Captured from
-/// Go, `show tables in mysql` returns 61 names: these 60 tables and the
-/// `tidb_mdl_view` view, which this tier does not bootstrap yet (it needs
-/// `tidb_decode_sql_digests`).
+/// Enumerating `mysql` lists the objects Go's bootstrap creates. Captured
+/// from Go, `show tables in mysql` returns 61 names: 60 tables and the
+/// `tidb_mdl_view` view (`metadef.CreateTiDBMDLView`).
 #[test]
 fn enumerating_the_system_schema_lists_the_bootstrap_tables() {
     let mut session = Session::new();
@@ -247,6 +246,7 @@ fn enumerating_the_system_schema_lists_the_bootstrap_tables() {
         "tidb_kernel_options",
         "tidb_masking_policy",
         "tidb_mdl_info",
+        "tidb_mdl_view",
         "tidb_pitr_id_map",
         "tidb_restore_registry",
         "tidb_runaway_queries",

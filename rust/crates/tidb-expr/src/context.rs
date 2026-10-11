@@ -697,6 +697,26 @@ pub trait Columns {
         None
     }
 
+    /// Go `PrivilegeChecker.RequestVerification("", "", "",
+    /// mysql.ProcessPriv)`, which `TIDB_DECODE_SQL_DIGESTS` asks when it is
+    /// built and again when it evaluates. A resolver without a session is
+    /// unrestricted, as Go's internal sessions are.
+    fn has_process_privilege(&self) -> bool {
+        true
+    }
+
+    /// Go `SQLDigestTextRetriever.RetrieveGlobal` (`expression/util.go`),
+    /// which `TIDB_DECODE_SQL_DIGESTS` runs through its SQL-executor
+    /// property: each requested digest's normalized text from the statement
+    /// summaries, empty when none knows it. `Some(Err)` is the retrieval's
+    /// failure; `None` is a resolver with no SQL executor at all.
+    fn retrieve_sql_digest_texts(
+        &self,
+        _digests: &[String],
+    ) -> Option<Result<std::collections::HashMap<String, String>, String>> {
+        None
+    }
+
     /// Go `TIDB_DECODE_KEY`'s statement infoschema hook. A resolver without
     /// a session has no hook and returns the input unchanged.
     fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {

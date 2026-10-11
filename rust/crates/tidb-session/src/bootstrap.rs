@@ -219,6 +219,23 @@ impl Session {
         self.with_staged_catalog(|catalog| {
             tidb_executor::run_insert_in(&insert, catalog, "mysql", &insert_ctx).map(|_| ())
         })?;
+        // Go `doDDLWorks`: `mysql.tidb_mdl_view` (`metadef.CreateTiDBMDLView`)
+        // after the builtin binding row.
+        let Ok(tidb_ast::Stmt::Ddl(ddl)) =
+            tidb_parser::parse(tidb_metadef::system_tables_def::CREATE_TI_DBMDLVIEW)
+        else {
+            return Err(DriverError::unsupported(
+                "metadef.CreateTiDBMDLView does not parse as a statement",
+            ));
+        };
+        let tidb_ast::DdlStmt::CreateView(create) = &*ddl else {
+            return Err(DriverError::unsupported(
+                "metadef.CreateTiDBMDLView is not a CREATE VIEW",
+            ));
+        };
+        self.with_catalog_mut(|catalog| {
+            tidb_executor::run_create_view_in(&**create, catalog, "mysql", &ddl_ctx)
+        })?;
         // Go `doDDLWorks` ends with `ALTER RESOURCE GROUP default
         // BACKGROUND=(TASK_TYPES='stats')` (`kv.InternalTxnStats`).
         self.bootstrap_default_resource_group_background()?;

@@ -188,12 +188,12 @@ impl Session {
         let mut written_db = None;
         let mut planning_catalog = None;
         if let Stmt::Query(query) = target {
-            crate::dispatch::information_schema_tables_in_query(
+            self.information_schema_tables_read_by(
                 query,
                 &current_db,
                 &mut memory_tables,
                 &mut written_db,
-            );
+            )?;
             if !memory_tables.is_empty() {
                 let warnings_start = ctx.warning_count();
                 let (_, catalog, _) = self.plan_information_schema_query(

@@ -1316,6 +1316,8 @@ impl Session {
             connection_collation,
             default_collation_for_utf8mb4,
             sequence_privilege: self.sequence_privilege_check(),
+            process_privilege: self.has_process_privilege(),
+            sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
             fk_cascade_table_lock: self.fk_cascade_table_lock_check(),
             ddl_sql_mode: sql_mode.0,
         };

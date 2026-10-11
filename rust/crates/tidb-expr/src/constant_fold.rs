@@ -586,6 +586,9 @@ pub fn is_unfoldable(name: &str) -> bool {
             | "row_count"
             | "version"
             | "tidb_version"
+            // Reads the statement summaries through the session's SQL
+            // executor and checks its PROCESS privilege.
+            | "tidb_decode_sql_digests"
             // Reads the SESSION transaction context at evaluation: folding
             // it at plan time would freeze the zero the statement had before
             // its first read opened a snapshot.

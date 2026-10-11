@@ -252,9 +252,31 @@ fn a_sequence_is_not_a_table() {
         error_of(&mut session, "delete from s1"),
         (1105, "delete sequence s1 is not supported now".to_owned())
     );
-    // Real TiDB reports `[planner:1051] Unknown table ''` here, with the name
-    // genuinely empty; this refuses instead of claiming a zero-column source.
-    assert!(session.run("select * from s1").is_err());
+    // Go's `buildDataSource` reads a sequence as a one-row `TableDual`
+    // (oracle-captured): a constant projection answers one row, a wildcard
+    // over the dual's empty schema is `[planner:1051] Unknown table ''`, and
+    // the checks before the dual still refuse a partition clause and an
+    // index hint.
+    assert_eq!(scalar(&mut session, "select 1 from s1"), "1");
+    assert_eq!(
+        scalar(&mut session, "select count(1) from S1 as q where 1=1"),
+        "1"
+    );
+    assert_eq!(
+        error_of(&mut session, "select * from s1"),
+        (1051, "Unknown table ''".to_owned())
+    );
+    assert_eq!(
+        error_of(&mut session, "select 1 from s1 use index(x)"),
+        (1176, "Key 'x' doesn't exist in table 's1'".to_owned())
+    );
+    assert_eq!(
+        error_of(&mut session, "select 1 from s1 partition(p0)"),
+        (
+            1747,
+            "PARTITION () clause on non partitioned table".to_owned()
+        )
+    );
     // The name really is taken. Real TiDB reports
     // `[schema:1050] Table 'test.s1' already exists`; this engine's
     // `CREATE TABLE` duplicate check reports a generic 1105 for EVERY existing
