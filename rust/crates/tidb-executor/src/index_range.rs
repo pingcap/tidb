@@ -810,7 +810,7 @@ fn comparison_collation_allows_range(
     else {
         return false;
     };
-    let expression_collation = tidb_expr::collation_derive::collation_of_node(&rewritten);
+    let expression_collation = tidb_expr::collation_derive::derived_collation_of(&rewritten);
     expression_collation == column.field_type.collation()
         || (equality && tidb_expr::expr_collation::is_bin_collation(expression_collation.name()))
 }

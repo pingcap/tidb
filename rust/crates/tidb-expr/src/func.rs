@@ -772,7 +772,8 @@ pub(crate) fn eval_func_values(
         // char position, arguments in the opposite order (reusing
         // `position`, which already handles the empty-substr and
         // not-found rules).
-        "LOCATE" if vals.len() == 2 => {
+        // `POSITION(substr IN str)` is Go's two-argument `locateFunctionClass`.
+        "LOCATE" | "POSITION" if vals.len() == 2 => {
             locate(&vals[0], &vals[1], locate_collation(&vals[0], &vals[1]))
         }
         "LOCATE" if vals.len() == 3 => {

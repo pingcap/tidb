@@ -157,3 +157,88 @@ fn a_ddl_from_ticdc_skips_the_submit_admission() {
     );
     session.run("admin unset bdr role").unwrap();
 }
+
+/// Go `executor.AlterTablePartitionPlacement` (`ddl/bdr_mode.test`'s
+/// placement block, and oracle-captured edges): a partition takes the policy
+/// reference itself -- SHOW CREATE TABLE and `information_schema.partitions`
+/// read it back, and the policy is in use while it holds it -- after Go's
+/// unknown-partition (1735), unknown-policy (8239) and unpartitioned-table
+/// (1505) refusals, and the job is one the primary BDR role denies.
+#[test]
+fn a_partition_takes_its_own_placement_policy() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table t(a int) partition by range(a) (partition p0 values less than (5), \
+             partition p1 values less than (10), partition p3 values less than (100))",
+        )
+        .unwrap();
+    session
+        .run("create placement policy pp4 followers=4")
+        .unwrap();
+    session
+        .run("alter table t partition p3 placement policy=pp4")
+        .unwrap();
+    let show = row_text(session.run("show create table t"));
+    assert!(
+        show[0][1].ends_with(
+            " PARTITION `p3` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`pp4` */)"
+        ),
+        "{show:?}"
+    );
+    let placements = |session: &mut Session| {
+        row_text(session.run(
+            "select partition_name, tidb_placement_policy_name from information_schema.partitions \
+             where table_name = 't' order by partition_name",
+        ))
+    };
+    assert_eq!(
+        placements(&mut session),
+        [["p0", "NULL"], ["p1", "NULL"], ["p3", "pp4"]]
+    );
+    session
+        .run("alter table t partition p3 placement policy=default")
+        .unwrap();
+    session
+        .run("alter table t partition P1 placement policy=pp4")
+        .unwrap();
+    assert_eq!(
+        placements(&mut session),
+        [["p0", "NULL"], ["p1", "pp4"], ["p3", "NULL"]]
+    );
+    assert_eq!(
+        denied(&mut session, "drop placement policy pp4"),
+        "Placement policy 'pp4' is still in use"
+    );
+    assert_eq!(
+        denied(
+            &mut session,
+            "alter table t partition p9 placement policy=pp4"
+        ),
+        "Unknown partition 'p9' in table 't'"
+    );
+    assert_eq!(
+        denied(
+            &mut session,
+            "alter table t partition p3 placement policy=nosuch"
+        ),
+        "Unknown placement policy 'nosuch'"
+    );
+    session.run("create table t2 (a int)").unwrap();
+    assert_eq!(
+        denied(
+            &mut session,
+            "alter table t2 partition p3 placement policy=pp4"
+        ),
+        "Partition management on a not partitioned table is not possible"
+    );
+    session.run("admin set bdr role primary").unwrap();
+    assert_eq!(
+        denied(
+            &mut session,
+            "alter table t partition p3 placement policy=pp4"
+        ),
+        PRIMARY_DENIED
+    );
+    session.run("admin unset bdr role").unwrap();
+}

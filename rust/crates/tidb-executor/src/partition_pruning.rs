@@ -2579,11 +2579,11 @@ where
             op_name = "eq";
         }
         // "If different collation, we can only prune if the expression is
-        // binary collation and an EQ": otherwise every partition stays.
-        let expr_collation = op
-            .ret_type
-            .as_ref()
-            .map_or("", tidb_datatype::FieldType::collation_name);
+        // binary collation and an EQ": otherwise every partition stays. Go
+        // reads the comparison's own collation (`expr.CharsetAndCollation()`);
+        // a comparison rebuilt over numbers or times derives none and keeps
+        // its result type's.
+        let expr_collation = op.derived_collation().name();
         let column_collation = self
             .column
             .ret_type

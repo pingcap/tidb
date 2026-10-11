@@ -1901,6 +1901,13 @@ impl Session {
             tidb_ast::AdminStmt::AdminCheck(check) => {
                 self.admin_check_stmt(check.as_ref()).map(Some)
             }
+            // Go `RecoverIndexExec` / `CleanupIndexExec`.
+            tidb_ast::AdminStmt::AdminRecoverIndex(recover) => {
+                self.admin_recover_index_stmt(recover.as_ref()).map(Some)
+            }
+            tidb_ast::AdminStmt::AdminCleanupIndex(cleanup) => {
+                self.admin_cleanup_index_stmt(cleanup.as_ref()).map(Some)
+            }
             tidb_ast::AdminStmt::ShowCreate {
                 kind,
                 name,

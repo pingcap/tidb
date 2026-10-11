@@ -533,3 +533,77 @@ fn a_table_list_is_refused() {
     let (_, message) = error_of(&mut session, "admin check table t1, t2");
     assert!(message.contains("one table at a time"), "{message}");
 }
+
+/// Go `RecoverIndexExec` and `CleanupIndexExec` repair the two corruptions
+/// `ADMIN CHECK` finds: RECOVER writes back the entries a row lost
+/// (`ADDED_COUNT` rows of `SCAN_COUNT` scanned) and CLEANUP deletes the
+/// entries whose row is gone (`REMOVED_COUNT`), after which the check
+/// passes again. A missing index is Go's plain `secondary index ... is not
+/// found` error.
+#[test]
+fn recover_and_cleanup_index_repair_what_check_finds() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a int primary key, b varchar(10), index idx_b(b))")
+        .unwrap();
+    session
+        .run("insert into t values (1, 'aa'), (2, 'bb'), (3, 'cc')")
+        .unwrap();
+    let corrupt = |session: &mut Session, drop_entry: bool| {
+        session
+            .with_catalog_mut(|catalog| {
+                let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+                else {
+                    panic!("t is not stored as bytes");
+                };
+                let table = std::sync::Arc::make_mut(table);
+                if drop_entry {
+                    let index = table
+                        .index_list_for_check()
+                        .into_iter()
+                        .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
+                        .expect("idx_b");
+                    let entries = table.index_entries_for_check(index.id).expect("entries");
+                    table
+                        .delete_raw_key_for_test(&entries[0].0)
+                        .expect("delete the entry");
+                } else {
+                    table
+                        .delete_record_for_test(&tidb_executor::kv_table::TableHandle::Int(2))
+                        .expect("delete the row");
+                }
+                Ok(())
+            })
+            .unwrap();
+    };
+    assert_eq!(
+        row_text(session.run("admin recover index t idx_b")),
+        [["0", "3"]]
+    );
+    corrupt(&mut session, true);
+    assert_eq!(error_of(&mut session, "admin check index t idx_b").0, 8003);
+    assert_eq!(
+        row_text(session.run("admin recover index t idx_b")),
+        [["1", "3"]]
+    );
+    assert_check_passes(&mut session, "admin check table t");
+
+    corrupt(&mut session, false);
+    assert_eq!(error_of(&mut session, "admin check table t").0, 8223);
+    assert_eq!(
+        row_text(session.run("admin cleanup index t idx_b")),
+        [["1"]]
+    );
+    assert_check_passes(&mut session, "admin check table t");
+    assert_eq!(
+        row_text(session.run("admin cleanup index t idx_b")),
+        [["0"]]
+    );
+    assert_eq!(
+        error_of(&mut session, "admin recover index t nosuch"),
+        (
+            1105,
+            "secondary index `nosuch` is not found in table `t`".to_owned()
+        )
+    );
+}

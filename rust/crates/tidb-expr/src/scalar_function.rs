@@ -349,6 +349,9 @@ pub struct ScalarFunction {
     /// errors. The protobuf signature has no field for it, so a copy pushed
     /// to the coprocessor errors either way.
     cannot_convert_string_as_warning: bool,
+    /// Go `builtinJSONSumCRC32Sig.tp`: the `ARRAY` type `JSON_SUM_CRC32`
+    /// converts each element to, distinct from its `BIGINT` result type.
+    json_sum_crc32_type: Option<FieldType>,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
@@ -730,6 +733,14 @@ impl ScalarFunction {
     ) -> Self {
         let mut function = Self::new(CiString::new("from_binary"), ret_type, vec![arg]);
         function.cannot_convert_string_as_warning = cannot_convert_string_as_warning;
+        function
+    }
+
+    /// Go `BuildJSONSumCrc32FunctionWithCheck`'s node: a `BIGINT` result over
+    /// `arg`, whose elements convert to `array_type`'s element type.
+    pub fn new_json_sum_crc32(arg: Expression, ret_type: FieldType, array_type: FieldType) -> Self {
+        let mut function = Self::new(CiString::new("json_sum_crc32"), ret_type, vec![arg]);
+        function.json_sum_crc32_type = Some(array_type);
         function
     }
 
@@ -1189,17 +1200,24 @@ impl ScalarFunction {
             .all(|arg| matches!(arg, Expression::Constant(_)))
     }
 
-    /// The collation this function's own evaluation runs under: the one the
-    /// expression rewriter's derivation stamped on its result type (Go's
-    /// `baseBuiltinFunc.collator`, set from `ExprCollation.Collation`).
+    /// The collation this function's own evaluation runs under (Go's
+    /// `baseBuiltinFunc.collator`, set from `ExprCollation.Collation`): the
+    /// derivation's collation, which a non-string result does not carry on
+    /// its type -- `b < 'x'` over a gbk column compares under
+    /// `gbk_chinese_ci` and is a binary-charset integer.
     ///
-    /// A node built outside the rewriter carries no derived collation, and
-    /// falls back to the connection collation the rest of the tier uses.
+    /// A node built outside the rewriter carries no derived collation; it
+    /// reads its result type, and otherwise falls back to the connection
+    /// collation the rest of the tier uses.
     #[must_use]
     pub fn derived_collation(&self) -> tidb_datatype::Collation {
-        self.ret_type
-            .as_ref()
-            .and_then(|ft| tidb_datatype::Collation::from_name(ft.collation_name()))
+        let (_, derived) = self.collation.charset_and_collation();
+        tidb_datatype::Collation::from_name(derived)
+            .or_else(|| {
+                self.ret_type
+                    .as_ref()
+                    .and_then(|ft| tidb_datatype::Collation::from_name(ft.collation_name()))
+            })
             .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION)
     }
 
@@ -2467,6 +2485,12 @@ impl ScalarFunction {
                 return Ok(result);
             }
         }
+        if name == "json_sum_crc32" && self.args.len() == 1 {
+            if let Some(array_type) = &self.json_sum_crc32_type {
+                let value = self.args[0].eval(ctx, row)?;
+                return crate::cast::eval_json_sum_crc32(value, array_type);
+            }
+        }
         if name == "cast_array" && self.args.len() == 1 {
             let value = self.args[0].eval(ctx, row)?;
             let ret_type = self
@@ -2886,7 +2910,7 @@ impl ScalarFunction {
                 // no position signature for INSTR) and takes its arguments
                 // UNSWAPPED, starting the search at `pos`
                 // (`builtinLocate3Args{,UTF8}Sig`).
-                "locate" if matches!(self.args.len(), 2 | 3) => {
+                "locate" | "position" if matches!(self.args.len(), 2 | 3) => {
                     let substr = self.args[0].eval(ctx, row)?;
                     let str = self.args[1].eval(ctx, row)?;
                     if self.args.len() == 3 {

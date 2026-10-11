@@ -2790,7 +2790,20 @@ pub fn expression_to_pb_in(
 ) -> Option<Expr> {
     let described = from_expression(expression)?;
     let mut encoded = to_pb_in(&described, columns, zone)?;
-    encoded.field_type = Some(field_type_to_pb(expression.static_type()?)?);
+    let mut field_type = expression.static_type()?.clone();
+    // Go `scalarFuncToPBExpr`: "put collation information into the RetType
+    // enforcedly and push it down" -- a function's own collation, which a
+    // non-string result does not carry on its type, is the one TiKV runs it
+    // under.
+    if let Expression::ScalarFunction(function) = expression {
+        if tidb_datatype::new_collation_enabled() {
+            let (_, collation) = function.collation.charset_and_collation();
+            if !collation.is_empty() {
+                field_type.set_collation_name(collation);
+            }
+        }
+    }
+    encoded.field_type = Some(field_type_to_pb(&field_type)?);
     Some(encoded)
 }
 

@@ -1564,49 +1564,80 @@ fn json_pretty_go_vectors() {
     assert!(dispatch("JSON_PRETTY", &[s("{}"), s("extra")]).is_none());
 }
 
-/// Representable scalar-array rows from `TestJSONSumCrc32` in
-/// `pkg/expression/builtin_json_test.go:127`.  The Go source supplies the
-/// target array `FieldType` through `expr AS type ARRAY`; this frozen
-/// evaluator exercises the shared JSON-text portion (homogeneous numeric
-/// and string arrays, empty arrays, root/type errors, NULL, and invalid
-/// scalar/nested members) while keeping signed/unsigned/string-width
-/// conversion and path/session metadata as explicit boundaries.
+/// Go `TestJSONSumCrc32` (`pkg/expression/builtin_json_test.go:127`): each
+/// element converts to the ARRAY type's element type before its `%v` text is
+/// checksummed, so a signed `-1` under an UNSIGNED array, a double under a
+/// BIGINT array and a string under a DOUBLE array all fail, while the same
+/// documents sum under a matching type.
 #[test]
 fn json_sum_crc32_go_vectors() {
-    for (document, want) in [
-        ("[-1, 2, 3]", 3_101_005_010_i64),
-        ("[1, 2, 3]", 4_505_025_631_i64),
-        (r#"["a", "b", "c"]"#, 5_925_539_243_i64),
-        ("[1.1, 1, 3.3]", 6_204_045_883_i64),
-        ("[1.1, 2.2, 3.3]", 4_453_038_788_i64),
-        ("[]", 0),
-    ] {
-        assert_eq!(
-            call_result("JSON_SUM_CRC32", &[s(document)]),
-            Ok(Datum::Int(want)),
-            "JSON_SUM_CRC32({document:?})",
-        );
+    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+    fn array_of(code: FieldTypeCode, unsigned: bool) -> FieldType {
+        let mut element = FieldType::new(code);
+        element.set_charset_name("binary");
+        element.set_collation_name("binary");
+        if unsigned {
+            element.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+        if matches!(code, FieldTypeCode::VarString) {
+            element.set_flen(16);
+        }
+        element.with_array(true)
     }
-    assert_eq!(call("JSON_SUM_CRC32", &[Datum::Null]), Datum::Null);
-
-    for document in [
-        "1",
-        "{}",
-        "true",
-        "[true]",
-        "[null]",
-        "[[1]]",
-        "[{\"a\": 1}]",
-        r#"[1.1, "1.1", 3.3]"#,
-    ] {
-        assert!(
-            call_result("JSON_SUM_CRC32", &[s(document)]).is_err(),
-            "JSON_SUM_CRC32({document:?}) must reject this text-domain row",
-        );
+    fn checksum(texts: &[&str]) -> i64 {
+        texts
+            .iter()
+            .map(|text| i64::from(crc32fast_ieee(text.as_bytes())))
+            .sum()
     }
-    assert!(call_result("JSON_SUM_CRC32", &[s("not-json")]).is_err());
-    assert!(dispatch("JSON_SUM_CRC32", &[]).is_none());
-    assert!(dispatch("JSON_SUM_CRC32", &[s("[]"), s("extra")]).is_none());
+    fn crc32fast_ieee(bytes: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFF_u32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+    let eval = |document: &str, array_type: &FieldType| {
+        crate::cast::eval_json_sum_crc32(j(document), array_type)
+    };
+    let bigint = array_of(FieldTypeCode::LongLong, false);
+    let unsigned = array_of(FieldTypeCode::LongLong, true);
+    let string = array_of(FieldTypeCode::VarString, false);
+    let double = array_of(FieldTypeCode::Double, false);
+    assert_eq!(
+        eval("[-1, 2, 3]", &bigint),
+        Ok(Datum::Int(checksum(&["-1", "2", "3"])))
+    );
+    assert_eq!(
+        eval("[1, 2, 3]", &unsigned),
+        Ok(Datum::Int(checksum(&["1", "2", "3"])))
+    );
+    assert!(eval("[-1, 1]", &unsigned).is_err());
+    assert_eq!(
+        eval(r#"["a", "b", "c"]"#, &string),
+        Ok(Datum::Int(checksum(&["a", "b", "c"])))
+    );
+    assert_eq!(
+        eval("[1.1, 1, 3.3]", &double),
+        Ok(Datum::Int(checksum(&["1.1", "1", "3.3"])))
+    );
+    assert!(eval("[1.1, 1, 3.3]", &bigint).is_err());
+    assert_eq!(
+        eval("[1.1, 2.2, 3.3]", &double),
+        Ok(Datum::Int(checksum(&["1.1", "2.2", "3.3"])))
+    );
+    assert!(eval(r#"[1.1, "1.1", 3.3]"#, &double).is_err());
+    assert_eq!(eval("[]", &bigint), Ok(Datum::Int(0)));
+    assert_eq!(
+        crate::cast::eval_json_sum_crc32(Datum::Null, &bigint),
+        Ok(Datum::Null)
+    );
+    // A non-array document is `ErrInvalidTypeForJSON`.
+    assert!(eval("1", &bigint).is_err());
 }
 
 /// Complete representable table from `TestJSONLength` in

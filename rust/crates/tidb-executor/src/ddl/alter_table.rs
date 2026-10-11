@@ -906,6 +906,9 @@ fn submitted_jobs(
                     }
                     PreparedMetadataChange::Ttl(_) => A::ACTION_ALTER_TTLINFO,
                     PreparedMetadataChange::Placement(_) => A::ACTION_ALTER_TABLE_PLACEMENT,
+                    PreparedMetadataChange::PartitionPlacement { .. } => {
+                        A::ACTION_ALTER_TABLE_PARTITION_PLACEMENT
+                    }
                     PreparedMetadataChange::Affinity(_) => A::ACTION_ALTER_TABLE_AFFINITY,
                     PreparedMetadataChange::SplitPolicy(..) => {
                         A::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY
@@ -2013,6 +2016,12 @@ enum PreparedMetadataChange {
         database: String,
         name: String,
     },
+    /// Go `ActionAlterTablePartitionPlacement`: one partition's policy
+    /// reference, by partition ID (`None` is `PLACEMENT POLICY=DEFAULT`).
+    PartitionPlacement {
+        partition_id: i64,
+        policy: Option<tidb_model::PolicyRefInfo>,
+    },
 }
 
 impl PreparedMetadataChange {
@@ -2063,6 +2072,25 @@ impl PreparedMetadataChange {
                         .map_err(DriverError::unsupported)?,
                     Self::Ttl(info) => table.set_ttl_info(info),
                     Self::Placement(policy) => table.set_placement_policy(policy),
+                    // Go `onAlterTablePartitionPlacement`: the definition
+                    // takes the reference; the table's own is untouched.
+                    Self::PartitionPlacement {
+                        partition_id,
+                        policy,
+                    } => {
+                        let definition = table
+                            .partition_mut()
+                            .and_then(|partition| {
+                                partition
+                                    .definitions
+                                    .iter_mut()
+                                    .find(|definition| definition.id == partition_id)
+                            })
+                            .ok_or_else(|| {
+                                DriverError::unsupported("the partition left the table")
+                            })?;
+                        definition.placement_policy = policy;
+                    }
                     Self::Affinity(affinity) => table.set_affinity(affinity),
                     Self::SplitPolicy(index_name, policy) => {
                         super::region_split::set_split_policy(table, &index_name, policy);
@@ -2129,6 +2157,9 @@ fn is_metadata_change(action: &tidb_ast::AlterTableAction) -> bool {
             | tidb_ast::AlterTableAction::WithoutValidation
             | tidb_ast::AlterTableAction::OrderByColumns { .. }
             | tidb_ast::AlterTableAction::SplitRegion { .. }
+            | tidb_ast::AlterTableAction::Partition(
+                tidb_ast::AlterPartitionAction::SetOptions { .. }
+            )
     )
 }
 
@@ -2154,6 +2185,10 @@ fn prepare_metadata_change(
 ) -> Result<Vec<PreparedMetadataChange>, DriverError> {
     let table = column_changes::table_of(catalog, database, name)?;
     match action {
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::SetOptions {
+            partition,
+            options,
+        }) => prepare_partition_options(catalog, table, partition, options),
         tidb_ast::AlterTableAction::SetTableOptions { options } => prepare_table_options(
             catalog,
             database,
@@ -2430,6 +2465,66 @@ fn prepare_table_options(
         changes.push(PreparedMetadataChange::Placement(reference));
     }
     Ok(changes)
+}
+
+/// Go `executor.AlterTablePartitionOptions` and `AlterTablePartitionPlacement`:
+/// a placement policy is the only partition option, and the partition must
+/// exist on a partitioned table before the policy is resolved and the job
+/// submitted.
+fn prepare_partition_options(
+    catalog: &Catalog,
+    table: &crate::KvTable,
+    partition_name: &str,
+    options: &[tidb_ast::TableOption],
+) -> Result<Vec<PreparedMetadataChange>, DriverError> {
+    let mut placement = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::PlacementPolicy(policy) => placement = Some(policy),
+            // Go `errors.New("unknown partition option")`.
+            _ => {
+                return Err(DriverError::Mysql(crate::driver::MysqlError::new(
+                    1105,
+                    "unknown partition option".to_owned(),
+                )))
+            }
+        }
+    }
+    let Some(policy) = placement else {
+        return Ok(Vec::new());
+    };
+    let Some(partition) = table.partition() else {
+        return Err(DriverError::PartitionManagementOnNonpartitioned);
+    };
+    // Go `tables.FindPartitionByName(tblInfo, spec.PartitionNames[0].L)`.
+    let lowered = partition_name.go_to_lower();
+    let Some(partition_id) = partition
+        .definitions
+        .iter()
+        .find(|definition| definition.name.go_to_lower() == lowered)
+        .map(|definition| definition.id)
+    else {
+        return Err(DriverError::UnknownPartition {
+            partition: lowered,
+            table: table.name().to_owned(),
+        });
+    };
+    // Go `checkAndNormalizePlacementPolicy`: `DEFAULT` clears the reference.
+    let policy = if policy.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        let found = catalog
+            .policy(policy)
+            .ok_or_else(|| DriverError::PlacementPolicyNotExists(policy.clone()))?;
+        Some(tidb_model::PolicyRefInfo {
+            id: found.id,
+            name: tidb_ast::CiString::new(policy.clone()),
+        })
+    };
+    Ok(vec![PreparedMetadataChange::PartitionPlacement {
+        partition_id,
+        policy,
+    }])
 }
 
 fn alter_table_charset_pair(

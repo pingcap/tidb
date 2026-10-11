@@ -96,6 +96,59 @@ impl Session {
         }
     }
 
+    /// Go `RecoverIndexExec`: `ADDED_COUNT` and `SCAN_COUNT` for the rows
+    /// whose missing entries of the named index were written back.
+    pub(crate) fn admin_recover_index_stmt(
+        &mut self,
+        recover: &tidb_ast::AdminRecoverIndexStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (database, name) = self.split_table_path(&recover.table)?;
+        let index = recover.index.clone();
+        let ctx = self.statement_context(true);
+        let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
+        let (added, scanned) = self.with_catalog_mut(|catalog| {
+            let table = admin_index_table_mut(catalog, &database, &name)?;
+            let table_name = table.name().to_owned();
+            table
+                .recover_index(&index, &ctx, &decode_context)
+                .map_err(tidb_executor::ddl::index_backfill_error)?
+                .ok_or_else(|| secondary_index_not_found(&index, &table_name))
+        })?;
+        let count = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        Ok(StmtOutput::Rows {
+            columns: vec![
+                ("ADDED_COUNT".to_owned(), count.clone()),
+                ("SCAN_COUNT".to_owned(), count),
+            ],
+            rows: vec![vec![Datum::Int(added), Datum::Int(scanned)]],
+        })
+    }
+
+    /// Go `CleanupIndexExec`: `REMOVED_COUNT` for the entries of the named
+    /// index whose row is gone.
+    pub(crate) fn admin_cleanup_index_stmt(
+        &mut self,
+        cleanup: &tidb_ast::AdminRecoverIndexStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let (database, name) = self.split_table_path(&cleanup.table)?;
+        let index = cleanup.index.clone();
+        let removed = self.with_catalog_mut(|catalog| {
+            let table = admin_index_table_mut(catalog, &database, &name)?;
+            let table_name = table.name().to_owned();
+            table
+                .cleanup_index(&index)
+                .map_err(tidb_executor::ddl::index_backfill_error)?
+                .ok_or_else(|| secondary_index_not_found(&index, &table_name))
+        })?;
+        Ok(StmtOutput::Rows {
+            columns: vec![(
+                "REMOVED_COUNT".to_owned(),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            )],
+            rows: vec![vec![Datum::UInt(removed)]],
+        })
+    }
+
     /// Resolves a written table path against the current database.
     pub(crate) fn split_table_path(
         &self,
@@ -179,6 +232,33 @@ fn admin_check_table_mut<'a>(
              check its rows against",
         )),
     }
+}
+
+/// The stored table `ADMIN RECOVER INDEX` / `ADMIN CLEANUP INDEX` works on.
+fn admin_index_table_mut<'a>(
+    catalog: &'a mut tidb_executor::Catalog,
+    database: &str,
+    name: &str,
+) -> Result<&'a mut tidb_executor::kv_table::KvTable, DriverError> {
+    match catalog.table_mut_in(database, name) {
+        Some(tidb_executor::TableEntry::Kv(table)) => Ok(std::sync::Arc::make_mut(table)),
+        Some(_) => Err(DriverError::unsupported(
+            "ADMIN RECOVER/CLEANUP INDEX needs a storage-backed table",
+        )),
+        None => Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+            "{database}.{name}"
+        )))),
+    }
+}
+
+/// Go `executorBuilder.buildRecoverIndex`/`buildCleanupIndex`'s
+/// `errors.Errorf("secondary index `%v` is not found in table `%v`")`, which
+/// names the index as written and the table by its stored name.
+fn secondary_index_not_found(index: &str, table: &str) -> DriverError {
+    DriverError::Mysql(tidb_executor::driver::MysqlError::new(
+        1105,
+        format!("secondary index `{index}` is not found in table `{table}`"),
+    ))
 }
 
 /// Maps the check's own outcome onto the errors TiDB reports.

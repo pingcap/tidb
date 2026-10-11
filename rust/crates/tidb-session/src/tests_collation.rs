@@ -760,3 +760,53 @@ fn an_unrepresentable_constant_is_an_illegal_mix() {
     );
     assert_eq!(code, 1267, "{message}");
 }
+
+/// Go `newReturnFieldTypeForBaseBuiltinFunc`: a builtin's result type takes
+/// the derived collation only when the result is a string; any other result
+/// is the binary charset, while the function itself still runs under the
+/// derivation (`baseBuiltinFunc.collator`). `INSTR(gbk_col, ...)` is
+/// therefore a binary integer, and `HEX` over it transcodes nothing --
+/// captured from Go. This tier stamped `gbk` on the integer, so `HEX`
+/// wrapped it in a GBK transcode and refused the statement.
+#[test]
+fn a_non_string_function_result_is_the_binary_charset() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a char(20) charset utf8mb4, b char(20) charset gbk)")
+        .unwrap();
+    session.run("insert into t values ('一', '一')").unwrap();
+    assert_eq!(
+        crate::tests_support::query_text(
+            &mut session,
+            "select charset(instr(b, 0xd2bb)), collation(instr(b, 0xd2bb)), \
+             charset(locate('x', b)), charset(b < 'x'), charset(length(b)) from t",
+        )
+        .1,
+        [["binary", "binary", "binary", "binary", "binary"]]
+    );
+    assert_eq!(
+        crate::tests_support::query_text(
+            &mut session,
+            "select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)), hex(ascii(b)), \
+             hex(length(b)), hex(b < 'x') from t",
+        )
+        .1,
+        [["1", "1", "D2", "2", "0"]]
+    );
+    // `POSITION(substr IN str)` is Go's `position` call built like any
+    // other (`locateFunctionClass`), so the gbk column meeting a binary
+    // literal is transcoded before the search, as INSTR's is.
+    assert_eq!(
+        crate::tests_support::query_text(
+            &mut session,
+            "select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t",
+        )
+        .1,
+        [["1", "1"]]
+    );
+    // The comparison still runs under the column's gbk_chinese_ci.
+    assert_eq!(
+        crate::tests_support::query_text(&mut session, "select b = '一', b < 'x' from t").1,
+        [["1", "0"]]
+    );
+}

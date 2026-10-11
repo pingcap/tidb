@@ -1676,6 +1676,78 @@ fn rewrite_cast_array(
     )))
 }
 
+/// Go `BuildJSONSumCrc32FunctionWithCheck` (`builtin_json.go`), the
+/// rewriter's `*ast.JSONSumCrc32Expr` arm: `JSON_SUM_CRC32(json AS <type>
+/// ARRAY)` is a `BIGINT` that sums the CRC32 of the array's elements, each
+/// converted to `<type>`. It is not a `CAST(... AS ... ARRAY)`: no
+/// functional-index context is needed to build it.
+fn rewrite_json_sum_crc32(
+    cast: &tidb_ast::CastExpr,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    validate_cast_type(cast)?;
+    let (_, element) = resolved_cast_target(cast, resolver)?;
+    let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
+    let mut array_type = element.clone().with_array(true);
+    // "If source argument's nullable, then target type should be nullable".
+    if !arg
+        .static_type()
+        .is_some_and(|ft| ft.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL))
+    {
+        array_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    }
+    // `jsonSumCRC32FunctionClass.verifyArgs`.
+    if arg.static_type().map(FieldType::eval_type) != Some(tidb_datatype::EvalType::Json) {
+        return Err(EvalError::Json(JsonError::InvalidTypeForJson {
+            argument: 1,
+            function: "JSON_SUM_CRC32",
+        }));
+    }
+    if matches!(
+        element.code(),
+        FieldTypeCode::Year
+            | FieldTypeCode::Json
+            | FieldTypeCode::Float
+            | FieldTypeCode::NewDecimal
+    ) {
+        return Err(EvalError::NotImplemented(
+            format!(
+                "calculating json_sum_crc32 on array of {}",
+                element.source_string()
+            )
+            .into(),
+        ));
+    }
+    if element.eval_type() == tidb_datatype::EvalType::String {
+        if !matches!(element.charset_name(), "utf8mb4" | "binary") {
+            return Err(EvalError::NotImplemented("unsupported charset".into()));
+        }
+        if element.flen() == tidb_datatype::UNSPECIFIED_LENGTH {
+            return Err(EvalError::NotImplemented(
+                "calculating json_sum_crc32 on array of char/binary BLOBs with unspecified length"
+                    .into(),
+            ));
+        }
+    }
+    let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
+    result_type::set_binary_charset(&mut ret_type);
+    let mut node = Expression::ScalarFunction(ScalarFunction::new_json_sum_crc32(
+        arg, ret_type, array_type,
+    ));
+    // `jsonSumFunction.SetCoercibility(CoercibilityNumeric)` and
+    // `SetRepertoire(ASCII)`.
+    crate::collation_derive::apply_derived_collation(
+        &mut node,
+        &crate::expr_collation::ExprCollation {
+            coer: crate::expr_collation::Coercibility::NUMERIC,
+            repe: crate::expr_collation::Repertoire::ASCII,
+            charset: "binary".to_owned(),
+            collation: "binary".to_owned(),
+        },
+    );
+    Ok(node)
+}
+
 fn prepare_in_string_hash_sets(expr: &mut Expression) {
     let Expression::ScalarFunction(function) = expr else {
         return;
@@ -2798,20 +2870,19 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 args,
             )))
         }
-        // Go parses POSITION with its own `substr IN str` grammar, then
-        // builds the ordinary two-argument `locateFunctionClass`.
-        Expr::Position { substr, str } => {
-            let args = vec![
-                rewrite_expr_resolved(substr, resolver)?,
-                rewrite_expr_resolved(str, resolver)?,
-            ];
-            let ret_type = builtin_return_type("locate", &args).expect("LOCATE is registered");
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("locate"),
-                ret_type,
-                args,
-            )))
-        }
+        // Go parses POSITION with its own `substr IN str` grammar into an
+        // ordinary `position(substr, str)` call (`parsePositionFunc`), which
+        // `funcs` builds with `locateFunctionClass` -- through the same
+        // argument handling as any call, so a gbk argument meeting a binary
+        // literal is transcoded (`HandleBinaryLiteral`).
+        Expr::Position { substr, str } => rewrite_expr_resolved(
+            &Expr::Func {
+                name: "position".to_owned(),
+                args: vec![(**substr).clone(), (**str).clone()],
+                origin_position: 0,
+            },
+            resolver,
+        ),
         // `TIMESTAMPDIFF(unit, a, b)`'s unit is a dedicated AST field rather
         // than an argument expression (see `tidb_ast::Expr::TimestampDiff`),
         // but the shared implementation `time_fn::dispatch` already takes the
@@ -3235,6 +3306,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             )))
         }
         Expr::Cast(cast) => {
+            if cast.style == tidb_ast::CastStyle::JsonSumCrc32 {
+                return rewrite_json_sum_crc32(cast, resolver);
+            }
             if cast.array {
                 return rewrite_cast_array(cast, resolver);
             }

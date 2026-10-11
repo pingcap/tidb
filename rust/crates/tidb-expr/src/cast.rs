@@ -403,8 +403,22 @@ pub fn convert_json_to_type(
                 target.code(),
                 ConversionFlags::default(),
             );
-            if converted.event.is_some() {
-                return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()));
+            match converted.event {
+                None => {}
+                // Go `overflow(v, tp)`: "constant %v overflows %s".
+                Some(tidb_datatype::ScalarConversionEvent::Overflow(
+                    tidb_datatype::ScalarConversionError::Overflow { value, target },
+                )) => {
+                    return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.generate(
+                        format!(
+                            "constant {value} overflows {}",
+                            tidb_datatype::type_str(target)
+                        ),
+                    )));
+                }
+                Some(_) => {
+                    return Err(EvalError::Conversion(tidb_datatype::ERR_OVERFLOW.clone()));
+                }
             }
             Ok(if unsigned {
                 Datum::UInt(converted.value as u64)
@@ -461,6 +475,97 @@ pub fn convert_json_to_type(
         }
         _ => Err(invalid_json_for_func_index()),
     }
+}
+
+/// Go `builtinJSONSumCRC32Sig.evalInt`: the sum of the IEEE CRC32 of every
+/// element of a JSON array, each converted to the ARRAY type's element type
+/// (`convertJSON2Tp`, under Go's strict `fakeSctx`) and printed as Go's
+/// `%v`. A conversion that does not apply to the element is Go's
+/// `Invalid JSON value for CAST to type <type>`.
+pub(crate) fn eval_json_sum_crc32(
+    value: Datum,
+    array_type: &FieldType,
+) -> Result<Datum, EvalError> {
+    let json = match value {
+        Datum::Null => return Ok(Datum::Null),
+        Datum::Json(json) => json,
+        _ => {
+            return Err(EvalError::Unsupported(
+                "JSON_SUM_CRC32 received a non-JSON argument",
+            ))
+        }
+    };
+    if json.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {
+        return Err(EvalError::Json(crate::JsonError::InvalidTypeForJson {
+            argument: 1,
+            function: "JSON_SUM_CRC32",
+        }));
+    }
+    let element = array_type.array_type();
+    // Go resolves `convertJSON2Tp` before reading any element.
+    if !matches!(
+        element.eval_type(),
+        EvalType::String | EvalType::Int | EvalType::Real | EvalType::Datetime | EvalType::Duration
+    ) {
+        return Err(EvalError::NotImplemented(
+            format!("calculating sum of {}", element.source_string()).into(),
+        ));
+    }
+    let count = json.element_count().map_err(json_eval_error)?;
+    let mut sum = 0_i64;
+    for position in 0..count {
+        let item = json
+            .array_get(position)
+            .map_err(json_eval_error)?
+            .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
+        let converted = convert_json_to_type(&item, &element).map_err(|error| {
+            if is_invalid_json_for_func_index(&error) {
+                EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
+                    tidb_error::terror::TerrorCode::new(1105),
+                    format!(
+                        "Invalid JSON value for CAST to type {}",
+                        element.compact_str(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH)
+                    ),
+                ))
+            } else {
+                error
+            }
+        })?;
+        // Go `sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))`.
+        sum = sum.wrapping_add(i64::from(crc32_ieee(&go_value_text(&converted))));
+    }
+    Ok(Datum::Int(sum))
+}
+
+/// Go `fmt`'s `%v` of the value `convertJSON2Tp` returned.
+fn go_value_text(value: &Datum) -> Vec<u8> {
+    match value {
+        Datum::String(text) => text.bytes().to_vec(),
+        Datum::Int(value) => value.to_string().into_bytes(),
+        Datum::UInt(value) => value.to_string().into_bytes(),
+        Datum::Real(value) => tidb_datatype::format_float_g_shortest(*value).into_bytes(),
+        Datum::Time(time) => time.to_string().into_bytes(),
+        Datum::Duration(duration) => duration.to_string().into_bytes(),
+        other => format!("{other:?}").into_bytes(),
+    }
+}
+
+/// Go `hash/crc32.ChecksumIEEE`.
+fn crc32_ieee(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFF_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Whether `error` is Go's `ErrInvalidJSONForFuncIndex` (3903).
+fn is_invalid_json_for_func_index(error: &EvalError) -> bool {
+    matches!(error, EvalError::Conversion(terror) if terror.code() == tidb_error::terror::TerrorCode::new(3903))
 }
 
 /// `CreateBinaryJSON` over the Go value `convertJSON2Tp` returned.

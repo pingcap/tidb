@@ -16,8 +16,8 @@
 //! The builtins run on the `BinaryJSON` port of `pkg/types`
 //! (`tidb_datatype`), as Go's do, so an opaque, date or time value keeps its
 //! identity, paths parse with Go's `ParseJSONPathExpr` port, and every result
-//! prints through `BinaryJSON`'s `MarshalJSON` port. `JSON_SCHEMA_VALID` and
-//! `JSON_SUM_CRC32` read a decoded tree, as Go's validator and checksum do.
+//! prints through `BinaryJSON`'s `MarshalJSON` port. `JSON_SCHEMA_VALID`
+//! reads a decoded tree, as Go's validator does.
 //!
 //! The family is split by what a function DOES to a document, each file
 //! naming the Go file it was read from:
@@ -51,7 +51,7 @@ use modify::{
     json_modify_with_paths, json_remove, JsonModifyMode,
 };
 use predicate::{json_contains, json_contains_path, json_member_of, json_overlaps};
-use report::{json_schema_valid, json_sum_crc32, json_valid};
+use report::{json_schema_valid, json_valid};
 use search::json_search;
 
 use crate::{Datum, EvalError};
@@ -258,7 +258,6 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("JSON_MERGE_PATCH", 2..) => Some(json_merge_patch(vals, &no_arg_types(vals.len()))),
         ("JSON_SEARCH", 3..) => Some(json_search(vals, &no_arg_types(vals.len()))),
         ("JSON_PRETTY", 1) => Some(json_pretty(vals, &no_arg_types(1))),
-        ("JSON_SUM_CRC32", 1) => Some(json_sum_crc32(&vals[0])),
         ("JSON_DEPTH", 1) => Some(json_depth(&vals[0], None)),
         ("JSON_STORAGE_FREE", 1) => Some(json_storage_free(&vals[0], None)),
         ("JSON_STORAGE_SIZE", 1) => Some(json_storage_size(&vals[0], None)),

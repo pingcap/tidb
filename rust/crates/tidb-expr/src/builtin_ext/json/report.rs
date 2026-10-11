@@ -12,9 +12,10 @@
 // limitations under the License.
 
 //! Scalar facts ABOUT a document: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`,
-//! `JSON_KEYS`, `JSON_SUM_CRC32`.
+//! `JSON_KEYS`. (`JSON_SUM_CRC32` converts each element to a typed ARRAY
+//! element first, which `crate::cast::eval_json_sum_crc32` owns.)
 //!
-//! Mirrors `builtinJSON{Valid*,Type,Length,Keys,Keys2Args,SumCRC32}Sig` in
+//! Mirrors `builtinJSON{Valid*,Type,Length,Keys,Keys2Args}Sig` in
 //! `pkg/expression/builtin_json.go` and `BinaryJSON.Type` /
 //! `GetElemCount` in `pkg/types/json_binary_functions.go`.
 //!
@@ -25,7 +26,7 @@
 //! guessing. `JSON_DEPTH` and the storage sizes live in [`super::document`]
 //! because they read BinaryJSON's encoded layout, not its value.
 
-use serde_json::{Number, Value as Json};
+use serde_json::Value as Json;
 
 use super::value::parse_json_document_argument;
 use crate::builtin_ext::BuiltinFuncCache;
@@ -206,119 +207,4 @@ pub(super) fn json_valid(v: &Datum) -> Result<Datum, EvalError> {
             Err(EvalError::Unsupported("range sentinel JSON_VALID argument"))
         }
     }
-}
-
-/// `JSON_SUM_CRC32(json_doc)`, port of `builtinJSONSumCRC32Sig.evalInt` in
-/// `pkg/expression/builtin_json.go`.  The Go signature receives a JSON array
-/// plus an `ARRAY`-typed `FieldType` carried by the cast expression; the
-/// frozen Rust evaluator has no typed JSON datum or FieldType metadata.  The
-/// representable text-domain contract therefore accepts homogeneous scalar
-/// arrays (numbers or strings), preserving Go's `fmt.Appendf("%v", item)`
-/// bytes before each IEEE CRC32 and returning the int64 sum.  The target-type
-/// checks (signed/unsigned range, fixed string width, and explicit JSON path
-/// extraction) remain an orchestrator boundary rather than guessed defaults.
-pub(super) fn json_sum_crc32(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(document) = parse_json_document_argument(value)? else {
-        return Ok(Datum::Null);
-    };
-    let Json::Array(values) = document else {
-        return Err(EvalError::Unsupported("JSON_SUM_CRC32 requires JSON array"));
-    };
-
-    let mut saw_string = false;
-    let mut saw_number = false;
-    let mut sum = 0_i64;
-    for value in values {
-        let text = match value {
-            Json::String(value) if !saw_number => {
-                saw_string = true;
-                value
-            }
-            Json::Number(value) if !saw_string => {
-                saw_number = true;
-                format_json_sum_number(&value)
-            }
-            Json::Bool(_) | Json::Null | Json::Array(_) | Json::Object(_) => {
-                return Err(EvalError::Unsupported(
-                    "JSON_SUM_CRC32 requires scalar array values",
-                ));
-            }
-            Json::String(_) | Json::Number(_) => {
-                return Err(EvalError::Unsupported(
-                    "JSON_SUM_CRC32 requires homogeneous array values",
-                ));
-            }
-        };
-        sum = sum.wrapping_add(i64::from(crc32_ieee(text.as_bytes())));
-    }
-    Ok(Datum::Int(sum))
-}
-
-/// Go's `%v` formatting for the integer/ordinary-double rows used by
-/// `TestJSONSumCrc32`: unlike BinaryJSON text, a float integral value is
-/// rendered as `1`, not `1.0`.  Rust's shortest `f64` display has the same
-/// spelling for these source vectors.
-fn format_json_sum_number(number: &Number) -> String {
-    if let Some(integer) = number.as_i64() {
-        return integer.to_string();
-    }
-    if let Some(integer) = number.as_u64() {
-        return integer.to_string();
-    }
-    let value = number
-        .as_f64()
-        .expect("serde JSON numbers are finite f64 here");
-    if value == 0.0 {
-        return "0".to_string();
-    }
-    let mut rendered = value.to_string();
-    let abs = value.abs();
-    if !(1e-4..1e6).contains(&abs) {
-        // Rust and Go both provide shortest round-tripping decimals, but
-        // their fixed/scientific cutover differs.  Normalize the fixed Rust
-        // spelling to Go's `%g`/`%v` threshold and two-digit exponent rule.
-        let negative = rendered.starts_with('-');
-        if negative {
-            rendered.remove(0);
-        }
-        let (integer, fraction) = rendered
-            .split_once('.')
-            .map_or((rendered.as_str(), ""), |(integer, fraction)| {
-                (integer, fraction)
-            });
-        let digits = format!("{integer}{fraction}");
-        let first = digits
-            .bytes()
-            .position(|digit| digit != b'0')
-            .expect("nonzero float has a significant digit");
-        let exponent = if integer != "0" {
-            integer.len() as i32 - first as i32 - 1
-        } else {
-            -(first as i32 - integer.len() as i32 + 1)
-        };
-        let mut mantissa = digits[first..].trim_end_matches('0').to_string();
-        if mantissa.len() > 1 {
-            mantissa.insert(1, '.');
-        }
-        rendered = format!(
-            "{}{}e{:+03}",
-            if negative { "-" } else { "" },
-            mantissa,
-            exponent
-        );
-    }
-    rendered
-}
-
-/// IEEE CRC32, matching `hash/crc32.ChecksumIEEE` used by the Go builtin.
-fn crc32_ieee(bytes: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFF_u32;
-    for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
-        }
-    }
-    !crc
 }

@@ -595,27 +595,6 @@ fn json_unquote() {
 }
 
 /// Go `pkg/expression/builtin_json_test.go:127 TestJSONSumCrc32`.
-/// Go builds `expr AS type ARRAY` and checksums `fmt.Appendf("%v", item)`.
-/// Rust's value-only path covers the homogeneous scalar-array CRC; typed
-/// ARRAY FieldType conversion remains a gap.
-#[test]
-fn json_sum_crc32() {
-    for (document, want) in [
-        ("[-1, 2, 3]", 3_101_005_010_i64),
-        ("[1, 2, 3]", 4_505_025_631_i64),
-        (r#"["a", "b", "c"]"#, 5_925_539_243_i64),
-        ("[1.1, 1, 3.3]", 6_204_045_883_i64),
-        ("[1.1, 2.2, 3.3]", 4_453_038_788_i64),
-    ] {
-        assert_eq!(
-            json_call("JSON_SUM_CRC32", &[json_s(document)]).unwrap(),
-            Datum::Int(want),
-            "JSON_SUM_CRC32({document})"
-        );
-    }
-    assert!(json_call("JSON_SUM_CRC32", &[json_s(r#"[1.1, "1.1", 3.3]"#)]).is_err());
-}
-
 /// Go `pkg/expression/builtin_json_test.go:233 TestJSONExtract`.
 #[test]
 fn json_extract() {

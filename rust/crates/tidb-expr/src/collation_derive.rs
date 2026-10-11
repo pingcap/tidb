@@ -797,13 +797,30 @@ fn compare_is_string(args: &[Expression]) -> bool {
 /// halves matter: the first feeds an enclosing function's aggregation, the
 /// second feeds this function's own evaluation.
 pub fn apply_derived_collation(expr: &mut Expression, ec: &ExprCollation) {
-    // Go keeps the derivation in the function's `collationInfo` and leaves
-    // `tp` as the function class built it. This port stamps it on the result
-    // type as well, except on an ARRAY result, whose type carries the
-    // ELEMENT's charset (`CAST(j AS CHAR(2) ARRAY)` counts characters).
+    // Go keeps the derivation in the function's `collationInfo`; the result
+    // type takes it only when the result is a string
+    // (`newReturnFieldTypeForBaseBuiltinFunc`), and every other result of a
+    // builtin is the binary charset -- `INSTR(gbk_col, ...)` is an integer
+    // whose charset is `binary`, so `HEX` over it transcodes nothing. An
+    // ARRAY result carries the ELEMENT's charset (`CAST(j AS CHAR(2) ARRAY)`
+    // counts characters), and a JSON result keeps the type its class built.
+    let is_function = matches!(expr, Expression::ScalarFunction(_));
     if let Some(ft) = ret_type_mut(expr).filter(|ft| !ft.is_array()) {
-        ft.set_charset_name(ec.charset.clone());
-        ft.set_collation_name(ec.collation.clone());
+        match ft.eval_type() {
+            EvalType::String => {
+                ft.set_charset_name(ec.charset.clone());
+                ft.set_collation_name(ec.collation.clone());
+            }
+            EvalType::Json if is_function => {}
+            _ if is_function => {
+                ft.set_charset_name("binary");
+                ft.set_collation_name("binary");
+            }
+            _ => {
+                ft.set_charset_name(ec.charset.clone());
+                ft.set_collation_name(ec.collation.clone());
+            }
+        }
     }
     let info = collation_info_mut(expr);
     info.set_coercibility(ec.coer);
@@ -819,6 +836,18 @@ pub fn apply_derived_collation(expr: &mut Expression, ec: &ExprCollation) {
 #[must_use]
 pub fn collation_of_node(expr: &Expression) -> Collation {
     Collation::from_name(ret_type_of(expr).collation_name()).unwrap_or(Collation::Utf8Mb4Bin)
+}
+
+/// Go `Expression.CharsetAndCollation()`'s collation: a function's own
+/// derivation (its `collationInfo`), which a non-string result does not
+/// carry on its type, and the result type's collation for any other node --
+/// what the ranger checks a comparison's compatibility with.
+#[must_use]
+pub fn derived_collation_of(expr: &Expression) -> Collation {
+    match expr {
+        Expression::ScalarFunction(function) => function.derived_collation(),
+        _ => collation_of_node(expr),
+    }
 }
 
 /// Go `FoldConstant`'s epilogue (`constant_fold.go:40`): whatever folding
