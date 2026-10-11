@@ -66,6 +66,45 @@ fn unsigned_primary_key_with_composite_index() {
     assert_check_passes(&mut session, "admin check index t idx");
 }
 
+/// `TestPrefixedClusteredIndexUniqueKeyWithNewCollation` and
+/// `TestCollationPrefixClusteredIndex`: a prefix index over a column the
+/// clustered key also holds decodes the column whole from the handle, and Go
+/// `compareData` cuts that value to the index's prefix before comparing it
+/// with the row's -- the check passes. An unnamed PRIMARY KEY spends its
+/// column's anonymous name, so `key (k)` is `k_2`.
+#[test]
+fn a_prefix_index_over_a_clustered_key_column_checks_clean() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, \
+             primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 \
+             collate=utf8mb4_bin",
+        )
+        .unwrap();
+    session.run("insert into t values ('aaa', 2)").unwrap();
+    assert_check_passes(&mut session, "admin check table t");
+    session.run("drop table t").unwrap();
+
+    session
+        .run(
+            "create table t (k char(20), v int, primary key (k(4)) clustered, key (k)) \
+             collate utf8mb4_general_ci",
+        )
+        .unwrap();
+    session.run("insert into t values('01233', 1)").unwrap();
+    session.run("create index idx on t(k(2))").unwrap();
+    assert_eq!(
+        row_text(session.run("select * from t use index(k_2)")),
+        [["01233", "1"]]
+    );
+    assert_eq!(
+        row_text(session.run("select * from t use index(idx)")),
+        [["01233", "1"]]
+    );
+    assert_check_passes(&mut session, "admin check table t");
+}
+
 /// `TestAdminCheckTableClusterIndex`: a clustered composite primary key with
 /// two secondary indexes, checked as rows accumulate.
 #[test]

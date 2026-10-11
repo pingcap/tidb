@@ -3199,6 +3199,7 @@ impl Session {
         // taken before execution so a statement is lexed exactly once per
         // meaning.
         let sql_mode = self.scanner_sql_mode();
+        let parser_config = self.vars.build_parser_config();
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
         // The Apply channel describes THIS statement's plan.
@@ -3871,6 +3872,7 @@ impl Session {
                             &current_db,
                             tidb_executor::CreateTableSettings {
                                 sql_mode,
+                                parser_config,
                                 foreign_key_checks,
                                 enable_check_constraint,
                                 clustered_index_mode,

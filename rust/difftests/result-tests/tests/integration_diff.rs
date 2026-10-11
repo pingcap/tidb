@@ -211,6 +211,10 @@ enum SkipClass {
     /// An `EXPLAIN` whose recording is not a text operator tree at all (JSON,
     /// DOT, a binary plan, or `EXPLAIN ANALYZE`'s execution counters).
     PlanFormatNotComparable(&'static str),
+    /// TiDB's recording succeeded and this engine raised an error the
+    /// script's own `--error 0,<code>` list accepts: both outcomes are the
+    /// test's contract, not a gap.
+    AcceptedAlternativeError,
 }
 
 fn integrationtest_dir() -> PathBuf {
@@ -764,6 +768,14 @@ fn compare_output(
                 .first()
                 .map_or_else(|| "<error>".to_owned(), |line| display_line(line))
         ))),
+        (Err(error), false)
+            if stmt
+                .accepted_errors
+                .contains(&error.clone().to_mysql_error().code) =>
+        {
+            report.skip(SkipClass::AcceptedAlternativeError);
+            Err(None)
+        }
         (Err(error), false) => {
             report.skip(SkipClass::OutOfDomain);
             if show_out_of_domain() {

@@ -458,8 +458,12 @@ fn build_index_definition(
         &ctx.session_zone(),
         ctx.like_default_escape(),
     )?;
-    // Go `checkExpressionIndexAutoIncrement` (3754).
-    if let Some(auto) = table.auto_increment_offset() {
+    // Go `checkExpressionIndexAutoIncrement` (3754), which
+    // `tidb_enable_auto_increment_in_generated` turns off.
+    if let Some(auto) = table
+        .auto_increment_offset()
+        .filter(|_| !ctx.auto_increment_in_generated())
+    {
         let auto_name = table.columns[auto].name.clone();
         if hidden.iter().any(|(_, column)| {
             column

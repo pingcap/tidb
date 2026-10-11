@@ -152,6 +152,7 @@ impl Session {
         ];
         let settings = tidb_executor::CreateTableSettings {
             sql_mode: self.scanner_sql_mode(),
+            parser_config: self.vars.build_parser_config(),
             foreign_key_checks: self.foreign_key_checks(),
             enable_check_constraint: false,
             // Go `BootstrapSession` pins the bootstrap session's

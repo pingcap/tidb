@@ -181,6 +181,35 @@ fn insert_conflict_policies() {
 /// partitions. `RETURNING` is parsed and silently ignored, matching Go
 /// (testkit probe: the write succeeds with a plain OK, no result set,
 /// no warning).
+/// Go `TestInsertOnDuplicateLazyMoreThan1Row` (issue 29260): an ON
+/// DUPLICATE KEY UPDATE assignment whose scalar subquery returns two rows
+/// fails only when a row meets a duplicate; an INSERT into a table with no
+/// unique key never evaluates it.
+#[test]
+fn on_duplicate_subquery_more_than_one_row_is_lazy() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1(a INTEGER PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE TABLE t2(a INTEGER)").unwrap();
+    session.run("CREATE TABLE source (b INTEGER)").unwrap();
+    session.run("INSERT INTO t1 VALUES (1)").unwrap();
+    session.run("INSERT INTO t2 VALUES (1)").unwrap();
+    session.run("INSERT INTO source VALUES (1),(1)").unwrap();
+    assert_eq!(
+        session
+            .run("INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source)")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1242
+    );
+    session
+        .run("INSERT INTO t2 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source)")
+        .unwrap();
+    assert_eq!(row_text(session.run("SELECT count(*) FROM t2")), [["2"]]);
+}
+
 #[test]
 fn insert_select_and_ordered_dml() {
     let mut session = Session::new();

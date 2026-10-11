@@ -395,16 +395,32 @@ pub fn check_table(
                 {
                     let column_offset = index.column_offsets[position];
                     let column = &table.columns[column_offset];
-                    match index_value.compare(record_value, column.field_type.collation()) {
+                    // Go `compareData` cuts the decoded index value to its key
+                    // part's prefix too (`tablecodec.TruncateIndexValue`): a
+                    // column the entry restores from the common handle comes
+                    // back whole. A failed comparison reports the cut value,
+                    // an unequal one the value as decoded.
+                    let mut cut = index_value.clone();
+                    crate::index_prefix_cut::cut_index_value(
+                        &mut cut,
+                        index.prefix_length(position),
+                        &column.field_type,
+                    );
+                    match cut.compare(record_value, column.field_type.collation()) {
                         Ok(Ordering::Equal) => {}
                         comparison => {
+                            let reported = if comparison.is_err() {
+                                &cut
+                            } else {
+                                index_value
+                            };
                             return Err(AdminCheckError::ValueMismatch(Box::new(
                                 AdminValueMismatch {
                                     table: table_name.clone(),
                                     index: index.name.clone(),
                                     column: column.name.clone(),
                                     handle: render_handle(handle),
-                                    index_value: render_go_datum(index_value),
+                                    index_value: render_go_datum(reported),
                                     record_value: render_go_datum(record_value),
                                     compare_error: comparison.err().map_or_else(
                                         || "<nil>".to_owned(),

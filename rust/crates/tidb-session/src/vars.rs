@@ -2851,6 +2851,21 @@ impl SessionVars {
         self.enable_window_function
     }
 
+    /// Go `SessionVars.BuildParserConfig`: the switches every statement this
+    /// session parses runs under.
+    #[must_use]
+    pub fn build_parser_config(&self) -> tidb_parser::ParserConfig {
+        tidb_parser::ParserConfig {
+            enable_window_function: self.enable_window_function,
+            enable_strict_double_type_check: self
+                .system_value(tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_DOUBLE_TYPE_CHECK)
+                .map_or(
+                    tidb_vardef::defaults::DEF_ENABLE_STRICT_DOUBLE_TYPE_CHECK,
+                    |value| value.eq_ignore_ascii_case("ON") || value == "1",
+                ),
+        }
+    }
+
     /// Go `SessionVars.TiFlashMaxBytesBeforeExternalJoin`.
     #[must_use]
     pub const fn ti_flash_max_bytes_before_ext_join(&self) -> i64 {

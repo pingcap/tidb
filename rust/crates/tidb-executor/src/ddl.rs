@@ -922,6 +922,10 @@ pub struct CreateTableSettings {
     /// session already parsed, so without it a double-quoted name would mean
     /// one thing to the session and another here.
     pub sql_mode: tidb_parser::SqlMode,
+    /// The session's parser switches (Go `SessionVars.BuildParserConfig`),
+    /// for the same re-parse: `DOUBLE(10)` is a syntax error only under
+    /// `tidb_enable_strict_double_type_check`.
+    pub parser_config: tidb_parser::ParserConfig,
     /// `@@foreign_key_checks`: with it off, Go stores a foreign key as
     /// written instead of resolving it against the referenced table.
     pub foreign_key_checks: bool,
@@ -946,6 +950,7 @@ impl Default for CreateTableSettings {
     fn default() -> Self {
         Self {
             sql_mode: tidb_parser::SqlMode::default(),
+            parser_config: tidb_parser::ParserConfig::default(),
             foreign_key_checks: true,
             enable_check_constraint: false,
             clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode(
@@ -1151,6 +1156,7 @@ fn create_table_in(
 ) -> Result<bool, DriverError> {
     let CreateTableSettings {
         sql_mode,
+        parser_config,
         foreign_key_checks,
         enable_check_constraint,
         clustered_index_mode,
@@ -1159,13 +1165,16 @@ fn create_table_in(
     // errors like `ast.ErrPartitionColumnList` [ddl:1653] straight from the
     // grammar action via `opt.Validate()`) keeps its coded identity on the
     // wire; ordinary grammar failures stay the plain 1064-style parse error.
-    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode).map_err(|e| match e.errno {
-        Some(errno) => DriverError::ParseCoded {
-            errno,
-            message: e.message,
-        },
-        None => DriverError::Parse(format!("{e:?}")),
-    })?;
+    let stmt =
+        tidb_parser::parse_with_sql_mode_and_config(sql, sql_mode, parser_config).map_err(|e| {
+            match e.errno {
+                Some(errno) => DriverError::ParseCoded {
+                    errno,
+                    message: e.message,
+                },
+                None => DriverError::Parse(format!("{e:?}")),
+            }
+        })?;
 
     let create = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {
@@ -1991,9 +2000,11 @@ fn create_table_in(
     )?;
     for hidden in hidden_columns {
         // Go `checkExpressionIndexAutoIncrement`: an expression index may not
-        // read an AUTO_INCREMENT column. Captured as 3754 naming the index,
-        // which is the index whose part built this column.
-        if let Some(auto) = auto_increment_offset {
+        // read an AUTO_INCREMENT column unless
+        // `tidb_enable_auto_increment_in_generated` allows it. Captured as
+        // 3754 naming the index, which is the index whose part built this
+        // column.
+        if let Some(auto) = auto_increment_offset.filter(|_| !ctx.auto_increment_in_generated()) {
             let auto_name = columns[auto].name.original().to_owned();
             if hidden
                 .generated

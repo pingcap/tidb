@@ -2366,7 +2366,11 @@ impl Session {
             return Ok(vec![sql.to_owned()]);
         }
         let mode = self.scanner_sql_mode();
-        let Ok(statements) = tidb_parser::parse_multi_with_sql_mode(sql, mode) else {
+        let Ok(statements) = tidb_parser::parse_multi_with_sql_mode_and_config(
+            sql,
+            mode,
+            self.vars.build_parser_config(),
+        ) else {
             return Ok(vec![sql.to_owned()]);
         };
         // Go `conn.go:1874`: a text that parses to ZERO statements — all

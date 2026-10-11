@@ -432,6 +432,19 @@ fn an_expression_index_cannot_read_an_auto_increment_column() {
         ),
         Some(3754)
     );
+    // Go skips the check when `tidb_enable_auto_increment_in_generated` is
+    // on (`TestAutoIncrementColumnErrorMessage`).
+    session
+        .run("SET SESSION tidb_enable_auto_increment_in_generated = 1")
+        .unwrap();
+    assert_eq!(code(&mut session, "CREATE INDEX idxa ON ta((a+1))"), None);
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE tb (a INT AUTO_INCREMENT PRIMARY KEY, INDEX idxb ((a+1)))"
+        ),
+        None
+    );
 }
 
 /// Captured: 1060. A user column already called `_V$_idxh_0` collides with

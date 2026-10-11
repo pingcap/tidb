@@ -221,6 +221,20 @@ pub fn parse_with_sql_mode_and_warnings(sql: &str, sql_mode: SqlMode) -> PResult
     })
 }
 
+/// [`parse_with_sql_mode_and_warnings`] under a session's [`ParserConfig`].
+pub fn parse_with_sql_mode_config_and_warnings(
+    sql: &str,
+    sql_mode: SqlMode,
+    config: ParserConfig,
+) -> PResult<ParseOutput> {
+    let mut parser = Parser::new_with_parser_config(sql, sql_mode, config);
+    let statement = parse_one_with_parser(sql, &mut parser)?;
+    Ok(ParseOutput {
+        statement,
+        warnings: parser.warnings,
+    })
+}
+
 /// Parses one statement with connection charset/collation metadata without
 /// discarding recoverable parser warnings.
 pub fn parse_with_connection_and_warnings(
@@ -267,6 +281,51 @@ pub fn parse_with_window_functions(sql: &str, enabled: bool) -> PResult<Stmt> {
         enabled,
     );
     parse_one_with_parser(sql, &mut parser)
+}
+
+/// Go `parser.ParserConfig`: the per-session switches
+/// `Parser.SetParserConfig` applies, which a session builds from its variables
+/// (`SessionVars.BuildParserConfig`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParserConfig {
+    /// Go `EnableWindowFunction` (`tidb_enable_window_function`): whether the
+    /// scanner reads window-function names as keywords.
+    pub enable_window_function: bool,
+    /// Go `EnableStrictDoubleTypeCheck`
+    /// (`tidb_enable_strict_double_type_check`): whether `DOUBLE(M)` without a
+    /// scale is a syntax error.
+    pub enable_strict_double_type_check: bool,
+}
+
+impl Default for ParserConfig {
+    /// Go `parser.New`: both switches on.
+    fn default() -> Self {
+        Self {
+            enable_window_function: true,
+            enable_strict_double_type_check: true,
+        }
+    }
+}
+
+/// Parses one statement under a session's SQL mode and parser configuration:
+/// Go `Parser.SetSQLMode` and `Parser.SetParserConfig` before `ParseOneStmt`.
+pub fn parse_with_sql_mode_and_config(
+    sql: &str,
+    sql_mode: SqlMode,
+    config: ParserConfig,
+) -> PResult<Stmt> {
+    let mut parser = Parser::new_with_parser_config(sql, sql_mode, config);
+    parse_one_with_parser(sql, &mut parser)
+}
+
+/// [`parse_with_sql_mode_and_config`] for a text of several statements.
+pub fn parse_multi_with_sql_mode_and_config(
+    sql: &str,
+    sql_mode: SqlMode,
+    config: ParserConfig,
+) -> PResult<Vec<Stmt>> {
+    let mut parser = Parser::new_with_parser_config(sql, sql_mode, config);
+    parse_multi_with_parser(sql, &mut parser)
 }
 
 /// Parses one statement with Go's `Parser.SetStrictDoubleTypeCheck` switch.
@@ -829,6 +888,19 @@ impl Parser {
         collation: &str,
     ) -> Self {
         Self::new_with_all_configuration(sql, enable_mariadb, sql_mode, charset, collation, true)
+    }
+
+    fn new_with_parser_config(sql: &str, sql_mode: SqlMode, config: ParserConfig) -> Self {
+        let mut parser = Self::new_with_all_configuration(
+            sql,
+            false,
+            sql_mode,
+            tidb_mysql::DefaultCharset,
+            tidb_mysql::DefaultCollationName,
+            config.enable_window_function,
+        );
+        parser.strict_double_type_check = config.enable_strict_double_type_check;
+        parser
     }
 
     fn new_with_all_configuration(

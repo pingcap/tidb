@@ -156,6 +156,10 @@ pub struct Stmt {
     /// `--error <code>` preceded this statement: the recording is an
     /// `Error ...` line, not rows.
     pub expect_error: bool,
+    /// The codes of an `--error 0,<code>...` list: the script accepts the
+    /// statement succeeding or failing with one of them, and the recording
+    /// shows only which TiDB did.
+    pub accepted_errors: Vec<u16>,
     /// `--sorted_result` preceded this statement: the recorder sorted the row
     /// lines before writing them, so a comparison must sort too.
     pub sorted: bool,
@@ -237,6 +241,7 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
     let mut pending: Option<&'static str> = None;
     let mut modes = [false; MODE_BLOCKERS.len()];
     let mut expect_error = false;
+    let mut accepted_errors: Vec<u16> = Vec::new();
     let mut sorted = false;
     let mut warnings = false;
     let mut buffer: Vec<&str> = Vec::new();
@@ -264,7 +269,17 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
                 // the accepted codes: the statement may succeed, and then the
                 // recording holds its rows. Only the recorded `Error ...` line
                 // says which happened.
-                "error" => expect_error = !rest.split(',').any(|code| code.trim() == "0"),
+                "error" => {
+                    expect_error = !rest.split(',').any(|code| code.trim() == "0");
+                    accepted_errors = if expect_error {
+                        Vec::new()
+                    } else {
+                        rest.split(',')
+                            .filter_map(|code| code.trim().parse::<u16>().ok())
+                            .filter(|code| *code != 0)
+                            .collect()
+                    };
+                }
                 "sorted_result" => sorted = true,
                 "enable_warnings" => warnings = true,
                 "disable_warnings" => warnings = false,
@@ -325,6 +340,7 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
         items.push(Item::Stmt(Stmt {
             sql: buffer.join("\n"),
             expect_error,
+            accepted_errors: std::mem::take(&mut accepted_errors),
             sorted,
             warnings,
             blocker: pending.take().or_else(|| {

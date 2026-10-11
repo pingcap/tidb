@@ -613,13 +613,18 @@ fn resolve_insert_target(
 /// (`handleScalarSubquery`'s `EvalSubqueryFirstRow`): before any row is
 /// written, and whether or not a row conflicts. One that reads the target's
 /// columns stays in the statement, for the rewriter to refuse.
+///
+/// An ON DUPLICATE assignment's `ErrSubqueryMoreThan1Row` is not raised here:
+/// Go `Insert.ResolveOnDuplicate` keeps it on the assignment (`LazyErr`) for
+/// the row that meets a duplicate (issue 29260), so it comes back beside the
+/// folded statement, one slot per assignment.
 fn fold_insert_subqueries(
     insert: &tidb_ast::InsertStmt,
     layout: &InsertTargetLayout,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<tidb_ast::InsertStmt>, DriverError> {
+) -> Result<Option<(tidb_ast::InsertStmt, Vec<Option<DriverError>>)>, DriverError> {
     use super::subquery::{expr_has_subquery, fold_subqueries};
     let values = insert
         .rows
@@ -652,17 +657,29 @@ fn fold_insert_subqueries(
         ctx,
     );
     let mut folded = insert.clone();
-    let values = folded
-        .rows
-        .iter_mut()
-        .flatten()
-        .chain(folded.on_duplicate.iter_mut().map(|assignment| &mut assignment.value));
-    for value in values {
+    for value in folded.rows.iter_mut().flatten() {
         if expr_has_subquery(value) {
             *value = fold_subqueries(value, &scope, catalog, current_db, ctx)?;
         }
     }
-    Ok(Some(folded))
+    let mut lazy_errors = Vec::with_capacity(folded.on_duplicate.len());
+    for assignment in &mut folded.on_duplicate {
+        let mut lazy_error = None;
+        if expr_has_subquery(&assignment.value) {
+            match fold_subqueries(&assignment.value, &scope, catalog, current_db, ctx) {
+                Ok(value) => assignment.value = value,
+                Err(error) => {
+                    if error.clone().to_mysql_error().code != 1242 {
+                        return Err(error);
+                    }
+                    assignment.value = tidb_ast::Expr::Null;
+                    lazy_error = Some(error);
+                }
+            }
+        }
+        lazy_errors.push(lazy_error);
+    }
+    Ok(Some((folded, lazy_errors)))
 }
 
 /// The subqueries `expr` contains, outermost only.
@@ -713,7 +730,10 @@ fn run_insert_with_physical(
 
     let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
     let folded_insert = fold_insert_subqueries(insert, &target_layout, catalog, current_db, ctx)?;
-    let insert = folded_insert.as_ref().unwrap_or(insert);
+    let (insert, lazy_errors) = match &folded_insert {
+        Some((folded, lazy_errors)) => (folded, lazy_errors.as_slice()),
+        None => (insert, &[][..]),
+    };
     let eval_chunk = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
@@ -755,6 +775,7 @@ fn run_insert_with_physical(
     let select_on_duplicate = if insert.source.is_some() {
         Some(prepare_on_duplicate_assignments(
             &insert.on_duplicate,
+            lazy_errors,
             &target_layout.column_list,
             &target_layout.column_meta,
             target_layout.extra_handle_offset,
@@ -1053,6 +1074,7 @@ fn run_insert_with_physical(
         Some(prepared) => prepared,
         None => prepare_on_duplicate_assignments(
             &insert.on_duplicate,
+            lazy_errors,
             &column_list,
             &column_meta,
             extra_handle_offset,
@@ -1834,6 +1856,9 @@ pub(crate) struct PreparedOnDuplicateAssignment {
     /// Built over Go's `Schema4OnDuplicate` (see
     /// [`super::on_duplicate_scope::OnDuplicateResolver`]).
     value: Expression,
+    /// Go `Assignment.LazyErr`: a scalar subquery's 1242 raised while the
+    /// assignment was built, which only a row meeting a duplicate reports.
+    lazy_error: Option<DriverError>,
 }
 
 struct PreparedOnDuplicate {
@@ -1854,6 +1879,7 @@ struct PreparedOnDuplicate {
 #[allow(clippy::too_many_arguments)]
 fn prepare_on_duplicate_assignments(
     assignments: &[tidb_ast::Assignment],
+    lazy_errors: &[Option<DriverError>],
     column_list: &[(String, FieldType)],
     column_meta: &[ColumnDefaultMeta],
     extra_handle_offset: Option<usize>,
@@ -1889,7 +1915,7 @@ fn prepare_on_duplicate_assignments(
         extra_types,
     };
     let mut prepared = Vec::with_capacity(assignments.len());
-    for assignment in assignments {
+    for (position, assignment) in assignments.iter().enumerate() {
         let (offset, _, _) = resolver.resolve(&assignment.col).ok_or_else(|| {
             DriverError::UnknownColumnInClause {
                 column: assignment.col.last().cloned().unwrap_or_default(),
@@ -1926,6 +1952,7 @@ fn prepare_on_duplicate_assignments(
             });
         }
 
+        let lazy_error = lazy_errors.get(position).cloned().flatten();
         let value = match &assignment.value {
             tidb_ast::Expr::Default(None) => {
                 let datum =
@@ -1952,7 +1979,11 @@ fn prepare_on_duplicate_assignments(
                 rewrite_with_prepared_defaults(value, &value_resolver, &defaults)?
             }
         };
-        prepared.push(PreparedOnDuplicateAssignment { offset, value });
+        prepared.push(PreparedOnDuplicateAssignment {
+            offset,
+            value,
+            lazy_error,
+        });
     }
     Ok(prepared)
 }
@@ -2010,6 +2041,9 @@ fn apply_on_duplicate(
     let mut updated = existing.clone();
     let assigned = (|| {
         for assignment in &prepared.assignments {
+            if let Some(error) = &assignment.lazy_error {
+                return Err(error.clone());
+            }
             let mut row4_update = sql_row(&updated);
             row4_update.extend(
                 extras

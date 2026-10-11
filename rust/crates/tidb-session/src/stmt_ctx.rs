@@ -588,7 +588,12 @@ impl Session {
     }
 
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
-        tidb_parser::parse_with_sql_mode(sql, self.scanner_sql_mode()).map_err(|e| match e.errno {
+        tidb_parser::parse_with_sql_mode_and_config(
+            sql,
+            self.scanner_sql_mode(),
+            self.vars.build_parser_config(),
+        )
+        .map_err(|e| match e.errno {
             Some(errno) => DriverError::ParseCoded {
                 errno,
                 message: e.message,

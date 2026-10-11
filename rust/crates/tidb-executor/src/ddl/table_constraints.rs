@@ -186,6 +186,20 @@ pub(crate) fn table_indexes(
             ));
         }
         crate::ddl::indexes::reject_duplicate_index_columns(&index.parts)?;
+        // Go `setEmptyConstraintName` names every anonymous key constraint,
+        // a PRIMARY KEY included, before the primary key's index is called
+        // `PRIMARY`: the column's name is spent all the same, so
+        // `primary key (k(4)), key (k)` names the key `k_2`.
+        if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey && index.name.is_none() {
+            let first = match index.parts.first() {
+                Some(tidb_ast::IndexPart::Column { name, .. }) => Some(name.as_str()),
+                Some(tidb_ast::IndexPart::Expr { .. }) => Some("expression_index"),
+                None => None,
+            };
+            if let Some(first) = first {
+                reserved.push(anonymous_index_name(&indexes, &reserved, first));
+            }
+        }
         match index.kind {
             // Go omits the physical PRIMARY index only for PKIsHandle.  A
             // common handle stores no separate index entries either, but its

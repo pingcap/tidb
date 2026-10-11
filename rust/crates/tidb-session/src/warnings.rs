@@ -282,23 +282,26 @@ impl Session {
         let previous = std::mem::take(&mut self.warnings);
         self.pending_observation_parse = None;
         let parse_started = std::time::Instant::now();
-        let (mut stmt, parse_warnings) =
-            match tidb_parser::parse_with_sql_mode_and_warnings(sql, self.scanner_sql_mode()) {
-                Ok(output) => (output.statement, output.warnings),
-                Err(error) => {
-                    // The parse-failure door maps the error; the diagnostics
-                    // a failed parse carried are dropped (go's failed parse
-                    // never reaches the warning copy either).
-                    let mapped = match error.errno {
-                        Some(errno) => DriverError::ParseCoded {
-                            errno,
-                            message: error.message,
-                        },
-                        None => DriverError::Parse(error.compatibility_message(sql)),
-                    };
-                    return Err(mapped);
-                }
-            };
+        let (mut stmt, parse_warnings) = match tidb_parser::parse_with_sql_mode_config_and_warnings(
+            sql,
+            self.scanner_sql_mode(),
+            self.vars.build_parser_config(),
+        ) {
+            Ok(output) => (output.statement, output.warnings),
+            Err(error) => {
+                // The parse-failure door maps the error; the diagnostics
+                // a failed parse carried are dropped (go's failed parse
+                // never reaches the warning copy either).
+                let mapped = match error.errno {
+                    Some(errno) => DriverError::ParseCoded {
+                        errno,
+                        message: error.message,
+                    },
+                    None => DriverError::Parse(error.compatibility_message(sql)),
+                };
+                return Err(mapped);
+            }
+        };
         self.record_observation_parse(sql, parse_started.elapsed());
         self.observe_statement_node(&stmt, false);
         self.install_statement_warning_state(&stmt, previous);

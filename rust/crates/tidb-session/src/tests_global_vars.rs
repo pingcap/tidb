@@ -1238,6 +1238,36 @@ fn enable_window_function_session_hook_updates_typed_state() {
     assert!(session.vars().window_function_enabled());
 }
 
+/// Go `SessionVars.BuildParserConfig`: the session parses under its own
+/// switches. `TestDDLWithStrictDoubleTypeCheck`'s `DOUBLE(10)` is a syntax
+/// error only while `tidb_enable_strict_double_type_check` is on, and with
+/// window functions off `rank` is an ordinary name.
+#[test]
+fn statements_parse_under_the_sessions_parser_config() {
+    let mut session = Session::new();
+    session
+        .run("SET @@tidb_enable_strict_double_type_check = 'ON'")
+        .unwrap();
+    assert_eq!(
+        session
+            .run("CREATE TABLE double_type_check(id INT, c DOUBLE(10))")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1149
+    );
+    session
+        .run("SET @@tidb_enable_strict_double_type_check = 'OFF'")
+        .unwrap();
+    session
+        .run("CREATE TABLE double_type_check(id INT, c DOUBLE(10))")
+        .unwrap();
+
+    session.run("SET tidb_enable_window_function = 0").unwrap();
+    session.run("CREATE TABLE w (`rank` INT)").unwrap();
+    session.run("SELECT rank FROM w").unwrap();
+}
+
 /// Go `TestTiDBAutoAnalyzeConcurrencyValidation`: concurrency writes require
 /// both process-wide auto-analyze switches, then publish the validated value
 /// to the scheduler-facing atomic when the prerequisites are enabled.
