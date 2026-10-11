@@ -55,6 +55,7 @@ mod from;
 mod index_usage_reporter;
 pub mod infoschema_meta;
 mod multi_dml;
+pub mod perfschema;
 pub use multi_dml::delete_privilege_tables;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 

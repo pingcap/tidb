@@ -1946,44 +1946,6 @@ pub const METRICS_SCHEMA_TABLES: &[(&str, i64)] = &[
     ("uptime", 4611686018427408546),
 ];
 
-pub const PERFORMANCE_SCHEMA_TABLES: &[(&str, i64)] = &[
-    ("events_stages_current", 4611686018427397904),
-    ("events_stages_history", 4611686018427397905),
-    ("events_stages_history_long", 4611686018427397906),
-    ("events_statements_current", 4611686018427397907),
-    ("events_statements_history", 4611686018427397908),
-    ("events_statements_history_long", 4611686018427397909),
-    ("events_statements_summary_by_digest", 4611686018427397910),
-    ("events_transactions_current", 4611686018427397911),
-    ("events_transactions_history", 4611686018427397912),
-    ("events_transactions_history_long", 4611686018427397913),
-    ("global_status", 4611686018427397914),
-    ("global_variables", 4611686018427397915),
-    ("pd_profile_allocs", 4611686018427397916),
-    ("pd_profile_block", 4611686018427397917),
-    ("pd_profile_cpu", 4611686018427397918),
-    ("pd_profile_goroutines", 4611686018427397919),
-    ("pd_profile_memory", 4611686018427397920),
-    ("pd_profile_mutex", 4611686018427397921),
-    ("prepared_statements_instances", 4611686018427397922),
-    ("session_account_connect_attrs", 4611686018427397923),
-    ("session_connect_attrs", 4611686018427397924),
-    ("session_status", 4611686018427397925),
-    ("session_variables", 4611686018427397926),
-    ("setup_actors", 4611686018427397927),
-    ("setup_consumers", 4611686018427397928),
-    ("setup_instruments", 4611686018427397929),
-    ("setup_objects", 4611686018427397930),
-    ("status_by_connection", 4611686018427397931),
-    ("tidb_profile_allocs", 4611686018427397932),
-    ("tidb_profile_block", 4611686018427397933),
-    ("tidb_profile_cpu", 4611686018427397934),
-    ("tidb_profile_goroutines", 4611686018427397935),
-    ("tidb_profile_memory", 4611686018427397936),
-    ("tidb_profile_mutex", 4611686018427397937),
-    ("tikv_profile_cpu", 4611686018427397938),
-];
-
 pub const SYS_TABLES: &[(&str, i64)] = &[("schema_unused_indexes", 122)];
 
 fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
@@ -2097,22 +2059,16 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
     }
     // go lists information_schema's own tables after the user schemas.
     rows.extend(information_schema_tables_rows());
-    // go seeds metrics_schema/performance_schema/sys with their own SYSTEM
-    // VIEW / VIEW rows (the oracle cells: the epoch CREATE_TIME for the
-    // metrics/performance machinery; the view's own creation time for sys;
-    // the TIDB_TABLE_ID blocks the bootstrap assigned per schema).
+    // go seeds metrics_schema and sys with their own SYSTEM VIEW / VIEW rows
+    // (the oracle cells: the epoch CREATE_TIME for the metrics tables; the
+    // view's own creation time for sys; the TIDB_TABLE_ID blocks the
+    // bootstrap assigned per schema). performance_schema's tables are
+    // catalog entries and render through the loop above.
     for (schema, schema_upper, tables, created, is_view) in [
         (
             "metrics_schema",
             "METRICS_SCHEMA",
             METRICS_SCHEMA_TABLES,
-            "1970-01-01 08:00:00",
-            false,
-        ),
-        (
-            "performance_schema",
-            "PERFORMANCE_SCHEMA",
-            PERFORMANCE_SCHEMA_TABLES,
             "1970-01-01 08:00:00",
             false,
         ),

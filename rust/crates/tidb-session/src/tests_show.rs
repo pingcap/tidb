@@ -2789,3 +2789,73 @@ fn variables_info_answers_as_go() {
         [["******"]]
     );
 }
+
+/// Go `pkg/infoschema/perfschema`: the 35 tables built from `const.go`'s
+/// `CREATE TABLE` text under `tableIDMap`'s ids, served as memory tables
+/// (`MemTableScan`, columns without an original name), with
+/// `session_variables` filled by `GetDataFromSessionVariables`. Captured
+/// from Go TiDB (`executor/perfschema`).
+#[test]
+fn performance_schema_tables_answer_as_go() {
+    let mut session = Session::new();
+    let rows = |session: &mut Session, sql: &str| crate::tests_support::row_text(session.run(sql));
+    assert_eq!(
+        rows(&mut session, "show tables from performance_schema").len(),
+        35
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select * from performance_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit'"
+        ),
+        [["tidb_retry_limit", "10"]]
+    );
+    assert_eq!(
+        rows(&mut session, "DESCRIBE performance_schema.GLOBAL_VARIABLES"),
+        [
+            ["VARIABLE_NAME", "varchar(64)", "NO", "", "NULL", ""],
+            ["VARIABLE_VALUE", "varchar(1024)", "YES", "", "NULL", ""],
+        ]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select table_schema, table_type, tidb_table_id from information_schema.tables \
+             where table_name = 'session_variables'"
+        ),
+        [["PERFORMANCE_SCHEMA", "SYSTEM VIEW", "4611686018427397935"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "select count(*) from information_schema.columns where table_schema = 'performance_schema'"
+        ),
+        [["419"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "explain format='brief' select * from performance_schema.session_variables \
+             where variable_name='autocommit'"
+        ),
+        [
+            [
+                "Selection",
+                "8000.00",
+                "root",
+                "",
+                "eq(Column#1, \"autocommit\")"
+            ],
+            [
+                "└─MemTableScan",
+                "10000.00",
+                "root",
+                "table:session_variables",
+                ""
+            ],
+        ]
+    );
+    assert!(session
+        .run("select * from information_schema.events_statements_summary_by_digest")
+        .is_err());
+}

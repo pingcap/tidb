@@ -793,6 +793,8 @@ impl Default for Catalog {
         // lookup. Doing it here rather than at each construction site is what
         // makes that unforgettable.
         super::infoschema_meta::register_tables(&mut catalog);
+        super::perfschema::register_tables(&mut catalog)
+            .expect("Go's performance_schema DDL builds in this tier");
         catalog
     }
 }

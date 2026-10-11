@@ -245,15 +245,22 @@ struct RetainedSelectPlan<'a> {
 /// The ordinary executor resolves bare names against `current_db`; mirror
 /// that here so `USE information_schema; SELECT ... FROM tables` materializes
 /// the same virtual source as its qualified spelling.
-/// The schema a referenced virtual table registers under: everything lives
-/// in `information_schema` except the one `performance_schema` table this
-/// tier serves (go seeds both schemas' retriever tables the same way).
+/// The schema a referenced virtual table registers under: the
+/// `performance_schema` tables Go fills per statement, and the
+/// `information_schema` ones (the two schemas share no table name).
 fn serving_schema_of(table_name: &str) -> &'static str {
-    if table_name.eq_ignore_ascii_case("events_statements_summary_by_digest") {
-        "performance_schema"
+    if tidb_executor::driver::perfschema::is_predefined_table(table_name) {
+        tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
     } else {
         infoschema::INFORMATION_SCHEMA
     }
+}
+
+/// Whether a `performance_schema` table is materialized per statement: all
+/// of them are, since Go serves each as a virtual table (`MemTableScan`);
+/// the ones `perfSchemaTable.getRows` does not fill come back empty.
+fn perfschema_rows_served(table_name: &str) -> bool {
+    tidb_executor::driver::perfschema::is_predefined_table(table_name)
 }
 
 /// The virtual tables a query reads, in every scope Go's `buildDataSource`
@@ -270,10 +277,18 @@ pub(crate) fn information_schema_tables_in_query(
     for path in crate::binding::collect_physical_table_refs(&stmt) {
         match path.as_slice() {
             [name] if infoschema::is_information_schema(current_db) => out.push(name.clone()),
+            [name]
+                if current_db.eq_ignore_ascii_case(
+                    tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA,
+                ) && perfschema_rows_served(name) =>
+            {
+                out.push(name.clone())
+            }
             [schema, name]
                 if infoschema::is_information_schema(schema)
-                    || (schema.eq_ignore_ascii_case("performance_schema")
-                        && name.eq_ignore_ascii_case("events_statements_summary_by_digest")) =>
+                    || (schema.eq_ignore_ascii_case(
+                        tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA,
+                    ) && perfschema_rows_served(name)) =>
             {
                 // The 1146 for a missing virtual table names the database AS
                 // WRITTEN (go folds nothing here).
@@ -815,6 +830,37 @@ impl Session {
         }
     }
 
+    /// The `(name, type)` columns a referenced virtual table materializes
+    /// with: a `performance_schema` table's own catalog columns (built from
+    /// Go's DDL), or an `information_schema` table's declared ones.
+    fn virtual_table_schema(
+        &mut self,
+        table_name: &str,
+    ) -> Option<Vec<(String, tidb_datatype::FieldType)>> {
+        if !tidb_executor::driver::perfschema::is_predefined_table(table_name) {
+            return infoschema::table_schema(table_name);
+        }
+        self.with_catalog_mut(|catalog| {
+            Ok(
+                match catalog.table_in(
+                    tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA,
+                    table_name,
+                ) {
+                    Some(tidb_executor::TableEntry::Kv(table)) => Some(
+                        table
+                            .columns()
+                            .iter()
+                            .map(|column| (column.name.clone(), column.field_type.clone()))
+                            .collect(),
+                    ),
+                    _ => None,
+                },
+            )
+        })
+        .ok()
+        .flatten()
+    }
+
     pub(crate) fn information_schema_planning_catalog(
         &mut self,
         table_names: &[String],
@@ -822,7 +868,7 @@ impl Session {
     ) -> Result<Catalog, DriverError> {
         let mut schemas = Vec::with_capacity(table_names.len());
         for table_name in table_names {
-            let Some(columns) = infoschema::table_schema(table_name) else {
+            let Some(columns) = self.virtual_table_schema(table_name) else {
                 // go names the database AS THE STATEMENT WROTE it in this
                 // 1146, not the canonical `INFORMATION_SCHEMA` spelling.
                 let db = written_db
@@ -927,7 +973,7 @@ impl Session {
         }
         let mut materialized = Vec::with_capacity(table_names.len());
         for table_name in table_names {
-            let Some(columns) = infoschema::table_schema(&table_name) else {
+            let Some(columns) = self.virtual_table_schema(&table_name) else {
                 return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
                     "{}.{}",
                     infoschema::INFORMATION_SCHEMA,
@@ -989,6 +1035,11 @@ impl Session {
                 self.user_attributes_table_rows(&scratch, ctx)
             } else if table_name.eq_ignore_ascii_case("VARIABLES_INFO") {
                 self.variables_info_table_rows()
+            } else if serving_schema_of(&table_name)
+                == tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
+                && table_name.eq_ignore_ascii_case("SESSION_VARIABLES")
+            {
+                self.session_variables_table_rows()?
             } else if table_name.eq_ignore_ascii_case("CLUSTER_CONFIG") {
                 self.cluster_config_table_rows(cluster_config_filters)?
             } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
@@ -1064,6 +1115,26 @@ impl Session {
             ]);
         }
         rows
+    }
+
+    /// Go `infoschema.GetDataFromSessionVariables`, the rows of
+    /// `performance_schema.session_variables`: every variable the viewer may
+    /// see, with `GetSessionOrGlobalSystemVar`'s value. Unlike
+    /// `VARIABLES_INFO`, a value that cannot be read fails the statement.
+    fn session_variables_table_rows(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        let text = |value: &str| tidb_datatype::Datum::Bytes(value.as_bytes().to_vec());
+        let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
+        for definition in sysvar::SYS_VARS {
+            if self.sem_hides_sysvar(definition.name) {
+                continue;
+            }
+            let value = self
+                .vars
+                .get_system(definition.name)
+                .map_err(crate::variables::var_error)?;
+            rows.push(vec![text(definition.name), text(&value)]);
+        }
+        Ok(rows)
     }
 
     /// Go `memtableRetriever.setDataForUserAttributes`: read the metadata
