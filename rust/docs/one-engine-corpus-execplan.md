@@ -25,7 +25,9 @@ After this plan, the corpus replays through the production stack -- `ClusterSess
   - [x] (2026-10-11) Backend gaps: LOAD STATS goes through the connection's local-infile exchange (`executor/analyze` 183 / 0 / 0 on unistore); `connect` with a password logs in through the node's account verification (`executor/dual_password` 80 / 0, `privilege/privileges` 400 / 3 / 17).
   - [x] (2026-10-11) The three aborting topics: the `ddl-job-scheduler` thread overflowed its default stack on the lock-resolution path; it now gets the SQL worker's stack (`ddl/bdr_mode` 136 / 86 / 57, `ddl/constraint` 269 / 1 / 4, `infoschema/tables` 113 / 4 run to the end).
   - [x] (2026-10-11) The three production faults: `BATCH ... DML` is classified as a query, as Go's `NonTransactionalDMLExec` returns a result set (`executor/nontransactional` 1490 / 4 / 1); an unsigned BIGINT column formats a signed datum as Go's `dumpTextRow` `GetUint64` does; the "unrequested handle" was three faults, below (`clustered_index` 34 / 0 / 0 from 12 / 18 / 4, `session/clustered_index` 338 / 7 from 326 / 22).
-  - [ ] `ddl/bdr_mode`'s remaining gap; the DDL prototype; DDL ports by triage; the unistore replay in the gate.
+  - [x] (2026-10-11) The answer shape of the `Admin` statement bucket follows the schema of Go's plan, one exhaustive arm per statement (`classify.rs::admin_plan_has_result_schema`): `ADMIN SET/UNSET BDR ROLE`, `DO`, binding DDL, `ANALYZE` and the stats statements had answered a one-row `affected_rows` result set. `ddl/bdr_mode` 222 / 0 from 136 / 86, `bindinfo/bind` 200 / 2 from 134 / 68 (as in process), `planner/core/integration` 1485 / 9, `executor/executor` 1703 / 21.
+  - [x] (2026-10-11) DDL route decided (Decision Log).
+  - [ ] DDL ports by triage, starting with Go's `checkConstraintNames` as one shared function; the unistore replay in the gate.
 - [ ] Milestone 4: the in-process transaction model is retired.
 
 

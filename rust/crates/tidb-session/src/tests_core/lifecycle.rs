@@ -497,6 +497,34 @@ fn update_and_delete_through_the_session() {
     );
 }
 
+/// The wire answers an `Admin`-bucket statement with an OK packet exactly when
+/// Go's plan for it has an empty schema. The production node answered
+/// `ADMIN SET BDR ROLE`, `DO`, `CREATE BINDING` and `ANALYZE` with a
+/// one-column `affected_rows` result set, which a client reads as rows.
+#[test]
+fn an_admin_statement_answers_rows_only_when_go_plans_a_schema() {
+    let session = Session::new();
+    for (sql, kind) in [
+        ("ADMIN SET BDR ROLE PRIMARY", StmtKind::Write),
+        ("ADMIN UNSET BDR ROLE", StmtKind::Write),
+        ("ADMIN SHOW BDR ROLE", StmtKind::Query),
+        ("DO 1", StmtKind::Write),
+        (
+            "CREATE SESSION BINDING FOR SELECT * FROM t USING SELECT * FROM t",
+            StmtKind::Write,
+        ),
+        ("SHOW SESSION BINDINGS", StmtKind::Query),
+        ("ANALYZE TABLE t", StmtKind::Write),
+        ("ADMIN CHECK TABLE t", StmtKind::Write),
+        ("ADMIN CHECK INDEX t idx (1, 2)", StmtKind::Query),
+        ("ADMIN SHOW DDL JOBS", StmtKind::Query),
+        ("ADMIN CANCEL DDL JOBS 1", StmtKind::Query),
+        ("HELP 'select'", StmtKind::Query),
+    ] {
+        assert_eq!(session.statement_kind(sql).unwrap(), kind, "{sql}");
+    }
+}
+
 #[test]
 fn mpp_statement_contexts_share_counters_until_completion() {
     use tidb_executor::remote_scan::PushdownStatementContext;

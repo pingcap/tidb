@@ -179,6 +179,138 @@ pub(crate) fn statement_not_fill_cache(stmt: &Stmt) -> bool {
     )
 }
 
+/// Whether the plan Go builds for this statement has a non-empty schema, so
+/// that the connection answers with a result set rather than an OK packet
+/// (`ExecStmt.Exec` returns no record set for an empty schema).
+///
+/// The `Admin` statement bucket holds every statement Go plans through
+/// `buildAdmin`, `buildSimple`, `buildShow` and their neighbours; each arm
+/// names the Go builder that decides its schema. The match is exhaustive so a
+/// new variant has to choose.
+fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
+    use tidb_ast::AdminStmt;
+    match admin {
+        // `buildSimple` with no schema: account, privilege, process and
+        // server-control statements, extended statistics DDL, and the
+        // job-cancelling statements.
+        AdminStmt::Grant(_)
+        | AdminStmt::GrantProxy(_)
+        | AdminStmt::GrantRole(_)
+        | AdminStmt::Revoke(_)
+        | AdminStmt::RevokeRole(_)
+        | AdminStmt::Binlog(_)
+        | AdminStmt::Kill(_)
+        | AdminStmt::Flush(_)
+        | AdminStmt::CreateStatistics(_)
+        | AdminStmt::DropStatistics(_)
+        | AdminStmt::CancelDistributionJob(_)
+        | AdminStmt::DropQueryWatch(_)
+        | AdminStmt::CancelImportJob(_)
+        | AdminStmt::DropStats(_) => false,
+        // `buildSimple` sets a schema for these three.
+        AdminStmt::Brie(_) | AdminStmt::CalibrateResource(_) | AdminStmt::AddQueryWatch(_) => true,
+        // `ShutdownStmt` is `Simple`; `HELP` reports the topics it finds.
+        AdminStmt::ServerControl(control) => {
+            matches!(control.as_ref(), tidb_ast::ServerControlStmt::Help(_))
+        }
+        // `buildSetConfig` -> `SetConfig`; `buildDo` -> a no-delay
+        // projection over an empty schema.
+        AdminStmt::SetConfig(_) | AdminStmt::Do(_) => false,
+        // `buildRecommendIndex`: `run` and `show` report rows, `set` does
+        // not; every other action is refused before execution.
+        AdminStmt::RecommendIndex(recommend) => {
+            !matches!(recommend.as_ref(), tidb_ast::RecommendIndexStmt::Set(_))
+        }
+        // `buildAdmin`: `Simple`, `AlterDDLJob`, `AdminPlugins`,
+        // `SQLBindPlan`, the blacklist reloads, `WorkloadRepoCreate`, and
+        // `CheckTable`, which appends nothing on success.
+        AdminStmt::FlushPlanCache(_)
+        | AdminStmt::Reload(_)
+        | AdminStmt::SetBdrRole(_)
+        | AdminStmt::UnsetBdrRole
+        | AdminStmt::AlterDdlJobs(_)
+        | AdminStmt::Plugins { .. }
+        | AdminStmt::BindingControl(_)
+        | AdminStmt::CreateWorkloadSnapshot => false,
+        AdminStmt::AdminCheck(check) => match check.as_ref() {
+            tidb_ast::AdminCheckStmt::Table { .. } => false,
+            // `AdminCheckIndexRange` reports the rows it checked.
+            tidb_ast::AdminCheckStmt::Index { handle_ranges, .. } => !handle_ranges.is_empty(),
+        },
+        // `buildAdmin` with a schema.
+        AdminStmt::ShowBdrRole
+        | AdminStmt::ShowSlow(_)
+        | AdminStmt::ShowDdl
+        | AdminStmt::ShowDdlJobs(_)
+        | AdminStmt::ShowDdlJobQueries(_)
+        | AdminStmt::DdlJobControl(_)
+        | AdminStmt::ShowNextRowId(_)
+        | AdminStmt::AdminChecksum(_)
+        | AdminStmt::AdminRecoverIndex(_)
+        | AdminStmt::AdminCleanupIndex(_) => true,
+        // `ast.CleanupTableLockStmt` is `Simple`.
+        AdminStmt::CleanupTableLock(_) => false,
+        // `buildShow`, `buildExplain`, `buildExplainFor`, `buildTrace`,
+        // `buildPlanReplayer` and `buildSplitRegion` all set a schema.
+        AdminStmt::ShowGrants(_)
+        | AdminStmt::ShowMasterStatus
+        | AdminStmt::ShowPrivileges
+        | AdminStmt::ShowBuiltins
+        | AdminStmt::ShowImportJobs(_)
+        | AdminStmt::ShowImportGroups(_)
+        | AdminStmt::ShowCreate { .. }
+        | AdminStmt::ShowCreateUser(_)
+        | AdminStmt::ShowVariables(_)
+        | AdminStmt::ShowStatus(_)
+        | AdminStmt::ShowWarnings(_)
+        | AdminStmt::ShowErrors(_)
+        | AdminStmt::ShowCollation(_)
+        | AdminStmt::ShowEngines(_)
+        | AdminStmt::ShowCharset(_)
+        | AdminStmt::ShowStatsHistograms(_)
+        | AdminStmt::ShowStatsBuckets(_)
+        | AdminStmt::ShowStatsLocked(_)
+        | AdminStmt::ShowStatsTopN(_)
+        | AdminStmt::ShowDatabases(_)
+        | AdminStmt::ShowTables(_)
+        | AdminStmt::ShowOpenTables(_)
+        | AdminStmt::ShowTableStatus(_)
+        | AdminStmt::ShowTableNextRowId(_)
+        | AdminStmt::ShowColumns(_)
+        | AdminStmt::ShowIndex(_)
+        | AdminStmt::ShowInspection(_)
+        | AdminStmt::ShowDistributionJobs(_)
+        | AdminStmt::ShowTablePlacement(_)
+        | AdminStmt::ShowPlacement(_)
+        | AdminStmt::ShowProfile(_)
+        | AdminStmt::ShowMaskingPolicies(_)
+        | AdminStmt::ShowBindings(_)
+        | AdminStmt::Trace(_)
+        | AdminStmt::ExplainFor(_)
+        | AdminStmt::Explain(_)
+        | AdminStmt::PlanReplayer(_)
+        | AdminStmt::DescribeTable(_)
+        | AdminStmt::SplitRegion(_) => true,
+        // `buildCreateBindPlan`/`buildDropBindPlan`/
+        // `buildSetBindingStatusPlan` -> `SQLBindPlan`; `buildAnalyze`,
+        // `buildRefreshStats`, `buildLockStats`/`buildUnlockStats` and
+        // `buildLoadStats` set none.
+        AdminStmt::CreateBinding(_)
+        | AdminStmt::DropBinding(_)
+        | AdminStmt::SetBinding(_)
+        | AdminStmt::AnalyzeTable(_)
+        | AdminStmt::AnalyzeIncremental(_)
+        | AdminStmt::RefreshStats(_)
+        | AdminStmt::LockStats(_)
+        | AdminStmt::UnlockStats(_)
+        | AdminStmt::LoadStats(_) => false,
+        // `buildTraffic`: only `SHOW TRAFFIC JOBS` sets a schema.
+        AdminStmt::Traffic(traffic) => {
+            matches!(traffic.as_ref(), tidb_ast::TrafficStmt::ShowJobs)
+        }
+    }
+}
+
 impl Session {
     /// What this statement's WHOLE read is, decided by parsing alone, so a
     /// front end that binds a read snapshot can tell it before the statement
@@ -332,50 +464,10 @@ impl Session {
                     .map_or(StmtKind::Query, |inner| self.statement_kind_parsed(&inner)),
                 _ => StmtKind::Write,
             },
-            // `KILL`, `FLUSH` and `SHUTDOWN`/`RESTART` are the admin
-            // statements that answer with an OK packet rather than a result
-            // set, as they do in Go: all are `SimpleExec` there, which
-            // produces no rows (`executeShutdown` answers before the
-            // 1-second-delayed stop). `HELP` keeps the result-set shape.
-            // The same no-rows shape holds for the maintenance statements
-            // whose Go executors end in an empty schema: `ADMIN CHECK
-            // TABLE`/`CHECK INDEX` without ranges (`CheckTableExec` appends
-            // nothing on success), the blacklist/binding reloads
-            // (`ReloadExprPushdownBlacklist`/`ReloadOptRuleBlacklist`/
-            // `AdminReloadBindings`), `ADMIN FLUSH BINDINGS`, and
-            // `ADMIN CREATE WORKLOAD SNAPSHOT`. The ranged
-            // `ADMIN CHECK INDEX t idx (a, b)` form keeps its result set.
-            Stmt::Admin(admin)
-                if match &**admin {
-                    tidb_ast::AdminStmt::Grant(_)
-                    | tidb_ast::AdminStmt::GrantProxy(_)
-                    | tidb_ast::AdminStmt::GrantRole(_)
-                    | tidb_ast::AdminStmt::Revoke(_)
-                    | tidb_ast::AdminStmt::RevokeRole(_)
-                    | tidb_ast::AdminStmt::Kill(_)
-                    | tidb_ast::AdminStmt::Flush(_)
-                    | tidb_ast::AdminStmt::FlushPlanCache(_) => true,
-                    tidb_ast::AdminStmt::ServerControl(control) => matches!(
-                        &**control,
-                        tidb_ast::ServerControlStmt::Shutdown
-                            | tidb_ast::ServerControlStmt::Restart
-                    ),
-                    tidb_ast::AdminStmt::AdminCheck(check) => match check.as_ref() {
-                        tidb_ast::AdminCheckStmt::Table { .. } => true,
-                        tidb_ast::AdminCheckStmt::Index { handle_ranges, .. } => {
-                            handle_ranges.is_empty()
-                        }
-                    },
-                    tidb_ast::AdminStmt::Reload(_) => true,
-                    tidb_ast::AdminStmt::BindingControl(
-                        tidb_ast::AdminBindingControlKind::Flush,
-                    ) => true,
-                    tidb_ast::AdminStmt::CreateWorkloadSnapshot => true,
-                    _ => false,
-                } =>
-            {
-                StmtKind::Write
-            }
+            // An `Admin` statement answers with an OK packet exactly when the
+            // plan Go builds for it has an empty schema; see
+            // `admin_plan_has_result_schema`.
+            Stmt::Admin(admin) if !admin_plan_has_result_schema(admin) => StmtKind::Write,
             // `SHOW`/`DESCRIBE`/`EXPLAIN` all answer with a result set.
             Stmt::Query(_) | Stmt::Admin(_) => StmtKind::Query,
             // Go `NonTransactionalDMLExec` answers a `BATCH ...` with a result
