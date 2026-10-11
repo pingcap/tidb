@@ -96,19 +96,6 @@ struct BuildState {
     table_task_source: Option<(i32, Box<dyn Executor>)>,
     /// Reader subplans use coprocessor expression semantics.
     in_reader: bool,
-    /// Scoped statement-local adaptive LIMIT controller, keyed to the one
-    /// physical ordered lookup reader Go attaches it to.
-    adaptive_limit_reader: Option<(
-        usize,
-        Arc<crate::adaptive_limit::AdaptiveLimitController>,
-        Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
-    )>,
-    /// The same controller attached to an eligible ordered index join.
-    adaptive_limit_join: Option<(
-        usize,
-        Arc<crate::adaptive_limit::AdaptiveLimitController>,
-        Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
-    )>,
     /// Whether a `PhysicalProjection` may run Go's projection workers. Go
     /// keeps every projection serial inside INSERT/UPDATE/DELETE (its
     /// `inUpdateStmt`/`inDeleteStmt`/`inInsertStmt` builder flags, because
@@ -126,7 +113,6 @@ pub(crate) type PhysicalRuntimeStats = HashMap<usize, PhysicalRuntimeCounter>;
 pub(crate) struct PhysicalRuntimeCounter {
     rows: crate::executor::RowCount,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
-    adaptive: Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
     apply: Option<crate::apply::native::ApplyRuntimeSink>,
 }
 
@@ -136,7 +122,6 @@ impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
             rows,
             calls: None,
             apply: None,
-            adaptive: None,
         }
     }
 }
@@ -182,34 +167,6 @@ impl PhysicalRuntimeCounter {
                 details.push(format!("{concurrency}, cache:OFF"));
             }
         }
-        if let Some(runtime_snapshot) = self
-            .adaptive
-            .as_ref()
-            .and_then(|snapshot| *snapshot.lock().unwrap())
-        {
-            use crate::adaptive_limit::AdaptiveLimitRuntimeKind::{DirectLookup, IndexJoin};
-            let snapshot = runtime_snapshot.snapshot;
-            details.push(match runtime_snapshot.kind {
-                DirectLookup => format!(
-                    "adaptive:{{lookup:{}/{}, outstanding:{}, blocked:{}}}",
-                    snapshot.lookup_handles,
-                    snapshot.lookup_rows,
-                    snapshot.lookup_outstanding_at_stop,
-                    format(snapshot.lookup_admission_blocked),
-                ),
-                IndexJoin => format!(
-                    "adaptive:{{outer:{}/{}, lookup:{}/{}, outstanding:{}/{}, blocked:outer={},lookup={}}}",
-                    snapshot.outer_fetched,
-                    snapshot.outer_consumed,
-                    snapshot.lookup_handles,
-                    snapshot.lookup_rows,
-                    snapshot.outer_outstanding_at_stop,
-                    snapshot.lookup_outstanding_at_stop,
-                    format(snapshot.outer_admission_blocked),
-                    format(snapshot.lookup_admission_blocked),
-                ),
-            });
-        }
         (!details.is_empty()).then(|| details.join(", "))
     }
 }
@@ -243,27 +200,6 @@ impl BuildState {
                 .apply
                 .get_or_insert_with(|| Arc::new(Mutex::new(None))),
         ))
-    }
-
-    fn adaptive_runtime_sink(
-        &mut self,
-        plan_key: usize,
-    ) -> Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink> {
-        let counters = self.runtime_counters.as_mut()?;
-        let counter = counters
-            .entry(plan_key)
-            .or_insert_with(|| PhysicalRuntimeCounter {
-                rows: crate::executor::RowCount::default(),
-                calls: None,
-                apply: None,
-                adaptive: None,
-            });
-        let sink = counter
-            .adaptive
-            .get_or_insert_with(|| Arc::new(Mutex::new(None)));
-        // One physical plan has at most one adaptive controller. Its kind is
-        // written with the final snapshot by the executor that owns Close.
-        Some(Arc::clone(sink))
     }
 
     fn meter(
@@ -308,7 +244,6 @@ impl BuildState {
                     rows: crate::executor::RowCount::default(),
                     calls: None,
                     apply: None,
-                    adaptive: None,
                 });
         let counter = stats.rows.clone();
         let calls = Arc::clone(
@@ -1765,146 +1700,6 @@ fn embedded_table_scan(plan: &PhysicalPlan) -> Option<&PhysicalTableScan> {
     }
 }
 
-fn adaptive_limit_lookup_candidate(plan: &PhysicalPlan) -> Option<&PhysicalPlan> {
-    let mut candidate = plan;
-    loop {
-        match candidate {
-            PhysicalPlan::Projection(_) if candidate.children().len() == 1 => {
-                candidate = &candidate.children()[0];
-            }
-            PhysicalPlan::IndexLookUpReader(_) => return Some(candidate),
-            _ => return None,
-        }
-    }
-}
-
-fn adaptive_limit_index_join_candidate(plan: &PhysicalPlan) -> Option<&PhysicalPlan> {
-    let mut candidate = plan;
-    loop {
-        match candidate {
-            PhysicalPlan::Projection(_) if candidate.children().len() == 1 => {
-                candidate = &candidate.children()[0];
-            }
-            PhysicalPlan::IndexJoin(_) => return Some(candidate),
-            _ => return None,
-        }
-    }
-}
-
-fn adaptive_limit_lookup_config(
-    limit: &tidb_planner::physical::PhysicalLimit,
-    candidate: &PhysicalPlan,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-) -> Option<(usize, crate::adaptive_limit::AdaptiveLimitConfig)> {
-    let PhysicalPlan::IndexLookUpReader(reader) = candidate else {
-        return None;
-    };
-    if !reader.keep_order || reader.pushed_limit.is_some() || reader.index_lookup_push_down {
-        return None;
-    }
-    let scan = embedded_index_scan(reader.index_plan.as_deref()?)?;
-    let table = catalog.physical_kv_table_by_id(scan.table_id)?;
-    // Go also excludes explicit/correlated grouped ranges because their
-    // merge-sort stage can fetch all groups before handle admission begins.
-    // This Rust physical path carries one flat range list and walks it
-    // sequentially; it has no grouped-range metadata or merge-sort source to
-    // admit. When that planner/executor shape is added, carry its eligibility
-    // metadata here and apply Go's grouped-range veto before attaching.
-    if table.partition().is_some() {
-        return None;
-    }
-
-    let demand_rows = limit.offset.saturating_add(limit.count);
-    let lookup_size = ctx.index_lookup_size();
-    let initial_window = adaptive_limit_initial_window(demand_rows, lookup_size);
-    let (_, max_chunk_size) = ctx.executor_chunk_sizes();
-    let initial_batch_size = if reader.paging {
-        initial_window
-    } else {
-        initial_window
-            .max(max_chunk_size as u64)
-            .min(lookup_size as u64)
-    };
-    Some((
-        runtime_plan_key(candidate),
-        crate::adaptive_limit::AdaptiveLimitConfig {
-            demand_rows,
-            initial_outer_window: 0,
-            max_outer_window: 0,
-            initial_lookup_window: initial_window,
-            max_lookup_window: (lookup_size as u64)
-                .saturating_mul(ctx.index_lookup_concurrency() as u64),
-            initial_lookup_batch_size: initial_batch_size,
-            max_lookup_batch_size: lookup_size as u64,
-        },
-    ))
-}
-
-fn adaptive_limit_controller_for_lookup(
-    limit: &tidb_planner::physical::PhysicalLimit,
-    child: &PhysicalPlan,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-) -> Option<(usize, Arc<crate::adaptive_limit::AdaptiveLimitController>)> {
-    if !ctx.enable_adaptive_limit_scan() || ctx.index_lookup_concurrency() <= 1 {
-        return None;
-    }
-    let candidate = adaptive_limit_lookup_candidate(child)?;
-    let (reader_key, config) = adaptive_limit_lookup_config(limit, candidate, catalog, ctx)?;
-    Some((
-        reader_key,
-        crate::adaptive_limit::AdaptiveLimitController::for_direct_lookup(config),
-    ))
-}
-
-fn adaptive_limit_controller_for_index_join(
-    limit: &tidb_planner::physical::PhysicalLimit,
-    child: &PhysicalPlan,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-) -> Option<(
-    usize,
-    usize,
-    Arc<crate::adaptive_limit::AdaptiveLimitController>,
-)> {
-    if !ctx.enable_adaptive_limit_scan() || ctx.index_lookup_concurrency() <= 1 {
-        return None;
-    }
-    let join_plan = adaptive_limit_index_join_candidate(child)?;
-    let PhysicalPlan::IndexJoin(join) = join_plan else {
-        unreachable!("adaptive index-join candidate is an index join")
-    };
-    let outer_idx = 1usize.checked_sub(join.inner_child_idx)?;
-    if !join
-        .base
-        .child_req_prop(outer_idx)
-        .is_some_and(|property| property.need_keep_order())
-    {
-        return None;
-    }
-    let outer_plan = join_plan.children().get(outer_idx)?;
-    let reader_plan = adaptive_limit_lookup_candidate(outer_plan)?;
-    let (reader_key, mut config) = adaptive_limit_lookup_config(limit, reader_plan, catalog, ctx)?;
-    let batch_size = ctx.index_join_batch_size();
-    config.initial_outer_window = adaptive_limit_initial_window(config.demand_rows, batch_size);
-    config.max_outer_window =
-        (batch_size as u64).saturating_mul(ctx.index_lookup_join_concurrency() as u64);
-    Some((
-        runtime_plan_key(join_plan),
-        reader_key,
-        crate::adaptive_limit::AdaptiveLimitController::for_index_join(config),
-    ))
-}
-
-fn adaptive_limit_initial_window(demand_rows: u64, ceiling: usize) -> u64 {
-    if demand_rows == 0 || ceiling <= 1 {
-        1
-    } else {
-        demand_rows.min(ceiling as u64)
-    }
-}
-
 /// Go pushes a `Limit offset:o, count:c | cop[tikv]` under the index reader's
 /// `IndexPlan`, so the coprocessor index scan itself stops after `o + c`
 /// entries. The local byte-level cursor has no region request to carry it, so
@@ -2134,8 +1929,6 @@ fn build_index_reader(
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
     net_bytes: Option<f64>,
-    adaptive_limit: Option<Arc<crate::adaptive_limit::AdaptiveLimitController>>,
-    adaptive_runtime: Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -2245,12 +2038,6 @@ fn build_index_reader(
     source.read_table_columns(keep);
     source.set_lookup_concurrency(ctx.index_lookup_concurrency());
     source.set_lookup_size(ctx.index_lookup_size());
-    if let Some(controller) = adaptive_limit {
-        source.set_adaptive_limit_controller(controller);
-    }
-    if let Some(sink) = adaptive_runtime {
-        source.set_adaptive_limit_runtime_sink(sink);
-    }
     if lookup_pushdown {
         source.enable_lookup_pushdown();
     }
@@ -3324,14 +3111,6 @@ fn build_index_join(
     executor.set_index_lookup_concurrency(ctx.index_lookup_join_concurrency());
     executor.set_index_join_batch_size(ctx.index_join_batch_size());
     executor.set_vectorized_expression(ctx.enable_vectorized_expression());
-    if let Some((target, controller, sink)) = &state.adaptive_limit_join {
-        if *target == runtime_plan_key(plan) {
-            executor.set_adaptive_limit_controller(Arc::clone(controller));
-            if let Some(sink) = sink {
-                executor.set_adaptive_limit_runtime_sink(Arc::clone(sink));
-            }
-        }
-    }
     if join.kind == tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin {
         executor.set_index_hash_join(join.keep_outer_order);
     }
@@ -5264,8 +5043,6 @@ fn build_with_state(
             false,
             state.index_scan_limit.take(),
             state.reader_net_bytes,
-            None,
-            None,
             catalog,
             ctx,
         ),
@@ -5329,16 +5106,6 @@ fn build_with_state(
                 reader.index_lookup_push_down,
                 None,
                 None,
-                state
-                    .adaptive_limit_reader
-                    .as_ref()
-                    .filter(|(target, _, _)| *target == runtime_plan_key(plan))
-                    .map(|(_, controller, _)| Arc::clone(controller)),
-                state
-                    .adaptive_limit_reader
-                    .as_ref()
-                    .filter(|(target, _, _)| *target == runtime_plan_key(plan))
-                    .and_then(|(_, _, sink)| sink.as_ref().map(Arc::clone)),
                 catalog,
                 ctx,
             )?;
@@ -5561,30 +5328,7 @@ fn build_with_state(
         }
         PhysicalPlan::Limit(limit) => {
             let child_plan = only_child(plan)?;
-            let adaptive_join =
-                adaptive_limit_controller_for_index_join(limit, child_plan, catalog, ctx);
-            let adaptive = if let Some((_, reader_key, controller)) = &adaptive_join {
-                Some((*reader_key, Arc::clone(controller), None))
-            } else {
-                adaptive_limit_controller_for_lookup(limit, child_plan, catalog, ctx).map(
-                    |(reader_key, controller)| {
-                        let sink = state.adaptive_runtime_sink(reader_key);
-                        (reader_key, controller, sink)
-                    },
-                )
-            };
-            let adaptive_join = adaptive_join.map(|(join_key, _, controller)| {
-                let sink = state.adaptive_runtime_sink(join_key);
-                (join_key, controller, sink)
-            });
-            let previous_adaptive = state.adaptive_limit_reader.clone();
-            let previous_adaptive_join = state.adaptive_limit_join.clone();
-            state.adaptive_limit_reader = adaptive.clone();
-            state.adaptive_limit_join = adaptive_join.clone();
-            let built_child = build_with_state(child_plan, catalog, ctx, state);
-            state.adaptive_limit_reader = previous_adaptive;
-            state.adaptive_limit_join = previous_adaptive_join;
-            let mut child = built_child?;
+            let mut child = build_with_state(child_plan, catalog, ctx, state)?;
             // Go puts a cop-side Limit below the reader's scan; the local
             // LimitExec still applies the offset. A refused cap leaves that
             // executor as the sole authority, which is always correct, only
@@ -5597,7 +5341,7 @@ fn build_with_state(
             let schema = unary_schema(plan, child.as_ref());
             let max_chunk_size = ctx.executor_chunk_sizes().1;
             let init_cap = limit.count.min(max_chunk_size as u64) as usize;
-            let mut executor = LimitExec::new(
+            let executor = LimitExec::new(
                 ExecutorMeta::new(
                     schema,
                     i64::from(plan.base().base.id()),
@@ -5608,9 +5352,6 @@ fn build_with_state(
                 limit.count,
                 child,
             );
-            if let Some((_, controller, _)) = adaptive {
-                executor.set_adaptive_limit_controller(controller);
-            }
             Ok(Box::new(executor) as Box<dyn Executor>)
         }
         PhysicalPlan::Sort(sort) => {
@@ -6453,60 +6194,6 @@ mod tests {
         assert!(close_calls.lock().unwrap().close >= Duration::from_millis(1));
     }
 
-    #[test]
-    fn adaptive_runtime_stats_match_go_compact_snapshot_format() {
-        let direct = PhysicalRuntimeCounter {
-            rows: crate::executor::RowCount::default(),
-            calls: None,
-            apply: None,
-            adaptive: Some(Arc::new(Mutex::new(Some(
-                crate::adaptive_limit::AdaptiveLimitRuntimeSnapshot {
-                    kind: crate::adaptive_limit::AdaptiveLimitRuntimeKind::DirectLookup,
-                    snapshot: crate::adaptive_limit::AdaptiveLimitSnapshot {
-                        lookup_handles: 7,
-                        lookup_rows: 4,
-                        lookup_outstanding_at_stop: 2,
-                        ..Default::default()
-                    },
-                },
-            )))),
-        };
-        let zero = tidb_model::go_duration::format_explain_duration(0);
-        assert_eq!(
-            direct.execution_info().as_deref(),
-            Some(format!("adaptive:{{lookup:7/4, outstanding:2, blocked:{zero}}}").as_str())
-        );
-
-        let join = PhysicalRuntimeCounter {
-            rows: crate::executor::RowCount::default(),
-            calls: None,
-            apply: None,
-            adaptive: Some(Arc::new(Mutex::new(Some(
-                crate::adaptive_limit::AdaptiveLimitRuntimeSnapshot {
-                    kind: crate::adaptive_limit::AdaptiveLimitRuntimeKind::IndexJoin,
-                    snapshot: crate::adaptive_limit::AdaptiveLimitSnapshot {
-                        outer_fetched: 9,
-                        outer_consumed: 6,
-                        lookup_handles: 12,
-                        lookup_rows: 5,
-                        outer_outstanding_at_stop: 3,
-                        lookup_outstanding_at_stop: 7,
-                        ..Default::default()
-                    },
-                },
-            )))),
-        };
-        assert_eq!(
-            join.execution_info().as_deref(),
-            Some(
-                format!(
-                    "adaptive:{{outer:9/6, lookup:12/5, outstanding:3/7, blocked:outer={zero},lookup={zero}}}"
-                )
-                .as_str()
-            )
-        );
-    }
-
     fn int_handles(values: &[i64]) -> Vec<TableHandle> {
         values.iter().copied().map(TableHandle::Int).collect()
     }
@@ -6516,218 +6203,6 @@ mod tests {
             .iter()
             .map(|handle| handle.int_value().expect("int handle"))
             .collect()
-    }
-
-    #[test]
-    fn adaptive_limit_direct_lookup_targets_only_keep_order_reader_under_projections() {
-        let table_id = 610;
-        let mut catalog = Catalog::default();
-        catalog.register_kv(
-            "adaptive_limit",
-            crate::KvTable::new(table_id, vec![long_column("id", 1)]),
-        );
-        let scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
-            table_id,
-            ..PhysicalIndexScan::default()
-        });
-        let mut reader_base = BasePhysicalPlan::with_id(1, "IndexLookUpReader", 0);
-        reader_base.set_children(vec![scan.clone()]);
-        let reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
-            base: reader_base,
-            index_plan: Some(Box::new(scan)),
-            keep_order: true,
-            ..PhysicalIndexLookUpReader::default()
-        });
-        let mut projection_base = BasePhysicalPlan::with_id(2, "Projection", 0);
-        projection_base.set_children(vec![reader]);
-        let child = PhysicalPlan::Projection(PhysicalProjection {
-            base: projection_base,
-            ..PhysicalProjection::default()
-        });
-        let limit = tidb_planner::physical::PhysicalLimit {
-            offset: 2,
-            count: 3,
-            ..Default::default()
-        };
-        let mut cost_env = tidb_planner::find_best_task::coster::CostEnv::default();
-        cost_env.session.index_lookup_concurrency = 3.0;
-        cost_env.session.index_lookup_size = 12.0;
-        let ctx = crate::StmtContext::for_query()
-            .with_enable_adaptive_limit_scan(true)
-            .with_optimizer_cost_env(cost_env);
-
-        let (target, controller) =
-            adaptive_limit_controller_for_lookup(&limit, &child, &catalog, &ctx)
-                .expect("eligible ordered lookup receives adaptive admission");
-        let candidate = adaptive_limit_lookup_candidate(&child).expect("projection wraps reader");
-        assert_eq!(target, runtime_plan_key(candidate));
-        let initial = controller.snapshot();
-        assert_eq!(initial.demand_rows, 5);
-        assert_eq!(initial.lookup_window, 5);
-        assert_eq!(initial.lookup_batch_size, 12);
-
-        let disabled = crate::StmtContext::for_query();
-        assert!(
-            adaptive_limit_controller_for_lookup(&limit, &child, &catalog, &disabled).is_none()
-        );
-    }
-
-    #[test]
-    fn adaptive_limit_direct_lookup_allows_a_flat_multi_range_scan() {
-        let table_id = 612;
-        let mut catalog = Catalog::default();
-        catalog.register_kv(
-            "adaptive_limit_multi_range",
-            crate::KvTable::new(table_id, vec![long_column("id", 1)]),
-        );
-        let point_range = |value| tidb_planner::ranger::types::Range {
-            low_val: vec![Datum::Int(value)],
-            high_val: vec![Datum::Int(value)],
-            collators: vec![tidb_datatype::Collation::DEFAULT],
-            ..Default::default()
-        };
-        let scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
-            table_id,
-            ranges: vec![point_range(2), point_range(4)],
-            ..PhysicalIndexScan::default()
-        });
-        let mut reader_base = BasePhysicalPlan::with_id(21, "IndexLookUpReader", 0);
-        reader_base.set_children(vec![scan.clone()]);
-        let reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
-            base: reader_base,
-            index_plan: Some(Box::new(scan)),
-            keep_order: true,
-            ..PhysicalIndexLookUpReader::default()
-        });
-        let limit = tidb_planner::physical::PhysicalLimit {
-            count: 2,
-            ..Default::default()
-        };
-        let mut cost_env = tidb_planner::find_best_task::coster::CostEnv::default();
-        cost_env.session.index_lookup_concurrency = 2.0;
-        let ctx = crate::StmtContext::for_query()
-            .with_enable_adaptive_limit_scan(true)
-            .with_optimizer_cost_env(cost_env);
-
-        assert!(adaptive_limit_controller_for_lookup(&limit, &reader, &catalog, &ctx).is_some());
-    }
-
-    #[test]
-    fn adaptive_limit_index_join_requires_keep_order_and_shares_the_outer_reader() {
-        use tidb_planner::physical::{PhysicalIndexJoin, PhysicalTableDual};
-        use tidb_planner::physical_property::{PhysicalProperty, TaskType};
-
-        let table_id = 611;
-        let mut catalog = Catalog::default();
-        catalog.register_kv(
-            "adaptive_limit_join",
-            crate::KvTable::new(table_id, vec![long_column("id", 1)]),
-        );
-        let scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
-            table_id,
-            ..PhysicalIndexScan::default()
-        });
-        let mut reader_base = BasePhysicalPlan::with_id(11, "IndexLookUpReader", 0);
-        reader_base.set_children(vec![scan.clone()]);
-        let reader = PhysicalPlan::IndexLookUpReader(PhysicalIndexLookUpReader {
-            base: reader_base,
-            index_plan: Some(Box::new(scan)),
-            keep_order: true,
-            ..PhysicalIndexLookUpReader::default()
-        });
-        let mut outer_projection_base = BasePhysicalPlan::with_id(12, "Projection", 0);
-        outer_projection_base.set_children(vec![reader]);
-        let outer = PhysicalPlan::Projection(PhysicalProjection {
-            base: outer_projection_base,
-            ..PhysicalProjection::default()
-        });
-        let mut join_base = BasePhysicalPlan::with_id(13, "IndexJoin", 0);
-        join_base.set_children(vec![
-            outer,
-            PhysicalPlan::TableDual(PhysicalTableDual::default()),
-        ]);
-        join_base.set_children_req_props(vec![
-            Some(PhysicalProperty::new(
-                TaskType::Root,
-                &[1],
-                false,
-                f64::MAX,
-                false,
-            )),
-            Some(PhysicalProperty::default()),
-        ]);
-        let join = PhysicalPlan::IndexJoin(PhysicalIndexJoin {
-            base: join_base,
-            inner_child_idx: 1,
-            ..PhysicalIndexJoin::default()
-        });
-        let mut root_projection_base = BasePhysicalPlan::with_id(14, "Projection", 0);
-        root_projection_base.set_children(vec![join]);
-        let child = PhysicalPlan::Projection(PhysicalProjection {
-            base: root_projection_base,
-            ..PhysicalProjection::default()
-        });
-        let limit = tidb_planner::physical::PhysicalLimit {
-            offset: 2,
-            count: 3,
-            ..Default::default()
-        };
-        let mut cost_env = tidb_planner::find_best_task::coster::CostEnv::default();
-        cost_env.session.index_lookup_concurrency = 3.0;
-        cost_env.session.index_lookup_join_concurrency = 2.0;
-        cost_env.session.index_lookup_size = 12.0;
-        cost_env.session.index_join_batch_size = 17.0;
-        let ctx = crate::StmtContext::for_query()
-            .with_enable_adaptive_limit_scan(true)
-            .with_optimizer_cost_env(cost_env.clone());
-
-        let (join_key, reader_key, controller) =
-            adaptive_limit_controller_for_index_join(&limit, &child, &catalog, &ctx)
-                .expect("ordered index join with an ordered lookup outer gets one controller");
-        let join_plan = adaptive_limit_index_join_candidate(&child).expect("projected join");
-        let outer_reader = adaptive_limit_lookup_candidate(&join_plan.children()[0])
-            .expect("projected outer reader");
-        assert_eq!(join_key, runtime_plan_key(join_plan));
-        assert_eq!(reader_key, runtime_plan_key(outer_reader));
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.demand_rows, 5);
-        assert_eq!(snapshot.outer_window, 5);
-        assert_eq!(snapshot.lookup_window, 5);
-        assert_eq!(snapshot.lookup_batch_size, 12);
-        for expected in [5, 10, 17, 17] {
-            let reserved = controller
-                .try_reserve_outer(17)
-                .expect("outer window admits the next bounded batch");
-            assert_eq!(reserved, expected);
-            controller.commit_outer(reserved, reserved);
-            controller.observe_join_progress(reserved, 0);
-        }
-        assert_eq!(controller.snapshot().outer_window, 34);
-
-        let mut unordered_join = match &child {
-            PhysicalPlan::Projection(projection) => projection.base.children()[0].clone(),
-            _ => unreachable!(),
-        };
-        if let PhysicalPlan::IndexJoin(join) = &mut unordered_join {
-            join.base.set_children_req_props(vec![
-                Some(PhysicalProperty::default()),
-                Some(PhysicalProperty::default()),
-            ]);
-        }
-        let mut unordered_root_base = BasePhysicalPlan::with_id(15, "Projection", 0);
-        unordered_root_base.set_children(vec![unordered_join]);
-        let unordered_child = PhysicalPlan::Projection(PhysicalProjection {
-            base: unordered_root_base,
-            ..PhysicalProjection::default()
-        });
-        let disabled = crate::StmtContext::for_query().with_optimizer_cost_env(cost_env);
-        assert!(
-            adaptive_limit_controller_for_index_join(&limit, &unordered_child, &catalog, &ctx)
-                .is_none()
-        );
-        assert!(
-            adaptive_limit_controller_for_index_join(&limit, &child, &catalog, &disabled).is_none()
-        );
     }
 
     #[test]

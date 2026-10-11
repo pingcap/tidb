@@ -847,8 +847,6 @@ pub struct StmtContextData {
     /// Go `SessionVars.LimitPushDownThreshold`
     /// (`@@tidb_opt_limit_push_down_threshold`, default `5000`).
     limit_push_down_threshold: u64,
-    /// Go `SessionVars.EnableAdaptiveLimitScan` (`@@tidb_enable_adaptive_limit_scan`).
-    enable_adaptive_limit_scan: bool,
     /// The statement snapshot of Go `SessionVars.OptimizerFixControl`.
     ///
     /// Keeping the parsed map on the context makes planner decisions consume
@@ -1536,13 +1534,6 @@ context_configuration! {
     #[must_use]
     pub fn with_limit_push_down_threshold(mut self, threshold: u64) -> Self {
         self.limit_push_down_threshold = threshold;
-        self
-    }
-
-    /// Sets `@@tidb_enable_adaptive_limit_scan` for this statement.
-    #[must_use]
-    pub fn with_enable_adaptive_limit_scan(mut self, enabled: bool) -> Self {
-        self.enable_adaptive_limit_scan = enabled;
         self
     }
 
@@ -2269,7 +2260,6 @@ impl StmtContext {
             enable_null_aware_anti_join: true,
             limit_push_down_threshold: tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD
                 as u64,
-            enable_adaptive_limit_scan: tidb_vardef::defaults::DEF_TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
             index_lookup_push_down_session:
                 tidb_planner::access_path::IndexLookupPushDownSession::default(),
@@ -3270,12 +3260,6 @@ impl StmtContext {
     #[must_use]
     pub fn limit_push_down_threshold(&self) -> u64 {
         self.limit_push_down_threshold
-    }
-
-    /// Go `SessionVars.EnableAdaptiveLimitScan`.
-    #[must_use]
-    pub fn enable_adaptive_limit_scan(&self) -> bool {
-        self.enable_adaptive_limit_scan
     }
 
     /// The statement's parsed optimizer-fix controls.

@@ -35,7 +35,7 @@
 //! (see `Session::warn_truncated_var`).
 //!
 //! NOT MODELLED (documented): the per-variable `Validation` closures other
-//! than those [`SysVarDef::run_validation`] names, and the `SetSession` and
+//! than those [`SysVarDef::run_validation_with_lookup`] names, and the `SetSession` and
 //! `GetSession` closures Go attaches to many entries (charset name checks,
 //! isolation-level checks, autocommit's implicit commit, and every variable
 //! whose read is computed rather than stored); instance-specific mutation
@@ -889,7 +889,6 @@ const ALLOW_EMPTY_VARS: &[&str] = &[
     "tidb_stmt_summary_refresh_interval",
     "tidb_stmt_summary_persist_evicted",
     "tidb_stmt_summary_group_by_user",
-    "tidb_exp_embed_openai_api_base",
 ];
 
 /// Go `SysVar.AllowEmptyAll`: the empty string is accepted in every scope.
@@ -1205,14 +1204,6 @@ impl SysVarDef {
     /// normalized and the original text, and `timestamp`'s closure reads the
     /// original -- so a value the type check would silently clamp is still
     /// rejected.
-    fn run_validation(
-        &self,
-        validated: Validated,
-        original: &str,
-    ) -> Result<Validated, ValidationError> {
-        self.run_validation_with_lookup(validated, original, None)
-    }
-
     fn run_validation_with_lookup(
         &self,
         validated: Validated,
@@ -1332,16 +1323,6 @@ impl SysVarDef {
                     truncated: validated.truncated,
                 });
             }
-            return Err(ValidationError::WrongValue);
-        }
-        // Go's `tidb_enable_shared_lock_upgrade` gate is unavailable on the
-        // classic kernel. Its Validation closure sees the normalized ON
-        // value (including a typed `1`) and refuses it with
-        // ErrWrongValueForVar; OFF remains the ordinary boolean default.
-        if self.name == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE
-            && !tidb_config::kerneltype::is_next_gen()
-            && validated.value == "ON"
-        {
             return Err(ValidationError::WrongValue);
         }
         // Go's `tidb_foreign_key_check_in_shared_lock` Validation allows ON
@@ -1704,21 +1685,6 @@ impl SysVarDef {
                 "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze"
                 .to_owned(),
             ));
-        }
-        if self.name == tidb_vardef::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_BASE {
-            let value = crate::embedding::normalize_openai_embedding_api_base(original)
-                .map_err(ValidationError::Refused)?;
-            return Ok(Validated {
-                value,
-                truncated: validated.truncated,
-            });
-        }
-        if self.name == tidb_vardef::tidb_vars::TIDB_TXN_FILE_MIN_MUTATION_SIZE {
-            let value = original.parse::<u64>().unwrap_or_default();
-            const MIN_MUTATION_SIZE: u64 = 1 << 20;
-            if value > 0 && value < MIN_MUTATION_SIZE {
-                return Err(ValidationError::WrongValue);
-            }
         }
         if self.name == "tidb_workload_repository_dest" {
             return tidb_workloadrepo::validate_dest(&validated.value)
@@ -3376,13 +3342,6 @@ mod tests {
         assert_eq!(duration.validate("1hr"), Err(ValidationError::WrongType));
         assert_eq!(duration.validate("1ms").unwrap().value, "1s");
         assert_eq!(duration.validate("2h10m").unwrap().value, "1h0m0s");
-
-        let retention = get_sys_var("tidb_plan_replayer_file_retention_time").unwrap();
-        assert_eq!(
-            retention.validate("8761h").unwrap().value,
-            "8760h0m0s",
-            "Go caps plan-replayer retention at one year"
-        );
     }
 
     /// Go `TestValidate`'s fallback-engine matrix: only TiFlash is accepted,

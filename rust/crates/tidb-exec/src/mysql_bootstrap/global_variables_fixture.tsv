@@ -354,6 +354,7 @@ tidb_analyze_default_num_topn	100
 tidb_analyze_distsql_scan_concurrency	4
 tidb_analyze_partition_concurrency	2
 tidb_analyze_skip_column_types	json,blob,mediumblob,longblob,mediumtext,longtext
+tidb_analyze_store_batch_size	4
 tidb_analyze_version	2
 tidb_auto_analyze_concurrency	3
 tidb_auto_analyze_end_time	23:59 +0000
@@ -371,6 +372,7 @@ tidb_build_stats_concurrency	2
 tidb_capture_plan_baselines	OFF
 tidb_cb_pd_metadata_error_rate_threshold_ratio	0
 tidb_cloud_storage_uri	
+tidb_columnar_storage_enabled	ON
 tidb_committer_concurrency	128
 tidb_constraint_check_in_place	OFF
 tidb_cost_model_version	2
@@ -386,7 +388,6 @@ tidb_disable_txn_auto_retry	ON
 tidb_distsql_scan_concurrency	15
 tidb_dml_batch_size	0
 tidb_enable_1pc	OFF
-tidb_enable_adaptive_limit_scan	ON
 tidb_enable_analyze_snapshot	OFF
 tidb_enable_async_commit	OFF
 tidb_enable_async_merge_global_stats	ON
@@ -401,6 +402,7 @@ tidb_enable_cascades_planner	OFF
 tidb_enable_check_constraint	OFF
 tidb_enable_clustered_index	ON
 tidb_enable_column_tracking	ON
+tidb_enable_connection_event_log	OFF
 tidb_enable_dist_task	ON
 tidb_enable_exchange_partition	ON
 tidb_enable_extended_stats	OFF
@@ -450,7 +452,6 @@ tidb_enable_resource_control	ON
 tidb_enable_reuse_chunk	ON
 tidb_enable_row_level_checksum	OFF
 tidb_enable_shared_lock_promotion	OFF
-tidb_enable_shared_lock_upgrade	OFF
 tidb_enable_stmt_summary	ON
 tidb_enable_strict_double_type_check	ON
 tidb_enable_strict_not_null_check	ON
@@ -621,6 +622,7 @@ tidb_prefer_broadcast_join_by_exchange_data_size	OFF
 tidb_prepared_plan_cache_memory_guard_ratio	0.1
 tidb_prepared_plan_cache_size	100
 tidb_projection_concurrency	-1
+tidb_query_cop_store_limit	15
 tidb_query_log_max_len	4096
 tidb_rc_write_check_ts	OFF
 tidb_redact_log	OFF
@@ -689,6 +691,10 @@ tidb_txn_entry_size_limit	0
 tidb_txn_mode	pessimistic
 tidb_use_plan_baselines	ON
 tidb_window_concurrency	-1
+tidb_workload_repository_active_sampling_interval	5
+tidb_workload_repository_dest	
+tidb_workload_repository_retention_days	7
+tidb_workload_repository_snapshot_interval	3600
 tiflash_compute_dispatch_policy	consistent_hash
 tiflash_fastscan	OFF
 tiflash_fine_grained_shuffle_batch_size	8192

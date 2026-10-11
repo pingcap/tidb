@@ -59,7 +59,6 @@ pub mod tagged_ptr;
 
 pub mod access_cost;
 pub mod access_path;
-pub(crate) mod adaptive_limit;
 pub mod admin_check;
 pub mod worker_pool;
 

@@ -25,7 +25,6 @@
 //! inline reordered/duplicate child-column projection.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::ColumnSwapHelper;
 use tidb_datatype::FieldType;
@@ -108,8 +107,6 @@ pub struct LimitExec {
     meet_first_batch: bool,
     child: Box<dyn Executor>,
     child_result: Chunk,
-    /// Shared with an eligible ordered index lookup below this LIMIT.
-    adaptive_limit: Option<Arc<crate::adaptive_limit::AdaptiveLimitController>>,
 }
 
 impl LimitExec {
@@ -164,24 +161,6 @@ impl LimitExec {
             meet_first_batch: offset == 0,
             child,
             child_result,
-            adaptive_limit: None,
-        }
-    }
-
-    /// Shares the statement-local admission controller with an eligible
-    /// ordered index lookup in this LIMIT's child tree.
-    pub(crate) fn set_adaptive_limit_controller(
-        &mut self,
-        controller: Arc<crate::adaptive_limit::AdaptiveLimitController>,
-    ) {
-        self.adaptive_limit = Some(controller);
-    }
-
-    fn stop_adaptive_limit_if_satisfied(&self) {
-        if self.cursor >= self.end {
-            if let Some(controller) = &self.adaptive_limit {
-                controller.stop();
-            }
         }
     }
 
@@ -245,9 +224,6 @@ impl LimitExec {
 impl Executor for LimitExec {
     /// Go `Open`/`open`: opens the child and resets the window cursor.
     fn open(&mut self) -> Result<(), ExecError> {
-        if let Some(controller) = &self.adaptive_limit {
-            controller.reset();
-        }
         self.child.open()?;
         self.child_result.reset();
         self.cursor = 0;
@@ -263,7 +239,6 @@ impl Executor for LimitExec {
             return Err(ExecError::internal(INVALID_INLINE_PROJECTION));
         }
         if self.cursor >= self.end {
-            self.stop_adaptive_limit_if_satisfied();
             return Ok(());
         }
         let parent_required_rows = req.required_rows();
@@ -275,9 +250,6 @@ impl Executor for LimitExec {
             self.child.next(&mut self.child_result)?;
             let batch_size = u64::try_from(self.child_result.num_rows()).unwrap_or(u64::MAX);
             if batch_size == 0 {
-                if let Some(controller) = &self.adaptive_limit {
-                    controller.stop();
-                }
                 return Ok(());
             }
             let new_cursor = self.cursor.saturating_add(batch_size);
@@ -294,7 +266,6 @@ impl Executor for LimitExec {
                 let begin = usize::try_from(begin).unwrap_or(usize::MAX);
                 let end = usize::try_from(end).unwrap_or(usize::MAX);
                 self.append_partial_batch(req, begin, end)?;
-                self.stop_adaptive_limit_if_satisfied();
                 return Ok(());
             }
             self.cursor = new_cursor;
@@ -306,9 +277,6 @@ impl Executor for LimitExec {
         self.child.next(&mut self.child_result)?;
         let mut batch_size = u64::try_from(self.child_result.num_rows()).unwrap_or(u64::MAX);
         if batch_size == 0 {
-            if let Some(controller) = &self.adaptive_limit {
-                controller.stop();
-            }
             return Ok(());
         }
         if self.cursor.saturating_add(batch_size) > self.end {
@@ -317,16 +285,11 @@ impl Executor for LimitExec {
             self.child_result.truncate_to(rows);
         }
         self.cursor = self.cursor.saturating_add(batch_size);
-        let result = self.transfer_full_batch(req);
-        self.stop_adaptive_limit_if_satisfied();
-        result
+        self.transfer_full_batch(req)
     }
 
     /// Go `Close` (minus the slow-close logging/tracing, deferred).
     fn close(&mut self) -> Result<(), ExecError> {
-        if let Some(controller) = &self.adaptive_limit {
-            controller.stop();
-        }
         self.child.close()
     }
 

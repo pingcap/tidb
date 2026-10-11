@@ -23,7 +23,7 @@
 
 use super::super::{SysVarDef, VarType};
 
-pub(super) static ENTRIES: [SysVarDef; 132] = [
+pub(super) static ENTRIES: [SysVarDef; 131] = [
     SysVarDef {
         name: "bind_address",
         global_config_name: "",
@@ -190,19 +190,6 @@ pub(super) static ENTRIES: [SysVarDef; 132] = [
         allow_auto_value: false,
         min_value: 1,
         max_value: 2,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "tidb_enable_adaptive_limit_scan",
-        global_config_name: "",
-        scope: 3,
-        value: "OFF",
-        var_type: VarType::Bool,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
     },

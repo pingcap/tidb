@@ -14,9 +14,5 @@
 
 //! Non-default numeric bounds from `pkg/sessionctx/vardef/tidb_vars.go`.
 
-/// Go `MinTiDBTxnFileMinMutationSize` (= `1 << 20`).
-/// Resolved from 1 << 20.
-pub const MIN_TIDB_TXN_FILE_MIN_MUTATION_SIZE: i64 = 1048576;
-
 /// Go `MaxTiDBAnalyzeStoreBatchSize` (= `8`).
 pub const MAX_TIDB_ANALYZE_STORE_BATCH_SIZE: u64 = 8;

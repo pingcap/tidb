@@ -15,7 +15,7 @@
 //! Non-account, non-user-variable SET payloads translated from
 //! `pkg/parser/set_explain_parser.go` and `pkg/parser/ast/misc.go`.
 
-use crate::util::{back_quote, escape_string_literal};
+use crate::util::{back_quote, escape_string_literal, redact_url};
 use crate::Expr;
 
 /// A generic system-variable `SET` statement.
@@ -41,8 +41,8 @@ impl SetStmt {
     }
 
     /// Returns the statement text safe for processlist, logging, and audit
-    /// consumers. System assignments use the same redaction rules as Go's
-    /// `SetStmt.SecureText`, so embedding API-key values never leave the AST.
+    /// consumers: Go's `SetStmt.SecureText`, whose restore redacts the
+    /// credentials in a `tidb_cloud_storage_uri` URL.
     pub fn secure_text(&self) -> String {
         let mut out = String::new();
         self.restore_into(&mut out);
@@ -72,30 +72,23 @@ impl SystemVariableAssignment {
         out.push('.');
         out.push_str(&back_quote(&self.name));
         out.push('=');
-        if is_embedding_api_key_sys_var(&self.name) {
-            // Go's VariableAssignment.Restore writes this as a string literal
-            // rather than routing the secret through the expression formatter.
-            out.push_str("'******'");
-        } else {
-            self.value.restore_into(out);
+        match &self.value {
+            // Go `VariableAssignment.Restore`: the URL is written plain, with
+            // its credentials redacted (`RedactURL`), for `show processlist`.
+            // Go asserts a literal there (any other value panics its
+            // restore); this restores such a value as written.
+            SetVariableValue::Expr(
+                Expr::String(text)
+                | Expr::RawString(text)
+                | Expr::CharsetString { value: text, .. },
+            ) if self.name == TIDB_CLOUD_STORAGE_URI => out.push_str(&redact_url(text)),
+            value => value.restore_into(out),
         }
     }
 }
 
-/// The explicit Go allowlist of system variables carrying embedding API keys.
-/// Keep this list closed: names that merely share a prefix must remain visible.
-fn is_embedding_api_key_sys_var(name: &str) -> bool {
-    [
-        "tidb_exp_embed_jina_ai_api_key",
-        "tidb_exp_embed_openai_api_key",
-        "tidb_exp_embed_cohere_api_key",
-        "tidb_exp_embed_huggingface_api_key",
-        "tidb_exp_embed_nvidia_nim_api_key",
-        "tidb_exp_embed_gemini_api_key",
-    ]
-    .iter()
-    .any(|candidate| name.eq_ignore_ascii_case(candidate))
-}
+/// Go `ast.TiDBCloudStorageURI`.
+const TIDB_CLOUD_STORAGE_URI: &str = "tidb_cloud_storage_uri";
 
 /// System-variable assignment scope accepted by TiDB's generic SET loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

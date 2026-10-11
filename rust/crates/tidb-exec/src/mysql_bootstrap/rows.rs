@@ -139,6 +139,13 @@ pub fn seed(
 /// `HasGlobalScope` filter plus `GlobalSystemVariableInitialValue` override
 /// applied, so this file needs no Scope metadata to reproduce Go's seeded set
 /// byte-for-byte — only to be re-captured if the sysvar registry changes.
+///
+/// Two corrections make it the SERVER's set rather than that test binary's:
+/// the four workload-repository variables are added, because
+/// `cmd/tidb-server` imports `pkg/util/workloadrepo`, whose `init` registers
+/// them (a `pkg/session` test does not import it); and the test-mode
+/// `GlobalSystemVariableInitialValue` arms are left out, so
+/// `tidb_mem_oom_action` is `CANCEL` and `tidb_enable_auto_analyze` is `ON`.
 const GLOBAL_VARIABLES_FIXTURE: &str = include_str!("global_variables_fixture.tsv");
 
 /// Parses [`GLOBAL_VARIABLES_FIXTURE`] into one seed row per global variable.

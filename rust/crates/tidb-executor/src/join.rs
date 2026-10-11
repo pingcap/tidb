@@ -810,19 +810,6 @@ struct IndexLookupState {
     max_batch_size: usize,
 }
 
-struct ReadIndexOuterError {
-    error: ExecError,
-    fetched_rows: usize,
-}
-
-fn index_state_consumed_outer_rows(state: &IndexLookupState) -> usize {
-    state
-        .hash
-        .as_ref()
-        .and_then(IndexHashState::ordered_consumed_outer_rows)
-        .unwrap_or(state.cursor)
-}
-
 struct IndexRowProbe {
     key: Option<Vec<u8>>,
     next_inner: usize,
@@ -1372,10 +1359,6 @@ pub struct JoinExec<C: Columns> {
     index_lookup_concurrency: usize,
     /// Go `SessionVars.IndexJoinBatchSize`, resolved at statement construction.
     index_join_batch_size: usize,
-    /// Statement-local admission feedback installed only for the same
-    /// ordered LIMIT/index-join shape as Go's `AdaptiveLimitController`.
-    adaptive_limit: Option<Arc<crate::adaptive_limit::AdaptiveLimitController>>,
-    adaptive_runtime: Option<crate::adaptive_limit::AdaptiveLimitRuntimeSink>,
     outer_filter: Vec<Expression>,
     filter_is_left: bool,
     /// The complete logical `ON` clause. The nested-loop reference path must
@@ -1559,8 +1542,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             concurrency: 1,
             index_lookup_concurrency: INDEX_LOOKUP_JOIN_CONCURRENCY,
             index_join_batch_size: INDEX_JOIN_BATCH_SIZE,
-            adaptive_limit: None,
-            adaptive_runtime: None,
             outer_filter: Vec::new(),
             filter_is_left: true,
             conditions,
@@ -1644,20 +1625,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// clamp keeps standalone callers from constructing an empty batch loop.
     pub(crate) fn set_index_join_batch_size(&mut self, batch_size: usize) {
         self.index_join_batch_size = batch_size.max(1);
-    }
-
-    pub(crate) fn set_adaptive_limit_controller(
-        &mut self,
-        controller: Arc<crate::adaptive_limit::AdaptiveLimitController>,
-    ) {
-        self.adaptive_limit = Some(controller);
-    }
-
-    pub(crate) fn set_adaptive_limit_runtime_sink(
-        &mut self,
-        sink: crate::adaptive_limit::AdaptiveLimitRuntimeSink,
-    ) {
-        self.adaptive_runtime = Some(sink);
     }
 
     fn left_exec(&self) -> &dyn Executor {
@@ -2201,24 +2168,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             if !self.fill_index_batch(req.required_rows())? {
                 return Ok(());
             }
-            let controller = self.adaptive_limit.clone();
-            let consumed_before = self
-                .index_state
-                .as_ref()
-                .map_or(0, index_state_consumed_outer_rows);
-            let output_before = req.num_rows();
-            let result = self.drain_index_batch(req);
-            if let Some(controller) = controller {
-                let consumed_after = self
-                    .index_state
-                    .as_ref()
-                    .map_or(consumed_before, index_state_consumed_outer_rows);
-                controller.observe_join_progress(
-                    consumed_after.saturating_sub(consumed_before),
-                    req.num_rows().saturating_sub(output_before),
-                );
-            }
-            result?;
+            self.drain_index_batch(req)?;
             if req.is_full() {
                 return Ok(());
             }
@@ -2340,34 +2290,20 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             {
                 return Ok(false);
             }
-            if self
-                .adaptive_limit
-                .as_ref()
-                .is_some_and(|controller| controller.snapshot().stopped)
-                && state.pending.is_empty()
-                && state
-                    .unordered
-                    .as_ref()
-                    .is_none_or(|tasks| tasks.active == 0)
-            {
-                return Ok(false);
-            }
-            self.load_index_batch(required_rows)?;
+            self.load_index_batch()?;
         }
     }
 
     /// Pull the next task after starting a bounded number of later lookups.
     /// Ordinary lookup tasks return prepared rows/maps; hash tasks return a
     /// bounded output stream. Both retain the outer-task queue's ownership.
-    fn load_index_batch(&mut self, parent_required_rows: usize) -> Result<(), ExecError> {
+    fn load_index_batch(&mut self) -> Result<(), ExecError> {
         let outer_is_left = self.outer_is_left();
-        let adaptive_outer_join = matches!(self.kind, JoinKind::Left | JoinKind::Right);
         let JoinExec {
             left,
             right,
             keys,
             index_lookup_concurrency,
-            adaptive_limit,
             tracker,
             memory,
             index_lookup,
@@ -2422,9 +2358,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 shared,
                 lane_pool,
                 *index_lookup_concurrency,
-                parent_required_rows,
-                adaptive_outer_join,
-                adaptive_limit.as_deref(),
             )?;
         }
         let synchronous = |plan: &mut IndexLookupPlan,
@@ -2518,9 +2451,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             shared,
             lane_pool,
             index_lookup_concurrency.saturating_sub(1),
-            parent_required_rows,
-            adaptive_outer_join,
-            adaptive_limit.as_deref(),
         )?;
         match task.source {
             PendingIndexLookupSource::Draining { results } => {
@@ -2592,50 +2522,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         shared: &Arc<IndexTaskShared<C>>,
         lane_pool: &Arc<crate::worker_pool::LanePool>,
         target: usize,
-        parent_required_rows: usize,
-        adaptive_outer_join: bool,
-        adaptive_limit: Option<&crate::adaptive_limit::AdaptiveLimitController>,
     ) -> Result<(), ExecError> {
         let outer_types = outer_child.ret_field_types().to_vec();
         while state.pending.len() + state.unordered.as_ref().map_or(0, |tasks| tasks.active)
             < target
         {
-            let reservation = if let Some(controller) = adaptive_limit {
-                let Some(reserved) = controller.try_reserve_outer(state.max_batch_size) else {
-                    break;
-                };
-                reserved
-            } else {
-                0
-            };
-            let adaptive_row_cap = adaptive_limit.map(|_| {
-                if adaptive_outer_join && parent_required_rows != 0 {
-                    reservation.min(parent_required_rows)
-                } else {
-                    reservation
-                }
-            });
-            let (mut outer, outer_bytes, fetched_rows, skipped_rows) =
-                match Self::read_index_outer_task(
-                    outer_child,
-                    &outer_types,
-                    &plan.outer_not_null,
-                    state,
-                    shared.max_chunk_size,
-                    adaptive_row_cap,
-                ) {
-                    Ok(read) => read,
-                    Err(read_error) => {
-                        if let Some(controller) = adaptive_limit {
-                            controller.commit_outer(reservation, read_error.fetched_rows);
-                        }
-                        return Err(read_error.error);
-                    }
-                };
-            if let Some(controller) = adaptive_limit {
-                controller.commit_outer(reservation, fetched_rows);
-                controller.observe_join_progress(skipped_rows, 0);
-            }
+            let (mut outer, outer_bytes) = Self::read_index_outer_task(
+                outer_child,
+                &outer_types,
+                &plan.outer_not_null,
+                state,
+                shared.max_chunk_size,
+            )?;
             if outer.is_empty() {
                 if state.outer_done {
                     break;
@@ -2697,38 +2595,18 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         outer_not_null: &[usize],
         state: &mut IndexLookupState,
         max_chunk_size: usize,
-        adaptive_row_cap: Option<usize>,
-    ) -> Result<(OuterBatch, i64, usize, usize), ReadIndexOuterError> {
-        let row_cap = adaptive_row_cap.unwrap_or(state.batch_size);
+    ) -> Result<(OuterBatch, i64), ExecError> {
         let mut outer = OuterBatch::new(
             outer_types,
-            row_cap.clamp(1, max_chunk_size.max(1)),
+            state.batch_size.clamp(1, max_chunk_size.max(1)),
             max_chunk_size.max(1),
         );
-        let mut fetched_rows = 0usize;
-        let mut skipped_rows = 0usize;
-        while if adaptive_row_cap.is_some() {
-            fetched_rows < row_cap
-        } else {
-            outer.len() < state.batch_size
-        } {
+        while outer.len() < state.batch_size {
             if state.outer_row >= state.outer_chunk.num_rows() {
                 if state.outer_done {
                     break;
                 }
-                if adaptive_row_cap.is_some() {
-                    let remaining = row_cap.saturating_sub(fetched_rows);
-                    state.outer_chunk.set_required_rows(
-                        isize::try_from(remaining).unwrap_or(isize::MAX),
-                        max_chunk_size.max(1),
-                    );
-                }
-                outer_child
-                    .next(&mut state.outer_chunk)
-                    .map_err(|error| ReadIndexOuterError {
-                        error,
-                        fetched_rows,
-                    })?;
+                outer_child.next(&mut state.outer_chunk)?;
                 state.outer_row = 0;
                 if state.outer_chunk.num_rows() == 0 {
                     state.outer_done = true;
@@ -2737,24 +2615,14 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             }
             let row = state.outer_chunk.get_row(state.outer_row);
             state.outer_row += 1;
-            fetched_rows += 1;
-            let non_null = chunk_row_non_null_at(row, outer_not_null).map_err(|error| {
-                ReadIndexOuterError {
-                    error,
-                    fetched_rows,
-                }
-            })?;
-            if !non_null {
-                skipped_rows += 1;
+            if !chunk_row_non_null_at(row, outer_not_null)? {
                 continue;
             }
             outer.push(row);
         }
-        if adaptive_row_cap.is_none() {
-            state.batch_size = state.batch_size.saturating_mul(2).min(state.max_batch_size);
-        }
+        state.batch_size = state.batch_size.saturating_mul(2).min(state.max_batch_size);
         let bytes = outer.settle_bytes();
-        Ok((outer, bytes, fetched_rows, skipped_rows))
+        Ok((outer, bytes))
     }
 
     /// Emits the loaded batch's outer rows, in the order the child produced
@@ -6187,12 +6055,6 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
                 self.right_exec_mut().close()
             }
         })();
-        if let (Some(controller), Some(sink)) = (&self.adaptive_limit, &self.adaptive_runtime) {
-            *sink.lock().unwrap() = Some(crate::adaptive_limit::AdaptiveLimitRuntimeSnapshot {
-                kind: crate::adaptive_limit::AdaptiveLimitRuntimeKind::IndexJoin,
-                snapshot: controller.snapshot(),
-            });
-        }
         result
     }
 

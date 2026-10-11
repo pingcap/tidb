@@ -32,7 +32,6 @@ mod concurrency;
 mod connections;
 mod ddl_schema;
 mod distsql_storage;
-mod embedding;
 mod gc;
 mod innodb;
 mod logging;
@@ -57,7 +56,6 @@ const SLICES: &[&[SysVarDef]] = &[
     &connections::ENTRIES,
     &ddl_schema::ENTRIES,
     &distsql_storage::ENTRIES,
-    &embedding::ENTRIES,
     &gc::ENTRIES,
     &innodb::ENTRIES,
     &logging::ENTRIES,
@@ -82,7 +80,6 @@ const TOTAL: usize = concurrency::ENTRIES.len()
     + connections::ENTRIES.len()
     + ddl_schema::ENTRIES.len()
     + distsql_storage::ENTRIES.len()
-    + embedding::ENTRIES.len()
     + gc::ENTRIES.len()
     + innodb::ENTRIES.len()
     + logging::ENTRIES.len()
@@ -186,13 +183,5 @@ mod registry_tests {
         assert!(matches!(cop.var_type, VarType::Unsigned));
         assert_eq!(cop.min_value, 0_i64);
         assert_eq!(cop.max_value, 256_u64);
-
-        let adaptive_limit = SYS_VARS
-            .iter()
-            .find(|v| v.name == "tidb_enable_adaptive_limit_scan")
-            .expect("tidb_enable_adaptive_limit_scan in registry");
-        assert_eq!(adaptive_limit.scope, 3_u8);
-        assert_eq!(adaptive_limit.value, "OFF");
-        assert!(matches!(adaptive_limit.var_type, VarType::Bool));
     }
 }

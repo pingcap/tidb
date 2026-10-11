@@ -94,7 +94,6 @@ pub(crate) struct StatementVarSnapshot {
     enable_hash_join: bool,
     enable_null_aware_anti_join: bool,
     limit_push_down_threshold: u64,
-    enable_adaptive_limit_scan: bool,
     index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
     join_reorder_through_proj: bool,
     join_reorder_through_sel: bool,
@@ -969,7 +968,6 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD as u64),
-            enable_adaptive_limit_scan: on(tidb_vardef::tidb_vars::TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN),
             index_lookup_push_down_session,
             join_reorder_through_proj: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ,
@@ -1212,7 +1210,6 @@ impl Session {
         let enable_hash_join = snapshot.enable_hash_join;
         let enable_null_aware_anti_join = snapshot.enable_null_aware_anti_join;
         let limit_push_down_threshold = snapshot.limit_push_down_threshold;
-        let enable_adaptive_limit_scan = snapshot.enable_adaptive_limit_scan;
         let mut index_lookup_push_down_session = snapshot.index_lookup_push_down_session;
         // Transaction state is not part of the variable-table generation
         // that keys `StatementVarSnapshot`, so read it at every statement
@@ -1362,7 +1359,6 @@ impl Session {
                     .with_enable_hash_join(enable_hash_join)
                     .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
                     .with_limit_push_down_threshold(limit_push_down_threshold)
-                    .with_enable_adaptive_limit_scan(enable_adaptive_limit_scan)
                     .with_index_lookup_push_down_session(index_lookup_push_down_session)
                     .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                     .with_optimizer_cost_env(optimizer_cost_env.clone())
@@ -1626,7 +1622,6 @@ impl Session {
                 .with_enable_hash_join(enable_hash_join)
                 .with_enable_null_aware_anti_join(enable_null_aware_anti_join)
                 .with_limit_push_down_threshold(limit_push_down_threshold)
-                .with_enable_adaptive_limit_scan(enable_adaptive_limit_scan)
                 .with_index_lookup_push_down_session(index_lookup_push_down_session)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                 .with_optimizer_cost_env(optimizer_cost_env)
@@ -1788,33 +1783,6 @@ pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parse
 
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn adaptive_limit_scan_uses_the_session_statement_snapshot() {
-        let mut session = Session::new();
-        assert!(
-            !session
-                .statement_context(false)
-                .enable_adaptive_limit_scan()
-        );
-        session
-            .run("SET tidb_enable_adaptive_limit_scan = ON")
-            .unwrap();
-        let query = session.statement_context(false);
-        let dml = session.statement_context(true);
-        assert!(query.enable_adaptive_limit_scan());
-        assert!(dml.enable_adaptive_limit_scan());
-
-        session
-            .run("SET tidb_enable_adaptive_limit_scan = OFF")
-            .unwrap();
-        assert!(
-            !session
-                .statement_context(false)
-                .enable_adaptive_limit_scan()
-        );
-        assert!(query.enable_adaptive_limit_scan());
-    }
 
     #[test]
     fn index_usage_collector_tracks_execution_info_switch_per_statement() {

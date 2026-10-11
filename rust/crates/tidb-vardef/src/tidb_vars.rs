@@ -571,9 +571,6 @@ pub const TIDB_PAGING_SIZE_BYTES: &str = "tidb_paging_size_bytes";
 /// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 /// Go `TiDBEnableCascadesPlanner`.
 pub const TIDB_ENABLE_CASCADES_PLANNER: &str = "tidb_enable_cascades_planner";
-/// TiDBEnableAdaptiveLimitScan enables bounded admission for eligible ordered LIMIT index lookups.
-/// Go `TiDBEnableAdaptiveLimitScan`.
-pub const TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN: &str = "tidb_enable_adaptive_limit_scan";
 /// TiDBSkipUTF8Check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 /// the input string values are valid, we can skip the check.
 /// Go `TiDBSkipUTF8Check`.
@@ -1185,9 +1182,6 @@ pub const TIDB_ENABLE_CHECK_CONSTRAINT: &str = "tidb_enable_check_constraint";
 /// TiDBOptEnableHashJoin indicates whether to enable hash join.
 /// Go `TiDBOptEnableHashJoin`.
 pub const TIDB_OPT_ENABLE_HASH_JOIN: &str = "tidb_opt_enable_hash_join";
-/// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
-/// Go `TiDBEnableFullOuterJoin`.
-pub const TIDB_ENABLE_FULL_OUTER_JOIN: &str = "tidb_enable_full_outer_join";
 /// TiDBMViewEnable indicates whether to enable materialized view DDL.
 /// Go `TiDBMViewEnable`.
 pub const TIDB_MVIEW_ENABLE: &str = "tidb_mview_enable";
@@ -1218,22 +1212,12 @@ pub const DIV_PRECISION_INCREMENT: &str = "div_precision_increment";
 /// as `select for update` statements which do acquire pessimistic locks.
 /// Go `TiDBEnableSharedLockPromotion`.
 pub const TIDB_ENABLE_SHARED_LOCK_PROMOTION: &str = "tidb_enable_shared_lock_promotion";
-/// TiDBEnableSharedLockUpgrade indicates whether shared locks may be upgraded
-/// to exclusive locks during pessimistic locking.
-/// Go `TiDBEnableSharedLockUpgrade`.
-pub const TIDB_ENABLE_SHARED_LOCK_UPGRADE: &str = "tidb_enable_shared_lock_upgrade";
 /// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 /// Go `TiDBAccelerateUserCreationUpdate`.
 pub const TIDB_ACCELERATE_USER_CREATION_UPDATE: &str = "tidb_accelerate_user_creation_update";
 /// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
 /// Go `TiDBEnableCachePrepareStmt`.
 pub const TIDB_ENABLE_CACHE_PREPARE_STMT: &str = "tidb_enable_cache_prepare_stmt";
-/// TiDBEnableTxnFile is used to control whether to enable file-based transaction feature.
-/// Go `TiDBEnableTxnFile`.
-pub const TIDB_ENABLE_TXN_FILE: &str = "tidb_enable_txn_file";
-/// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
-/// Go `TiDBTxnFileMinMutationSize`.
-pub const TIDB_TXN_FILE_MIN_MUTATION_SIZE: &str = "tidb_txn_file_min_mutation_size";
 /// TiDBGCEnable turns garbage collection on or OFF
 /// Go `TiDBGCEnable`.
 pub const TIDB_GC_ENABLE: &str = "tidb_gc_enable";
@@ -1365,28 +1349,6 @@ pub const TIDB_DDL_DISK_QUOTA: &str = "tidb_ddl_disk_quota";
 /// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 /// Go `TiDBCloudStorageURI`.
 pub const TIDB_CLOUD_STORAGE_URI: &str = "tidb_cloud_storage_uri";
-/// The "exp" prefix in the following embedding system variables means experimental.
-/// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling Jina embedding API.
-/// Go `TiDBExpEmbedJinaAIAPIKey`.
-pub const TIDB_EXP_EMBED_JINA_AI_API_KEY: &str = "tidb_exp_embed_jina_ai_api_key";
-/// TiDBExpEmbedOpenAIAPIKey is the API key to use when calling OpenAI-compatible embedding API.
-/// Go `TiDBExpEmbedOpenAIAPIKey`.
-pub const TIDB_EXP_EMBED_OPENAI_API_KEY: &str = "tidb_exp_embed_openai_api_key";
-/// TiDBExpEmbedOpenAIAPIBase is the base URL to use when calling OpenAI-compatible embedding API.
-/// Go `TiDBExpEmbedOpenAIAPIBase`.
-pub const TIDB_EXP_EMBED_OPENAI_API_BASE: &str = "tidb_exp_embed_openai_api_base";
-/// TiDBExpEmbedCohereAPIKey is the API key to use when calling Cohere embedding API.
-/// Go `TiDBExpEmbedCohereAPIKey`.
-pub const TIDB_EXP_EMBED_COHERE_API_KEY: &str = "tidb_exp_embed_cohere_api_key";
-/// TiDBExpEmbedHuggingFaceAPIKey is the API key to use when calling Hugging Face embedding API.
-/// Go `TiDBExpEmbedHuggingFaceAPIKey`.
-pub const TIDB_EXP_EMBED_HUGGINGFACE_API_KEY: &str = "tidb_exp_embed_huggingface_api_key";
-/// TiDBExpEmbedNvidiaNIMAPIKey is the API key to use when calling NVIDIA NIM embedding API.
-/// Go `TiDBExpEmbedNvidiaNIMAPIKey`.
-pub const TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY: &str = "tidb_exp_embed_nvidia_nim_api_key";
-/// TiDBExpEmbedGeminiAPIKey is the API key to use when calling Gemini embedding API.
-/// Go `TiDBExpEmbedGeminiAPIKey`.
-pub const TIDB_EXP_EMBED_GEMINI_API_KEY: &str = "tidb_exp_embed_gemini_api_key";
 /// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 /// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 /// Go `TiDBAutoBuildStatsConcurrency`.
@@ -1838,40 +1800,6 @@ mod tests {
             (
                 TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
                 "tidb_plan_replayer_file_retention_time",
-            ),
-            (TIDB_ENABLE_FULL_OUTER_JOIN, "tidb_enable_full_outer_join"),
-            (TIDB_ENABLE_TXN_FILE, "tidb_enable_txn_file"),
-            (
-                TIDB_TXN_FILE_MIN_MUTATION_SIZE,
-                "tidb_txn_file_min_mutation_size",
-            ),
-            (
-                TIDB_EXP_EMBED_JINA_AI_API_KEY,
-                "tidb_exp_embed_jina_ai_api_key",
-            ),
-            (
-                TIDB_EXP_EMBED_OPENAI_API_KEY,
-                "tidb_exp_embed_openai_api_key",
-            ),
-            (
-                TIDB_EXP_EMBED_OPENAI_API_BASE,
-                "tidb_exp_embed_openai_api_base",
-            ),
-            (
-                TIDB_EXP_EMBED_COHERE_API_KEY,
-                "tidb_exp_embed_cohere_api_key",
-            ),
-            (
-                TIDB_EXP_EMBED_HUGGINGFACE_API_KEY,
-                "tidb_exp_embed_huggingface_api_key",
-            ),
-            (
-                TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY,
-                "tidb_exp_embed_nvidia_nim_api_key",
-            ),
-            (
-                TIDB_EXP_EMBED_GEMINI_API_KEY,
-                "tidb_exp_embed_gemini_api_key",
             ),
             (
                 TIDB_ENABLE_CONNECTION_EVENT_LOG,

@@ -622,10 +622,6 @@ impl GlobalSysvars {
         if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
             return Ok("1".to_owned());
         }
-        if self.publishes_runtime_settings && crate::embedding::is_embedding_variable(def.name) {
-            return Ok(crate::embedding::masked_global_value(def.name)
-                .expect("embedding variable has a process-wide value"));
-        }
         if self.publishes_runtime_settings
             && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
         {
@@ -937,10 +933,6 @@ impl GlobalSysvars {
         if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
             return Ok("1".to_owned());
         }
-        if self.publishes_runtime_settings && crate::embedding::is_embedding_variable(def.name) {
-            return Ok(crate::embedding::masked_global_value(def.name)
-                .expect("embedding variable has a process-wide value"));
-        }
         if self.publishes_runtime_settings
             && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
         {
@@ -1068,10 +1060,6 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL) {
             self.publish_enable_mdl();
         }
-        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
-        {
-            self.publish_plan_replayer_file_retention_time();
-        }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
                 self.publish_schema_cache_size(&value);
@@ -1096,7 +1084,6 @@ impl GlobalSysvars {
                 self.publish_stmt_summary_setting(name, &value);
             }
         }
-        self.publish_embedding_settings();
         self.publish_instance_plan_cache_settings(None);
         self.refresh_resolved();
     }
@@ -1164,34 +1151,6 @@ impl GlobalSysvars {
                             .store(value.to_bits(), SeqCst);
                     }
                 }
-            }
-        }
-    }
-
-    /// Publishes the process-wide embedding settings after a live table
-    /// mutation. Scratch cluster tables deliberately keep their values in the
-    /// table until `replace_from` makes the committed image live.
-    fn publish_embedding_settings(&self) {
-        if !self.publishes_runtime_settings {
-            return;
-        }
-        let names = [
-            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_JINA_AI_API_KEY,
-            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_KEY,
-            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_OPENAI_API_BASE,
-            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_COHERE_API_KEY,
-            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_HUGGINGFACE_API_KEY,
-            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_NVIDIA_NIM_API_KEY,
-            tidb_vardef::tidb_vars::TIDB_EXP_EMBED_GEMINI_API_KEY,
-        ];
-        let values = self.values.lock().expect("global sysvar lock poisoned");
-        for name in names {
-            // Publish only values this registry actually carries: an absent
-            // entry means "never set here", and pushing the default for it
-            // would let isolated (test) registries clobber the process
-            // configuration published by a parallel registry that did set it.
-            if let Some(value) = values.get(name) {
-                crate::embedding::publish_global(name, Some(value));
             }
         }
     }
@@ -1390,7 +1349,6 @@ impl GlobalSysvars {
                 }
             }
         }
-        self.publish_embedding_settings();
         self.publish_instance_plan_cache_settings(None);
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
@@ -1403,9 +1361,6 @@ impl GlobalSysvars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
             self.publish_enable_mdl();
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME {
-            self.publish_plan_replayer_file_retention_time();
         }
         if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
             self.publish_schema_cache_size(&stored_value);
@@ -1495,27 +1450,6 @@ impl GlobalSysvars {
                 value.eq_ignore_ascii_case("ON") || value == "1"
             });
         tidb_vardef::ENABLE_TTL_JOB.store(enabled, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Publishes Go's process-wide plan-replayer retention duration from the
-    /// validated GLOBAL table. Scratch cluster images defer this until their
-    /// committed values replace the live table.
-    fn publish_plan_replayer_file_retention_time(&self) {
-        if !self.publishes_runtime_settings {
-            return;
-        }
-        let Some(value) = self
-            .values
-            .lock()
-            .expect("global sysvar lock poisoned")
-            .get(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
-            .cloned()
-        else {
-            return;
-        };
-        if let Ok(nanoseconds) = tidb_config::configtypes::parse_go_duration(&value) {
-            tidb_vardef::set_plan_replayer_file_retention_time(nanoseconds);
-        }
     }
 
     /// Publishes Go's `vardef.SchemaCacheSize` byte counter from a validated
@@ -1782,13 +1716,6 @@ impl GlobalSysvars {
             .expect("global sysvar lock poisoned")
             .remove(&key);
         self.publish_instance_plan_cache_settings(Some(&key));
-        // RESET restores the Go default in the process-wide embedding config
-        // even though the registry no longer carries an explicit value
-        // (`publish_embedding_settings` intentionally skips absent values so
-        // isolated registries cannot clobber the process configuration).
-        if crate::embedding::is_embedding_variable(&key) {
-            crate::embedding::publish_global(&key, None);
-        }
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
         }
@@ -1800,9 +1727,6 @@ impl GlobalSysvars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
             self.publish_enable_mdl();
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME {
-            self.publish_plan_replayer_file_retention_time();
         }
         if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
             self.publish_schema_cache_size(
@@ -1922,7 +1846,6 @@ impl GlobalSysvars {
         let mut loaded_memory_arbitration = false;
         let mut loaded_require_secure_transport = false;
         let mut loaded_ttl_job_enable = false;
-        let mut loaded_plan_replayer_retention = false;
         let mut loaded_schema_cache_size = false;
         let mut loaded_auto_analyze = false;
         let mut loaded_circuit_breaker_ratio = false;
@@ -1938,8 +1861,6 @@ impl GlobalSysvars {
                 loaded_require_secure_transport |=
                     key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
                 loaded_ttl_job_enable |= key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE;
-                loaded_plan_replayer_retention |=
-                    key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME;
                 loaded_schema_cache_size |= key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE;
                 loaded_auto_analyze |= is_auto_analyze_setting(&key);
                 loaded_circuit_breaker_ratio |= key
@@ -1979,9 +1900,6 @@ impl GlobalSysvars {
         // in the cluster until that node was stopped.
         self.publish_enable_mdl();
         self.publish_enable_foreign_key();
-        if loaded_plan_replayer_retention {
-            self.publish_plan_replayer_file_retention_time();
-        }
         if loaded_schema_cache_size {
             if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
                 self.publish_schema_cache_size(&value);
@@ -2011,7 +1929,6 @@ impl GlobalSysvars {
             }
         }
         self.publish_stmt_summary_settings();
-        self.publish_embedding_settings();
         self.publish_instance_plan_cache_settings(None);
         self.refresh_resolved();
     }
@@ -2088,7 +2005,6 @@ impl GlobalSysvars {
         // visible keeps the process flag at false and acknowledges DDL on
         // the classic per-node key instead of the MDL per-job key.
         self.publish_enable_mdl();
-        self.publish_plan_replayer_file_retention_time();
         if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             self.publish_schema_cache_size(&value);
         }
@@ -2109,7 +2025,6 @@ impl GlobalSysvars {
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();
-        self.publish_embedding_settings();
         self.publish_instance_plan_cache_settings(None);
     }
 
@@ -2383,9 +2298,6 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnablePreparedPlanCache`, maintained by the
     /// `tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook.
     enable_prepared_plan_cache: bool,
-    /// Go's typed `SessionVars.EnableSharedLockUpgrade`, maintained by the
-    /// `tidb_enable_shared_lock_upgrade` sysvar's `SetSession` hook.
-    enable_shared_lock_upgrade: bool,
     /// Go's typed `SessionVars.SharedLockPromotion`, maintained by the
     /// `tidb_enable_shared_lock_promotion` sysvar's `SetSession` hook.
     shared_lock_promotion: bool,
@@ -2514,7 +2426,6 @@ impl Default for SessionVars {
             selectivity_factor: tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR,
             multi_statement_mode: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
-            enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
             shared_lock_promotion: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION,
             enable_window_function: tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION,
             enable_mview: tidb_vardef::defaults::DEF_TIDB_MVIEW_ENABLE,
@@ -2635,7 +2546,6 @@ impl SessionVars {
         let selectivity_factor = Self::selectivity_factor_from_systems(&systems);
         let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
-        let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
         let shared_lock_promotion = Self::shared_lock_promotion_from_systems(&systems);
         let enable_window_function = Self::enable_window_function_from_systems(&systems);
         let enable_mview = Self::mview_enabled_from_systems(&systems);
@@ -2670,7 +2580,6 @@ impl SessionVars {
         self.selectivity_factor = selectivity_factor;
         self.multi_statement_mode = multi_statement_mode;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
-        self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
         self.shared_lock_promotion = shared_lock_promotion;
         self.enable_window_function = enable_window_function;
         self.enable_mview = enable_mview;
@@ -2760,15 +2669,6 @@ impl SessionVars {
             .get(tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE)
             .map_or(
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
-                |value| value == "ON",
-            )
-    }
-
-    fn shared_lock_upgrade_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE)
-            .map_or(
-                tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
                 |value| value == "ON",
             )
     }
@@ -2965,13 +2865,6 @@ impl SessionVars {
     #[must_use]
     pub const fn prepared_plan_cache_enabled(&self) -> bool {
         self.enable_prepared_plan_cache
-    }
-
-    /// Go `SessionVars.EnableSharedLockUpgrade`, updated when its normalized
-    /// ON/OFF sysvar changes and consumed by the transaction lock context.
-    #[must_use]
-    pub const fn shared_lock_upgrade_enabled(&self) -> bool {
-        self.enable_shared_lock_upgrade
     }
 
     /// Go `SessionVars.SharedLockPromotion`, which makes `FOR SHARE` use the
@@ -3298,7 +3191,6 @@ impl SessionVars {
         let mut restores_selectivity_factor = false;
         let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
-        let mut restores_shared_lock_upgrade = false;
         let mut restores_shared_lock_promotion = false;
         let mut restores_window_function = false;
         let mut restores_ti_flash_max_bytes_before_ext_join = false;
@@ -3322,8 +3214,6 @@ impl SessionVars {
             restores_multi_statement_mode |= key == "tidb_multi_statement_mode";
             restores_prepared_plan_cache |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
-            restores_shared_lock_upgrade |=
-                key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE;
             restores_shared_lock_promotion |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION;
             restores_window_function |= key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION;
@@ -3385,9 +3275,6 @@ impl SessionVars {
         }
         if restores_prepared_plan_cache {
             self.enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&self.systems);
-        }
-        if restores_shared_lock_upgrade {
-            self.enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&self.systems);
         }
         if restores_shared_lock_promotion {
             self.shared_lock_promotion = Self::shared_lock_promotion_from_systems(&self.systems);
@@ -3710,9 +3597,6 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
             self.enable_prepared_plan_cache = value == "ON";
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE {
-            self.enable_shared_lock_upgrade = value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION {
             self.shared_lock_promotion = value == "ON";
@@ -4436,13 +4320,6 @@ fn system_u64(vars: &SessionVars, name: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn system_f64(vars: &SessionVars, name: &str) -> f64 {
-    vars.get_system(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0.0)
-}
-
 fn system_string(vars: &SessionVars, name: &str) -> String {
     vars.get_system(name).unwrap_or_default()
 }
@@ -5091,52 +4968,6 @@ mod tests {
     }
 
     #[test]
-    fn shared_lock_upgrade_switch_uses_go_typed_state() {
-        let mut vars = SessionVars::new();
-        assert!(!vars.shared_lock_upgrade_enabled());
-        if tidb_config::kerneltype::is_next_gen() {
-            let restore =
-                vars.snapshot_system(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE);
-            vars.set_system(
-                tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
-                "ON".to_owned(),
-            )
-            .unwrap();
-            assert!(vars.shared_lock_upgrade_enabled());
-            vars.restore_system(restore);
-            assert!(!vars.shared_lock_upgrade_enabled());
-
-            let globals = GlobalSysvars::new();
-            globals
-                .set(
-                    tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
-                    "ON".to_owned(),
-                )
-                .unwrap();
-            vars.seed_from_globals(globals).unwrap();
-            assert!(vars.shared_lock_upgrade_enabled());
-        } else {
-            assert!(vars
-                .set_system(
-                    tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
-                    "ON".to_owned(),
-                )
-                .is_err());
-            assert!(!vars.shared_lock_upgrade_enabled());
-
-            let globals = GlobalSysvars::new();
-            assert!(globals
-                .set(
-                    tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
-                    "ON".to_owned(),
-                )
-                .is_err());
-            vars.seed_from_globals(globals).unwrap();
-            assert!(!vars.shared_lock_upgrade_enabled());
-        }
-    }
-
-    #[test]
     fn shared_lock_promotion_switch_uses_go_typed_state() {
         let mut vars = SessionVars::new();
         assert!(!vars.shared_lock_promotion_enabled());
@@ -5243,12 +5074,6 @@ mod tests {
         // registry default -- `load_from_cluster` only overwrites names it is
         // given.
         assert_eq!(globals.get("max_allowed_packet").unwrap(), "67108864");
-        assert_eq!(
-            globals
-                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN)
-                .unwrap(),
-            "OFF"
-        );
     }
 
     #[test]
@@ -5424,60 +5249,6 @@ mod tests {
             .load_from_cluster([("tidb_redact_log".to_owned(), "ON".to_owned())]);
         assert!(tidb_util::redact::need_redact());
         vars.globals.reset("tidb_redact_log").unwrap();
-    }
-
-    /// Go `TestSetSysVar`: GLOBAL plan-replayer retention writes update the
-    /// process duration, while malformed values and scratch cluster images do
-    /// not publish until commit replacement.
-    #[test]
-    fn plan_replayer_retention_global_hook_updates_process_authority() {
-        // Loading or replacing a whole GLOBAL table republishes the process
-        // switches; the tests that assert on them run apart from this one.
-        let _serialised = crate::tests_support::process_switch_tests();
-        let original = tidb_vardef::plan_replayer_file_retention_time();
-        let mut vars = SessionVars::new();
-        vars.set_global(
-            tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
-            "2h".to_owned(),
-        )
-        .unwrap();
-        assert_eq!(
-            tidb_vardef::plan_replayer_file_retention_time(),
-            2 * 60 * 60 * 1_000_000_000
-        );
-        assert_eq!(
-            vars.get_global(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
-                .unwrap(),
-            "2h0m0s"
-        );
-        assert!(vars
-            .set_global(
-                tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
-                "2hours".to_owned()
-            )
-            .is_err());
-        assert_eq!(
-            tidb_vardef::plan_replayer_file_retention_time(),
-            2 * 60 * 60 * 1_000_000_000
-        );
-
-        let scratch = GlobalSysvars::from_cluster_rows([(
-            tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME.to_owned(),
-            "3h".to_owned(),
-        )]);
-        assert_eq!(
-            tidb_vardef::plan_replayer_file_retention_time(),
-            2 * 60 * 60 * 1_000_000_000
-        );
-        vars.globals.replace_from(&scratch);
-        assert_eq!(
-            tidb_vardef::plan_replayer_file_retention_time(),
-            3 * 60 * 60 * 1_000_000_000
-        );
-        vars.globals
-            .reset(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
-            .unwrap();
-        tidb_vardef::set_plan_replayer_file_retention_time(original);
     }
 
     /// Go `TestValidateInternalSessionVariable`: explicit session writes hide

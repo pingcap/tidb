@@ -187,8 +187,6 @@ pub const DEF_MIN_PAGING_SIZE: i64 = 128;
 /// Go `DefMaxPagingSize` (= `int(paging.MinAllowedMaxPagingSize)`).
 /// Resolved from paging.MinAllowedMaxPagingSize.
 pub const DEF_MAX_PAGING_SIZE: i64 = 50000;
-/// Go `DefTiDBEmbedOpenAIAPIBase` (= `"https://api.openai.com/v1"`).
-pub const DEF_TIDB_EMBED_OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 /// Go `DefPagingSizeBytes` (= `0`).
 pub const DEF_PAGING_SIZE_BYTES: i64 = 0;
 /// Go `DefMaxChunkSize` (= `1024`).
@@ -241,8 +239,6 @@ pub const DEF_TIDB_OPTIMIZER_ENABLE_NEW_OFGB: bool = false;
 pub const DEF_TIDB_ENABLE_OUTER_JOIN_REORDER: bool = true;
 /// Go `DefTiDBEnableNAAJ` (= `true`).
 pub const DEF_TIDB_ENABLE_NAAJ: bool = true;
-/// Go `DefTiDBEnableAdaptiveLimitScan`; session and registry default is OFF.
-pub const DEF_TIDB_ENABLE_ADAPTIVE_LIMIT_SCAN: bool = false;
 /// Go `DefTiDBAllowBatchCop` (= `1`).
 pub const DEF_TIDB_ALLOW_BATCH_COP: i64 = 1;
 /// Go `DefShardRowIDBits` (= `0`).
@@ -797,8 +793,6 @@ pub const DEF_RUNTIME_FILTER_MODE: &str = "OFF";
 pub const DEF_TIDB_LOCK_UNCHANGED_KEYS: bool = true;
 /// Go `DefTiDBEnableCheckConstraint` (= `false`).
 pub const DEF_TIDB_ENABLE_CHECK_CONSTRAINT: bool = false;
-/// Go `DefTiDBEnableFullOuterJoin` (= `false`).
-pub const DEF_TIDB_ENABLE_FULL_OUTER_JOIN: bool = false;
 /// Go `DefTiDBMViewEnable` (= `false`).
 pub const DEF_TIDB_MVIEW_ENABLE: bool = false;
 /// Go `DefTiDBSkipMissingPartitionStats` (= `true`).
@@ -840,8 +834,6 @@ pub const DEF_TIDB_ENABLE_LAZY_CURSOR_FETCH: bool = false;
 pub const DEF_OPT_ENABLE_PROJECTION_PUSH_DOWN: bool = true;
 /// Go `DefTiDBEnableSharedLockPromotion` (= `false`).
 pub const DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION: bool = false;
-/// Go `DefTiDBEnableSharedLockUpgrade` (= `false`).
-pub const DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE: bool = false;
 /// Go `DefTiDBTSOClientRPCMode` (= `TSOClientRPCModeDefault`).
 pub const DEF_TIDB_TSO_CLIENT_RPC_MODE: &str = "DEFAULT";
 /// Go `DefTiDBCircuitBreakerPDMetaErrorRateRatio` (= `0.0`).
@@ -873,10 +865,6 @@ pub const DEF_TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY: &str = "hint-only";
 pub const DEF_ENABLE_CACHE_PREPARE_STMT: bool = false;
 /// Go `DefTiDBEnableConnectionEventLog` (= `false`).
 pub const DEF_TIDB_ENABLE_CONNECTION_EVENT_LOG: bool = false;
-/// Go `DefTiDBEnableTxnFile` (= `false`).
-pub const DEF_TIDB_ENABLE_TXN_FILE: bool = false;
-/// Go `DefTiDBTxnFileMinMutationSize` (= `0`).
-pub const DEF_TIDB_TXN_FILE_MIN_MUTATION_SIZE: i64 = 0;
 
 #[cfg(test)]
 mod tests {
@@ -928,21 +916,16 @@ mod tests {
         assert_eq!(DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO, 0.0);
         assert!(DEF_ENABLE_WINDOW_FUNCTION);
         assert_eq!(DEF_TIDB_HASH_JOIN_VERSION, HASH_JOIN_VERSION_OPTIMIZED);
-        assert!(!DEF_TIDB_ENABLE_FULL_OUTER_JOIN);
         assert_eq!(DEF_TIDB_AUTO_ANALYZE_CONCURRENCY, 3);
         assert_eq!(DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS, 256);
         assert_eq!(DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N, 100);
         assert_eq!(DEF_TIDB_ANALYZE_STORE_BATCH_SIZE, 4);
         assert_eq!(crate::bounds::MAX_TIDB_ANALYZE_STORE_BATCH_SIZE, 8);
-        assert_eq!(DEF_TIDB_EMBED_OPENAI_API_BASE, "https://api.openai.com/v1");
         assert_eq!(
             DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
             604_800_000_000_000
         );
         assert!(!DEF_TIDB_ENABLE_CONNECTION_EVENT_LOG);
-        assert!(!DEF_TIDB_ENABLE_TXN_FILE);
-        assert_eq!(DEF_TIDB_TXN_FILE_MIN_MUTATION_SIZE, 0);
-        assert_eq!(crate::bounds::MIN_TIDB_TXN_FILE_MIN_MUTATION_SIZE, 1 << 20);
         assert_eq!(DEF_OPT_SELECTIVITY_FACTOR, 0.8);
         assert!(!DEF_TIDB_SKIP_ISOLATION_LEVEL_CHECK);
         assert!((32..=10240).contains(&DEF_TIDB_DDL_REORG_BATCH_SIZE));

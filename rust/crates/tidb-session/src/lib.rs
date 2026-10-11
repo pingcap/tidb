@@ -1233,7 +1233,6 @@ mod bootstrap;
 mod classify;
 pub mod cursor;
 mod dispatch;
-pub mod embedding;
 mod explain_arm;
 mod gcutil;
 mod identity;
@@ -3099,8 +3098,6 @@ mod tests_savepoint;
 mod tests_sem_v2;
 #[cfg(test)]
 mod tests_sequence;
-#[cfg(test)]
-mod tests_session_embedding_source;
 #[cfg(test)]
 mod tests_session_part1_source;
 #[cfg(test)]
