@@ -583,8 +583,8 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sum = "h1:eTt6UMpEnq59NjON49b3Cay8Dm0sCs1nDliwgkyEsRM=",
-        version = "v1.0.6",
+        sum = "h1:XSu8kU3C9Oo2x3gdwfxpz1ZsE6NaMfe9821ahNPzAf4=",
+        version = "v1.0.8",
     )
     go_repository(
         name = "com_github_blizzy78_varnamelen",
