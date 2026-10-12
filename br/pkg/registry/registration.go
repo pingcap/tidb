@@ -104,7 +104,8 @@ const (
 	// selectRegistrationsByMaxIDSQLTemplate is the SQL template for selecting registrations by max ID
 	selectRegistrationsByMaxIDSQLTemplate = `
 		SELECT
-		id, filter_strings, source_filter_strings, route_strings, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd, filter_hash
+		id, filter_strings, source_filter_strings, route_strings, route_hash, start_ts, restored_ts,
+		upstream_cluster_id, with_sys_table, status, cmd, filter_hash
 		FROM %s.%s
 		WHERE id < %%?
 		ORDER BY id ASC`
@@ -118,9 +119,11 @@ const (
 	// createNewTaskSQLTemplate is the SQL template for creating a new task
 	createNewTaskSQLTemplate = `
 		INSERT INTO %s.%s
-		(filter_strings, filter_hash, source_filter_strings, route_strings, route_hash, start_ts, restored_ts, upstream_cluster_id,
+		(filter_strings, filter_hash, source_filter_strings, route_strings, route_hash,
+		 start_ts, restored_ts, upstream_cluster_id,
 		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
-		VALUES (%%?, SHA2(%%?, 256), %%?, %%?, %%?, %%?, %%?, %%?, %%?, 'running', %%?, FROM_UNIXTIME(%%?), FROM_UNIXTIME(%%?))`
+		VALUES (%%?, SHA2(%%?, 256), %%?, %%?, %%?, %%?, %%?, %%?, %%?, 'running', %%?, FROM_UNIXTIME(%%?),
+		 FROM_UNIXTIME(%%?))`
 	legacyCreateNewTaskSQLTemplate = `
 		INSERT INTO %s.%s
 		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id,
@@ -299,7 +302,8 @@ func hasRestoreRegistryRouteSchema(tableInfo *model.TableInfo) bool {
 		return false
 	}
 	index := tableInfo.FindIndexByName(restoreRegistryRouteIndexName)
-	if index == nil || !index.Unique || !index.IsPublic() || index.Primary || len(index.Columns) != len(restoreRegistryRouteIndexColumns) {
+	if index == nil || !index.Unique || !index.IsPublic() || index.Primary ||
+		len(index.Columns) != len(restoreRegistryRouteIndexColumns) {
 		return false
 	}
 	for i, expected := range restoreRegistryRouteIndexColumns {
@@ -333,7 +337,8 @@ func NewRestoreRegistry(ctx context.Context, g glue.Glue, dom *domain.Domain) (*
 	}()
 
 	tableExists := true
-	tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr(RestoreRegistryDBName), ast.NewCIStr(RestoreRegistryTableName))
+	tbl, err := dom.InfoSchema().TableByName(
+		ctx, ast.NewCIStr(RestoreRegistryDBName), ast.NewCIStr(RestoreRegistryTableName))
 	if err != nil {
 		if !infoschema.ErrTableNotExists.Equal(err) {
 			return nil, errors.Trace(err)
