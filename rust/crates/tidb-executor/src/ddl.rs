@@ -341,6 +341,7 @@ pub mod job_history;
 pub mod label_rules;
 mod partition_interval;
 mod partition_reorg;
+pub use alter_table::{plan_hash_partition_management, HashManagement};
 pub use partition_reorg::{
     plan_alter_table_partitioning, plan_remove_partitioning, plan_reorganize_partition,
     PartitionReorgPlan, ReorgHost,

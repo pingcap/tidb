@@ -546,6 +546,11 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Canonical SQL retained so the shared partition DDL implementation
         /// parses and applies exactly the source action.
         sql: String,
+        /// The action as written, which a HASH/KEY table reorganizes
+        /// instead (Go `hashPartitionManagement`).
+        action: Box<tidb_ast::AlterPartitionAction>,
+        /// The context a HASH/KEY reorganization runs under.
+        context: DdlStatementContext,
     },
     /// `ALTER TABLE ... DROP PARTITION`, through the ordinary partition DDL
     /// implementation.
@@ -2451,7 +2456,9 @@ fn lower_alter_table_catalog(
                 context: DdlStatementContext(context.clone()),
             }))
         }
-        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Add { .. }) => {
+        tidb_ast::AlterTableAction::Partition(
+            action @ tidb_ast::AlterPartitionAction::Add { .. },
+        ) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::AddPartitions {
                 schema,
@@ -2460,9 +2467,33 @@ fn lower_alter_table_catalog(
                     alter.clone(),
                 ))))
                 .restore(),
+                action: Box::new(action.clone()),
+                context: DdlStatementContext(context.clone()),
             }))
         }
-        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Drop { .. }) => {
+        // Go `AlterTablePartition` for INTERVAL partitioning: LAST PARTITION
+        // LESS THAN is an ADD PARTITION job of the generated definitions ...
+        tidb_ast::AlterTableAction::Partition(
+            action @ tidb_ast::AlterPartitionAction::LastPartitionLessThan { .. },
+        ) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AddPartitions {
+                schema,
+                table,
+                sql: Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::AlterTable(Box::new(
+                    alter.clone(),
+                ))))
+                .restore(),
+                action: Box::new(action.clone()),
+                context: DdlStatementContext(context.clone()),
+            }))
+        }
+        // ... and FIRST PARTITION LESS THAN a DROP PARTITION job of the
+        // definitions below the bound.
+        tidb_ast::AlterTableAction::Partition(
+            tidb_ast::AlterPartitionAction::Drop { .. }
+            | tidb_ast::AlterPartitionAction::FirstPartitionLessThan { .. },
+        ) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::DropPartitions {
                 schema,
@@ -2476,7 +2507,8 @@ fn lower_alter_table_catalog(
         tidb_ast::AlterTableAction::Partition(
             action @ (tidb_ast::AlterPartitionAction::Reorganize { .. }
             | tidb_ast::AlterPartitionAction::Repartition(_)
-            | tidb_ast::AlterPartitionAction::RemovePartitioning),
+            | tidb_ast::AlterPartitionAction::RemovePartitioning
+            | tidb_ast::AlterPartitionAction::Coalesce { .. }),
         ) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::ReorganizePartitions {
@@ -9337,6 +9369,31 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 tidb_ast::AlterPartitionAction::RemovePartitioning => {
                     tidb_executor::ddl::plan_remove_partitioning(&kv, &mut host)
                 }
+                tidb_ast::AlterPartitionAction::Coalesce { count, .. } => {
+                    tidb_executor::ddl::plan_hash_partition_management(
+                        &kv,
+                        tidb_executor::ddl::HashManagement::Coalesce(*count),
+                        ctx,
+                        &mut host,
+                    )
+                }
+                tidb_ast::AlterPartitionAction::Add { spec, .. } => {
+                    let change = match spec {
+                        tidb_ast::AddPartitionSpec::Definitions(definitions) => {
+                            tidb_executor::ddl::HashManagement::Add {
+                                count: 0,
+                                definitions,
+                            }
+                        }
+                        tidb_ast::AddPartitionSpec::Count(count) => {
+                            tidb_executor::ddl::HashManagement::Add {
+                                count: *count,
+                                definitions: &[],
+                            }
+                        }
+                    };
+                    tidb_executor::ddl::plan_hash_partition_management(&kv, change, ctx, &mut host)
+                }
                 other => unreachable!("lowered only for a reorganization, got {other:?}"),
             };
             if let Some(failed) = host.failed.take() {
@@ -9361,7 +9418,12 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 (Some(final_metadata), Some(current)) if reorg.new_table_id.is_none() => {
                     let rebuilt = crate::table_info_build::partition_info(final_metadata);
                     let final_definitions = rebuilt.definitions.snapshot();
-                    current.write().definitions = final_definitions.clone().into();
+                    {
+                        let mut current = current.write();
+                        // Go `tblInfo.Partition.Num = uint64(len(newDefs))`.
+                        current.num = final_definitions.len() as u64;
+                        current.definitions = final_definitions.clone().into();
+                    }
                     let kept =
                         |id: i64| old_definitions.iter().any(|definition| definition.id == id);
                     (
@@ -9460,7 +9522,9 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 );
             }
             diff.action_type = match action.as_ref() {
-                tidb_ast::AlterPartitionAction::Reorganize { .. } => {
+                tidb_ast::AlterPartitionAction::Reorganize { .. }
+                | tidb_ast::AlterPartitionAction::Coalesce { .. }
+                | tidb_ast::AlterPartitionAction::Add { .. } => {
                     ActionType::ACTION_REORGANIZE_PARTITION
                 }
                 tidb_ast::AlterPartitionAction::Repartition(_) => {
@@ -9509,10 +9573,45 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 context: context.clone(),
             });
         }
-        DdlStatement::AddPartitions { schema, table, sql }
+        DdlStatement::AddPartitions {
+            schema, table, sql, ..
+        }
         | DdlStatement::DropPartitions { schema, table, sql } => {
             let adding = matches!(statement, DdlStatement::AddPartitions { .. });
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `AddTablePartitions`: on a HASH/KEY table an ADD is a
+            // reorganization of every partition (`hashPartitionManagement`),
+            // whichever form it was written in.
+            if let DdlStatement::AddPartitions {
+                action, context, ..
+            } = statement
+            {
+                let hash_or_key = stored.partition.as_ref().is_some_and(|partition| {
+                    let partition = partition.read();
+                    partition.enable
+                        && matches!(
+                            partition.partition_type,
+                            tidb_ast::PartitionType::HASH | tidb_ast::PartitionType::KEY
+                        )
+                });
+                if hash_or_key
+                    && matches!(action.as_ref(), tidb_ast::AlterPartitionAction::Add { .. })
+                {
+                    return plan_ddl_with_auto_ids(
+                        snapshot,
+                        &DdlStatement::ReorganizePartitions {
+                            schema: schema.clone(),
+                            table: table.clone(),
+                            action: action.clone(),
+                            context: context.clone(),
+                        },
+                        start_ts,
+                        use_new_collation,
+                        auto_ids,
+                        cdc_write_source,
+                    );
+                }
+            }
             let transformed = apply_partition_change(stored, schema, table, sql)?;
             let old_names = stored
                 .partition

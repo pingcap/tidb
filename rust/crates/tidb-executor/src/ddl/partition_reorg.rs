@@ -28,7 +28,7 @@ use super::{Catalog, DriverError};
 use crate::kv_table::{PartitionReorg, RecreatedIndex};
 use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeColumnBound};
 
-const STATS_OUTDATED_RELATED: &str = "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now";
+pub(super) const STATS_OUTDATED_RELATED: &str = "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now";
 const STATS_OUTDATED_NEW: &str = "The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now";
 
 fn visible_names_and_types(table: &crate::KvTable) -> (Vec<String>, Vec<FieldType>) {
@@ -99,7 +99,7 @@ impl ReorgHost for CatalogReorgHost<'_> {
 
 /// The in-process owner: plans against its own table, then applies the plan
 /// to it.
-fn run_in_catalog(
+pub(super) fn run_in_catalog(
     catalog: &mut Catalog,
     database: &str,
     table_name: &str,
@@ -129,7 +129,7 @@ fn run_in_catalog(
 /// Go `AllocateIndexID` + `setGlobalIndexVersion` for every index
 /// `onReorganizePartition` duplicates: the ones global before or after the
 /// change, in index order.
-fn recreated_indexes(
+pub(super) fn recreated_indexes(
     table: &crate::KvTable,
     global_after: impl Fn(&crate::KvIndex) -> bool,
 ) -> Vec<RecreatedIndex> {

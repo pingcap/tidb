@@ -1164,25 +1164,19 @@ pub(super) fn refuse_affinity(table: &crate::KvTable, operation: &str) -> Result
 }
 
 /// What a HASH/KEY reorganization asks for (Go `hashPartitionManagement`).
-enum HashManagement<'a> {
+#[derive(Clone, Copy)]
+pub enum HashManagement<'a> {
     /// `ADD PARTITION PARTITIONS n` or `ADD PARTITION (definitions)`.
     Add {
+        /// The written `PARTITIONS n`, zero for a definition list.
         count: u64,
+        /// The written definitions.
         definitions: &'a [tidb_ast::PartitionDefinition],
     },
     /// `COALESCE PARTITION n`.
     Coalesce(u64),
 }
 
-/// Go `hashPartitionManagement` and the `ReorganizePartitions` it calls for
-/// a HASH/KEY table: every partition is reorganized into
-/// `buildHashPartitionDefinitions`' list -- the existing definitions keep
-/// their names, comments and placement policies, the written ones follow,
-/// and the rest are named `p{i}` -- whose names must be unique (1517), and
-/// every row is re-hashed. Refusals in Go's order: a non-partitioned table
-/// (1505), AFFINITY (8200), a COALESCE on another method (1509), a count
-/// below one (1515) or one removing the last partition (1508), and a value
-/// clause on an added definition (1480).
 fn hash_partition_management(
     catalog: &mut Catalog,
     database: &str,
@@ -1190,143 +1184,185 @@ fn hash_partition_management(
     change: HashManagement<'_>,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let built = {
-        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
-            return Err(DriverError::unsupported(
-                "ALTER TABLE ... PARTITION needs a storage-backed table",
-            ));
-        };
-        let Some(partition) = table.partition() else {
-            return Err(DriverError::PartitionManagementOnNonpartitioned);
-        };
-        let hash_or_key = matches!(
-            partition.kind,
-            crate::partition_routing::PartitionKind::Hash
-                | crate::partition_routing::PartitionKind::Key
-        );
-        refuse_affinity(
-            table,
-            match change {
-                HashManagement::Add { .. } => "ADD PARTITION",
-                HashManagement::Coalesce(_) => "COALESCE PARTITION",
-            },
-        )?;
-        let existing = &partition.definitions;
-        let (count, written) = match change {
-            HashManagement::Add { count, definitions } => {
-                for definition in definitions {
-                    let (method, clause) = match definition.clause {
-                        tidb_ast::PartitionDefinitionClause::None => continue,
-                        tidb_ast::PartitionDefinitionClause::LessThan(_) => {
-                            ("RANGE", "VALUES LESS THAN")
-                        }
-                        tidb_ast::PartitionDefinitionClause::In(_)
-                        | tidb_ast::PartitionDefinitionClause::Default => ("LIST", "VALUES IN"),
-                        tidb_ast::PartitionDefinitionClause::History { .. } => {
-                            ("SYSTEM_TIME", "VALUES HISTORY")
-                        }
-                    };
-                    return Err(DriverError::PartitionWrongValues { method, clause });
-                }
-                let added = if definitions.is_empty() {
-                    count as usize
-                } else {
-                    definitions.len()
+    super::partition_reorg::run_in_catalog(catalog, database, table_name, ctx, |table, host| {
+        plan_hash_partition_management(table, change, ctx, host)
+    })
+}
+
+/// Go `hashPartitionManagement` and the `ReorganizePartitions` it calls for
+/// a HASH/KEY table, planned against `table`: every partition is reorganized
+/// into `buildHashPartitionDefinitions`' list -- the existing definitions
+/// keep their names, comments and placement policies, the written ones
+/// follow, and the rest are named `p{i}` -- whose names must be unique
+/// (1517), every row is re-hashed into a fresh physical table, and the global
+/// indexes are recreated. Refusals in Go's order: a non-partitioned table
+/// (1505), AFFINITY (8200), a COALESCE on another method (1509), a count
+/// below one (1515) or one removing the last partition (1508), and a value
+/// clause on an added definition (1480).
+pub fn plan_hash_partition_management(
+    table: &crate::KvTable,
+    change: HashManagement<'_>,
+    ctx: &crate::StmtContext,
+    host: &mut dyn super::partition_reorg::ReorgHost,
+) -> Result<super::partition_reorg::PartitionReorgPlan, DriverError> {
+    let Some(partition) = table.partition() else {
+        return Err(DriverError::PartitionManagementOnNonpartitioned);
+    };
+    let hash_or_key = matches!(
+        partition.kind,
+        crate::partition_routing::PartitionKind::Hash
+            | crate::partition_routing::PartitionKind::Key
+    );
+    refuse_affinity(
+        table,
+        match change {
+            HashManagement::Add { .. } => "ADD PARTITION",
+            HashManagement::Coalesce(_) => "COALESCE PARTITION",
+        },
+    )?;
+    let existing = &partition.definitions;
+    let (count, written) = match change {
+        HashManagement::Add { count, definitions } => {
+            for definition in definitions {
+                let (method, clause) = match definition.clause {
+                    tidb_ast::PartitionDefinitionClause::None => continue,
+                    tidb_ast::PartitionDefinitionClause::LessThan(_) => {
+                        ("RANGE", "VALUES LESS THAN")
+                    }
+                    tidb_ast::PartitionDefinitionClause::In(_)
+                    | tidb_ast::PartitionDefinitionClause::Default => ("LIST", "VALUES IN"),
+                    tidb_ast::PartitionDefinitionClause::History { .. } => {
+                        ("SYSTEM_TIME", "VALUES HISTORY")
+                    }
                 };
-                (existing.len() + added, definitions)
+                return Err(DriverError::PartitionWrongValues { method, clause });
             }
-            HashManagement::Coalesce(count) => {
-                // Go's ErrCoalesceOnlyOnHashPartition fires on HASH and KEY
-                // alike (oracle g-partition: COALESCE on a KEY table is ok).
-                if !hash_or_key {
-                    return Err(DriverError::CoalesceOnlyOnHashPartition);
-                }
-                if count < 1 {
-                    return Err(DriverError::CoalescePartitionNoPartition);
-                }
-                if count as usize >= existing.len() {
-                    return Err(DriverError::PartitionDropLast);
-                }
-                (existing.len() - count as usize, &[][..])
-            }
-        };
-        if count > super::table_partition::MAX_PARTITIONS as usize {
-            return Err(DriverError::PartitionTooMany);
-        }
-        let mut built = Vec::with_capacity(count);
-        for ordinal in 0..count {
-            if let Some(definition) = existing.get(ordinal) {
-                built.push((
-                    definition.name.clone(),
-                    definition.comment.clone(),
-                    definition.placement_policy.clone(),
-                ));
-            } else if let Some(definition) = written.get(ordinal - existing.len()) {
-                built.push((
-                    definition.name.clone(),
-                    super::table_partition::partition_definition_comment(definition, ctx, false)?,
-                    super::table_partition::partition_definition_placement(definition),
-                ));
+            let added = if definitions.is_empty() {
+                count as usize
             } else {
-                built.push((format!("p{ordinal}"), String::new(), None));
-            }
+                definitions.len()
+            };
+            (existing.len() + added, definitions)
         }
-        // Go `checkPartitionNameUnique` over the reorganized definitions.
-        let mut seen = std::collections::HashSet::with_capacity(built.len());
-        for (name, _, _) in &built {
-            if !seen.insert(super::table_partition::go_to_lower(name)) {
-                return Err(DriverError::PartitionSameName(name.clone()));
+        HashManagement::Coalesce(count) => {
+            // Go's ErrCoalesceOnlyOnHashPartition fires on HASH and KEY
+            // alike (oracle g-partition: COALESCE on a KEY table is ok).
+            if !hash_or_key {
+                return Err(DriverError::CoalesceOnlyOnHashPartition);
             }
-        }
-        // Go `handlePartitionPlacement`: each policy must exist.
-        for (_, _, policy) in &mut built {
-            if let Some(reference) = policy.as_mut() {
-                let Some(found) = catalog.policy(reference.name.original()) else {
-                    return Err(DriverError::PlacementPolicyNotExists(
-                        reference.name.original().to_owned(),
-                    ));
-                };
-                reference.id = found.id;
+            if count < 1 {
+                return Err(DriverError::CoalescePartitionNoPartition);
             }
+            if count as usize >= existing.len() {
+                return Err(DriverError::PartitionDropLast);
+            }
+            (existing.len() - count as usize, &[][..])
         }
-        let mut definitions = built
-            .into_iter()
+    };
+    if count > super::table_partition::MAX_PARTITIONS as usize {
+        return Err(DriverError::PartitionTooMany);
+    }
+    let mut built = Vec::with_capacity(count);
+    for ordinal in 0..count {
+        if let Some(definition) = existing.get(ordinal) {
+            built.push((
+                definition.name.clone(),
+                definition.comment.clone(),
+                definition.placement_policy.clone(),
+            ));
+        } else if let Some(definition) = written.get(ordinal - existing.len()) {
+            built.push((
+                definition.name.clone(),
+                super::table_partition::partition_definition_comment(definition, ctx, false)?,
+                super::table_partition::partition_definition_placement(definition),
+            ));
+        } else {
+            built.push((format!("p{ordinal}"), String::new(), None));
+        }
+    }
+    // Go `checkPartitionNameUnique` over the reorganized definitions.
+    let mut seen = std::collections::HashSet::with_capacity(built.len());
+    for (name, _, _) in &built {
+        if !seen.insert(super::table_partition::go_to_lower(name)) {
+            return Err(DriverError::PartitionSameName(name.clone()));
+        }
+    }
+    let mut definitions = built
+        .into_iter()
+        .map(
+            |(name, comment, placement_policy)| crate::partition_routing::PartitionDef {
+                id: 0,
+                name,
+                less_than: Vec::new(),
+                in_values: Vec::new(),
+                comment,
+                placement_policy,
+                storage_class: Default::default(),
+            },
+        )
+        .collect::<Vec<_>>();
+    // Go `handlePartitionPlacement`: each policy must exist.
+    host.resolve_placement(&mut definitions)?;
+    // Go `buildPartitionDefinitionsInfo` ->
+    // `rebuildStorageClassForPartitionDefinitions` over the reorganized list.
+    assign_partition_storage_classes(table, &partition.kind, &[], &mut definitions, ctx)?;
+    // Every partition gets a fresh physical id, as Go's reorganize does.
+    for definition in &mut definitions {
+        definition.id = host.allocate_table_id();
+    }
+    let source_ids = existing.iter().map(|definition| definition.id).collect();
+    let recreated = super::partition_reorg::recreated_indexes(table, |index| index.global);
+    let key = matches!(partition.kind, crate::partition_routing::PartitionKind::Key);
+    let stored = super::table_partition::StoredPartitionMetadata {
+        kind: if key {
+            tidb_ast::PartitionType::KEY
+        } else {
+            tidb_ast::PartitionType::HASH
+        },
+        enable: true,
+        num: definitions.len() as u64,
+        expr: if key {
+            String::new()
+        } else {
+            partition.expr_text.clone()
+        },
+        columns: if key {
+            partition.dependencies.clone()
+        } else {
+            Vec::new()
+        },
+        is_empty_columns: false,
+        definitions: definitions
+            .iter()
             .map(
-                |(name, comment, placement_policy)| crate::partition_routing::PartitionDef {
-                    id: 0,
-                    name,
+                |definition| super::table_partition::StoredPartitionDefinition {
+                    id: definition.id,
+                    name: definition.name.clone(),
                     less_than: Vec::new(),
                     in_values: Vec::new(),
-                    comment,
-                    placement_policy,
-                    storage_class: Default::default(),
+                    comment: definition.comment.clone(),
+                    placement_policy: definition.placement_policy.clone(),
+                    storage_class: definition.storage_class.clone(),
                 },
             )
-            .collect::<Vec<_>>();
-        // Go `buildPartitionDefinitionsInfo` ->
-        // `rebuildStorageClassForPartitionDefinitions` over the reorganized
-        // list.
-        assign_partition_storage_classes(table, &partition.kind, &[], &mut definitions, ctx)?;
-        definitions
+            .collect(),
     };
-    // Every partition gets a fresh physical id, as Go's reorganize does.
-    let mut definitions = built;
-    for definition in &mut definitions {
-        definition.id = catalog.allocate_table_id();
-    }
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        unreachable!("the table was resolved above")
-    };
-    std::sync::Arc::make_mut(table)
-        .rehash_hash_partitions(definitions, ctx)
-        .map_err(|error| crate::driver::kv_read_error("reorganize partition", error))?;
-    // Go `ReorganizePartitions` warns on success, which both ADD and
-    // COALESCE reach (oracle m24: COALESCE answers ok with this warning).
-    ctx.append_warning_parts(
-        1105,
-        "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now",
-    );
-    Ok(())
+    let mut spec = partition.clone();
+    spec.definitions = definitions;
+    Ok(super::partition_reorg::PartitionReorgPlan {
+        reorg: crate::kv_table::PartitionReorg {
+            source_ids,
+            partition: Some(spec),
+            routing: None,
+            new_table_id: None,
+            recreated_indexes: recreated,
+        },
+        interval_rewrite: None,
+        // Go `ReorganizePartitions` warns on success, which both ADD and
+        // COALESCE reach (oracle m24: COALESCE answers ok with this warning).
+        warning: Some(super::partition_reorg::STATS_OUTDATED_RELATED),
+        stored: Some(stored),
+    })
 }
 
 fn drop_partition_action(

@@ -510,57 +510,6 @@ impl KvTable {
         Ok(())
     }
 
-    /// Rebuilds a HASH table to `new_ids.len()` partitions, redistributing
-    /// every row by the new modulus. Go `hashPartitionManagement`
-    /// (`pkg/ddl/executor.go:2782-2814`) reaches the same observable state
-    /// through `ReorganizePartitions`: all rows are re-hashed, the
-    /// definitions are renumbered `p0..`, and the old physical tables
-    /// retire. COALESCE shrinks to this count; ADD PARTITION PARTITIONS n
-    /// grows to it.
-    pub(crate) fn rehash_hash_partitions(
-        &mut self,
-        definitions: Vec<PartitionDef>,
-        ctx: &crate::StmtContext,
-    ) -> Result<(), KvTableError> {
-        let old_ids: Vec<i64> = {
-            let partition = self.partition.as_ref().expect("validated by DDL");
-            partition.definitions.iter().map(|d| d.id).collect()
-        };
-
-        // Every row, with the handle it must keep.
-        let previous_read_partitions = self.read_partitions.replace(old_ids.clone());
-        let rows = self.scan_rows_with_handles_recomputed(&RowDecodeContext::for_write(ctx));
-        self.read_partitions = previous_read_partitions;
-        let rows = rows?;
-
-        // Retire every old physical table: data and index entries.
-        self.clear_partition_data(&old_ids, ctx)?;
-
-        // The definitions Go's `buildHashPartitionDefinitions` built.
-        self.partition
-            .as_mut()
-            .expect("validated by DDL")
-            .definitions = definitions;
-        self.read_partitions = None;
-
-        // Re-insert every row through the normal write path, which routes it
-        // to `handle % new_count` and rebuilds the index entries. Int
-        // handles are preserved (`insert_row_with_row_id`); a clustered
-        // common handle is recomputed from the row itself.
-        for (handle, row) in rows {
-            match handle.int_value() {
-                Some(row_id) => {
-                    self.insert_row_with_row_id(&row, Some(row_id), 0, ctx)?;
-                }
-                None => {
-                    self.insert_row(&row, ctx)?;
-                }
-            }
-        }
-        ctx.staged_writes().mark_dirty(self.table_id);
-        Ok(())
-    }
-
     /// Go `checkExchangePartitionRecordValidation`'s partition condition for
     /// one row of the table being exchanged in: whether the row does NOT
     /// belong to the partition at `ordinal`.

@@ -12612,3 +12612,70 @@ fn partition_reorganizations_move_rows_as_go_does() {
     );
     rows(&mut session, "ADMIN CHECK TABLE test.h");
 }
+
+/// Go `hashPartitionManagement`: on a HASH table ADD PARTITION and COALESCE
+/// PARTITION reorganize every partition, so each row is re-hashed into the
+/// new count; and INTERVAL maintenance (LAST / FIRST PARTITION LESS THAN) is
+/// an ADD / DROP PARTITION job. This node appended a definition without
+/// moving a row, and refused the interval statements.
+#[test]
+fn hash_partition_management_rehashes_rows_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1003)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.h (a INT, b INT, KEY ib (b)) PARTITION BY HASH (a) PARTITIONS 2",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.h VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)",
+    );
+    session
+        .execute_write("ALTER TABLE test.h ADD PARTITION PARTITIONS 1")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a FROM test.h PARTITION (p2) ORDER BY a"
+        )),
+        [["2"], ["5"]]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.h");
+    session
+        .execute_write("ALTER TABLE test.h COALESCE PARTITION 2")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM test.h PARTITION (p0)"
+        )),
+        [["6"]]
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.h"));
+    assert!(
+        created[0][1].ends_with("PARTITION BY HASH (`a`) PARTITIONS 1"),
+        "{}",
+        created[0][1]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.h");
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.iv (a INT) PARTITION BY RANGE (a) INTERVAL (10) \
+         FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (30)",
+    );
+    session
+        .execute_write("ALTER TABLE test.iv LAST PARTITION LESS THAN (50)")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE test.iv FIRST PARTITION LESS THAN (20)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT partition_name FROM information_schema.partitions \
+             WHERE table_schema = 'test' AND table_name = 'iv' ORDER BY partition_ordinal_position"
+        )),
+        [["P_LT_20"], ["P_LT_30"], ["P_LT_40"], ["P_LT_50"]]
+    );
+}
