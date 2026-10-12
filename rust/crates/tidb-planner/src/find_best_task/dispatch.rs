@@ -4096,7 +4096,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 });
                 let (table_filters, mut virtual_table_filters) =
                     crate::pushdown::split_virtual_column_filters(table_filters);
-                let (index_filters, mut rejected_index_filters) = crate::pushdown::split_scan_filters(
+                // Go `addPushedDownSelection4PhysicalIndexScan` splits only the
+                // TABLE filters by virtual column; the index filters go
+                // through `PushDownExprs` alone.
+                let (index_filters, mut rejected_index_filters) = crate::pushdown::push_down_exprs(
                     index_filters, tidb_expr::infer_pushdown::PushDownStore::TiKv,
                     &ctx.expr_pushdown_blacklist,
                 );

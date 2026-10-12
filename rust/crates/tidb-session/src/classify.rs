@@ -809,6 +809,9 @@ impl Session {
             Stmt::Ddl(ddl) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::AlterInstance(_)) => {
                 StoredStateChange::None
             }
+            // Go's hypothetical indexes and TiFlash replicas are
+            // `SessionVars` state: no job runs and no schema version moves.
+            Stmt::Ddl(ddl) if is_hypo_ddl(ddl) => StoredStateChange::None,
             Stmt::Ddl(_) => StoredStateChange::Schema,
             // `ADMIN CLEANUP TABLE LOCK` is a DDL job (`ActionUnlockTable`).
             Stmt::Admin(admin)
@@ -903,5 +906,22 @@ impl Session {
                 StoredStateChange::None
             }
         }
+    }
+}
+
+/// The statements Go answers from `SessionVars` alone: `CREATE INDEX ... TYPE
+/// HYPO`, `DROP HYPO INDEX` and a lone `ALTER TABLE ... SET HYPO TIFLASH
+/// REPLICA`.
+pub(crate) fn is_hypo_ddl(ddl: &tidb_ast::DdlStmt) -> bool {
+    match ddl {
+        tidb_ast::DdlStmt::CreateIndex(create) => {
+            create.options.index_type == Some(tidb_ast::IndexType::HYPO)
+        }
+        tidb_ast::DdlStmt::DropIndex(drop) => drop.is_hypo,
+        tidb_ast::DdlStmt::AlterTable(alter) => matches!(
+            alter.actions.as_slice(),
+            [tidb_ast::AlterTableAction::SetTiFlashReplica { hypo: true, .. }]
+        ),
+        _ => false,
     }
 }

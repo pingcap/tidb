@@ -131,10 +131,18 @@ impl Column {
     }
 
     fn same_virtual_expression(&self, other: &Column) -> bool {
+        // Go `col.RetType.Equal(newCol.RetType)`, which ignores every flag but
+        // UNSIGNED: an expression index's hidden column carries the key flag
+        // of its POSITION (`MultipleKeyFlag` when it leads a key), so the
+        // hidden columns of one expression in two indexes differ in flags.
+        let same_type = match (&self.ret_type, &other.ret_type) {
+            (Some(left), Some(right)) => left.equal(right),
+            (left, right) => left == right,
+        };
         matches!(
             self.virtual_expr.as_deref(),
             Some(Expression::ScalarFunction(_))
-        ) && self.ret_type == other.ret_type
+        ) && same_type
             && crate::constant::optional_expression_equals(&self.virtual_expr, &other.virtual_expr)
     }
 

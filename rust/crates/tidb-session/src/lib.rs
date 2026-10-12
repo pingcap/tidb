@@ -552,6 +552,10 @@ pub struct Session {
     /// builder a catalog with the overlay removed -- a whole-catalog clone
     /// per view read on this tier's shape.
     local_temporary_tables: Vec<(String, String, tidb_executor::KvTable)>,
+    /// Go `SessionVars.HypoIndexes`: session state, never schema.
+    hypo_indexes: Arc<tidb_executor::ddl::HypoIndexes>,
+    /// Go `SessionVars.HypoTiFlashReplicas`: session state, never schema.
+    hypo_tiflash_replicas: Arc<tidb_executor::ddl::HypoTiFlashReplicas>,
     /// Go `SessionVars.TxnCtx.TemporaryTables`: the rows this session has
     /// written to GLOBAL temporary tables, by physical table id.
     ///
@@ -980,6 +984,8 @@ impl Session {
             txn: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
+            hypo_indexes: Arc::default(),
+            hypo_tiflash_replicas: Arc::default(),
             global_temporary_data: std::collections::HashMap::new(),
             vars: SessionVars::new(),
             global_config_syncer: None,

@@ -749,6 +749,7 @@ fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> ScanAc
 
 fn index_access(
     catalog: &Catalog,
+    hypo_indexes: Option<&crate::ddl::HypoIndexes>,
     table_id: i64,
     alias: Option<&str>,
     index_id: i64,
@@ -764,7 +765,20 @@ fn index_access(
         }
         return table_access;
     };
-    let Some(index) = table.plan_indexes().find(|index| index.id == index_id) else {
+    // Go prints the plan's own `p.Index`, which for an EXPLAIN may be one of
+    // the session's hypothetical indexes rather than one the table stores.
+    let hypo_index = || {
+        let database = catalog.physical_kv_table_database_by_id(table_id)?;
+        hypo_indexes?
+            .table_indexes(database, &table.name)
+            .into_iter()
+            .find(|index| index.id == index_id)
+    };
+    let Some(index) = table
+        .plan_indexes()
+        .find(|index| index.id == index_id)
+        .or_else(hypo_index)
+    else {
         if let Some(name) = index_name {
             table_access.indexes.push(IndexAccess {
                 name: name.to_owned(),
@@ -793,9 +807,14 @@ fn index_access(
     table_access
 }
 
-fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> ScanAccessObject {
+fn point_access(
+    catalog: &Catalog,
+    hypo_indexes: Option<&crate::ddl::HypoIndexes>,
+    table_id: i64,
+    index_id: Option<i64>,
+) -> ScanAccessObject {
     match index_id {
-        Some(index_id) => index_access(catalog, table_id, None, index_id, None),
+        Some(index_id) => index_access(catalog, hypo_indexes, table_id, None, index_id, None),
         None => {
             let mut access = table_access(catalog, table_id, None);
             let Some(table) = catalog.physical_kv_table_by_id(table_id) else {
@@ -1060,7 +1079,11 @@ fn physical_operator_name(
     }
 }
 
-fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObject> {
+fn physical_access(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    hypo_indexes: Option<&crate::ddl::HypoIndexes>,
+) -> Option<AccessObject> {
     match plan {
         // Go reader AccessObject reports dynamic pruning; scan AccessObject
         // reports a partition only when it scans a static physical table ID.
@@ -1097,6 +1120,7 @@ fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObjec
         })),
         PhysicalPlan::IndexScan(scan) => Some(AccessObject::Scan(index_access(
             catalog,
+            hypo_indexes,
             scan.table_id,
             scan.table_as_name.as_deref(),
             scan.index_id,
@@ -1104,14 +1128,19 @@ fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObjec
         ))),
         PhysicalPlan::PointGet(point) => {
             let id = point.partition.as_ref().and_then(|p| p.physical_table_id);
-            let mut access = point_access(catalog, id.unwrap_or(point.table_id), point.index_id);
+            let mut access = point_access(
+                catalog,
+                hypo_indexes,
+                id.unwrap_or(point.table_id),
+                point.index_id,
+            );
             if point.partition.is_some() && id.is_none() {
                 access.partitions = vec!["dual".to_owned()];
             }
             Some(AccessObject::Scan(access))
         }
         PhysicalPlan::BatchPointGet(point) => {
-            let mut access = point_access(catalog, point.table_id, point.index_id);
+            let mut access = point_access(catalog, hypo_indexes, point.table_id, point.index_id);
             if let Some(ids) = &point.partition_ids {
                 if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
                     if let Some(partition) = table.partition() {
@@ -1970,7 +1999,7 @@ fn physical_explain_operator(
         .with_task(task)
         .with_operator_info(info)
         .with_children(children);
-    if let Some(access_object) = physical_access(plan, catalog) {
+    if let Some(access_object) = physical_access(plan, catalog, statement_context.hypo_indexes()) {
         operator = operator.with_access_object(access_object);
     }
     operator.estimated_cost = estimated_cost;
@@ -3293,12 +3322,15 @@ mod tests {
             ];
             for reader in readers {
                 assert_eq!(
-                    physical_access(&reader, &catalog).unwrap().to_string(),
+                    physical_access(&reader, &catalog, None)
+                        .unwrap()
+                        .to_string(),
                     expected
                 );
             }
             for scan in [table, index] {
-                let Some(AccessObject::Scan(access)) = physical_access(&scan, &catalog) else {
+                let Some(AccessObject::Scan(access)) = physical_access(&scan, &catalog, None)
+                else {
                     panic!("scan has a scan access object");
                 };
                 assert!(access.partitions.is_empty());

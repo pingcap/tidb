@@ -471,6 +471,23 @@ pub(crate) struct PlannerCatalog {
     current_database: String,
     view: Arc<PlannerSchemaView>,
     latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    /// Go `SessionVars.HypoIndexes`, present only for an `EXPLAIN`.
+    hypo_indexes: Option<Arc<crate::ddl::HypoIndexes>>,
+    /// Go `SessionVars.HypoTiFlashReplicas`, present only for an `EXPLAIN`.
+    hypo_tiflash_replicas: Option<Arc<crate::ddl::HypoTiFlashReplicas>>,
+}
+
+impl PlannerCatalog {
+    /// Go reads `SessionVars.HypoIndexes` and `HypoTiFlashReplicas` only
+    /// under `StmtCtx.InExplainStmt` (`getPossibleAccessPaths`,
+    /// `UsedHypoTiFlashReplicas`), so only an EXPLAIN's source carries them.
+    pub(crate) fn with_explain_hypo_state(mut self, ctx: &crate::StmtContext) -> Self {
+        if ctx.in_explain_stmt() {
+            self.hypo_indexes = ctx.hypo_indexes_shared();
+            self.hypo_tiflash_replicas = ctx.hypo_tiflash_replicas_shared();
+        }
+        self
+    }
 }
 
 /// Whether `database`.`name` is one of the virtual tables Go serves as a
@@ -523,6 +540,55 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
 
     fn latest_index_schema(&self) -> Option<&tidb_planner::domain_misc::LatestIndexSchema> {
         self.latest_index_schema.as_deref()
+    }
+
+    fn hypo_indexes(
+        &self,
+        db_name: &str,
+        table_name: &str,
+    ) -> Vec<tidb_planner::plan_builder::catalog::SourceIndex> {
+        let (Some(hypo), Some(table)) = (
+            self.hypo_indexes.as_deref(),
+            self.find_table(db_name, table_name),
+        ) else {
+            return Vec::new();
+        };
+        hypo.table_indexes(db_name, table_name)
+            .into_iter()
+            .map(|index| tidb_planner::plan_builder::catalog::SourceIndex {
+                id: index.id,
+                name: index.name.clone(),
+                columns: index
+                    .column_offsets
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, offset)| {
+                        table.column_at(*offset).map(|column| {
+                            tidb_planner::plan_builder::catalog::SourceIndexColumn {
+                                name: column.name.clone(),
+                                offset: *offset,
+                                length: index.prefix_length(position),
+                            }
+                        })
+                    })
+                    .collect(),
+                unique: index.unique,
+                primary: false,
+                is_public: true,
+                is_visible: index.visible,
+                is_columnar: false,
+                is_multi_valued: false,
+                global: index.global,
+                condition_expr_string: String::new(),
+                affect_column_offsets: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn uses_hypo_tiflash_replicas(&self, db_name: &str, table_name: &str) -> bool {
+        self.hypo_tiflash_replicas
+            .as_deref()
+            .is_some_and(|replicas| replicas.contains(db_name, table_name))
     }
 
     fn find_table_ignoring_local_temporary(
@@ -1966,6 +2032,8 @@ impl Catalog {
             current_database: current_database.to_owned(),
             view: self.planner_schema_view(),
             latest_index_schema,
+            hypo_indexes: None,
+            hypo_tiflash_replicas: None,
         }
     }
 

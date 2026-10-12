@@ -3652,6 +3652,73 @@ impl Session {
                     }
                     Ok(StmtOutput::Affected(0))
                 }
+                // Go `createIndex`'s hypo branch: the index joins the
+                // session's `HypoIndexes`; no job runs and no schema moves.
+                DdlStmt::CreateIndex(create)
+                    if create.options.index_type == Some(tidb_ast::IndexType::HYPO) =>
+                {
+                    let current_db = self.current_db.clone();
+                    let ctx = self.statement_context(false);
+                    let mut hypo_indexes = (*self.hypo_indexes).clone();
+                    let result = self.with_persistent_catalog_mut(|catalog| {
+                        tidb_executor::ddl::create_hypo_index(
+                            catalog,
+                            &current_db,
+                            create,
+                            &ctx,
+                            &mut hypo_indexes,
+                        )
+                    });
+                    self.drain_eval_warnings(&ctx);
+                    result?;
+                    self.hypo_indexes = std::sync::Arc::new(hypo_indexes);
+                    Ok(StmtOutput::Affected(0))
+                }
+                // Go `dropIndex` with `isHypo`: `dropHypoIndexFromCtx`.
+                DdlStmt::DropIndex(drop) if drop.is_hypo => {
+                    let current_db = self.current_db.clone();
+                    let mut hypo_indexes = (*self.hypo_indexes).clone();
+                    self.with_persistent_catalog_mut(|catalog| {
+                        tidb_executor::ddl::drop_hypo_index(
+                            catalog,
+                            &current_db,
+                            drop,
+                            &mut hypo_indexes,
+                        )
+                    })?;
+                    self.hypo_indexes = std::sync::Arc::new(hypo_indexes);
+                    Ok(StmtOutput::Affected(0))
+                }
+                // Go `AlterTableSetTiFlashReplica` with `replicaInfo.Hypo`:
+                // `setHypoTiFlashReplica`.
+                DdlStmt::AlterTable(alter)
+                    if matches!(
+                        alter.actions.as_slice(),
+                        [tidb_ast::AlterTableAction::SetTiFlashReplica { hypo: true, .. }]
+                    ) =>
+                {
+                    let [tidb_ast::AlterTableAction::SetTiFlashReplica { count, labels, .. }] =
+                        alter.actions.as_slice()
+                    else {
+                        unreachable!("matched by the guard");
+                    };
+                    let (database, table) =
+                        tidb_executor::driver::split_table_path_pub(&alter.name, &self.current_db)?;
+                    let (database, table) = (database.to_owned(), table.to_owned());
+                    let mut replicas = (*self.hypo_tiflash_replicas).clone();
+                    self.with_persistent_catalog_mut(|catalog| {
+                        tidb_executor::ddl::set_hypo_tiflash_replica(
+                            catalog,
+                            &database,
+                            &table,
+                            *count,
+                            labels,
+                            &mut replicas,
+                        )
+                    })?;
+                    self.hypo_tiflash_replicas = std::sync::Arc::new(replicas);
+                    Ok(StmtOutput::Affected(0))
+                }
                 DdlStmt::CreateIndex(create) => {
                     let if_not_exists = create.if_not_exists;
                     let current_db = self.current_db.clone();

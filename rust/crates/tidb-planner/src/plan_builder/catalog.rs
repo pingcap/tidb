@@ -356,6 +356,20 @@ pub trait TableSource {
     /// `ErrBadDB` rather than `ErrNoSuchTable`.
     fn database_exists(&self, db_name: &str) -> bool;
 
+    /// Go `SessionVars.HypoIndexes[dbName.L][tblInfo.Name.L]`, read by
+    /// `getPossibleAccessPaths` only under `StmtCtx.InExplainStmt`; a source
+    /// outside an `EXPLAIN` answers none. Each comes back as the index Go
+    /// built for it (`BuildIndexInfo`, no id allocated).
+    fn hypo_indexes(&self, _db_name: &str, _table_name: &str) -> Vec<SourceIndex> {
+        Vec::new()
+    }
+
+    /// Go `UsedHypoTiFlashReplicas`: the session declared a hypothetical
+    /// TiFlash replica for this table and the statement is an `EXPLAIN`.
+    fn uses_hypo_tiflash_replicas(&self, _db_name: &str, _table_name: &str) -> bool {
+        false
+    }
+
     /// Go `domain.GetDomain(ctx).InfoSchema()`, snapshotted at the statement
     /// boundary. Test/internal sources without a session have no domain.
     fn latest_index_schema(&self) -> Option<&crate::domain_misc::LatestIndexSchema> {

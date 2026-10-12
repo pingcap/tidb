@@ -330,6 +330,7 @@ mod exchange_partition;
 mod generated_modify;
 mod index_changes;
 pub mod index_prefix;
+mod hypo_index;
 mod indexes;
 pub mod modify_column_type;
 pub use indexes::{
@@ -376,6 +377,9 @@ pub use table_partition::{
 pub use bdr::admit_job as admit_bdr_job;
 pub use bdr::submit_job as submit_ddl_job;
 use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
+pub use hypo_index::{
+    create_hypo_index, drop_hypo_index, set_hypo_tiflash_replica, HypoIndexes, HypoTiFlashReplicas,
+};
 pub use indexes::{index_backfill_error, run_create_index_in, run_drop_index_in};
 pub use table_constraints::is_int_column_type;
 use table_constraints::{

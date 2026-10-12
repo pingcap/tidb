@@ -867,7 +867,9 @@ pub(super) fn logical_from_plan(
     ctx: &crate::StmtContext,
     in_dml: bool,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
-    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx);
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
@@ -3239,7 +3241,9 @@ fn planner_optimized_query_with_allocators(
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
-    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx);
     let session_zone = ctx.session_zone();
     let evaluator = subquery_evaluator(
         catalog,
@@ -3305,7 +3309,9 @@ pub(crate) fn query_builds_correlated_columns(
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<bool, tidb_planner::plan_base::PlanError> {
-    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx);
     let session_zone = ctx.session_zone();
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -3360,7 +3366,9 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     ),
     tidb_planner::plan_base::PlanError,
 > {
-    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx);
     let session_zone = ctx.session_zone();
     let registry = ScalarSubqueryRegistry::default();
     let evaluator = subquery_evaluator(
@@ -3993,7 +4001,9 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
 > {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
-    let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx);
     let session_zone = ctx.session_zone();
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());

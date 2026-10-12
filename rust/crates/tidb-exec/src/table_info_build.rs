@@ -544,6 +544,15 @@ pub fn build_table_info_in_schema(
         }
     }
 
+    // Go `setColumnFlagWithConstraint` runs in `buildColumnsAndConstraints`,
+    // before `buildTableInfo` builds any hidden column, and skips every
+    // expression key part (`key.Expr != nil`): an expression index's hidden
+    // column carries no key flag. The expression parts are still unnamed
+    // here, so they match no column.
+    for constraint in &constraints {
+        stamp_constraint_flags(&mut columns, constraint)?;
+    }
+
     // go `BuildHiddenColumnInfo` (pkg/ddl/create_table.go:1590): every
     // expression index part is lowered to a hidden VIRTUAL generated column
     // `_V$_<index>_<part-position>` and the key part points at it. Runs now
@@ -569,12 +578,6 @@ pub fn build_table_info_in_schema(
             ));
         }
         seen.push(lowercase);
-    }
-
-    // Go `setColumnFlagWithConstraint`, run over every constraint once every
-    // column exists.
-    for constraint in &constraints {
-        stamp_constraint_flags(&mut columns, constraint)?;
     }
 
     let mut table = build_table(

@@ -1133,7 +1133,12 @@ impl Session {
         is_dml: bool,
         ignore_err: bool,
     ) -> tidb_executor::StmtContext {
-        let ctx = self.session_statement_context(is_dml, ignore_err);
+        let ctx = self
+            .session_statement_context(is_dml, ignore_err)
+            .with_hypo_state(
+                Arc::clone(&self.hypo_indexes),
+                Arc::clone(&self.hypo_tiflash_replicas),
+            );
         match &self.txn {
             Some(txn) => ctx.with_txn_read_snapshot(Arc::clone(&txn.read_snapshot)),
             None => ctx,

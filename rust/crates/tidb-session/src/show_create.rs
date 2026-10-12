@@ -306,7 +306,18 @@ pub(super) fn show_create_table_text(
         ));
     }
 
-    for index in table.indexes() {
+    // Go `ConstructResultOfShowCreateTable` appends the session's
+    // hypothetical indexes after the public ones, sorted by name.
+    let hypo_indexes = ctx
+        .hypo_indexes()
+        .map(|hypo| hypo.table_indexes(database, name))
+        .unwrap_or_default();
+    let indexes = table
+        .indexes()
+        .iter()
+        .map(|index| (index, false))
+        .chain(hypo_indexes.into_iter().map(|index| (index, true)));
+    for (index, is_hypo) in indexes {
         // The PRIMARY is emitted ONCE, and the block above decided which of
         // the two places does it: it prints from the handle offsets only when
         // the index list carries no PRIMARY, and otherwise leaves it to this
@@ -326,7 +337,11 @@ pub(super) fn show_create_table_text(
         }
         // Go `show.go`: a partial index prints its stored condition
         // (`ConditionExprString`) after the key parts.
-        let mut condition = table.partial_index_condition_string(index.id);
+        let mut condition = if is_hypo {
+            None
+        } else {
+            table.partial_index_condition_string(index.id)
+        };
         let columns = index
             .column_offsets
             .iter()
@@ -362,6 +377,9 @@ pub(super) fn show_create_table_text(
             clause.push_str(" COMMENT '");
             clause.push_str(&tidb_util::format::output_format(&index.comment));
             clause.push('\'');
+        }
+        if is_hypo {
+            clause.push_str(" /* HYPO INDEX */");
         }
         // Go `idxInfo.Primary`: the marker follows every other suffix and
         // `tableInfo.HasClusteredIndex()` decides it, which a common handle

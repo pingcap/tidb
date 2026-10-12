@@ -59,11 +59,22 @@ pub fn split_scan_filters(
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> (Vec<Expression>, Vec<Expression>) {
     let (ordinary, mut root) = split_virtual_column_filters(filters);
-    let (pushed, rejected): (Vec<_>, Vec<_>) = ordinary.into_iter().partition(|condition| {
-        can_exprs_push_down(std::slice::from_ref(condition), store, blacklist)
-    });
+    let (pushed, rejected) = push_down_exprs(ordinary, store, blacklist);
     root.extend(rejected);
     (pushed, root)
+}
+
+/// Go `expression.PushDownExprs`: the filters `store` can evaluate, then the
+/// ones it cannot. Unlike [`split_scan_filters`] it keeps a virtual-column
+/// filter: an index that covers the hidden column evaluates it.
+pub fn push_down_exprs(
+    filters: Vec<Expression>,
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> (Vec<Expression>, Vec<Expression>) {
+    filters.into_iter().partition(|condition| {
+        can_exprs_push_down(std::slice::from_ref(condition), store, blacklist)
+    })
 }
 
 /// Go `extractFiltersForIndexMerge`: a filter TiKV can evaluate is pushed,

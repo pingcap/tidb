@@ -1211,7 +1211,10 @@ impl Default for IndexLookupPushDownSession {
 ///   [`crate::plan_builder::catalog::SourceIndex`], so an inverted index
 ///   would enumerate here where Go skips it; the catalog does not model one
 ///   today;
-/// * hypo indexes (`:1419-1441`) — explain-only session state;
+/// * hypo indexes (`:1419-1441`) are not enumerated here: an EXPLAIN's
+///   [`crate::plan_builder::catalog::TableSource::hypo_indexes`] are appended
+///   to the table's index list before this runs, so they enumerate as public
+///   paths after the real ones;
 /// Hint filtering (`:1443` onward) is the separate
 /// [`apply_table_index_hints`] stage, matching Go's enumeration-then-filter
 /// structure. Comment-style hints must join that same stage through the

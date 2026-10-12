@@ -12890,3 +12890,153 @@ fn global_temporary_rows_end_with_their_transaction_as_go_does() {
     rows(&mut session, "COMMIT");
     assert!(rows(&mut session, "SELECT a FROM test.g").is_empty());
 }
+
+/// Go keeps hypothetical indexes and TiFlash replicas in `SessionVars`
+/// (`addHypoIndexIntoCtx`, `dropHypoIndexFromCtx`, `setHypoTiFlashReplica`):
+/// only EXPLAIN plans them and SHOW CREATE TABLE prints the indexes. This
+/// node stored them as real indexes.
+#[test]
+fn hypothetical_indexes_are_session_state_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1008)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t (a INT, b INT, c INT, KEY (a))",
+    );
+    session
+        .execute_write("CREATE INDEX hypo_bc TYPE HYPO ON test.t (b, c)")
+        .unwrap();
+    session
+        .execute_write("CREATE UNIQUE INDEX hypo_c TYPE HYPO ON test.t (c)")
+        .unwrap();
+    let error = session
+        .execute_write("CREATE INDEX hypo_bc TYPE HYPO ON test.t (b)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1105, "conflict hypo index name hypo_bc")
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(
+        created[0][1].contains(
+            "  KEY `a` (`a`),\n  KEY `hypo_bc` (`b`,`c`) /* HYPO INDEX */,\n  \
+             UNIQUE KEY `hypo_c` (`c`) /* HYPO INDEX */\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+    let explain = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row[3].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        explain(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT b FROM test.t WHERE b = 1 AND c = 2"
+        )
+        .last()
+        .unwrap(),
+        "table:t, index:hypo_bc(b, c)"
+    );
+    assert_eq!(
+        explain(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT c FROM test.t WHERE c = 1"
+        ),
+        ["table:t, index:hypo_c(c)"]
+    );
+    // Only EXPLAIN sees them: the table has no such index to read.
+    assert!(rows(&mut session, "SELECT c FROM test.t WHERE c = 1").is_empty());
+    session
+        .execute_write("DROP HYPO INDEX hypo_bc ON test.t")
+        .unwrap();
+    let error = session
+        .execute_write("DROP HYPO INDEX hypo_bc ON test.t")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1091, "index hypo_bc doesn't exist")
+    );
+    session
+        .execute_write("DROP HYPO INDEX IF EXISTS hypo_bc ON test.t")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1")
+        .unwrap();
+    assert!(
+        explain(&mut session, "EXPLAIN FORMAT='brief' SELECT b FROM test.t")
+            .iter()
+            .any(|object| object == "table:t")
+    );
+    assert!(displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT b FROM test.t"
+    ))
+    .iter()
+    .any(|row| row[2] == "mpp[tiflash]"));
+    session
+        .execute_write("ALTER TABLE test.t SET HYPO TIFLASH REPLICA 0")
+        .unwrap();
+    assert!(!displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT b FROM test.t"
+    ))
+    .iter()
+    .any(|row| row[2] == "mpp[tiflash]"));
+    // Session state: another session sees none of it.
+    let mut other = stack.factory.open_session(session_context(1009)).unwrap();
+    let created = displayed(rows(&mut other, "SHOW CREATE TABLE test.t"));
+    assert!(!created[0][1].contains("HYPO"), "{}", created[0][1]);
+}
+
+/// Two expression indexes on one expression own different hidden columns,
+/// and Go's `EqualByExprAndID` treats them as one by `FieldType.Equal`,
+/// which ignores key flags. Go stamps no key flag on a hidden column
+/// (`setColumnFlagWithConstraint` skips expression parts), and pushes an
+/// index filter on one through `PushDownExprs` alone. This node stamped
+/// `MultipleKeyFlag`, compared flags, and kept the filter at root.
+#[test]
+fn expression_indexes_on_one_expression_cover_each_other_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1010)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t1 (a VARCHAR(10), b VARCHAR(10), KEY e1 ((lower(a))), \
+         KEY e2 ((lower(a))), KEY idx ((lower(a)), a), KEY idx1 (a, (lower(a))), \
+         KEY idx2 (a, (lower(a)), b))",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM test.t1 WHERE lower(a) LIKE \"aadwa\" AND a = \"a\""
+        )),
+        [
+            ["IndexReader", "1.00", "root", "", "index:Projection"],
+            ["└─Projection", "1.00", "cop[tikv]", "", "test.t1.a, test.t1.b"],
+            [
+                "  └─Selection",
+                "1.00",
+                "cop[tikv]",
+                "",
+                "like(lower(test.t1.a), \"aadwa\", 92)"
+            ],
+            [
+                "    └─IndexRangeScan",
+                "1.25",
+                "cop[tikv]",
+                "table:t1, index:idx2(a, lower(`a`), b)",
+                "range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"
+            ],
+        ]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT column_name, column_key FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 't1' ORDER BY ordinal_position"
+        )),
+        [["a", "MUL"], ["b", ""]]
+    );
+}

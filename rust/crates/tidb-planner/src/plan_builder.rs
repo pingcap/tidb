@@ -2613,6 +2613,28 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// `ErrBadDB` for an unknown database, `ErrNoSuchTable` for an unknown
     /// table.
+    /// `table` with the session's hypothetical indexes appended to its index
+    /// list and its hypothetical TiFlash replica set, or `None` when the
+    /// session declared neither for it (or the statement is not an EXPLAIN).
+    fn with_hypo_access_paths(
+        &self,
+        db_name: &str,
+        table: &catalog::SourceTable,
+    ) -> Option<catalog::SourceTable> {
+        let indexes = self.source.hypo_indexes(db_name, &table.table_name);
+        let tiflash = !table.has_tiflash_replica
+            && self
+                .source
+                .uses_hypo_tiflash_replicas(db_name, &table.table_name);
+        if indexes.is_empty() && !tiflash {
+            return None;
+        }
+        let mut table = table.clone();
+        table.indexes.extend(indexes);
+        table.has_tiflash_replica |= tiflash;
+        Some(table)
+    }
+
     pub fn build_data_source(&mut self, table_ref: &TableRef) -> Result<LogicalPlan, PlanError> {
         if table_ref
             .sample
@@ -2756,6 +2778,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.opt_flag |= flags::GC_SUBSTITUTE;
         }
 
+        // Go `getPossibleAccessPaths` (`planbuilder.go:1332`, `:1419`): an
+        // EXPLAIN also plans the session's hypothetical TiFlash replica and
+        // hypothetical indexes, as public paths after the real ones.
+        let hypo_table;
+        let table = match self.with_hypo_access_paths(&db_name, table) {
+            Some(with_hypo) => {
+                hypo_table = with_hypo;
+                &hypo_table
+            }
+            None => table,
+        };
         let as_name = table_ref.alias.clone();
         let visible_table = as_name.clone().unwrap_or_else(|| table.table_name.clone());
         let mut force_no_index_lookup_push_down = false;

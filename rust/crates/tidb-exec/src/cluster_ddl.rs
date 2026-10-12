@@ -2004,10 +2004,11 @@ fn lower_alter_table_catalog(
             labels,
         } => {
             if *hypo {
-                // Go `onSetTiFlashReplicaSpec` (ddl/executor/alter_executor.go):
-                // the planner-only HYPO form has no DDL execution.
+                // Go `setHypoTiFlashReplica` keeps the replica in
+                // `SessionVars`; the session answers a lone `SET HYPO TIFLASH
+                // REPLICA`, and a multi-action ALTER has no session arm yet.
                 return Err(DdlAdmissionError::unsupported(
-                    "HYPO TIFLASH REPLICA is a planner-only index hint and cannot be executed",
+                    "SET HYPO TIFLASH REPLICA among other ALTER TABLE actions is not supported yet",
                 ));
             }
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -4738,6 +4739,14 @@ fn lower_create_index(
     // `primary = true`; the caller decides, since the AST's own
     // `CREATE INDEX` grammar has no PRIMARY spelling.
     let (schema, table) = split_name(&create.table, default_schema, "table")?;
+    // Go `createIndex`'s hypo branch keeps the index in `SessionVars`. The
+    // session answers `CREATE INDEX ... TYPE HYPO` itself; the ALTER TABLE
+    // spelling has no session arm yet, and must not store a real index.
+    if create.options.index_type == Some(tidb_ast::IndexType::HYPO) {
+        return Err(DdlAdmissionError::unsupported(
+            "a hypothetical index through ALTER TABLE is not supported yet",
+        ));
+    }
     let unique = match create.kind {
         tidb_ast::IndexKind::Ordinary => false,
         tidb_ast::IndexKind::Unique => true,
@@ -4845,9 +4854,11 @@ fn lower_drop_index(
     default_schema: &str,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     let (schema, table) = split_name(&drop.table, default_schema, "table")?;
+    // Go keeps hypothetical indexes in `SessionVars`; the session answers
+    // `DROP HYPO INDEX` before any statement reaches the catalog.
     if drop.is_hypo {
         return Err(DdlAdmissionError::unsupported(
-            "DROP HYPO INDEX is not supported: this node creates no hypothetical indexes",
+            "DROP HYPO INDEX is session state and never reaches the catalog",
         ));
     }
     Ok(DdlStatement::DropIndex {

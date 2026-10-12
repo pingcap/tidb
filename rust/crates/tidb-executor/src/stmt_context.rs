@@ -893,6 +893,11 @@ pub struct StmtContextData {
     /// Go `domain.GetDomain(ctx).InfoSchema()` narrowed to the metadata read
     /// by `planner/util/domainmisc.GetLatestIndexInfo`.
     latest_index_schema: Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>>,
+    /// Go `SessionVars.HypoIndexes`, which `EXPLAIN` planning and `SHOW
+    /// CREATE TABLE` read.
+    hypo_indexes: Option<Arc<crate::ddl::HypoIndexes>>,
+    /// Go `SessionVars.HypoTiFlashReplicas`, which `EXPLAIN` planning reads.
+    hypo_tiflash_replicas: Option<Arc<crate::ddl::HypoTiFlashReplicas>>,
     /// The statement snapshot of every session value read by cost model v2.
     optimizer_cost_env: Option<Arc<tidb_planner::find_best_task::coster::CostEnv>>,
     /// Go `SessionVars.ExecutorConcurrency`, shared by executor families that
@@ -1607,6 +1612,18 @@ context_configuration! {
         schema: Arc<tidb_planner::domain_misc::LatestIndexSchema>,
     ) -> Self {
         self.latest_index_schema = Some(schema);
+        self
+    }
+
+    /// Attaches the session's hypothetical indexes and TiFlash replicas.
+    #[must_use]
+    pub fn with_hypo_state(
+        mut self,
+        indexes: Arc<crate::ddl::HypoIndexes>,
+        tiflash_replicas: Arc<crate::ddl::HypoTiFlashReplicas>,
+    ) -> Self {
+        self.hypo_indexes = (!indexes.is_empty()).then_some(indexes);
+        self.hypo_tiflash_replicas = (!tiflash_replicas.is_empty()).then_some(tiflash_replicas);
         self
     }
 
@@ -2330,6 +2347,8 @@ impl StmtContext {
             index_lookup_push_down_session:
                 tidb_planner::access_path::IndexLookupPushDownSession::default(),
             latest_index_schema: None,
+            hypo_indexes: None,
+            hypo_tiflash_replicas: None,
             optimizer_cost_env: None,
             executor_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
             hashagg_partial_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize,
@@ -3345,6 +3364,28 @@ impl StmtContext {
         &self,
     ) -> tidb_planner::access_path::IndexLookupPushDownSession {
         self.index_lookup_push_down_session
+    }
+
+    /// Go `SessionVars.HypoIndexes`, when the session defined any.
+    #[must_use]
+    pub fn hypo_indexes(&self) -> Option<&crate::ddl::HypoIndexes> {
+        self.hypo_indexes.as_deref()
+    }
+
+    /// Go `SessionVars.HypoTiFlashReplicas`, when the session defined any.
+    #[must_use]
+    pub fn hypo_tiflash_replicas(&self) -> Option<&crate::ddl::HypoTiFlashReplicas> {
+        self.hypo_tiflash_replicas.as_deref()
+    }
+
+    pub(crate) fn hypo_indexes_shared(&self) -> Option<Arc<crate::ddl::HypoIndexes>> {
+        self.hypo_indexes.clone()
+    }
+
+    pub(crate) fn hypo_tiflash_replicas_shared(
+        &self,
+    ) -> Option<Arc<crate::ddl::HypoTiFlashReplicas>> {
+        self.hypo_tiflash_replicas.clone()
     }
 
     /// Returns the latest-domain index metadata captured for this statement.

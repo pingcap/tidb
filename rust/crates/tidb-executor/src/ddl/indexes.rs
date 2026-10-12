@@ -556,15 +556,15 @@ pub(super) enum IndexAdmission<T> {
     Note(DriverError),
 }
 
-struct BuiltIndex {
-    index: KvIndex,
-    hidden: Vec<crate::expression_index::HiddenIndexColumn>,
+pub(super) struct BuiltIndex {
+    pub(super) index: KvIndex,
+    pub(super) hidden: Vec<crate::expression_index::HiddenIndexColumn>,
 }
 
 /// Build metadata without reading rows or writing the catalog. Go performs
 /// index admission before collecting multi-schema conflicts and rebuilds the
 /// definition in the worker before backfill.
-fn build_index_definition(
+pub(super) fn build_index_definition(
     table: &crate::KvTable,
     index: IndexSpec<'_>,
     ctx: &crate::StmtContext,
