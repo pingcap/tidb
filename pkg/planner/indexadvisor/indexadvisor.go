@@ -76,17 +76,16 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 		return nil, errors.New("nil input")
 	}
 
-	if !persist {
-		// `RECOMMEND INDEX RETURN RESULT FOR` is used by diagnostic TiDB, where all writes are
-		// forbidden. Skip column-statistics usage recording here so planning the
-		// workload does not trigger a deferred write in that mode.
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		originalSkipColumnStatsUsage := stmtCtx.SkipColumnStatsUsage
-		stmtCtx.SkipColumnStatsUsage = true
-		defer func() {
-			stmtCtx.SkipColumnStatsUsage = originalSkipColumnStatsUsage
-		}()
-	}
+	// Index advisor analyzes a workload to recommend indexes; it does not
+	// execute that workload. Do not count predicates seen during RUN FOR or
+	// RETURN RESULT FOR as real workload usage, or a later background flush
+	// could write that analysis-only usage to mysql.column_stats_usage.
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	originalSkipColumnStatsUsage := stmtCtx.SkipColumnStatsUsage
+	stmtCtx.SkipColumnStatsUsage = true
+	defer func() {
+		stmtCtx.SkipColumnStatsUsage = originalSkipColumnStatsUsage
+	}()
 
 	advisorLogger().Info("index advisor option filled and start", zap.Any("option", option))
 	defer func() {
