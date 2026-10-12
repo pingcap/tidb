@@ -483,10 +483,11 @@ pub fn build_table_info_in_schema(
             &table_charset,
             &table_collate,
             context,
-            // go `columnDefToCol` resolves generated expressions against the
-            // columns PRECEDING this one in the CREATE TABLE (all columns
-            // already processed by this loop iteration).
-            Some(&columns),
+            GeneratedColumns::Deferred {
+                preceding: &columns,
+                schema,
+                table: create.name.last().map_or("", String::as_str),
+            },
         )?;
         // go `buildColumnsAndConstraints` warns `ErrWarnDeprecatedZerofill`
         // (1681) for every ZEROFILL column it builds -- and go's YEAR type
@@ -784,7 +785,69 @@ pub fn build_table_info_in_schema(
             }
         }
     }
+    check_generated_columns(create, &mut table, context)?;
     Ok(table)
+}
+
+/// Go `checkTableInfoValidWithStmt` -> `checkGeneratedColumn`: once the table
+/// is built, every generated expression is resolved against ALL its declared
+/// columns -- a generated column may read a LATER ordinary one (`b int as
+/// (c+1), c int` is accepted), only an earlier generated one (3107), never an
+/// unknown name (1054), nor the AUTO_INCREMENT column unless
+/// `tidb_enable_auto_increment_in_generated` allows it (3109). The resolved
+/// text and dependences replace what `columnDefToCol` recorded.
+fn check_generated_columns(
+    create: &CreateTableStmt,
+    table: &mut TableInfo,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    if !create.columns.iter().any(|column| {
+        column
+            .options
+            .iter()
+            .any(|option| matches!(option, ColumnOption::Generated { .. }))
+    }) {
+        return Ok(());
+    }
+    // The declared columns lead `Columns` in definition order; hidden
+    // expression-index columns follow them.
+    let declared = table
+        .columns
+        .iter_deref()
+        .take(create.columns.len())
+        .collect::<Vec<_>>();
+    let names = declared
+        .iter()
+        .map(|column| column.read().name.original().to_owned())
+        .collect::<Vec<_>>();
+    let types = declared
+        .iter()
+        .map(|column| column.read().field_type.clone())
+        .collect::<Vec<_>>();
+    let built = tidb_executor::generated_column::build_generated_columns_with_like_default_escape(
+        &create.columns,
+        &names,
+        &types,
+        &context.session_zone(),
+        context.like_default_escape(),
+        context.auto_increment_in_generated(),
+    )
+    .map_err(generated_column_admission_error)?;
+    for (column, generated) in declared.iter().zip(built) {
+        let Some(generated) = generated else {
+            continue;
+        };
+        let mut column = column.write();
+        column.generated_expr_string = generated.expr_text;
+        column.generated_stored = generated.stored;
+        // Go `findDependedColumnNames` keys the set by `Name.L`.
+        for dependency in generated.dependencies {
+            column
+                .dependences
+                .insert(tidb_hack::go_to_lower(&dependency));
+        }
+    }
+    Ok(())
 }
 
 /// Go `BuildIndexInfo`'s partial-index half for `index` on `table`:
@@ -1283,8 +1346,28 @@ pub fn build_added_column(
         table_charset,
         table_collate,
         context,
-        generated_preceding,
+        generated_preceding.map_or(GeneratedColumns::Refused, GeneratedColumns::Existing),
     )?;
+    // Go `checkAutoIncrementRef` (`AddColumn`): unless
+    // `tidb_enable_auto_increment_in_generated` allows it, a generated column
+    // may not read the table's AUTO_INCREMENT column (3109).
+    if info.is_generated() && !context.auto_increment_in_generated() {
+        let auto_increment = generated_preceding
+            .unwrap_or(&[])
+            .iter()
+            .find(|existing| existing.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT));
+        if let Some(auto_increment) = auto_increment {
+            if info.dependences.contains(auto_increment.name.lowercase()) {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrGeneratedColumnRefAutoInc,
+                    format!(
+                        "Generated column '{}' cannot refer to auto-increment column.",
+                        tidb_hack::go_to_lower(&column.name)
+                    ),
+                ));
+            }
+        }
+    }
     // Go ignores every constraint returned here. Unsupported key/FK options
     // were refused above; the only possible result is the inline CHECK that
     // pinned `ALTER TABLE ... ADD COLUMN` does not persist.
@@ -1304,8 +1387,15 @@ pub fn build_modified_column(
     table_collate: &str,
     context: &tidb_executor::StmtContext,
 ) -> Refusal<ColumnInfo> {
-    let (info, _constraints) =
-        build_column(0, column, None, table_charset, table_collate, context, None)?;
+    let (info, _constraints) = build_column(
+        0,
+        column,
+        None,
+        table_charset,
+        table_collate,
+        context,
+        GeneratedColumns::Refused,
+    )?;
     Ok(info)
 }
 
@@ -1511,6 +1601,37 @@ fn stamp_origin_default(
     Ok(())
 }
 
+/// Where a column's generated expression is resolved.
+#[derive(Clone, Copy)]
+enum GeneratedColumns<'a> {
+    /// MODIFY / CHANGE COLUMN: this node does not build one.
+    Refused,
+    /// ADD COLUMN: against the table's existing columns, now.
+    Existing(&'a [ColumnInfo]),
+    /// CREATE TABLE: Go `columnDefToCol` records the expression text and
+    /// its dependences only, and `checkGeneratedColumn` resolves every
+    /// expression against the whole table once it is built. `preceding` is
+    /// the columns before this one, which a DEFAULT expression reads;
+    /// `schema` and `table` judge a qualified column name.
+    Deferred {
+        preceding: &'a [ColumnInfo],
+        schema: &'a str,
+        table: &'a str,
+    },
+}
+
+impl<'a> GeneratedColumns<'a> {
+    fn preceding(self) -> &'a [ColumnInfo] {
+        match self {
+            Self::Refused => &[],
+            Self::Existing(columns)
+            | Self::Deferred {
+                preceding: columns, ..
+            } => columns,
+        }
+    }
+}
+
 /// Go `buildColumnAndConstraint` + `columnDefToCol` for one column.
 fn build_column(
     offset: usize,
@@ -1519,7 +1640,7 @@ fn build_column(
     table_charset: &str,
     table_collate: &str,
     context: &tidb_executor::StmtContext,
-    generated_preceding: Option<&[ColumnInfo]>,
+    generated_columns: GeneratedColumns<'_>,
 ) -> Refusal<(ColumnInfo, Vec<(usize, Constraint)>)> {
     let name = &column.name;
     // Go `buildColumnAndConstraint`: the hidden handle's name is reserved.
@@ -1730,13 +1851,13 @@ fn build_column(
                 }
             },
             ColumnOption::Default(expr) => {
-                let preceding_names: Vec<String> = generated_preceding
-                    .unwrap_or(&[])
+                let preceding_names: Vec<String> = generated_columns
+                    .preceding()
                     .iter()
                     .map(|column| column.name.original().to_owned())
                     .collect();
-                let preceding_types: Vec<FieldType> = generated_preceding
-                    .unwrap_or(&[])
+                let preceding_types: Vec<FieldType> = generated_columns
+                    .preceding()
                     .iter()
                     .map(|column| column.field_type.clone())
                     .collect();
@@ -1825,10 +1946,28 @@ fn build_column(
             ColumnOption::Generated {
                 expression, stored, ..
             } => {
-                let Some(preceding) = generated_preceding else {
-                    return Err(DdlAdmissionError::unsupported(
-                        "a generated expression waits on its DDL course",
-                    ));
+                let preceding = match generated_columns {
+                    GeneratedColumns::Refused => {
+                        return Err(DdlAdmissionError::unsupported(
+                            "a generated expression waits on its DDL course",
+                        ));
+                    }
+                    GeneratedColumns::Deferred { schema, table, .. } => {
+                        info.generated_expr_string = expression.restore_with_flags(
+                            tidb_executor::generated_column::generated_restore_flags(),
+                        );
+                        info.generated_stored = *stored;
+                        let (_, dependences) =
+                            tidb_executor::generated_column::find_depended_column_names(
+                                schema, table, column,
+                            )
+                            .map_err(default_admission_error)?;
+                        for dependency in dependences {
+                            info.dependences.insert(dependency);
+                        }
+                        continue;
+                    }
+                    GeneratedColumns::Existing(preceding) => preceding,
                 };
                 let names = preceding
                     .iter()
@@ -2205,6 +2344,8 @@ fn build_table(
         } else {
             constraint.name.clone()
         };
+        // Go `BuildIndexInfo` -> `checkTooLongIndex` (1059).
+        tidb_executor::ddl::check_too_long_identifier(&name).map_err(default_admission_error)?;
         let mut index_columns = Vec::with_capacity(constraint.parts.len());
         let mut part_lengths: Vec<(tidb_datatype::FieldType, i64)> =
             Vec::with_capacity(constraint.parts.len());

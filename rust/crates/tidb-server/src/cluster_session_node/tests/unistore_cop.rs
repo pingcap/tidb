@@ -12363,3 +12363,55 @@ fn sequence_ddl_runs_as_go_runs_it() {
         ]
     );
 }
+
+/// Go `columnDefToCol` records a generated column's text and dependences,
+/// and `checkGeneratedColumn` resolves every expression against the whole
+/// table once it is built: a generated column reads a LATER ordinary column,
+/// and the AUTO_INCREMENT column only when allowed (3109, also ADD COLUMN's
+/// `checkAutoIncrementRef`). `BuildIndexInfo` refuses an index name over 64
+/// characters (1059). This node resolved against the preceding columns only
+/// (1054), and checked neither.
+#[test]
+fn generated_columns_resolve_against_the_whole_table_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(999)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.g (gc1 INT AS (r + 1), gc2 INT AS (r + 1) STORED, r INT)",
+    );
+    rows(&mut session, "INSERT INTO test.g (r) VALUES (1)");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM test.g")),
+        [["2", "2", "1"]]
+    );
+    for (sql, code, message) in [
+        (
+            "CREATE TABLE test.a1 (a BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT, b BIGINT AS (a + 1))"
+                .to_owned(),
+            3109,
+            "Generated column 'b' cannot refer to auto-increment column.".to_owned(),
+        ),
+        (
+            format!("CREATE TABLE test.a2 (c INT, INDEX {} (c))", "d".repeat(65)),
+            1059,
+            format!("Identifier name '{}' is too long", "d".repeat(65)),
+        ),
+    ] {
+        let error = session.execute_write(&sql).unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (code, message.as_str()), "{sql}");
+    }
+    rows(
+        &mut session,
+        "CREATE TABLE test.a3 (a BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT, b INT)",
+    );
+    let error = session
+        .execute_write("ALTER TABLE test.a3 ADD COLUMN d BIGINT GENERATED ALWAYS AS (a + 1)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            3109,
+            "Generated column 'd' cannot refer to auto-increment column."
+        )
+    );
+}

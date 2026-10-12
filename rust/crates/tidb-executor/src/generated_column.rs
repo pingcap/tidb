@@ -537,6 +537,74 @@ fn rewrite_error(error: tidb_expr::EvalError, missing_name: Option<String>) -> G
     }
 }
 
+/// Go `findDependedColumnNames` over `FindColumnNamesInExpr`: whether the
+/// column is generated, and the `Name.L` of every column its expression
+/// names, in first-seen order. A qualifier naming another database is 1102,
+/// another table 1103.
+pub fn find_depended_column_names(
+    schema: &str,
+    table: &str,
+    def: &tidb_ast::ColumnDef,
+) -> Result<(bool, Vec<String>), crate::DriverError> {
+    #[derive(Default)]
+    struct ColumnNames(Vec<Vec<String>>);
+    impl tidb_ast::Visitor for ColumnNames {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_mut::<tidb_ast::Expr>() {
+                self.0.push(path.clone());
+                return true;
+            }
+            false
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let Some(tidb_ast::ColumnOption::Generated { expression, .. }) = def
+        .options
+        .iter()
+        .find(|option| matches!(option, tidb_ast::ColumnOption::Generated { .. }))
+    else {
+        return Ok((false, Vec::new()));
+    };
+    let mut names = ColumnNames::default();
+    tidb_ast::Visitable::accept(&mut expression.clone(), &mut names);
+    let (schema, table) = (
+        tidb_hack::go_to_lower(schema),
+        tidb_hack::go_to_lower(table),
+    );
+    let mut dependences = Vec::new();
+    for path in names.0 {
+        let (db, tbl, column) = match path.as_slice() {
+            [column] => (None, None, column),
+            [tbl, column] => (None, Some(tbl), column),
+            [db, tbl, column, ..] => (Some(db), Some(tbl), column),
+            [] => continue,
+        };
+        if let Some(db) = db.filter(|db| !db.is_empty() && !schema.is_empty()) {
+            if tidb_hack::go_to_lower(db) != schema {
+                return Err(crate::DriverError::DdlCoded {
+                    errno: tidb_error::mysql::errcode::ErrWrongDBName,
+                    message: format!("Incorrect database name '{db}'"),
+                });
+            }
+        }
+        if let Some(tbl) = tbl.filter(|tbl| !tbl.is_empty() && !table.is_empty()) {
+            if tidb_hack::go_to_lower(tbl) != table {
+                return Err(crate::DriverError::DdlCoded {
+                    errno: tidb_error::mysql::errcode::ErrWrongTableName,
+                    message: format!("Incorrect table name '{tbl}'"),
+                });
+            }
+        }
+        let column = tidb_hack::go_to_lower(column);
+        if !dependences.contains(&column) {
+            dependences.push(column);
+        }
+    }
+    Ok((true, dependences))
+}
+
 /// Go `columnDefToCol`'s generated arm plus `verifyColumnGeneration`: turns
 /// the parsed column definitions into one `Option<GeneratedColumn>` per
 /// column, refusing exactly what Go refuses.
@@ -752,7 +820,7 @@ fn resolve_generated_expr(
 ///
 /// This is also the canonical form a generated-column substitution rule can
 /// compare against once the wired planner implements `GcSubstituter`.
-pub(crate) fn generated_restore_flags() -> tidb_ast::RestoreFlags {
+pub fn generated_restore_flags() -> tidb_ast::RestoreFlags {
     tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
         | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
         | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
