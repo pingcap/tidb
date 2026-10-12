@@ -520,6 +520,9 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::SetTiFlashReplica { .. }
             | DdlStatement::AlterTableSetRegionSplitPolicy { .. }
             | DdlStatement::AlterTableAffinity { .. }
+            | DdlStatement::CreateResourceGroup { .. }
+            | DdlStatement::AlterResourceGroup { .. }
+            | DdlStatement::DropResourceGroup { .. }
             | DdlStatement::UpdateTiFlashReplicaStatus { .. }
             | DdlStatement::TruncateTable { .. } => {
                 return Err(SqlQueryError::unknown(

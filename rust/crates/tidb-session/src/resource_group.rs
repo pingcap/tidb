@@ -324,6 +324,20 @@ impl Session {
         &mut self,
         stmt: &CreateResourceGroupStmt,
     ) -> Result<StmtOutput, DriverError> {
+        match self.admit_create_resource_group(stmt)? {
+            Some(group) => {
+                self.submit_resource_group_job(ActionType::ACTION_CREATE_RESOURCE_GROUP, group)
+            }
+            None => Ok(StmtOutput::Done(false)),
+        }
+    }
+
+    /// Go `executor.AddResourceGroup` up to its job: the group to create, or
+    /// `None` where `IF NOT EXISTS` filed the 8248 as a note.
+    fn admit_create_resource_group(
+        &mut self,
+        stmt: &CreateResourceGroupStmt,
+    ) -> Result<Option<ResourceGroupInfo>, DriverError> {
         check_resource_control_enabled()?;
         let fresh = ResourceGroupInfo {
             settings: Some(Box::new(ResourceGroupSettings::new())),
@@ -336,12 +350,12 @@ impl Session {
             let error = resource_group_exists(&stmt.name);
             if stmt.if_not_exists {
                 self.append_suppressed(error);
-                return Ok(StmtOutput::Done(false));
+                return Ok(None);
             }
             return Err(error);
         }
         check_resource_group_validation(&group)?;
-        self.submit_resource_group_job(ActionType::ACTION_CREATE_RESOURCE_GROUP, group)
+        Ok(Some(group))
     }
 
     /// Go `DDLExec.executeAlterResourceGroup` and `executor.AlterResourceGroup`.
@@ -349,19 +363,32 @@ impl Session {
         &mut self,
         stmt: &AlterResourceGroupStmt,
     ) -> Result<StmtOutput, DriverError> {
+        match self.admit_alter_resource_group(stmt)? {
+            Some(group) => {
+                self.submit_resource_group_job(ActionType::ACTION_ALTER_RESOURCE_GROUP, group)
+            }
+            None => Ok(StmtOutput::Done(false)),
+        }
+    }
+
+    /// Go `executor.AlterResourceGroup` up to its job.
+    fn admit_alter_resource_group(
+        &mut self,
+        stmt: &AlterResourceGroupStmt,
+    ) -> Result<Option<ResourceGroupInfo>, DriverError> {
         check_resource_control_enabled()?;
         let existing = self.lock_catalog()?.resource_group(&stmt.name).cloned();
         let Some(existing) = existing else {
             let error = resource_group_not_exists(&stmt.name);
             if stmt.if_exists {
                 self.append_suppressed(error);
-                return Ok(StmtOutput::Done(false));
+                return Ok(None);
             }
             return Err(error);
         };
         let group = build_resource_group(&existing, &stmt.options)?;
         check_resource_group_validation(&group)?;
-        self.submit_resource_group_job(ActionType::ACTION_ALTER_RESOURCE_GROUP, group)
+        Ok(Some(group))
     }
 
     /// Go `DDLExec.executeDropResourceGroup` and `executor.DropResourceGroup`.
@@ -369,6 +396,19 @@ impl Session {
         &mut self,
         stmt: &DropResourceGroupStmt,
     ) -> Result<StmtOutput, DriverError> {
+        match self.admit_drop_resource_group(stmt)? {
+            Some(group) => {
+                self.submit_resource_group_job(ActionType::ACTION_DROP_RESOURCE_GROUP, group)
+            }
+            None => Ok(StmtOutput::Done(false)),
+        }
+    }
+
+    /// Go `executor.DropResourceGroup` up to its job.
+    fn admit_drop_resource_group(
+        &mut self,
+        stmt: &DropResourceGroupStmt,
+    ) -> Result<Option<ResourceGroupInfo>, DriverError> {
         check_resource_control_enabled()?;
         if stmt.name.to_lowercase() == DEFAULT_RESOURCE_GROUP_NAME {
             return Err(plain_error("can't drop reserved resource group"));
@@ -378,7 +418,7 @@ impl Session {
             let error = resource_group_not_exists(&stmt.name);
             if stmt.if_exists {
                 self.append_suppressed(error);
-                return Ok(StmtOutput::Done(false));
+                return Ok(None);
             }
             return Err(error);
         };
@@ -400,7 +440,35 @@ impl Session {
                 )));
             }
         }
-        self.submit_resource_group_job(ActionType::ACTION_DROP_RESOURCE_GROUP, existing)
+        Ok(Some(existing))
+    }
+
+    /// The cluster DDL for a resource-group statement: Go's executor checks
+    /// against this session's schema, then the statement the DDL job runs.
+    /// `None` is an `IF [NOT] EXISTS` that filed its note and submits no job.
+    pub fn cluster_resource_group_statement(
+        &mut self,
+        ddl: &tidb_ast::DdlStmt,
+    ) -> Result<Option<tidb_exec::cluster_ddl::DdlStatement>, DriverError> {
+        use tidb_exec::cluster_ddl::DdlStatement;
+        Ok(match ddl {
+            tidb_ast::DdlStmt::CreateResourceGroup(create) => self
+                .admit_create_resource_group(create)?
+                .map(|group| DdlStatement::CreateResourceGroup {
+                    group: Box::new(group),
+                }),
+            tidb_ast::DdlStmt::AlterResourceGroup(alter) => self
+                .admit_alter_resource_group(alter)?
+                .map(|group| DdlStatement::AlterResourceGroup {
+                    group: Box::new(group),
+                }),
+            tidb_ast::DdlStmt::DropResourceGroup(drop) => self
+                .admit_drop_resource_group(drop)?
+                .map(|group| DdlStatement::DropResourceGroup {
+                    group: Box::new(group),
+                }),
+            _ => None,
+        })
     }
 
     /// The resource-group job: BDR admission (`doDDLJob2`) and the meta edit

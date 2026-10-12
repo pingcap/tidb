@@ -197,6 +197,10 @@ pub(super) fn run_worker(
                 WorkerCommand::ListResourceGroups { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
+                WorkerCommand::PutResourceGroup { reply, .. }
+                | WorkerCommand::DeleteResourceGroup { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
                 WorkerCommand::GetTimestamp { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
@@ -446,6 +450,40 @@ pub(super) fn run_worker(
                     &shutdown,
                     keyspace_id,
                     with_ru_stats,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::PutResourceGroup {
+                keyspace_id,
+                group,
+                modify,
+                reply,
+            } => {
+                let result = super::failover::put_resource_group_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &shutdown,
+                    keyspace_id,
+                    &group,
+                    modify,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::DeleteResourceGroup {
+                keyspace_id,
+                name,
+                reply,
+            } => {
+                let result = super::failover::delete_resource_group_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &shutdown,
+                    keyspace_id,
+                    &name,
                 );
                 let _ = reply.send(result);
             }

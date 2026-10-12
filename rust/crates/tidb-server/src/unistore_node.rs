@@ -491,6 +491,8 @@ pub(crate) fn unistore_cluster_session_stack(
     // Go `affinity.InitManager(nil)`: unistore has no PD HTTP client, so the
     // affinity groups live in the mock manager.
     tidb_domain::affinity::init_manager(None);
+    // Go `initResourceManagerClient(nil)`: the mock resource manager.
+    tidb_domain::resource_manager_client::init_resource_manager_client(None);
 
     // The bootstrap: every boot, because the store is empty every boot.
     let (outcome, schema_version) =

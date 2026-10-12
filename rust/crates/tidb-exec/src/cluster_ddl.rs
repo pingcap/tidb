@@ -443,6 +443,23 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Go SetTiFlashReplicaArgs.ResetAvailable, used by restore repair.
         reset_available: bool,
     },
+    /// Go `AddResourceGroup` -> the `ActionCreateResourceGroup` job
+    /// (`onCreateResourceGroup`): the group the session admitted, given its
+    /// ID by the job.
+    CreateResourceGroup {
+        /// The group, built from the statement's options.
+        group: Box<tidb_model::ResourceGroupInfo>,
+    },
+    /// Go `AlterResourceGroup` -> the `ActionAlterResourceGroup` job.
+    AlterResourceGroup {
+        /// The existing group with the statement's settings applied.
+        group: Box<tidb_model::ResourceGroupInfo>,
+    },
+    /// Go `DropResourceGroup` -> the `ActionDropResourceGroup` job.
+    DropResourceGroup {
+        /// The group being dropped.
+        group: Box<tidb_model::ResourceGroupInfo>,
+    },
     /// Go `AlterTableAffinity` -> the `ActionAlterTableAffinity` job
     /// (`onAlterTableAffinity`): the table's affinity and its PD groups.
     AlterTableAffinity {
@@ -6182,6 +6199,7 @@ fn plan_persisted_check_constraint_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
+            resource_group_update: None,
         },
         // Go runOneJobStep re-encodes decoded arguments after any successful
         // action, independently of whether the schema version changed.
@@ -6294,6 +6312,7 @@ fn plan_persisted_create_schema_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
+            resource_group_update: None,
         },
         update_raw_args: true,
         run_error: None,
@@ -6439,6 +6458,7 @@ fn plan_persisted_create_table_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups,
+            resource_group_update: None,
         },
         update_raw_args: true,
         run_error: None,
@@ -6631,6 +6651,7 @@ fn plan_persisted_create_tables_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups,
+            resource_group_update: None,
         },
         update_raw_args: true,
         run_error: None,
@@ -6851,6 +6872,7 @@ fn plan_persisted_rename_tables_job_step(
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
                 affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
+                resource_group_update: None,
             },
             update_raw_args: true,
             run_error: None,
@@ -6925,6 +6947,7 @@ fn plan_persisted_rename_tables_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
+            resource_group_update: None,
         },
         update_raw_args: true,
         run_error: None,
@@ -7035,6 +7058,7 @@ fn plan_persisted_drop_schema_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups,
+            resource_group_update: None,
         },
         update_raw_args: false,
         run_error: None,
@@ -7134,6 +7158,7 @@ fn plan_persisted_drop_table_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups,
+            resource_group_update: None,
         },
         update_raw_args: false,
         run_error: None,
@@ -7141,6 +7166,50 @@ fn plan_persisted_drop_table_job_step(
 }
 // Action handlers select cancellation; the shared worker records this fresh
 // error, discards action writes, and finalizes the job in the same transaction.
+/// Go `resourcegroup.NewGroupFromOptions(groupInfo.Name.L, settings)`: the
+/// group as the resource manager takes it, refusing invalid settings.
+fn resource_group_proto(
+    group: &tidb_model::ResourceGroupInfo,
+) -> Result<tidb_proto::resource_manager::ResourceGroup, DdlPlanError> {
+    tidb_ddl_resourcegroup::new_group_from_options(
+        group.name.lowercase(),
+        group.settings.as_deref(),
+    )
+    .map_err(|error| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            error.to_string(),
+        ))
+    })
+}
+
+/// Go `Mutator.AddResourceGroup`'s value: the group's JSON behind the magic
+/// byte.
+fn serialize_resource_group(
+    group: &tidb_model::ResourceGroupInfo,
+) -> Result<Vec<u8>, DdlPlanError> {
+    serde_json::to_vec(group)
+        .map(|json| value::attach_magic_byte(&json))
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))
+}
+
+/// Go `checkResourceGroupExist`: the stored group of the job's ID.
+fn stored_resource_group(
+    catalog: &ClusterCatalog,
+    group_id: i64,
+) -> Result<&tidb_model::ResourceGroupInfo, DdlPlanError> {
+    catalog
+        .resource_groups
+        .iter()
+        .find(|group| group.id == group_id)
+        .ok_or_else(|| {
+            coded_refusal(
+                tidb_error::tidb::errcode::ErrResourceGroupNotExists,
+                format!("Unknown resource group '(Group ID {group_id})'"),
+            )
+        })
+}
+
 /// Go's wrapping of a `createTable` affinity failure.
 const CREATE_TABLE_AFFINITY_ERROR: &str = "failed to create table affinity groups in PD";
 
@@ -7184,6 +7253,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         placement_bundles: Vec::new(),
         placement_rollback_bundles: Vec::new(),
         affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
+        resource_group_update: None,
     }
 }
 
@@ -7551,6 +7621,47 @@ pub struct DdlWrite {
     /// published, failing it when PD refuses; `deleteTableAffinityGroupsInPD`,
     /// best-effort cleanup).
     pub affinity_groups: crate::ddl_affinity::AffinityGroupUpdate,
+    /// The resource-manager write a resource-group job makes before its
+    /// version is published (Go `infosync.AddResourceGroup` and its
+    /// siblings), failing the change when it fails.
+    pub resource_group_update: Option<ResourceGroupUpdate>,
+}
+
+/// Go's `infosync` resource-group writes from the resource-group jobs.
+#[derive(Clone, Debug)]
+pub enum ResourceGroupUpdate {
+    /// `onCreateResourceGroup`'s `infosync.AddResourceGroup`.
+    Add(Box<tidb_proto::resource_manager::ResourceGroup>),
+    /// `onAlterResourceGroup`'s `infosync.ModifyResourceGroup`.
+    Modify(Box<tidb_proto::resource_manager::ResourceGroup>),
+    /// `onDropResourceGroup`'s `infosync.DeleteResourceGroup`.
+    Delete(String),
+}
+
+impl ResourceGroupUpdate {
+    /// Makes the write; the error is the job's.
+    pub fn apply(&self) -> Result<(), String> {
+        match self {
+            Self::Add(group) => {
+                match tidb_domain::resource_manager_client::add_resource_group((**group).clone()) {
+                    Ok(()) => Ok(()),
+                    // Go: TiDB adds the default group when it bootstraps, so a
+                    // keyspace-mode TiDB skips that one's "already exists".
+                    Err(error)
+                        if error.contains("already exists")
+                            && group.name == tidb_model::DEFAULT_RESOURCE_GROUP_NAME =>
+                    {
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            Self::Modify(group) => {
+                tidb_domain::resource_manager_client::modify_resource_group((**group).clone())
+            }
+            Self::Delete(name) => tidb_domain::resource_manager_client::delete_resource_group(name),
+        }
+    }
 }
 
 /// Go `checkExchangePartitionRecordValidation` expressed as a data obligation
@@ -8417,6 +8528,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     // sent.
     let mut placement_bundles: Vec<tidb_placement::Bundle> = Vec::new();
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    let mut resource_group_update: Option<ResourceGroupUpdate> = None;
     let mut placement_rollback_bundles: Vec<tidb_placement::Bundle> = Vec::new();
     let schema_version = catalog.schema_version + 1;
     let mut writes = Vec::new();
@@ -9244,6 +9356,48 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             diff.table_id = stored.id;
             // Placement creation still uses the legacy poll owner here.
             // Its migration to durable DDL and cleanup to GC remains F01.
+        }
+        // Go `onCreateResourceGroup`: the group, PUBLIC under the job's ID,
+        // in meta and in the resource manager.
+        DdlStatement::CreateResourceGroup { group } => {
+            let mut info = (**group).clone();
+            let proto = resource_group_proto(&info)?;
+            info.id = global_ids.allocate(1)?[0];
+            info.state = SchemaState::PUBLIC;
+            writes.push(BufferMutation::set(
+                key::resource_group_kv_key(info.id),
+                serialize_resource_group(&info)?,
+            )?);
+            diff.action_type = ActionType::ACTION_CREATE_RESOURCE_GROUP;
+            diff.schema_id = info.id;
+            resource_group_update = Some(ResourceGroupUpdate::Add(Box::new(proto)));
+        }
+        // Go `onAlterResourceGroup`: the stored group takes the new settings.
+        DdlStatement::AlterResourceGroup { group } => {
+            let proto = resource_group_proto(group)?;
+            let stored = stored_resource_group(&catalog, group.id)?;
+            let mut info = stored.clone();
+            info.settings = group.settings.clone();
+            writes.push(BufferMutation::set(
+                key::resource_group_kv_key(info.id),
+                serialize_resource_group(&info)?,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_RESOURCE_GROUP;
+            diff.schema_id = info.id;
+            resource_group_update = Some(ResourceGroupUpdate::Modify(Box::new(proto)));
+        }
+        // Go `onDropResourceGroup`: out of meta and out of the resource
+        // manager.
+        DdlStatement::DropResourceGroup { group } => {
+            let stored = stored_resource_group(&catalog, group.id)?;
+            writes.push(BufferMutation::delete(key::resource_group_kv_key(
+                stored.id,
+            ))?);
+            diff.action_type = ActionType::ACTION_DROP_RESOURCE_GROUP;
+            diff.schema_id = stored.id;
+            resource_group_update = Some(ResourceGroupUpdate::Delete(
+                stored.name.lowercase().to_owned(),
+            ));
         }
         DdlStatement::AlterTableAffinity {
             schema,
@@ -12622,6 +12776,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         placement_bundles,
         placement_rollback_bundles,
         affinity_groups,
+        resource_group_update,
     })))
 }
 

@@ -3556,6 +3556,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-ddl-logutil",
  "tidb-ddl-notifier",
+ "tidb-ddl-resourcegroup",
  "tidb-distsql",
  "tidb-domain",
  "tidb-error",

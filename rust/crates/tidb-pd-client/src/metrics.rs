@@ -69,7 +69,10 @@ pub fn observe_cmd(operation: PdOperation, seconds: f64, succeeded: bool) {
         PdOperation::Tso
         | PdOperation::StoreGlobalConfig
         | PdOperation::ExternalTimestamp
-        | PdOperation::ListResourceGroups => return,
+        | PdOperation::ListResourceGroups
+        | PdOperation::AddResourceGroup
+        | PdOperation::ModifyResourceGroup
+        | PdOperation::DeleteResourceGroup => return,
     };
     total.observe(seconds);
     if !succeeded {

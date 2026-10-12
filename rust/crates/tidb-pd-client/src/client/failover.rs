@@ -484,6 +484,69 @@ pub(super) fn list_resource_groups_with_failover(
     )
 }
 
+/// [`super::requests::put_resource_group`] through the foreground failover.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn put_resource_group_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+    keyspace_id: Option<u32>,
+    group: &tidb_proto::resource_manager::ResourceGroup,
+    modify: bool,
+) -> Result<String, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        shutdown,
+        |runtime, clients, endpoint, _cluster_id| {
+            super::requests::put_resource_group(
+                runtime,
+                clients,
+                endpoint,
+                timeout,
+                shutdown,
+                keyspace_id,
+                group.clone(),
+                modify,
+            )
+        },
+    )
+}
+
+/// [`super::requests::delete_resource_group`] through the foreground failover.
+pub(super) fn delete_resource_group_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+    keyspace_id: Option<u32>,
+    name: &str,
+) -> Result<String, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        shutdown,
+        |runtime, clients, endpoint, _cluster_id| {
+            super::requests::delete_resource_group(
+                runtime,
+                clients,
+                endpoint,
+                timeout,
+                shutdown,
+                keyspace_id,
+                name,
+            )
+        },
+    )
+}
+
 pub(super) fn refresh_membership(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,

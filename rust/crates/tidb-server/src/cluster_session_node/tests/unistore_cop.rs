@@ -13321,3 +13321,59 @@ fn show_affinity_lists_affinity_tables_as_go_does() {
         [row("a2", "p1")]
     );
 }
+
+/// Go's resource-group DDL (`onCreateResourceGroup` / `onAlterResourceGroup`
+/// / `onDropResourceGroup`) keeps the group in meta and in the resource
+/// manager (the mock on unistore), behind the executor's existence checks.
+/// This node refused the statements outright.
+#[test]
+fn resource_group_ddl_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1016)).unwrap();
+    session
+        .execute_write("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 100")
+        .unwrap();
+    session
+        .execute_write("ALTER RESOURCE GROUP rg1 RU_PER_SEC = 200")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT name, ru_per_sec FROM information_schema.resource_groups WHERE name = 'rg1'"
+        )),
+        [["rg1", "200"]]
+    );
+    let error = session
+        .execute_write("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 100")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8248, "Resource group 'rg1' already exists")
+    );
+    session
+        .execute_write("CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 100")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [["Note", "8248", "Resource group 'rg1' already exists"]]
+    );
+    session.execute_write("SET RESOURCE GROUP rg1").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT CURRENT_RESOURCE_GROUP()")),
+        [["rg1"]]
+    );
+    session.execute_write("SET RESOURCE GROUP default").unwrap();
+    session.execute_write("DROP RESOURCE GROUP rg1").unwrap();
+    assert!(rows(
+        &mut session,
+        "SELECT name FROM information_schema.resource_groups WHERE name = 'rg1'"
+    )
+    .is_empty());
+    let error = session
+        .execute_write("DROP RESOURCE GROUP rg1")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8249, "Unknown resource group 'rg1'")
+    );
+}

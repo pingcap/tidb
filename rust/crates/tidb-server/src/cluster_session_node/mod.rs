@@ -6591,6 +6591,42 @@ impl ClusterServerSession {
                         }));
                     }
                 }
+                // Go `executor.AddResourceGroup` / `AlterResourceGroup` /
+                // `DropResourceGroup` check against the session's schema
+                // before the job; an `IF [NOT] EXISTS` that suppressed its
+                // error submits none.
+                if let Stmt::Ddl(ddl) = stmt {
+                    if matches!(
+                        &**ddl,
+                        tidb_ast::DdlStmt::CreateResourceGroup(_)
+                            | tidb_ast::DdlStmt::AlterResourceGroup(_)
+                            | tidb_ast::DdlStmt::DropResourceGroup(_)
+                    ) {
+                        self.session
+                            .require_statement_table_privileges(stmt)
+                            .map_err(map_error)?;
+                        // DROP reads `mysql.user` for an account bound to the
+                        // group (Go `MatchUserResourceGroupName`), so the
+                        // admission reads through a statement snapshot.
+                        let resource_group = self.session.current_resource_group().to_owned();
+                        let statement = self.probe_statement(
+                            StatementReadShape::Unknown,
+                            &resource_group,
+                            |session| {
+                                session
+                                    .cluster_resource_group_statement(ddl)
+                                    .map_err(map_error)
+                            },
+                        )?;
+                        return Ok(StatementRoute::Ddl(statement.unwrap_or(
+                            DdlStatement::AcceptedNoOp {
+                                schema: String::new(),
+                                table: String::new(),
+                                warning: None,
+                            },
+                        )));
+                    }
+                }
                 // A CREATE VIEW resolves its body against this node's own
                 // catalog FIRST — a bad body fails here, at CREATE time,
                 // exactly where Go's `executeCreateView` preprocess fails —

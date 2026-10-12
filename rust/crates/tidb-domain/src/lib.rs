@@ -35,6 +35,7 @@ pub mod historical_stats;
 pub mod metrics;
 pub mod plan_replayer;
 pub mod replayer;
+pub mod resource_manager_client;
 pub mod ru_stats;
 pub mod schema_checker;
 pub mod server_id;

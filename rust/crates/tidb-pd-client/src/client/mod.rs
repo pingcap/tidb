@@ -96,6 +96,17 @@ enum WorkerCommand {
         with_ru_stats: bool,
         reply: mpsc::Sender<Result<Vec<tidb_proto::resource_manager::ResourceGroup>, PdClientError>>,
     },
+    PutResourceGroup {
+        keyspace_id: Option<u32>,
+        group: Box<tidb_proto::resource_manager::ResourceGroup>,
+        modify: bool,
+        reply: mpsc::Sender<Result<String, PdClientError>>,
+    },
+    DeleteResourceGroup {
+        keyspace_id: Option<u32>,
+        name: String,
+        reply: mpsc::Sender<Result<String, PdClientError>>,
+    },
     GetTimestamp {
         deadline: Instant,
         reply: mpsc::Sender<Result<u64, PdClientError>>,
@@ -700,6 +711,61 @@ impl PdClient {
             .send(WorkerCommand::ListResourceGroups {
                 keyspace_id,
                 with_ru_stats,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Go `ResourceManagerClient.AddResourceGroup`.
+    pub fn add_resource_group(
+        &self,
+        keyspace_id: Option<u32>,
+        group: tidb_proto::resource_manager::ResourceGroup,
+    ) -> Result<String, PdClientError> {
+        self.put_resource_group(keyspace_id, group, false)
+    }
+
+    /// Go `ResourceManagerClient.ModifyResourceGroup`.
+    pub fn modify_resource_group(
+        &self,
+        keyspace_id: Option<u32>,
+        group: tidb_proto::resource_manager::ResourceGroup,
+    ) -> Result<String, PdClientError> {
+        self.put_resource_group(keyspace_id, group, true)
+    }
+
+    fn put_resource_group(
+        &self,
+        keyspace_id: Option<u32>,
+        group: tidb_proto::resource_manager::ResourceGroup,
+        modify: bool,
+    ) -> Result<String, PdClientError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::PutResourceGroup {
+                keyspace_id,
+                group: Box::new(group),
+                modify,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Go `ResourceManagerClient.DeleteResourceGroup`.
+    pub fn delete_resource_group(
+        &self,
+        keyspace_id: Option<u32>,
+        name: &str,
+    ) -> Result<String, PdClientError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::DeleteResourceGroup {
+                keyspace_id,
+                name: name.to_owned(),
                 reply,
             })
             .map_err(|_| PdClientError::Closed)?;

@@ -400,6 +400,14 @@ pub(crate) fn run_cluster_session_node_with_spill(
         })?
         .with_auto_ids(auto_id_service.clone()),
     );
+    // Go `InfoSyncer.initResourceManagerClient(pdCli)`: the resource-group
+    // jobs write PD's resource manager through it.
+    tidb_domain::resource_manager_client::init_resource_manager_client(authority.pd_client().map(
+        |pd| {
+            Arc::new(PdResourceManagerClient { pd })
+                as Arc<dyn tidb_domain::resource_manager_client::ResourceManagerClient>
+        },
+    ));
     // Go `InfoSyncer` init's `affinity.InitManager(is.pdHTTPCli)`: the DDL
     // job workers create and delete PD affinity groups through it.
     tidb_domain::affinity::init_manager(config.pd_endpoints.first().and_then(|endpoint| {
@@ -920,5 +928,37 @@ impl tidb_session::vars::PdRegionPolicy for ProcessPdRegionPolicy {
     }
     fn set_tso_rpc_concurrency(&self, concurrency: isize) {
         self.0.set_tso_client_rpc_concurrency(concurrency);
+    }
+}
+
+/// PD's `ResourceManagerClient` writes for the null keyspace this node
+/// serves.
+struct PdResourceManagerClient {
+    pd: tidb_pd_client::PdClient,
+}
+
+impl tidb_domain::resource_manager_client::ResourceManagerClient for PdResourceManagerClient {
+    fn add_resource_group(
+        &self,
+        group: tidb_proto::resource_manager::ResourceGroup,
+    ) -> Result<String, String> {
+        self.pd
+            .add_resource_group(None, group)
+            .map_err(|error| error.to_string())
+    }
+
+    fn modify_resource_group(
+        &self,
+        group: tidb_proto::resource_manager::ResourceGroup,
+    ) -> Result<String, String> {
+        self.pd
+            .modify_resource_group(None, group)
+            .map_err(|error| error.to_string())
+    }
+
+    fn delete_resource_group(&self, name: &str) -> Result<String, String> {
+        self.pd
+            .delete_resource_group(None, name)
+            .map_err(|error| error.to_string())
     }
 }

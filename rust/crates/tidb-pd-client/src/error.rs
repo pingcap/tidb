@@ -41,6 +41,12 @@ pub enum PdOperation {
     StoreGlobalConfig,
     /// Resource-group metadata, Go `ResourceManagerClient.ListResourceGroups`.
     ListResourceGroups,
+    /// Go `ResourceManagerClient.AddResourceGroup`.
+    AddResourceGroup,
+    /// Go `ResourceManagerClient.ModifyResourceGroup`.
+    ModifyResourceGroup,
+    /// Go `ResourceManagerClient.DeleteResourceGroup`.
+    DeleteResourceGroup,
 }
 
 impl std::fmt::Display for PdOperation {
@@ -59,6 +65,9 @@ impl std::fmt::Display for PdOperation {
             Self::ExternalTimestamp => formatter.write_str("ExternalTimestamp"),
             Self::StoreGlobalConfig => formatter.write_str("StoreGlobalConfig"),
             Self::ListResourceGroups => formatter.write_str("ListResourceGroups"),
+            Self::AddResourceGroup => formatter.write_str("AddResourceGroup"),
+            Self::ModifyResourceGroup => formatter.write_str("ModifyResourceGroup"),
+            Self::DeleteResourceGroup => formatter.write_str("DeleteResourceGroup"),
         }
     }
 }
@@ -126,6 +135,9 @@ pub enum PdClientError {
         /// Source-data detail.
         message: String,
     },
+    /// An application error in a ResourceManager write response, Go's
+    /// `errors.Errorf("[resource_manager] %s", resErr.Message)`.
+    ResourceManager(String),
 }
 
 impl PdClientError {
@@ -143,6 +155,7 @@ impl PdClientError {
             Self::ClusterMismatch { .. } => "cluster_mismatch",
             Self::ZeroClusterId => "zero_cluster_id",
             Self::InvalidTopology { kind, .. } => kind,
+            Self::ResourceManager(_) => "resource_manager",
         }
     }
 }
@@ -198,6 +211,7 @@ impl std::fmt::Display for PdClientError {
             Self::InvalidTopology { kind, message } => {
                 write!(formatter, "invalid PD topology ({kind}): {message}")
             }
+            Self::ResourceManager(message) => write!(formatter, "[resource_manager] {message}"),
         }
     }
 }

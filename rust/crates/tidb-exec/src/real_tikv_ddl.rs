@@ -589,6 +589,19 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
             timeout,
         ));
     }
+    // Go's resource-group jobs write the resource manager before the version
+    // is published, failing the job when it refuses.
+    if let Some(update) = &write.resource_group_update {
+        if let Err(error) = update.apply() {
+            transaction.finish_without_writes()?;
+            return Err(compensate_external_delivery(
+                ClusterDdlError::NotCommitted(error),
+                placement_receipt.as_ref(),
+                label_receipt.as_ref(),
+                timeout,
+            ));
+        }
+    }
     let planned_version = write.schema_version;
     // The bundles above are keyed by ids THIS attempt allocated. In Go the ids
     // a bundle carries are already durable when the job worker delivers it --
@@ -1770,6 +1783,17 @@ fn commit_cluster_ddl_with_backfill_once<
             label_receipt.as_ref(),
             timeout,
         ));
+    }
+    if let Some(update) = &write.resource_group_update {
+        if let Err(error) = update.apply() {
+            let _ = transaction.rollback();
+            return Err(compensate_external_delivery(
+                ClusterDdlError::NotCommitted(error),
+                placement_receipt.as_ref(),
+                label_receipt.as_ref(),
+                timeout,
+            ));
+        }
     }
     if let Some(mdl_info) = &write.mdl_info_update {
         if let Err(error) = mdl_info.append_mutations(

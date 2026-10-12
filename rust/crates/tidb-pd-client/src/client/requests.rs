@@ -396,6 +396,122 @@ pub(super) fn list_resource_groups(
     Ok(response.groups)
 }
 
+/// Go `(*client).putResourceGroup` (`pd/client/resource_manager_client.go:184-215`)
+/// for `AddResourceGroup` (`modify` false) and `ModifyResourceGroup`: the
+/// group carries this client's keyspace, set when it names none and refused
+/// when it names another; an application error in the body is Go's
+/// `[resource_manager] <message>`.
+pub(super) fn put_resource_group(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    keyspace_id: Option<u32>,
+    mut group: tidb_proto::resource_manager::ResourceGroup,
+    modify: bool,
+) -> Result<String, PdClientError> {
+    use tidb_proto::resource_manager::{
+        keyspace_id_value::Keyspace, resource_manager_client::ResourceManagerClient,
+        KeyspaceIdValue, PutResourceGroupRequest,
+    };
+    let keyspace = keyspace_id.unwrap_or(NULL_KEYSPACE_ID);
+    match group
+        .keyspace_id
+        .as_ref()
+        .and_then(|value| value.keyspace.as_ref())
+    {
+        None => {
+            group.keyspace_id = Some(KeyspaceIdValue {
+                keyspace: Some(Keyspace::Value(keyspace)),
+            });
+        }
+        Some(Keyspace::Value(value)) if *value != keyspace => {
+            return Err(PdClientError::ResourceManager(format!(
+                "keyspace ID {value} of the resource group does not match the client's {keyspace}"
+            )));
+        }
+        Some(_) => {}
+    }
+    let channel = {
+        let _guard = runtime.enter();
+        clients.channel(endpoint)?
+    };
+    let mut client = ResourceManagerClient::new(channel);
+    let operation = if modify {
+        PdOperation::ModifyResourceGroup
+    } else {
+        PdOperation::AddResourceGroup
+    };
+    let request = PutResourceGroupRequest { group: Some(group) };
+    let response = if modify {
+        block_on_rpc(
+            runtime,
+            timeout,
+            shutdown,
+            operation,
+            client.modify_resource_group(request),
+        )
+    } else {
+        block_on_rpc(
+            runtime,
+            timeout,
+            shutdown,
+            operation,
+            client.add_resource_group(request),
+        )
+    };
+    let response = map_rpc_result(response, operation, endpoint, timeout)?.into_inner();
+    if let Some(error) = response.error {
+        return Err(PdClientError::ResourceManager(error.message));
+    }
+    Ok(response.body)
+}
+
+/// Go `(*client).DeleteResourceGroup` (`resource_manager_client.go:218-237`).
+pub(super) fn delete_resource_group(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    keyspace_id: Option<u32>,
+    name: &str,
+) -> Result<String, PdClientError> {
+    use tidb_proto::resource_manager::{
+        keyspace_id_value::Keyspace, resource_manager_client::ResourceManagerClient,
+        DeleteResourceGroupRequest, KeyspaceIdValue,
+    };
+    let channel = {
+        let _guard = runtime.enter();
+        clients.channel(endpoint)?
+    };
+    let mut client = ResourceManagerClient::new(channel);
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        PdOperation::DeleteResourceGroup,
+        client.delete_resource_group(DeleteResourceGroupRequest {
+            resource_group_name: name.to_owned(),
+            keyspace_id: Some(KeyspaceIdValue {
+                keyspace: Some(Keyspace::Value(keyspace_id.unwrap_or(NULL_KEYSPACE_ID))),
+            }),
+        }),
+    );
+    let response = map_rpc_result(
+        response,
+        PdOperation::DeleteResourceGroup,
+        endpoint,
+        timeout,
+    )?
+    .into_inner();
+    if let Some(error) = response.error {
+        return Err(PdClientError::ResourceManager(error.message));
+    }
+    Ok(response.body)
+}
+
 pub(super) fn get_gc_state(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,
