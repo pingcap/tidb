@@ -347,6 +347,7 @@ pub fn build_table_info_in_schema(
     let mut auto_rand_id = 0i64;
     let mut auto_id_cache = 0i64;
     let mut compression = String::new();
+    let mut affinity = None;
     let mut shard_row_id_bits = None;
     let mut pre_split_regions = None;
     for option in &create.table_options {
@@ -423,14 +424,11 @@ pub fn build_table_info_in_schema(
                     )
                 })?);
             }
-            // Go `handleTableOptions`' affinity arm needs
-            // `model.NewTableAffinityInfoWithLevel` and the affinity package
-            // behind it, not yet ported.
-            TableOption::Affinity(_) => {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    "CREATE TABLE option AFFINITY is not supported by this node",
-                ))
+            // Go `handleTableOptions`: `NewTableAffinityInfoWithLevel`, the
+            // last one winning.
+            TableOption::Affinity(level) => {
+                affinity =
+                    tidb_executor::ddl::table_affinity(level).map_err(default_admission_error)?;
             }
             // Every other option is outside Go `handleTableOptions`' switch:
             // MySQL compatibility it accepts and records nowhere (the parser
@@ -802,6 +800,14 @@ pub fn build_table_info_in_schema(
             }
         }
     }
+    // Go `validateTableAffinity`, right after `buildTablePartitionInfo`.
+    tidb_executor::ddl::validate_table_affinity(
+        temporary != tidb_model::TempTableType::NONE,
+        table.get_partition_info().is_some(),
+        affinity.as_ref(),
+    )
+    .map_err(default_admission_error)?;
+    table.affinity = affinity.map(GoShared::new);
     check_generated_columns(create, &mut table, context)?;
     // Go `handleTableOptions` records the TTL definition and
     // `checkTableInfoValidWithStmt` validates it after the generated columns;

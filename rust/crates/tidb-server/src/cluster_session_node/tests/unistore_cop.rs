@@ -13185,3 +13185,99 @@ fn region_split_policies_persist_as_go_does() {
         )
     );
 }
+
+/// Go `handleTableOptions` / `AlterTableAffinity` record a table's AFFINITY,
+/// the DDL job creates its PD affinity groups through `pkg/domain/affinity`
+/// (the mock manager on unistore) and deletes them when the affinity goes,
+/// partition management on such a table is refused, and a view is not a
+/// BASE TABLE. This node refused the option outright.
+#[test]
+fn table_affinity_and_its_groups_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1014)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t1 (a INT) AFFINITY = 'TABLE'",
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t1"));
+    assert!(
+        created[0][1].ends_with("/*T![affinity] AFFINITY='table' */"),
+        "{}",
+        created[0][1]
+    );
+    let table_id = displayed(rows(
+        &mut session,
+        "SELECT tidb_table_id FROM information_schema.tables \
+         WHERE table_schema = 'test' AND table_name = 't1'",
+    ))[0][0]
+        .clone();
+    let group = format!("_tidb_t_{table_id}");
+    let held = |group: &str| {
+        tidb_domain::affinity::get_groups(&[group.to_owned()])
+            .unwrap()
+            .contains_key(group)
+    };
+    assert!(held(&group));
+    session
+        .execute_write("ALTER TABLE test.t1 AFFINITY = ''")
+        .unwrap();
+    assert!(!held(&group));
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t1"));
+    assert!(!created[0][1].contains("AFFINITY"), "{}", created[0][1]);
+    rows(
+        &mut session,
+        "CREATE TABLE test.t2 (a INT) AFFINITY = 'table'",
+    );
+    let t2_group = format!(
+        "_tidb_t_{}",
+        displayed(rows(
+            &mut session,
+            "SELECT tidb_table_id FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 't2'",
+        ))[0][0]
+    );
+    assert!(held(&t2_group));
+    rows(&mut session, "DROP TABLE test.t2");
+    assert!(!held(&t2_group));
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.tp (a INT) AFFINITY = 'partition' PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+    );
+    for (sql, message) in [
+        (
+            "ALTER TABLE test.tp ADD PARTITION (PARTITION p2 VALUES LESS THAN (30))",
+            "Unsupported ADD PARTITION of a table with AFFINITY option",
+        ),
+        (
+            "ALTER TABLE test.tp DROP PARTITION p1",
+            "Unsupported DROP PARTITION of a table with AFFINITY option",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (8200, message),
+            "{sql}"
+        );
+    }
+    let error = session
+        .execute_write("ALTER TABLE test.t1 AFFINITY = 'partition'")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            8266,
+            "Can not set AFFINITY='partition' on a non-partition table."
+        )
+    );
+    rows(&mut session, "CREATE VIEW test.v1 AS SELECT 1");
+    let error = session
+        .execute_write("ALTER TABLE test.v1 AFFINITY = 'table'")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1347, "'test.v1' is not BASE TABLE")
+    );
+}

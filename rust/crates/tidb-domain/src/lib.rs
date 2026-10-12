@@ -24,6 +24,7 @@
 //! integrating them with the live session slow-query recorder remains open.
 //! Preserve the original Go cases alongside these retained algorithms.
 
+pub mod affinity;
 pub mod cdcutil;
 pub mod cluster_topology;
 pub mod disttask;

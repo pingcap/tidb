@@ -577,6 +577,18 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     } else {
         None
     };
+    // Go `createTableAffinityGroupsInPD`: inside the job, before the version
+    // is published, cancelling the job when PD refuses. Idempotent, so a
+    // retried attempt re-creates the same groups harmlessly.
+    if let Err(error) = write.affinity_groups.apply_create() {
+        transaction.finish_without_writes()?;
+        return Err(compensate_external_delivery(
+            ClusterDdlError::NotCommitted(error),
+            placement_receipt.as_ref(),
+            label_receipt.as_ref(),
+            timeout,
+        ));
+    }
     let planned_version = write.schema_version;
     // The bundles above are keyed by ids THIS attempt allocated. In Go the ids
     // a bundle carries are already durable when the job worker delivers it --
@@ -599,6 +611,9 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     };
     match outcome {
         OptimisticCommitOutcome::Committed(_) => {
+            // Go `deleteTableAffinityGroupsInPD`: best-effort cleanup, once
+            // the change that stopped needing the groups is durable.
+            write.affinity_groups.apply_delete();
             notify_schema_version(notifier, planned_version);
             Ok(ClusterDdlReport::Applied {
                 schema_version: planned_version,
@@ -1746,6 +1761,16 @@ fn commit_cluster_ddl_with_backfill_once<
     } else {
         None
     };
+    // Go `createTableAffinityGroupsInPD`, as in the single-phase path.
+    if let Err(error) = write.affinity_groups.apply_create() {
+        let _ = transaction.rollback();
+        return Err(compensate_external_delivery(
+            ClusterDdlError::NotCommitted(error),
+            placement_receipt.as_ref(),
+            label_receipt.as_ref(),
+            timeout,
+        ));
+    }
     if let Some(mdl_info) = &write.mdl_info_update {
         if let Err(error) = mdl_info.append_mutations(
             write.ddl_job_id,
@@ -1771,6 +1796,8 @@ fn commit_cluster_ddl_with_backfill_once<
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
+            // Go `deleteTableAffinityGroupsInPD`: best-effort, once durable.
+            write.affinity_groups.apply_delete();
             match phase {
                 DdlPhase::Initial(..) => notify_schema_version(notifier, planned_version),
                 DdlPhase::Persisted { schema_state, .. } if planned_version != 0 => {

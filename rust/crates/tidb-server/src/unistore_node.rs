@@ -488,6 +488,9 @@ pub(crate) fn unistore_cluster_session_stack(
 
     let engine = RunConfiguredNodeError::Engine;
     let (read_authority, _pd, opener) = in_process_write_stack().map_err(engine)?;
+    // Go `affinity.InitManager(nil)`: unistore has no PD HTTP client, so the
+    // affinity groups live in the mock manager.
+    tidb_domain::affinity::init_manager(None);
 
     // The bootstrap: every boot, because the store is empty every boot.
     let (outcome, schema_version) =

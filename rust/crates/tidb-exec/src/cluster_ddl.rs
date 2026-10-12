@@ -443,6 +443,16 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Go SetTiFlashReplicaArgs.ResetAvailable, used by restore repair.
         reset_available: bool,
     },
+    /// Go `AlterTableAffinity` -> the `ActionAlterTableAffinity` job
+    /// (`onAlterTableAffinity`): the table's affinity and its PD groups.
+    AlterTableAffinity {
+        /// Database containing the table.
+        schema: String,
+        /// Table whose affinity is set.
+        table: String,
+        /// The level as written; Go parses it after resolving the table.
+        level: String,
+    },
     /// Go `AlterTableSetRegionSplitPolicy` -> the
     /// `ActionAlterTableSetRegionSplitPolicy` job (`onAlterTableSetRegionSplitPolicy`):
     /// the normalized policy lands on the table or on the named index.
@@ -2130,6 +2140,14 @@ fn lower_alter_table_catalog(
                     schema,
                     table,
                     engine_attribute,
+                }));
+            }
+            if let tidb_ast::TableOption::Affinity(level) = option {
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::AlterTableAffinity {
+                    schema,
+                    table,
+                    level: level.clone(),
                 }));
             }
             if let tidb_ast::TableOption::PlacementPolicy(policy) = option {
@@ -6163,6 +6181,7 @@ fn plan_persisted_check_constraint_job_step(
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
+            affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
         },
         // Go runOneJobStep re-encodes decoded arguments after any successful
         // action, independently of whether the schema version changed.
@@ -6274,6 +6293,7 @@ fn plan_persisted_create_schema_job_step(
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
+            affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
         },
         update_raw_args: true,
         run_error: None,
@@ -6386,6 +6406,18 @@ fn plan_persisted_create_table_job_step(
         schema_version,
         Some(GoShared::new(table_info.clone())),
     );
+    // Go `createTable`'s `createTableAffinityGroupsInPD`, wrapped as
+    // "failed to create table affinity groups in PD".
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate {
+        create_error_context: Some(CREATE_TABLE_AFFINITY_ERROR),
+        ..crate::ddl_affinity::AffinityGroupUpdate::default()
+    };
+    affinity_groups.create_for(&table_info).map_err(|error| {
+        cancel_ddl_job(
+            active,
+            affinity_plan_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
+        )
+    })?;
 
     Ok(PersistedDdlActionStep {
         write: DdlWrite {
@@ -6406,6 +6438,7 @@ fn plan_persisted_create_table_job_step(
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
+            affinity_groups,
         },
         update_raw_args: true,
         run_error: None,
@@ -6555,6 +6588,19 @@ fn plan_persisted_create_tables_job_step(
 
     active.job.state = JobState::DONE;
     active.job.schema_state = SchemaState::PUBLIC;
+    // Go `createTable` for each table of the batch.
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate {
+        create_error_context: Some(CREATE_TABLE_AFFINITY_ERROR),
+        ..crate::ddl_affinity::AffinityGroupUpdate::default()
+    };
+    for info in &table_infos {
+        affinity_groups.create_for(info).map_err(|error| {
+            cancel_ddl_job(
+                active,
+                affinity_plan_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
+            )
+        })?;
+    }
     // Go onCreateTables uses SetTableInfos, including an empty batch;
     // selecting only the first table also leaves an empty batch RUNNING.
     active
@@ -6584,6 +6630,7 @@ fn plan_persisted_create_tables_job_step(
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
+            affinity_groups,
         },
         update_raw_args: true,
         run_error: None,
@@ -6803,6 +6850,7 @@ fn plan_persisted_rename_tables_job_step(
                 warnings: Vec::new(),
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
+                affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
             },
             update_raw_args: true,
             run_error: None,
@@ -6876,6 +6924,7 @@ fn plan_persisted_rename_tables_job_step(
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
+            affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
         },
         update_raw_args: true,
         run_error: None,
@@ -6916,6 +6965,7 @@ fn plan_persisted_drop_schema_job_step(
     };
 
     let mut db_info = database;
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let schema_version = schema_version + 1;
     match db_info.state {
         SchemaState::PUBLIC => db_info.state = SchemaState::WRITE_ONLY,
@@ -6939,6 +6989,16 @@ fn plan_persisted_drop_schema_job_step(
         // Go `metaMut.DropDatabase`: only the database meta key is deleted;
         // the tables' KVs are cleaned by the delete range.
         mutations.push(BufferMutation::delete(key::database_kv_key(db_info.id))?);
+        // Go `onDropSchema`'s `batchDeleteTableAffinityGroups`.
+        if let Some(dropped) = catalog
+            .databases
+            .iter()
+            .find(|database| database.info.id == db_info.id)
+        {
+            for table in &dropped.tables {
+                affinity_groups.delete_for(table, None);
+            }
+        }
         active
             .job
             .finish_db_job(JobState::DONE, SchemaState::NONE, schema_version, None);
@@ -6974,6 +7034,7 @@ fn plan_persisted_drop_schema_job_step(
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
+            affinity_groups,
         },
         update_raw_args: false,
         run_error: None,
@@ -7006,6 +7067,7 @@ fn plan_persisted_drop_table_job_step(
         .expect("checked_job_table checked the database");
 
     let schema_version = schema_version + 1;
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     match table.state {
         SchemaState::PUBLIC => table.state = SchemaState::WRITE_ONLY,
         SchemaState::WRITE_ONLY => table.state = SchemaState::DELETE_ONLY,
@@ -7031,6 +7093,8 @@ fn plan_persisted_drop_table_job_step(
             database.info.id,
             table.id,
         ))?);
+        // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
+        affinity_groups.delete_for(&table, None);
         active.job.finish_table_job(
             JobState::DONE,
             SchemaState::NONE,
@@ -7069,6 +7133,7 @@ fn plan_persisted_drop_table_job_step(
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
+            affinity_groups,
         },
         update_raw_args: false,
         run_error: None,
@@ -7076,6 +7141,21 @@ fn plan_persisted_drop_table_job_step(
 }
 // Action handlers select cancellation; the shared worker records this fresh
 // error, discards action writes, and finalizes the job in the same transaction.
+/// Go's wrapping of a `createTable` affinity failure.
+const CREATE_TABLE_AFFINITY_ERROR: &str = "failed to create table affinity groups in PD";
+
+/// An affinity group definition the job cannot build: Go's `errors.Errorf`,
+/// wrapped by its caller when it wraps one.
+fn affinity_plan_error(context: Option<&str>, error: String) -> DdlPlanError {
+    DdlPlanError::Admission(DdlAdmissionError::with_code(
+        GENERIC_ERROR_CODE,
+        match context {
+            Some(context) => format!("{context}: {error}"),
+            None => error,
+        },
+    ))
+}
+
 fn cancel_ddl_job(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     error: impl Into<DdlPlanError>,
@@ -7103,6 +7183,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         warnings: Vec::new(),
         placement_bundles: Vec::new(),
         placement_rollback_bundles: Vec::new(),
+        affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
     }
 }
 
@@ -7465,6 +7546,11 @@ pub struct DdlWrite {
     /// the forward bundles; deriving them here avoids a PD read that Go's
     /// exchange path never performs.
     pub placement_rollback_bundles: Vec<tidb_placement::Bundle>,
+    /// The PD affinity groups the change creates and deletes (Go
+    /// `createTableAffinityGroupsInPD`, inside the job before the version is
+    /// published, failing it when PD refuses; `deleteTableAffinityGroupsInPD`,
+    /// best-effort cleanup).
+    pub affinity_groups: crate::ddl_affinity::AffinityGroupUpdate,
 }
 
 /// Go `checkExchangePartitionRecordValidation` expressed as a data obligation
@@ -8021,6 +8107,8 @@ fn apply_partition_change(
 
     let spec = stored_partition_spec(stored)?;
 
+    // The change replays the in-process ALTER, which also moves rows, so it
+    // runs over an in-memory table carrying the metadata its checks read.
     let kv_columns = stored
         .columns
         .iter_deref()
@@ -8051,6 +8139,14 @@ fn apply_partition_change(
             .as_ref()
             .map(|replica| replica.read().clone()),
     );
+    // Go `AddTablePartitions` / `CheckDropTablePartition` refuse a table
+    // with AFFINITY.
+    kv_table.set_affinity(
+        stored
+            .affinity
+            .as_ref()
+            .map(|affinity| affinity.read().clone()),
+    );
     kv_table.set_partition(spec);
     let mut catalog = Catalog::default();
     catalog.create_database(schema);
@@ -8074,6 +8170,29 @@ fn apply_partition_change(
         .partition()
         .expect("ALTER ADD/DROP PARTITION retains partitioning")
         .clone())
+}
+
+/// Go `TableFromMeta` over the stored metadata alone: the table the loader
+/// serves, for executor checks that read no row.
+fn metadata_kv_table(
+    stored: &TableInfo,
+    schema: &str,
+    table: &str,
+) -> Result<tidb_executor::KvTable, DdlPlanError> {
+    let detached = tidb_executor::cluster_storage::ClusterTableStorage::new(
+        tidb_executor::cluster_storage::MutationBuffer::new(),
+        std::sync::Arc::new(std::sync::Mutex::new(
+            tidb_executor::cluster_storage::SwappableSnapshot::new(),
+        )),
+    );
+    crate::table_from_meta::cluster_table(
+        stored,
+        &detached,
+        &crate::table_from_meta::AutoIdSource::Unavailable,
+    )
+    .map_err(|reason| {
+        DdlPlanError::Unsupported(format!("`{schema}`.`{table}` cannot be loaded: {reason}"))
+    })
 }
 
 fn exchange_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
@@ -8297,6 +8416,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     // placement; empty for every other statement, and an empty list is never
     // sent.
     let mut placement_bundles: Vec<tidb_placement::Bundle> = Vec::new();
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let mut placement_rollback_bundles: Vec<tidb_placement::Bundle> = Vec::new();
     let schema_version = catalog.schema_version + 1;
     let mut writes = Vec::new();
@@ -8509,6 +8629,10 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 writes.push(BufferMutation::delete(raw_key)?);
             }
             writes.push(BufferMutation::delete(key::database_kv_key(db_id))?);
+            // Go `onDropSchema`'s `batchDeleteTableAffinityGroups`.
+            for table in &database.tables {
+                affinity_groups.delete_for(table, None);
+            }
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
             if !tidb_metadef::is_mem_or_sys_db(&name.go_to_lower()) {
@@ -8859,6 +8983,12 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         ))
                     })?;
             }
+            // Go `createTable`'s `createTableAffinityGroupsInPD`, after the
+            // placement bundles and wrapped as Go wraps it.
+            affinity_groups.create_error_context = Some(CREATE_TABLE_AFFINITY_ERROR);
+            affinity_groups
+                .create_for(&info)
+                .map_err(|error| affinity_plan_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
@@ -9115,6 +9245,63 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // Placement creation still uses the legacy poll owner here.
             // Its migration to durable DDL and cleanup to GC remains F01.
         }
+        DdlStatement::AlterTableAffinity {
+            schema,
+            table,
+            level,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::TableNotExists {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            refuse_non_base_table(stored, schema, table)?;
+            let admission = |error: tidb_executor::DriverError| {
+                let error = error.to_mysql_error();
+                DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            };
+            // Go `AlterTableAffinity`: `NewTableAffinityInfoWithLevel`, then
+            // `validateTableAffinity` against the table.
+            let affinity = tidb_executor::ddl::table_affinity(level).map_err(admission)?;
+            tidb_executor::ddl::validate_table_affinity(
+                stored.temp_table_type != tidb_model::TempTableType::NONE,
+                stored.get_partition_info().is_some(),
+                affinity.as_ref(),
+            )
+            .map_err(admission)?;
+            // Go `onAlterTableAffinity`: the new groups first (the job fails
+            // when PD refuses), then the old ones, best-effort, unless the
+            // level -- and so every group id -- is unchanged.
+            let mut info = stored.clone_like_go();
+            info.affinity = affinity.map(GoShared::new);
+            if info.affinity.is_some() {
+                affinity_groups
+                    .create_for(&info)
+                    .map_err(|error| affinity_plan_error(None, error))?;
+            }
+            if let Some(old) = stored.affinity.as_ref() {
+                let level_changed = info
+                    .affinity
+                    .as_ref()
+                    .is_none_or(|new| new.read().level != old.read().level);
+                if level_changed {
+                    affinity_groups.delete_for(stored, None);
+                }
+            }
+            let db_id = database.info.id;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, stored.id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_TABLE_AFFINITY;
+            diff.schema_id = db_id;
+            diff.table_id = stored.id;
+        }
         DdlStatement::AlterTableSetRegionSplitPolicy {
             schema,
             table,
@@ -9130,6 +9317,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             };
+            refuse_non_base_table(stored, schema, table)?;
             let target = match target {
                 tidb_ast::SplitTarget::Table => tidb_executor::ddl::SplitPolicyTarget::Table,
                 tidb_ast::SplitTarget::PrimaryKey => {
@@ -9429,22 +9617,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // The table the loader serves, planned against without reading a
             // row: Go's executor checks and the job's first state read only
             // its metadata.
-            let detached = tidb_executor::cluster_storage::ClusterTableStorage::new(
-                tidb_executor::cluster_storage::MutationBuffer::new(),
-                std::sync::Arc::new(std::sync::Mutex::new(
-                    tidb_executor::cluster_storage::SwappableSnapshot::new(),
-                )),
-            );
-            let kv = crate::table_from_meta::cluster_table(
-                stored,
-                &detached,
-                &crate::table_from_meta::AutoIdSource::Unavailable,
-            )
-            .map_err(|reason| {
-                DdlPlanError::Unsupported(format!(
-                    "`{schema}`.`{table}` cannot be loaded: {reason}"
-                ))
-            })?;
+            let kv = metadata_kv_table(stored, schema, table)?;
             let mut policies = Vec::new();
             for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
                 policies.push(
@@ -10186,12 +10359,34 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 })
                 .collect::<Vec<_>>();
             debug_assert!(allocated.next().is_none());
+            // Go `onTruncateTablePartition`'s `oldDefinitions`: the truncated
+            // partitions as they were.
+            let new_ids: std::collections::BTreeSet<i64> =
+                definitions.iter().map(|definition| definition.id).collect();
+            let old_definitions: Vec<tidb_model::partition::PartitionDefinition> = stored
+                .partition
+                .as_ref()
+                .expect("the partition change validated partitioning")
+                .read()
+                .definitions
+                .snapshot()
+                .into_iter()
+                .filter(|definition| !new_ids.contains(&definition.id))
+                .collect();
             let mut info = stored.clone_like_go();
             info.partition
                 .as_ref()
                 .expect("the partition change validated partitioning")
                 .write()
                 .definitions = definitions.into();
+            // Go: the new partitions' groups first (critical), then the
+            // truncated ones', best-effort.
+            if info.affinity.is_some() {
+                affinity_groups
+                    .create_for(&info)
+                    .map_err(|error| affinity_plan_error(None, error))?;
+                affinity_groups.delete_for(&info, Some(&old_definitions));
+            }
             if let Some(replica) = &info.tiflash_replica {
                 let remaining = info
                     .partition
@@ -11075,6 +11270,16 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         ))
                     })?;
             }
+            // Go `onTruncateTable`: the new identity's groups first (the job
+            // fails when PD refuses), then the old table's, best-effort.
+            if info.affinity.is_some() {
+                affinity_groups
+                    .create_for(&info)
+                    .map_err(|error| affinity_plan_error(None, error))?;
+            }
+            if stored.affinity.is_some() {
+                affinity_groups.delete_for(stored, None);
+            }
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = new_table_id;
@@ -11129,6 +11334,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let db_id = database.info.id;
             let table_id = stored.id;
             writes.push(BufferMutation::delete(key::table_kv_key(db_id, table_id))?);
+            // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
+            affinity_groups.delete_for(stored, None);
             // Go `GetAutoIDAccessors(dbID, tblID).Del()` removes the three
             // allocator fields with the table; each is deleted only if this
             // snapshot observed it, exactly as `HDel` does.
@@ -12414,6 +12621,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         warnings,
         placement_bundles,
         placement_rollback_bundles,
+        affinity_groups,
     })))
 }
 
@@ -12907,6 +13115,22 @@ fn table_name_key(schema: &str, table: &str) -> String {
 ///
 /// An index change has no `IF EXISTS` for the TABLE, only for the index, so a
 /// missing database or table is always an error here.
+/// Go `executor.AlterTable`: a view or a sequence is refused before any
+/// specification is looked at (`ErrWrongObject`).
+fn refuse_non_base_table(
+    stored: &TableInfo,
+    schema: &str,
+    table: &str,
+) -> Result<(), DdlPlanError> {
+    if stored.is_view() || stored.is_sequence() {
+        return Err(coded_refusal(
+            tidb_error::tidb::errcode::ErrWrongObject,
+            format!("'{schema}.{table}' is not BASE TABLE"),
+        ));
+    }
+    Ok(())
+}
+
 fn locate_table<'catalog>(
     catalog: &'catalog ClusterCatalog,
     schema: &str,

@@ -638,9 +638,7 @@ pub(crate) fn table_compression_option(options: &[tidb_ast::TableOption]) -> Opt
 
 /// Go `model.NewTableAffinityInfoWithLevel` with `ErrInvalidTableAffinity`
 /// (8266) for a level it does not know.
-pub(crate) fn table_affinity(
-    level: &str,
-) -> Result<Option<tidb_model::TableAffinityInfo>, DriverError> {
+pub fn table_affinity(level: &str) -> Result<Option<tidb_model::TableAffinityInfo>, DriverError> {
     tidb_model::new_table_affinity_info_with_level(level).map_err(|_| DriverError::DdlCoded {
         errno: tidb_error::tidb::errcode::ErrInvalidAffinityOption,
         message: format!("Invalid AFFINITY '{level}'"),
@@ -650,7 +648,7 @@ pub(crate) fn table_affinity(
 /// Go `validateTableAffinity`: no affinity on a temporary table, `table`
 /// level only on an unpartitioned one and `partition` level only on a
 /// partitioned one (`ErrCannotSetAffinityOnTable`, 8266).
-pub(crate) fn validate_table_affinity(
+pub fn validate_table_affinity(
     temporary: bool,
     partitioned: bool,
     affinity: Option<&tidb_model::TableAffinityInfo>,

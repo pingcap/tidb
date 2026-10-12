@@ -400,6 +400,22 @@ pub(crate) fn run_cluster_session_node_with_spill(
         })?
         .with_auto_ids(auto_id_service.clone()),
     );
+    // Go `InfoSyncer` init's `affinity.InitManager(is.pdHTTPCli)`: the DDL
+    // job workers create and delete PD affinity groups through it.
+    tidb_domain::affinity::init_manager(config.pd_endpoints.first().and_then(|endpoint| {
+        match tidb_exec::pd_affinity_client::PdHttpAffinityClient::with_security(
+            &format!("http://{endpoint}"),
+            &config.cluster_security,
+        ) {
+            Ok(client) => {
+                Some(Arc::new(client) as Arc<dyn tidb_domain::affinity::PdAffinityClient>)
+            }
+            Err(error) => {
+                eprintln!("affinity PD client startup: {error}");
+                None
+            }
+        }
+    }));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
     let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
         Arc::clone(&catalog),
