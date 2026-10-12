@@ -392,9 +392,7 @@ pub fn check_multi_schema_names(info: &tidb_model::MultiSchemaInfo) -> Result<()
             if seen.contains(&canonical) {
                 return Err(DriverError::DdlCoded {
                     errno: 8200,
-                    message: format!(
-                        "Unsupported modify column: operate same {kind} '{canonical}'"
-                    ),
+                    message: format!("Unsupported operate same {kind} '{canonical}'"),
                 });
             }
             if add_to_seen {

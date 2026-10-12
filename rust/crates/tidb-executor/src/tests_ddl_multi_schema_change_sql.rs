@@ -136,10 +136,7 @@ fn multi_schema_change_rename_columns_combinations_refuse_conflicting_operations
     )
     .expect_err("Go: 8200 Unsupported operate same column 'c'");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'c'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'c'");
     assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 
     // add a column positioned AFTER the renamed-away column
@@ -155,10 +152,7 @@ fn multi_schema_change_rename_columns_combinations_refuse_conflicting_operations
     )
     .expect_err("Go: 8200 Unsupported operate same column");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'b'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'b'");
     assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 
     // drop and rename the same column
@@ -174,10 +168,7 @@ fn multi_schema_change_rename_columns_combinations_refuse_conflicting_operations
     )
     .expect_err("Go: 8200 Unsupported operate same column 'b'");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'b'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'b'");
     assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 
     // add an index over a column the same statement renames away
@@ -193,10 +184,7 @@ fn multi_schema_change_rename_columns_combinations_refuse_conflicting_operations
     )
     .expect_err("Go: 8200 Unsupported operate same column");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'b'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'b'");
     assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 }
 
@@ -309,10 +297,7 @@ fn multi_schema_change_change_columns_combinations_refuse_conflicts() {
     )
     .expect_err("Go: 8200 Unsupported operate same column 'b'");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'b'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'b'");
 
     // change and add the same column name
     let mut catalog = Catalog::default();
@@ -327,10 +312,7 @@ fn multi_schema_change_change_columns_combinations_refuse_conflicts() {
     )
     .expect_err("Go: 8200 Unsupported operate same column 'c'");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'c'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'c'");
 
     // change a column and add an index over its old name
     let mut catalog = Catalog::default();
@@ -345,10 +327,7 @@ fn multi_schema_change_change_columns_combinations_refuse_conflicts() {
     )
     .expect_err("Go: 8200 Unsupported operate same column");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'b'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'b'");
 }
 
 /// Go `multi_schema_change_test.go:148::TestMultiSchemaChangeDropColumnsParallel`.
@@ -549,10 +528,7 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
     )
     .expect_err("Go: 8200 Unsupported operate same index 't'");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same index 't'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same index 't'");
 
     // add and rename to the same index name
     let mut catalog = Catalog::default();
@@ -567,10 +543,7 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
     )
     .expect_err("Go: 8200 Unsupported operate same index");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same index 't1'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same index 't1'");
 
     // drop a column with its covering index and rename that index
     let mut catalog = Catalog::default();
@@ -717,10 +690,7 @@ fn multi_schema_change_index_jobs_use_resolved_anonymous_names() {
     run_create_table_on("create table t (a int, index a(a))", &mut catalog).unwrap();
     let error = alter(&mut catalog, "alter table t add index(a), add index(a)").unwrap_err();
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same index 'a_2'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same index 'a_2'");
     let error = alter(&mut catalog, "alter table t drop index a, add index a(a)").unwrap_err();
     assert_eq!(
         code_of(&error),
@@ -850,10 +820,7 @@ fn multi_schema_change_alter_index_combinations_refuse_conflicts() {
     )
     .expect_err("Go: 8200 Unsupported operate same index 'idx'");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same index 'idx'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same index 'idx'");
 
     // drop and alter the same index
     let mut catalog = Catalog::default();
@@ -868,10 +835,7 @@ fn multi_schema_change_alter_index_combinations_refuse_conflicts() {
     )
     .expect_err("Go: 8200 Unsupported operate same index");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same index 'idx'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same index 'idx'");
 
     // Go validates the visibility source before collecting index conflicts.
     let mut catalog = Catalog::default();
@@ -1021,10 +985,7 @@ fn multi_schema_change_expression_index_combinations_measured() {
     )
     .expect_err("Go: 8200 Unsupported operate same column");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'a'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'a'");
 
     // add column c, change column a d bigint, add index idx((a + a))
     let mut catalog = Catalog::default();
@@ -1036,10 +997,7 @@ fn multi_schema_change_expression_index_combinations_measured() {
     )
     .expect_err("Go: 8200 Unsupported operate same column");
     assert_eq!(code_of(&error), 8200);
-    assert_eq!(
-        message_of(&error),
-        "Unsupported modify column: operate same column 'a'"
-    );
+    assert_eq!(message_of(&error), "Unsupported operate same column 'a'");
 
     // add column c default 10, add index idx1((a + b)), add unique index idx2((a + b))
     let mut catalog = Catalog::default();

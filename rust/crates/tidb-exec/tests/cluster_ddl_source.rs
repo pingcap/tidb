@@ -6048,7 +6048,7 @@ fn a_modify_column_plans_the_kind_go_gives_it() {
         "ALTER TABLE widen MODIFY COLUMN name VARCHAR(40)",
     ] {
         let write = plan(&mut store, sql, 201);
-        assert!(write.column_reorg.is_none(), "{sql}");
+        assert!(write.column_reorgs.is_empty(), "{sql}");
     }
 
     // (statement, kind, VARCHAR -> CHAR precheck, the column renumbered).
@@ -6099,7 +6099,9 @@ fn a_modify_column_plans_the_kind_go_gives_it() {
         ),
     ] {
         let write = plan(&mut store, sql, 202);
-        let reorg = write.column_reorg.as_ref().expect("a data step is owed");
+        let [reorg] = write.column_reorgs.as_slice() else {
+            panic!("one data step is owed")
+        };
         assert_eq!(reorg.kind, kind, "{sql}");
         assert_eq!(reorg.precheck, precheck, "{sql}");
         assert_eq!(reorg.new_column_id != reorg.column_id, renumbered, "{sql}");
@@ -6130,7 +6132,9 @@ fn a_modify_column_plans_the_kind_go_gives_it() {
         "ALTER TABLE widen MODIFY COLUMN code VARCHAR(10) COLLATE utf8mb4_bin",
         203,
     );
-    let reorg = write.column_reorg.as_ref().expect("a data step is owed");
+    let [reorg] = write.column_reorgs.as_slice() else {
+        panic!("one data step is owed")
+    };
     assert_eq!(reorg.renumbered_indexes, [(2, 3)]);
     assert_eq!(index_id(&write, "icode"), 3);
     assert_eq!(index_id(&write, "iname"), 1);
@@ -7650,12 +7654,15 @@ fn cluster_column_batch_admits_original_names_before_execution() {
     }
 }
 
+/// Go runs a MODIFY / CHANGE whose rows change inside a multi-schema change
+/// as one sub-job among its siblings: the bundle stages that sub-job's data
+/// step, tagged with its place so a failed precheck re-plans it alone.
 #[test]
-fn cluster_column_batch_rejects_reorg_before_publishing_siblings() {
+fn cluster_column_batch_stages_a_reorg_per_modify_sub_job() {
     for sql in [
         "ALTER TABLE u6.t MODIFY a INT, ADD COLUMN c INT",
         "ALTER TABLE u6.t CHANGE a renamed INT, ADD COLUMN c INT",
-        "ALTER TABLE u6.t MODIFY s VARCHAR(2), DROP COLUMN a",
+        "ALTER TABLE u6.t ADD COLUMN c INT, MODIFY s VARCHAR(2), DROP COLUMN a",
     ] {
         let mut store = bootstrapped();
         let create = plan(
@@ -7664,8 +7671,16 @@ fn cluster_column_batch_rejects_reorg_before_publishing_siblings() {
             100,
         );
         apply(&mut store, &create);
-        let error = plan_ddl(&mut store, &statement(sql), 200).expect_err(sql);
-        assert_eq!(error.to_sql_error().code, 8200, "{sql}: {error}");
+        let write = plan(&mut store, sql, 200);
+        let [reorg] = write.column_reorgs.as_slice() else {
+            panic!("{sql}: one data step is owed")
+        };
+        let expected = if sql.contains("ADD COLUMN c INT, MODIFY") {
+            1
+        } else {
+            0
+        };
+        assert_eq!(reorg.action_offset, Some(expected), "{sql}");
     }
 }
 

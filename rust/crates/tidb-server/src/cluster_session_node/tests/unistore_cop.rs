@@ -12088,3 +12088,113 @@ fn comment_lengths_and_plan_time_warnings_follow_the_sql_mode_as_go_does() {
     );
     rows(&mut session, "COMMIT");
 }
+
+/// Go's multi-schema change from `ddl/multi_schema_change.test`: the index,
+/// default and table-option sub-jobs (`fillMultiSchemaInfo`), a MODIFY whose
+/// rows change inside the bundle, a drop's `len(Columns)` check seeing the
+/// columns other sub-jobs add, a later AUTO_INCREMENT sub-job adjusted
+/// against the counter the earlier one left (a note), ADD PRIMARY KEY's NOT
+/// NULL key columns, and an expression index's columns counted as relative.
+/// This node refused every bundle with one of those sub-jobs.
+#[test]
+fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(996)).unwrap();
+    rows(&mut session, "CREATE TABLE test.t1 (a INT, b INT)");
+    rows(&mut session, "INSERT INTO test.t1 VALUES (1, 2)");
+    session
+        .execute_write("ALTER TABLE test.t1 DROP COLUMN a, DROP COLUMN b, ADD COLUMN c INT DEFAULT 3, ADD COLUMN d INT DEFAULT 4")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM test.t1")),
+        [["3", "4"]]
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.t2 (a INT, b INT, c INT, PRIMARY KEY (a) NONCLUSTERED, KEY i3 (b), KEY i (c))",
+    );
+    session
+        .execute_write("ALTER TABLE test.t2 DROP INDEX i3, DROP PRIMARY KEY, RENAME INDEX i TO i1, CHANGE COLUMN c d INT")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT key_name, column_name FROM information_schema.tidb_indexes \
+             WHERE table_schema = 'test' AND table_name = 't2'"
+        )),
+        [["i1", "d"]]
+    );
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.t3 (a INT, b INT, c INT, KEY ib (b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.t3 VALUES (1, 2, 3), (11, 22, 33)",
+    );
+    session
+        .execute_write("ALTER TABLE test.t3 MODIFY COLUMN a TINYINT AFTER c, MODIFY COLUMN b TINYINT, MODIFY COLUMN c TINYINT FIRST")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT * FROM test.t3 USE INDEX (ib) ORDER BY b"
+        )),
+        [["3", "2", "1"], ["33", "22", "11"]]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.t3");
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.t4 (a INT AUTO_INCREMENT PRIMARY KEY, b INT)",
+    );
+    session
+        .execute_write("ALTER TABLE test.t4 AUTO_INCREMENT = 110, AUTO_INCREMENT = 90")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Note",
+            "1105",
+            "Can't reset AUTO_INCREMENT to 90 without FORCE option, using 110 instead"
+        ]]
+    );
+    session
+        .execute_write("ALTER TABLE test.t4 MODIFY COLUMN b TINYINT, AUTO_INCREMENT = 200, COMMENT = 'abc', CHARSET = utf8mb4")
+        .unwrap();
+    rows(&mut session, "INSERT INTO test.t4 (b) VALUES (1)");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a FROM test.t4")),
+        [["200"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT table_comment FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 't4'"
+        )),
+        [["abc"]]
+    );
+
+    rows(&mut session, "CREATE TABLE test.t5 (a INT)");
+    session
+        .execute_write("ALTER TABLE test.t5 ADD INDEX i (a), ADD PRIMARY KEY (a)")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t5"));
+    assert!(
+        created[0][1].contains("`a` int NOT NULL"),
+        "{}",
+        created[0][1]
+    );
+
+    rows(&mut session, "CREATE TABLE test.t6 (a INT, b INT)");
+    let error = session
+        .execute_write("ALTER TABLE test.t6 MODIFY COLUMN b DOUBLE, ADD INDEX idx ((a + b))")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8200, "Unsupported operate same column 'b'")
+    );
+}

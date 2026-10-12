@@ -261,8 +261,13 @@ pub enum ClusterDdlError {
     /// A MODIFY / CHANGE COLUMN found a row the new type cannot hold.
     ColumnReorg(LockSqlError),
     /// Go `precheckForVarcharToChar` found a row that does not fit; the
-    /// statement is planned again as a reorganization.
-    ColumnPrecheckFailed,
+    /// statement is planned again with that MODIFY / CHANGE -- the
+    /// multi-schema sub-job at `action_offset`, or the single statement --
+    /// as a reorganization.
+    ColumnPrecheckFailed {
+        /// The failing sub-job's offset, `None` for a single MODIFY.
+        action_offset: Option<usize>,
+    },
     /// Go `checkForeignKeyConstrain` refused an `ADD FOREIGN KEY`; the job
     /// is rolled back with `rollback`, then answers with `error`.
     ForeignKeyCheckFailed {
@@ -329,7 +334,7 @@ impl fmt::Display for ClusterDdlError {
             | Self::ColumnReorg(error)
             | Self::ForeignKeyCheckFailed { error, .. }
             | Self::ExchangeValidation(error) => formatter.write_str(&error.message),
-            Self::ColumnPrecheckFailed => {
+            Self::ColumnPrecheckFailed { .. } => {
                 formatter.write_str("a VARCHAR -> CHAR precheck found a row that does not fit")
             }
             Self::ExchangeValidationUnavailable => write!(
@@ -363,7 +368,7 @@ impl std::error::Error for ClusterDdlError {
             | Self::Backfill(_)
             | Self::IndexBackfill(_)
             | Self::ColumnReorg(_)
-            | Self::ColumnPrecheckFailed
+            | Self::ColumnPrecheckFailed { .. }
             | Self::ForeignKeyCheckFailed { .. }
             | Self::BackfillUnavailable
             | Self::ExchangeValidation(_)
@@ -522,7 +527,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::CheckConstraintValidationUnavailable);
     }
-    if write.column_reorg.is_some()
+    if !write.column_reorgs.is_empty()
         || !write.foreign_key_checks.is_empty()
         || write.cache_table_check.is_some()
     {
@@ -894,7 +899,7 @@ pub fn commit_cluster_ddl_with_backfill<
         return Err(ClusterDdlError::PersistedJobRequired);
     }
 
-    let phase = |statement| {
+    let phase = |statement: &DdlStatement| {
         commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
             DdlPhase::Initial(statement, cdc_write_source),
@@ -907,35 +912,27 @@ pub fn commit_cluster_ddl_with_backfill<
             auto_ids,
         )
     };
-    let outcome = match phase(statement) {
-        // Go `precheckForVarcharToChar`: a row that does not fit sends the
-        // job on as `ModifyTypeReorg` (`modify_column.go`), here a second plan
-        // of the same statement with that kind fixed.
-        Err(ClusterDdlError::ColumnPrecheckFailed) => {
-            let DdlStatement::ModifyColumn {
-                modify_column_type, ..
-            } = statement
-            else {
-                unreachable!("only a MODIFY / CHANGE COLUMN prechecks its rows");
-            };
-            debug_assert!(modify_column_type.is_none());
-            let mut reorganized = statement.clone();
-            if let DdlStatement::ModifyColumn {
-                modify_column_type, ..
-            } = &mut reorganized
-            {
-                *modify_column_type =
-                    Some(tidb_executor::ddl::modify_column_type::ModifyColumnType::Reorg);
+    // Go `precheckForVarcharToChar`: a row that does not fit sends the job
+    // on as `ModifyTypeReorg` (`modify_column.go`), here another plan of the
+    // same statement with that MODIFY's kind fixed. Each retry fixes one
+    // more sub-job, so the loop ends.
+    let mut current = std::borrow::Cow::Borrowed(statement);
+    let outcome = loop {
+        match phase(current.as_ref()) {
+            Err(ClusterDdlError::ColumnPrecheckFailed { action_offset }) => {
+                let mut reorganized = current.as_ref().clone();
+                reorganize_after_failed_precheck(&mut reorganized, action_offset);
+                current = std::borrow::Cow::Owned(reorganized);
             }
-            phase(&reorganized)
+            // Go `onCreateForeignKey`: the refused check rolls the job back,
+            // and the statement answers with the check's error once that is
+            // done.
+            Err(ClusterDdlError::ForeignKeyCheckFailed { error, rollback }) => {
+                phase(&rollback)?;
+                return Err(ClusterDdlError::IndexBackfill(error));
+            }
+            outcome => break outcome,
         }
-        // Go `onCreateForeignKey`: the refused check rolls the job back, and
-        // the statement answers with the check's error once that is done.
-        Err(ClusterDdlError::ForeignKeyCheckFailed { error, rollback }) => {
-            phase(&rollback)?;
-            return Err(ClusterDdlError::IndexBackfill(error));
-        }
-        outcome => outcome,
     };
     match outcome? {
         DdlPhaseOutcome::SchemaSync { .. } | DdlPhaseOutcome::Paused => {
@@ -944,6 +941,30 @@ pub fn commit_cluster_ddl_with_backfill<
         DdlPhaseOutcome::AlreadySatisfied(report) => Ok(report),
         DdlPhaseOutcome::Committed(committed) => Ok(committed.report),
     }
+}
+
+/// Marks the MODIFY / CHANGE whose precheck failed -- the single statement,
+/// or the multi-schema sub-job at `action_offset` -- as `ModifyTypeReorg`.
+fn reorganize_after_failed_precheck(statement: &mut DdlStatement, action_offset: Option<usize>) {
+    let modify_column_type = match (statement, action_offset) {
+        (
+            DdlStatement::ModifyColumn {
+                modify_column_type, ..
+            },
+            None,
+        ) => modify_column_type,
+        (DdlStatement::MultiSchemaChange { actions, .. }, Some(offset)) => {
+            match &mut actions[offset] {
+                crate::cluster_ddl::AlterColumnAction::Modify {
+                    modify_column_type, ..
+                } => modify_column_type,
+                _ => unreachable!("only a MODIFY / CHANGE sub-job prechecks its rows"),
+            }
+        }
+        _ => unreachable!("only a MODIFY / CHANGE COLUMN prechecks its rows"),
+    };
+    debug_assert!(modify_column_type.is_none());
+    *modify_column_type = Some(tidb_executor::ddl::modify_column_type::ModifyColumnType::Reorg);
 }
 
 /// The reason the shared persisted worker released its job to the scheduler.
@@ -1535,7 +1556,7 @@ fn commit_cluster_ddl_with_backfill_once<
     };
     let mut buffer = MutationBuffer::new();
     if !write.backfill.is_empty()
-        || write.column_reorg.is_some()
+        || !write.column_reorgs.is_empty()
         || !write.foreign_key_checks.is_empty()
         || write.cache_table_check.is_some()
         || write.exchange_partition_validation.is_some()
@@ -1553,14 +1574,18 @@ fn commit_cluster_ddl_with_backfill_once<
                         })?
                         .bind(snapshot);
                     let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
-                    if let Some(reorg) = &write.column_reorg {
+                    // Each data step reads the rows the one before it left in
+                    // the buffer, as Go's sub-jobs reorganize in turn.
+                    for reorg in &write.column_reorgs {
                         match backfiller
                             .stage_column(reorg, Arc::clone(&handle), &buffer)
                             .map_err(ClusterDdlError::ColumnReorg)?
                         {
                             ColumnStageOutcome::Staged => {}
                             ColumnStageOutcome::PrecheckFailed => {
-                                return Err(ClusterDdlError::ColumnPrecheckFailed)
+                                return Err(ClusterDdlError::ColumnPrecheckFailed {
+                                    action_offset: reorg.action_offset,
+                                })
                             }
                         }
                     }
@@ -1609,7 +1634,7 @@ fn commit_cluster_ddl_with_backfill_once<
         };
         // Go `executor.DoDDLJob` appends the job's reorganization warnings
         // to the statement once the job is synced (one per code, counted).
-        if let Some(reorg) = &write.column_reorg {
+        for reorg in &write.column_reorgs {
             for (level, code, message) in reorg.context.0.take_warnings() {
                 let level = match level {
                     tidb_distsql::WarningLevel::Note => DdlWarningLevel::Note,

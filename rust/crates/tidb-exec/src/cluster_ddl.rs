@@ -196,6 +196,10 @@ pub enum AlterColumnAction {    /// `ADD COLUMN`, at its written position.
         context: DdlStatementContext,
         /// CHANGE locates the original column by this name.
         rename_from: Option<String>,
+        /// Go `ModifyColumnArgs.ModifyColumnType` for this sub-job: `None`
+        /// until the plan computes it; a failed VARCHAR -> CHAR precheck
+        /// plans the statement again with `Reorg` for this sub-job only.
+        modify_column_type: Option<tidb_executor::ddl::modify_column_type::ModifyColumnType>,
     },
     /// RENAME COLUMN shares the modify-column job owner.
     Rename {
@@ -256,6 +260,56 @@ pub enum AlterColumnAction {    /// `ADD COLUMN`, at its written position.
         /// The statement context used to resolve and validate it.
         context: DdlStatementContext,
     },
+    /// `DROP PRIMARY KEY` (Go `ActionDropPrimaryKey`).
+    DropPrimaryKey,
+    /// `RENAME INDEX from TO to` (Go `ActionRenameIndex`).
+    RenameIndex {
+        /// The index's current name.
+        from: String,
+        /// The name it takes.
+        to: String,
+    },
+    /// `ALTER INDEX name {VISIBLE | INVISIBLE}` (Go
+    /// `ActionAlterIndexVisibility`).
+    IndexVisibility {
+        /// The index as written.
+        name: String,
+        /// Whether it becomes invisible.
+        invisible: bool,
+    },
+    /// `ALTER COLUMN name {SET DEFAULT expr | DROP DEFAULT}` (Go
+    /// `ActionSetDefaultValue`).
+    SetDefault {
+        /// The column as written.
+        column: String,
+        /// The new default; `None` drops it.
+        default_value: Option<Box<tidb_ast::Expr>>,
+        /// The context the default is evaluated under.
+        context: DdlStatementContext,
+    },
+    /// `AUTO_INCREMENT [=] n` (Go `ActionRebaseAutoID`).
+    RebaseAutoId {
+        /// The requested next id.
+        new_base: i64,
+        /// `FORCE`: set the counter exactly, even backwards.
+        force: bool,
+    },
+    /// `COMMENT [=] 'text'` (Go `ActionModifyTableComment`), already
+    /// length-checked.
+    TableComment {
+        /// The comment the table stores.
+        comment: String,
+    },
+    /// The table's `CHARACTER SET` / `COLLATE` pair, or `CONVERT TO` (Go
+    /// `ActionModifyTableCharsetAndCollate`).
+    TableCharset {
+        /// The target charset, empty to keep the table's own.
+        charset: String,
+        /// The target collation, empty to take the charset's default.
+        collate: String,
+        /// `CONVERT TO`: also rewrite each column's charset.
+        overwrite_columns: bool,
+    },
 }
 
 /// A `StmtContext` wrapper carrying the Debug the statement enum derives.
@@ -275,7 +329,8 @@ impl AlterColumnAction {
             | Self::Modify { context, .. }
             | Self::AddIndex { context, .. }
             | Self::AddForeignKey { context, .. }
-            | Self::AddCheck { context, .. } => Some(&context.0),
+            | Self::AddCheck { context, .. }
+            | Self::SetDefault { context, .. } => Some(&context.0),
             _ => None,
         }
     }
@@ -1453,11 +1508,127 @@ fn lower_alter_table_catalog(
                     let mut single = alter.clone();
                     single.actions = vec![action.clone()];
                     match lower_alter_table_catalog(&single, default_schema, context)? {
-                        Some(DdlStatement::ModifyColumn { column, position, context, rename_from, .. }) =>
-                            actions.push(AlterColumnAction::Modify { column, position, context, rename_from }),
-                        Some(DdlStatement::RenameColumn { from, to, .. }) =>
-                            actions.push(AlterColumnAction::Rename { from, to }),
+                        Some(DdlStatement::ModifyColumn {
+                            column,
+                            position,
+                            context,
+                            rename_from,
+                            modify_column_type,
+                            ..
+                        }) => actions.push(AlterColumnAction::Modify {
+                            column,
+                            position,
+                            context,
+                            rename_from,
+                            modify_column_type,
+                        }),
+                        Some(DdlStatement::RenameColumn { from, to, .. }) => {
+                            actions.push(AlterColumnAction::Rename { from, to })
+                        }
                         _ => return Ok(None),
+                    }
+                }
+                // Go `fillMultiSchemaInfo`'s index, default and table-option
+                // sub-jobs, each lowered exactly as its single spelling is.
+                tidb_ast::AlterTableAction::DropPrimaryKey(_)
+                | tidb_ast::AlterTableAction::RenameIndex(_)
+                | tidb_ast::AlterTableAction::AlterIndexVisibility(_)
+                | tidb_ast::AlterTableAction::AlterColumnDefault(_)
+                | tidb_ast::AlterTableAction::ConvertCharacterSet { .. } => {
+                    let mut single = alter.clone();
+                    single.actions = vec![action.clone()];
+                    match lower_alter_table_catalog(&single, default_schema, context)? {
+                        Some(DdlStatement::DropPrimaryKey { .. }) => {
+                            actions.push(AlterColumnAction::DropPrimaryKey)
+                        }
+                        Some(DdlStatement::RenameIndex { from, to, .. }) => {
+                            actions.push(AlterColumnAction::RenameIndex { from, to })
+                        }
+                        Some(DdlStatement::AlterIndexVisibility {
+                            index, invisible, ..
+                        }) => actions.push(AlterColumnAction::IndexVisibility {
+                            name: index,
+                            invisible,
+                        }),
+                        Some(DdlStatement::SetColumnDefault {
+                            column,
+                            default_value,
+                            context,
+                            ..
+                        }) => actions.push(AlterColumnAction::SetDefault {
+                            column,
+                            default_value,
+                            context,
+                        }),
+                        Some(DdlStatement::ModifyTableCharsetAndCollate {
+                            charset,
+                            collate,
+                            overwrite_columns,
+                            ..
+                        }) => actions.push(AlterColumnAction::TableCharset {
+                            charset,
+                            collate,
+                            overwrite_columns,
+                        }),
+                        _ => return Ok(None),
+                    }
+                }
+                // Go `AlterTable` walks one table-option spec's options in
+                // order, one sub-job each, and handles the charset / collate
+                // pair once (`handledCharsetOrCollate`) with the last of each
+                // winning.
+                tidb_ast::AlterTableAction::SetTableOptions { options } => {
+                    let mut charset_handled = false;
+                    for option in options {
+                        match option {
+                            tidb_ast::TableOption::CharacterSet(_)
+                            | tidb_ast::TableOption::Collate(_) => {
+                                if charset_handled {
+                                    continue;
+                                }
+                                charset_handled = true;
+                                let mut charset = String::new();
+                                let mut collate = String::new();
+                                for option in options {
+                                    match option {
+                                        tidb_ast::TableOption::CharacterSet(value) => {
+                                            charset = value.clone()
+                                        }
+                                        tidb_ast::TableOption::Collate(value) => {
+                                            collate = value.clone()
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                actions.push(AlterColumnAction::TableCharset {
+                                    charset,
+                                    collate,
+                                    overwrite_columns: false,
+                                });
+                            }
+                            tidb_ast::TableOption::AutoIncrement(_)
+                            | tidb_ast::TableOption::ForceAutoIncrement(_)
+                            | tidb_ast::TableOption::Comment(_) => {
+                                let mut single = alter.clone();
+                                single.actions =
+                                    vec![tidb_ast::AlterTableAction::SetTableOptions {
+                                        options: vec![option.clone()],
+                                    }];
+                                match lower_alter_table_catalog(&single, default_schema, context)? {
+                                    Some(DdlStatement::RebaseAutoIncrementId {
+                                        new_base,
+                                        force,
+                                        ..
+                                    }) => actions
+                                        .push(AlterColumnAction::RebaseAutoId { new_base, force }),
+                                    Some(DdlStatement::ModifyTableComment { comment, .. }) => {
+                                        actions.push(AlterColumnAction::TableComment { comment })
+                                    }
+                                    _ => return Ok(None),
+                                }
+                            }
+                            _ => return Ok(None),
+                        }
                     }
                 }
                 tidb_ast::AlterTableAction::DropColumn { if_exists, name } => {
@@ -2565,6 +2736,63 @@ fn prepare_modify_column(
     })
 }
 
+/// Go's final state after a changing column / changing indexes replace the
+/// old ones: every index on the column under a new id
+/// (`initializeChangingIndexes`, `AllocateIndexID`), and under
+/// `ModifyTypeReorg` the column under a new id too (`AllocateColumnID`).
+/// Returns the column's id afterwards and each renumbered index as
+/// (old id, new id).
+fn renumber_changed_column(
+    info: &mut TableInfo,
+    old_id: i64,
+    changed_name: &str,
+    kind: tidb_executor::ddl::modify_column_type::ModifyColumnType,
+) -> (i64, Vec<(i64, i64)>) {
+    use tidb_executor::ddl::modify_column_type::ModifyColumnType;
+    let mut renumbered_indexes = Vec::new();
+    if matches!(kind, ModifyColumnType::IndexReorg | ModifyColumnType::Reorg) {
+        let changed_name = changed_name.go_to_lower();
+        let related = info
+            .indices
+            .iter_deref()
+            .filter(|index| {
+                index
+                    .read()
+                    .columns
+                    .iter_deref()
+                    .any(|part| part.read().name.lowercase() == changed_name)
+            })
+            .collect::<Vec<_>>();
+        for index in related {
+            info.max_index_id += 1;
+            let mut index = index.write();
+            renumbered_indexes.push((index.id, info.max_index_id));
+            index.id = info.max_index_id;
+        }
+    }
+    let offset = info
+        .columns
+        .iter_deref()
+        .position(|candidate| candidate.read().id == old_id)
+        .expect("the modified column keeps its place in the table");
+    if kind == ModifyColumnType::Reorg {
+        info.max_column_id += 1;
+        let new_id = info.max_column_id;
+        info.columns
+            .get(offset)
+            .expect("the modified column is present")
+            .write()
+            .id = new_id;
+    }
+    let new_column_id = info
+        .columns
+        .get(offset)
+        .expect("the modified column is present")
+        .read()
+        .id;
+    (new_column_id, renumbered_indexes)
+}
+
 /// Apply an already admitted column by stable ID, preserving offsets shifted
 /// by preceding jobs and updating index references with the column rename.
 fn apply_prepared_column(
@@ -2634,6 +2862,16 @@ fn apply_prepared_column(
 /// table. Index execution keeps its existing backfill owner after admission.
 struct PreparedClusterColumns {
     columns: BTreeMap<usize, (tidb_model::ColumnInfo, tidb_ast::ColumnPosition, bool)>,
+    /// A MODIFY / CHANGE sub-job's data step: its kind, whether it prechecks
+    /// the rows, and whether the check covers the value range.
+    modify_kinds: BTreeMap<
+        usize,
+        (
+            tidb_executor::ddl::modify_column_type::ModifyColumnType,
+            bool,
+            bool,
+        ),
+    >,
     foreign_keys: BTreeMap<usize, CreatedForeignKey>,
     skipped: BTreeMap<usize, String>,
 }
@@ -2648,6 +2886,7 @@ fn prepare_cluster_columns(
 ) -> Result<PreparedClusterColumns, DdlPlanError> {
     let mut prepared = PreparedClusterColumns {
         columns: BTreeMap::new(),
+        modify_kinds: BTreeMap::new(),
         foreign_keys: BTreeMap::new(),
         skipped: BTreeMap::new(),
     };
@@ -2661,6 +2900,7 @@ fn prepare_cluster_columns(
     let mut relative_columns = Vec::new();
     let mut add_indexes = Vec::new();
     let mut drop_indexes = Vec::new();
+    let mut alter_indexes = Vec::new();
     for (offset, action) in actions.iter().enumerate() {
         let mut skipped = None;
         let mut column_job = None;
@@ -2712,27 +2952,22 @@ fn prepare_cluster_columns(
                 position,
                 context,
                 rename_from,
+                modify_column_type,
             } => {
-                let prepared = prepare_modify_column(
+                let modified = prepare_modify_column(
                     stored,
                     table,
                     column,
                     position,
                     context,
                     rename_from.as_deref(),
-                    None,
+                    *modify_column_type,
                 )?;
-                // The bundled form does not stage a column's data step yet.
-                if prepared.kind
-                    != tidb_executor::ddl::modify_column_type::ModifyColumnType::NoReorg
-                {
-                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                        8200,
-                        "Unsupported modify column: this node checks or rewrites a column's \
-                         rows in a single-column ALTER only",
-                    )));
-                }
-                let built = prepared.column;
+                prepared.modify_kinds.insert(
+                    offset,
+                    (modified.kind, modified.precheck, modified.check_value_range),
+                );
+                let built = modified.column;
                 let old_name =
                     CiString::new(rename_from.as_deref().unwrap_or(&column.name).to_owned());
                 if built.name.lowercase() == old_name.lowercase() {
@@ -2783,7 +3018,8 @@ fn prepare_cluster_columns(
                 if_not_exists,
                 index,
                 expressions,
-                ..
+                condition,
+                context,
             } => {
                 let name = settle_added_index_name(stored, index, expressions);
                 if find_index(stored, &name).is_some() {
@@ -2799,6 +3035,32 @@ fn prepare_cluster_columns(
                         "index `{name}` already exists on `{schema}`.`{table}`"
                     ));
                 } else {
+                    // Go `fillMultiSchemaInfo`: each expression part's hidden
+                    // column, built by the executor against the original
+                    // table, makes the columns it reads relative too.
+                    if expressions.iter().any(Option::is_some) {
+                        let mut candidate = stored.clone_like_go();
+                        plan_added_index(
+                            &mut candidate,
+                            index,
+                            expressions,
+                            condition.as_ref(),
+                            &name,
+                            // The sub-job plans the index again, and raises
+                            // its warnings then.
+                            &context.0.with_isolated_warnings(),
+                        )?;
+                        for hidden in candidate.columns.iter_deref().skip(stored.columns.len()) {
+                            relative_columns.extend(
+                                hidden
+                                    .read()
+                                    .dependences
+                                    .snapshot()
+                                    .into_iter()
+                                    .map(|name| CiString::new(name.to_string())),
+                            );
+                        }
+                    }
                     for (indexed, expression) in index.columns.iter_deref().zip(expressions) {
                         // An expression part's hidden column does not exist
                         // until the plan builds it.
@@ -2902,6 +3164,23 @@ fn prepare_cluster_columns(
                     )));
                 }
             }
+            // Go `fillMultiSchemaInfo`.
+            AlterColumnAction::DropPrimaryKey => {
+                drop_indexes.push(CiString::new("PRIMARY".to_owned()));
+            }
+            AlterColumnAction::RenameIndex { from, to } => {
+                add_indexes.push(CiString::new(from.clone()));
+                drop_indexes.push(CiString::new(to.clone()));
+            }
+            AlterColumnAction::IndexVisibility { name, .. } => {
+                alter_indexes.push(CiString::new(name.clone()));
+            }
+            AlterColumnAction::SetDefault { column, .. } => {
+                modify_columns.push(CiString::new(column.clone()));
+            }
+            AlterColumnAction::RebaseAutoId { .. }
+            | AlterColumnAction::TableComment { .. }
+            | AlterColumnAction::TableCharset { .. } => {}
         }
         if let Some(job) = column_job {
             if let tidb_ast::ColumnPosition::After(name) = &job.1 {
@@ -2921,6 +3200,7 @@ fn prepare_cluster_columns(
         relative_columns: GoSharedSlice::from_vec(relative_columns),
         add_indexes: GoSharedSlice::from_vec(add_indexes),
         drop_indexes: GoSharedSlice::from_vec(drop_indexes),
+        alter_indexes: GoSharedSlice::from_vec(alter_indexes),
         ..Default::default()
     };
     // Go `checkMultiSchemaInfo`.
@@ -2945,6 +3225,465 @@ enum AlterColumnOutcome {
     Applied,
     /// The `IF [NOT] EXISTS` no-op, with the sentence `already` reports.
     AlreadySatisfied(String),
+}
+
+/// Go `onDropIndex` for the primary key over an EVOLVING `TableInfo`, after
+/// `CheckIsDropPrimaryKey`. The index entries go with the definition.
+fn apply_drop_primary_key(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    info: &mut TableInfo,
+    use_new_collation: bool,
+    backfill: &mut Vec<IndexBackfill>,
+) -> Result<(), DdlPlanError> {
+    // A clustered primary key -- whether it is the int handle (`PKIsHandle`)
+    // or a composite one (`IsCommonHandle`) -- is what the rows are STORED
+    // under, so dropping it would leave every row unaddressable.
+    if info.pk_is_handle || info.is_common_handle {
+        return Err(DdlPlanError::Admission(
+            crate::table_info_build::DdlAdmissionError::with_code(
+                8200,
+                "Unsupported drop primary key when the table is using clustered index".to_owned(),
+            ),
+        ));
+    }
+    // Go's `PRIMARY` lookup is by the reserved name, and a general index that
+    // merely happens to be called `primary` is not one (the #14243 fix).
+    let primary = info.indices.iter_deref().find(|index| {
+        let index = index.read();
+        index.name.lowercase() == "primary" && index.primary
+    });
+    let Some(primary) = primary else {
+        // Go `ErrCantDropFieldOrKey` (1091), the same code DROP INDEX uses
+        // for a name that is not there.
+        return Err(DdlPlanError::UnknownIndex("PRIMARY".to_owned()));
+    };
+    let dropped = primary.read().clone_like_go();
+    crate::foreign_key_build::check_index_needed_in_foreign_key(catalog, schema, info, &dropped)
+        .map_err(DdlPlanError::Admission)?;
+    // The removal walk rebuilds the dropped index's entry keys, so its table
+    // must still CARRY the index.
+    let backfill_table = Box::new(info.clone_like_go());
+    if let Some(offset) = info.indices.iter_handles().position(|candidate| {
+        candidate
+            .as_ref()
+            .expect("nil *IndexInfo in TableInfo.Indices")
+            .read()
+            .id
+            == dropped.id
+    }) {
+        info.indices.delete_go(offset, offset + 1);
+    }
+    // An index whose rows survive its `TableInfo` is invisible garbage that a
+    // later index of the same id would read as its own.
+    backfill.push(IndexBackfill {
+        table: backfill_table,
+        index: GoShared::new(dropped),
+        use_new_collation,
+        operation: IndexBackfillOperation::Drop,
+    });
+    Ok(())
+}
+
+/// Go `ValidateRenameIndex` and `renameIndexes` over an EVOLVING `TableInfo`.
+fn apply_rename_index(
+    info: &mut TableInfo,
+    schema: &str,
+    table: &str,
+    from: &str,
+    to: &str,
+) -> Result<AlterColumnOutcome, DdlPlanError> {
+    if find_index(info, from).is_none() {
+        return Err(DdlPlanError::KeyNotExists {
+            index: from.to_owned(),
+            table: table.to_owned(),
+        });
+    }
+    // Case-SENSITIVE equality is the no-op test: `inDex` -> `IndEX` is a real
+    // rename that only changes the stored spelling.
+    if from == to {
+        return Ok(AlterColumnOutcome::AlreadySatisfied(format!(
+            "index `{from}` on `{schema}`.`{table}` already has that name"
+        )));
+    }
+    let from_lower = from.go_to_lower();
+    let to_lower = to.go_to_lower();
+    if from_lower != to_lower {
+        if let Some(existing) = find_index(info, to) {
+            return Err(DdlPlanError::DuplicateKeyName(
+                existing.read().name.original().to_owned(),
+            ));
+        }
+    }
+    // Go `renameIndexes` walks every index and renames each one whose name
+    // matches, rather than stopping at the first.
+    //
+    // Its two other passes have nothing to rename here: temp indexes exist
+    // only during a reorg this node does not run, and the hidden columns of
+    // an expression index cannot occur because this node refuses to create
+    // or load one.
+    for candidate in info.indices.iter_deref() {
+        let mut candidate = candidate.write();
+        if candidate.name.lowercase() == from_lower {
+            candidate.name = CiString::new(to.to_owned());
+        }
+    }
+    Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go `validateAlterIndexVisibility` and `setIndexVisibility` over an
+/// EVOLVING `TableInfo`.
+fn apply_index_visibility(
+    info: &mut TableInfo,
+    schema: &str,
+    table: &str,
+    index: &str,
+    invisible: bool,
+) -> Result<AlterColumnOutcome, DdlPlanError> {
+    // The index must exist AND be public, else `ErrKeyNotExists`.
+    let found = find_index(info, index)
+        .filter(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);
+    let Some(found) = found else {
+        return Err(DdlPlanError::KeyNotExists {
+            index: index.to_owned(),
+            table: table.to_owned(),
+        });
+    };
+    // Go's early return: a visibility that already matches finishes the job
+    // without touching the table.
+    if found.read().invisible == invisible {
+        return Ok(AlterColumnOutcome::AlreadySatisfied(format!(
+            "index `{index}` on `{schema}`.`{table}` is already {}",
+            if invisible { "invisible" } else { "visible" }
+        )));
+    }
+    if invisible && found.read().is_columnar_index() {
+        return Err(coded_refusal(
+            8200,
+            format!(
+                "INVISIBLE can not be used in {} INDEX",
+                found.read().tp.sql()
+            ),
+        ));
+    }
+    let wanted = index.go_to_lower();
+    // Go `setIndexVisibility` walks EVERY index and sets each one whose name
+    // matches, rather than stopping at the first.
+    for candidate in info.indices.iter_deref() {
+        let mut candidate = candidate.write();
+        if candidate.name.lowercase() == wanted {
+            candidate.invisible = invisible;
+        }
+    }
+    Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go `onSetDefaultValue` over an EVOLVING `TableInfo`.
+fn apply_set_column_default(
+    info: &mut TableInfo,
+    table: &str,
+    column: &str,
+    default_value: Option<&tidb_ast::Expr>,
+    context: &tidb_executor::StmtContext,
+) -> Result<(), DdlPlanError> {
+    // Go resolves the target column before it looks at the new default at
+    // all, and a non-public one reads as absent.
+    let wanted = column.go_to_lower();
+    let Some(target) = info.columns.iter_deref().find(|candidate| {
+        let candidate = candidate.read();
+        candidate.name.lowercase() == wanted && candidate.state == tidb_model::SchemaState::PUBLIC
+    }) else {
+        return Err(DdlPlanError::UnknownColumn {
+            column: column.to_owned(),
+            table: table.to_owned(),
+        });
+    };
+    // Go `ErrInvalidAutoRandom`: the shard bits own the column's values, so a
+    // default could never be written.
+    if default_value.is_some()
+        && info.auto_random_bits > 0
+        && target.read().field_type.has_flag(FieldTypeFlags::PRI_KEY)
+    {
+        return Err(DdlPlanError::InvalidAutoRandom(
+            "auto_random is incompatible with default".to_owned(),
+        ));
+    }
+    let mut target = target.write();
+    crate::table_info_build::set_column_default(column, &mut target, default_value, context)
+        .map_err(DdlPlanError::Admission)
+}
+
+/// Go refuses an ALTER TABLE charset change that names neither a charset nor
+/// a collation before it resolves anything.
+fn check_table_charset_named(charset: &str, collate: &str) -> Result<(), DdlPlanError> {
+    if charset.is_empty() && collate.is_empty() {
+        return Err(DdlPlanError::Admission(
+            crate::table_info_build::DdlAdmissionError::with_code(
+                1115,
+                "Unknown character set: ''".to_owned(),
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Go `checkAlterTableCharset` and `onModifyTableCharsetAndCollate` over an
+/// EVOLVING `TableInfo`.
+#[allow(clippy::too_many_arguments)]
+fn apply_table_charset_and_collate(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    table: &str,
+    info: &mut TableInfo,
+    charset: &str,
+    collate: &str,
+    overwrite_columns: bool,
+) -> Result<AlterColumnOutcome, DdlPlanError> {
+    let database = find_database(catalog, schema)
+        .expect("locate_table resolved the database")
+        .info
+        .clone();
+    // Go: an omitted charset keeps the table's own, and an omitted collation
+    // becomes that charset's default.
+    let to_charset = if charset.is_empty() {
+        info.charset.clone()
+    } else {
+        charset.to_owned()
+    };
+    let (to_charset, to_collate) = crate::table_info_build::resolve_charset_collation(
+        Some(to_charset.as_str()),
+        if collate.is_empty() {
+            None
+        } else {
+            Some(collate)
+        },
+        CATALOG_CHARSET,
+        CATALOG_COLLATION,
+    )
+    .map_err(DdlPlanError::Admission)?;
+
+    // Go `checkAlterTableCharset`'s early return: the table already matches
+    // AND, when the columns are in scope, every non-binary column matches too.
+    if info.charset == to_charset && info.collate == to_collate {
+        let columns_settled = !overwrite_columns
+            || info.columns.iter_deref().all(|column| {
+                let column = column.read();
+                let column_charset = column.field_type.charset_name();
+                column_charset == "binary"
+                    || (column_charset == to_charset
+                        && column.field_type.collation().name() == to_collate)
+            });
+        if columns_settled {
+            return Ok(AlterColumnOutcome::AlreadySatisfied(format!(
+                "`{schema}`.`{table}` is already {to_charset}/{to_collate}"
+            )));
+        }
+    }
+
+    // Go resolves the table's ORIGINAL pair against its database before
+    // comparing, so a table that never named one is judged by what it
+    // actually inherited.
+    let (from_charset, from_collate) = crate::table_info_build::resolve_charset_collation(
+        if info.charset.is_empty() {
+            Some(database.charset.as_str())
+        } else {
+            Some(info.charset.as_str())
+        },
+        if info.collate.is_empty() {
+            Some(database.collate.as_str())
+        } else {
+            Some(info.collate.as_str())
+        },
+        CATALOG_CHARSET,
+        CATALOG_COLLATION,
+    )
+    .map_err(DdlPlanError::Admission)?;
+    check_modify_charset_and_collation(
+        &to_charset,
+        &to_collate,
+        &from_charset,
+        &from_collate,
+        false,
+        "",
+    )?;
+
+    if overwrite_columns {
+        // Go checks every column BEFORE it rewrites any of them, so a refusal
+        // leaves the table exactly as it was.
+        for column in info.columns.iter_deref() {
+            let column = column.read();
+            let name = column.name.original().to_owned();
+            if column.field_type.code() == tidb_datatype::FieldTypeCode::Varchar {
+                check_varchar_field_length(column.field_type.flen(), &name, &to_charset)?;
+            }
+            let column_charset = column.field_type.charset_name().to_owned();
+            if column_charset == "binary" || column_charset.is_empty() {
+                continue;
+            }
+            check_modify_charset_and_collation(
+                &to_charset,
+                &to_collate,
+                &column_charset,
+                column.field_type.collation().name(),
+                is_column_with_index(&name, info),
+                &name,
+            )?;
+        }
+    }
+    info.charset = to_charset.clone();
+    info.collate = to_collate.clone();
+    if overwrite_columns {
+        let collation = tidb_datatype::Collation::from_name(&to_collate)
+            .unwrap_or(tidb_datatype::Collation::Binary);
+        for column in info.columns.iter_deref() {
+            let mut column = column.write();
+            // Go `field_types.HasCharset`: a type that holds text takes the
+            // new pair, everything else is marked binary.
+            if column.field_type.has_charset() {
+                column.field_type.set_charset_name(to_charset.clone());
+                column.field_type.set_collation(collation);
+            } else {
+                column.field_type.set_charset_name("binary");
+                column
+                    .field_type
+                    .set_collation(tidb_datatype::Collation::Binary);
+            }
+        }
+    }
+    Ok(AlterColumnOutcome::Applied)
+}
+
+/// The auto-increment counter a multi-schema change has already moved inside
+/// its own transaction: the value its executor-side checks read, and the
+/// value the sub-jobs before this one left.
+#[derive(Clone, Copy)]
+struct RebasedCounter {
+    original: i64,
+    evolved: i64,
+}
+
+/// Go `RebaseAutoID` (the executor's `adjustNewBaseToNextGlobalID`, a
+/// warning) and `onRebaseAutoIncrementIDType`. Inside a multi-schema change
+/// the job adjusts the base again against the counter the earlier sub-jobs
+/// left, and Go reports that sub-job warning as a note
+/// (`appendMultiChangeWarningsToOwnerCtx`).
+#[allow(clippy::too_many_arguments)]
+fn rebase_auto_increment_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    auto_ids: Option<&std::sync::Arc<crate::auto_id_client::AutoIdClient>>,
+    db_id: i64,
+    info: &mut TableInfo,
+    requested: i64,
+    force: bool,
+    rebased: &mut Option<RebasedCounter>,
+    writes: &mut Vec<BufferMutation>,
+    warnings: &mut Vec<(DdlWarningLevel, u16, String)>,
+) -> Result<(), DdlPlanError> {
+    if force && requested == 0 {
+        return Err(DdlPlanError::AutoIdReadFailed);
+    }
+    let counter_key = crate::cluster_auto_id::auto_id_key_for(db_id, info);
+    let service = auto_ids.filter(|_| info.sep_auto_inc()).map(|client| {
+        let unsigned = info.is_auto_inc_col_unsigned();
+        crate::cluster_auto_id::AutoIdServiceAllocator::new(
+            client.clone(),
+            if info.auto_id_schema_id == 0 {
+                db_id
+            } else {
+                info.auto_id_schema_id
+            },
+            info.id,
+            unsigned,
+            u32::MAX,
+        )
+    });
+    let call = if force {
+        tidb_executor::kv_table::AutoIdCall::with_timeout(std::time::Duration::from_secs(30))
+    } else {
+        tidb_executor::kv_table::AutoIdCall::background()
+    };
+
+    // Go `NextGlobalAutoID`: the stored counter holds the id LAST handed out,
+    // so the next one to allocate is one past it. An absent key reads as 0,
+    // matching Go's `GetInt64`.
+    let stored_counter = if let Some(rebased) = rebased {
+        rebased.original
+    } else if force && service.is_some() {
+        0
+    } else if let Some(service) = &service {
+        service
+            .alloc(&call, 0, 1, 1)
+            .map_err(|e| DdlPlanError::Encode(e.to_string()))?
+            .1
+    } else {
+        match snapshot.get(&counter_key)? {
+            Some(value) => value::parse_int_value(&value)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            None => 0,
+        }
+    };
+    let mut new_base = requested;
+    if !force {
+        // Go `adjustNewBaseToNextGlobalID` compares as UNSIGNED whatever the
+        // column's signedness, and never lets the base move backwards:
+        // another node's allocator may already have handed out ids past the
+        // requested base.
+        let next_global = (stored_counter as u64).wrapping_add(1);
+        let adjusted = u64::max(new_base as u64, next_global) as i64;
+        if adjusted != new_base {
+            warnings.push((
+                DdlWarningLevel::Warning,
+                1105,
+                format!(
+                    "Can't reset AUTO_INCREMENT to {new_base} without FORCE option, \
+                     using {adjusted} instead"
+                ),
+            ));
+            new_base = adjusted;
+        }
+        if let Some(rebased) = rebased {
+            let next_global = (rebased.evolved as u64).wrapping_add(1);
+            let adjusted = u64::max(new_base as u64, next_global) as i64;
+            if adjusted != new_base {
+                warnings.push((
+                    DdlWarningLevel::Note,
+                    1105,
+                    format!(
+                        "Can't reset AUTO_INCREMENT to {new_base} without FORCE option, \
+                         using {adjusted} instead"
+                    ),
+                ));
+                new_base = adjusted;
+            }
+        }
+    }
+    info.auto_inc_id = new_base;
+    // "The next value to allocate is `newBase`", so the counter -- which
+    // holds the last id handed out -- becomes one below it. `Rebase` only
+    // ever grows, `ForceRebase` sets exactly; the non-force base was already
+    // raised to at least the current counter above, so both reduce to one
+    // write here.
+    let new_end = new_base.wrapping_sub(1);
+    let current = rebased.map_or(stored_counter, |rebased| rebased.evolved);
+    let evolved = if let Some(service) = &service {
+        service
+            .rebase(&call, new_end, force)
+            .map_err(|e| DdlPlanError::Encode(e.to_string()))?;
+        new_end
+    } else if force || (new_end as u64) > (current as u64) {
+        writes.push(BufferMutation::set(
+            counter_key,
+            value::encode_int_value(new_end),
+        )?);
+        new_end
+    } else {
+        current
+    };
+    *rebased = Some(RebasedCounter {
+        original: stored_counter,
+        evolved,
+    });
+    Ok(())
 }
 
 /// Go's add-column job body over an EVOLVING `TableInfo` — the same rules a
@@ -3155,7 +3894,7 @@ fn check_is_droppable_column(
         }
         return Err(DdlPlanError::CantDropFieldOrKey(column.to_owned()));
     };
-    is_droppable_column(info, column)?;
+    is_droppable_column(info, column, info.columns.len())?;
     check_drop_column_with_partition_constraint(info, &col_name)?;
     crate::foreign_key_build::check_drop_column_with_foreign_key_constraint(
         catalog, schema, info, &col_name,
@@ -3187,6 +3926,7 @@ fn check_drop_column(
     schema: &str,
     info: &TableInfo,
     column: &str,
+    column_count: usize,
 ) -> Result<(), DdlPlanError> {
     let col_name = column.go_to_lower();
     if !info.columns.iter_deref().any(|candidate| {
@@ -3198,7 +3938,7 @@ fn check_drop_column(
             format!("column {column} doesn't exist"),
         ));
     }
-    is_droppable_column(info, column)?;
+    is_droppable_column(info, column, column_count)?;
     // Go `checkDropColumnWithForeignKeyConstraintInOwner`.
     if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
         crate::foreign_key_build::check_drop_column_with_foreign_key_constraint(
@@ -3210,7 +3950,14 @@ fn check_drop_column(
 }
 
 /// Go `isDroppableColumn` (`pkg/ddl/column.go`).
-fn is_droppable_column(info: &TableInfo, column: &str) -> Result<(), DdlPlanError> {
+///
+/// `column_count` is Go's `len(tblInfo.Columns)` at the check, which inside a
+/// multi-schema change counts columns other sub-jobs are still adding.
+fn is_droppable_column(
+    info: &TableInfo,
+    column: &str,
+    column_count: usize,
+) -> Result<(), DdlPlanError> {
     let col_name = column.go_to_lower();
     // Go `hasDependentByGeneratedColumn`, whose `dep` is `colName.L`.
     if let Some(dependent) = info
@@ -3233,7 +3980,7 @@ fn is_droppable_column(info: &TableInfo, column: &str) -> Result<(), DdlPlanErro
             )
         });
     }
-    if info.columns.len() == 1 {
+    if column_count == 1 {
         return Err(coded_refusal(
             tidb_error::mysql::errcode::ErrCantRemoveAllFields,
             format!(
@@ -5085,7 +5832,7 @@ fn plan_persisted_check_constraint_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: validation,
-            column_reorg: None,
+            column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
             mdl_info_update: None,
@@ -5195,7 +5942,7 @@ fn plan_persisted_create_schema_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
-            column_reorg: None,
+            column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
             mdl_info_update: None,
@@ -5326,7 +6073,7 @@ fn plan_persisted_create_table_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
-            column_reorg: None,
+            column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
             mdl_info_update: None,
@@ -5503,7 +6250,7 @@ fn plan_persisted_create_tables_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
-            column_reorg: None,
+            column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
             mdl_info_update: None,
@@ -5721,7 +6468,7 @@ fn plan_persisted_rename_tables_job_step(
                 backfill: Vec::new(),
                 exchange_partition_validation: None,
                 check_constraint_validation: None,
-                column_reorg: None,
+                column_reorgs: Vec::new(),
                 foreign_key_checks: Vec::new(),
                 cache_table_check: None,
                 mdl_info_update: None,
@@ -5793,7 +6540,7 @@ fn plan_persisted_rename_tables_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
-            column_reorg: None,
+            column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
             mdl_info_update: None,
@@ -5890,7 +6637,7 @@ fn plan_persisted_drop_schema_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
-            column_reorg: None,
+            column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
             mdl_info_update: None,
@@ -5984,7 +6731,7 @@ fn plan_persisted_drop_table_job_step(
             backfill: Vec::new(),
             exchange_partition_validation: None,
             check_constraint_validation: None,
-            column_reorg: None,
+            column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
             mdl_info_update: None,
@@ -6017,7 +6764,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         backfill: Vec::new(),
         exchange_partition_validation: None,
         check_constraint_validation: None,
-        column_reorg: None,
+        column_reorgs: Vec::new(),
         foreign_key_checks: Vec::new(),
         cache_table_check: None,
         mdl_info_update: None,
@@ -6346,8 +7093,9 @@ pub struct DdlWrite {
     pub exchange_partition_validation: Option<ExchangePartitionValidation>,
     /// Existing-row validation owed before an enforced CHECK becomes public.
     pub check_constraint_validation: Option<CheckConstraintValidation>,
-    /// The row check or rewrite a MODIFY / CHANGE COLUMN owes, if any.
-    pub column_reorg: Option<ColumnReorg>,
+    /// The row checks or rewrites MODIFY / CHANGE COLUMN owes, one per
+    /// sub-job whose data changes, in sub-job order.
+    pub column_reorgs: Vec<ColumnReorg>,
     /// The existing-row checks the `ADD FOREIGN KEY`s owe, in job order.
     pub foreign_key_checks: Vec<ForeignKeyCheck>,
     /// The table an `ALTER TABLE ... CACHE` owes Go's `checkCacheTableSize`.
@@ -6564,6 +7312,9 @@ pub struct ColumnReorg {
     pub use_new_collation: bool,
     /// SQL mode and location the rows are checked and converted under.
     pub context: DdlStatementContext,
+    /// The multi-schema sub-job this data step belongs to, `None` for a
+    /// single MODIFY / CHANGE; a failed precheck re-plans that one only.
+    pub action_offset: Option<usize>,
 }
 
 /// Go `checkForeignKeyConstrain`, owed by an `ADD FOREIGN KEY` under
@@ -7084,7 +7835,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     let mut backfill = Vec::new();
     let mut exchange_partition_validation = None;
     let mut check_constraint_validation = None;
-    let mut column_reorg: Option<ColumnReorg> = None;
+    let mut column_reorgs: Vec<ColumnReorg> = Vec::new();
     let mut foreign_key_checks: Vec<ForeignKeyCheck> = Vec::new();
     let mut cache_table_check: Option<Box<TableInfo>> = None;
     let mut exchange_partition_label_swap = None;
@@ -7305,47 +8056,14 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         }
         DdlStatement::DropPrimaryKey { schema, table } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            // Go `CheckIsDropPrimaryKey`. A clustered primary key -- whether
-            // it is the int handle (`PKIsHandle`) or a composite one
-            // (`IsCommonHandle`) -- is what the rows are STORED under, so
-            // dropping it would leave every row unaddressable.
-            if stored.pk_is_handle || stored.is_common_handle {
-                return Err(DdlPlanError::Admission(
-                    crate::table_info_build::DdlAdmissionError::with_code(
-                        8200,
-                        "Unsupported drop primary key when the table is using clustered index"
-                            .to_owned(),
-                    ),
-                ));
-            }
-            // Go's `PRIMARY` lookup is by the reserved name, and a general
-            // index that merely happens to be called `primary` is not one
-            // (the #14243 fix).
-            let primary = stored.indices.iter_deref().find(|index| {
-                let index = index.read();
-                index.name.lowercase() == "primary" && index.primary
-            });
-            let Some(primary) = primary else {
-                // Go `ErrCantDropFieldOrKey` (1091), the same code DROP INDEX
-                // uses for a name that is not there.
-                return Err(DdlPlanError::UnknownIndex("PRIMARY".to_owned()));
-            };
-            let dropped = primary.read().clone_like_go();
-            crate::foreign_key_build::check_index_needed_in_foreign_key(
-                &catalog, schema, stored, &dropped,
-            )
-            .map_err(DdlPlanError::Admission)?;
             let mut info = stored.clone_like_go();
-            if let Some(offset) = info.indices.iter_handles().position(|candidate| {
-                candidate
-                    .as_ref()
-                    .expect("nil *IndexInfo in TableInfo.Indices")
-                    .read()
-                    .id
-                    == dropped.id
-            }) {
-                info.indices.delete_go(offset, offset + 1);
-            }
+            apply_drop_primary_key(
+                &catalog,
+                schema,
+                &mut info,
+                use_new_collation,
+                &mut backfill,
+            )?;
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -7355,16 +8073,6 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
-            // The entries have to go with the definition, exactly as
-            // `DROP INDEX` does: an index whose rows survive its `TableInfo`
-            // is invisible garbage that a later index of the same id would
-            // read as its own.
-            backfill.push(IndexBackfill {
-                table: Box::new(stored.clone_like_go()),
-                index: GoShared::new(dropped),
-                use_new_collation,
-                operation: IndexBackfillOperation::Drop,
-            });
             diff.action_type = ActionType::ACTION_DROP_PRIMARY_KEY;
             diff.schema_id = db_id;
             diff.table_id = table_id;
@@ -8918,52 +9626,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let old_id = prepared.id;
             let mut info = stored.clone_like_go();
             apply_prepared_column(&mut info, prepared, requested_position, false)?;
-            // Go's final state after a changing column / changing indexes
-            // replace the old ones: every index on the column under a new id
-            // (`initializeChangingIndexes`, `AllocateIndexID`), and under
-            // `ModifyTypeReorg` the column under a new id too
-            // (`AllocateColumnID`).
-            let mut renumbered_indexes = Vec::new();
-            if matches!(kind, ModifyColumnType::IndexReorg | ModifyColumnType::Reorg) {
-                let changed_name = column.name.go_to_lower();
-                let related = info
-                    .indices
-                    .iter_deref()
-                    .filter(|index| {
-                        index
-                            .read()
-                            .columns
-                            .iter_deref()
-                            .any(|part| part.read().name.lowercase() == changed_name)
-                    })
-                    .collect::<Vec<_>>();
-                for index in related {
-                    info.max_index_id += 1;
-                    let mut index = index.write();
-                    renumbered_indexes.push((index.id, info.max_index_id));
-                    index.id = info.max_index_id;
-                }
-            }
-            let offset = info
-                .columns
-                .iter_deref()
-                .position(|candidate| candidate.read().id == old_id)
-                .expect("the modified column keeps its place in the table");
-            if kind == ModifyColumnType::Reorg {
-                info.max_column_id += 1;
-                let new_id = info.max_column_id;
-                info.columns
-                    .get(offset)
-                    .expect("the modified column is present")
-                    .write()
-                    .id = new_id;
-            }
-            let new_column_id = info
-                .columns
-                .get(offset)
-                .expect("the modified column is present")
-                .read()
-                .id;
+            let (new_column_id, renumbered_indexes) =
+                renumber_changed_column(&mut info, old_id, &column.name, kind);
             admit_modified_column_bdr(
                 &bdr_role,
                 schema,
@@ -8976,7 +9640,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             if kind != ModifyColumnType::NoReorg {
-                column_reorg = Some(ColumnReorg {
+                column_reorgs.push(ColumnReorg {
                     table: Box::new(stored.clone_like_go()),
                     column_id: old_id,
                     after: Box::new(info.clone_like_go()),
@@ -8987,6 +9651,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     check_value_range,
                     use_new_collation,
                     context: context.clone(),
+                    action_offset: None,
                 });
             }
             let table_id = info.id;
@@ -9048,6 +9713,18 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 });
             }
             let active_action_count = action_order.len();
+            // Go's multi-schema worker steps every sub-job through its
+            // revertible states before any finishes: each ADD COLUMN's column
+            // is in `Columns` by then, while a DROP COLUMN only marks itself
+            // non-revertible. A drop's `len(Columns)` check therefore sees the
+            // columns added before it (that first step) and every added
+            // column less the drops finished before it (its later steps).
+            let mut pending_added_columns = action_order
+                .iter()
+                .filter(|offset| matches!(actions[**offset], AlterColumnAction::Add { .. }))
+                .count();
+            let mut applied_added_columns = 0usize;
+            let mut rebased = None;
             satisfied.extend(prepared.skipped.values().cloned());
             let mut merged_added_indexes = Vec::new();
             for (sequence, action_offset) in action_order.into_iter().enumerate() {
@@ -9057,7 +9734,42 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         let (column, position, add) = prepared.columns.remove(&action_offset)
                             .expect("every active column job was prepared");
                         let name = column.name.clone();
+                        let old_id = column.id;
+                        // A MODIFY / CHANGE sub-job whose data changes reads
+                        // the rows as the sub-jobs before it left them.
+                        let reorg = prepared
+                            .modify_kinds
+                            .get(&action_offset)
+                            .copied()
+                            .filter(|(kind, ..)| {
+                                *kind != tidb_executor::ddl::modify_column_type::ModifyColumnType::NoReorg
+                            })
+                            .map(|step| (step, info.clone_like_go()));
                         apply_prepared_column(&mut info, column, &position, add)?;
+                        if let Some(((kind, precheck, check_value_range), before)) = reorg {
+                            let AlterColumnAction::Modify { context, .. } = action else {
+                                unreachable!("only a MODIFY / CHANGE sub-job changes data");
+                            };
+                            let (new_column_id, renumbered_indexes) =
+                                renumber_changed_column(&mut info, old_id, name.original(), kind);
+                            column_reorgs.push(ColumnReorg {
+                                table: Box::new(before),
+                                column_id: old_id,
+                                after: Box::new(info.clone_like_go()),
+                                new_column_id,
+                                renumbered_indexes,
+                                kind,
+                                precheck,
+                                check_value_range,
+                                use_new_collation,
+                                context: context.clone(),
+                                action_offset: Some(action_offset),
+                            });
+                        }
+                        if add {
+                            pending_added_columns -= 1;
+                            applied_added_columns += 1;
+                        }
                         match action {
                             AlterColumnAction::Add {
                                 column: definition, ..
@@ -9097,7 +9809,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         AlterColumnOutcome::Applied
                     }
                     AlterColumnAction::Drop { column, .. } => {
-                        check_drop_column(&catalog, schema, &info, column)?;
+                        let column_count = usize::min(
+                            stored.columns.len() + applied_added_columns,
+                            info.columns.len() + pending_added_columns,
+                        );
+                        check_drop_column(&catalog, schema, &info, column, column_count)?;
                         let before = info.clone_like_go();
                         apply_drop_column(&mut info, column);
                         plan_removed_column_indexes(
@@ -9133,9 +9849,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         // origin default, an expression part its hidden
                         // column) but must not walk the new index.
                         let backfill_table = Box::new(info.clone_like_go());
-                        info.max_index_id += 1;
-                        added.id = info.max_index_id;
-                        added.table = info.name.clone();
+                        allocate_added_index(&mut info, &mut added);
                         let added = GoShared::new(added);
                         info.indices.push_handle_go(Some(added.clone()));
                         backfill.push(IndexBackfill {
@@ -9272,6 +9986,71 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         }
                         applied += 1;
                         continue;
+                    }
+                    AlterColumnAction::DropPrimaryKey => {
+                        apply_drop_primary_key(
+                            &catalog,
+                            schema,
+                            &mut info,
+                            use_new_collation,
+                            &mut backfill,
+                        )?;
+                        AlterColumnOutcome::Applied
+                    }
+                    AlterColumnAction::RenameIndex { from, to } => {
+                        apply_rename_index(&mut info, schema, table, from, to)?
+                    }
+                    AlterColumnAction::IndexVisibility { name, invisible } => {
+                        apply_index_visibility(&mut info, schema, table, name, *invisible)?
+                    }
+                    AlterColumnAction::SetDefault {
+                        column,
+                        default_value,
+                        context,
+                    } => {
+                        apply_set_column_default(
+                            &mut info,
+                            table,
+                            column,
+                            default_value.as_deref(),
+                            &context.0,
+                        )?;
+                        AlterColumnOutcome::Applied
+                    }
+                    AlterColumnAction::RebaseAutoId { new_base, force } => {
+                        rebase_auto_increment_id(
+                            snapshot,
+                            auto_ids,
+                            db_id,
+                            &mut info,
+                            *new_base,
+                            *force,
+                            &mut rebased,
+                            &mut writes,
+                            &mut warnings,
+                        )?;
+                        AlterColumnOutcome::Applied
+                    }
+                    // Go `onModifyTableComment`.
+                    AlterColumnAction::TableComment { comment } => {
+                        info.comment = comment.clone();
+                        AlterColumnOutcome::Applied
+                    }
+                    AlterColumnAction::TableCharset {
+                        charset,
+                        collate,
+                        overwrite_columns,
+                    } => {
+                        check_table_charset_named(charset, collate)?;
+                        apply_table_charset_and_collate(
+                            &catalog,
+                            schema,
+                            table,
+                            &mut info,
+                            charset,
+                            collate,
+                            *overwrite_columns,
+                        )?
                     }
                 };
                 match outcome {
@@ -9598,35 +10377,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // The backfill decodes the EXISTING rows: the table with any hidden
             // column the index adds, without the index itself.
             let backfill_table = Box::new(info.clone_like_go());
-            // go's `ADD PRIMARY KEY` stamps every key column NOT NULL+PRI
-            // (oracle: after `ALTER TABLE pf ADD PRIMARY KEY(b(2))`, SHOW
-            // CREATE prints `b` varchar(8) NOT NULL and SHOW INDEX adds the
-            // `PRIMARY` row with Sub_part=2).
-            let pk_columns: Vec<String> = if index.primary {
-                added
-                    .columns
-                    .iter_deref()
-                    .map(|column| column.read().name.original().to_owned())
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            info.max_index_id += 1;
-            added.id = info.max_index_id;
-            added.table = info.name.clone();
-            set_global_index_version(&info, &mut added);
-            for stored_column in info.columns.iter_deref() {
-                let name = stored_column.read().name.lowercase().to_owned();
-                if pk_columns.iter().any(|pk| pk.go_to_lower() == name) {
-                    let mut column = stored_column.write();
-                    let mut field_type = column.field_type.clone();
-                    field_type.add_flags(
-                        tidb_datatype::FieldTypeFlags::PRI_KEY
-                            | tidb_datatype::FieldTypeFlags::NOT_NULL,
-                    );
-                    column.field_type = field_type;
-                }
-            }
+            allocate_added_index(&mut info, &mut added);
             let added = GoShared::new(added);
             info.indices.push_handle_go(Some(added.clone()));
             check_table_info_valid(&info)?;
@@ -9961,43 +10712,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             invisible,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            // Go `validateAlterIndexVisibility`: the index must exist AND be
-            // public, else `ErrKeyNotExists`.
-            let found = find_index(stored, index)
-                .filter(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);
-            let Some(found) = found else {
-                return Err(DdlPlanError::KeyNotExists {
-                    index: index.clone(),
-                    table: table.clone(),
-                });
-            };
-            // Go's early return: a visibility that already matches finishes
-            // the job without touching the table, so no schema version is
-            // spent on a no-op.
-            if found.read().invisible == *invisible {
-                return Ok(already(format!(
-                    "index `{index}` on `{schema}`.`{table}` is already {}",
-                    if *invisible { "invisible" } else { "visible" }
-                )));
-            }
-            if *invisible && found.read().is_columnar_index() {
-                return Err(coded_refusal(
-                    8200,
-                    format!(
-                        "INVISIBLE can not be used in {} INDEX",
-                        found.read().tp.sql()
-                    ),
-                ));
-            }
-            let wanted = index.go_to_lower();
             let mut info = stored.clone_like_go();
-            // Go `setIndexVisibility` walks EVERY index and sets each one
-            // whose name matches, rather than stopping at the first.
-            for candidate in info.indices.iter_deref() {
-                let mut candidate = candidate.write();
-                if candidate.name.lowercase() == wanted {
-                    candidate.invisible = *invisible;
-                }
+            if let AlterColumnOutcome::AlreadySatisfied(detail) =
+                apply_index_visibility(&mut info, schema, table, index, *invisible)?
+            {
+                return Ok(already(detail));
             }
             // Go `updateVersionAndTableInfoWithCheck`.
             check_table_info_valid(&info)?;
@@ -10081,129 +10800,19 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             collate,
             overwrite_columns,
         } => {
-            // Go refuses the form that names neither before it resolves
-            // anything.
-            if charset.is_empty() && collate.is_empty() {
-                return Err(DdlPlanError::Admission(
-                    crate::table_info_build::DdlAdmissionError::with_code(
-                        1115,
-                        "Unknown character set: ''".to_owned(),
-                    ),
-                ));
-            }
+            check_table_charset_named(charset, collate)?;
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let database = find_database(&catalog, schema)
-                .expect("locate_table resolved the database")
-                .info
-                .clone();
-            // Go: an omitted charset keeps the table's own, and an omitted
-            // collation becomes that charset's default.
-            let to_charset = if charset.is_empty() {
-                stored.charset.clone()
-            } else {
-                charset.clone()
-            };
-            let (to_charset, to_collate) = crate::table_info_build::resolve_charset_collation(
-                Some(to_charset.as_str()),
-                if collate.is_empty() {
-                    None
-                } else {
-                    Some(collate.as_str())
-                },
-                CATALOG_CHARSET,
-                CATALOG_COLLATION,
-            )
-            .map_err(DdlPlanError::Admission)?;
-
-            // Go `checkAlterTableCharset`'s early return: the table already
-            // matches AND, when the columns are in scope, every non-binary
-            // column matches too.
-            if stored.charset == to_charset && stored.collate == to_collate {
-                let columns_settled = !*overwrite_columns
-                    || stored.columns.iter_deref().all(|column| {
-                        let column = column.read();
-                        let column_charset = column.field_type.charset_name();
-                        column_charset == "binary"
-                            || (column_charset == to_charset
-                                && column.field_type.collation().name() == to_collate)
-                    });
-                if columns_settled {
-                    return Ok(already(format!(
-                        "`{schema}`.`{table}` is already {to_charset}/{to_collate}"
-                    )));
-                }
-            }
-
-            // Go resolves the table's ORIGINAL pair against its database
-            // before comparing, so a table that never named one is judged by
-            // what it actually inherited.
-            let (from_charset, from_collate) = crate::table_info_build::resolve_charset_collation(
-                if stored.charset.is_empty() {
-                    Some(database.charset.as_str())
-                } else {
-                    Some(stored.charset.as_str())
-                },
-                if stored.collate.is_empty() {
-                    Some(database.collate.as_str())
-                } else {
-                    Some(stored.collate.as_str())
-                },
-                CATALOG_CHARSET,
-                CATALOG_COLLATION,
-            )
-            .map_err(DdlPlanError::Admission)?;
-            check_modify_charset_and_collation(
-                &to_charset,
-                &to_collate,
-                &from_charset,
-                &from_collate,
-                false,
-                "",
-            )?;
-
             let mut info = stored.clone_like_go();
-            if *overwrite_columns {
-                // Go checks every column BEFORE it rewrites any of them, so a
-                // refusal leaves the table exactly as it was.
-                for column in info.columns.iter_deref() {
-                    let column = column.read();
-                    let name = column.name.original().to_owned();
-                    if column.field_type.code() == tidb_datatype::FieldTypeCode::Varchar {
-                        check_varchar_field_length(column.field_type.flen(), &name, &to_charset)?;
-                    }
-                    let column_charset = column.field_type.charset_name().to_owned();
-                    if column_charset == "binary" || column_charset.is_empty() {
-                        continue;
-                    }
-                    check_modify_charset_and_collation(
-                        &to_charset,
-                        &to_collate,
-                        &column_charset,
-                        column.field_type.collation().name(),
-                        is_column_with_index(&name, stored),
-                        &name,
-                    )?;
-                }
-            }
-            info.charset = to_charset.clone();
-            info.collate = to_collate.clone();
-            if *overwrite_columns {
-                let collation = tidb_datatype::Collation::from_name(&to_collate)
-                    .unwrap_or(tidb_datatype::Collation::Binary);
-                for column in info.columns.iter_deref() {
-                    let mut column = column.write();
-                    // Go `field_types.HasCharset`: a type that holds text
-                    // takes the new pair, everything else is marked binary.
-                    if column.field_type.has_charset() {
-                        column.field_type.set_charset_name(to_charset.clone());
-                        column.field_type.set_collation(collation);
-                    } else {
-                        column.field_type.set_charset_name("binary");
-                        column
-                            .field_type
-                            .set_collation(tidb_datatype::Collation::Binary);
-                    }
-                }
+            if let AlterColumnOutcome::AlreadySatisfied(detail) = apply_table_charset_and_collate(
+                &catalog,
+                schema,
+                table,
+                &mut info,
+                charset,
+                collate,
+                *overwrite_columns,
+            )? {
+                return Ok(already(detail));
             }
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -10279,42 +10888,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             to,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            // Go `ValidateRenameIndex`, in its order.
-            if find_index(stored, from).is_none() {
-                return Err(DdlPlanError::KeyNotExists {
-                    index: from.clone(),
-                    table: table.clone(),
-                });
-            }
-            // Case-SENSITIVE equality is the no-op test: `inDex` -> `IndEX`
-            // is a real rename that only changes the stored spelling.
-            if from == to {
-                return Ok(already(format!(
-                    "index `{from}` on `{schema}`.`{table}` already has that name"
-                )));
-            }
-            let from_lower = from.go_to_lower();
-            let to_lower = to.go_to_lower();
-            if from_lower != to_lower {
-                if let Some(existing) = find_index(stored, to) {
-                    return Err(DdlPlanError::DuplicateKeyName(
-                        existing.read().name.original().to_owned(),
-                    ));
-                }
-            }
             let mut info = stored.clone_like_go();
-            // Go `renameIndexes` walks every index and renames each one whose
-            // name matches, rather than stopping at the first.
-            //
-            // Its two other passes have nothing to rename here: temp indexes
-            // exist only during a reorg this node does not run, and the
-            // hidden columns of an expression index cannot occur because this
-            // node refuses to create or load one.
-            for candidate in info.indices.iter_deref() {
-                let mut candidate = candidate.write();
-                if candidate.name.lowercase() == from_lower {
-                    candidate.name = CiString::new(to.clone());
-                }
+            if let AlterColumnOutcome::AlreadySatisfied(detail) =
+                apply_rename_index(&mut info, schema, table, from, to)?
+            {
+                return Ok(already(detail));
             }
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
@@ -10338,39 +10916,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             let mut info = stored.clone_like_go();
-            // Go resolves the target column before it looks at the new
-            // default at all, and a non-public one reads as absent.
-            let wanted = column.go_to_lower();
-            let Some(target) = info.columns.iter_deref().find(|candidate| {
-                let candidate = candidate.read();
-                candidate.name.lowercase() == wanted
-                    && candidate.state == tidb_model::SchemaState::PUBLIC
-            }) else {
-                return Err(DdlPlanError::UnknownColumn {
-                    column: column.clone(),
-                    table: table.clone(),
-                });
-            };
-            // Go `ErrInvalidAutoRandom`: the shard bits own the column's
-            // values, so a default could never be written.
-            if default_value.is_some()
-                && info.auto_random_bits > 0
-                && target.read().field_type.has_flag(FieldTypeFlags::PRI_KEY)
-            {
-                return Err(DdlPlanError::InvalidAutoRandom(
-                    "auto_random is incompatible with default".to_owned(),
-                ));
-            }
-            {
-                let mut target = target.write();
-                crate::table_info_build::set_column_default(
-                    column,
-                    &mut target,
-                    default_value.as_deref(),
-                    &context.0,
-                )
-                .map_err(DdlPlanError::Admission)?;
-            }
+            apply_set_column_default(
+                &mut info,
+                table,
+                column,
+                default_value.as_deref(),
+                &context.0,
+            )?;
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -10426,69 +10978,18 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             force,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            if *force && *new_base == 0 {
-                return Err(DdlPlanError::AutoIdReadFailed);
-            }
-            let counter_key = crate::cluster_auto_id::auto_id_key_for(db_id, stored);
-            let service = auto_ids.filter(|_| stored.sep_auto_inc()).map(|client| {
-                let unsigned = stored.is_auto_inc_col_unsigned();
-                crate::cluster_auto_id::AutoIdServiceAllocator::new(
-                    client.clone(),
-                    if stored.auto_id_schema_id == 0 {
-                        db_id
-                    } else {
-                        stored.auto_id_schema_id
-                    },
-                    stored.id,
-                    unsigned,
-                    u32::MAX,
-                )
-            });
-            let call = if *force {
-                tidb_executor::kv_table::AutoIdCall::with_timeout(std::time::Duration::from_secs(30))
-            } else {
-                tidb_executor::kv_table::AutoIdCall::background()
-            };
-
-            // Go `NextGlobalAutoID`: the stored counter holds the id LAST
-            // handed out, so the next one to allocate is one past it. An
-            // absent key reads as 0, matching Go's `GetInt64`.
-            let stored_counter = if *force && service.is_some() {
-                0
-            } else if let Some(service) = &service {
-                service
-                    .alloc(&call, 0, 1, 1)
-                    .map_err(|e| DdlPlanError::Encode(e.to_string()))?
-                    .1
-            } else {
-                match snapshot.get(&counter_key)? {
-                    Some(value) => value::parse_int_value(&value)
-                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-                    None => 0,
-                }
-            };
-            let next_global = (stored_counter as u64).wrapping_add(1);
-            let mut new_base = *new_base;
-            if !*force {
-                // Go `adjustNewBaseToNextGlobalID` compares as UNSIGNED
-                // whatever the column's signedness, and never lets the base
-                // move backwards: another node's allocator may already have
-                // handed out ids past the requested base.
-                let adjusted = u64::max(new_base as u64, next_global) as i64;
-                if adjusted != new_base {
-                    warnings = vec![(
-                        DdlWarningLevel::Warning,
-                        1105,
-                        format!(
-                            "Can't reset AUTO_INCREMENT to {new_base} without FORCE option, \
-                             using {adjusted} instead"
-                        ),
-                    )];
-                    new_base = adjusted;
-                }
-            }
             let mut info = stored.clone_like_go();
-            info.auto_inc_id = new_base;
+            rebase_auto_increment_id(
+                snapshot,
+                auto_ids,
+                db_id,
+                &mut info,
+                *new_base,
+                *force,
+                &mut None,
+                &mut writes,
+                &mut warnings,
+            )?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -10497,22 +10998,6 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
-            // "The next value to allocate is `newBase`", so the counter --
-            // which holds the last id handed out -- becomes one below it.
-            // `Rebase` only ever grows, `ForceRebase` sets exactly; the
-            // non-force base was already raised to at least the current
-            // counter above, so both reduce to one write here.
-            let new_end = new_base.wrapping_sub(1);
-            if let Some(service) = &service {
-                service
-                    .rebase(&call, new_end, *force)
-                    .map_err(|e| DdlPlanError::Encode(e.to_string()))?;
-            } else if *force || (new_end as u64) > (stored_counter as u64) {
-                writes.push(BufferMutation::set(
-                    counter_key,
-                    value::encode_int_value(new_end),
-                )?);
-            }
             diff.action_type = ActionType::ACTION_REBASE_AUTO_ID;
             diff.schema_id = db_id;
             diff.table_id = table_id;
@@ -10673,7 +11158,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         backfill,
         exchange_partition_validation,
         check_constraint_validation,
-        column_reorg,
+        column_reorgs,
         foreign_key_checks,
         cache_table_check,
         mdl_info_update,
@@ -11610,6 +12095,38 @@ fn plan_added_index(
     crate::table_info_build::build_index_condition(info, &mut added, condition, context)
         .map_err(DdlPlanError::Admission)?;
     Ok(added)
+}
+
+/// Gives a planned index its id and table and finishes the table for it, as
+/// Go's `onCreateIndex` does for a single ADD INDEX and a multi-schema
+/// sub-job alike: `setGlobalIndexVersion`, and for a primary key every key
+/// column stamped NOT NULL+PRI (oracle: after `ALTER TABLE pf ADD PRIMARY
+/// KEY(b(2))`, SHOW CREATE prints `b` varchar(8) NOT NULL and SHOW INDEX
+/// adds the `PRIMARY` row with Sub_part=2).
+fn allocate_added_index(info: &mut TableInfo, added: &mut IndexInfo) {
+    info.max_index_id += 1;
+    added.id = info.max_index_id;
+    added.table = info.name.clone();
+    set_global_index_version(info, added);
+    if !added.primary {
+        return;
+    }
+    let pk_columns: Vec<String> = added
+        .columns
+        .iter_deref()
+        .map(|column| column.read().name.lowercase().to_owned())
+        .collect();
+    for stored_column in info.columns.iter_deref() {
+        let name = stored_column.read().name.lowercase().to_owned();
+        if pk_columns.contains(&name) {
+            let mut column = stored_column.write();
+            let mut field_type = column.field_type.clone();
+            field_type.add_flags(
+                tidb_datatype::FieldTypeFlags::PRI_KEY | tidb_datatype::FieldTypeFlags::NOT_NULL,
+            );
+            column.field_type = field_type;
+        }
+    }
 }
 
 /// The table's index of that name, matched the way MySQL matches one:
