@@ -15,7 +15,6 @@
 package tikvhandler
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -30,7 +29,6 @@ import (
 type regionCacheStore interface {
 	GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStatus
 	StartRefreshStoreCache(storeID uint64) tikv.StoreCacheStatus
-	RefreshStoreCache(ctx context.Context, storeID uint64) tikv.StoreCacheRefreshResult
 	ResetStoreCacheRefresh(storeID uint64) error
 	GetClusterID() uint64
 	GetKeyspace() string
