@@ -13527,3 +13527,57 @@ fn label_rule_ddl_writes_the_nodes_label_manager() {
         0
     );
 }
+
+/// Go `AlterTablePartitionPlacement` / `onAlterTablePartitionPlacement` and
+/// the `AlterTableOption` loop's one charset job: on the production node a
+/// partition takes (and clears) a placement policy, and several CHARSET /
+/// COLLATE options settle through `GetCharsetAndCollateInTableOption`.
+#[test]
+fn partition_placement_and_multi_option_charset_on_the_production_node() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1019)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE PLACEMENT POLICY pp1 FOLLOWERS=1")
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE tp (a INT) PARTITION BY RANGE (a) \
+             (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    let show_create = |session: &mut ClusterServerSession, table: &str| {
+        displayed(rows(session, &format!("SHOW CREATE TABLE {table}")))[0][1].clone()
+    };
+    session
+        .execute_write("ALTER TABLE tp PARTITION p0 PLACEMENT POLICY=pp1")
+        .unwrap();
+    assert!(show_create(&mut session, "tp").contains(
+        "PARTITION `p0` VALUES LESS THAN (10) /*T![placement] PLACEMENT POLICY=`pp1` */"
+    ));
+    session
+        .execute_write("ALTER TABLE tp PARTITION p0 PLACEMENT POLICY=DEFAULT")
+        .unwrap();
+    assert!(!show_create(&mut session, "tp").contains("PLACEMENT POLICY"));
+    session
+        .execute_write("CREATE TABLE c (a VARCHAR(10))")
+        .unwrap();
+    let error = session
+        .execute_write("ALTER TABLE c PARTITION p0 PLACEMENT POLICY=pp1")
+        .unwrap_err();
+    assert_eq!(error.code, 1505);
+    let error = session
+        .execute_write("ALTER TABLE tp PARTITION nope PLACEMENT POLICY=pp1")
+        .unwrap_err();
+    assert_eq!(error.code, 1735);
+
+    session
+        .execute_write("ALTER TABLE c CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci")
+        .unwrap();
+    assert!(show_create(&mut session, "c")
+        .contains("DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"));
+    let error = session
+        .execute_write("ALTER TABLE c CHARSET latin1 CHARSET utf8mb4")
+        .unwrap_err();
+    assert_eq!(error.code, 1302);
+}

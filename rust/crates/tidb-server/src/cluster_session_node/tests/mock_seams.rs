@@ -522,6 +522,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::AlterTableAffinity { .. }
             | DdlStatement::AlterTableAttributes { .. }
             | DdlStatement::AlterTablePartitionAttributes { .. }
+            | DdlStatement::AlterTablePartitionPlacement { .. }
             | DdlStatement::CreateResourceGroup { .. }
             | DdlStatement::AlterResourceGroup { .. }
             | DdlStatement::DropResourceGroup { .. }

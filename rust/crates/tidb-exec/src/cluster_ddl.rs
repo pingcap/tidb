@@ -1017,6 +1017,18 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// The policy as written; `DEFAULT` clears the table's.
         policy: String,
     },
+    /// `ALTER TABLE ... PARTITION p PLACEMENT POLICY [=] name`, Go's
+    /// `AlterTablePartitionPlacement` -> `ActionAlterTablePartitionPlacement`.
+    AlterTablePartitionPlacement {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The partition name as written.
+        partition: String,
+        /// The policy as written; `DEFAULT` clears the partition's.
+        policy: String,
+    },
     /// `ALTER TABLE ... SHARD_ROW_ID_BITS = n`, Go's `ActionShardRowID`.
     /// Metadata only.
     ShardRowId {
@@ -2123,6 +2135,38 @@ fn lower_alter_table_catalog(
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::RemoveTtl { schema, table }))
         }
+        tidb_ast::AlterTableAction::SetTableOptions { options }
+            if !options.is_empty()
+                && options.iter().all(|option| {
+                    matches!(
+                        option,
+                        tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_)
+                    )
+                }) =>
+        {
+            // Go's `AlterTableOption` loop handles every charset/collate
+            // option at once: `GetCharsetAndCollateInTableOption` from the
+            // first, then one `AlterTableCharsetAndCollate` job.
+            let (charset, collate) = tidb_executor::ddl::get_charset_and_collate_in_table_option(
+                0,
+                options,
+                context.default_collation_for_utf8mb4(),
+            )
+            .map_err(|error| {
+                let error = error.to_mysql_error();
+                DdlAdmissionError::with_code(error.code, error.message)
+            })?;
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::ModifyTableCharsetAndCollate {
+                schema,
+                table,
+                charset,
+                collate,
+                // Go `NeedToOverwriteColCharset`: only CONVERT TO overwrites
+                // the columns, and that is its own action here.
+                overwrite_columns: false,
+            }))
+        }
         tidb_ast::AlterTableAction::SetTableOptions { options } => {
             let [option] = options.as_slice() else {
                 return Ok(None);
@@ -2145,24 +2189,6 @@ fn lower_alter_table_catalog(
                     schema,
                     table,
                     new_cache: new_cache as i64,
-                }));
-            }
-            if let tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) =
-                option
-            {
-                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-                let (charset, collate) = match option {
-                    tidb_ast::TableOption::CharacterSet(value) => (value.clone(), String::new()),
-                    tidb_ast::TableOption::Collate(value) => (String::new(), value.clone()),
-                    _ => unreachable!("the arm matched one of the two"),
-                };
-                return Ok(Some(DdlStatement::ModifyTableCharsetAndCollate {
-                    schema,
-                    table,
-                    charset,
-                    collate,
-                    // Without CONVERT TO, Go moves the table default only.
-                    overwrite_columns: false,
                 }));
             }
             if let tidb_ast::TableOption::EngineAttribute(_)
@@ -2652,6 +2678,39 @@ fn lower_alter_table_catalog(
                 with_validation: *with_validation,
                 check_constraints: context.enable_check_constraint(),
             }))
+        }
+        // Go `AlterTablePartitionOptions`: PLACEMENT POLICY is the one
+        // partition option; the last one written wins.
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::SetOptions {
+            partition,
+            options,
+        }) => {
+            let mut policy = None;
+            for option in options {
+                match option {
+                    tidb_ast::TableOption::PlacementPolicy(name) => policy = Some(name.clone()),
+                    _ => {
+                        return Err(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
+                            "unknown partition option".to_owned(),
+                        ))
+                    }
+                }
+            }
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            match policy {
+                Some(policy) => Ok(Some(DdlStatement::AlterTablePartitionPlacement {
+                    schema,
+                    table,
+                    partition: partition.clone(),
+                    policy,
+                })),
+                None => Ok(Some(DdlStatement::AcceptedNoOp {
+                    schema,
+                    table,
+                    warning: None,
+                })),
+            }
         }
         tidb_ast::AlterTableAction::SetAttributes(attributes) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -9620,6 +9679,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // level -- and so every group id -- is unchanged.
             let mut info = stored.clone_like_go();
             info.affinity = affinity.map(GoShared::new);
+            // Go `updateVersionAndTableInfo(..., true)` stamps `UpdateTS`.
+            info.update_ts = start_ts;
             if info.affinity.is_some() {
                 affinity_groups
                     .create_for(&info)
@@ -9677,10 +9738,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 label_rules::attributes_rule_write(rule),
                 Some(LABEL_RULES_NOTIFY_ERROR),
             )?;
+            // Go `updateVersionAndTableInfo(..., true)` stamps `UpdateTS`.
+            let mut info = stored.clone_like_go();
+            info.update_ts = start_ts;
             let db_id = database.info.id;
             writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, stored.id),
-                value::serialize_table_info(stored)
+                value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
             diff.action_type = ActionType::ACTION_ALTER_TABLE_ATTRIBUTES;
@@ -9744,10 +9808,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 label_rules::attributes_rule_write(rule),
                 Some(LABEL_RULES_NOTIFY_ERROR),
             )?;
+            // Go `updateVersionAndTableInfo(..., true)` stamps `UpdateTS`.
+            let mut info = stored.clone_like_go();
+            info.update_ts = start_ts;
             let db_id = database.info.id;
             writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, stored.id),
-                value::serialize_table_info(stored)
+                value::serialize_table_info(&info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
             diff.action_type = ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES;
@@ -9788,6 +9855,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             })?;
             let mut info = stored.clone_like_go();
             crate::table_info_build::set_region_split_policy(&mut info, &index_name, policy);
+            // Go `updateVersionAndTableInfo(..., true)` stamps `UpdateTS`.
+            info.update_ts = start_ts;
             let db_id = database.info.id;
             writes.push(BufferMutation::set(
                 key::table_kv_key(db_id, stored.id),
@@ -12600,6 +12669,82 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 None => {}
             }
             diff.action_type = ActionType::ACTION_ALTER_TABLE_PLACEMENT;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AlterTablePartitionPlacement {
+            schema,
+            table,
+            partition,
+            policy,
+        } => {
+            // Go `AlterTablePartitionPlacement`, then
+            // `onAlterTablePartitionPlacement`.
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let admission = |error: tidb_executor::DriverError| {
+                let error = error.to_mysql_error();
+                DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            };
+            let Some(partitioning) = stored.get_partition_info() else {
+                return Err(admission(
+                    tidb_executor::DriverError::PartitionManagementOnNonpartitioned,
+                ));
+            };
+            // Go `tables.FindPartitionByName(tblInfo, spec.PartitionNames[0].L)`.
+            let partition_name = partition.go_to_lower();
+            let Some(ordinal) = partitioning
+                .read()
+                .definitions
+                .snapshot()
+                .iter()
+                .position(|definition| definition.name.lowercase() == partition_name)
+            else {
+                return Err(admission(tidb_executor::DriverError::UnknownPartition {
+                    partition: partition_name,
+                    table: stored.name.original().to_owned(),
+                }));
+            };
+            let reference = check_and_normalize_placement_policy(snapshot, policy)?;
+            let mut info = stored.clone_like_go();
+            let mut old_enables_placement = false;
+            let mut definition = None;
+            info.partition
+                .as_ref()
+                .expect("checked partitioned above")
+                .read()
+                .definitions
+                .update(ordinal, |def| {
+                    old_enables_placement = def.placement_policy_ref.is_some();
+                    def.placement_policy_ref = reference.clone();
+                    definition = Some(def.clone());
+                });
+            let definition = definition.expect("the partition was found above");
+            // Go `updateVersionAndTableInfo(..., true)` stamps `UpdateTS`.
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            // `placement.NewPartitionBundle`, or an empty bundle when the
+            // partition had placement before and has none now.
+            let policies = load_policies(snapshot)?;
+            let bundle =
+                tidb_placement::new_partition_bundle(&policies, &definition).map_err(|error| {
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!("building placement rules: {error}"),
+                    ))
+                })?;
+            match bundle {
+                Some(bundle) => placement_bundles.push(bundle),
+                None if old_enables_placement => {
+                    placement_bundles.push(tidb_placement::new_bundle(definition.id))
+                }
+                None => {}
+            }
+            diff.action_type = ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

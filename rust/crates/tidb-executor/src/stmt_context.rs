@@ -3247,6 +3247,12 @@ impl StmtContext {
         (&self.connection_charset, &self.connection_collation)
     }
 
+    /// Go `SessionVars.DefaultCollationForUTF8MB4`.
+    #[must_use]
+    pub fn default_collation_for_utf8mb4(&self) -> &str {
+        &self.default_collation_for_utf8mb4
+    }
+
     /// The authenticated account used for `CURRENT_USER()`.
     #[must_use]
     pub fn authenticated_identity(&self) -> Option<(&str, &str)> {

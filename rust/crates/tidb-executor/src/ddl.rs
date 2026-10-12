@@ -315,7 +315,9 @@ pub fn is_retryable_ddl_cancel_err(error: &(dyn std::error::Error + 'static)) ->
 
 mod alter_metadata;
 mod alter_table;
-pub use alter_table::{check_modifiable_column, check_modify_types};
+pub use alter_table::{
+    check_modifiable_column, check_modify_types, get_charset_and_collate_in_table_option,
+};
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub mod auto_random;
 pub(crate) mod bdr;

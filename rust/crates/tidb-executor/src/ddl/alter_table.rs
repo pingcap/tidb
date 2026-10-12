@@ -2644,6 +2644,82 @@ fn prepare_partition_options(
     }])
 }
 
+/// Go `getDefaultCollationForUTF8MB4`.
+fn get_default_collation_for_utf8mb4<'a>(cs: &str, default_utf8mb4_coll: &'a str) -> &'a str {
+    if cs == "utf8mb4" {
+        default_utf8mb4_coll
+    } else {
+        ""
+    }
+}
+
+/// Go `GetCharsetAndCollateInTableOption`: the charset and collation an
+/// ALTER TABLE's options from `start_idx` on settle to. The last charset
+/// wins (a different one is `ErrConflictingDeclarations`), a charset alone
+/// takes its default collation (`@@default_collation_for_utf8mb4` for
+/// utf8mb4), and a collation must belong to the charset named.
+pub fn get_charset_and_collate_in_table_option(
+    start_idx: usize,
+    options: &[tidb_ast::TableOption],
+    default_utf8mb4_coll: &str,
+) -> Result<(String, String), DriverError> {
+    let mut chs = String::new();
+    let mut coll = String::new();
+    for option in options.iter().skip(start_idx) {
+        match option {
+            tidb_ast::TableOption::CharacterSet(name) => {
+                let info =
+                    tidb_datatype::get_charset_info(name).map_err(|_| DriverError::DdlCoded {
+                        errno: tidb_error::tidb::errcode::ErrUnknownCharacterSet,
+                        message: format!("Unknown character set: '{name}'"),
+                    })?;
+                if chs.is_empty() {
+                    chs = info.name.clone();
+                } else if chs != info.name {
+                    return Err(DriverError::DdlCoded {
+                        errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                        message: format!(
+                            "Conflicting declarations: 'CHARACTER SET {chs}' and 'CHARACTER SET {}'",
+                            info.name
+                        ),
+                    });
+                }
+                if coll.is_empty() {
+                    let default_coll =
+                        get_default_collation_for_utf8mb4(&chs, default_utf8mb4_coll);
+                    coll = if default_coll.is_empty() {
+                        info.default_collation.clone()
+                    } else {
+                        default_coll.to_owned()
+                    };
+                }
+            }
+            tidb_ast::TableOption::Collate(name) => {
+                let info = tidb_datatype::get_collation_by_name(name).map_err(|_| {
+                    DriverError::DdlCoded {
+                        errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+                        message: format!("Unknown collation: '{name}'"),
+                    }
+                })?;
+                if chs.is_empty() {
+                    chs = info.charset_name.clone();
+                } else if chs != info.charset_name {
+                    return Err(DriverError::DdlCoded {
+                        errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
+                        message: format!(
+                            "Collation '{}' is not valid for CHARACTER SET '{chs}'",
+                            info.name
+                        ),
+                    });
+                }
+                coll = info.name.clone();
+            }
+            _ => {}
+        }
+    }
+    Ok((chs, coll))
+}
+
 fn alter_table_charset_pair(
     options: &[tidb_ast::TableOption],
     fallback: TableCharset,
