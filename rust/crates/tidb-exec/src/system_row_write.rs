@@ -908,7 +908,7 @@ pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnco
     // region fills a DATE column with a date, a JSON column with a binary
     // document and an ENUM column with a member -- never with the bytes of
     // their printed form, which no reader of that column can hold.
-    let Datum::Bytes(_) = &datum else {
+    let (Datum::Bytes(_) | Datum::String(_)) = &datum else {
         return Ok(datum);
     };
     let flags = tidb_datatype::ConversionFlags::from_bits(
@@ -960,7 +960,13 @@ fn materialise(
         GoAnyView::Bool(value) => Datum::Int(i64::from(value)),
         GoAnyView::Float(value) => Datum::Real(value),
         GoAnyView::String(bytes) => {
-            let text = Datum::Bytes(bytes.as_bytes().to_vec());
+            // Go `types.NewDatum` sets a dynamic string with
+            // `mysql.DefaultCollationName`: it is UTF-8 text, so a later cast
+            // into a GBK column validates it rather than decoding it as GBK.
+            let text = Datum::new_collation_string(
+                bytes.as_bytes().to_vec(),
+                tidb_datatype::Collation::Utf8Mb4Bin,
+            );
             // A numeric column's default is stored as its printed form, so it
             // has to be read back as a number before it is encoded as one.
             match column.get_type() {
@@ -1011,14 +1017,16 @@ fn materialise(
 /// naming an element the column does not declare is refused rather than
 /// written with an invented position.
 pub fn typed_value(value: &Datum, field_type: &FieldType) -> Result<Datum, RowEncodeError> {
-    let Datum::Bytes(bytes) = value else {
-        return Ok(value.clone());
+    let bytes = match value {
+        Datum::Bytes(bytes) => bytes.as_slice(),
+        Datum::String(_) => value.as_raw_bytes().expect("a string datum carries bytes"),
+        _ => return Ok(value.clone()),
     };
     let code = field_type.code();
     if !matches!(code, FieldTypeCode::Enum | FieldTypeCode::Set) {
         return Ok(value.clone());
     }
-    let diagnostic_name = GoString::from(bytes.as_slice()).to_utf8_lossy_go();
+    let diagnostic_name = GoString::from(bytes).to_utf8_lossy_go();
     if field_type.elems().is_empty() {
         return Err(RowEncodeError(format!(
             "a {code:?} column that declares no elements cannot store `{diagnostic_name}`"
@@ -1030,7 +1038,7 @@ pub fn typed_value(value: &Datum, field_type: &FieldType) -> Result<Datum, RowEn
     let datum_collation = field_type.collation();
     if code == FieldTypeCode::Enum {
         let member = field_type
-            .with_elems_visible(|elements| parse_enum(elements, bytes.as_slice(), collator))
+            .with_elems_visible(|elements| parse_enum(elements, bytes, collator))
             .map_err(|error| RowEncodeError(error.to_string()))?;
         Ok(Datum::new_enum(member, datum_collation))
     } else {
@@ -1038,7 +1046,7 @@ pub fn typed_value(value: &Datum, field_type: &FieldType) -> Result<Datum, RowEn
         // names; `parse_set_name` computes both, and answers the empty set for
         // the empty string rather than treating it as an unknown element.
         let members = field_type
-            .with_elems_visible(|elements| parse_set_name(elements, bytes.as_slice(), collator))
+            .with_elems_visible(|elements| parse_set_name(elements, bytes, collator))
             .map_err(|error| RowEncodeError(error.to_string()))?;
         Ok(Datum::new_set(members, datum_collation))
     }
@@ -1429,7 +1437,10 @@ mod tests {
             .expect("a built-in Go string is a valid VARCHAR default");
         assert_eq!(
             literal_default(&column, "t").expect("the raw string default materialises"),
-            Datum::Bytes(vec![0xff, 0x80, b'x'])
+            Datum::new_collation_string(
+                vec![0xff, 0x80, b'x'],
+                tidb_datatype::Collation::Utf8Mb4Bin
+            )
         );
 
         column

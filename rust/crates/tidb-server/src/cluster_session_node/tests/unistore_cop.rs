@@ -13990,3 +13990,36 @@ fn global_index_keys_carry_the_partition_after_exchange() {
         [["6"]]
     );
 }
+
+/// Go `table.GetColDefaultValue` casts `types.NewDatum(defaultVal)` -- a
+/// UTF-8 `utf8mb4_bin` string -- into the column. The production loader built
+/// a binary datum instead, so the cast into a GBK column decoded the stored
+/// UTF-8 as GBK: `DEFAULT 0xC4E3BAC3` read back as mojibake and `DEFAULT '好'`
+/// refused to insert at all.
+#[test]
+fn gbk_column_defaults_insert_as_the_text_they_store() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1029)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t (a CHAR(10) CHARSET gbk DEFAULT 0xC4E3BAC3)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO t VALUES (DEFAULT)")
+        .unwrap();
+    session.execute_write("INSERT INTO t () VALUES ()").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, HEX(a) FROM t")),
+        [["你好", "C4E3BAC3"], ["你好", "C4E3BAC3"]]
+    );
+    session
+        .execute_write("CREATE TABLE t2 (a CHAR(10) CHARSET gbk DEFAULT '好')")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO t2 VALUES (DEFAULT)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, HEX(a) FROM t2")),
+        [["好", "BAC3"]]
+    );
+}
