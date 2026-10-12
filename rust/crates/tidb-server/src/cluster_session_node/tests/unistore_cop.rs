@@ -11968,3 +11968,123 @@ fn cluster_bdr_role_lives_in_meta_and_refuses_denied_ddl() {
     run(&mut session, "truncate table test.bdr_t").unwrap();
     run(&mut session, "drop table test.bdr_t").unwrap();
 }
+
+/// Go `validateCommentLength` and `checkTooBigFieldLengthAndTryAutoConvert`,
+/// from `ddl/db.test`: strict mode refuses an over-long table (1628), field
+/// (1629) or index (1688) comment; otherwise the statement warns and keeps
+/// the first bytes. The warnings a plan-time build raises (ADD COLUMN, ADD
+/// INDEX, MODIFY) reach `SHOW WARNINGS` as Go's do. A GLOBAL temporary
+/// table's allocator starts at its `AUTO_INCREMENT` (Go
+/// `NewAllocatorFromTempTblInfo`). This node accepted every long comment
+/// silently, answered ALTER TABLE COMMENT with 1105, dropped plan-time
+/// warnings and started the temporary table at 1.
+#[test]
+fn comment_lengths_and_plan_time_warnings_follow_the_sql_mode_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(995)).unwrap();
+    let field = "b".repeat(1025);
+    let table = "b".repeat(2049);
+    rows(&mut session, "CREATE TABLE test.t (c INT, d INT, e INT)");
+    for (sql, code, message) in [
+        (
+            format!("CREATE TABLE test.t1 (c INT) COMMENT = '{table}'"),
+            1628,
+            "Comment for table 't1' is too long (max = 2048)",
+        ),
+        (
+            format!("CREATE TABLE test.t1 (c INT COMMENT '{field}')"),
+            1629,
+            "Comment for field 'c' is too long (max = 1024)",
+        ),
+        (
+            format!("CREATE TABLE test.t1 (c INT, KEY (c) COMMENT '{field}')"),
+            1688,
+            "Comment for index 'c' is too long (max = 1024)",
+        ),
+        (
+            format!("ALTER TABLE test.t ADD COLUMN c1 INT COMMENT '{field}'"),
+            1629,
+            "Comment for field 'c1' is too long (max = 1024)",
+        ),
+        (
+            format!("ALTER TABLE test.t ADD KEY (e) COMMENT '{field}'"),
+            1688,
+            "Comment for index 'e' is too long (max = 1024)",
+        ),
+        (
+            format!("ALTER TABLE test.t COMMENT = '{table}'"),
+            1628,
+            "Comment for table 't' is too long (max = 2048)",
+        ),
+    ] {
+        let error = session.execute_write(&sql).unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (code, message));
+    }
+    rows(&mut session, "SET @@sql_mode = ''");
+    for (sql, warning) in [
+        (
+            format!("CREATE TABLE test.t1 (c INT) COMMENT = '{table}'"),
+            [
+                "Warning",
+                "1628",
+                "Comment for table 't1' is too long (max = 2048)",
+            ],
+        ),
+        (
+            format!("ALTER TABLE test.t ADD COLUMN c1 INT COMMENT '{field}'"),
+            [
+                "Warning",
+                "1629",
+                "Comment for field 'c1' is too long (max = 1024)",
+            ],
+        ),
+        (
+            format!("CREATE INDEX i1 ON test.t (d) COMMENT '{field}'"),
+            [
+                "Warning",
+                "1688",
+                "Comment for index 'i1' is too long (max = 1024)",
+            ],
+        ),
+        (
+            "CREATE TABLE test.v (a VARCHAR(200))".to_owned(),
+            ["", "", ""],
+        ),
+        (
+            "ALTER TABLE test.v MODIFY a VARCHAR(70000000)".to_owned(),
+            [
+                "Warning",
+                "1246",
+                "Converting column 'a' from VARCHAR to TEXT",
+            ],
+        ),
+    ] {
+        session.execute_write(&sql).unwrap();
+        let warnings = displayed(rows(&mut session, "SHOW WARNINGS"));
+        if warning[0].is_empty() {
+            assert!(warnings.is_empty(), "{sql}: {warnings:?}");
+        } else {
+            assert_eq!(warnings, [warning], "{sql}");
+        }
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT length(table_comment) FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 't1'"
+        )),
+        [["2048"]]
+    );
+    rows(
+        &mut session,
+        "CREATE GLOBAL TEMPORARY TABLE test.g (id INT PRIMARY KEY AUTO_INCREMENT) \
+         AUTO_INCREMENT = 100 ON COMMIT DELETE ROWS",
+    );
+    rows(&mut session, "BEGIN");
+    rows(&mut session, "INSERT INTO test.g VALUES (NULL)");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM test.g")),
+        [["100"]]
+    );
+    rows(&mut session, "COMMIT");
+}

@@ -7384,7 +7384,13 @@ impl ClusterServerSession {
         self.session.begin_cluster_lock_job(statement);
         let report = self
             .ddl
-            .execute(statement, self.session.ddl_cdc_write_source())?;
+            .execute(statement, self.session.ddl_cdc_write_source());
+        // Go appends plan-time warnings to the session's statement context
+        // before it submits the job, so they precede the job's own.
+        if let Some(context) = statement.statement_context() {
+            self.session.drain_context_warnings(context);
+        }
+        let report = report?;
         self.session.finish_cluster_lock_job(statement);
         let created_id = match &report {
             ClusterDdlReport::Applied { created_id, .. } => *created_id,

@@ -268,6 +268,45 @@ impl std::fmt::Debug for DdlStatementContext {
     }
 }
 
+impl AlterColumnAction {
+    fn statement_context(&self) -> Option<&tidb_executor::StmtContext> {
+        match self {
+            Self::Add { context, .. }
+            | Self::Modify { context, .. }
+            | Self::AddIndex { context, .. }
+            | Self::AddForeignKey { context, .. }
+            | Self::AddCheck { context, .. } => Some(&context.0),
+            _ => None,
+        }
+    }
+}
+
+impl DdlStatement {
+    /// The issuing statement's context the plan-time build appends to.
+    ///
+    /// Go's executor raises plan-time warnings (an over-long comment in
+    /// non-strict mode, a VARCHAR auto-converted to TEXT) directly on the
+    /// session's statement context, so the caller drains this after the
+    /// statement ran. Every context a multi-schema change carries is the
+    /// same statement's.
+    pub fn statement_context(&self) -> Option<&tidb_executor::StmtContext> {
+        match self {
+            Self::AddColumn { context, .. }
+            | Self::AddCheckConstraint { context, .. }
+            | Self::DropCheckConstraint { context, .. }
+            | Self::AlterCheckConstraint { context, .. }
+            | Self::ModifyColumn { context, .. }
+            | Self::AddForeignKey { context, .. }
+            | Self::CreateIndex { context, .. }
+            | Self::SetColumnDefault { context, .. } => Some(&context.0),
+            Self::MultiSchemaChange { actions, .. } => actions
+                .iter()
+                .find_map(AlterColumnAction::statement_context),
+            _ => None,
+        }
+    }
+}
+
 /// One catalog change this node knows how to perform.
 #[derive(Clone, Debug)]
 pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
@@ -1751,13 +1790,15 @@ fn lower_alter_table_catalog(
                 // Go `AlterTableComment` validates the length against the
                 // statement's SQL mode BEFORE it publishes the job: strict
                 // refuses, non-strict warns and truncates.
-                let comment = tidb_executor::ddl::normalize_table_comment(
+                let comment = tidb_executor::ddl::validate_comment_length(
                     comment,
-                    &table,
-                    &tidb_executor::StmtContext::for_query().with_strict(true),
+                    &tidb_hack::go_to_lower(&table),
+                    tidb_executor::ddl::CommentOwner::Table,
+                    context,
                 )
                 .map_err(|error| {
-                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
+                    let error = error.to_mysql_error();
+                    DdlAdmissionError::with_code(error.code, error.message)
                 })?;
                 return Ok(Some(DdlStatement::ModifyTableComment {
                     schema,

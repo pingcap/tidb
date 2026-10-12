@@ -889,6 +889,10 @@ pub(crate) fn cluster_table(
     // (A LOCAL temporary table is in no meta store, so it can never arrive
     // through this loader.)
     kv_table.set_temp_table_type(table.temp_table_type);
+    // Go `TableInfo.AutoIncID`, which a GLOBAL temporary table's in-memory
+    // allocator starts from (`NewAllocatorFromTempTblInfo`); a permanent
+    // table's counter lives in its cluster auto-id key instead.
+    kv_table.set_auto_inc_id(table.auto_inc_id);
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
     // cluster-wide home would allocate from a fresh in-process cell and

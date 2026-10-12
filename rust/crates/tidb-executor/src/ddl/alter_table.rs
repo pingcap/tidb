@@ -2446,7 +2446,7 @@ fn prepare_table_options(
             }
             tidb_ast::TableOption::Comment(comment) => {
                 changes.push(PreparedMetadataChange::Comment(
-                    super::normalize_table_comment(comment, name, ctx)?,
+                    super::validate_comment_length(comment, name, super::CommentOwner::Table, ctx)?,
                 ))
             }
             // Go `AlterTableAffinity`.

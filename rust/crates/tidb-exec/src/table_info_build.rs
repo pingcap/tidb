@@ -609,7 +609,15 @@ pub fn build_table_info_in_schema(
         table.auto_random_bits = spec.shard_bits;
         table.auto_random_range_bits = spec.range_bits;
     }
-    table.comment = comment;
+    // Go `buildTableInfoWithCheck` validates the table comment right after
+    // `handleTableOptions`, under the statement's SQL mode.
+    table.comment = tidb_executor::ddl::validate_comment_length(
+        &comment,
+        &tidb_hack::go_to_lower(table.name.original()),
+        tidb_executor::ddl::CommentOwner::Table,
+        context,
+    )
+    .map_err(default_admission_error)?;
     if let Some(engine_attribute) = engine_attribute {
         if let Some(settings) =
             tidb_executor::ddl::storage_class::storage_class_settings_of(&engine_attribute)
@@ -1751,7 +1759,16 @@ fn build_column(
             // clustered handle has been selected, because that decision is
             // part of the AUTO_RANDOM contract.
             ColumnOption::AutoRandom(_) => {}
-            ColumnOption::Comment(comment) => info.comment = comment.clone(),
+            // Go `setColumnComment`, once per option.
+            ColumnOption::Comment(comment) => {
+                info.comment = tidb_executor::ddl::validate_comment_length(
+                    comment,
+                    &lower,
+                    tidb_executor::ddl::CommentOwner::Field,
+                    context,
+                )
+                .map_err(default_admission_error)?;
+            }
             ColumnOption::Generated {
                 expression, stored, ..
             } => {
@@ -2209,6 +2226,13 @@ fn build_table(
             ..IndexInfo::default()
         };
         build_index_condition(&table, &mut index, constraint.condition.as_ref(), context)?;
+        index.comment = tidb_executor::ddl::validate_comment_length(
+            &index.comment,
+            index.name.original(),
+            tidb_executor::ddl::CommentOwner::Index,
+            context,
+        )
+        .map_err(default_admission_error)?;
         table.indices.push_go(index);
     }
     Ok(table)

@@ -553,8 +553,6 @@ fn auto_random_base_option(options: &[tidb_ast::TableOption]) -> Result<Option<i
     Ok(seed)
 }
 
-const MAX_TABLE_COMMENT_BYTES: usize = 2048;
-
 /// The final `COMMENT=` option a CREATE or ALTER TABLE applies.
 /// The `COMMENT` a column definition names, if it names one; Go's
 /// `setColumnComment` runs per option, so the last one wins.
@@ -572,37 +570,45 @@ pub(crate) fn column_comment_option(options: &[tidb_ast::ColumnOption]) -> Optio
 /// What a comment is attached to, for Go `validateCommentLength`'s error.
 #[derive(Clone, Copy)]
 pub enum CommentOwner {
+    /// A table: `ErrTooLongTableComment` (1628), at most 2048 bytes.
+    Table,
     /// A column: `ErrTooLongFieldComment` (1629).
     Field,
     /// An index: `ErrTooLongIndexComment` (1688).
     Index,
 }
 
-/// Go `validateCommentLength` for a column or index comment, which holds at
-/// most 1024 bytes: strict mode refuses a longer one, otherwise it warns and
-/// keeps the first 1024 bytes.
+/// Go `validateCommentLength`: a table comment holds at most 2048 bytes and
+/// any other at most 1024; strict mode refuses a longer one, otherwise it
+/// warns and keeps the bytes within the limit.
 pub fn validate_comment_length(
     comment: &str,
     name: &str,
     owner: CommentOwner,
     ctx: &crate::StmtContext,
 ) -> Result<String, DriverError> {
+    // Go `MaxCommentLength`, doubled for a table as MySQL 5.7 has it.
     const MAX_COMMENT_LENGTH: usize = 1024;
-    if comment.len() <= MAX_COMMENT_LENGTH {
+    let max_len = match owner {
+        CommentOwner::Table => MAX_COMMENT_LENGTH * 2,
+        CommentOwner::Field | CommentOwner::Index => MAX_COMMENT_LENGTH,
+    };
+    if comment.len() <= max_len {
         return Ok(comment.to_owned());
     }
     // `%-.64s`: the name as Go prints it.
     let shown: String = name.chars().take(64).collect();
     let (errno, owner) = match owner {
+        CommentOwner::Table => (tidb_error::mysql::errcode::ErrTooLongTableComment, "table"),
         CommentOwner::Field => (tidb_error::mysql::errcode::ErrTooLongFieldComment, "field"),
         CommentOwner::Index => (tidb_error::mysql::errcode::ErrTooLongIndexComment, "index"),
     };
-    let message = format!("Comment for {owner} '{shown}' is too long (max = {MAX_COMMENT_LENGTH})");
+    let message = format!("Comment for {owner} '{shown}' is too long (max = {max_len})");
     if ctx.strict() {
         return Err(DriverError::DdlCoded { errno, message });
     }
     ctx.append_warning_parts(errno, &message);
-    let mut end = MAX_COMMENT_LENGTH;
+    let mut end = max_len;
     while !comment.is_char_boundary(end) {
         end -= 1;
     }
@@ -672,29 +678,7 @@ pub(crate) fn table_comment_option(
     }) else {
         return Ok(None);
     };
-    normalize_table_comment(comment, table, ctx).map(Some)
-}
-
-/// Validates the comment text a single ALTER TABLE option writes.
-pub fn normalize_table_comment(
-    comment: &str,
-    table: &str,
-    ctx: &crate::StmtContext,
-) -> Result<String, DriverError> {
-    if comment.len() <= MAX_TABLE_COMMENT_BYTES {
-        return Ok(comment.to_owned());
-    }
-    let error = DriverError::TableCommentTooLong(table.to_owned());
-    if ctx.strict() {
-        return Err(error);
-    }
-    let reported = error.to_mysql_error();
-    ctx.append_warning_parts(reported.code, &reported.message);
-    let mut end = MAX_TABLE_COMMENT_BYTES;
-    while !comment.is_char_boundary(end) {
-        end -= 1;
-    }
-    Ok(comment[..end].to_owned())
+    validate_comment_length(comment, table, CommentOwner::Table, ctx).map(Some)
 }
 
 /// Parses and executes a `CREATE TABLE`, building a [`TableInfo`] and
