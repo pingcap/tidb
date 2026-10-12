@@ -706,6 +706,10 @@ pub(super) fn build_index_definition(
         ),
         None => None,
     };
+    let expression_parts = resolved
+        .iter()
+        .map(|part| part.expression)
+        .collect::<Vec<_>>();
     check_create_global_index(
         index_name,
         unique,
@@ -714,6 +718,7 @@ pub(super) fn build_index_definition(
         &indexed_columns,
         &offsets,
         &prefix_lengths,
+        &expression_parts,
         ctx,
     )?;
     let comment =
@@ -833,6 +838,7 @@ pub fn check_create_global_index(
     columns: &[IndexedTableColumn<'_>],
     offsets: &[usize],
     prefix_lengths: &[i64],
+    expression_parts: &[bool],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     if global && partition_offsets.is_none() {
@@ -842,12 +848,22 @@ pub fn check_create_global_index(
         warn_global_index_needs_manual_analyze(
             ctx,
             index_name,
-            offsets.iter().zip(prefix_lengths).map(|(offset, prefix)| {
-                columns
-                    .get(*offset)
-                    .is_none_or(|column| column.virtual_generated)
-                    || *prefix != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
-            }),
+            offsets
+                .iter()
+                .zip(prefix_lengths)
+                .zip(expression_parts.iter().chain(std::iter::repeat(&false)))
+                .map(|((offset, prefix), expression)| {
+                    // Go reads `tblInfo.Columns[col.Offset]`; an expression
+                    // part's hidden column is not in the table yet and still
+                    // carries `Offset` 0, so Go judges the first column.
+                    let column = if *expression {
+                        columns.first()
+                    } else {
+                        columns.get(*offset)
+                    };
+                    column.is_none_or(|column| column.virtual_generated)
+                        || *prefix != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                }),
         );
     }
     if let Some(partition_offsets) = partition_offsets.filter(|_| unique && !global) {

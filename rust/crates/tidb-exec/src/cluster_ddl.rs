@@ -4834,7 +4834,10 @@ fn table_column_count_limit() -> usize {
 /// published, as `createTableWithInfoJob` runs it after the existence check:
 /// the name, duplicate-column and count checks one port shares with the
 /// in-process builder, then `checkTableInfoValid`'s `checkInvisibleIndexOnPK`.
-fn check_table_info_valid_extra(info: &TableInfo) -> Result<(), DdlPlanError> {
+fn check_table_info_valid_extra(
+    info: &TableInfo,
+    warnings: &mut Vec<(DdlWarningLevel, u16, String)>,
+) -> Result<(), DdlPlanError> {
     let columns = info
         .columns
         .iter_deref()
@@ -4850,7 +4853,51 @@ fn check_table_info_valid_extra(info: &TableInfo) -> Result<(), DdlPlanError> {
         let error = error.to_mysql_error();
         coded_refusal(error.code, error.message)
     })?;
+    check_global_indexes(info, warnings)?;
     check_table_info_valid(info)
+}
+
+/// Go `checkGlobalIndexes` -> `checkGlobalIndex`: a GLOBAL index needs a
+/// partitioned table, and one with a prefix or VIRTUAL generated part warns
+/// that auto analyze cannot sample it (`validateGlobalIndexWithGeneratedColumns`).
+fn check_global_indexes(
+    info: &TableInfo,
+    warnings: &mut Vec<(DdlWarningLevel, u16, String)>,
+) -> Result<(), DdlPlanError> {
+    let partitioned = info
+        .get_partition_info()
+        .is_some_and(|partition| partition.read().partition_type != tidb_ast::PartitionType::NONE);
+    for index in info.indices.iter_deref() {
+        let index = index.read();
+        if !index.global {
+            continue;
+        }
+        if !partitioned {
+            return Err(coded_refusal(
+                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                "Unsupported Global Index on non-partitioned table".to_owned(),
+            ));
+        }
+        let needs_manual_analyze = index.columns.iter_deref().any(|part| {
+            let part = part.read();
+            let virtual_generated = usize::try_from(part.offset)
+                .ok()
+                .and_then(|offset| info.columns.get(offset))
+                .is_some_and(|column| column.read().is_virtual_generated());
+            virtual_generated || part.length != -1
+        });
+        if needs_manual_analyze {
+            warnings.push((
+                DdlWarningLevel::Warning,
+                tidb_error::tidb::errcode::ErrWarnGlobalIndexNeedManuallyAnalyze,
+                format!(
+                    "Auto analyze is not effective for index '{}', need analyze manually",
+                    index.name.original()
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Go `checkTableInfoValid`, which `updateVersionAndTableInfoWithCheck` runs
@@ -9458,7 +9505,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 }
             }
             // Go `createTableWithInfoJob`.
-            check_table_info_valid_extra(&info)?;
+            check_table_info_valid_extra(&info, &mut warnings)?;
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -9528,7 +9575,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             }
-            check_table_info_valid_extra(&info)?;
+            check_table_info_valid_extra(&info, &mut warnings)?;
             crate::foreign_key_build::check_table_foreign_keys_valid_in_owner(
                 &catalog, schema, &mut info, fk_check,
             )
@@ -9703,7 +9750,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             created_id = Some(table_id);
             let mut info = (**info).clone();
             // Go `createTableWithInfoJob` checks a view like any table.
-            check_table_info_valid_extra(&info)?;
+            check_table_info_valid_extra(&info, &mut warnings)?;
             info.id = table_id;
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
@@ -14614,6 +14661,10 @@ fn plan_added_index(
         }
         None => None,
     };
+    let expression_parts = resolved
+        .iter()
+        .map(|part| part.expression)
+        .collect::<Vec<_>>();
     tidb_executor::ddl::check_create_global_index(
         name,
         added.unique,
@@ -14622,6 +14673,7 @@ fn plan_added_index(
         &indexed,
         &offsets,
         &prefix_lengths,
+        &expression_parts,
         context,
     )
     .map_err(admission)?;

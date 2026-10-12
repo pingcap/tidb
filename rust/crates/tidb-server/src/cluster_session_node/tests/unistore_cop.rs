@@ -13783,3 +13783,40 @@ fn pushed_reads_answer_large_decimals_and_clustered_time_keys_as_go() {
         [["20"]]
     );
 }
+
+/// Go `checkGlobalIndexes` on the production CREATE TABLE: a GLOBAL index
+/// needs a partitioned table (8200), and one with a prefix part warns that
+/// auto analyze cannot sample it (8265); Go's ADD INDEX check reads
+/// `tblInfo.Columns[col.Offset]`, where an expression part's new hidden
+/// column still has `Offset` 0, so a GLOBAL expression index does not warn.
+#[test]
+fn global_index_rules_on_the_production_create_table() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1023)).unwrap();
+    session.execute_write("USE test").unwrap();
+    let error = session
+        .execute_write("CREATE TABLE plain (a INT, b INT, UNIQUE INDEX idx (a) GLOBAL)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8200, "Unsupported Global Index on non-partitioned table")
+    );
+    session
+        .execute_write(
+            "CREATE TABLE gp (a INT, d VARCHAR(10), UNIQUE INDEX d_s (d(3)) GLOBAL) \
+             PARTITION BY HASH (a) PARTITIONS 3",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Warning",
+            "8265",
+            "Auto analyze is not effective for index 'd_s', need analyze manually"
+        ]]
+    );
+    session
+        .execute_write("ALTER TABLE gp ADD UNIQUE INDEX ie ((a + 2)) GLOBAL")
+        .unwrap();
+    assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
+}
