@@ -3430,16 +3430,60 @@ impl RemoteRowCursor {
     /// Its ordering and tombstone rules are shared with projected readers.
     fn next_keyed_row(&mut self) -> Result<Option<KeyedRow>, KvTableError> {
         if self.unordered_shadowed.is_some() {
-            // Go UnionScan's snapshot getter drops every key present in the
-            // mutation buffer before applying residuals. No relative order
-            // is needed: replacement rows and inserts come from the staged
-            // iterator, including when their old snapshot row was filtered.
-            while let Some(entry) = self.read_remote()? {
-                if !self.unordered_shadowed.as_ref().unwrap().contains(&entry.0) {
-                    return Ok(Some(entry));
+            // Go UnionScan's snapshot getter drops every snapshot row whose
+            // key is in the mutation buffer, whatever order the rows arrive
+            // in -- replacement rows and inserts come from the added rows,
+            // including when their old snapshot row was filtered. What
+            // remains is merged with the added rows exactly as
+            // `UnionScanExec.getOneRow` does: the snapshot row is emitted
+            // while it compares below the added row, so a replaced row that
+            // sorts before the next snapshot row comes out before it.
+            loop {
+                let remote = loop {
+                    let Some(entry) = self.next_remote()? else {
+                        break None;
+                    };
+                    if self.unordered_shadowed.as_ref().unwrap().contains(&entry.0) {
+                        self.pending_remote = None;
+                        continue;
+                    }
+                    break Some(entry);
+                };
+                // A tombstone contributes no row.
+                let staged = loop {
+                    match self.next_staged() {
+                        Some((_, None)) => self.pending_staged = None,
+                        other => break other,
+                    }
+                };
+                match (remote, staged) {
+                    (None, None) => return Ok(None),
+                    (Some(entry), None) => {
+                        self.pending_remote = None;
+                        return Ok(Some(entry));
+                    }
+                    (None, Some((key, row))) => {
+                        self.pending_staged = None;
+                        let row = row.expect("tombstones were skipped above");
+                        return Ok(Some((key, row)));
+                    }
+                    (Some(entry), Some((staged_key, row))) => {
+                        let ordering = if self.unsigned_handle_order {
+                            record_merge_bytes(&entry.0, true)
+                                .cmp(record_merge_bytes(&staged_key, true))
+                        } else {
+                            entry.0.as_slice().cmp(staged_key.as_slice())
+                        };
+                        if ordering == std::cmp::Ordering::Less {
+                            self.pending_remote = None;
+                            return Ok(Some(entry));
+                        }
+                        self.pending_staged = None;
+                        let row = row.expect("tombstones were skipped above");
+                        return Ok(Some((staged_key, row)));
+                    }
                 }
             }
-            return Ok(self.staged.find_map(|(key, row)| row.map(|row| (key, row))));
         }
         loop {
             let remote = self.next_remote()?;

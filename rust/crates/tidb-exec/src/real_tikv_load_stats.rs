@@ -38,8 +38,8 @@ use crate::cluster_load_stats::{
 };
 use crate::cluster_stats_load::ClusterStatsItem;
 use crate::cluster_stats_write::{
-    loaded_stats_item_statements, plan_loaded_stats_item_statement, plan_loaded_stats_meta_write,
-    plan_loaded_stats_usage_write,
+    loaded_stats_item_statements, plan_delete_table_stats, plan_loaded_stats_item_statement,
+    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
 };
 use crate::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
@@ -136,6 +136,25 @@ pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
         item_count,
         physical_ids,
     })
+}
+
+/// Commits the storage half of pinned Go `executeDropStats`:
+/// `DeleteTableStatsFromKV(statsIDs, soft = true)` in one wrapped transaction,
+/// whose start timestamp is the new version of every re-versioned meta and
+/// histogram row.
+pub fn commit_cluster_drop_stats<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    physical_ids: &[i64],
+    timeout: Duration,
+) -> Result<(), ClusterLoadStatsCommitError> {
+    commit_pessimistic_statement(opener, timeout, |snapshot, version| {
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let plan = plan_delete_table_stats(&mut snapshot, &catalog, physical_ids, true, version)
+            .map_err(|error| error.to_string())?;
+        Ok(((), plan.mutations))
+    })
+    .map_err(pessimistic_error)
 }
 
 fn commit_loaded_table<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(

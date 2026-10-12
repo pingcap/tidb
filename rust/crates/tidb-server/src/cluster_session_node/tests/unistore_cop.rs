@@ -14188,3 +14188,277 @@ fn case_branch_differing_only_in_not_null_is_not_cast() {
         "unexpected cast in the plan:\n{text}"
     );
 }
+
+/// Go `executeCreateUser` / `executeRenameUser` refuse a user name over 32
+/// bytes and a host over 255 with `ErrWrongStringLength` (1470), whose
+/// `%-.70s` prints at most the first 70 characters of the offender. The
+/// production node accepted both, and the same message for a view's DEFINER
+/// printed the whole value.
+#[test]
+fn account_names_over_their_limits_are_refused_with_1470() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1035)).unwrap();
+    let long_user = "u".repeat(33);
+    let error = session
+        .execute_write(&format!("CREATE USER '{long_user}'@'%'"))
+        .unwrap_err();
+    assert_eq!(error.code, 1470);
+    assert_eq!(
+        error.message,
+        format!("String '{long_user}' is too long for user name (should be no longer than 32)")
+    );
+    let long_host = "h".repeat(256);
+    let error = session
+        .execute_write(&format!("CREATE USER 'x'@'{long_host}'"))
+        .unwrap_err();
+    assert_eq!(error.code, 1470);
+    assert_eq!(
+        error.message,
+        format!(
+            "String '{}' is too long for host name (should be no longer than 255)",
+            "h".repeat(70)
+        )
+    );
+    session.execute_write("CREATE USER 'short'@'%'").unwrap();
+    let error = session
+        .execute_write(&format!("RENAME USER 'short'@'%' TO '{long_user}'@'%'"))
+        .unwrap_err();
+    assert_eq!(error.code, 1470);
+}
+
+/// Go `CreateIndex` turns `ErrDupKeyName` under `IF NOT EXISTS` into a Note
+/// and succeeds; the production planner returned success with no Note.
+#[test]
+fn create_index_if_not_exists_notes_the_duplicate_key_name() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1036)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t (a INT, KEY idx (a))")
+        .unwrap();
+    session
+        .execute_write("CREATE INDEX IF NOT EXISTS idx ON t (a)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [["Note", "1061", "Duplicate key name 'idx'"]]
+    );
+}
+
+/// Go `checkAlterTableCharset` runs `checkIndexLengthWithNewCharset` before a
+/// CONVERT TO CHARACTER SET: `(varchar(500) utf8, varchar(500) utf8)` keys at
+/// 3000 bytes and would key at 4000 as utf8mb4, past `MaxIndexLength`.
+#[test]
+fn convert_charset_refuses_an_index_that_would_grow_too_long() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1037)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE posts (id INT AUTO_INCREMENT PRIMARY KEY, \
+             title VARCHAR(500) CHARACTER SET utf8, subtitle VARCHAR(500) CHARACTER SET utf8, \
+             UNIQUE KEY (title, subtitle))",
+        )
+        .unwrap();
+    let error = session
+        .execute_write("ALTER TABLE posts CONVERT TO CHARACTER SET utf8mb4")
+        .unwrap_err();
+    assert_eq!(error.code, 1071);
+    assert_eq!(
+        error.message,
+        "Specified key was too long (4000 bytes); max key length is 3072 bytes"
+    );
+    session
+        .execute_write("CREATE TABLE short (a VARCHAR(10) CHARACTER SET utf8, KEY (a))")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE short CONVERT TO CHARACTER SET utf8mb4")
+        .unwrap();
+}
+
+/// Go `SimpleExec.executeDropStats` soft-deletes every named physical id's
+/// statistics (`DeleteTableStatsFromKV(ids, true)`): the buckets and TopN rows
+/// go, the histogram rows are zeroed in place, and the meta row stays with a
+/// fresh version. The production node answered "DROP STATS ... is not ported"
+/// and left every row.
+#[test]
+fn drop_stats_soft_deletes_the_stored_statistics() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = stack.factory;
+    let mut session = factory
+        .open_session(session_context(1038))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE ds (c1 VARCHAR(20), c2 VARCHAR(20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO ds VALUES ('1','1'),('2','2'),('3','3'),('4','4'),('1','1'),('2','2'),('3','3'),('4','4')",
+    );
+    rows(&mut session, "ANALYZE TABLE ds ALL COLUMNS WITH 2 TOPN");
+    let table_id = factory
+        .catalog
+        .load()
+        .find_table("test", "ds")
+        .expect("table is published")
+        .1
+        .id;
+    let count = |session: &mut ClusterServerSession, table: &str| {
+        displayed(rows(
+            session,
+            &format!("SELECT COUNT(*) FROM mysql.{table} WHERE table_id = {table_id}"),
+        ))[0][0]
+            .clone()
+    };
+    assert_ne!(count(&mut session, "stats_buckets"), "0");
+    assert_ne!(count(&mut session, "stats_top_n"), "0");
+    let version_before = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .unwrap();
+
+    session.execute_write("DROP STATS ds").unwrap();
+
+    assert_eq!(count(&mut session, "stats_buckets"), "0");
+    assert_eq!(count(&mut session, "stats_top_n"), "0");
+    // The histogram rows stay, zeroed; the meta row keeps its counts and is
+    // re-versioned.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT COUNT(*) FROM mysql.stats_histograms WHERE table_id = {table_id} \
+                 AND distinct_count <> 0"
+            ),
+        )),
+        [["0"]]
+    );
+    let version_after = displayed(rows(
+        &mut session,
+        &format!("SELECT version FROM mysql.stats_meta WHERE table_id = {table_id}"),
+    ))[0][0]
+        .parse::<u64>()
+        .unwrap();
+    assert!(version_after > version_before);
+}
+
+/// Go resolves DROP STATS' tables before it writes anything.
+#[test]
+fn drop_stats_refuses_an_unknown_table_and_a_partition_clause_on_a_plain_one() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1039)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session.execute_write("CREATE TABLE dp (a INT)").unwrap();
+    let error = session.execute_write("DROP STATS missing").unwrap_err();
+    assert_eq!(error.code, 1146);
+    let error = session
+        .execute_write("DROP STATS dp PARTITION p0")
+        .unwrap_err();
+    assert_eq!(error.code, 1505);
+}
+
+/// Go `UnionScanExec.getOneRow` merges the transaction's added rows into the
+/// snapshot rows by handle, whether or not the scan asked to keep order: a
+/// replaced row that sorts before the next snapshot row comes out before it.
+/// The node dropped the shadowed snapshot rows and then emitted every
+/// remaining snapshot row before any added one, so an UPDATE moved its row to
+/// the end of an unordered SELECT.
+#[test]
+fn union_scan_emits_added_rows_in_handle_order() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1040)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE us (c_str VARCHAR(40), c_int INT, c_datetime DATETIME, \
+             PRIMARY KEY (c_str) CLUSTERED, UNIQUE KEY (c_datetime))",
+        )
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO us VALUES ('laughing hertz', 1, '2020-04-27 20:29:30'), \
+             ('sharp yalow', 2, '2020-04-01 05:53:36'), \
+             ('pedantic hoover', 3, '2020-03-10 11:49:00')",
+        )
+        .unwrap();
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("UPDATE us SET c_str = 'amazing herschel' WHERE c_int = 3")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT c_int, c_str FROM us WHERE c_datetime BETWEEN '2020-01-09 22:00:28' \
+             AND '2020-04-08 15:12:37'"
+        )),
+        [["3", "amazing herschel"], ["2", "sharp yalow"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT c_int FROM us")),
+        [["3"], ["1"], ["2"]]
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+}
+
+/// Go assigns a `CREATE TABLE ... LIKE` copy its own physical table ids -- the
+/// table's, then one per partition -- like any other new table. The node kept
+/// the source's partition ids, so the two tables shared physical tables and a
+/// row inserted into one was counted by the other.
+#[test]
+fn create_table_like_a_partitioned_table_gets_its_own_partition_ids() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1041)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE lk1 (c_int INT, PRIMARY KEY (c_int)) PARTITION BY HASH (c_int) PARTITIONS 2",
+        )
+        .unwrap();
+    session.execute_write("CREATE TABLE lk2 LIKE lk1").unwrap();
+    session.execute_write("INSERT INTO lk2 VALUES (1)").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*) FROM lk1")),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*) FROM lk2")),
+        [["1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(DISTINCT tidb_partition_id) FROM information_schema.partitions \
+             WHERE table_schema = 'test' AND table_name IN ('lk1', 'lk2')"
+        )),
+        [["4"]]
+    );
+}
+
+/// Go reads a BIT column's default through `GetDefaultValue()`, which returns
+/// the raw `DefaultValueBit` bytes; the JSON-facing `DefaultValue` string is
+/// those bytes decoded lossily (every byte that is not valid UTF-8 becomes
+/// U+FFFD). The node's catalog loader read the string, so a BIT default with a
+/// byte at or above 0x80 came back as `EF BF BD` repeated.
+#[test]
+fn bit_defaults_keep_their_raw_bytes_across_the_stored_catalog() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1042)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE bd (k INT, v BIT(34) DEFAULT b'111010101111001001100111101111111', \
+             z BIT(40) DEFAULT 0xFFEEDDCCBB, w BIT(8) DEFAULT b'101')",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO bd (k) VALUES (1)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT HEX(v), HEX(z), HEX(w) FROM bd")),
+        [["1D5E4CF7F", "FFEEDDCCBB", "5"]]
+    );
+}

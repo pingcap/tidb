@@ -412,6 +412,8 @@ enum StatementRoute {    /// Changes nothing stored outside this process.
     FlushStatsDelta(FlushStatsDeltaTargets),
     /// One persisted `LOCK STATS` or `UNLOCK STATS` operation.
     StatsLock(ClusterStatsLockStatement),
+    /// One `DROP STATS`, over the physical ids Go's `executeDropStats` names.
+    DropStats(Vec<i64>),
 }
 
 enum FlushStatsDeltaTargets {
@@ -6452,6 +6454,9 @@ impl ClusterServerSession {
                 if prepare_cluster_load_stats_parsed(stmt).is_some() {
                     return Ok(StatementRoute::LoadStats);
                 }
+                if let Some(physical_ids) = self.drop_stats_ids(stmt)? {
+                    return Ok(StatementRoute::DropStats(physical_ids));
+                }
                 match prepare_cluster_analyze_parsed(stmt, self.session.current_database()) {
                     Ok(Some(tables)) if !tables.is_empty() => Ok(StatementRoute::Analyze(tables)),
                     Ok(_) => Err(SqlQueryError::unknown(
@@ -7882,6 +7887,11 @@ impl QuerySession for ClusterServerSession {
                     .observe_routed_write(sql, stmt, |node| node.run_stats_lock(&statement))
                     .map(Some)
             }
+            StatementRoute::DropStats(physical_ids) => {
+                return self
+                    .observe_routed_write(sql, stmt, |node| node.run_drop_stats(&physical_ids))
+                    .map(Some)
+            }
             StatementRoute::Ordinary => {}
         }
         if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))
@@ -8428,6 +8438,12 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::StatsLock(statement) => {
                 self.observe_routed_write(sql, stmt, |node| node.run_stats_lock(&statement))?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::DropStats(physical_ids) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_drop_stats(&physical_ids))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

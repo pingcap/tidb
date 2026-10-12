@@ -801,9 +801,12 @@ pub fn declared_default(
     if column.default_is_expr {
         return Err(unmaterialisable(column, table));
     }
+    // Go `table.GetColDefaultValue` reads `GetDefaultValue()`, whose BIT arm
+    // returns the raw `DefaultValueBit` bytes; the JSON-facing string is the
+    // same bytes decoded lossily.
     materialise(
         column,
-        &column.default_value,
+        &column.get_default_value(),
         table,
         Some(current_timestamp),
     )
@@ -823,7 +826,8 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
     if column.default_is_expr {
         return Err(unmaterialisable(column, table));
     }
-    if let Some(GoAnyView::String(bytes)) = column.default_value.view() {
+    let declared = column.get_default_value();
+    if let Some(GoAnyView::String(bytes)) = declared.view() {
         if is_time_column(column)
             && bytes
                 .as_bytes()
@@ -832,7 +836,7 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
             return Err(unmaterialisable(column, table));
         }
     }
-    materialise(column, &column.default_value, table, None)
+    materialise(column, &declared, table, None)
 }
 
 /// The datum one column's `OriginDefaultValue` materialises to.

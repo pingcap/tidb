@@ -219,6 +219,109 @@ impl ClusterServerSession {
         })
     }
 
+    /// Go `SimpleExec.executeDropStats`' id resolution: the physical ids
+    /// whose statistics the statement drops. `Ok(None)` is a statement that
+    /// is not DROP STATS.
+    ///
+    /// Without a partition clause every named table drops its partitions and
+    /// itself (a non-partitioned table's own id twice, as Go's loop yields
+    /// it); `GLOBAL` drops the first table's own id; a partition list drops
+    /// the first table's named partitions.
+    pub(super) fn drop_stats_ids(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<Vec<i64>>, SqlQueryError> {
+        let tidb_ast::Stmt::Admin(admin) = stmt else {
+            return Ok(None);
+        };
+        let tidb_ast::AdminStmt::DropStats(drop) = admin.as_ref() else {
+            return Ok(None);
+        };
+        let current_database = self.session.current_database().to_owned();
+        let catalog = self.catalog.load();
+        let mut tables = Vec::with_capacity(drop.tables.len());
+        for path in &drop.tables {
+            let (schema, name) = match path.as_slice() {
+                [name] => (current_database.clone(), name.clone()),
+                [schema, name] => (schema.clone(), name.clone()),
+                _ => {
+                    return Err(SqlQueryError::unknown(
+                        "DROP STATS of a malformed table name",
+                    ))
+                }
+            };
+            if schema.is_empty() {
+                return Err(super::map_error(tidb_executor::DriverError::Schema(
+                    tidb_executor::SchemaErrorKind::NoDatabaseSelected,
+                )));
+            }
+            let Some((_, table)) = catalog.find_table(&schema, &name) else {
+                return Err(super::map_error(tidb_executor::DriverError::Schema(
+                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{schema}.{name}")),
+                )));
+            };
+            tables.push(table);
+        }
+        let partition_ids = |table: &tidb_model::table_info::TableInfo,
+                             names: &[String]|
+         -> Result<Vec<i64>, SqlQueryError> {
+            let Some(partition) = table.get_partition_info() else {
+                if !names.is_empty() {
+                    return Err(super::map_error(
+                        tidb_executor::DriverError::PartitionManagementOnNonpartitioned,
+                    ));
+                }
+                return Ok(vec![table.id]);
+            };
+            let definitions = partition.read().definitions.snapshot();
+            if names.is_empty() {
+                return Ok(definitions.iter().map(|definition| definition.id).collect());
+            }
+            names
+                .iter()
+                .map(|name| {
+                    definitions
+                        .iter()
+                        .find(|definition| definition.name.lowercase() == name.go_to_lower())
+                        .map(|definition| definition.id)
+                        .ok_or_else(|| {
+                            SqlQueryError::unknown(format!(
+                                "can not found the specified partition name {name} in the table definition"
+                            ))
+                        })
+                })
+                .collect()
+        };
+        let mut ids = Vec::new();
+        if drop.global {
+            ids.push(tables[0].id);
+        } else if drop.partitions.is_empty() {
+            for table in &tables {
+                ids.extend(partition_ids(table, &[])?);
+                ids.push(table.id);
+            }
+        } else {
+            ids = partition_ids(tables[0], &drop.partitions)?;
+        }
+        // The soft delete is idempotent per id; plan each once.
+        let mut seen = std::collections::BTreeSet::new();
+        ids.retain(|id| seen.insert(*id));
+        Ok(Some(ids))
+    }
+
+    /// Runs Go's `executeDropStats` write: the statistics handle commits its
+    /// own transaction, so the user's is not moved.
+    pub(super) fn run_drop_stats(
+        &mut self,
+        physical_ids: &[i64],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        self.analyze.drop_stats(physical_ids)?;
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
+    }
+
     /// Runs one persisted statistics-lock operation in the internal
     /// transaction owned by the statistics handle.
     pub(super) fn run_stats_lock(

@@ -876,6 +876,7 @@ impl Session {
                     tidb_ast::AdminStmt::AnalyzeTable(_)
                         | tidb_ast::AdminStmt::AnalyzeIncremental(_)
                         | tidb_ast::AdminStmt::LoadStats(_)
+                        | tidb_ast::AdminStmt::DropStats(_)
                 ) || matches!(
                     admin.as_ref(),
                     tidb_ast::AdminStmt::Flush(flush)

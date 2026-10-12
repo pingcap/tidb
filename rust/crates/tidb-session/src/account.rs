@@ -735,12 +735,27 @@ impl Session {
             }
             let user = spec.user.user.as_str();
             let host = spec.user.host.as_str();
-            // Go `executeCreateUser` refuses to expire the anonymous account's
-            // password before it looks the account up.
+            // Go `executeCreateUser` checks the name length first, then
+            // refuses to expire the anonymous account's password, then the
+            // host length -- all before it looks the account up.
+            if user.len() > tidb_parser::auth::USER_NAME_MAX_LENGTH {
+                return Err(tidb_executor::ddl::preprocess::wrong_string_length_error(
+                    user,
+                    "user name",
+                    tidb_parser::auth::USER_NAME_MAX_LENGTH,
+                ));
+            }
             if user.is_empty()
                 && matches!(options.expire, Some(privilege::PasswordExpireSetting::Now))
             {
                 return Err(DriverError::PasswordExpireAnonymousUser);
+            }
+            if host.len() > tidb_parser::auth::HOST_NAME_MAX_LENGTH {
+                return Err(tidb_executor::ddl::preprocess::wrong_string_length_error(
+                    host,
+                    "host name",
+                    tidb_parser::auth::HOST_NAME_MAX_LENGTH,
+                ));
             }
             if registry.user_exists(user, host) {
                 if !if_not_exists {
@@ -1348,6 +1363,22 @@ impl Session {
                     || (!gone.contains(account) && registry.user_exists(&account.0, &account.1))
             };
             for (old, new) in &resolved {
+                // Go `executeRenameUser` checks the NEW name's lengths before
+                // it looks either account up.
+                if new.0.len() > tidb_parser::auth::USER_NAME_MAX_LENGTH {
+                    return Err(tidb_executor::ddl::preprocess::wrong_string_length_error(
+                        &new.0,
+                        "user name",
+                        tidb_parser::auth::USER_NAME_MAX_LENGTH,
+                    ));
+                }
+                if new.1.len() > tidb_parser::auth::HOST_NAME_MAX_LENGTH {
+                    return Err(tidb_executor::ddl::preprocess::wrong_string_length_error(
+                        &new.1,
+                        "host name",
+                        tidb_parser::auth::HOST_NAME_MAX_LENGTH,
+                    ));
+                }
                 let old_missing = !exists(old, &gone, &added);
                 if old_missing || exists(new, &gone, &added) {
                     return Err(DriverError::RenameUserFailed {

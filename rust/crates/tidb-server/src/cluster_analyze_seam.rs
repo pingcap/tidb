@@ -100,6 +100,14 @@ pub trait ClusterAnalyze: Send + Sync {
             "this statistics writer does not support LOAD STATS",
         ))
     }
+
+    /// Go `executeDropStats`: soft-deletes every named physical id's
+    /// statistics from storage, then refreshes this node's cache.
+    fn drop_stats(&self, _physical_ids: &[i64]) -> Result<(), SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "this statistics writer does not support DROP STATS",
+        ))
+    }
 }
 
 /// The production analyzer: one real transaction per table, the optimistic
@@ -272,6 +280,19 @@ where
         self.refresh_stats(report.physical_ids().to_vec())
             .map_err(SqlQueryError::unknown)?;
         Ok(report)
+    }
+
+    fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), SqlQueryError> {
+        tidb_exec::real_tikv_load_stats::commit_cluster_drop_stats(
+            &self.opener,
+            physical_ids,
+            self.timeout,
+        )
+        .map_err(cluster_load_stats_error)?;
+        // Go `executeDropStats` ends in `StatsHandle.Update`, and returns its
+        // failure: the rows are durable either way.
+        self.refresh_stats(physical_ids.to_vec())
+            .map_err(SqlQueryError::unknown)
     }
 }
 

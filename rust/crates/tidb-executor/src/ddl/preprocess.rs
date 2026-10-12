@@ -168,15 +168,24 @@ fn check_table_name(name: &str) -> Result<(), DriverError> {
     Ok(())
 }
 
+/// `dbterror.ErrWrongStringLength` (1470): `String '%-.70s' is too long for
+/// %s (should be no longer than %d)`. The `%-.70s` keeps the first 70 runes of
+/// the offending value, so a 255-character host prints as its first 70.
+#[must_use]
+pub fn wrong_string_length_error(value: &str, kind: &str, maximum: usize) -> DriverError {
+    let shown: String = value.chars().take(70).collect();
+    DriverError::DdlCoded {
+        errno: tidb_error::mysql::errcode::ErrWrongStringLength,
+        message: format!(
+            "String '{shown}' is too long for {kind} (should be no longer than {maximum})"
+        ),
+    }
+}
+
 /// `dbterror.ErrWrongStringLength` (1470) over a view's DEFINER.
 fn check_definer_length(value: &str, kind: &str, maximum: usize) -> Result<(), DriverError> {
     if value.len() > maximum {
-        return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrWrongStringLength,
-            message: format!(
-                "String '{value}' is too long for {kind} (should be no longer than {maximum})"
-            ),
-        });
+        return Err(wrong_string_length_error(value, kind, maximum));
     }
     Ok(())
 }

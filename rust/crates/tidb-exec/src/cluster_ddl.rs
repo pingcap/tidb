@@ -4124,6 +4124,60 @@ fn check_table_charset_named(charset: &str, collate: &str) -> Result<(), DdlPlan
 /// Go `checkAlterTableCharset` and `onModifyTableCharsetAndCollate` over an
 /// EVOLVING `TableInfo`.
 #[allow(clippy::too_many_arguments)]
+/// Go `checkIndexLengthWithNewCharset`: every index's key length, summed over
+/// its parts with each column converted to the new charset, must still fit
+/// `MaxIndexLength` -- `CONVERT TO CHARACTER SET utf8mb4` quadruples a
+/// `varchar(1000) utf8` key part from 3000 to 4000 bytes.
+fn check_index_length_with_new_charset(
+    info: &TableInfo,
+    to_charset: &str,
+    to_collate: &str,
+) -> Result<(), DdlPlanError> {
+    use tidb_executor::ddl::index_prefix::{check_index_key_length, PrefixError};
+    let collation =
+        tidb_datatype::Collation::from_name(to_collate).unwrap_or(tidb_datatype::Collation::Binary);
+    let converted: Vec<tidb_datatype::FieldType> = info
+        .columns
+        .iter_deref()
+        .map(|column| {
+            let mut field_type = column.read().field_type.clone();
+            if field_type.has_charset() {
+                field_type.set_charset_name(to_charset);
+                field_type.set_collation(collation);
+            } else {
+                field_type.set_charset_name("binary");
+                field_type.set_collation(tidb_datatype::Collation::Binary);
+            }
+            field_type
+        })
+        .collect();
+    for index in info.indices.iter_deref() {
+        let index = index.read();
+        let parts: Vec<(&tidb_datatype::FieldType, i64)> = index
+            .columns
+            .iter_deref()
+            .filter_map(|part| {
+                let part = part.read();
+                let offset = usize::try_from(part.offset).ok()?;
+                Some((converted.get(offset)?, part.length))
+            })
+            .collect();
+        let part_count = parts.len();
+        check_index_key_length(parts, part_count, true, true).map_err(|error| match error {
+            PrefixError::TooLongKey { length, max } => {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrTooLongKey,
+                    format!(
+                        "Specified key was too long ({length} bytes); max key length is {max} bytes"
+                    ),
+                ))
+            }
+            other => unreachable!("the key-length sum reports only ErrTooLongKey, got {other:?}"),
+        })?;
+    }
+    Ok(())
+}
+
 fn apply_table_charset_and_collate(
     catalog: &ClusterCatalog,
     schema: &str,
@@ -4202,6 +4256,7 @@ fn apply_table_charset_and_collate(
     )?;
 
     if overwrite_columns {
+        check_index_length_with_new_charset(info, &to_charset, &to_collate)?;
         // Go checks every column BEFORE it rewrites any of them, so a refusal
         // leaves the table exactly as it was.
         for column in info.columns.iter_deref() {
@@ -9445,9 +9500,26 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 });
             }
             let db_id = database.info.id;
-            let table_id = global_ids.allocate(1)?[0];
-            created_id = Some(table_id);
             let mut info = source.clone_like_go();
+            // Go `assignIDsForTable` runs for a LIKE table exactly as for any
+            // other: the table's own id, then one physical id per partition
+            // in definition order. Keeping the source's partition ids made
+            // the two tables share physical tables, so each saw the other's
+            // rows.
+            let partition_count = info.partition.as_ref().map_or(0, |partition| {
+                partition.read().definitions.with_visible(<[_]>::len)
+            }) as i64;
+            let ids = global_ids.allocate(1 + partition_count)?;
+            let table_id = ids[0];
+            created_id = Some(table_id);
+            if let Some(partition) = &info.partition {
+                let partition = partition.read();
+                for (ordinal, id) in ids[1..].iter().enumerate() {
+                    partition
+                        .definitions
+                        .update(ordinal, |definition| definition.id = *id);
+                }
+            }
             // Go keeps only the PUBLIC columns and indices: a column or index
             // still being added is not part of the definition being copied.
             info.columns = tidb_model::GoSharedPointerSlice::from_handles(
@@ -12536,10 +12608,19 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if let Some(existing) = find_index(stored, &name) {
                 let existing = existing.read();
                 if *if_not_exists {
-                    return Ok(already(format!(
-                        "index `{}` already exists on `{schema}`.`{table}`",
-                        existing.name.original()
-                    )));
+                    // Go `CreateIndex`: `ErrDupKeyName` under `IF NOT EXISTS`
+                    // is appended as a Note and the statement succeeds.
+                    return Ok(already_with_warnings(
+                        format!(
+                            "index `{}` already exists on `{schema}`.`{table}`",
+                            existing.name.original()
+                        ),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            1061,
+                            format!("Duplicate key name '{name}'"),
+                        )],
+                    ));
                 }
                 return Err(DdlPlanError::DuplicateKeyName(name));
             }
