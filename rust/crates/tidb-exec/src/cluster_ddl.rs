@@ -587,6 +587,10 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         standalone_table: String,
         /// Whether rows must be proven to belong to the named partition.
         with_validation: bool,
+        /// Go `vardef.EnableCheckConstraint` when the statement ran: whether
+        /// the validation also applies each table's writable CHECK
+        /// constraints to the other's rows.
+        check_constraints: bool,
     },
     /// The single-action `ALTER TABLE ... DROP COLUMN` this node serves.
     ///
@@ -2546,6 +2550,7 @@ fn lower_alter_table_catalog(
                 standalone_schema,
                 standalone_table,
                 with_validation: *with_validation,
+                check_constraints: context.enable_check_constraint(),
             }))
         }
         tidb_ast::AlterTableAction::WithValidation => {
@@ -7420,6 +7425,9 @@ pub struct ExchangePartitionValidation {
     pub standalone: Box<TableInfo>,
     /// Physical ID of the named partition before the swap.
     pub partition_id: i64,
+    /// Go `vardef.EnableCheckConstraint`: whether each table's writable
+    /// CHECK constraints are applied to the other's rows.
+    pub check_constraints: bool,
 }
 
 /// One Go `registerMDLInfo` replacement associated with a committed CHECK
@@ -7603,6 +7611,13 @@ pub struct PartitionReorgStep {
     pub reorg: tidb_executor::kv_table::PartitionReorg,
     /// SQL mode and location the rows are routed under.
     pub context: DdlStatementContext,
+    /// The database the table's auto-id counters live under.
+    pub db_id: i64,
+    /// Go's final state for PARTITION BY / REMOVE PARTITIONING: each counter
+    /// copied from the old table id's key to the new one's, as
+    /// (from, to). It runs after the rows moved, because a heap row whose
+    /// `_tidb_rowid` collides takes a new one from the old counter first.
+    pub counter_moves: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 /// Go `checkForeignKeyConstrain`, owed by an `ADD FOREIGN KEY` under
@@ -9476,6 +9491,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // ... and PARTITION BY / REMOVE PARTITIONING give the table its
             // `NewTableID`, carrying the auto-id counters across.
             let mut old_physical_ids = reorg.source_ids.clone();
+            let mut counter_moves = Vec::new();
             if let Some(new_table_id) = reorg.new_table_id {
                 writes.push(BufferMutation::delete(key::table_kv_key(
                     db_id,
@@ -9486,9 +9502,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     key::auto_increment_id_kv_key,
                     key::auto_random_table_id_kv_key,
                 ] {
-                    if let Some(value) = snapshot.get(&key_for(db_id, old_table_id))? {
-                        writes.push(BufferMutation::set(key_for(db_id, new_table_id), value)?);
-                    }
+                    counter_moves
+                        .push((key_for(db_id, old_table_id), key_for(db_id, new_table_id)));
                 }
                 if old_physical_ids.first() != Some(&old_table_id) {
                     old_physical_ids.push(old_table_id);
@@ -9571,6 +9586,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 table: Box::new(stored.clone_like_go()),
                 reorg,
                 context: context.clone(),
+                db_id,
+                counter_moves,
             });
         }
         DdlStatement::AddPartitions {
@@ -9783,6 +9800,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             standalone_schema,
             standalone_table,
             with_validation,
+            check_constraints,
         } => {
             let (partitioned_db_id, stored_partitioned) = locate_table(&catalog, schema, table)?;
             let (standalone_db_id, stored_standalone) =
@@ -9877,6 +9895,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     partitioned: Box::new(stored_partitioned.clone_like_go()),
                     standalone: Box::new(stored_standalone.clone_like_go()),
                     partition_id: original_partition_id,
+                    check_constraints: *check_constraints,
                 });
             }
             exchange_partition_label_swap = Some(ExchangePartitionLabelSwap {

@@ -2389,6 +2389,119 @@ where
 /// snapshot and staging buffer. That reuse is the point: an index whose
 /// entries were written by a second implementation would disagree with the one
 /// the write path maintains from the next `INSERT` onwards.
+/// Auto-id counters read and bumped inside the DDL transaction itself: what a
+/// row move that must allocate a fresh `_tidb_rowid` allocates from.
+#[derive(Debug)]
+struct DdlTransactionAutoIds {
+    storage: ClusterTableStorage,
+}
+
+use tidb_executor::kv_table::TableAutoId;
+
+impl crate::cluster_session::TableAutoIds for DdlTransactionAutoIds {
+    fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
+        self.over(tidb_exec::cluster_auto_id::auto_id_key_for(db_id, table))
+    }
+
+    fn row_allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
+        let db_id = if table.auto_id_schema_id == 0 {
+            db_id
+        } else {
+            table.auto_id_schema_id
+        };
+        self.over(tidb_meta::key::auto_table_id_kv_key(db_id, table.id))
+    }
+
+    fn random_allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
+        self.over(tidb_exec::cluster_auto_id::auto_random_id_key_for(
+            db_id, table,
+        ))
+    }
+}
+
+impl DdlTransactionAutoIds {
+    fn over(&self, key: Vec<u8>) -> TableAutoId {
+        TableAutoId::over(
+            Arc::new(DdlTransactionAutoIdStore {
+                storage: Mutex::new(self.storage.clone()),
+                key: tidb_txnkv::Key::from_bytes(key),
+            }),
+            tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP,
+        )
+    }
+}
+
+/// One counter key, as Go's `alloc4Signed` reads and bumps it, through the DDL
+/// transaction's buffer.
+#[derive(Debug)]
+struct DdlTransactionAutoIdStore {
+    storage: Mutex<ClusterTableStorage>,
+    key: tidb_txnkv::Key,
+}
+
+impl DdlTransactionAutoIdStore {
+    fn last(&self) -> Result<u64, tidb_executor::kv_table::AutoIdStoreError> {
+        let mut storage = self.storage.lock().expect("auto id storage poisoned");
+        match tidb_executor::storage::TableStorage::get(&mut *storage, &self.key) {
+            Ok(value) => tidb_meta::value::parse_int_value(&value)
+                .map(|value| value as u64)
+                .map_err(|error| tidb_executor::kv_table::AutoIdStoreError(error.to_string())),
+            Err(tidb_executor::storage::StorageError::NotFound) => Ok(0),
+            Err(error) => Err(tidb_executor::kv_table::AutoIdStoreError(error.to_string())),
+        }
+    }
+
+    fn store(&self, end: u64) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+        let mut storage = self.storage.lock().expect("auto id storage poisoned");
+        tidb_executor::storage::TableStorage::set(
+            &mut *storage,
+            self.key.clone(),
+            tidb_meta::value::encode_int_value(end as i64),
+        )
+        .map_err(|error| tidb_executor::kv_table::AutoIdStoreError(error.to_string()))
+    }
+}
+
+impl tidb_executor::kv_table::AutoIdStore for DdlTransactionAutoIdStore {
+    fn reserve(
+        &self,
+        step: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), tidb_executor::kv_table::AutoIdStoreError> {
+        let base = self.last()?;
+        let end = tidb_executor::kv_table::advance(base, step, unsigned);
+        self.store(end)?;
+        Ok((base, end))
+    }
+
+    fn next_global(&self) -> Result<u64, tidb_executor::kv_table::AutoIdStoreError> {
+        Ok(self.last()?.wrapping_add(1))
+    }
+
+    fn rebase(
+        &self,
+        required: u64,
+        unsigned: bool,
+    ) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+        if tidb_executor::kv_table::exceeds(required, self.last()?, unsigned) {
+            self.store(required)?;
+        }
+        Ok(())
+    }
+
+    fn force_rebase(
+        &self,
+        required: u64,
+        _unsigned: bool,
+    ) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+        self.store(required)
+    }
+
+    fn reset(&self) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+        self.store(0)
+    }
+}
+
 struct KvTableIndexBackfiller;
 
 impl IndexBackfiller for KvTableIndexBackfiller {
@@ -2610,18 +2723,49 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let mut table = cluster_table(&step.table, &storage, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?;
+        // A heap row whose `_tidb_rowid` collides with one already moved takes
+        // a new id from the table's counter, read and bumped inside this DDL
+        // transaction so the counter copied below includes it.
+        let ids = DdlTransactionAutoIds {
+            storage: storage.clone(),
+        };
+        let mut table = cluster_table(
+            &step.table,
+            &storage,
+            &AutoIdSource::In {
+                db_id: step.db_id,
+                ids: &ids,
+            },
+        )
+        .map_err(exchange_validation_internal)?;
+        let failure = |error: tidb_executor::DriverError| {
+            let error = error.to_mysql_error();
+            LockSqlError {
+                code: error.code,
+                state: error.state,
+                message: error.message,
+            }
+        };
         table
             .reorganize_partitions(step.reorg.clone(), &step.context.0)
-            .map_err(|error| {
-                let error = tidb_executor::driver::kv_write_error(error).to_mysql_error();
-                LockSqlError {
-                    code: error.code,
-                    state: error.state,
-                    message: error.message,
-                }
-            })
+            .map_err(|error| failure(tidb_executor::driver::kv_write_error(error)))?;
+        let mut storage = storage;
+        for (from, to) in &step.counter_moves {
+            match tidb_executor::storage::TableStorage::get(
+                &mut storage,
+                &tidb_txnkv::Key::from_bytes(from.clone()),
+            ) {
+                Ok(value) => tidb_executor::storage::TableStorage::set(
+                    &mut storage,
+                    tidb_txnkv::Key::from_bytes(to.clone()),
+                    value,
+                )
+                .map_err(|error| failure(error.into()))?,
+                Err(tidb_executor::storage::StorageError::NotFound) => {}
+                Err(error) => return Err(failure(error.into())),
+            }
+        }
+        Ok(())
     }
     fn stage_cache_table_check(
         &self,
@@ -2672,9 +2816,16 @@ impl ExchangePartitionValidator for KvTableIndexBackfiller {
             partitioned
                 .validate_insert_partitions(&row, &[plan.partition_id], &context)
                 .map_err(exchange_validation_table_error)?;
-            partitioned
-                .validate_check_constraints(&row, &context)
-                .map_err(exchange_validation_table_error)?;
+            // Go applies the CHECK constraints only while
+            // `vardef.EnableCheckConstraint` is on.
+            if plan.check_constraints {
+                partitioned
+                    .validate_check_constraints(&row, &context)
+                    .map_err(exchange_validation_table_error)?;
+            }
+        }
+        if !plan.check_constraints {
+            return Ok(());
         }
 
         // Go's second restricted query reads the target partition and applies

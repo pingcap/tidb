@@ -12679,3 +12679,75 @@ fn hash_partition_management_rehashes_rows_as_go_does() {
         [["P_LT_20"], ["P_LT_30"], ["P_LT_40"], ["P_LT_50"]]
     );
 }
+
+/// Go `checkExchangePartitionRecordValidation` applies CHECK constraints only
+/// while `tidb_enable_check_constraint` is on; and a heap row whose
+/// `_tidb_rowid` collides when partitions collapse takes a fresh one from
+/// the table's counter, which then moves to the new table id
+/// (`onReorganizePartition`). This node validated the constraints with the
+/// switch off (1737) and gave the colliding row a duplicate id.
+#[test]
+fn exchange_and_collapse_honour_go_switches_and_counters() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1004)).unwrap();
+    rows(
+        &mut session,
+        "SET @@global.tidb_enable_check_constraint = 1",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.nt (a INT CHECK (a > 75) NOT ENFORCED, b INT CHECK (b > 50) ENFORCED)",
+    );
+    rows(&mut session, "INSERT INTO test.nt VALUES (80, 60)");
+    rows(
+        &mut session,
+        "CREATE TABLE test.pt (a INT CHECK (a < 75) ENFORCED, b INT CHECK (b < 75 OR b > 100) ENFORCED) \
+         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (50), PARTITION p1 VALUES LESS THAN (100))",
+    );
+    let error = session
+        .execute_write("ALTER TABLE test.pt EXCHANGE PARTITION p1 WITH TABLE test.nt")
+        .unwrap_err();
+    assert_eq!(error.code, 1737, "{}", error.message);
+    rows(
+        &mut session,
+        "SET @@global.tidb_enable_check_constraint = 0",
+    );
+    session
+        .execute_write("ALTER TABLE test.pt EXCHANGE PARTITION p1 WITH TABLE test.nt")
+        .unwrap();
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.t (id INT NOT NULL, store_id INT NOT NULL) PARTITION BY RANGE (store_id) \
+         (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), \
+          PARTITION p2 VALUES LESS THAN (16), PARTITION p3 VALUES LESS THAN (21))",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.t1 (id INT NOT NULL, store_id INT NOT NULL)",
+    );
+    rows(&mut session, "INSERT INTO test.t VALUES (1, 1)");
+    rows(&mut session, "INSERT INTO test.t VALUES (2, 17)");
+    rows(&mut session, "INSERT INTO test.t1 VALUES (0, 18)");
+    session
+        .execute_write("ALTER TABLE test.t EXCHANGE PARTITION p3 WITH TABLE test.t1")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE test.t REMOVE PARTITIONING")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT *, _tidb_rowid FROM test.t ORDER BY id"
+        )),
+        [["0", "18", "30001"], ["1", "1", "1"]]
+    );
+    rows(&mut session, "INSERT INTO test.t VALUES (5, 5)");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT _tidb_rowid FROM test.t WHERE id = 5"
+        )),
+        [["60001"]]
+    );
+}
