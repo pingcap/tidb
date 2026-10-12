@@ -1,0 +1,8 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "ftse2e_test",
+    srcs = ["plan_validation_test.go"],
+    size = "small",
+    timeout = "short",
+)

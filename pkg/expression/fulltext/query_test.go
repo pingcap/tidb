@@ -15,7 +15,6 @@
 package fulltext
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -267,28 +266,6 @@ func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {
 	document := strings.TrimSpace(strings.Repeat("foo ", repetitions*2))
 	phrase := `"` + strings.Repeat("foo ", repetitions) + `never"`
 	require.False(t, matchQueryForTest(t, standardConfigForTest(), phrase, []ColumnInput{{Text: document}}))
-}
-
-func BenchmarkRepeatedTokenPhraseMiss(b *testing.B) {
-	config := standardConfigForTest()
-	analyzer, err := GetAnalyzer(config)
-	require.NoError(b, err)
-	for _, repetitions := range []int{128, 256, 512} {
-		b.Run(fmt.Sprintf("query-%d-document-%d", repetitions, repetitions*2), func(b *testing.B) {
-			query, err := CompileBooleanQuery(
-				`"`+strings.Repeat("foo ", repetitions)+`never"`,
-				config,
-			)
-			require.NoError(b, err)
-			document := strings.TrimSpace(strings.Repeat("foo ", repetitions*2))
-			doc, err := BuildDocument([]ColumnInput{{Text: document}}, analyzer)
-			require.NoError(b, err)
-			b.ResetTimer()
-			for b.Loop() {
-				query.Match(doc)
-			}
-		})
-	}
 }
 
 type preparationCountingCollator struct {
