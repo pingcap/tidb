@@ -13949,3 +13949,44 @@ fn create_table_default_policy_and_drop_index_hidden_columns_as_go() {
         .execute_write("ALTER TABLE h ADD COLUMN (_V$_idx_0 INT)")
         .unwrap();
 }
+
+/// Go `ddl.Start` -> `detectAndUpdateJobVersion` turns on the global index V1
+/// key format (a single node at once), so a non-unique global index carries
+/// the partition ID in its key and rows of different partitions sharing a
+/// `_tidb_rowid` after EXCHANGE PARTITION keep separate entries (issue
+/// 65289). The node never ran the detection and wrote the legacy key.
+#[test]
+fn global_index_keys_carry_the_partition_after_exchange() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1028)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t (a INT, b INT, PRIMARY KEY (a) NONCLUSTERED)")
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE tp (a INT, b INT, PRIMARY KEY (a) NONCLUSTERED) PARTITION BY RANGE (a) \
+             (PARTITION p0 VALUES LESS THAN (5), PARTITION p1 VALUES LESS THAN (11), \
+             PARTITION p2 VALUES LESS THAN (20))",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO tp (a, b) VALUES (2, 2), (4, 4), (6, 6)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO t (a, b) VALUES (12, 2), (14, 4), (16, 6)")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE tp EXCHANGE PARTITION p2 WITH TABLE t")
+        .unwrap();
+    session
+        .execute_write("CREATE INDEX idx_b ON tp (b) GLOBAL")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM tp USE INDEX (idx_b)"
+        )),
+        [["6"]]
+    );
+}

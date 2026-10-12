@@ -91,6 +91,125 @@ pub trait ClusterDdl: Send + Sync {
     }
 }
 
+/// Go `jobV2FirstVer`: every TiDB at or above it runs job version 2.
+const JOB_V2_FIRST_VER: (u64, u64, u64) = (8, 4, 0);
+/// Go `globalIdxV1FirstVer`: every TiDB at or above it reads the global
+/// index V1 key format (the partition ID in a non-unique global key).
+const GLOBAL_IDX_V1_FIRST_VER: (u64, u64, u64) = (8, 5, 6);
+/// Go `detectJobVerInterval`.
+const DETECT_JOB_VER_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Go `semver.NewVersion` with the pre-release cleared, as
+/// `detectAndUpdateJobVersionOnce` compares it: `MAJOR.MINOR.PATCH`, an
+/// optional `-pre-release` and `+build`.
+fn parse_release_version(text: &str) -> Option<(u64, u64, u64)> {
+    let core = text.split('+').next()?.split('-').next()?;
+    let mut parts = core.split('.');
+    let version = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    parts.next().is_none().then_some(version)
+}
+
+/// Whether Go's detection has nothing left to wait for.
+fn job_version_settled() -> bool {
+    tidb_model::get_job_ver_in_use() == tidb_model::JobVersion::V2
+        && tidb_model::index::get_global_index_v1_supported()
+}
+
+/// Go `ddl.detectAndUpdateJobVersionOnce`: job version 2 once every TiDB in
+/// the cluster is at least 8.4.0, global index V1 once every one is at least
+/// 8.5.6, read from the servers' registered versions.
+fn detect_and_update_job_version_once(
+    server_info: &tidb_domain::serverinfo_syncer::Syncer,
+) -> Result<(), String> {
+    let infos = server_info.all_server_info()?;
+    let mut all_support_v2 = true;
+    let mut all_support_global_idx_v1 = true;
+    for info in infos.values() {
+        let tidb_version = &info.static_info.version_info.version;
+        let Some(index) = tidb_version.find(tidb_mysql::consts::VersionSeparator) else {
+            all_support_v2 = false;
+            all_support_global_idx_v1 = false;
+            break;
+        };
+        let release = tidb_version[index + tidb_mysql::consts::VersionSeparator.len()..]
+            .trim_start_matches('v');
+        let Some(version) = parse_release_version(release) else {
+            all_support_v2 = false;
+            all_support_global_idx_v1 = false;
+            break;
+        };
+        if version < JOB_V2_FIRST_VER {
+            all_support_v2 = false;
+        }
+        if version < GLOBAL_IDX_V1_FIRST_VER {
+            all_support_global_idx_v1 = false;
+        }
+        if !all_support_v2 && !all_support_global_idx_v1 {
+            break;
+        }
+    }
+    let target = if all_support_v2 {
+        tidb_model::JobVersion::V2
+    } else {
+        tidb_model::JobVersion::V1
+    };
+    if tidb_model::get_job_ver_in_use() != target {
+        tidb_model::set_job_ver_in_use(target);
+    }
+    if tidb_model::index::get_global_index_v1_supported() != all_support_global_idx_v1 {
+        tidb_model::index::set_global_index_v1_supported(all_support_global_idx_v1);
+    }
+    Ok(())
+}
+
+/// Go `ddl.detectAndUpdateJobVersion`: without etcd (a single node) job
+/// version 2 and global index V1 hold at once; otherwise detect now and, while
+/// a peer is older, re-detect every `detectJobVerInterval` until both hold.
+fn detect_and_update_job_version(
+    has_etcd: bool,
+    server_info: &Arc<tidb_domain::serverinfo_syncer::Syncer>,
+) -> Option<(Sender<()>, JoinHandle<()>)> {
+    if !has_etcd {
+        tidb_model::set_job_ver_in_use(tidb_model::JobVersion::V2);
+        tidb_model::index::set_global_index_v1_supported(true);
+        return None;
+    }
+    if let Err(error) = detect_and_update_job_version_once(server_info) {
+        eprintln!(
+            "{{\"event\":\"detect_job_version_failed\",\"error\":{}}}",
+            serde_json::to_string(&error).unwrap_or_default()
+        );
+    }
+    if job_version_settled() {
+        return None;
+    }
+    let (stop, stopped) = channel::<()>();
+    let server_info = Arc::clone(server_info);
+    let worker = std::thread::Builder::new()
+        .name("ddl-detect-job-version".to_owned())
+        .spawn(move || loop {
+            match stopped.recv_timeout(DETECT_JOB_VER_INTERVAL) {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                _ => return,
+            }
+            if let Err(error) = detect_and_update_job_version_once(&server_info) {
+                eprintln!(
+                    "{{\"event\":\"detect_job_version_failed\",\"error\":{}}}",
+                    serde_json::to_string(&error).unwrap_or_default()
+                );
+            }
+            if job_version_settled() {
+                return;
+            }
+        })
+        .ok()?;
+    Some((stop, worker))
+}
+
 const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
 const ADDING_DDL_JOB_NOTIFY_KEY: &[u8] = b"/tidb/ddl/add_ddl_job_general";
 const DDL_SCHEDULER_INTERVAL: Duration = Duration::from_secs(1);
@@ -438,6 +557,9 @@ where
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     min_job_id_stop: Sender<()>,
     min_job_id_worker: Option<JoinHandle<()>>,
+    /// Go `detectAndUpdateJobVersion`'s background re-detection, while some
+    /// peer is still older than job version 2 / global index V1.
+    job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
 }
 
 impl<C, L, P> RealClusterDdl<C, L, P>
@@ -492,6 +614,13 @@ where
         min_job_id_refresher: Arc<MinJobIdRefresher>,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
+        // Go `ddl.Start`: on the classic kernel, settle the job version and
+        // the global index V1 key format before any job is submitted.
+        let job_version_detector = if tidb_config::kerneltype::is_classic() {
+            detect_and_update_job_version(notifier.is_some(), &server_info)
+        } else {
+            None
+        };
         let server_state_context = ServerStateContext::background();
         let server_state: Arc<dyn Syncer> = match notifier.as_ref() {
             Some(etcd) => Arc::new(EtcdSyncer::new(
@@ -583,6 +712,7 @@ where
             min_job_id_refresher,
             min_job_id_stop,
             min_job_id_worker: Some(min_job_id_worker),
+            job_version_detector,
         })
     }
 
@@ -2099,6 +2229,20 @@ mod schema_sync_tests {
         assert!(ddl.update_replica_status(8, true).is_err());
     }
 
+    /// Go `detectAndUpdateJobVersionOnce` reads `semver.NewVersion` with
+    /// the pre-release cleared.
+    #[test]
+    fn release_versions_parse_as_go_semver_compares_them() {
+        assert_eq!(parse_release_version("8.5.6"), Some((8, 5, 6)));
+        assert_eq!(
+            parse_release_version("8.4.0-this-is-a-placeholder"),
+            Some((8, 4, 0))
+        );
+        assert_eq!(parse_release_version("9.0.0-beta.1+build"), Some((9, 0, 0)));
+        assert_eq!(parse_release_version("8.5"), None);
+        assert!(parse_release_version("8.5.5").unwrap() < GLOBAL_IDX_V1_FIRST_VER);
+    }
+
     #[test]
     fn closed_server_state_watch_rewatches_and_reloads() {
         let rewatched = std::sync::atomic::AtomicBool::new(false);
@@ -2372,6 +2516,10 @@ where
         self.server_state_context.cancel();
         let _ = self.min_job_id_stop.send(());
         if let Some(worker) = self.min_job_id_worker.take() {
+            let _ = worker.join();
+        }
+        if let Some((stop, worker)) = self.job_version_detector.take() {
+            let _ = stop.send(());
             let _ = worker.join();
         }
         self.owner.close();
