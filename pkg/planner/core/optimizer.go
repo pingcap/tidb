@@ -1324,7 +1324,7 @@ func hasUsableOverlongTypeSizeStats(statsInfo *property.StatsInfo, overlongColum
 			return false
 		}
 	}
-	return false
+	return true
 }
 
 // estimateReusableChunkRowsForOverlongType returns the row bound used by the reusable-chunk memory
