@@ -184,11 +184,11 @@ type TableReaderExecutor struct {
 	keepOrder bool
 	desc      bool
 	// byItems only for partition table with orderBy + pushedLimit
-	byItems   []*util.ByItems
-	paging    bool
+	byItems []*util.ByItems
+	paging  bool
 	// firstRowPerRange makes each key range its own task; see PhysicalTableReader.FirstRowPerRange.
 	firstRowPerRange bool
-	storeType kv.StoreType
+	storeType        kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter (both conditions in PhysicalSelection and LateMaterializationFilterCondition in PhysicalTableScan)
 	// If true, we will need to revise the dagPB (fill correlated column value in filter) each time call Open().
 	corColInFilter bool
