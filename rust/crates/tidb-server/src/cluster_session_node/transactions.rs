@@ -87,6 +87,41 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
     SqlQueryError::new(error.code, error.state, error.message)
 }
 
+/// The commit callback's `TxnInfo` (client-go `txn.go`'s `CommitHook`
+/// argument): the timestamps and protocol of a transaction that committed,
+/// which Go records as `@@tidb_last_txn_info`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommittedTxnInfo {
+    /// The transaction's start timestamp.
+    pub start_ts: u64,
+    /// The timestamp it committed at.
+    pub commit_ts: u64,
+    /// client-go's `txn_commit_mode`: `2pc`, `async_commit` or `1pc`.
+    pub commit_mode: &'static str,
+}
+
+impl CommittedTxnInfo {
+    /// The info of a COMMITTED outcome; any other outcome committed nothing.
+    #[must_use]
+    pub fn from_outcome(
+        outcome: &tidb_txnkv::transaction::OptimisticCommitOutcome,
+    ) -> Option<Self> {
+        let tidb_txnkv::transaction::OptimisticCommitOutcome::Committed(committed) = outcome else {
+            return None;
+        };
+        let receipt = &committed.receipt;
+        Some(Self {
+            start_ts: receipt.start_ts,
+            commit_ts: receipt.commit_ts,
+            commit_mode: match receipt.commit_protocol {
+                tidb_txnkv::transaction::CommittedProtocol::TwoPhase => "2pc",
+                tidb_txnkv::transaction::CommittedProtocol::AsyncCommit => "async_commit",
+                tidb_txnkv::transaction::CommittedProtocol::OnePc => "1pc",
+            },
+        })
+    }
+}
+
 /// Everything a connection needs from the cluster's transaction tier: one
 /// fresh read snapshot per autocommit statement, one publication of its staged
 /// writes, and the single transaction an explicit `BEGIN` holds open.
@@ -187,7 +222,7 @@ pub trait ClusterTransactions: Send + Sync {
         read_ts: Option<u64>,
         resource_group: &str,
         options: SessionTransactionOptions,
-    ) -> Result<(), SqlQueryError>;
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError>;
 
     /// [`Self::commit`] with the session's schema lease checker bound to the
     /// publication (Go `SetOptionsBeforeCommit`); a tier with no validator
@@ -200,7 +235,7 @@ pub trait ClusterTransactions: Send + Sync {
         _schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
         observer: Option<tidb_session::process::ProcessTransactionObserver>,
-    ) -> Result<(), SqlQueryError> {
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         if let (Some(observer), Some(ts)) = (observer, read_ts) {
             observer.activated(ts);
         }
@@ -221,6 +256,7 @@ pub trait ClusterTransactions: Send + Sync {
             error => SqlQueryError::unknown(error.to_string()),
         })?;
         self.commit(&buffer, Some(read_ts), resource_group, options)
+            .map(|_| ())
     }
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
@@ -352,7 +388,10 @@ pub trait OpenClusterTransaction: Send {
     ///
     /// The error is the client-visible one: a transaction whose prewrite lost
     /// the race against a newer commit reports 9007, as Go's does.
-    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError>;
+    fn commit(
+        self: Box<Self>,
+        buffer: &MutationBuffer,
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError>;
 
     /// Ends the transaction without publishing anything.
     fn rollback(self: Box<Self>) -> Result<(), String>;
@@ -1262,7 +1301,7 @@ where
         read_ts: Option<u64>,
         resource_group: &str,
         options: SessionTransactionOptions,
-    ) -> Result<(), SqlQueryError> {
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         self.commit_with_schema_lease(buffer, read_ts, resource_group, None, options, None)
     }
 
@@ -1274,11 +1313,11 @@ where
         schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
         observer: Option<tidb_session::process::ProcessTransactionObserver>,
-    ) -> Result<(), SqlQueryError> {
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         // Go's autocommit `finishStmt` on a statement that staged nothing
         // publishes nothing; skip the opener and protocol lookups too.
         if buffer.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let opener = self.opener_for_resource_group(resource_group);
         commit_staged_buffer(
@@ -1294,7 +1333,7 @@ where
                 }
             },
         )
-        .map(|_| ())
+        .map(|outcome| outcome.as_ref().and_then(CommittedTxnInfo::from_outcome))
         .map_err(sql_error)
     }
 
@@ -1422,9 +1461,12 @@ where
         SessionTransaction::snapshot_for(self, locking).map_err(|error| error.to_string())
     }
 
-    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
+    fn commit(
+        self: Box<Self>,
+        buffer: &MutationBuffer,
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         SessionTransaction::commit(*self, buffer)
-            .map(|_| ())
+            .map(|outcome| outcome.as_ref().and_then(CommittedTxnInfo::from_outcome))
             .map_err(sql_error)
     }
 
@@ -1557,7 +1599,7 @@ mod tests {
             _read_ts: Option<u64>,
             _resource_group: &str,
             _options: SessionTransactionOptions,
-        ) -> Result<(), SqlQueryError> {
+        ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
             panic!("unused in batch-get forwarding test")
         }
 

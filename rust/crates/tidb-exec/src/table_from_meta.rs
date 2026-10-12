@@ -617,6 +617,8 @@ pub fn cluster_table(
     // the high bits of every `_tidb_rowid`, and `PreSplitRegions`.
     kv_table.set_shard_row_id_bits(table.shard_row_id_bits);
     kv_table.set_pre_split_regions(table.pre_split_regions);
+    // Go `TableInfo.Compression`, which `SHOW CREATE TABLE` prints.
+    kv_table.set_compression(table.compression.clone());
     // Go `TableInfo.TTLInfo`, which `SHOW CREATE TABLE` prints.
     kv_table.set_ttl_info(table.ttl_info.as_ref().map(|info| info.read().clone()));
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves

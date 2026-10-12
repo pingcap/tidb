@@ -279,6 +279,7 @@ impl Session {
         }
         self.prepared_params = None;
         self.statement_boundary_open = true;
+        self.parse_warnings = None;
         let previous = std::mem::take(&mut self.warnings);
         self.pending_observation_parse = None;
         let parse_started = std::time::Instant::now();
@@ -393,9 +394,24 @@ impl Session {
     /// routed statement is never SHOW WARNINGS.
     pub fn begin_routed_statement_warnings(&mut self) {
         self.restore_statement_variables();
+        // Go's `ResetContextOfStmt` runs once per statement. A text statement
+        // the front end parsed already reset here
+        // (`parse_at_statement_boundary`), and the buffer now holds the
+        // parser's own warnings for it, which the statement must keep.
+        if std::mem::take(&mut self.statement_boundary_open) {
+            return;
+        }
         self.snapshot_previous_warning_counts();
         self.warnings.clear();
         self.in_show_warning = false;
+    }
+
+    /// The end of a routed statement: Go's `clientConn.handleStmt` appends
+    /// the parser's warnings after the statement's own, and the boundary the
+    /// parse opened closes with the statement.
+    pub(crate) fn finish_routed_statement_warnings(&mut self, succeeded: bool) {
+        self.statement_boundary_open = false;
+        self.move_parse_warnings_behind_execution(succeeded);
     }
 
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {

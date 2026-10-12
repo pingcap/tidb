@@ -6007,7 +6007,8 @@ impl ClusterServerSession {
                 }
                 let bindings_changed = self.binding_records_changed();
                 return match transaction.commit(&self.buffer) {
-                    Ok(()) => {
+                    Ok(committed) => {
+                        self.record_committed_txn_info(committed);
                         self.refresh_committed_bindings(bindings_changed);
                         self.record_write_details(write_details);
                         self.session.publish_table_delta();
@@ -6093,7 +6094,8 @@ impl ClusterServerSession {
             crate::session_transaction::transaction_options(self.session.vars()),
             self.session.transaction_observer(),
         ) {
-            Ok(()) => {
+            Ok(committed) => {
+                self.record_committed_txn_info(committed);
                 self.refresh_committed_bindings(bindings_changed);
                 Ok(())
             }
@@ -6101,6 +6103,19 @@ impl ClusterServerSession {
                 self.buffer.reset();
                 Err(error)
             }
+        }
+    }
+
+    /// Go's `kv.CommitHook`: a transaction that committed records its own
+    /// timestamps as `@@tidb_last_txn_info`. One that published nothing
+    /// leaves what the statement recorded.
+    fn record_committed_txn_info(&self, committed: Option<transactions::CommittedTxnInfo>) {
+        if let Some(committed) = committed {
+            self.session.record_committed_txn_info(
+                committed.start_ts,
+                committed.commit_ts,
+                committed.commit_mode,
+            );
         }
     }
 
@@ -6157,7 +6172,8 @@ impl ClusterServerSession {
             .with_label_values(&[txn_mode, num_label, "general"])
             .observe(txn_statement_count);
         match commit_result {
-            Ok(()) => {
+            Ok(committed) => {
+                self.record_committed_txn_info(committed);
                 self.refresh_committed_bindings(bindings_changed);
                 self.record_write_details(write_details);
                 self.session.publish_table_delta();

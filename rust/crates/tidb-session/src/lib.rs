@@ -1453,8 +1453,15 @@ impl Session {
     /// and pipeline fields are their zero values -- the same zeros Go's
     /// struct marshals for a plain transaction.
     pub(crate) fn set_last_txn_info_committed(&self, start_ts: u64, commit_ts: u64) {
+        self.record_committed_txn_info(start_ts, commit_ts, "2pc");
+    }
+
+    /// Go's `kv.CommitHook` (`sessiontxn/isolation/base.go:510`): the cluster
+    /// transaction's own start and commit timestamps and the protocol that
+    /// committed it, recorded once the commit is done.
+    pub fn record_committed_txn_info(&self, start_ts: u64, commit_ts: u64, commit_mode: &str) {
         *self.last_txn_info.borrow_mut() = format!(
-            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"2pc\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
+            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"{commit_mode}\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
         );
     }
 

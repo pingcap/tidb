@@ -13040,3 +13040,95 @@ fn expression_indexes_on_one_expression_cover_each_other_as_go_does() {
         [["a", "MUL"], ["b", ""]]
     );
 }
+
+/// Go `handleTableOptions` records COMPRESSION and ignores every option
+/// outside its switch, and the parser's "parsed but ignored" warning reaches
+/// SHOW WARNINGS after the statement's own (`clientConn.handleStmt`). This
+/// node refused the options, and its routed DDL reset the warning buffer a
+/// second time, dropping the parser's warnings.
+#[test]
+fn ignored_table_options_warn_through_the_parser_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1011)).unwrap();
+    // The connection's COM_QUERY order: parse at the statement boundary,
+    // then the write.
+    let sql = "CREATE TABLE test.a (id INT PRIMARY KEY) PAGE_CHECKSUM=1 COMPRESSION='zlib'";
+    let parsed = session.parse_statement(sql).unwrap().unwrap();
+    session.execute_write_parsed(sql, &parsed).unwrap();
+    let warnings = displayed(rows(&mut session, "SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0][..2], ["Warning", "1064"]);
+    assert!(
+        warnings[0][2]
+            .contains("The PAGE_CHECKSUM option is parsed but ignored by all storage engines."),
+        "{warnings:?}"
+    );
+    let sql = "CREATE TABLE test.b (a INT)";
+    let parsed = session.parse_statement(sql).unwrap().unwrap();
+    session.execute_write_parsed(sql, &parsed).unwrap();
+    assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.a"));
+    assert!(
+        created[0][1].ends_with(" COMPRESSION='zlib'"),
+        "{}",
+        created[0][1]
+    );
+}
+
+/// Go's `kv.CommitHook` records the cluster transaction's own start and
+/// commit timestamps as `@@tidb_last_txn_info`, so a stale read AS OF that
+/// commit_ts sees the commit. This node reported timestamps from a local
+/// counter that no transaction committed at.
+#[test]
+fn last_txn_info_reports_the_cluster_commit_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1012)).unwrap();
+    rows(&mut session, "CREATE TABLE test.t1 (a INT)");
+    session
+        .execute_write("INSERT INTO test.t1 VALUES (1)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO test.t1 VALUES (2)")
+        .unwrap();
+    rows(
+        &mut session,
+        "SET @c = json_extract(@@tidb_last_txn_info, '$.commit_ts')",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM test.t1 AS OF TIMESTAMP @c"
+        )),
+        [["2"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM test.t1 AS OF TIMESTAMP cast(@c AS UNSIGNED) - 1"
+        )),
+        [["1"]]
+    );
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO test.t1 VALUES (3)")
+        .unwrap();
+    session.control_transaction("COMMIT").unwrap();
+    let info = displayed(rows(
+        &mut session,
+        "SELECT json_extract(@@tidb_last_txn_info, '$.start_ts') < \
+         json_extract(@@tidb_last_txn_info, '$.commit_ts'), \
+         json_extract(@@tidb_last_txn_info, '$.txn_commit_mode')",
+    ));
+    assert_eq!(info[0][0], "1", "{info:?}");
+    rows(
+        &mut session,
+        "SET @c = json_extract(@@tidb_last_txn_info, '$.commit_ts')",
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT count(*) FROM test.t1 AS OF TIMESTAMP @c"
+        )),
+        [["3"]]
+    );
+}

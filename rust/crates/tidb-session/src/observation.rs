@@ -378,6 +378,7 @@ impl Session {
         }
         self.routed_statement_observation_depth -= 1;
         if self.routed_statement_observation_depth == 0 {
+            self.finish_routed_statement_warnings(succeeded);
             self.publish_statement_observation(succeeded, affected_rows, 0);
             self.refresh_process_status();
         }

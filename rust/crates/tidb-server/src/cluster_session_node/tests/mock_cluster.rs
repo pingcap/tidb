@@ -10,7 +10,9 @@
 //! failure is only visible as a count: a leaked read handle, a second
 //! publication, a snapshot taken twice.
 
-use super::super::transactions::{PendingClusterSnapshot, PendingClusterTransaction};
+use super::super::transactions::{
+    CommittedTxnInfo, PendingClusterSnapshot, PendingClusterTransaction,
+};
 use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -417,11 +419,11 @@ impl ClusterTransactions for MockTransactions {
         read_ts: Option<u64>,
         resource_group: &str,
         _options: SessionTransactionOptions,
-    ) -> Result<(), SqlQueryError> {
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         self.0.record_resource_group(resource_group);
         let staged = buffer.snapshot();
         if staged.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         if self.0.fail_next_region_commit.swap(false, Ordering::AcqRel) {
             let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
@@ -431,7 +433,9 @@ impl ClusterTransactions for MockTransactions {
                     detail: "regionMiss backoffer exhausted".to_owned(),
                 },
             });
-            return commit_outcome_to_sql_error(&outcome).map_err(sql_error);
+            return commit_outcome_to_sql_error(&outcome)
+                .map(|()| None)
+                .map_err(sql_error);
         }
         if self
             .0
@@ -445,7 +449,9 @@ impl ClusterTransactions for MockTransactions {
                         .to_owned(),
                 },
             });
-            return commit_outcome_to_sql_error(&outcome).map_err(sql_error);
+            return commit_outcome_to_sql_error(&outcome)
+                .map(|()| None)
+                .map_err(sql_error);
         }
         // Autocommit publishes at the timestamp the statement READ at, which is
         // what puts a commit that landed in between inside TiKV's conflict
@@ -463,7 +469,7 @@ impl ClusterTransactions for MockTransactions {
         let outcome = self.0.publish(staged, start_ts);
         commit_outcome_to_sql_error(&outcome).map_err(sql_error)?;
         buffer.reset();
-        Ok(())
+        Ok(CommittedTxnInfo::from_outcome(&outcome))
     }
 
     fn begin(
@@ -550,10 +556,13 @@ impl OpenClusterTransaction for MockSessionTransaction {
         }))
     }
 
-    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
+    fn commit(
+        self: Box<Self>,
+        buffer: &MutationBuffer,
+    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         let staged = buffer.snapshot();
         if staged.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         for key in buffer.presume_not_exists_keys() {
             if self.data.contains_key(&key) {
@@ -571,7 +580,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
         let outcome = self.cluster.publish(staged, self.start_ts);
         commit_outcome_to_sql_error(&outcome).map_err(sql_error)?;
         buffer.reset();
-        Ok(())
+        Ok(CommittedTxnInfo::from_outcome(&outcome))
     }
 
     fn rollback(self: Box<Self>) -> Result<(), String> {

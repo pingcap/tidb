@@ -349,6 +349,7 @@ pub fn build_table_info_in_schema(
     let mut auto_inc_id = 0i64;
     let mut auto_rand_id = 0i64;
     let mut auto_id_cache = 0i64;
+    let mut compression = String::new();
     let mut shard_row_id_bits = None;
     let mut pre_split_regions = None;
     for option in &create.table_options {
@@ -373,14 +374,18 @@ pub fn build_table_info_in_schema(
                 }
                 auto_id_cache = parsed as i64;
             }
-            TableOption::AutoIncrement(value) => {
+            // Go `handleTableOptions`: `tbInfo.Compression = op.StrValue`.
+            TableOption::Compression(value) => compression = value.clone(),
+            // Go parses `FORCE AUTO_INCREMENT` into the same
+            // `TableOptionAutoIncrement`, and CREATE TABLE reads only its value.
+            TableOption::AutoIncrement(value) | TableOption::ForceAutoIncrement(value) => {
                 auto_inc_id = value.parse().map_err(|_| {
                     DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
                         "CREATE TABLE AUTO_INCREMENT = {value} is not an integer this node can store"
                     ))
                 })?;
             }
-            TableOption::AutoRandomBase(value) => {
+            TableOption::AutoRandomBase(value) | TableOption::ForceAutoRandomBase(value) => {
                 auto_rand_id = value.parse::<u64>().map_err(|_| {
                     DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
                         "CREATE TABLE AUTO_RANDOM_BASE = {value} is not an integer this node can store"
@@ -421,12 +426,19 @@ pub fn build_table_info_in_schema(
                     )
                 })?);
             }
-            other => {
+            // Go `handleTableOptions`' affinity arm needs
+            // `model.NewTableAffinityInfoWithLevel` and the affinity package
+            // behind it, not yet ported.
+            TableOption::Affinity(_) => {
                 return Err(DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,
-                    format!("CREATE TABLE option {other:?} is not supported by this node"),
+                    "CREATE TABLE option AFFINITY is not supported by this node",
                 ))
             }
+            // Every other option is outside Go `handleTableOptions`' switch:
+            // MySQL compatibility it accepts and records nowhere (the parser
+            // already warned about the ones it ignores).
+            _ => {}
         }
     }
     let (table_charset, table_collate) = resolve_charset_collation(
@@ -682,6 +694,7 @@ pub fn build_table_info_in_schema(
     }
     table.auto_inc_id = auto_inc_id;
     table.auto_id_cache = auto_id_cache;
+    table.compression = compression;
     table.auto_rand_id = auto_rand_id;
     // Go `handleTableOptions`' last step (`shardingBits`): PRE_SPLIT_REGIONS
     // never exceeds the table's sharding bits, SHARD_ROW_ID_BITS else
