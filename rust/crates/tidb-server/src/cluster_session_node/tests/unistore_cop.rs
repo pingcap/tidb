@@ -14462,3 +14462,67 @@ fn bit_defaults_keep_their_raw_bytes_across_the_stored_catalog() {
         [["1D5E4CF7F", "FFEEDDCCBB", "5"]]
     );
 }
+
+/// Go judges `HasCharset(colDef.Tp)` for a COLUMN `COLLATE` option on the
+/// parsed type, which still carries `BinaryFlag` for a `BINARY` attribute: the
+/// option is then not applied and `OverwriteCollationWithBinaryFlag`'s
+/// `utf8_bin` stands. An explicit CHARACTER SET plus COLLATE ignores BINARY.
+#[test]
+fn binary_attribute_with_a_collate_option_keeps_the_charsets_bin_collation() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1043)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for (create, expected) in [
+        (
+            "CREATE TABLE bc1 (a VARCHAR(10) BINARY COLLATE utf8_general_ci)",
+            "CHARACTER SET utf8 COLLATE utf8_bin",
+        ),
+        (
+            "CREATE TABLE bc2 (a VARCHAR(10) BINARY CHARSET utf8 COLLATE utf8_general_ci)",
+            "CHARACTER SET utf8 COLLATE utf8_general_ci",
+        ),
+        (
+            "CREATE TABLE bc3 (a VARCHAR(10) BINARY CHARSET utf8)",
+            "CHARACTER SET utf8 COLLATE utf8_bin",
+        ),
+    ] {
+        session.execute_write(create).unwrap();
+        let table = create.split_whitespace().nth(2).unwrap();
+        let shown = displayed(rows(&mut session, &format!("SHOW CREATE TABLE {table}")));
+        assert!(
+            shown[0][1].contains(&format!("`a` varchar(10) {expected} DEFAULT NULL")),
+            "{create}: {}",
+            shown[0][1]
+        );
+    }
+}
+
+/// Go's `CompactTableStmt` validates the table and partition names and, with
+/// no TiFlash replica, answers a warning; it does not change the catalog. The
+/// production node refused it as an unroutable catalog change.
+#[test]
+fn compact_table_without_a_replica_warns_instead_of_refusing() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1044)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session.execute_write("CREATE TABLE ct (a INT)").unwrap();
+    session
+        .execute_write("ALTER TABLE ct COMPACT TIFLASH REPLICA")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1105",
+            "compact skipped: no tiflash replica in the table"
+        ]]
+    );
+    let error = session
+        .execute_write("ALTER TABLE ct COMPACT PARTITION p1 TIFLASH REPLICA")
+        .unwrap_err();
+    assert_eq!(error.code, 1105);
+    let error = session
+        .execute_write("ALTER TABLE missing COMPACT")
+        .unwrap_err();
+    assert_eq!(error.code, 1146);
+}

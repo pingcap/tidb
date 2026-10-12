@@ -812,6 +812,11 @@ impl Session {
             // Go's hypothetical indexes and TiFlash replicas are
             // `SessionVars` state: no job runs and no schema version moves.
             Stmt::Ddl(ddl) if is_hypo_ddl(ddl) => StoredStateChange::None,
+            // `ALTER TABLE ... COMPACT` is Go's separate `CompactTableStmt`
+            // (a `DDLNode` only in the parser's spelling): it validates the
+            // table and partition names and, without a TiFlash replica,
+            // answers a warning. It never writes the catalog.
+            Stmt::Ddl(ddl) if is_compact_table(ddl) => StoredStateChange::None,
             Stmt::Ddl(_) => StoredStateChange::Schema,
             // `ADMIN CLEANUP TABLE LOCK` is a DDL job (`ActionUnlockTable`).
             Stmt::Admin(admin)
@@ -908,6 +913,19 @@ impl Session {
             }
         }
     }
+}
+
+/// Go's `CompactTableStmt`, which the parser spells as a lone
+/// `ALTER TABLE ... COMPACT` action.
+pub(crate) fn is_compact_table(ddl: &tidb_ast::DdlStmt) -> bool {
+    matches!(
+        ddl,
+        tidb_ast::DdlStmt::AlterTable(alter)
+            if matches!(
+                alter.actions.as_slice(),
+                [tidb_ast::AlterTableAction::Compact { .. }]
+            )
+    )
 }
 
 /// The statements Go answers from `SessionVars` alone: `CREATE INDEX ... TYPE

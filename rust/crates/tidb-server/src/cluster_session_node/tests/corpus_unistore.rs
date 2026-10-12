@@ -391,6 +391,13 @@ impl UnistoreConnections {
 impl ReplayBackend for UnistoreConnections {
     fn open(topic: &str) -> Result<Self, String> {
         recording_server_time_zone();
+        // The corpus was recorded by a server started with
+        // `tests/integrationtest/config.toml` (`stats-lease = "0"`, table
+        // locks enabled, new charset and expression indexes allowed): that
+        // file is the environment the recorded answers belong to.
+        let recording_config =
+            difftest_result_tests::replay::integrationtest_dir().join("config.toml");
+        let recording_config = recording_config.to_string_lossy().into_owned();
         let config = crate::node_config::NodeConfig::parse([
             "tidb-server",
             "--store",
@@ -399,6 +406,8 @@ impl ReplayBackend for UnistoreConnections {
             "0",
             "--auth-file",
             "/dev/null",
+            "--config",
+            recording_config.as_str(),
         ])
         .map_err(|error| format!("node config: {error:?}"))?;
         let users = Arc::new(

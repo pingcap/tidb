@@ -2195,8 +2195,15 @@ fn build_column(
                 }
             }
             // Already folded into the charset/collation resolution above.
+            // Go `field_types.HasCharset(colDef.Tp)` is judged on the PARSED
+            // type, which still carries `BinaryFlag` for a `BINARY` attribute
+            // (`processColumnFlags` strips it only afterwards): a string
+            // column with `BINARY COLLATE utf8_general_ci` keeps the `utf8_bin`
+            // that `OverwriteCollationWithBinaryFlag` settled.
             ColumnOption::Collate(collate) => {
-                if field_type.has_charset() {
+                let binary_modified = column.ty.binary
+                    && !matches!(field_type.code(), FieldTypeCode::Enum | FieldTypeCode::Set);
+                if field_type.has_charset() && !binary_modified {
                     field_type.set_collation_name(collate.clone());
                 }
             }
