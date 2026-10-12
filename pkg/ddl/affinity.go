@@ -31,6 +31,8 @@ import (
 
 // GetTableAffinityGroupID returns the affinity group ID for a table, including
 // the keyspace ID when the table uses a NextGen keyspace codec.
+// Classic format: _tidb_t_{tableID}.
+// NextGen format: _tidb_ks{keyspaceID}_t_{tableID}.
 func GetTableAffinityGroupID(codec tikv.Codec, tableID int64) string {
 	if label.UseKeyspaceAwareRules(codec) {
 		return fmt.Sprintf("_tidb_ks%d_t_%d", codec.GetKeyspaceID(), tableID)
@@ -40,6 +42,8 @@ func GetTableAffinityGroupID(codec tikv.Codec, tableID int64) string {
 
 // GetPartitionAffinityGroupID returns the affinity group ID for a partition,
 // including the keyspace ID when the partition uses a NextGen keyspace codec.
+// Classic format: _tidb_pt_{tableID}_p{partitionID}.
+// NextGen format: _tidb_ks{keyspaceID}_pt_{tableID}_p{partitionID}.
 func GetPartitionAffinityGroupID(codec tikv.Codec, tableID, partitionID int64) string {
 	if label.UseKeyspaceAwareRules(codec) {
 		return fmt.Sprintf("_tidb_ks%d_pt_%d_p%d", codec.GetKeyspaceID(), tableID, partitionID)

@@ -86,6 +86,18 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 		require.Equal(t, "_tidb_ks42_pt_123_p456", partitionGroupID)
 		require.NotEqual(t, tableGroupID, ddl.GetTableAffinityGroupID(otherCodec, tableID))
 		require.NotEqual(t, partitionGroupID, ddl.GetPartitionAffinityGroupID(otherCodec, tableID, partitionID))
+
+		// PD limits group IDs to 64 characters from this charset. Check the
+		// longest format with the maximum keyspace, table, and partition IDs.
+		maxCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 16777215},
+		})
+		require.NoError(t, err)
+		const maxID int64 = 1<<63 - 1
+		maxGroupID := ddl.GetPartitionAffinityGroupID(maxCodec, maxID, maxID)
+		require.Equal(t, "_tidb_ks16777215_pt_9223372036854775807_p9223372036854775807", maxGroupID)
+		require.Len(t, maxGroupID, 60)
+		require.Regexp(t, `^[-A-Za-z0-9_]{1,64}$`, maxGroupID)
 	} else {
 		require.Equal(t, ddl.GetTableAffinityGroupID(nil, tableID), tableGroupID)
 		require.Equal(t, ddl.GetPartitionAffinityGroupID(nil, tableID, partitionID), partitionGroupID)
