@@ -42,10 +42,6 @@ go_test(
     ],
     embed = [":util"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 4,
-=======
-    shard_count = 7,
->>>>>>> a40e9d6e76f (server: fix data race between connection liveness probe and packet read (#71855))
+    shard_count = 8,
     deps = ["@com_github_stretchr_testify//require"],
 )
