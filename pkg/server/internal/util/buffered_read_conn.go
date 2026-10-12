@@ -17,7 +17,6 @@ package util
 import (
 	"bufio"
 	"net"
-	"reflect"
 	"syscall"
 )
 
@@ -62,10 +61,20 @@ func (conn BufferedReadConn) IsAlive() int {
 	return probeConnAlive(sc)
 }
 
-// unwrapSyscallConn returns a syscall.Conn for c so that the peer-liveness probe
-// can work on the underlying file descriptor. TiDB wraps the raw socket with
-// BufferedReadConn and, when TLS is enabled, with a *tls.Conn, so unwrap those
-// wrappers before giving up. It returns nil when no probed connection is found.
+// underlayConn is implemented by net.Conn wrappers that can hand back the
+// net.Conn they wrap: *tls.Conn and, since go-proxyprotocol v1.0.8, the
+// PROXY-protocol conn. Naming the method the same as *crypto/tls.Conn lets a
+// single unwrap rule cover every wrapper.
+type underlayConn interface {
+	NetConn() net.Conn
+}
+
+// unwrapSyscallConn returns a syscall.Conn for conn so that the peer-liveness
+// probe can work on the underlying file descriptor. TiDB wraps the raw socket
+// with BufferedReadConn and, when TLS or the PROXY protocol is enabled, with a
+// *tls.Conn or the PROXY-protocol conn. Both provide an underlayConn, so unwrap
+// through that shared interface until a syscall.Conn is reached. It returns nil
+// when no probed connection is found.
 func unwrapSyscallConn(conn net.Conn) syscall.Conn {
 	c := conn
 	for depth := 0; c != nil && depth < 16; depth++ {
@@ -73,45 +82,12 @@ func unwrapSyscallConn(conn net.Conn) syscall.Conn {
 			return sc
 		}
 		switch v := c.(type) {
-		case interface{ NetConn() net.Conn }: // *tls.Conn
+		case underlayConn:
 			c = v.NetConn()
 		case *BufferedReadConn:
 			c = v.Conn
 		default:
-			// Third-party wrappers such as the PROXY-protocol conn embed a
-			// net.Conn without promoting SyscallConn or NetConn, so they are
-			// not caught by the cases above. Unwrap the embedded field when
-			// one is present; otherwise the fd is not reachable.
-			c = embeddedConn(c)
-			if c == nil {
-				return nil
-			}
-		}
-	}
-	return nil
-}
-
-// embeddedConn returns the net.Conn embedded in c, if any. Some third-party
-// net.Conn wrappers (for example the PROXY-protocol conn used when
-// proxy-protocol is enabled) embed a net.Conn rather than forwarding
-// SyscallConn or NetConn, so unwrapping that field is the only way to reach the
-// underlying file descriptor. It returns nil when c is not such a wrapper.
-func embeddedConn(c net.Conn) net.Conn {
-	v := reflect.ValueOf(c)
-	if v.Kind() != reflect.Ptr || v.IsNil() {
-		return nil
-	}
-	v = v.Elem()
-	if v.Kind() != reflect.Struct {
-		return nil
-	}
-	for i := range v.NumField() {
-		f := v.Field(i)
-		if !f.CanInterface() {
-			continue
-		}
-		if nc, ok := f.Interface().(net.Conn); ok && nc != nil {
-			return nc
+			return nil
 		}
 	}
 	return nil
