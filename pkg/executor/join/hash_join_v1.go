@@ -127,6 +127,11 @@ type HashJoinV1Exec struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinV1Exec) Close() error {
+	defer func() {
+		for _, w := range e.ProbeWorkers {
+			w.Joiner.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+		}
+	}()
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -199,6 +204,9 @@ func (e *HashJoinV1Exec) Open(ctx context.Context) error {
 
 // OpenSelf opens join itself and initializes the hash join context.
 func (e *HashJoinV1Exec) OpenSelf() error {
+	for _, w := range e.ProbeWorkers {
+		w.Joiner.resetJoinedRows(e.RuntimeStats() != nil)
+	}
 	e.Prepared = false
 	if e.HashJoinCtxV1.memTracker != nil {
 		e.HashJoinCtxV1.memTracker.Reset()

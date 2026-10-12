@@ -191,6 +191,7 @@ func (s *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 			candidateRow := tagHelper.toUnsafePointer(s.matchedRowsHeaders[s.currentProbeRow])
 			if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
 				if isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
+					s.addJoinedRow()
 					meta.setUsedFlag(candidateRow)
 				} else {
 					s.probeCollision++
@@ -265,6 +266,7 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 		if s.matchedRowsHeaders[s.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(s.matchedRowsHeaders[s.currentProbeRow])
 			if isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
+				s.addJoinedRow()
 				s.matchedRowsHeaders[s.currentProbeRow] = 0
 				s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
 				remainCap--

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -91,6 +92,68 @@ func joinerBaseForTest(t *testing.T, joiner Joiner) *baseJoiner {
 }
 
 func TestRequiredRows(t *testing.T) {
+	t.Run("joined rows before residual filtering", func(t *testing.T) {
+		fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
+		for _, joinType := range []base.JoinType{
+			base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin, base.SemiJoin,
+			base.AntiSemiJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin,
+		} {
+			for _, isNA := range []bool{false, true} {
+				for _, conditions := range [][]expression.Expression{nil, {expression.NewOne()}, {expression.NewZero()}, {expression.NewNull()}} {
+					joiner := NewJoiner(defaultCtx(), joinType, false, []types.Datum{types.NewDatum(nil)}, conditions, fields, fields, nil, isNA)
+					joiner.resetJoinedRows(true)
+					outer := genTestChunk(4, 1, fields).GetRow(0)
+					inners := genTestChunk(4, 4, fields)
+					iter := chunk.NewIterator4Chunk(inners)
+					iter.Begin()
+					result := chunk.New(append(fields, fields...), 4, 4)
+					result.SetRequiredRows(2, 4)
+					matched := false
+					for iter.Current() != iter.End() {
+						result.Reset()
+						ok, _, err := joiner.TryToMatchInners(outer, iter, result, LeftNotNullRightNotNull)
+						require.NoError(t, err)
+						matched = matched || ok
+					}
+					// Null-extension and anti/semi output must not add candidate pairs.
+					result.Reset()
+					joiner.OnMissMatch(false, outer, result)
+					stats := execdetails.NewRuntimeStatsColl(nil)
+					joiner.registerJoinedRows(stats, 1)
+					rows, found := stats.GetRootJoinedRows(1)
+					require.True(t, found)
+					want := int64(4)
+					if matched && joinType != base.InnerJoin && joinType != base.LeftOuterJoin && joinType != base.RightOuterJoin {
+						want = 1 // Semi joins stop after the first matching candidate.
+					}
+					require.Equal(t, want, rows, "join type %v, null aware %v, conditions %v", joinType, isNA, conditions)
+
+					// Publishing twice or opening an empty execution cannot duplicate prior work.
+					joiner.registerJoinedRows(stats, 1)
+					joiner.resetJoinedRows(true)
+					joiner.registerJoinedRows(stats, 1)
+					rows, _ = stats.GetRootJoinedRows(1)
+					require.Equal(t, want, rows)
+
+					if !isNA {
+						// Building the outer side must count every evaluated outer pair.
+						joiner.resetJoinedRows(true)
+						iter.Begin()
+						for iter.Current() != iter.End() {
+							result.Reset()
+							_, err := joiner.TryToMatchOuters(iter, outer, result, nil)
+							require.NoError(t, err)
+						}
+						joiner.registerJoinedRows(stats, 2)
+						rows, found = stats.GetRootJoinedRows(2)
+						require.True(t, found)
+						require.Equal(t, int64(4), rows)
+					}
+				}
+			}
+		}
+	})
+
 	joinTypes := []base.JoinType{base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
