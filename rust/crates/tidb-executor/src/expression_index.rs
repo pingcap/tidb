@@ -233,7 +233,7 @@ const GA_FUNCTIONS: &[&str] = &[
 /// Go `checkIllegalFn4Generated`'s `genType`: a generated column or an
 /// expression index key part.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum GenType {
+pub enum GenType {
     /// Go `typeColumn`.
     Column,
     /// Go `typeIndex`.
@@ -571,7 +571,7 @@ impl AdmissibilityScan {
 /// function, aggregate, row-value, window and arity rules a generated
 /// column's expression or an expression index key part must pass, `name`
 /// being the column or the index.
-pub(crate) fn check_illegal_fn_4_generated(
+pub fn check_illegal_fn_4_generated(
     name: &str,
     gen_type: GenType,
     expr: &Expr,

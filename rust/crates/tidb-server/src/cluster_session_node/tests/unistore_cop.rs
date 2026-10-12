@@ -13581,3 +13581,73 @@ fn partition_placement_and_multi_option_charset_on_the_production_node() {
         .unwrap_err();
     assert_eq!(error.code, 1302);
 }
+
+/// Go's generated-column rules on the production node: a table whose only
+/// read column is VIRTUAL still scans its rows (Go's `TableScan.Columns`
+/// carries the virtual column and `FillVirtualColumnValue` computes it);
+/// `CheckPKOnGeneratedColumn` refuses a virtual primary key; and MODIFY of a
+/// virtual column's expression runs through `checkModifyGeneratedColumn`
+/// while a change of a column a generated column reads is refused.
+#[test]
+fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1020)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE only_virtual (c0 TEXT AS ('a\\\\b'))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO only_virtual VALUES ()")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM only_virtual")),
+        [["a\\b"]]
+    );
+
+    let error = session
+        .execute_write("CREATE TABLE bad_pk (a INT, b INT, c INT AS (a+b), PRIMARY KEY (c))")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            3106,
+            "'Defining a virtual generated column as primary key' is not supported for \
+             generated columns."
+        )
+    );
+
+    session
+        .execute_write("CREATE TABLE g (a INT, b INT AS (a+1))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO g (a) VALUES (1)")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE g MODIFY b INT AS (a+2)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, b FROM g")),
+        [["1", "3"]]
+    );
+    let error = session
+        .execute_write("ALTER TABLE g MODIFY b INT AS (a+2) STORED")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            3106,
+            "'Changing the STORED status' is not supported for generated columns."
+        )
+    );
+    let error = session
+        .execute_write("ALTER TABLE g MODIFY a BIGINT")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            3106,
+            "'[ddl:3108]Column 'a' has a generated column dependency.' is not supported for \
+             generated columns."
+        )
+    );
+}

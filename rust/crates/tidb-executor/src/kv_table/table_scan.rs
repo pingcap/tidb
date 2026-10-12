@@ -2929,7 +2929,14 @@ struct StagedPhysicalLookup {
 /// index-lookup table probes. Transport-only identity stays outside the schema.
 struct RemoteRowMaterialization {
     decoder: RowDecoder,
+    /// The scan's columns, virtual ones included: Go's `TableScan.Columns`
+    /// carries them, the store answers their default, and
+    /// `FillVirtualColumnValue` computes them above the reader. A table
+    /// whose only read column is virtual still scans one column, so its rows
+    /// are counted.
     offsets: Vec<usize>,
+    /// The stored columns among `offsets`, which the decoder takes as read.
+    physical: Vec<usize>,
     synthetic_handle: bool,
 }
 
@@ -2941,19 +2948,26 @@ impl RemoteRowMaterialization {
         synthetic_handle: bool,
     ) -> Result<Self, KvTableError> {
         let decoder = table.row_decoder_projected(Some(keep), context)?;
-        let offsets = decoder.physical_offsets();
+        let offsets = decoder.decoded_offsets();
+        let physical = decoder.physical_offsets();
         Ok(Self {
             decoder,
             offsets,
+            physical,
             synthetic_handle,
         })
     }
 
     fn remap_predicates(&self, keep: &[usize], predicates: &[ScanPredicate]) -> Vec<ScanPredicate> {
+        // A virtual column's wire value is only its default, so a predicate
+        // reading one stays above the materialization.
         let layout: Vec<_> = self
             .offsets
             .iter()
             .map(|offset| {
+                if !self.physical.contains(offset) {
+                    return usize::MAX;
+                }
                 keep.iter()
                     .position(|kept| kept == offset)
                     .unwrap_or(usize::MAX)
@@ -2973,7 +2987,18 @@ impl RemoteRowMaterialization {
         } else {
             None
         };
-        let mut row = self.decoder.project_remote_row(&self.offsets, row)?;
+        // Drop the virtual columns' wire defaults; the decoder computes them.
+        let row = if self.physical.len() == self.offsets.len() {
+            row
+        } else {
+            self.offsets
+                .iter()
+                .zip(row)
+                .filter(|(offset, _)| self.physical.contains(offset))
+                .map(|(_, value)| value)
+                .collect()
+        };
+        let mut row = self.decoder.project_remote_row(&self.physical, row)?;
         if let Some(handle) = handle {
             row.push(handle);
         }

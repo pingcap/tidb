@@ -1167,6 +1167,36 @@ struct KeyPart {
     desc: bool,
 }
 
+/// Go `CheckPKOnGeneratedColumn`: every key part names a public column, and
+/// none is a VIRTUAL generated column -- a hidden one is an expression index
+/// (3756), any other is 3106.
+fn check_pk_on_generated_column(table: &TableInfo, constraint: &Constraint) -> Refusal<()> {
+    for part in &constraint.parts {
+        let Some(column) = table.find_public_column_by_name(&tidb_hack::go_to_lower(&part.name))
+        else {
+            return Err(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+                format!("Key column '{}' doesn't exist in table", part.name),
+            ));
+        };
+        let column = column.read();
+        if column.is_virtual_generated() {
+            if column.hidden {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrFunctionalIndexPrimaryKey,
+                    "The primary key cannot be an expression index",
+                ));
+            }
+            return Err(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+                "'Defining a virtual generated column as primary key' is not supported for \
+                 generated columns.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     let TableConstraint::Index(index) = constraint else {
         return Err(DdlAdmissionError::with_code(
@@ -1520,9 +1550,19 @@ pub fn build_modified_column(
         table_charset,
         table_collate,
         context,
-        GeneratedColumns::Refused,
+        GeneratedColumns::Modify,
     )?;
     Ok(info)
+}
+
+/// Go `ProcessModifyColumnOptions`' restore flags for a generated
+/// expression: CREATE / ADD COLUMN's, keeping a table qualifier.
+fn modify_generated_restore_flags() -> tidb_ast::RestoreFlags {
+    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
+        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
 }
 
 /// Go `GetModifiableColumnJob`: once a MODIFY / CHANGE may change the
@@ -1730,8 +1770,12 @@ fn stamp_origin_default(
 /// Where a column's generated expression is resolved.
 #[derive(Clone, Copy)]
 enum GeneratedColumns<'a> {
-    /// MODIFY / CHANGE COLUMN: this node does not build one.
+    /// ADD COLUMN without the table's columns: this node does not build one.
     Refused,
+    /// MODIFY / CHANGE COLUMN: Go `ProcessModifyColumnOptions` records the
+    /// expression text and the names it reads only; `checkModifyGeneratedColumn`
+    /// judges them against the table afterwards.
+    Modify,
     /// ADD COLUMN: against the table's existing columns, now.
     Existing(&'a [ColumnInfo]),
     /// CREATE TABLE: Go `columnDefToCol` records the expression text and
@@ -1749,7 +1793,7 @@ enum GeneratedColumns<'a> {
 impl<'a> GeneratedColumns<'a> {
     fn preceding(self) -> &'a [ColumnInfo] {
         match self {
-            Self::Refused => &[],
+            Self::Refused | Self::Modify => &[],
             Self::Existing(columns)
             | Self::Deferred {
                 preceding: columns, ..
@@ -2093,6 +2137,22 @@ fn build_column(
                         }
                         continue;
                     }
+                    GeneratedColumns::Modify => {
+                        info.generated_expr_string =
+                            expression.restore_with_flags(modify_generated_restore_flags());
+                        info.generated_stored = *stored;
+                        // Go `FindColumnNamesInExpr`, keyed by `Name.L`: no
+                        // qualifier check here (rule 4 makes it).
+                        let (_, dependences) =
+                            tidb_executor::generated_column::find_depended_column_names(
+                                "", "", column,
+                            )
+                            .map_err(default_admission_error)?;
+                        for dependency in dependences {
+                            info.dependences.insert(dependency);
+                        }
+                        continue;
+                    }
                     GeneratedColumns::Existing(preceding) => preceding,
                 };
                 let names = preceding
@@ -2423,6 +2483,7 @@ fn build_table(
 
     for constraint in &constraints {
         if constraint.kind == ConstraintKind::PrimaryKey {
+            check_pk_on_generated_column(&table, constraint)?;
             // Go `buildTableInfo` blocks every partial primary key.
             if constraint.condition.is_some() {
                 return Err(DdlAdmissionError::with_code(

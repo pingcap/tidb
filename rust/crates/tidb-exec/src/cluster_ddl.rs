@@ -3003,6 +3003,7 @@ struct PreparedModifyColumn {
 
 fn prepare_modify_column(
     stored: &TableInfo,
+    schema: &str,
     table: &str,
     column: &tidb_ast::ColumnDef,
     requested_position: &tidb_ast::ColumnPosition,
@@ -3047,6 +3048,19 @@ fn prepare_modify_column(
             .any(|candidate| candidate.read().name.lowercase() == new_name)
     {
         return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
+    }
+    // Go `checkModifyColumnWithGeneratedColumnsConstraint`: a rename of a
+    // column a generated column reads fails now; any other change fails
+    // once every other check has passed (issue 24321).
+    let generated_dependency = check_modify_column_with_generated_columns_constraint(
+        stored,
+        &wanted,
+        rename_from.unwrap_or(column.name.as_str()),
+    );
+    if new_name != wanted {
+        if let Some((code, message)) = &generated_dependency {
+            return Err(coded_refusal(*code, message.clone()));
+        }
     }
     let old = stored
         .columns
@@ -3093,6 +3107,10 @@ fn prepare_modify_column(
     )
     .map_err(admission)?;
     let check_value_range = !no_reorg_data_strict(&old.field_type, &field_type, indexed);
+    // Go `isGeneratedRelatedColumn` once the data may change.
+    if check_value_range {
+        is_generated_related_column(stored, &built, &old)?;
+    }
     let mut changed = built;
     changed.id = old.id;
     changed.offset = old.offset;
@@ -3118,6 +3136,25 @@ fn prepare_modify_column(
                 table: table.to_owned(),
             });
         }
+    }
+    // Go: "As same with MySQL, we don't support modifying the stored status
+    // for generated columns", then the deferred dependency refusal.
+    check_modify_generated_column(
+        stored,
+        schema,
+        position,
+        &old,
+        &changed,
+        column,
+        requested_position,
+        context,
+    )?;
+    if let Some((code, message)) = generated_dependency {
+        // Go wraps `errG.Error()`, the terror text with its class prefix.
+        return Err(coded_refusal(
+            tidb_error::mysql::errcode::ErrUnsupportedOnGeneratedColumn,
+            format!("'[ddl:{code}]{message}' is not supported for generated columns."),
+        ));
     }
     // Unlike ADD COLUMN, the column is already AT its offset, so the
     // destination is located against that rather than against an
@@ -3145,6 +3182,250 @@ fn prepare_modify_column(
         precheck,
         check_value_range,
     })
+}
+
+/// Go `checkModifyColumnWithGeneratedColumnsConstraint`: the error a change
+/// of `wanted` owes when a generated column (or an expression index's hidden
+/// column) reads it, named as written.
+fn check_modify_column_with_generated_columns_constraint(
+    stored: &TableInfo,
+    wanted: &str,
+    written: &str,
+) -> Option<(u16, String)> {
+    let dependent = stored.columns.iter_deref().find(|candidate| {
+        let candidate = candidate.read();
+        candidate.is_generated() && candidate.dependences.contains(wanted)
+    })?;
+    let hidden = dependent.read().hidden;
+    Some(if hidden {
+        (
+            tidb_error::mysql::errcode::ErrDependentByFunctionalIndex,
+            format!(
+                "Column '{written}' has an expression index dependency and cannot be dropped or \
+                 renamed"
+            ),
+        )
+    } else {
+        (
+            tidb_error::mysql::errcode::ErrDependentByGeneratedColumn,
+            format!("Column '{written}' has a generated column dependency."),
+        )
+    })
+}
+
+/// Go `isGeneratedRelatedColumn`: a change that may rewrite the data may not
+/// touch a generated column or one a generated column reads.
+fn is_generated_related_column(
+    stored: &TableInfo,
+    new: &tidb_model::ColumnInfo,
+    old: &tidb_model::ColumnInfo,
+) -> Result<(), DdlPlanError> {
+    let unsupported = |reason: String| {
+        coded_refusal(
+            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            format!("Unsupported modify column: {reason}"),
+        )
+    };
+    if new.is_generated() {
+        return Err(unsupported("new column is generated".to_owned()));
+    }
+    if old.is_generated() {
+        return Err(unsupported("old column is generated".to_owned()));
+    }
+    // Go `hasDependentByGeneratedColumn`, whose `dep` is `colName.L`.
+    let name = old.name.lowercase();
+    if stored
+        .columns
+        .iter_deref()
+        .any(|candidate| candidate.read().dependences.contains(name))
+    {
+        return Err(unsupported(format!(
+            "oldCol is a dependent column '{name}' for generated column"
+        )));
+    }
+    Ok(())
+}
+
+/// Go `checkModifyGeneratedColumn` (`pkg/ddl/generated_column.go`): the five
+/// rules a MODIFY / CHANGE of (or to) a generated column must pass.
+fn check_modify_generated_column(
+    stored: &TableInfo,
+    schema: &str,
+    position: usize,
+    old: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+    new_def: &tidb_ast::ColumnDef,
+    requested_position: &tidb_ast::ColumnPosition,
+    context: &DdlStatementContext,
+) -> Result<(), DdlPlanError> {
+    let unsupported_on_generated = |what: &str| {
+        coded_refusal(
+            tidb_error::mysql::errcode::ErrUnsupportedOnGeneratedColumn,
+            format!("'{what}' is not supported for generated columns."),
+        )
+    };
+    let bad_field = |column: &str| {
+        coded_refusal(
+            tidb_error::mysql::errcode::ErrBadField,
+            format!("Unknown column '{column}' in 'generated column function'"),
+        )
+    };
+    // Rule 1: the STORED status stays.
+    if old.is_virtual_generated() != new.is_virtual_generated() {
+        return Err(unsupported_on_generated("Changing the STORED status"));
+    }
+
+    // Rule 2: every generated column reads only columns that exist and
+    // generated columns before it, with this column at its new place.
+    let columns = stored
+        .columns
+        .iter_deref()
+        .map(|column| column.read().clone_like_go())
+        .collect::<Vec<_>>();
+    let mut generation: BTreeMap<String, (usize, bool, Vec<String>)> = BTreeMap::new();
+    for (offset, column) in columns.iter().enumerate() {
+        if offset == position {
+            // Go `findPositionRelativeColumn` over the table's columns.
+            let at = match requested_position {
+                tidb_ast::ColumnPosition::Default => offset,
+                tidb_ast::ColumnPosition::First => 0,
+                tidb_ast::ColumnPosition::After(anchor) => {
+                    let anchor = anchor.go_to_lower();
+                    let Some(relative) = columns
+                        .iter()
+                        .find(|candidate| candidate.name.lowercase() == anchor)
+                    else {
+                        return Err(bad_field(&anchor));
+                    };
+                    usize::try_from(relative.offset).unwrap_or(0) + 1
+                }
+            };
+            generation.insert(
+                new.name.lowercase().to_owned(),
+                (
+                    at,
+                    new.is_generated(),
+                    new.dependences
+                        .snapshot()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                ),
+            );
+        } else {
+            generation.insert(
+                column.name.lowercase().to_owned(),
+                (
+                    offset,
+                    column.is_generated(),
+                    column
+                        .dependences
+                        .snapshot()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                ),
+            );
+        }
+    }
+    // Go `verifyColumnGeneration`, for every column, changed or not.
+    for (offset, column) in columns.iter().enumerate() {
+        let name = if offset == position {
+            new.name.lowercase()
+        } else {
+            column.name.lowercase()
+        };
+        let (at, generated, dependences) = &generation[name];
+        if !generated {
+            continue;
+        }
+        for dependency in dependences {
+            let Some((dependency_at, dependency_generated, _)) = generation.get(dependency) else {
+                return Err(bad_field(dependency));
+            };
+            if *dependency_generated && at <= dependency_at {
+                return Err(coded_refusal(
+                    tidb_error::mysql::errcode::ErrGeneratedColumnNonPrior,
+                    "Generated column can refer only to generated columns defined prior to it."
+                        .to_owned(),
+                ));
+            }
+        }
+    }
+
+    if new.is_generated() {
+        let admission = |error: tidb_executor::DriverError| {
+            let error = error.to_mysql_error();
+            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        };
+        // Rule 3: Go `checkIllegalFn4Generated(newCol.Name.L, typeColumn, ...)`.
+        if let Some(tidb_ast::ColumnOption::Generated { expression, .. }) = new_def
+            .options
+            .iter()
+            .find(|option| matches!(option, tidb_ast::ColumnOption::Generated { .. }))
+        {
+            tidb_executor::expression_index::check_illegal_fn_4_generated(
+                new.name.lowercase(),
+                tidb_executor::expression_index::GenType::Column,
+                expression,
+            )
+            .map_err(admission)?;
+        }
+        // Rule 4: Go `findDependedColumnNames` with the qualifier check, and
+        // `checkAutoIncrementRef` unless the session allows it.
+        let (_, dependences) = tidb_executor::generated_column::find_depended_column_names(
+            schema,
+            stored.name.lowercase(),
+            new_def,
+        )
+        .map_err(admission)?;
+        if !context.0.auto_increment_in_generated() {
+            if let Some(auto_increment) = columns
+                .iter()
+                .find(|column| column.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT))
+            {
+                if dependences
+                    .iter()
+                    .any(|dependency| dependency == auto_increment.name.lowercase())
+                {
+                    return Err(coded_refusal(
+                        tidb_error::tidb::errcode::ErrGeneratedColumnRefAutoInc,
+                        format!(
+                            "Generated column '{}' cannot refer to auto-increment column.",
+                            new_def.name.go_to_lower()
+                        ),
+                    ));
+                }
+            }
+        }
+        // Rule 5: Go `checkIndexOrStored`.
+        let indexed = stored.indices.iter_deref().any(|index| {
+            index.read().columns.iter_deref().any(|part| {
+                let part = part.read();
+                part.name.lowercase() == old.name.lowercase()
+                    || part.name.lowercase() == new.name.lowercase()
+            })
+        });
+        let covered_by_index = || {
+            coded_refusal(
+                tidb_error::mysql::errcode::ErrUnsupportedOnGeneratedColumn,
+                "Unsupported modification for generated columns covered by an index".to_owned(),
+            )
+        };
+        if old.generated_expr_string == new.generated_expr_string {
+            if old.field_type.equal(&new.field_type) || !indexed {
+                return Ok(());
+            }
+            return Err(covered_by_index());
+        }
+        if new.generated_stored {
+            return Err(unsupported_on_generated("modifying a stored column"));
+        }
+        if indexed {
+            return Err(covered_by_index());
+        }
+    }
+    Ok(())
 }
 
 /// Go's final state after a changing column / changing indexes replace the
@@ -3367,6 +3648,7 @@ fn prepare_cluster_columns(
             } => {
                 let modified = prepare_modify_column(
                     stored,
+                    schema,
                     table,
                     column,
                     position,
@@ -11192,6 +11474,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 check_value_range,
             } = prepare_modify_column(
                 stored,
+                schema,
                 table,
                 column,
                 requested_position,

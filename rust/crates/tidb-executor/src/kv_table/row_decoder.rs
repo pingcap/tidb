@@ -667,6 +667,12 @@ impl RowDecoder {
 
     /// Physical inputs needed before evaluating this decoder's projection.
     /// Dependency expansion is shared with byte-level row decoding.
+    /// Every column the projection decodes, generated ones included: Go's
+    /// `TableScan.Columns` after `ExpandVirtualColumn`.
+    pub(crate) fn decoded_offsets(&self) -> Vec<usize> {
+        self.decoded_offsets.iter().copied().collect()
+    }
+
     pub(crate) fn physical_offsets(&self) -> Vec<usize> {
         self.decoded_offsets
             .iter()
