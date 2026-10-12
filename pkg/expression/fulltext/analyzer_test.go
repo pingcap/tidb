@@ -16,11 +16,14 @@ package fulltext
 
 import (
 	"context"
+	"math/rand"
+	"strings"
 	"testing"
 	"unicode"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -347,6 +350,45 @@ func TestAnalyzeStandardV1CustomStopwords(t *testing.T) {
 		{Text: "the", Position: 1},
 		{Text: "bar", Position: 2},
 	}, tokens)
+}
+
+func TestStopwordKeysMatchCompare(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	texts := []string{
+		"the THE The thé THÉ ｔｈｅ", "a A á Ａ i I í Ｉ", "ab a,b xby", "quick brown fox 数据库",
+		"ss ß s ﬃ ffi", "a\u0301 a\u0000 a\u00ad", "the  the\tThe", "🙃𞤀𝟙，", "", "ab\xffcd",
+	}
+	rng := rand.New(rand.NewSource(20261012))
+	parts := []string{"a", "i", "the", "The", "thé", "ss", "ß", "ａ", "，", "🙃", "\u0301", "\u00ad", "中", "x", " ", ",", "_"}
+	for range 100 {
+		var text strings.Builder
+		for range 12 {
+			text.WriteString(parts[rng.Intn(len(parts))])
+		}
+		texts = append(texts, text.String())
+	}
+	for _, name := range []string{"ascii_bin", "latin1_bin", "utf8_bin", "utf8_general_ci", "utf8_unicode_ci", "utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci", "binary"} {
+		for _, words := range [][]string{nil, {"ss", "s", "a\u0301", "a", "the", "中"}, {"th\xffe"}} {
+			for size := 1; size <= 10; size++ {
+				config := AnalyzerConfig{Collation: "utf8mb4_general_ci", StopwordCollation: name,
+					InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 84, InnodbFtEnableStopword: true,
+					Stopwords: words, NgramTokenSize: size}
+				gotInfo := parserInfoFromConfig(config)
+				// Retain the original per-word Compare path as the independent
+				// lookup oracle, including malformed-list callers and positions.
+				wantInfo := gotInfo
+				wantInfo.stopwordKeys, wantInfo.stopwordKeysByLength = nil, nil
+				for _, text := range texts {
+					require.Equal(t, wantInfo.isStopword(text), gotInfo.isStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
+					require.Equal(t, wantInfo.containsNgramStopword(text), gotInfo.containsNgramStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
+					require.Equal(t, analyzeStandardV1(text, wantInfo), analyzeStandardV1(text, gotInfo), "%s STANDARD %q", name, text)
+					require.Equal(t, analyzeNgramV1(text, wantInfo), analyzeNgramV1(text, gotInfo), "%s NGRAM size=%d %q", name, size, text)
+				}
+			}
+		}
+	}
 }
 
 func newFulltextTestContext(t *testing.T) *mock.Context {

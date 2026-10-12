@@ -17,6 +17,7 @@ package fulltext
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -287,6 +288,94 @@ func BenchmarkRepeatedTokenPhraseMiss(b *testing.B) {
 				query.Match(doc)
 			}
 		})
+	}
+}
+
+type preparationCountingCollator struct {
+	collate.Collator
+	compares int
+	compiles int
+}
+
+func (c *preparationCountingCollator) Compare(a, b string) int {
+	c.compares++
+	return c.Collator.Compare(a, b)
+}
+
+func (c *preparationCountingCollator) Pattern() collate.WildcardPattern {
+	return &preparationCountingPattern{WildcardPattern: c.Collator.Pattern(), owner: c}
+}
+
+type preparationCountingPattern struct {
+	collate.WildcardPattern
+	owner *preparationCountingCollator
+}
+
+func (p *preparationCountingPattern) Compile(pattern string, escape byte) {
+	p.owner.compiles++
+	p.WildcardPattern.Compile(pattern, escape)
+}
+
+func TestLocalMatchPreparesPatternsAndPhraseFailureOnce(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	for _, name := range []string{"utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci"} {
+		c := &preparationCountingCollator{Collator: collate.GetCollator(name)}
+		prefix := newPrefixNode("a_%\\", c)
+		require.Equal(t, 1, c.compiles)
+		doc := &Document{TokenSet: map[string]struct{}{"a_%\\tail": {}, "another": {}}}
+		for range 10 {
+			require.True(t, prefix.match(doc, c))
+		}
+		require.Equal(t, 1, c.compiles, "prefix Compile must not run per token/row")
+		phrase := buildPhraseNode([]Token{{Text: "cafe", Position: 0}, {Text: "CAFÉ", Position: 1}, {Text: "cafe", Position: 2}, {Text: "never", Position: 3}}, c).(phraseNode)
+		require.Equal(t, buildPhraseFailureWithCollator(phrase.tokens, c), phrase.failure, name)
+		column := ColumnDocument{Tokens: []Token{{Text: "zzz", Position: 0}, {Text: "zzz", Position: 1}, {Text: "zzz", Position: 2}, {Text: "zzz", Position: 3}}}
+		c.compares = 0
+		for range 10 {
+			require.False(t, phrase.matchDense(column, c))
+		}
+		require.Equal(t, 10*len(column.Tokens), c.compares, "only document comparisons; no repeated failure-table preparation")
+	}
+}
+
+func TestLocalMatchCompiledQueryConcurrentRead(t *testing.T) {
+	previous := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(previous)
+	for _, name := range []string{"utf8mb4_bin", "utf8mb4_0900_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci"} {
+		config := standardConfigForTest()
+		config.Collation, config.StopwordCollation = name, name
+		config.InnodbFtEnableStopword = true
+		analyzer, err := GetAnalyzer(config)
+		require.NoError(t, err)
+		for _, search := range []string{`+pre* -absent`, `+"cafe CAFÉ cafe never"`, `+"quick the fox"`, `+a_*`} {
+			query, err := CompileBooleanQuery(search, config)
+			require.NoError(t, err)
+			inputs := []string{"prefix cafe CAFÉ cafe never quick the fox a_tail", "unrelated cafe cafe cafe absent", "", "quick fox"}
+			want := make([]bool, len(inputs))
+			for i, input := range inputs {
+				doc, err := BuildDocument([]ColumnInput{{Text: input}, {IsNull: true}}, analyzer)
+				require.NoError(t, err)
+				want[i] = query.Match(doc)
+			}
+			var workers sync.WaitGroup
+			for range 8 {
+				workers.Go(func() {
+					for range 20 {
+						for i, input := range inputs {
+							doc, err := BuildDocument([]ColumnInput{{Text: input}, {IsNull: true}}, analyzer)
+							if err != nil || query.Match(doc) != want[i] {
+								t.Errorf("shared query/analyzer changed result: %s %s %q: %v", name, search, input, err)
+								return
+							}
+						}
+					}
+				})
+			}
+			workers.Wait()
+		}
 	}
 }
 

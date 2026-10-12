@@ -86,12 +86,12 @@ func (doc *Document) hasToken(token string, collator collate.Collator) bool {
 	return false
 }
 
-func (doc *Document) hasTokenPrefix(prefix string, collator collate.Collator) bool {
+func (doc *Document) hasTokenPrefix(prefix string, pattern collate.WildcardPattern) bool {
 	if doc == nil {
 		return false
 	}
 	for token := range doc.TokenSet {
-		if tokenHasPrefix(token, prefix, collator) {
+		if (pattern == nil && stringsHasPrefix(token, prefix)) || (pattern != nil && pattern.DoMatch(token)) {
 			return true
 		}
 	}
@@ -112,24 +112,6 @@ func (col ColumnDocument) positionsFor(token string, collator collate.Collator) 
 		sort.Ints(positions)
 	}
 	return positions
-}
-
-func tokenHasPrefix(token, prefix string, collator collate.Collator) bool {
-	if collator == nil {
-		return stringsHasPrefix(token, prefix)
-	}
-	pattern := collator.Pattern()
-	escaped := make([]byte, 0, len(prefix)+1)
-	for i := 0; i < len(prefix); i++ {
-		switch prefix[i] {
-		case '\\', '%', '_':
-			escaped = append(escaped, '\\')
-		}
-		escaped = append(escaped, prefix[i])
-	}
-	escaped = append(escaped, '%')
-	pattern.Compile(string(escaped), '\\')
-	return pattern.DoMatch(token)
 }
 
 func stringsHasPrefix(s, prefix string) bool {

@@ -260,6 +260,8 @@ type parserInfo struct {
 	ngramTokenSize       int
 	stopwords            map[string]struct{}
 	stopwordsByLength    map[int][]string
+	stopwordKeys         map[string]struct{}
+	stopwordKeysByLength map[int]map[string]struct{}
 	collator             collate.Collator // MATCH column collation
 	stopwordCollator     collate.Collator // collation_server
 }
@@ -273,7 +275,7 @@ func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
 		stopwordCollator = collate.GetCollator(config.StopwordCollation)
 	}
 	stopwords := stopwordSetFromConfig(config)
-	return parserInfo{
+	info := parserInfo{
 		innodbFtMinTokenSize: config.InnodbFtMinTokenSize,
 		innodbFtMaxTokenSize: config.InnodbFtMaxTokenSize,
 		ngramTokenSize:       config.NgramTokenSize,
@@ -282,6 +284,31 @@ func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
 		collator:             collator,
 		stopwordCollator:     stopwordCollator,
 	}
+	if stopwordCollator != nil && len(stopwords) > 0 {
+		// Compile immutable keys once per analyzer, not once per document.
+		// Keep NGRAM buckets indexed by source code-point length: a collation
+		// may expand or ignore characters, so key length is not token length.
+		info.stopwordKeys = make(map[string]struct{}, len(stopwords))
+		info.stopwordKeysByLength = make(map[int]map[string]struct{}, len(info.stopwordsByLength))
+		for word := range stopwords {
+			// Some collators return equality early on invalid UTF-8. Preserve
+			// Compare semantics for standalone/custom-list callers rather than
+			// assuming key equality is equivalent for malformed strings.
+			if !utf8.ValidString(word) {
+				info.stopwordKeys = nil
+				info.stopwordKeysByLength = nil
+				break
+			}
+			key := string(stopwordCollator.Key(word))
+			info.stopwordKeys[key] = struct{}{}
+			length := charLen(word)
+			if info.stopwordKeysByLength[length] == nil {
+				info.stopwordKeysByLength[length] = make(map[string]struct{})
+			}
+			info.stopwordKeysByLength[length][key] = struct{}{}
+		}
+	}
+	return info
 }
 
 func stopwordsByLength(stopwords map[string]struct{}) map[int][]string {
@@ -464,6 +491,15 @@ func (p parserInfo) containsNgramStopword(token string) bool {
 				}
 				continue
 			}
+			// Comparing a tiny bucket avoids allocating a key for every short
+			// candidate. Use the precompiled key set only for larger buckets;
+			// this applies to all collations, not a BIN-only specialization.
+			if len(stopwords) > 2 && p.stopwordKeysByLength != nil && utf8.ValidString(candidate) {
+				if _, ok := p.stopwordKeysByLength[stopwordLen][string(p.stopwordCollator.Key(candidate))]; ok {
+					return true
+				}
+				continue
+			}
 			for _, stopword := range stopwords {
 				if p.stopwordCollator.Compare(candidate, stopword) == 0 {
 					return true
@@ -479,6 +515,10 @@ func (p parserInfo) containsNgramStopword(token string) bool {
 func (p parserInfo) isStopword(token string) bool {
 	if p.stopwordCollator == nil {
 		_, ok := p.stopwords[strings.ToLower(token)]
+		return ok
+	}
+	if p.stopwordKeys != nil && utf8.ValidString(token) {
+		_, ok := p.stopwordKeys[string(p.stopwordCollator.Key(token))]
 		return ok
 	}
 	for stopword := range p.stopwords {

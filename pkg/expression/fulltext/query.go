@@ -131,11 +131,33 @@ func (n termNode) match(doc *Document, collator collate.Collator) bool {
 }
 
 type prefixNode struct {
-	prefix string
+	prefix  string
+	pattern collate.WildcardPattern
 }
 
-func (n prefixNode) match(doc *Document, collator collate.Collator) bool {
-	return doc.hasTokenPrefix(n.prefix, collator)
+func (n prefixNode) match(doc *Document, _ collate.Collator) bool {
+	return doc.hasTokenPrefix(n.prefix, n.pattern)
+}
+
+func newPrefixNode(prefix string, collator collate.Collator) prefixNode {
+	node := prefixNode{prefix: prefix}
+	if collator == nil {
+		return node
+	}
+	// Pattern.DoMatch only reads the compiled pattern. The query is immutable
+	// and may be shared by evaluator workers; never Compile it during Match.
+	node.pattern = collator.Pattern()
+	escaped := make([]byte, 0, len(prefix)+1)
+	for i := 0; i < len(prefix); i++ {
+		switch prefix[i] {
+		case '\\', '%', '_':
+			escaped = append(escaped, '\\')
+		}
+		escaped = append(escaped, prefix[i])
+	}
+	escaped = append(escaped, '%')
+	node.pattern.Compile(string(escaped), '\\')
+	return node
 }
 
 type phraseNode struct {
@@ -229,10 +251,12 @@ func (n phraseNode) matchDense(col ColumnDocument, collator collate.Collator) bo
 		return false
 	}
 	failure := n.failure
-	if collator != nil {
-		failure = buildPhraseFailureWithCollator(n.tokens, collator)
-	} else if len(failure) != len(n.tokens) {
-		failure = buildPhraseFailure(n.tokens)
+	if len(failure) != len(n.tokens) {
+		if collator != nil {
+			failure = buildPhraseFailureWithCollator(n.tokens, collator)
+		} else {
+			failure = buildPhraseFailure(n.tokens)
+		}
 	}
 	matched := 0
 	previousPosition := -1
@@ -550,7 +574,11 @@ func normalizeBooleanPhrase(phrase *matchagainst.BooleanPhrase, config AnalyzerC
 }
 
 func normalizeAnalyzedPhrase(text string, tokens []Token, config AnalyzerConfig) (queryNode, error) {
-	anchor := buildPhraseNode(tokens)
+	var collator collate.Collator
+	if config.Collation != "" {
+		collator = collate.GetCollator(config.Collation)
+	}
+	anchor := buildPhraseNode(tokens, collator)
 	if anchor == nil {
 		return nil, nil
 	}
@@ -574,7 +602,7 @@ func normalizeAnalyzedPhrase(text string, tokens []Token, config AnalyzerConfig)
 	if len(rawTokens) == len(tokens) {
 		return anchor, nil
 	}
-	return verifiedPhraseNode{anchor: anchor, phrase: buildPhraseNode(rawTokens), analyzer: rawAnalyzer}, nil
+	return verifiedPhraseNode{anchor: anchor, phrase: buildPhraseNode(rawTokens, collator), analyzer: rawAnalyzer}, nil
 }
 
 func normalizePrefixTerm(
@@ -611,7 +639,7 @@ func normalizePrefixTerm(
 			if parserInfo.collator == nil {
 				prefix = strings.ToLower(prefix)
 			}
-			children = append(children, prefixNode{prefix: prefix})
+			children = append(children, newPrefixNode(prefix, parserInfo.collator))
 		}
 		return combineBooleanTermNodes(children, modifier), nil
 	case model.FullTextParserTypeNgramV1:
@@ -623,7 +651,7 @@ func normalizePrefixTerm(
 			if parserInfo.collator == nil {
 				prefix = strings.ToLower(prefix)
 			}
-			return prefixNode{prefix: prefix}, nil
+			return newPrefixNode(prefix, parserInfo.collator), nil
 		}
 		tokens, err := analyzer.Analyze(text)
 		if err != nil {
@@ -648,7 +676,7 @@ func combineBooleanTermNodes(children []queryNode, modifier matchagainst.Boolean
 	return groupNode{should: children}
 }
 
-func buildPhraseNode(tokens []Token) queryNode {
+func buildPhraseNode(tokens []Token, collator collate.Collator) queryNode {
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -666,7 +694,11 @@ func buildPhraseNode(tokens []Token) queryNode {
 		node.offsets = append(node.offsets, token.Position-firstPosition)
 	}
 	if node.isDense() {
-		node.failure = buildPhraseFailure(node.tokens)
+		if collator != nil {
+			node.failure = buildPhraseFailureWithCollator(node.tokens, collator)
+		} else {
+			node.failure = buildPhraseFailure(node.tokens)
+		}
 	}
 	return node
 }
