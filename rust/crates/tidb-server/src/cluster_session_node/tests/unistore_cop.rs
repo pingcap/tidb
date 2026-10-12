@@ -391,6 +391,95 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
     rows(&mut session, "ADMIN CHECK TABLE test.child");
 }
 
+/// Go `AlterTableCache` / `AlterTableNoCache` and the `ErrOptOnCacheTable`
+/// refusals on the production node, answers from the Go oracle for the same
+/// script. CACHE writes the `mysql.table_cache_meta` lock row and stages
+/// `checkCacheTableSize`; every DDL Go's executor refuses on a cached table is
+/// refused (8242) before a job. This node refused CACHE / NOCACHE and ran the
+/// rest.
+#[test]
+fn a_cached_table_refuses_ddl_until_nocache_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(145)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.c1 (a INT PRIMARY KEY, b INT, KEY ib (b))",
+    );
+    rows(&mut session, "INSERT INTO test.c1 VALUES (1, 1), (2, 2)");
+    session.execute_write("ALTER TABLE test.c1 CACHE").unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c1"));
+    assert!(
+        created[0][1].ends_with(" /* CACHED ON */"),
+        "{}",
+        created[0][1]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT lock_type, lease, oldReadLease FROM mysql.table_cache_meta WHERE tid = \
+             (SELECT tidb_table_id FROM information_schema.tables \
+              WHERE table_schema = 'test' AND table_name = 'c1')"
+        )),
+        [["NONE", "0", "0"]]
+    );
+    rows(&mut session, "INSERT INTO test.c1 VALUES (3, 3)");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a FROM test.c1 ORDER BY a")),
+        [["1"], ["2"], ["3"]]
+    );
+    for (sql, operation) in [
+        ("ALTER TABLE test.c1 ADD COLUMN c INT", "Alter Table"),
+        ("ALTER TABLE test.c1 CACHE, ADD COLUMN d INT", "Alter Table"),
+        ("CREATE INDEX i2 ON test.c1 (b)", "Create Index"),
+        ("DROP INDEX ib ON test.c1", "Drop Index"),
+        ("TRUNCATE TABLE test.c1", "Truncate Table"),
+        ("RENAME TABLE test.c1 TO test.c2", "Rename Table"),
+        ("DROP TABLE test.c1", "Drop Table"),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                8242,
+                format!("'{operation}' is unsupported on cache tables.").as_str()
+            ),
+            "{sql}"
+        );
+    }
+    session.execute_write("ALTER TABLE test.c1 CACHE").unwrap();
+    session
+        .execute_write("ALTER TABLE test.c1 NOCACHE")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c1"));
+    assert!(!created[0][1].contains("CACHED ON"), "{}", created[0][1]);
+    session
+        .execute_write("ALTER TABLE test.c1 ADD COLUMN c INT")
+        .unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.p (a INT) PARTITION BY HASH (a) PARTITIONS 2",
+    );
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE test.p CACHE",
+            8242,
+            "'partition mode' is unsupported on cache tables.",
+        ),
+        (
+            "ALTER TABLE mysql.user CACHE",
+            8200,
+            "ALTER table cache for tables in system database is currently unsupported",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+}
+
 /// Go's expression defaults and clustered-index mode on the production node,
 /// answers from the Go oracle for the same script:
 /// - CREATE TABLE reads the session's `@@tidb_enable_clustered_index`

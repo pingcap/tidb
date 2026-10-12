@@ -6603,6 +6603,11 @@ impl ClusterServerSession {
                         self.session
                             .require_statement_table_privileges(stmt)
                             .map_err(map_error)?;
+                        // Go's executor refuses a cached table before any
+                        // shape this node does not plan.
+                        self.session
+                            .validate_cached_table_ddl(stmt)
+                            .map_err(map_error)?;
                         Err(SqlQueryError::unknown(
                             "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
                              CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, placement policy \
@@ -6620,6 +6625,12 @@ impl ClusterServerSession {
                     Err(refusal) => {
                         self.session.begin_routed_statement_warnings();
                         self.session.drain_context_warnings(&context);
+                        self.session
+                            .require_statement_table_privileges(stmt)
+                            .map_err(map_error)?;
+                        self.session
+                            .validate_cached_table_ddl(stmt)
+                            .map_err(map_error)?;
                         Err(SqlQueryError::new(
                             refusal.code,
                             refusal.sql_state(),
@@ -7363,6 +7374,9 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        self.session
+            .validate_cached_table_ddl(parsed)
+            .map_err(map_error)?;
         self.session
             .validate_persistent_ddl_references(statement)
             .map_err(map_error)?;

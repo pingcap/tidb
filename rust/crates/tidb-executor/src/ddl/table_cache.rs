@@ -64,3 +64,63 @@ pub(super) fn alter_cache_action(
     }
     Ok(())
 }
+
+/// Go's `ErrOptOnCacheTable` (8242) refusals that run before a DDL job is
+/// built, by statement kind: `AlterTable` (anything but one CACHE / NOCACHE),
+/// `createIndex`, `dropIndex`, `TruncateTable`, and `renameTable` /
+/// `renameTables`. DROP TABLE answers its own (`check_drop_object`). A table
+/// that does not exist is left to the statement, which reports it.
+pub fn check_cached_table_ddl(
+    catalog: &Catalog,
+    current_db: &str,
+    stmt: &tidb_ast::Stmt,
+) -> Result<(), DriverError> {
+    let tidb_ast::Stmt::Ddl(ddl) = stmt else {
+        return Ok(());
+    };
+    let cached = |path: &[String]| {
+        let (database, name) = match path {
+            [database, name] => (database.as_str(), name.as_str()),
+            [name] => (current_db, name.as_str()),
+            _ => return false,
+        };
+        matches!(
+            catalog.table_in(database, name),
+            Some(TableEntry::Kv(table)) if table.is_cache_table()
+        )
+    };
+    let refused = |operation| Err(DriverError::OperationOnCachedTable(operation));
+    match ddl.as_ref() {
+        tidb_ast::DdlStmt::AlterTable(alter) => {
+            if cached(&alter.name)
+                && !matches!(
+                    alter.actions.as_slice(),
+                    [tidb_ast::AlterTableAction::Cache(_)]
+                )
+            {
+                return refused("Alter Table");
+            }
+        }
+        tidb_ast::DdlStmt::CreateIndex(create) if cached(&create.table) => {
+            return refused("Create Index");
+        }
+        tidb_ast::DdlStmt::DropIndex(drop) if cached(&drop.table) => {
+            return refused("Drop Index");
+        }
+        tidb_ast::DdlStmt::TruncateTable(name) if cached(name) => {
+            return refused("Truncate Table");
+        }
+        tidb_ast::DdlStmt::RenameTable(rename) => {
+            let operation = if rename.pairs.len() == 1 {
+                "Rename Table"
+            } else {
+                "Rename Tables"
+            };
+            if rename.pairs.iter().any(|(old, _)| cached(old)) {
+                return refused(operation);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}

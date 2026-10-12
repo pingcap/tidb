@@ -2555,6 +2555,32 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             }
         })
     }
+    fn stage_cache_table_check(
+        &self,
+        table: &tidb_model::TableInfo,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let mut probe = cluster_table(table, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?;
+        probe.enable_cache().map_err(|error| {
+            let error = match error {
+                tidb_executor::kv_table::KvTableError::CacheTableUnsupported(operation) => {
+                    tidb_executor::DriverError::OperationOnCachedTable(operation)
+                }
+                other => tidb_executor::DriverError::unsupported(format!(
+                    "cache table size check failed: {other:?}"
+                )),
+            }
+            .to_mysql_error();
+            LockSqlError {
+                code: error.code,
+                state: error.state,
+                message: error.message,
+            }
+        })
+    }
 }
 
 impl ExchangePartitionValidator for KvTableIndexBackfiller {

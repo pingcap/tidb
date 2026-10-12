@@ -522,7 +522,10 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::CheckConstraintValidationUnavailable);
     }
-    if write.column_reorg.is_some() || !write.foreign_key_checks.is_empty() {
+    if write.column_reorg.is_some()
+        || !write.foreign_key_checks.is_empty()
+        || write.cache_table_check.is_some()
+    {
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::BackfillUnavailable);
     }
@@ -672,6 +675,26 @@ pub trait IndexBackfiller {
         _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
         Err(foreign_key_check_unavailable())
+    }
+
+    /// Go `checkCacheTableSize` for an `ALTER TABLE ... CACHE`: the table's
+    /// stored keys and values may total at most 64 MiB (`table too large`).
+    fn stage_cache_table_check(
+        &self,
+        _table: &tidb_model::TableInfo,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        Err(cache_table_check_unavailable())
+    }
+}
+
+/// The default for a backfiller that cannot read a table's stored bytes.
+fn cache_table_check_unavailable() -> LockSqlError {
+    LockSqlError {
+        code: 1105,
+        state: *b"HY000",
+        message: "this path cannot measure a table for ALTER TABLE ... CACHE".to_owned(),
     }
 }
 
@@ -1514,6 +1537,7 @@ fn commit_cluster_ddl_with_backfill_once<
     if !write.backfill.is_empty()
         || write.column_reorg.is_some()
         || !write.foreign_key_checks.is_empty()
+        || write.cache_table_check.is_some()
         || write.exchange_partition_validation.is_some()
         || write.check_constraint_validation.is_some()
     {
@@ -1560,6 +1584,11 @@ fn commit_cluster_ddl_with_backfill_once<
                                     max_foreign_key_id: check.child.max_foreign_key_id,
                                 }),
                             })?;
+                    }
+                    if let Some(table) = &write.cache_table_check {
+                        backfiller
+                            .stage_cache_table_check(table, Arc::clone(&handle), &buffer)
+                            .map_err(ClusterDdlError::IndexBackfill)?;
                     }
                     if let Some(validation) = &write.exchange_partition_validation {
                         exchange_validator

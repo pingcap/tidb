@@ -500,6 +500,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::AddForeignKey { .. }
             | DdlStatement::DropForeignKey { .. }
             | DdlStatement::AddForeignKeyRollback { .. }
+            | DdlStatement::AlterTableCache { .. }
             | DdlStatement::RenameColumn { .. }
             | DdlStatement::DropColumn { .. }
             | DdlStatement::MultiSchemaChange { .. }

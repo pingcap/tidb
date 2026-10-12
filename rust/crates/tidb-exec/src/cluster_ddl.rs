@@ -549,6 +549,16 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// rows are checked under.
         context: DdlStatementContext,
     },
+    /// `ALTER TABLE ... CACHE` / `NOCACHE` (Go `AlterTableCache` /
+    /// `AlterTableNoCache`).
+    AlterTableCache {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// CACHE, or NOCACHE.
+        cache: bool,
+    },
     /// `ALTER TABLE ... DROP FOREIGN KEY name` (Go `DropForeignKey`).
     DropForeignKey {
         /// The resolved database name.
@@ -1579,6 +1589,14 @@ fn lower_alter_table_catalog(
                 table,
                 definition: Box::new(definition.clone()),
                 context: DdlStatementContext(context.clone()),
+            }))
+        }
+        tidb_ast::AlterTableAction::Cache(mode) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterTableCache {
+                schema,
+                table,
+                cache: *mode == tidb_ast::AlterTableCacheMode::Cache,
             }))
         }
         tidb_ast::AlterTableAction::DropForeignKey(drop) => {
@@ -5028,6 +5046,7 @@ fn plan_persisted_check_constraint_job_step(
             check_constraint_validation: validation,
             column_reorg: None,
             foreign_key_checks: Vec::new(),
+            cache_table_check: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5137,6 +5156,7 @@ fn plan_persisted_create_schema_job_step(
             check_constraint_validation: None,
             column_reorg: None,
             foreign_key_checks: Vec::new(),
+            cache_table_check: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5267,6 +5287,7 @@ fn plan_persisted_create_table_job_step(
             check_constraint_validation: None,
             column_reorg: None,
             foreign_key_checks: Vec::new(),
+            cache_table_check: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5443,6 +5464,7 @@ fn plan_persisted_create_tables_job_step(
             check_constraint_validation: None,
             column_reorg: None,
             foreign_key_checks: Vec::new(),
+            cache_table_check: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5660,6 +5682,7 @@ fn plan_persisted_rename_tables_job_step(
                 check_constraint_validation: None,
                 column_reorg: None,
                 foreign_key_checks: Vec::new(),
+                cache_table_check: None,
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
                 warnings: Vec::new(),
@@ -5731,6 +5754,7 @@ fn plan_persisted_rename_tables_job_step(
             check_constraint_validation: None,
             column_reorg: None,
             foreign_key_checks: Vec::new(),
+            cache_table_check: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5827,6 +5851,7 @@ fn plan_persisted_drop_schema_job_step(
             check_constraint_validation: None,
             column_reorg: None,
             foreign_key_checks: Vec::new(),
+            cache_table_check: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5920,6 +5945,7 @@ fn plan_persisted_drop_table_job_step(
             check_constraint_validation: None,
             column_reorg: None,
             foreign_key_checks: Vec::new(),
+            cache_table_check: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -5952,6 +5978,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         check_constraint_validation: None,
         column_reorg: None,
         foreign_key_checks: Vec::new(),
+        cache_table_check: None,
         mdl_info_update: None,
         exchange_partition_label_swap: None,
         warnings: Vec::new(),
@@ -6282,6 +6309,8 @@ pub struct DdlWrite {
     pub column_reorg: Option<ColumnReorg>,
     /// The existing-row checks the `ADD FOREIGN KEY`s owe, in job order.
     pub foreign_key_checks: Vec<ForeignKeyCheck>,
+    /// The table an `ALTER TABLE ... CACHE` owes Go's `checkCacheTableSize`.
+    pub cache_table_check: Option<Box<TableInfo>>,
     /// The `mysql.tidb_mdl_info` row that must be replaced atomically with
     /// this schema phase before the owner waits for acknowledgements.
     pub mdl_info_update: Option<MdlInfoUpdate>,
@@ -7016,6 +7045,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     let mut check_constraint_validation = None;
     let mut column_reorg: Option<ColumnReorg> = None;
     let mut foreign_key_checks: Vec<ForeignKeyCheck> = Vec::new();
+    let mut cache_table_check: Option<Box<TableInfo>> = None;
     let mut exchange_partition_label_swap = None;
     let mut warnings: Vec<(DdlWarningLevel, u16, String)> = Vec::new();
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
@@ -9621,6 +9651,70 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::AlterTableCache {
+            schema,
+            table,
+            cache,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let wanted = if *cache {
+                tidb_model::TableCacheStatusType::ENABLE
+            } else {
+                tidb_model::TableCacheStatusType::DISABLE
+            };
+            // Go returns without a job when the state already holds.
+            if stored.table_cache_status_type == wanted {
+                return Ok(already(format!(
+                    "`{schema}`.`{table}` is already {}",
+                    if *cache { "cached" } else { "not cached" }
+                )));
+            }
+            if *cache {
+                // Go `AlterTableCache`.
+                if tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                    return Err(coded_refusal(
+                        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                        "ALTER table cache for tables in system database is currently unsupported",
+                    ));
+                }
+                if stored.temp_table_type != tidb_model::TempTableType::NONE {
+                    return Err(coded_refusal(
+                        tidb_error::tidb::errcode::ErrOptOnTemporaryTable,
+                        "`alter temporary table cache` is unsupported on temporary tables.",
+                    ));
+                }
+                if stored.partition.is_some() {
+                    return Err(coded_refusal(
+                        tidb_error::tidb::errcode::ErrOptOnCacheTable,
+                        "'partition mode' is unsupported on cache tables.",
+                    ));
+                }
+                // Go `checkCacheTableSize`, over the table's stored bytes.
+                cache_table_check = Some(Box::new(stored.clone_like_go()));
+                // Go `AlterTableCache`: `replace into mysql.table_cache_meta
+                // values (%?, 'NONE', 0, 0)` before the job.
+                write_table_cache_meta_row(&catalog, stored.id, &mut writes)?;
+            }
+            // Go moves through `TableCacheStatusSwitching`, one version each
+            // way; the transaction publishes the final state.
+            let mut info = stored.clone_like_go();
+            info.table_cache_status_type = wanted;
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = if *cache {
+                ActionType::ACTION_ALTER_CACHE_TABLE
+            } else {
+                ActionType::ACTION_ALTER_NO_CACHE_TABLE
+            };
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
         DdlStatement::DropForeignKey {
             schema,
             table,
@@ -10540,6 +10634,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         check_constraint_validation,
         column_reorg,
         foreign_key_checks,
+        cache_table_check,
         mdl_info_update,
         exchange_partition_label_swap,
         warnings,
@@ -11561,6 +11656,45 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
             value::encode_int_value(row_id),
         )?);
     }
+    Ok(())
+}
+
+/// Go `AlterTableCache`'s `replace into mysql.table_cache_meta values (%?,
+/// 'NONE', 0, 0)`: the cached table's lock row, unlocked.
+fn write_table_cache_meta_row(
+    catalog: &ClusterCatalog,
+    table_id: i64,
+    writes: &mut Vec<BufferMutation>,
+) -> Result<(), DdlPlanError> {
+    let (_, table) = catalog
+        .find_table("mysql", "table_cache_meta")
+        .ok_or_else(|| DdlPlanError::Encode("mysql.table_cache_meta does not exist".to_owned()))?;
+    let column = |name: &str| {
+        table
+            .cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+            .map(|column| column.read().clone_like_go())
+            .ok_or_else(|| {
+                DdlPlanError::Encode(format!("mysql.table_cache_meta has no column `{name}`"))
+            })
+    };
+    let lock_type = column("lock_type")?;
+    let mut values = crate::system_row_write::RowValues::new();
+    values.insert(column("tid")?.id, Datum::Int(table_id));
+    values.insert(
+        lock_type.id,
+        Datum::new_enum(
+            tidb_datatype::MysqlEnum::new("NONE", 1),
+            lock_type.field_type.collation(),
+        ),
+    );
+    values.insert(column("lease")?.id, Datum::Int(0));
+    values.insert(column("oldreadlease")?.id, Datum::Int(0));
+    writes.extend(
+        crate::system_row_write::replace_unindexed_clustered_row(table, &values)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    );
     Ok(())
 }
 

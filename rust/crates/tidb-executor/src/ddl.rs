@@ -346,6 +346,7 @@ pub mod preprocess;
 mod region_split;
 pub mod storage_class;
 mod table_cache;
+pub use table_cache::check_cached_table_ddl;
 mod table_constraints;
 mod table_lifecycle;
 pub mod table_lock;

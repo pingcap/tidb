@@ -573,6 +573,14 @@ impl Session {
                 || self.split_local_temporary_drop(drop).0.names.is_empty()))
     }
 
+    /// Go's `ErrOptOnCacheTable` refusals for a cached table, which its
+    /// executor raises before any job is built (`AlterTable`, `createIndex`,
+    /// `dropIndex`, `TruncateTable`, `renameTable(s)`).
+    pub fn validate_cached_table_ddl(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
+        let catalog = self.lock_catalog()?;
+        tidb_executor::ddl::check_cached_table_ddl(&catalog, &self.current_db, stmt)
+    }
+
     /// Go's submitter validates persistent FK references after implicit commit.
     /// These admission checks remain active when the global feature is OFF;
     /// the gated worker rechecks cannot replace them.
