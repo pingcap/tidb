@@ -331,7 +331,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	if hasTiFlashLocalMatchInfo && len(expr.GetArgs()) > 1 {
 		// The MATCH return value is numeric, but matching uses the collation of
 		// the first MATCH column. TiFlash's scalar function reads it from the
-		// scalar expression result FieldType, just as it does for scan FTS.
+		// scalar expression result FieldType to select its token collator.
 		tp.SetCollate(expr.GetArgs()[1].GetType(pc.ctx).GetCollate())
 	}
 

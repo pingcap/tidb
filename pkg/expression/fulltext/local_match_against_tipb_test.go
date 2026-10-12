@@ -24,7 +24,7 @@ import (
 )
 
 func TestBuildLocalMatchAgainstBooleanQuery(t *testing.T) {
-	query, err := BuildLocalMatchAgainstBooleanQuery(`+cat -dog "red fox" pre*`, model.FullTextParserTypeStandardV1)
+	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(`+cat -dog "red fox" pre*`, standardConfigForTest())
 	require.NoError(t, err)
 	require.Equal(t, LocalMatchAgainstProtocolVersion, query.GetVersion())
 	require.Equal(t, tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard, query.GetParser())
@@ -134,7 +134,7 @@ func TestBuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(t *testing.T) {
 }
 
 func TestBuildLocalMatchAgainstBooleanQuerySupportsNgramAndRejectsUnsupportedSyntax(t *testing.T) {
-	query, err := BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize("+数据库 -mysql", model.FullTextParserTypeNgramV1, 2)
+	query, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+数据库 -mysql", ngramConfigForTest())
 	require.NoError(t, err)
 	require.Equal(t, tipb.LocalMatchAgainstParser_LocalMatchAgainstParserNgram, query.GetParser())
 	require.Equal(t, uint32(2), query.GetNgramTokenSize())
@@ -144,24 +144,24 @@ func TestBuildLocalMatchAgainstBooleanQuerySupportsNgramAndRejectsUnsupportedSyn
 	require.Equal(t, tipb.LocalMatchAgainstBooleanOccur_LocalMatchAgainstBooleanOccurMustNot, query.GetNodes()[1].GetOccur())
 	require.Equal(t, "mysql", query.GetNodes()[1].GetText())
 
-	_, err = BuildLocalMatchAgainstBooleanQuery("(cat)", model.FullTextParserTypeStandardV1)
+	_, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("(cat)", standardConfigForTest())
 	require.Error(t, err)
 	for _, unsupported := range []string{">cat", "<cat", "~cat", `"cat dog"@2`} {
-		_, err = BuildLocalMatchAgainstBooleanQuery(unsupported, model.FullTextParserTypeStandardV1)
+		_, err = BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(unsupported, standardConfigForTest())
 		require.Error(t, err, "unsupported Boolean extensions must not enter the scalar wire protocol: %s", unsupported)
 	}
 }
 
 func TestBuildLocalMatchAgainstBooleanQueryRejectsSplitStandardPrefix(t *testing.T) {
 	for _, search := range []string{"+foo.bar*", "foo.bar*", "baz -foo.bar*", "+foo.a*"} {
-		_, err := BuildLocalMatchAgainstBooleanQuery(search, model.FullTextParserTypeStandardV1)
+		_, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search, standardConfigForTest())
 		require.ErrorContains(t, err, "split STANDARD prefix", search)
 	}
 	for _, search := range []string{"+foobar*", "+foo_bar*"} {
-		_, err := BuildLocalMatchAgainstBooleanQuery(search, model.FullTextParserTypeStandardV1)
+		_, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search, standardConfigForTest())
 		require.NoError(t, err, search)
 	}
-	_, err := BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize("+foo.bar*", model.FullTextParserTypeNgramV1, 2)
+	_, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig("+foo.bar*", ngramConfigForTest())
 	require.NoError(t, err, "NGRAM uses a different prefix normalization")
 }
 
@@ -193,6 +193,25 @@ func TestLocalMatchAgainstCapabilityErrorPrecedence(t *testing.T) {
 	}
 	_, err := BuildParsedLocalMatchAgainstBooleanQuery(nil, config)
 	require.EqualError(t, err, "nil Local MATCH Boolean group")
+}
+
+func TestAnalyzerConfigFromLocalMatchAgainstBooleanQueryDefaults(t *testing.T) {
+	for _, parser := range []tipb.LocalMatchAgainstParser{
+		tipb.LocalMatchAgainstParser_LocalMatchAgainstParserStandard,
+		tipb.LocalMatchAgainstParser_LocalMatchAgainstParserNgram,
+	} {
+		config, err := AnalyzerConfigFromLocalMatchAgainstBooleanQuery(&tipb.LocalMatchAgainstBooleanQuery{
+			Version:      LocalMatchAgainstProtocolVersion,
+			Parser:       parser,
+			StopwordMode: tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeDisabled,
+		}, "utf8mb4_bin")
+		require.NoError(t, err)
+		require.Equal(t, 3, config.InnodbFtMinTokenSize)
+		require.Equal(t, 84, config.InnodbFtMaxTokenSize)
+		require.Equal(t, 2, config.NgramTokenSize)
+		require.False(t, config.InnodbFtEnableStopword)
+		require.Equal(t, "utf8mb4_bin", config.Collation)
+	}
 }
 
 func TestAnalyzerConfigFromLocalMatchAgainstBooleanQuery(t *testing.T) {

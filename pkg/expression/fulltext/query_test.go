@@ -399,25 +399,26 @@ func TestCompileBooleanQueryNgramUnicodeNumber(t *testing.T) {
 	require.True(t, matchQueryForTest(t, config, "²", []ColumnInput{{Text: "²"}}))
 }
 
-func TestCompiledQueryMatchCost(t *testing.T) {
-	simple, err := CompileBooleanQuery("+tidb", standardConfigForTest())
-	require.NoError(t, err)
-	require.False(t, simple.MatchesNothing())
-	require.Zero(t, simple.DocumentMatchCost())
-
-	filtered, err := CompileBooleanQuery("+go", standardConfigForTest())
-	require.NoError(t, err)
-	require.True(t, filtered.MatchesNothing())
-
-	phrase, err := CompileBooleanQuery(`"tidb database"`, standardConfigForTest())
-	require.NoError(t, err)
-	require.Greater(t, phrase.MatchCost(), simple.MatchCost())
-	require.Equal(t, float64(1), phrase.DocumentMatchCost())
-
-	sparsePhrase, err := CompileBooleanQuery(`"tidb a database"`, standardConfigForTest())
-	require.NoError(t, err)
-	require.Greater(t, sparsePhrase.DocumentMatchCost(), phrase.DocumentMatchCost())
-
+func TestCompiledQueryMatchesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		search string
+		want   bool
+	}{
+		{"+tidb", false},
+		{"+go", true},
+		{`"tidb database"`, false},
+		{`"tidb a database"`, false},
+		{"", true},
+		{"-tidb", true},
+	} {
+		t.Run(tc.search, func(t *testing.T) {
+			query, err := CompileBooleanQuery(tc.search, standardConfigForTest())
+			require.NoError(t, err)
+			require.Equal(t, tc.want, query.MatchesNothing())
+		})
+	}
+	var nilQuery *Query
+	require.True(t, nilQuery.MatchesNothing())
 }
 
 func matchQueryForTest(t *testing.T, config AnalyzerConfig, query string, columns []ColumnInput) bool {

@@ -26,11 +26,9 @@ import (
 
 // Query is an executable no-score boolean fulltext query.
 type Query struct {
-	root              queryNode
-	matchCost         float64
-	documentMatchCost float64
-	matchesNothing    bool
-	collator          collate.Collator
+	root           queryNode
+	matchesNothing bool
+	collator       collate.Collator
 }
 
 // CompileBooleanQuery parses and normalizes a BOOLEAN MODE query for local
@@ -55,13 +53,10 @@ func CompileParsedBooleanQuery(group *matchagainst.BooleanGroup, config Analyzer
 	if err != nil {
 		return nil, err
 	}
-	work := estimateQueryNodeWork(root)
 	query := &Query{
-		root:              root,
-		matchCost:         work.fixed,
-		documentMatchCost: work.perDocument,
-		matchesNothing:    queryNodeMatchesNothing(root),
-		collator:          parserInfoFromConfig(config).collator,
+		root:           root,
+		matchesNothing: queryNodeMatchesNothing(root),
+		collator:       parserInfoFromConfig(config).collator,
 	}
 	return query, nil
 }
@@ -72,26 +67,6 @@ func (q *Query) Match(doc *Document) bool {
 		return false
 	}
 	return q.root.match(doc, q.collator)
-}
-
-// MatchCost returns fixed query work such as term lookups and phrase setup.
-// Work that scales with document size is reported by DocumentMatchCost.
-func (q *Query) MatchCost() float64 {
-	if q == nil {
-		return 0
-	}
-	return q.matchCost
-}
-
-// DocumentMatchCost returns how many additional document-sized passes local
-// matching performs after tokenization. Dense phrases use one KMP pass;
-// prefixes scan the token set; sparse phrases may intersect one position list
-// per analyzed query token.
-func (q *Query) DocumentMatchCost() float64 {
-	if q == nil {
-		return 0
-	}
-	return q.documentMatchCost
 }
 
 // MatchesNothing reports whether normalization proved that no document can
@@ -335,59 +310,6 @@ type groupNode struct {
 	must    []queryNode
 	should  []queryNode
 	mustNot []queryNode
-}
-
-type queryWorkEstimate struct {
-	fixed       float64
-	perDocument float64
-}
-
-func (w *queryWorkEstimate) add(other queryWorkEstimate) {
-	w.fixed += other.fixed
-	w.perDocument += other.perDocument
-}
-
-func estimateQueryNodeWork(node queryNode) queryWorkEstimate {
-	switch n := node.(type) {
-	case nil:
-		return queryWorkEstimate{}
-	case neverNode:
-		return queryWorkEstimate{fixed: 0.1}
-	case termNode:
-		return queryWorkEstimate{fixed: 1}
-	case prefixNode:
-		// Prefix matching scans the document's unique token set.
-		return queryWorkEstimate{fixed: 1, perDocument: 1}
-	case phraseNode:
-		work := queryWorkEstimate{fixed: max(2, float64(len(n.tokens))*2)}
-		if n.isDense() {
-			work.perDocument = 1
-		} else {
-			work.perDocument = float64(len(n.tokens))
-		}
-		return work
-	case groupNode:
-		work := queryWorkEstimate{fixed: 1}
-		for _, child := range n.must {
-			work.add(estimateQueryNodeWork(child))
-		}
-		for _, child := range n.mustNot {
-			work.add(estimateQueryNodeWork(child))
-		}
-		if len(n.must) == 0 {
-			for _, child := range n.should {
-				work.add(estimateQueryNodeWork(child))
-			}
-		}
-		return work
-	case verifiedPhraseNode:
-		work := estimateQueryNodeWork(n.anchor)
-		work.add(estimateQueryNodeWork(n.phrase))
-		work.perDocument++ // Unfiltered analysis only after an anchor match.
-		return work
-	default:
-		return queryWorkEstimate{fixed: 1}
-	}
 }
 
 func queryNodeMatchesNothing(node queryNode) bool {

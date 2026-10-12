@@ -286,6 +286,7 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
 		tsExec.AnnQuery = &annQueryCopy
 	}
+
 	var err error
 	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(ctx, p.runtimeFilterList, ctx.GetClient())
 	if err != nil {
@@ -339,6 +340,7 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
 		ptsExec.AnnQuery = &annQueryCopy
 	}
+
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err

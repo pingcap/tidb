@@ -2484,7 +2484,7 @@ func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(
 	analyzerConfig fulltext.AnalyzerConfig,
 	parsedQuery *matchagainst.BooleanGroup,
 ) (*expression.LocalMatchAgainstTiFlashEvalInfo, bool) {
-	if !matchAgainstAllowsTiFlashRowWise(modifier) || tblInfo == nil || er.planCtx == nil || er.planCtx.builder == nil {
+	if !expression.MatchAgainstModifierSupportedByLocalNoScore(modifier) || tblInfo == nil || er.planCtx == nil || er.planCtx.builder == nil {
 		return nil, false
 	}
 	if replica := tblInfo.TiFlashReplica; replica == nil || !replica.Available || replica.Count == 0 {
@@ -2523,13 +2523,6 @@ func (er *expressionRewriter) localMatchAgainstTiFlashRowWiseViable(
 		return nil, false
 	}
 	return &expression.LocalMatchAgainstTiFlashEvalInfo{BooleanQuery: booleanQuery}, true
-}
-
-// matchAgainstAllowsTiFlashRowWise reports whether a MATCH modifier can be
-// evaluated by TiFlash's row-wise Boolean MATCH scalar function.
-// Query expansion has no scalar-protocol representation and is rejected.
-func matchAgainstAllowsTiFlashRowWise(modifier ast.FulltextSearchModifier) bool {
-	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
 }
 
 func localMatchAgainstTiFlashAnalyzerConfigSupported(config fulltext.AnalyzerConfig) bool {
@@ -2603,13 +2596,9 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 	}
 
 	if searchText.IsNull() {
-		// NULL search yields NULL in MySQL MATCH semantics
-		// (builtin_fts.go evalReal returns isNull=true for NULL args), so we
-		// emit Constant(NULL) rather than Constant(0). This preserves
-		// three-valued logic under NOT — NOT NULL = NULL filters the row —
-		// and under IS NULL / IS NOT NULL. A literal Constant(0) would make
-		// NOT(MATCH...) admit every row when the search is NULL, diverging
-		// from native semantics.
+		// Preserve the legacy substring alternative's NULL result. This is
+		// not the row-wise Local MATCH path, which returns zero for NULL
+		// searches; the alternative does not promise equivalent FTS semantics.
 		er.ctxStackPop(numCols + 1)
 		er.ctxStackAppend(&expression.Constant{
 			Value:   types.Datum{},

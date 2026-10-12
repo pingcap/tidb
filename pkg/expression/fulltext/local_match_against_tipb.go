@@ -31,25 +31,6 @@ import (
 // BMP word characters. Filtered phrases are verified against unfiltered text.
 const LocalMatchAgainstProtocolVersion uint32 = 2
 
-// BuildLocalMatchAgainstBooleanQuery parses a BOOLEAN MODE search string and
-// converts it to the protocol representation consumed by TiFlash. The parser
-// type comes from FULLTEXT index configuration; callers must not claim support for a
-// parser which TiFlash cannot interpret.
-func BuildLocalMatchAgainstBooleanQuery(search string, parserType model.FullTextParserType) (*tipb.LocalMatchAgainstBooleanQuery, error) {
-	return BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search, parserType, 0)
-}
-
-// BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize parses a BOOLEAN MODE
-// search string and attaches the analyzer configuration required by TiFlash.
-// A zero NGRAM token size tells TiFlash to use its configured default.
-func BuildLocalMatchAgainstBooleanQueryWithNgramTokenSize(search string, parserType model.FullTextParserType, ngramTokenSize int) (*tipb.LocalMatchAgainstBooleanQuery, error) {
-	group, err := ParseBooleanQuery(search, parserType)
-	if err != nil {
-		return nil, err
-	}
-	return buildParsedLocalMatchAgainstBooleanQuery(group, parserType, ngramTokenSize)
-}
-
 func buildParsedLocalMatchAgainstBooleanQuery(group *matchagainst.BooleanGroup, parserType model.FullTextParserType, ngramTokenSize int) (*tipb.LocalMatchAgainstBooleanQuery, error) {
 	if group == nil {
 		return nil, fmt.Errorf("nil Local MATCH Boolean group")

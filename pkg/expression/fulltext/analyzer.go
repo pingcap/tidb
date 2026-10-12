@@ -17,7 +17,6 @@ package fulltext
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -53,20 +52,6 @@ type AnalyzerConfig struct {
 	NgramTokenSize         int
 }
 
-// Equal reports whether two analyzer configurations produce the same token
-// stream. Stopword order does not affect analysis; DDL stores it sorted, so an
-// order-sensitive comparison also catches malformed or non-canonical metadata.
-func (c AnalyzerConfig) Equal(other AnalyzerConfig) bool {
-	return c.ParserType == other.ParserType &&
-		c.Collation == other.Collation &&
-		c.StopwordCollation == other.StopwordCollation &&
-		c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
-		c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
-		c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
-		c.NgramTokenSize == other.NgramTokenSize &&
-		slices.Equal(c.Stopwords, other.Stopwords)
-}
-
 // Analyzer analyzes text into fulltext tokens.
 type Analyzer interface {
 	Analyze(text string) ([]Token, error)
@@ -96,8 +81,8 @@ func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
 }
 
 // AnalyzerConfigFromSessionContext builds an AnalyzerConfig from the current
-// session/global sysvars. Local index-backed MATCH should prefer index-bound
-// config once it is persisted in table metadata.
+// session/global sysvars for row-wise Local MATCH. The parser type is supplied
+// by the caller; this does not read analyzer settings or data from an index.
 func AnalyzerConfigFromSessionContext(sctx sessionctx.Context, parserType model.FullTextParserType) (AnalyzerConfig, error) {
 	if sctx == nil || sctx.GetSessionVars() == nil {
 		return AnalyzerConfig{}, fmt.Errorf("missing session context for fulltext analyzer")
@@ -393,7 +378,7 @@ func runeAtByte(text string, offset int) (rune, int) {
 }
 
 func isTokenChar(ch rune) bool {
-	// Protocol v1 requires Go Unicode 15.0.0; the full-character regression
+	// Local MATCH protocol version 2 requires Go Unicode 15.0.0; the full-character regression
 	// test fails on a different version or a changed classification. TiFlash
 	// uses a table generated from this same standard-library rule.
 	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
