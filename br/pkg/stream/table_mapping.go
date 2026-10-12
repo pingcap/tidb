@@ -1102,7 +1102,8 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 		// A schema-level rename rule restores the schema itself, even when every
 		// selected table is overridden to another target schema.
 		if dbReplace.SchemaRouted && dbReplace.Name != "" {
-			if err := mergeTarget(ast.NewCIStr(dbReplace.Name).L, dbReplace.Name, dbReplace.DbID, dbReplace.SourceDBInfo); err != nil {
+			if err := mergeTarget(ast.NewCIStr(dbReplace.Name).L, dbReplace.Name, dbReplace.DbID,
+				dbReplace.SourceDBInfo); err != nil {
 				return nil, err
 			}
 		}
@@ -1114,7 +1115,8 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 				ast.NewCIStr(tableReplace.TargetDBName).L == ast.NewCIStr(dbReplace.Name).L {
 				continue
 			}
-			if err := mergeTarget(ast.NewCIStr(tableReplace.TargetDBName).L, tableReplace.TargetDBName, tableReplace.TargetDBID, dbReplace.SourceDBInfo); err != nil {
+			if err := mergeTarget(ast.NewCIStr(tableReplace.TargetDBName).L, tableReplace.TargetDBName,
+				tableReplace.TargetDBID, dbReplace.SourceDBInfo); err != nil {
 				return nil, err
 			}
 		}
@@ -1332,7 +1334,8 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 			tr.IsView = tbl.IsView
 			for _, ref := range tbl.ForeignKeyReferences {
 				if ref != nil {
-					tr.ForeignKeyReferences = append(tr.ForeignKeyReferences, ForeignKeyReference{Schema: ref.Schema, Table: ref.Table})
+					tr.ForeignKeyReferences = append(tr.ForeignKeyReferences,
+						ForeignKeyReference{Schema: ref.Schema, Table: ref.Table})
 				}
 			}
 			tr.FilteredOut = tbl.FilteredOut
@@ -1353,7 +1356,8 @@ func (tm *TableMappingManager) generateTempID() DownstreamID {
 // UpdateDownstreamIds updates the mapping from old table ID to new table ID.
 // this is necessary since we override the table name during full restore directly to its end name, so we need to
 // figure out the id mapping upfront.
-func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*restoreutils.DatabaseRestorePlan, tables []*restoreutils.CreatedTable,
+func (tm *TableMappingManager) UpdateDownstreamIds(
+	dbs []*restoreutils.DatabaseRestorePlan, tables []*restoreutils.CreatedTable,
 	dom *domain.Domain) error {
 	dbReplaces := make(map[UpstreamID]*DBReplace)
 	resolvedTargetDBs := make(map[string]*model.DBInfo, len(dbs))
