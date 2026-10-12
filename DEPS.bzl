@@ -3598,8 +3598,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
+<<<<<<< HEAD
         sum = "h1:wxolKysltFSu8gxWJBdUdWuTBoSuY3MjNIIZI5S9JLY=",
         version = "v0.0.0-20260605083900-f9f651ef5fbc",
+=======
+        sum = "h1:GalvMypJTiQvfc6p8fs7OS0z+X9O5ZAN+hTZ67QpTYM=",
+        version = "v0.0.0-20261006155659-59b678398b17",
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
     )
     go_repository(
         name = "com_github_pkg_browser",

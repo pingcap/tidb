@@ -63,22 +63,38 @@ const MaxSketchSize = 10000
 //  1. https://www.vldb.org/conf/2001/P541.pdf
 //  2. https://algo.inria.fr/flajolet/Publications/FlMa85.pdf
 type FMSketch struct {
+<<<<<<< HEAD
 	// A set to store unique hashed values.
 	hashset *swiss.Map[uint64, bool]
+=======
+	// A set to store unique hashed values. The value is true only in a sketch
+	// of sampled rows, for a hash seen more than once.
+	hashset map[uint64]bool
+	// ndvCounts is set only in a sketch of sampled rows. A sketch is sampled if
+	// and only if ndvCounts is not nil.
+	ndvCounts *ndvCounts
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 	// A binary mask used to track the maximum number of trailing zeroes in the hashed values.
 	// Also used to track the level of the sketch.
-	// Every time the size of the hashset exceeds the maximum size, the mask will be moved to the next level.
+	// Every time the size of the hashset exceeds the maximum size, the mask will have one more bit set.
 	mask uint64
-	// The maximum size of the hashset. If the size exceeds this value, the mask will be moved to the next level.
+	// The maximum size of the hashset. If the size exceeds this value, the mask will have one more bit set.
 	// And the hashset will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
 	maxSize int
 }
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
+<<<<<<< HEAD
 	result := fmSketchPool.Get().(*FMSketch)
 	result.maxSize = maxSize
 	return result
+=======
+	return &FMSketch{
+		hashset: make(map[uint64]bool, maxSize),
+		maxSize: maxSize,
+	}
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 }
 
 // Copy makes a copy for current FMSketch.
@@ -86,6 +102,7 @@ func (s *FMSketch) Copy() *FMSketch {
 	if s == nil {
 		return nil
 	}
+<<<<<<< HEAD
 	result := NewFMSketch(s.maxSize)
 	s.hashset.Iter(func(key uint64, value bool) bool {
 		result.hashset.Put(key, value)
@@ -94,12 +111,27 @@ func (s *FMSketch) Copy() *FMSketch {
 	result.mask = s.mask
 	result.maxSize = s.maxSize
 	return result
+=======
+	copied := &FMSketch{
+		hashset: maps.Clone(s.hashset),
+		mask:    s.mask,
+		maxSize: s.maxSize,
+	}
+	if s.ndvCounts != nil {
+		value := *s.ndvCounts
+		copied.ndvCounts = &value
+	}
+	return copied
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 }
 
 // NDV returns the estimated number of distinct values (NDV) in the sketch.
 func (s *FMSketch) NDV() int64 {
 	if s == nil {
 		return 0
+	}
+	if s.ndvCounts != nil {
+		return s.sampledNDV()
 	}
 	// The estimated count of distinct values is 2^r * count, where 'r' is the maximum number of trailing zeroes observed and 'count' is the number of unique hashed values.
 	// The fundamental idea is that the hash function maps the input domain onto a logarithmic scale.
@@ -111,13 +143,34 @@ func (s *FMSketch) NDV() int64 {
 
 // insertHashValue inserts a hashed value into the sketch.
 func (s *FMSketch) insertHashValue(hashVal uint64) {
+	s.mergeHashValue(hashVal, false)
+}
+
+// mergeHashValue adds a hash from a source: a row, which has the hash one time, or a merged
+// sketch. repeated is true if the source saw the hash more than once.
+func (s *FMSketch) mergeHashValue(hashVal uint64, repeated bool) {
 	// If the hashed value is already covered by the mask, we can skip it.
 	// This is because the number of trailing zeroes in the hashed value is less than the mask.
 	if (hashVal & s.mask) != 0 {
 		return
 	}
+<<<<<<< HEAD
 	// Put the hashed value into the hashset.
 	s.hashset.Put(hashVal, true)
+=======
+	// Do not skip this lookup in a sketch that is not sampled. Assigning to a hash that is
+	// already present costs two to three times the lookup, and it made merges about 35% slower.
+	alreadyRepeated, ok := s.hashset[hashVal]
+	if ok {
+		// A sampled sketch sees the hash again here, so the hash is now repeated.
+		if s.ndvCounts != nil && !alreadyRepeated {
+			s.hashset[hashVal] = true
+		}
+		return
+	}
+	// A new hash keeps the flag of its source.
+	s.hashset[hashVal] = repeated
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 	// We track the unique hashed values level by level to ensure a minimum count of distinct values at each level.
 	// This way, the final estimation is less likely to be skewed by outliers.
 	if s.hashset.Count() > s.maxSize {
@@ -133,6 +186,14 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func (s *FMSketch) filterHashes() {
+	rejected := func(hash uint64, _ bool) bool { return hash&s.mask != 0 }
+	maps.DeleteFunc(s.hashset, rejected)
+}
+
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 // InsertValue inserts a value into the FM sketch.
 func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) error {
 	bytes, err := codec.EncodeValue(sc.TimeZone(), nil, value)
@@ -175,10 +236,21 @@ func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.D
 	return nil
 }
 
-// MergeFMSketch merges two FM Sketch.
+// MergeFMSketch merges two FM Sketch. Sampled sketches come from the responses
+// of one ANALYZE request, so they are all sampled at the same rate. ANALYZE
+// allocates the sketch that collects them before the first response says
+// whether TiKV sampled, so an empty s becomes sampled with the first of them.
 func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	if s == nil || rs == nil {
 		return
+	}
+	if rs.ndvCounts != nil {
+		if s.ndvCounts == nil {
+			s.ndvCounts = &ndvCounts{}
+		}
+		s.ndvCounts.rows += rs.ndvCounts.rows
+		s.ndvCounts.samples += rs.ndvCounts.samples
+		s.ndvCounts.nulls += rs.ndvCounts.nulls
 	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
@@ -189,10 +261,16 @@ func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 			return false
 		})
 	}
+<<<<<<< HEAD
 	rs.hashset.Iter(func(key uint64, _ bool) bool {
 		s.insertHashValue(key)
 		return false
 	})
+=======
+	for key, repeated := range rs.hashset {
+		s.mergeHashValue(key, repeated)
+	}
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 }
 
 // FMSketchToProto converts FMSketch to its protobuf representation.
@@ -200,10 +278,19 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	protoSketch := new(tipb.FMSketch)
 	if s != nil {
 		protoSketch.Mask = s.mask
+<<<<<<< HEAD
 		s.hashset.Iter(func(val uint64, _ bool) bool {
 			protoSketch.Hashset = append(protoSketch.Hashset, val)
 			return false
 		})
+=======
+		for val, repeated := range s.hashset {
+			// The hashset field of a sampled sketch has only the hashes seen once.
+			if !repeated {
+				protoSketch.Hashset = append(protoSketch.Hashset, val)
+			}
+		}
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 	}
 	return protoSketch
 }
@@ -213,10 +300,19 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	if protoSketch == nil {
 		return nil
 	}
+<<<<<<< HEAD
 	sketch := fmSketchPool.Get().(*FMSketch)
 	sketch.mask = protoSketch.Mask
 	for _, val := range protoSketch.Hashset {
 		sketch.hashset.Put(val, true)
+=======
+	sketch := &FMSketch{
+		hashset: make(map[uint64]bool, len(protoSketch.Hashset)),
+		mask:    protoSketch.Mask,
+	}
+	for _, val := range protoSketch.Hashset {
+		sketch.hashset[val] = false
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 	}
 	return sketch
 }
@@ -248,9 +344,19 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 
 // MemoryUsage returns the total memory usage of a FMSketch.
 func (s *FMSketch) MemoryUsage() (sum int64) {
+<<<<<<< HEAD
 	// As for the variables mask(uint64) and maxSize(int) each will consume 8 bytes. This is the origin of the constant 16.
 	// And for the variables hashset(map[uint64]bool), each element in map will consume 9 bytes(8[uint64] + 1[bool]).
 	sum = int64(16 + 9*s.hashset.Count())
+=======
+	// 80 is the 32-byte struct plus the 48-byte Go map header. An entry takes about 30 bytes: its slot takes 18
+	// (8-byte key, value padded to 8, a control byte, allocator rounding), and tables are 7/16 to 7/8 full.
+	sum = int64(80 + 30*len(s.hashset))
+	// A sampled sketch also keeps three 8-byte row counts.
+	if s.ndvCounts != nil {
+		sum += 24
+	}
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
 	return
 }
 

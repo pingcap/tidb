@@ -17,6 +17,7 @@ go_library(
         "index.go",
         "row_sampler.go",
         "sample.go",
+        "sampled_ndv.go",
         "scalar.go",
         "table.go",
     ],
@@ -118,7 +119,11 @@ go_test(
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+<<<<<<< HEAD
         "@com_github_pingcap_log//:log",
+=======
+        "@com_github_pingcap_tipb//go-tipb",
+>>>>>>> c765e5bb969 (statistics: estimate NDV from FM sketches of sampled rows (#71806))
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
