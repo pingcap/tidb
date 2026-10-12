@@ -170,7 +170,6 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			if item.InProgress {
 				out.InProgress = true
 			}
-			out.Errors = append(out.Errors, item.Errors...)
 			out.noteObserved(item.ObservedAt)
 			if detail {
 				out.Stores = append(out.Stores, item)
@@ -210,7 +209,6 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			}
 			out.Remaining += item.Remaining
 			out.Failed += item.Failed
-			out.Errors = append(out.Errors, item.Errors...)
 			out.noteObserved(item.ObservedAt)
 			if detail {
 				out.Stores = append(out.Stores, item)
