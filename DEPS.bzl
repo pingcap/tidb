@@ -4529,7 +4529,7 @@ def go_deps():
         importpath = "github.com/tikv/client-go/v2",
         replace = "github.com/lhy1024/client-go/v2",
         sum = "h1:jHN2IgZoHK5O5LTpV5450ztn57Uncb4tT4tfSmvccQs=",
-        version = "v2.0.1-0.20261012045958-cc984ab00b8a",
+        version = "v2.0.1-0.20261012050735-f17804849ca7",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
