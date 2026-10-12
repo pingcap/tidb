@@ -121,4 +121,42 @@ func TestIndexJoinMinFirstRowPerRange(t *testing.T) {
 		require.NotContains(t, planText.String(), "Agg", c.query)
 		tk.MustQuery(c.query).Check(c.want)
 	}
+
+	// ENUM is stored in the index by member number but MIN and MAX compare its
+	// string value, so with members 'z','a','m' the first row in index order
+	// holds 'z' while MIN is 'a'. Neither rewrite may apply. The LIMIT 1 form
+	// sorts by member number, so it stays an Apply and returns 'z'.
+	tk.MustExec("create table en (id bigint primary key auto_increment, ns_id bigint not null, e enum('z','a','m') not null, key k (ns_id, e))")
+	tk.MustExec("insert into en (ns_id, e) with recursive r(n) as (select 1 union all select n+1 from r where n < 300) " +
+		"select k.ns_id, elt(1 + r.n % 3, 'z', 'a', 'm') from r join (select 1 ns_id union all select 2 union all select 4) k")
+	// The primary key's leading column g is fixed only by a constant, so it
+	// isn't a join key and the index join couldn't read the first row per range.
+	tk.MustExec("create table big2 (g int not null, ns_id bigint not null, id bigint not null, primary key (g, ns_id, id) clustered)")
+	tk.MustExec("insert into big2 select 1, ns_id, id from big")
+	tk.MustExec("analyze table en, big2")
+	for _, c := range []struct {
+		query string
+		apply bool
+		want  [][]any
+	}{
+		{"select /*+ inl_join(m) */ t.ns_id, m.m from t left join (select ns_id, min(e) m from en group by ns_id) m on t.ns_id = m.ns_id order by t.ns_id",
+			false, testkit.Rows("1 a", "2 a", "3 <nil>", "4 a", "5 <nil>")},
+		{"select /*+ inl_join(m) */ t.ns_id, m.m from t left join (select ns_id, max(e) m from en group by ns_id) m on t.ns_id = m.ns_id order by t.ns_id",
+			false, testkit.Rows("1 z", "2 z", "3 <nil>", "4 z", "5 <nil>")},
+		{"select t.ns_id, (select s.e from en s where s.ns_id = t.ns_id order by s.ns_id, s.e limit 1) m from t order by t.ns_id",
+			true, testkit.Rows("1 z", "2 z", "3 <nil>", "4 z", "5 <nil>")},
+		{"select t.ns_id, (select s.id from big2 s where s.g = 1 and s.ns_id = t.ns_id order by s.id limit 1) m from t order by t.ns_id",
+			true, testkit.Rows("1 1001", "2 2001", "3 <nil>", "4 4001", "5 <nil>")},
+	} {
+		var planText strings.Builder
+		for _, r := range tk.MustQuery("explain format='brief' " + c.query).Rows() {
+			planText.WriteString(fmt.Sprintln(r...))
+		}
+		require.NotContains(t, planText.String(), "first row per range", c.query)
+		if c.apply {
+			require.Contains(t, planText.String(), "Apply", c.query)
+			require.NotContains(t, planText.String(), "Agg", c.query)
+		}
+		tk.MustQuery(c.query).Check(c.want)
+	}
 }

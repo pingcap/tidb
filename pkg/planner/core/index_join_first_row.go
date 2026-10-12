@@ -151,10 +151,10 @@ func tryIndexJoinFirstRowPerRange(join *physicalop.PhysicalIndexJoin) {
 	}
 
 	// The aggregated column is the next index column. It must be NOT NULL,
-	// since MIN and MAX skip NULLs but a scan returns them, and not a string,
-	// to keep index order and the aggregate's comparison obviously the same.
+	// since MIN and MAX skip NULLs but a scan returns them, and of a type whose
+	// index order is the order MIN and MAX compare in.
 	target := keyCols[prefixLen]
-	if !mysql.HasNotNullFlag(target.GetFlag()) || types.IsString(target.GetType()) {
+	if !mysql.HasNotNullFlag(target.GetFlag()) || !firstRowOrderMatchesMinMax(target.GetType()) {
 		return
 	}
 	isMax, ok := firstRowAggDirection(argAgg.AggFuncs, target.ID)
@@ -187,6 +187,23 @@ func tryIndexJoinFirstRowPerRange(join *physicalop.PhysicalIndexJoin) {
 			join.InnerPlan = hashAgg
 		}
 	}
+}
+
+// firstRowOrderMatchesMinMax reports whether index order for a column of type
+// tp is the order MIN and MAX compare its values in, so that the first row of
+// a range holds the minimum and the last the maximum. ENUM and SET are stored
+// by member number and bitmask but compared by string value, so for
+// ENUM('z','a') the index has 'z' first while MIN returns 'a'. Strings are
+// left out because a collation can make distinct values compare equal, and
+// floating point because -0 and +0 are distinct in the index but equal to MIN.
+func firstRowOrderMatchesMinMax(tp byte) bool {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeYear, mysql.TypeNewDecimal,
+		mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
+		return true
+	}
+	return false
 }
 
 // basePhysicalAggOf returns the aggregation in p, or nil if p isn't one.

@@ -15,8 +15,6 @@
 package core
 
 import (
-	"slices"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -122,7 +120,7 @@ func limitOneToMinMax(apply *logicalop.LogicalApply, inner base.LogicalPlan) (ba
 
 	aggArg := resolve(target)
 	if aggArg == nil || ds.Schema().ColumnIndex(aggArg) < 0 ||
-		!mysql.HasNotNullFlag(aggArg.RetType.GetFlag()) || types.IsString(aggArg.RetType.GetType()) {
+		!mysql.HasNotNullFlag(aggArg.RetType.GetFlag()) || !firstRowOrderMatchesMinMax(aggArg.RetType.GetType()) {
 		return nil, false
 	}
 	// Columns fixed per outer row by an equality, keyed by column ID. The value
@@ -165,8 +163,14 @@ func limitOneToMinMax(apply *logicalop.LogicalApply, inner base.LogicalPlan) (ba
 			return nil, false
 		}
 	}
-	prefix := firstRowIndexPrefix(ds, fixed, aggArg)
-	if !slices.ContainsFunc(prefix, func(id int64) bool { return fixed[id] }) {
+	// The index columns before the target must be exactly the columns the
+	// correlated equalities fix. Then they are the join keys and the GROUP BY,
+	// which is the shape the first-row read needs. A column fixed only by a
+	// constant isn't a join key, and a correlated column outside the index
+	// isn't part of the lookup range, and either way the index join would read
+	// every row of each group.
+	prefix := firstRowIndexPrefix(ds, fixed, len(groupBy), aggArg)
+	if len(prefix) == 0 || len(prefix) != len(groupBy) {
 		return nil, false
 	}
 	// The DataSource gets its statistics only at stats derivation, after this
@@ -234,11 +238,11 @@ func fixedByEquality(cond expression.Expression) (*expression.Column, expression
 	return nil, nil
 }
 
-// firstRowIndexPrefix finds a clustered primary key or index whose leading
-// columns are all fixed and whose next column is target, so that each value of
-// the fixed columns is one range with target in order. It returns the IDs of
-// the leading columns, or nil if there is no such index.
-func firstRowIndexPrefix(ds *logicalop.DataSource, fixed map[int64]bool, target *expression.Column) []int64 {
+// firstRowIndexPrefix finds an index whose first n columns are all fixed by
+// correlated equalities and whose next column is target, so that each value of
+// those columns is one lookup range with target in order. It returns the IDs of
+// the n leading columns, or nil if there is no such index.
+func firstRowIndexPrefix(ds *logicalop.DataSource, fixed map[int64]bool, n int, target *expression.Column) []int64 {
 	for _, path := range ds.AllPossibleAccessPaths {
 		idx := path.Index
 		if idx == nil || idx.MVIndex {
@@ -251,12 +255,12 @@ func firstRowIndexPrefix(ds *logicalop.DataSource, fixed map[int64]bool, target 
 			}
 			id := ds.TableInfo.Columns[ic.Offset].ID
 			if id == target.ID {
-				if len(prefix) > 0 {
+				if len(prefix) == n {
 					return prefix
 				}
 				break
 			}
-			if _, ok := fixed[id]; !ok {
+			if !fixed[id] {
 				break
 			}
 			prefix = append(prefix, id)
