@@ -715,6 +715,147 @@ impl Session {
     /// that selection, which builds the subquery the way any SELECT's does
     /// (`field IN (SELECT ...)`, `field < ALL (SELECT ...)`); any other
     /// predicate evaluates row by row against the same columns.
+    /// Go `ShowExec.fetchShowAffinity`: one row per table (`table` level) or
+    /// partition (`partition` level) carrying an AFFINITY, with its PD group's
+    /// state from `affinity.GetAllGroupStates` -- NULL where PD holds no such
+    /// group. The rows follow `ListTablesWithSpecialAttribute` over infoschema
+    /// v2: schema name, then table id, both descending. A literal LIKE is Go's
+    /// extractor, matched against the TABLE name.
+    fn show_affinity_stmt(
+        &mut self,
+        filter: Option<&tidb_ast::ShowInspectionFilter>,
+    ) -> Result<StmtOutput, DriverError> {
+        let (like_pattern, where_clause) = match filter {
+            None => (None, None),
+            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+            }
+            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+        };
+        struct AffinityRow {
+            db_lower: String,
+            table_id: i64,
+            db: String,
+            table: String,
+            partition: Option<String>,
+            group_id: String,
+        }
+        let mut infos = Vec::new();
+        {
+            let catalog = self.lock_catalog()?;
+            for database in catalog.database_names() {
+                for name in catalog.table_names(&database).unwrap_or_default() {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_in(&database, &name)
+                    else {
+                        continue;
+                    };
+                    let Some(affinity) = table.affinity() else {
+                        continue;
+                    };
+                    if like_pattern.as_ref().is_some_and(|pattern| {
+                        pattern.row_pattern.is_none() && !pattern.matches(&go_to_lower(&table.name))
+                    }) {
+                        continue;
+                    }
+                    let row = |partition: Option<String>, group_id: String| AffinityRow {
+                        db_lower: go_to_lower(&database),
+                        table_id: table.table_id,
+                        db: database.clone(),
+                        table: table.name.clone(),
+                        partition,
+                        group_id,
+                    };
+                    match affinity.level.as_str() {
+                        "table" => infos.push(row(
+                            None,
+                            tidb_exec::ddl_affinity::get_table_affinity_group_id(table.table_id),
+                        )),
+                        "partition" => {
+                            for definition in
+                                table.partition().map_or(&[][..], |spec| &spec.definitions)
+                            {
+                                infos.push(row(
+                                    Some(definition.name.clone()),
+                                    tidb_exec::ddl_affinity::get_partition_affinity_group_id(
+                                        table.table_id,
+                                        definition.id,
+                                    ),
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // A stable sort keeps a table's partitions in definition order.
+        infos.sort_by(|left, right| {
+            right
+                .db_lower
+                .cmp(&left.db_lower)
+                .then(right.table_id.cmp(&left.table_id))
+        });
+        let states = tidb_domain::affinity::get_all_group_states().map_err(|error| {
+            DriverError::Mysql(tidb_executor::MysqlError::new(1105, error.to_string()))
+        })?;
+        let rows = infos
+            .into_iter()
+            .map(|info| {
+                let state = states.get(&info.group_id);
+                let text = |text: &str| Datum::Bytes(text.as_bytes().to_vec());
+                vec![
+                    text(&info.db),
+                    text(&info.table),
+                    info.partition.as_deref().map_or(Datum::Null, text),
+                    state
+                        .filter(|state| state.group.leader_store_id != 0)
+                        .map_or(Datum::Null, |state| {
+                            Datum::UInt(state.group.leader_store_id)
+                        }),
+                    state
+                        .filter(|state| !state.group.voter_store_ids.is_empty())
+                        .map_or(Datum::Null, |state| {
+                            text(
+                                &state
+                                    .group
+                                    .voter_store_ids
+                                    .iter()
+                                    .map(u64::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(","),
+                            )
+                        }),
+                    state.map_or(Datum::Null, |state| {
+                        text(match state.phase.as_str() {
+                            "pending" => "Pending",
+                            "preparing" => "Preparing",
+                            "stable" => "Stable",
+                            other => other,
+                        })
+                    }),
+                    state.map_or(Datum::Null, |state| Datum::Int(state.region_count)),
+                    state.map_or(Datum::Null, |state| Datum::Int(state.affinity_region_count)),
+                ]
+            })
+            .collect();
+        let varchar = || FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
+        let longlong = || FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let columns = vec![
+            ("Db_name".to_owned(), varchar()),
+            ("Table_name".to_owned(), varchar()),
+            ("Partition_name".to_owned(), varchar()),
+            ("Leader_store_id".to_owned(), longlong()),
+            ("Voter_store_ids".to_owned(), varchar()),
+            ("Status".to_owned(), varchar()),
+            ("Region_count".to_owned(), longlong()),
+            ("Affinity_region_count".to_owned(), longlong()),
+        ];
+        let row_like = like_pattern.filter(|pattern| pattern.row_pattern.is_some());
+        self.filter_show_output(StmtOutput::Rows { columns, rows }, row_like, where_clause)
+    }
+
     pub(crate) fn filter_show_output(
         &mut self,
         output: StmtOutput,
@@ -1905,6 +2046,9 @@ impl Session {
                             where_clause,
                         )
                         .map(Some);
+                }
+                if show.kind == tidb_ast::ShowInspectionKind::Affinity {
+                    return self.show_affinity_stmt(show.filter.as_ref()).map(Some);
                 }
                 if let Some(output) = crate::show_admin::inspection_output(show.kind) {
                     return Ok(Some(output));

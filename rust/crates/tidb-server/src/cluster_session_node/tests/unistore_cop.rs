@@ -13281,3 +13281,43 @@ fn table_affinity_and_its_groups_as_go_does() {
         (1347, "'test.v1' is not BASE TABLE")
     );
 }
+
+/// Go `fetchShowAffinity`: a row per affinity table or partition, schema then
+/// table id descending, with NULL group state where PD holds no group (always
+/// on unistore, whose PD HTTP client is nil); LIKE matches the table name.
+/// This node answered no rows.
+#[test]
+fn show_affinity_lists_affinity_tables_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1015)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.a1 (a INT) AFFINITY = 'table'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.a2 (a INT) AFFINITY = 'partition' PARTITION BY HASH (a) PARTITIONS 2",
+    );
+    rows(&mut session, "CREATE TABLE test.plain (a INT)");
+    let null = "NULL".to_owned();
+    let row = |table: &str, partition: &str| {
+        let mut row = vec!["test".to_owned(), table.to_owned(), partition.to_owned()];
+        row.extend(std::iter::repeat_n(null.clone(), 5));
+        row
+    };
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW AFFINITY")),
+        [row("a2", "p0"), row("a2", "p1"), row("a1", "NULL")]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW AFFINITY LIKE 'A1'")),
+        [row("a1", "NULL")]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SHOW AFFINITY WHERE Partition_name = 'p1'"
+        )),
+        [row("a2", "p1")]
+    );
+}

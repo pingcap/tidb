@@ -169,8 +169,7 @@ pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<St
         // comes from the plan, the rows are always empty, and the client sees an
         // empty result set. Same for the BRIE/import job listings, which read
         // their system tables this build does not populate, and `SHOW REPLICA
-        // STATUS`/`SHOW AFFINITY`, which answer nothing without replication or
-        // affinity configuration.
+        // STATUS`, which answers nothing without replication.
         tidb_ast::ShowInspectionKind::Triggers => Some(StmtOutput::Rows {
             columns: crate::show_admin::trigger_columns(),
             rows: Vec::new(),
@@ -204,10 +203,6 @@ pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<St
                 ("Job_ID".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
                 ("State".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
             ],
-            rows: Vec::new(),
-        }),
-        tidb_ast::ShowInspectionKind::Affinity => Some(StmtOutput::Rows {
-            columns: vec![("1".to_owned(), FieldType::new(FieldTypeCode::Long))],
             rows: Vec::new(),
         }),
         _ => None,

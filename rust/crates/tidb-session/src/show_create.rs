@@ -337,7 +337,7 @@ pub(super) fn show_create_table_text(
         }
         // Go `show.go`: a partial index prints its stored condition
         // (`ConditionExprString`) after the key parts.
-        let mut condition = if is_hypo {
+        let condition = if is_hypo {
             None
         } else {
             table.partial_index_condition_string(index.id)
