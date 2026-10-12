@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/dumpling/dumpservice"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbmeta "github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -108,48 +109,6 @@ func (m *kvTableMeta) ColumnInfos() []*ColumnInfo {
 	return infos
 }
 
-func kvColumnType(column *model.ColumnInfo) string {
-	if column.GetCharset() == charset.CharsetBin {
-		switch column.GetType() {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
-			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			return "BLOB"
-		}
-	}
-	switch column.GetType() {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return "BIGINT"
-	case mysql.TypeFloat:
-		return "FLOAT"
-	case mysql.TypeDouble:
-		return "DOUBLE"
-	case mysql.TypeNewDecimal:
-		return "DECIMAL"
-	case mysql.TypeBit:
-		return "BIT"
-	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeGeometry:
-		return "BLOB"
-	case mysql.TypeDate, mysql.TypeNewDate:
-		return "DATE"
-	case mysql.TypeDatetime:
-		return "DATETIME"
-	case mysql.TypeTimestamp:
-		return "TIMESTAMP"
-	case mysql.TypeDuration:
-		return "TIME"
-	case mysql.TypeYear:
-		return "YEAR"
-	case mysql.TypeEnum:
-		return "ENUM"
-	case mysql.TypeSet:
-		return "SET"
-	case mysql.TypeJSON:
-		return "JSON"
-	default:
-		return "VARCHAR"
-	}
-}
-
 type kvTableData struct {
 	scanner kvScanner
 	table   *model.TableInfo
@@ -186,6 +145,7 @@ func (d *kvTableData) Start(tctx *tcontext.Context, _ *sql.Conn) error {
 		metrics: d.metrics,
 		table:   d.table,
 		decoder: decoder,
+		encoder: textrow.NewResultEncoder(charset.CharsetUTF8MB4),
 		args:    make([]any, len(decoder.columns)),
 	}
 	iter.readNext()
@@ -213,6 +173,7 @@ type kvRowIter struct {
 	metrics   *metrics
 	table     *model.TableInfo
 	decoder   *kvRowDecoder
+	encoder   *textrow.ResultEncoder
 	key       []byte
 	value     []byte
 	args      []any
@@ -238,16 +199,24 @@ func (i *kvRowIter) Decode(receiver RowReceiver) error {
 	}
 	receiver.BindAddress(i.args)
 	for index, column := range i.decoder.columns {
-		value := values.GetDatum(index, &column.FieldType)
 		destination, ok := i.args[index].(*sql.RawBytes)
 		if !ok {
 			return errors.Errorf("unsupported Dumpling kv row receiver %T", i.args[index])
 		}
-		if value.IsNull() {
+		if values.IsNull(index) {
 			*destination = nil
 			continue
 		}
-		data, err := value.ToString()
+		// Format values with the same text serializer as the server so the KV
+		// dump matches the SQL dump, for example MySQL's float formatting.
+		columnInfo := textrow.ColumnInfo{
+			Table:   i.table.Name.O,
+			Charset: uint16(mysql.CharsetNameToID(column.GetCharset())),
+			Flag:    uint16(column.GetFlag()),
+			Decimal: uint8(column.GetDecimal()),
+			Type:    column.GetType(),
+		}
+		data, err := textrow.FormatValueText(values, index, columnInfo, i.encoder)
 		if err != nil {
 			return errors.Annotatef(err, "format KV column %d", index)
 		}
