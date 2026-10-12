@@ -619,6 +619,20 @@ pub fn cluster_table(
     kv_table.set_pre_split_regions(table.pre_split_regions);
     // Go `TableInfo.Compression`, which `SHOW CREATE TABLE` prints.
     kv_table.set_compression(table.compression.clone());
+    // Go `TableInfo.TableSplitPolicy` and each `IndexInfo.RegionSplitPolicy`,
+    // which `SHOW CREATE TABLE` prints as `/*T![region_split] SPLIT ... */`.
+    kv_table.set_table_split_policy(
+        table
+            .table_split_policy
+            .as_ref()
+            .map(|policy| policy.read().clone()),
+    );
+    for index in table.indices.iter_deref() {
+        let index = index.read();
+        if let Some(policy) = index.region_split_policy.as_ref() {
+            kv_table.set_index_split_policy(index.id, policy.read().clone());
+        }
+    }
     // Go `TableInfo.TTLInfo`, which `SHOW CREATE TABLE` prints.
     kv_table.set_ttl_info(table.ttl_info.as_ref().map(|info| info.read().clone()));
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves

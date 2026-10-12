@@ -350,6 +350,7 @@ pub use partition_reorg::{
 pub mod placement_policy;
 pub mod preprocess;
 mod region_split;
+pub use region_split::{normalize_split_policy, SplitPolicyTable, SplitPolicyTarget};
 pub mod storage_class;
 mod table_cache;
 pub use table_cache::check_cached_table_ddl;

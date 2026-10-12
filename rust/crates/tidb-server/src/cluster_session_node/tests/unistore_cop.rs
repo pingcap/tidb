@@ -13132,3 +13132,56 @@ fn last_txn_info_reports_the_cluster_commit_as_go_does() {
         [["3"]]
     );
 }
+
+/// Go `normalizeSplitPolicy` records CREATE TABLE's and ALTER TABLE's region
+/// split policies on the table (`ActionAlterTableSetRegionSplitPolicy`), SHOW
+/// CREATE TABLE prints them, and a new index on a table with policies warns
+/// (`checkAndWarnMissingRegionSplitPolicy`). This node stored none of it.
+#[test]
+fn region_split_policies_persist_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1013)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t (id BIGINT NOT NULL, v BIGINT, KEY idx_v (v), \
+         PRIMARY KEY (id) NONCLUSTERED) \
+         SPLIT PRIMARY KEY BETWEEN (0) AND (10000) REGIONS 5",
+    );
+    session
+        .execute_write("ALTER TABLE test.t SPLIT INDEX idx_v BETWEEN (0) AND (100) REGIONS 3")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(
+        created[0][1].ends_with(
+            "/*T![region_split] SPLIT INDEX `idx_v` BETWEEN (0) AND (100) REGIONS 3 */\n\
+             /*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (10000) REGIONS 5 */"
+        ),
+        "{}",
+        created[0][1]
+    );
+    session
+        .execute_write("CREATE INDEX idx_w ON test.t (v, id)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1105",
+            "It is recommended to add a region split strategy to the new index 'idx_w' to avoid write hotspots"
+        ]]
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.c (id INT PRIMARY KEY CLUSTERED)",
+    );
+    let error = session
+        .execute_write("ALTER TABLE test.c SPLIT PRIMARY KEY BETWEEN (0) AND (10) REGIONS 2")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            8267,
+            "SPLIT PRIMARY is only for non-clustered table is forbidden"
+        )
+    );
+}

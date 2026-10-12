@@ -320,9 +320,6 @@ pub fn build_table_info_in_schema(
     if create.ctas.is_some() {
         return refuse("... AS <query>");
     }
-    if !create.splits.is_empty() {
-        return refuse("SPLIT REGION");
-    }
     if create.columns.is_empty() {
         return Err(DdlAdmissionError::with_code(
             GENERIC_ERROR_CODE,
@@ -814,7 +811,46 @@ pub fn build_table_info_in_schema(
         .map_err(default_admission_error)?
         .map(GoShared::new);
     check_ttl_info_valid(&table, false).map_err(default_admission_error)?;
+    // Go `CreateTable`: the region split policies, after
+    // `checkTableInfoValidWithStmt`, each recorded where `normalizeSplitPolicy`
+    // says -- the table's own keyspace or the named index.
+    for split in &create.splits {
+        let target = match &split.target {
+            tidb_ast::CreateTableSplitTarget::Table => tidb_executor::ddl::SplitPolicyTarget::Table,
+            tidb_ast::CreateTableSplitTarget::PrimaryKey => {
+                tidb_executor::ddl::SplitPolicyTarget::PrimaryKey
+            }
+            tidb_ast::CreateTableSplitTarget::Index(name) => {
+                tidb_executor::ddl::SplitPolicyTarget::Index(name)
+            }
+        };
+        let (index_name, policy) =
+            tidb_executor::ddl::normalize_split_policy(target, &split.option, &table)
+                .map_err(default_admission_error)?;
+        set_region_split_policy(&mut table, &index_name, policy);
+    }
     Ok(table)
+}
+
+/// Records a normalized split policy where Go's DDL puts it:
+/// `TableInfo.TableSplitPolicy` for the table's keyspace, else the named
+/// index's `RegionSplitPolicy`.
+pub(crate) fn set_region_split_policy(
+    table: &mut TableInfo,
+    index_name: &str,
+    policy: tidb_model::RegionSplitPolicy,
+) {
+    if index_name.is_empty() {
+        table.table_split_policy = Some(GoShared::new(policy));
+        return;
+    }
+    if let Some(index) = table
+        .indices
+        .iter_deref()
+        .find(|index| index.read().name.lowercase() == index_name)
+    {
+        index.write().region_split_policy = Some(GoShared::new(policy));
+    }
 }
 
 /// Go `checkTTLInfoValid`, in its order: a temporary table has no TiKV rows to

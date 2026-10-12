@@ -443,6 +443,19 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Go SetTiFlashReplicaArgs.ResetAvailable, used by restore repair.
         reset_available: bool,
     },
+    /// Go `AlterTableSetRegionSplitPolicy` -> the
+    /// `ActionAlterTableSetRegionSplitPolicy` job (`onAlterTableSetRegionSplitPolicy`):
+    /// the normalized policy lands on the table or on the named index.
+    AlterTableSetRegionSplitPolicy {
+        /// Database containing the table.
+        schema: String,
+        /// Table the policy is set on.
+        table: String,
+        /// The keyspace the clause names.
+        target: tidb_ast::SplitTarget,
+        /// The clause's bounds and region count.
+        option: tidb_ast::SplitOption,
+    },
     /// Go `UpdateTableReplicaInfo` -> the `ActionUpdateTiFlashReplicaStatus`
     /// job: the replica manager's poller flips `Available` once TiFlash
     /// reports every region's learner peer in place. Resolved by PHYSICAL
@@ -1996,6 +2009,16 @@ fn lower_alter_table_catalog(
                 from_table,
                 to_schema,
                 to_table,
+            }))
+        }
+        // Go `AlterTableSetRegionSplitPolicy`.
+        tidb_ast::AlterTableAction::SplitRegion { target, option } => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterTableSetRegionSplitPolicy {
+                schema,
+                table,
+                target: target.clone(),
+                option: option.clone(),
             }))
         }
         tidb_ast::AlterTableAction::SetTiFlashReplica {
@@ -9092,6 +9115,49 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // Placement creation still uses the legacy poll owner here.
             // Its migration to durable DDL and cleanup to GC remains F01.
         }
+        DdlStatement::AlterTableSetRegionSplitPolicy {
+            schema,
+            table,
+            target,
+            option,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::TableNotExists {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            let target = match target {
+                tidb_ast::SplitTarget::Table => tidb_executor::ddl::SplitPolicyTarget::Table,
+                tidb_ast::SplitTarget::PrimaryKey => {
+                    tidb_executor::ddl::SplitPolicyTarget::PrimaryKey
+                }
+                tidb_ast::SplitTarget::Index(name) => {
+                    tidb_executor::ddl::SplitPolicyTarget::Index(name)
+                }
+            };
+            let (index_name, policy) = tidb_executor::ddl::normalize_split_policy(
+                target, option, stored,
+            )
+            .map_err(|error| {
+                let error = error.to_mysql_error();
+                DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            })?;
+            let mut info = stored.clone_like_go();
+            crate::table_info_build::set_region_split_policy(&mut info, &index_name, policy);
+            let db_id = database.info.id;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, stored.id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY;
+            diff.schema_id = db_id;
+            diff.table_id = stored.id;
+        }
         DdlStatement::UpdateTiFlashReplicaStatus {
             table_id,
             available,
@@ -10654,6 +10720,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         // Go builds every sub-job from it; offsets now account
                         // for preceding disjoint jobs.
                         let name = settle_added_index_name(stored, index, expressions);
+                        warn_missing_region_split_policy(stored, &name, &context.0);
                         let mut added = plan_added_index(
                             &mut info,
                             index,
@@ -11367,6 +11434,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 &name,
                 &context.0,
             )?;
+            warn_missing_region_split_policy(stored, &name, &context.0);
             check_partial_index_fast_reorg(schema, &added)?;
             // The backfill decodes the EXISTING rows: the table with any hidden
             // column the index adds, without the index itself.
@@ -13078,6 +13146,29 @@ fn check_partial_index_fast_reorg(schema: &str, index: &IndexInfo) -> Result<(),
 /// `buildIndexColumns`, which resolves and validates every key part;
 /// `checkCreateGlobalIndex`; and `validateCommentLength`. Returns the index,
 /// complete except for its id.
+/// Go `checkAndWarnMissingRegionSplitPolicy`: a new index on a table whose
+/// indexes carry a region split policy draws a warning, read against the
+/// table as the statement found it.
+fn warn_missing_region_split_policy(
+    stored: &TableInfo,
+    new_index_name: &str,
+    context: &tidb_executor::StmtContext,
+) {
+    if stored
+        .indices
+        .iter_deref()
+        .any(|index| index.read().region_split_policy.is_some())
+    {
+        context.append_warning_parts(
+            tidb_error::tidb::errcode::ErrUnknown,
+            &format!(
+                "It is recommended to add a region split strategy to the new index \
+                 '{new_index_name}' to avoid write hotspots"
+            ),
+        );
+    }
+}
+
 fn plan_added_index(
     info: &mut TableInfo,
     index: &IndexInfo,

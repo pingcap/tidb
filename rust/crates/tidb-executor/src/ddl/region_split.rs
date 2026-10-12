@@ -22,9 +22,62 @@ use crate::kv_table::KvTable;
 use crate::DriverError;
 use tidb_model::RegionSplitPolicy;
 
+/// What Go's `normalizeSplitPolicy` reads off `tbInfo`, so the one port
+/// serves both the in-process [`KvTable`] and a stored `TableInfo`.
+pub trait SplitPolicyTable {
+    /// Go `tbInfo.HasClusteredIndex()`.
+    fn has_clustered_index(&self) -> bool;
+    /// Go `len(tables.FindPrimaryIndex(tbInfo).Columns)` when
+    /// `tbInfo.IsCommonHandle`, else `None`.
+    fn common_handle_column_count(&self) -> Option<usize>;
+    /// Go `len(tbInfo.FindIndexByName(name).Columns)`, `name` lowercase.
+    fn index_column_count(&self, name: &str) -> Option<usize>;
+}
+
+impl SplitPolicyTable for KvTable {
+    fn has_clustered_index(&self) -> bool {
+        self.pk_handle_offset().is_some() || !self.common_handle_offsets().is_empty()
+    }
+
+    fn common_handle_column_count(&self) -> Option<usize> {
+        let offsets = self.common_handle_offsets();
+        (!offsets.is_empty()).then_some(offsets.len())
+    }
+
+    fn index_column_count(&self, name: &str) -> Option<usize> {
+        self.indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case(name))
+            .map(|index| index.column_offsets.len())
+    }
+}
+
+impl SplitPolicyTable for tidb_model::TableInfo {
+    fn has_clustered_index(&self) -> bool {
+        self.pk_is_handle || self.is_common_handle
+    }
+
+    fn common_handle_column_count(&self) -> Option<usize> {
+        if !self.is_common_handle {
+            return None;
+        }
+        self.indices
+            .iter_deref()
+            .find(|index| index.read().primary)
+            .map(|index| index.read().columns.len())
+    }
+
+    fn index_column_count(&self, name: &str) -> Option<usize> {
+        self.indices
+            .iter_deref()
+            .find(|index| index.read().name.lowercase() == name)
+            .map(|index| index.read().columns.len())
+    }
+}
+
 /// Which keyspace a split clause names.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum SplitPolicyTarget<'a> {
+pub enum SplitPolicyTarget<'a> {
     /// The table's record keyspace (`TableLevel`).
     Table,
     /// `SPLIT PRIMARY KEY`.
@@ -37,10 +90,10 @@ pub(crate) enum SplitPolicyTarget<'a> {
 /// returns the lower-cased index name it targets (`""` for the table) with
 /// the policy to record. Each bound is built and evaluated as Go's
 /// `BuildSimpleExpr` + `Eval`, then stored as its restored SQL text.
-pub(crate) fn normalize_split_policy(
+pub fn normalize_split_policy(
     target: SplitPolicyTarget<'_>,
     option: &tidb_ast::SplitOption,
-    table: &KvTable,
+    table: &impl SplitPolicyTable,
 ) -> Result<(String, RegionSplitPolicy), DriverError> {
     let primary_name = "primary";
     let (index_name, primary_key) = match target {
@@ -52,9 +105,7 @@ pub(crate) fn normalize_split_policy(
             (name, primary_key)
         }
     };
-    let common_handle = !table.common_handle_offsets().is_empty();
-    let clustered = table.pk_handle_offset().is_some() || common_handle;
-    if clustered && primary_key {
+    if table.has_clustered_index() && primary_key {
         return Err(forbidden("SPLIT PRIMARY is only for non-clustered table"));
     }
     let (lower, upper, regions) = match option {
@@ -71,22 +122,19 @@ pub(crate) fn normalize_split_policy(
             "SPLIT REGION number must not be zero or negative",
         ));
     }
-    let column_count = if common_handle && primary_key {
-        table.common_handle_offsets().len()
+    let common_handle_columns = table.common_handle_column_count().filter(|_| primary_key);
+    let column_count = if let Some(count) = common_handle_columns {
+        count
     } else if index_name.is_empty() {
         1
     } else {
-        let Some(index) = table
-            .indexes()
-            .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(&index_name))
-        else {
+        let Some(count) = table.index_column_count(&index_name) else {
             return Err(DriverError::DdlCoded {
                 errno: tidb_error::tidb::errcode::ErrWrongNameForIndex,
                 message: format!("Incorrect index name '{index_name}'"),
             });
         };
-        index.column_offsets.len()
+        count
     };
     if column_count != upper.len() || column_count != lower.len() {
         return Err(DriverError::DdlCoded {

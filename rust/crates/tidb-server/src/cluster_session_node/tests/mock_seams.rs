@@ -518,6 +518,7 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::TruncatePartitions { .. }
             | DdlStatement::ExchangePartition { .. }
             | DdlStatement::SetTiFlashReplica { .. }
+            | DdlStatement::AlterTableSetRegionSplitPolicy { .. }
             | DdlStatement::UpdateTiFlashReplicaStatus { .. }
             | DdlStatement::TruncateTable { .. } => {
                 return Err(SqlQueryError::unknown(
