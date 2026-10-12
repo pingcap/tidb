@@ -12488,3 +12488,47 @@ fn ttl_table_options_run_as_go_runs_them() {
         (8150, "Cannot set TTL_ENABLE on a table without TTL config")
     );
 }
+
+/// Go `corColInFilter`: a reader whose pushed conditions read a correlated
+/// column re-describes them on every `Open`, so each Apply iteration sends its
+/// own binding. Constant propagation turns `c3 = 1 and c3 = t2.c3` into a
+/// pushed `eq(t2.c3, 1)`; this node described it once, while the binding was
+/// still NULL, and every probe counted nothing
+/// (`planner/core/casetest/index/index`).
+#[test]
+fn a_pushed_correlated_condition_carries_each_iterations_binding() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1001)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t1 (c1 INT, c2 INT, c3 INT, PRIMARY KEY (c1), KEY (c2))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.t1 VALUES (1, 1, 1), (2, 2, 2)",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.t2 (c1 INT, c2 INT, c3 INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.t2 VALUES (1, 1, 1), (2, 2, 2)",
+    );
+    for sql in [
+        "SELECT (SELECT count(*) FROM test.t1 WHERE c2 = 1 AND c2 = t2.c3) FROM test.t2 ORDER BY c1",
+        "SELECT (SELECT count(*) FROM test.t1 WHERE c3 = 1 AND c3 = t2.c3) FROM test.t2 ORDER BY c1",
+        "SELECT (SELECT count(*) FROM test.t1 USE INDEX (PRIMARY) WHERE c3 = 1 AND c3 = t2.c3) \
+         FROM test.t2 ORDER BY c1",
+    ] {
+        assert_eq!(displayed(rows(&mut session, sql)), [["1"], ["0"]], "{sql}");
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT * FROM test.t2 WHERE c1 < ALL(SELECT /*+ use_index_merge(t1) */ c1 FROM test.t1 \
+             WHERE (c1 = 10 AND c1 = t2.c3 OR c2 = 1 AND c2 = t2.c3) AND reverse(c3)) ORDER BY c1"
+        )),
+        [["2", "2", "2"]]
+    );
+}

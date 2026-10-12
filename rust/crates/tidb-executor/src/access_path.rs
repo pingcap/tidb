@@ -3911,6 +3911,16 @@ impl Executor for IndexRangeSourceExec {
         if let Some(rebuild) = &self.range_rebuilder {
             self.ranges = rebuild()?;
         }
+        // Go `IndexReaderExecutor` / `IndexLookUpExecutor.Open`'s
+        // `corColInFilter`, for the table-side and the index-side conditions.
+        if let Some(filter) = self.filter.as_mut() {
+            if filter.redescribe_correlated() {
+                self.pushed = filter.predicates().to_vec();
+            }
+        }
+        if let Some(index_probe) = self.index_probe.as_mut() {
+            index_probe.redescribe_correlated();
+        }
         self.next_range = if self.descending {
             self.ranges.len()
         } else {

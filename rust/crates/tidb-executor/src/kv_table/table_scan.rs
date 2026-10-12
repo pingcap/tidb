@@ -4905,6 +4905,12 @@ impl Executor for TableScanExec {
         if let Some(rebuild) = &self.handle_range_rebuilder {
             self.handle_ranges = Some(rebuild()?);
         }
+        // Go `TableReaderExecutor.Open`'s `corColInFilter`.
+        if let Some(filter) = self.filter.as_mut() {
+            if filter.redescribe_correlated() {
+                self.pushed = filter.predicates().to_vec();
+            }
+        }
         self.scanned.set(0);
         self.emitted = 0;
         self.cursor = None;

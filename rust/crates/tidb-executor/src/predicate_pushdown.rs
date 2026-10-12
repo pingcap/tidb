@@ -309,6 +309,27 @@ impl PushedScanFilter {
         &self.predicates
     }
 
+    /// Go `corColInDistPlan` over these conditions: whether one reads a
+    /// correlated column, whose value changes with every Apply iteration.
+    #[must_use]
+    pub(crate) fn has_correlated_columns(&self) -> bool {
+        self.filters
+            .iter()
+            .any(|filter| !tidb_expr::simple_expr::extract_cor_columns(filter).is_empty())
+    }
+
+    /// Go `corColInFilter`: a reader re-describes its conditions on every
+    /// `Open` (`ConstructListBasedDistExec`), so a correlated column is
+    /// written to the request with the value bound for this iteration
+    /// rather than the one it held when the executor was built.
+    pub(crate) fn redescribe(&mut self, ctx: &crate::StmtContext) {
+        self.predicates = self
+            .filters
+            .iter()
+            .filter_map(|filter| describe_execution_condition(filter, ctx).ok())
+            .collect();
+    }
+
     /// The built expressions the accepting source evaluates.
     #[must_use]
     pub(crate) fn filters(&self) -> &[Expression] {
@@ -823,8 +844,9 @@ pub(crate) fn remap_expression(expression: &mut Expression, keep: &[usize]) -> O
                 remap_expression(argument, keep)?;
             }
         }
-        Expression::Constant(_) => {}
-        Expression::CorrelatedColumn(_) => return None,
+        // A correlated column reads the outer row, not a scan column, so
+        // pruning the scan's columns leaves it as it is.
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
     }
     Some(())
 }
@@ -841,11 +863,15 @@ pub struct ScanFilterProbe {
 }
 
 impl ScanFilterProbe {
-    /// Refresh wire literals without cloning executable expressions or
-    /// replacing their immutable fast paths and row scratch allocation.
-    pub(crate) fn replace_predicates(&mut self, predicates: Vec<ScanPredicate>) {
-        assert_eq!(predicates.len(), self.filter.filters.len());
-        self.filter.predicates = predicates;
+    /// Go `corColInFilter` on `Open`: re-describes the conditions when one
+    /// reads a correlated column, so the request carries this iteration's
+    /// binding. Returns whether the descriptions were rebuilt.
+    pub(crate) fn redescribe_correlated(&mut self) -> bool {
+        if !self.filter.has_correlated_columns() {
+            return false;
+        }
+        self.filter.redescribe(&self.ctx);
+        true
     }
 
     pub(crate) fn new(filter: PushedScanFilter, ctx: crate::StmtContext, scratch: Chunk) -> Self {
