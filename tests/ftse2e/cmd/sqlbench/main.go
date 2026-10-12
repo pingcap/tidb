@@ -98,9 +98,9 @@ func parseOptions(args []string) (options, error) {
 	f.BoolVar(&o.stopwords, "stopwords", false, "enable builtin stopwords")
 	f.StringVar(&o.path, "path", "both", "timed path: both, local, or native; always verify both")
 	f.StringVar(&o.search, "search", "all", "all, word, phrase, prefix, cjk, or miss")
-	f.StringVar(&o.profileURL, "profile-url", "", "loopback TiFlash status URL, e.g. http://127.0.0.1:40292")
+	f.StringVar(&o.profileURL, "profile-url", "", "loopback status URL of TiDB (local path) or TiFlash (native path)")
 	f.StringVar(&o.profileFile, "profile-file", "", "new protobuf CPU profile file; never overwritten")
-	f.IntVar(&o.profileSeconds, "profile-seconds", 30, "CPU sampling seconds at 99Hz")
+	f.IntVar(&o.profileSeconds, "profile-seconds", 30, "CPU sampling seconds (Go default rate for TiDB, 99Hz for TiFlash)")
 	f.StringVar(&o.profileFormat, "profile-format", "protobuf", "protobuf or svg CPU profile")
 	if err := f.Parse(args); err != nil {
 		return o, err

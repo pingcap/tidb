@@ -23,8 +23,11 @@ func validateProfileOptions(o options) error {
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || !net.ParseIP(u.Hostname()).IsLoopback() {
 		return fmt.Errorf("profile URL must be an HTTP loopback status address")
 	}
-	if o.mode != "run" || o.path != "native" || o.search == "all" || o.concurrency != 1 || o.trials != 1 || o.profileFile == "" || o.profileSeconds < 1 || o.profileSeconds > 300 || o.duration < time.Duration(o.profileSeconds+2)*time.Second {
-		return fmt.Errorf("profiling requires run/native, one search/connection/trial, a new output file, seconds 1..300, and duration >= seconds+2")
+	if o.mode != "run" || (o.path != "native" && o.path != "local") || o.search == "all" || o.concurrency != 1 || o.trials != 1 || o.profileFile == "" || o.profileSeconds < 1 || o.profileSeconds > 300 || o.duration < time.Duration(o.profileSeconds+2)*time.Second {
+		return fmt.Errorf("profiling requires run with one local/native path, one search/connection/trial, a new output file, seconds 1..300, and duration >= seconds+2")
+	}
+	if o.path == "local" && o.profileFormat != "protobuf" {
+		return fmt.Errorf("TiDB profiling returns protobuf; render it with go tool pprof")
 	}
 	return nil
 }
@@ -44,7 +47,10 @@ func collectCPUProfile(ctx context.Context, o options) <-chan error {
 		defer f.Close()
 		u, _ := url.Parse(o.profileURL)
 		u.Path = "/debug/pprof/profile"
-		u.RawQuery = fmt.Sprintf("seconds=%d&frequency=99", o.profileSeconds)
+		u.RawQuery = fmt.Sprintf("seconds=%d", o.profileSeconds)
+		if o.path != "local" {
+			u.RawQuery += "&frequency=99"
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		if err != nil {
 			result = err

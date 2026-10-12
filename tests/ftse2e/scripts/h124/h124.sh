@@ -10,6 +10,7 @@ TIFLASH_BIN=/DATA/disk2/tongzhigao/tiflash/cmake-build-release/dbms/src/Server/t
 TIUP_BIN=/root/.tiup/bin/tiup
 PORT_OFFSET=20000 THREADS=8 CPU_LIST= CORPUS=smoke
 QUERY_THREADS=
+PROFILE_TARGET=tiflash
 RUN_LIBRARY_PATH=${LD_LIBRARY_PATH:-}
 FORWARD=()
 
@@ -20,6 +21,7 @@ Commands: start, resume, status, stop, e2e, setup, bench, profile
 Start options: --tidb-bin PATH --tiflash-bin PATH --tiup-bin PATH
                --port-offset N --threads N --cpus CPU_LIST
 Setup/bench/profile options: --corpus NAME --query-threads N -- SQLBENCH_OPTIONS
+Profile option: --profile-target tiflash|tidb (default tiflash).
 Profile defaults: native only, concurrency 1, one trial, 30s profile/32s workload.
 Specify one -search (word, phrase, prefix, cjk, miss); default is word.
 Examples:
@@ -41,6 +43,7 @@ while [[ $# -gt 0 ]]; do
         --port-offset) PORT_OFFSET=${2:?}; shift 2 ;;
         --threads) THREADS=${2:?}; shift 2 ;;
         --query-threads) QUERY_THREADS=${2:?}; shift 2 ;;
+        --profile-target) PROFILE_TARGET=${2:?}; shift 2 ;;
         --cpus) CPU_LIST=${2:?}; shift 2 ;;
         --corpus) CORPUS=${2:?}; shift 2 ;;
         --) shift; FORWARD=("$@"); break ;;
@@ -221,7 +224,12 @@ LAUNCH
         fi
         controlled_args=()
         if [[ $COMMAND == profile ]]; then
-            controlled_args=(-path native -concurrency 1 -trials 1 -profile-url "http://127.0.0.1:$((20292+PORT_OFFSET))" -profile-file "$result.profile")
+            case "$PROFILE_TARGET" in
+                tiflash) profile_path=native; profile_port=$((20292+PORT_OFFSET)) ;;
+                tidb) profile_path=local; profile_port=$((10080+PORT_OFFSET)) ;;
+                *) die "profile-target must be tiflash or tidb" ;;
+            esac
+            controlled_args=(-path "$profile_path" -concurrency 1 -trials 1 -profile-url "http://127.0.0.1:$profile_port" -profile-file "$result.profile")
         fi
         # Record contention; CPU affinity applies to the cluster only. Query
         # thread limits do not reserve physical cores or cap whole-process RSS.

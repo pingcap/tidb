@@ -19,6 +19,13 @@ func TestProfileOptionGuards(t *testing.T) {
 	if _, err := parseOptions(base); err != nil {
 		t.Fatal(err)
 	}
+	local := append(append([]string{}, base...), "-path", "local", "-profile-url", "http://127.0.0.1:30080")
+	if _, err := parseOptions(local); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseOptions(append(local, "-profile-format", "svg")); err == nil {
+		t.Fatal("accepted TiDB SVG profile response")
+	}
 	for _, extra := range [][]string{{"-path", "both"}, {"-search", "all"}, {"-concurrency", "2"}, {"-trials", "2"}, {"-duration", "30s"}, {"-profile-url", "http://10.0.0.1:40292"}, {"-profile-url", "http://127.0.0.1:40292/other"}, {"-profile-format", "unknown"}} {
 		if _, err := parseOptions(append(append([]string{}, base...), extra...)); err == nil {
 			t.Fatalf("accepted %v", extra)
@@ -91,5 +98,22 @@ func TestCollectCPUProfile(t *testing.T) {
 	defer server.Close()
 	if err := <-collectCPUProfile(context.Background(), options{profileURL: server.URL, profileFile: filepath.Join(t.TempDir(), "failed"), profileSeconds: 1}); err == nil {
 		t.Fatal("accepted failed profiling")
+	}
+}
+
+func TestCollectTiDBCPUProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/debug/pprof/profile" || r.URL.Query().Get("seconds") != "1" || r.URL.Query().Has("frequency") {
+			t.Error("incorrect Go pprof request")
+		}
+		_, _ = w.Write([]byte("test TiDB profile"))
+	}))
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "tidb.profile")
+	if err := <-collectCPUProfile(context.Background(), options{path: "local", profileURL: server.URL, profileFile: file, profileSeconds: 1, profileFormat: "protobuf"}); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "test TiDB profile" {
+		t.Fatalf("profile not saved: %s %v", data, err)
 	}
 }
