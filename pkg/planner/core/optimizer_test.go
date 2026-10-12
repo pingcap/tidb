@@ -194,6 +194,10 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 		reader.SCtx().GetSessionVars().MaxChunkSize = 32
 		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 
+		// At 512 rows, schema widths exceed the limit but observed column sizes fit.
+		reader.SCtx().GetSessionVars().MaxChunkSize = 512
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
 		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
 		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
 	})
