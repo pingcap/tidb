@@ -12415,3 +12415,76 @@ fn generated_columns_resolve_against_the_whole_table_as_go_does() {
         )
     );
 }
+
+/// Go's TTL table options: `handleTableOptions` and `checkTTLInfoValid` at
+/// CREATE, `AlterTableTTLInfoOrEnable` / `onTTLInfoChange` keeping the stored
+/// enable flag and interval a new `TTL=` leaves unset, `onTTLInfoRemove`, and
+/// the multi-schema refusal (8200). This node refused every TTL option.
+#[test]
+fn ttl_table_options_run_as_go_runs_them() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1000)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t (created_at DATETIME, updated_at DATE, n INT) \
+         TTL = `created_at` + INTERVAL 5 DAY TTL_ENABLE = 'OFF'",
+    );
+    session
+        .execute_write("ALTER TABLE test.t TTL_JOB_INTERVAL = '2h'")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE test.t TTL = `updated_at` + INTERVAL 1 YEAR")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(
+        created[0][1].ends_with(
+            "/*T![ttl] TTL=`updated_at` + INTERVAL 1 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ \
+             /*T![ttl] TTL_JOB_INTERVAL='2h' */"
+        ),
+        "{}",
+        created[0][1]
+    );
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE test.t TTL = `n` + INTERVAL 1 YEAR",
+            8148,
+            "Field 'n' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP",
+        ),
+        (
+            "ALTER TABLE test.t TTL = `nosuch` + INTERVAL 1 YEAR",
+            1054,
+            "Unknown column 'nosuch' in 'TTL config'",
+        ),
+        (
+            "ALTER TABLE test.t TTL_ENABLE = 'ON' REMOVE TTL",
+            8200,
+            "Unsupported multi schema change for alter table ttl",
+        ),
+        (
+            "CREATE TABLE test.p (id1 INT, id2 DOUBLE, t TIMESTAMP, PRIMARY KEY (id1, id2) CLUSTERED) \
+             TTL = `t` + INTERVAL 1 DAY",
+            8153,
+            "Unsupported clustered primary key type FLOAT/DOUBLE for TTL",
+        ),
+        (
+            "CREATE TABLE test.q (id INT) TTL_JOB_INTERVAL = '1h'",
+            8150,
+            "Cannot set TTL_JOB_INTERVAL on a table without TTL config",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
+    }
+    session
+        .execute_write("ALTER TABLE test.t REMOVE TTL")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(!created[0][1].contains("TTL"), "{}", created[0][1]);
+    let error = session
+        .execute_write("ALTER TABLE test.t TTL_ENABLE = 'ON'")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8150, "Cannot set TTL_ENABLE on a table without TTL config")
+    );
+}

@@ -480,6 +480,8 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::DropPlacementPolicy { .. }
             | DdlStatement::ModifyTableComment { .. }
             | DdlStatement::ShardRowId { .. }
+            | DdlStatement::AlterTtl { .. }
+            | DdlStatement::RemoveTtl { .. }
             | DdlStatement::CreateSequence { .. }
             | DdlStatement::AlterSequence { .. }
             | DdlStatement::DropSequence { .. }

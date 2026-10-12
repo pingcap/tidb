@@ -897,6 +897,29 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// every holder's lock.
         is_cleanup: bool,
     },
+    /// `ALTER TABLE ... TTL = ... / TTL_ENABLE = ... / TTL_JOB_INTERVAL =
+    /// ...` in one spec, Go's `AlterTableTTLInfoOrEnable` /
+    /// `ActionAlterTTLInfo`.
+    AlterTtl {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The `TTL=` definition, its enable flag and interval already folded
+        /// in (`getTTLInfoInOptions`).
+        ttl_info: Option<Box<tidb_model::TTLInfo>>,
+        /// `TTL_ENABLE`, when written.
+        enable: Option<bool>,
+        /// `TTL_JOB_INTERVAL`, when written.
+        job_interval: Option<String>,
+    },
+    /// `ALTER TABLE ... REMOVE TTL`, Go's `ActionAlterTTLRemove`.
+    RemoveTtl {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+    },
     /// `ALTER TABLE ... SHARD_ROW_ID_BITS = n`, Go's `ActionShardRowID`.
     /// Metadata only.
     ShardRowId {
@@ -1660,6 +1683,21 @@ fn lower_alter_table_catalog(
                 // order, one sub-job each, and handles the charset / collate
                 // pair once (`handledCharsetOrCollate`) with the last of each
                 // winning.
+                // Go `fillMultiSchemaInfo` has no TTL sub-job.
+                tidb_ast::AlterTableAction::SetTableOptions { options }
+                    if options.iter().any(is_ttl_table_option) =>
+                {
+                    return Err(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                        "Unsupported multi schema change for alter table ttl",
+                    ));
+                }
+                tidb_ast::AlterTableAction::RemoveTtl(_) => {
+                    return Err(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                        "Unsupported multi schema change for alter table no_ttl",
+                    ));
+                }
                 tidb_ast::AlterTableAction::SetTableOptions { options } => {
                     let mut charset_handled = false;
                     for option in options {
@@ -1946,6 +1984,36 @@ fn lower_alter_table_catalog(
                 labels: labels.clone(),
                 reset_available: false,
             }))
+        }
+        // Go `AlterTable` handles a spec's TTL, TTL_ENABLE and
+        // TTL_JOB_INTERVAL once, as one `AlterTableTTLInfoOrEnable`.
+        tidb_ast::AlterTableAction::SetTableOptions { options }
+            if !options.is_empty() && options.iter().all(is_ttl_table_option) =>
+        {
+            let ttl_info = tidb_executor::ddl::ttl_info_from_options(options).map_err(|error| {
+                let error = error.to_mysql_error();
+                DdlAdmissionError::with_code(error.code, error.message)
+            })?;
+            let enable = options.iter().rev().find_map(|option| match option {
+                tidb_ast::TableOption::TtlEnable(enabled) => Some(*enabled),
+                _ => None,
+            });
+            let job_interval = options.iter().rev().find_map(|option| match option {
+                tidb_ast::TableOption::TtlJobInterval(interval) => Some(interval.clone()),
+                _ => None,
+            });
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterTtl {
+                schema,
+                table,
+                ttl_info: ttl_info.map(Box::new),
+                enable,
+                job_interval,
+            }))
+        }
+        tidb_ast::AlterTableAction::RemoveTtl(_) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::RemoveTtl { schema, table }))
         }
         tidb_ast::AlterTableAction::SetTableOptions { options } => {
             let [option] = options.as_slice() else {
@@ -7544,6 +7612,16 @@ pub struct CheckConstraintValidation {
 /// `View`. `ViewInfo.Cols` stays nil: the resolved column names already
 /// carry any explicit `CREATE VIEW v (...)` list.
 #[must_use]
+/// Whether a table option is one of Go's TTL family.
+fn is_ttl_table_option(option: &tidb_ast::TableOption) -> bool {
+    matches!(
+        option,
+        tidb_ast::TableOption::Ttl { .. }
+            | tidb_ast::TableOption::TtlEnable(_)
+            | tidb_ast::TableOption::TtlJobInterval(_)
+    )
+}
+
 /// Go `CreateSequence`'s `BuildTableInfo(ctx, name, nil, nil, "", "")` with
 /// `Sequence` set: a column-less `TableInfo` of the current version.
 fn build_sequence_table_info(
@@ -8457,6 +8535,17 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let mut info = build
                 .for_database(&database.info.charset, &database.info.collate)
                 .map_err(DdlPlanError::Admission)?;
+            // Go `checkTTLInfoValid`'s foreign-key half, which reads the
+            // infoschema the builder does not see.
+            if info.ttl_info.is_some()
+                && !crate::foreign_key_build::get_table_referred_foreign_keys(
+                    &catalog, schema, table,
+                )
+                .is_empty()
+            {
+                let error = tidb_executor::DriverError::TtlReferencedByForeignKey.to_mysql_error();
+                return Err(coded_refusal(error.code, error.message));
+            }
             // Go `CreateTable`: the built table's `checkTableForeignKeysValid`
             // (executor.go:1106) comes before `createTableWithInfoJob`'s
             // existence check, which is followed by `checkTableInfoValidExtra`
@@ -11113,6 +11202,99 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 ActionType::ACTION_UNLOCK_TABLE,
                 first,
             )?;
+        }
+        DdlStatement::AlterTtl {
+            schema,
+            table,
+            ttl_info,
+            enable,
+            job_interval,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let stored_ttl = stored.ttl_info.as_ref().map(|ttl| ttl.read().clone());
+            let ttl = match ttl_info {
+                // Go `AlterTableTTLInfoOrEnable` validates the new definition
+                // on a copy of the table, then `onTTLInfoChange` keeps the
+                // stored enable flag and interval the statement left unset.
+                Some(ttl) => {
+                    let mut candidate = stored.clone_like_go();
+                    candidate.ttl_info = Some(GoShared::new((**ttl).clone()));
+                    let referred = !crate::foreign_key_build::get_table_referred_foreign_keys(
+                        &catalog, schema, table,
+                    )
+                    .is_empty();
+                    crate::table_info_build::check_ttl_info_valid(&candidate, referred).map_err(
+                        |error| {
+                            let error = error.to_mysql_error();
+                            coded_refusal(error.code, error.message)
+                        },
+                    )?;
+                    let mut ttl = (**ttl).clone();
+                    if let Some(old) = &stored_ttl {
+                        if enable.is_none() {
+                            ttl.enable = old.enable;
+                        }
+                        if job_interval.is_none() {
+                            ttl.job_interval = old.job_interval.clone();
+                        }
+                    }
+                    ttl
+                }
+                None => {
+                    let Some(mut ttl) = stored_ttl else {
+                        let option = if enable.is_some() {
+                            "TTL_ENABLE"
+                        } else {
+                            "TTL_JOB_INTERVAL"
+                        };
+                        let error = tidb_executor::DriverError::SetTtlOptionForNonTtlTable(
+                            option.to_owned(),
+                        )
+                        .to_mysql_error();
+                        return Err(coded_refusal(error.code, error.message));
+                    };
+                    if let Some(enable) = enable {
+                        ttl.enable = *enable;
+                    }
+                    if let Some(interval) = job_interval {
+                        ttl.job_interval = interval.clone();
+                    }
+                    ttl
+                }
+            };
+            let mut info = stored.clone_like_go();
+            info.ttl_info = Some(GoShared::new(ttl));
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_TTLINFO;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::RemoveTtl { schema, table } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `AlterTableRemoveTTL` submits no job for a table without one.
+            if stored.ttl_info.is_none() {
+                return Ok(already(format!("`{schema}`.`{table}` has no TTL")));
+            }
+            let mut info = stored.clone_like_go();
+            info.ttl_info = None;
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_TTLREMOVE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
         }
         DdlStatement::ShardRowId {
             schema,

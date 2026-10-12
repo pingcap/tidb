@@ -718,7 +718,7 @@ pub fn resolve_database_charset(
 /// on an existing `TTLInfo` -- so the `TTL=` clause is what decides. Their
 /// defaults are Go's: `TTL_ENABLE` is ON and the job interval is
 /// `DefaultTTLJobInterval`.
-pub(crate) fn ttl_info_from_options(
+pub fn ttl_info_from_options(
     options: &[tidb_ast::TableOption],
 ) -> Result<Option<tidb_model::TTLInfo>, DriverError> {
     let mut info: Option<tidb_model::TTLInfo> = None;
@@ -766,6 +766,34 @@ pub(crate) fn ttl_info_from_options(
         }
     }
     Ok(info)
+}
+
+/// Go `handleTableOptions`' TTL arm for CREATE TABLE: the `TTL=` definition
+/// the options describe, and TTL_ENABLE / TTL_JOB_INTERVAL refused without
+/// one (8150).
+pub fn create_table_ttl_info(
+    options: &[tidb_ast::TableOption],
+) -> Result<Option<tidb_model::TTLInfo>, DriverError> {
+    let ttl_info = ttl_info_from_options(options)?;
+    if ttl_info.is_none() {
+        if options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::TableOption::TtlEnable(_)))
+        {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(
+                "TTL_ENABLE".to_owned(),
+            ));
+        }
+        if options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::TableOption::TtlJobInterval(_)))
+        {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(
+                "TTL_JOB_INTERVAL".to_owned(),
+            ));
+        }
+    }
+    Ok(ttl_info)
 }
 
 pub fn validate_table_options(options: &[tidb_ast::TableOption]) -> Result<(), DriverError> {
@@ -1842,25 +1870,7 @@ fn create_table_in(
     // round-trip through its own output.
     // Go `checkTTLInfoValid` (`pkg/ddl/ttl.go:97`): the TTL job deletes
     // expired rows from TiKV, and a temporary table has no rows there.
-    let ttl_info = ttl_info_from_options(&create.table_options)?;
-    // Go `handleTableOptions`: TTL_ENABLE and TTL_JOB_INTERVAL need a TTL.
-    if ttl_info.is_none() {
-        if let Some(option) = create.table_options.iter().find_map(|option| match option {
-            tidb_ast::TableOption::TtlEnable(_) => Some("TTL_ENABLE"),
-            _ => None,
-        }) {
-            return Err(DriverError::SetTtlOptionForNonTtlTable(option.to_owned()));
-        }
-        if create
-            .table_options
-            .iter()
-            .any(|option| matches!(option, tidb_ast::TableOption::TtlJobInterval(_)))
-        {
-            return Err(DriverError::SetTtlOptionForNonTtlTable(
-                "TTL_JOB_INTERVAL".to_owned(),
-            ));
-        }
-    }
+    let ttl_info = create_table_ttl_info(&create.table_options)?;
     if let Some(info) = ttl_info.as_ref() {
         // Go `checkTTLInfoValid` (`pkg/ddl/ttl.go:97`), in its order: a
         // temporary table has no TiKV rows to expire, ...

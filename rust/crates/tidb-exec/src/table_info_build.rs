@@ -400,6 +400,10 @@ pub fn build_table_info_in_schema(
             // Validated above and applied once the table is built
             // (`handleEngineAttributeForCreateTable`).
             TableOption::EngineAttribute(_) | TableOption::StorageClass(_) => {}
+            // Go `handleTableOptions`' TTL arm, applied below.
+            TableOption::Ttl { .. }
+            | TableOption::TtlEnable(_)
+            | TableOption::TtlJobInterval(_) => {}
             // Go `handleTableOptions`, applied once the handle is known.
             TableOption::ShardRowIdBits(value) => {
                 shard_row_id_bits = Some(value.parse::<u64>().map_err(|_| {
@@ -786,7 +790,71 @@ pub fn build_table_info_in_schema(
         }
     }
     check_generated_columns(create, &mut table, context)?;
+    // Go `handleTableOptions` records the TTL definition and
+    // `checkTableInfoValidWithStmt` validates it after the generated columns;
+    // whether another table's foreign key refers to this one is the
+    // planner's to check, against the catalog.
+    table.ttl_info = tidb_executor::ddl::create_table_ttl_info(&create.table_options)
+        .map_err(default_admission_error)?
+        .map(GoShared::new);
+    check_ttl_info_valid(&table, false).map_err(default_admission_error)?;
     Ok(table)
+}
+
+/// Go `checkTTLInfoValid`, in its order: a temporary table has no TiKV rows to
+/// expire (8151); the interval must evaluate (`checkTTLIntervalExpr`); a
+/// clustered composite primary key may not hold a FLOAT / DOUBLE column
+/// (`checkPrimaryKeyForTTLTable`, 8153); a table another table's foreign key
+/// refers to cannot take one (8152); and the column must exist and be DATE,
+/// DATETIME or TIMESTAMP (`checkTTLInfoColumnType`, 1054 / 8148).
+pub(crate) fn check_ttl_info_valid(
+    table: &TableInfo,
+    referred_by_foreign_key: bool,
+) -> Result<(), tidb_executor::DriverError> {
+    use tidb_executor::DriverError;
+    let Some(ttl) = table.ttl_info.as_ref().map(|ttl| ttl.read().clone()) else {
+        return Ok(());
+    };
+    if table.temp_table_type != tidb_model::TempTableType::NONE {
+        return Err(DriverError::TempTableNotAllowedWithTTL);
+    }
+    tidb_ttl::eval_expire_time(
+        &chrono::Utc::now(),
+        &ttl.interval_expr_str,
+        tidb_ttl::TimeUnitType::from_i64(ttl.interval_time_unit),
+    )
+    .map_err(|error| DriverError::unsupported(error.to_string()))?;
+    if table.is_common_handle {
+        if let Some(primary) = table
+            .indices
+            .iter_deref()
+            .find(|index| index.read().primary)
+        {
+            let float_key = primary.read().columns.iter_deref().any(|part| {
+                tidb_model::column::find_column_info(&table.columns, part.read().name.original())
+                    .is_some_and(|column| {
+                        matches!(
+                            column.read().field_type.code(),
+                            FieldTypeCode::Float | FieldTypeCode::Double
+                        )
+                    })
+            });
+            if float_key {
+                return Err(DriverError::UnsupportedPrimaryKeyTypeWithTtl);
+            }
+        }
+    }
+    if referred_by_foreign_key {
+        return Err(DriverError::TtlReferencedByForeignKey);
+    }
+    let named = ttl.column_name.original();
+    match tidb_model::column::find_column_info(&table.columns, named) {
+        None => Err(DriverError::UnknownColumnInTtlConfig(named.to_owned())),
+        Some(column) if !column.read().field_type.code().is_type_time() => {
+            Err(DriverError::UnsupportedColumnInTtlConfig(named.to_owned()))
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 /// Go `checkTableInfoValidWithStmt` -> `checkGeneratedColumn`: once the table
