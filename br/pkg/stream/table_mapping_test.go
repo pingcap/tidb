@@ -1720,6 +1720,42 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 	}
 }
 
+// TestReplaceTemporaryIDsAllowsPartitionAndTableSharingUpstreamID is a
+// regression test for a PiTR restore that observed the same upstream ID both as
+// a partition of one table and as a standalone table entry. They share one
+// temporary downstream ID and must not be reported as a duplicate.
+func TestReplaceTemporaryIDsAllowsPartitionAndTableSharingUpstreamID(t *testing.T) {
+	tm := NewTableMappingManager()
+	tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+		1: {
+			Name: "db1",
+			DbID: -1,
+			TableMap: map[UpstreamID]*TableReplace{
+				10: {
+					TableID: -2,
+					Name:    "table1",
+					PartitionMap: map[UpstreamID]DownstreamID{
+						20: -3,
+					},
+				},
+				20: {
+					TableID: -3,
+					Name:    "table2",
+				},
+			},
+		},
+	}
+	tm.tempIDCounter = -3
+
+	require.NoError(t, tm.ReplaceTemporaryIDs(context.Background(), func(_ context.Context, n int) ([]int64, error) {
+		ids := make([]int64, 0, n)
+		for i := 0; i < n; i++ {
+			ids = append(ids, int64(1000+i))
+		}
+		return ids, nil
+	}))
+}
+
 func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	var (
 		dbID      int64  = 40

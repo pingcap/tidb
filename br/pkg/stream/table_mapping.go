@@ -768,9 +768,11 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 		if downID < 0 {
 			if previous, exists := usedTempIDs[downID]; exists {
 				// The same upstream object can legitimately appear in more than one
-				// DBReplace after an upstream RENAME/EXCHANGE and they share one
-				// downstream ID (see getOrCreateTableReplace/globalIdMap).
-				if previous.kind == owner.kind && previous.id == owner.id {
+				// DBReplace after an upstream RENAME/EXCHANGE, and a partition can
+				// also be observed as a standalone table entry (same upstream ID,
+				// different kind). Both share one downstream ID, so tolerate any
+				// repeat of the same non-zero upstream ID.
+				if owner.id != 0 && previous.id == owner.id {
 					return nil
 				}
 				// A DBReplace and a table-level target database can be two
