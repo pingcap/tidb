@@ -229,7 +229,8 @@ pub use ddl::{
     run_truncate_table_in_with_foreign_key_checks, split_drop_table_targets, CreateTableSettings,
 };
 pub use ddl_sequence::{
-    run_alter_sequence_in, run_create_sequence_in, run_drop_sequence_in, show_create_sequence,
+    alter_sequence_options, build_create_sequence, run_alter_sequence_in, run_create_sequence_in,
+    run_drop_sequence_in, show_create_sequence,
 };
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;

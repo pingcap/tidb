@@ -228,6 +228,66 @@ fn sequence_table_option_string_value(option: &tidb_ast::TableOption) -> String 
     }
 }
 
+/// Go `buildSequenceInfo`, after the preprocessor's name check: the options a
+/// `CREATE SEQUENCE` describes and its comment. Every table option but
+/// COMMENT and ENGINE is refused (ENGINE is the parser's implicit InnoDB
+/// spelling and does not become sequence metadata), then the options are
+/// filled and validated (4136).
+pub fn build_create_sequence(
+    create: &tidb_ast::CreateSequenceStmt,
+    database: &str,
+    name: &str,
+) -> Result<(SequenceInfo, String), DriverError> {
+    // Go's CREATE SEQUENCE preprocessor applies IsInCorrectIdentifierName
+    // before DDL execution: empty identifiers and names whose final byte is a
+    // space are rejected with ErrWrongTableName (1103).
+    if name.is_empty() || name.as_bytes().last() == Some(&b' ') {
+        return Err(DriverError::Schema(SchemaErrorKind::WrongTableName(
+            name.to_owned(),
+        )));
+    }
+    let mut comment = String::new();
+    for option in &create.table_options {
+        match option {
+            tidb_ast::TableOption::Comment(value) => comment = value.clone(),
+            tidb_ast::TableOption::Engine(_) => {}
+            _ => {
+                return Err(DriverError::SequenceUnsupportedTableOption(
+                    sequence_table_option_string_value(option),
+                ));
+            }
+        }
+    }
+    // RESTART is an ALTER-only option, and the PARSER already refuses it on a
+    // CREATE -- as real TiDB does (captured: `create sequence s restart with 5`
+    // is an error there too). No check is needed here.
+    let info = build_sequence_info(&create.options, &qualified(database, name))?;
+    Ok((info, comment))
+}
+
+/// Go `alterSequenceOptions` over the stored options: the new options, or
+/// 4136 when they conflict, and the value a `RESTART [WITH]` moves the
+/// counter to (a bare `RESTART` restarts at the possibly just-changed START).
+pub fn alter_sequence_options(
+    existing: SequenceInfo,
+    options: &[SequenceOption],
+    database: &str,
+    name: &str,
+) -> Result<(SequenceInfo, Option<i64>), DriverError> {
+    let info = apply_sequence_options(existing, options, false);
+    if !sequence_options_are_valid(&info) {
+        return Err(DriverError::Schema(
+            SchemaErrorKind::SequenceValuesConflicting(qualified(database, name)),
+        ));
+    }
+    let restart = options.iter().find_map(|option| match option {
+        SequenceOption::RestartWith(value) => Some(*value),
+        SequenceOption::Restart => Some(info.start),
+        _ => None,
+    });
+    Ok((info, restart))
+}
+
 /// `CREATE SEQUENCE`. Returns whether a sequence was created (`false` only for
 /// `IF NOT EXISTS` over an existing name).
 ///
@@ -244,12 +304,10 @@ pub fn run_create_sequence_in(
 ) -> Result<bool, DriverError> {
     let (database, name) = split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
-    // Go's CREATE SEQUENCE preprocessor applies IsInCorrectIdentifierName
-    // before DDL execution: empty identifiers and names whose final byte is a
-    // space are rejected with ErrWrongTableName (1103).
-    if name.is_empty() || name.as_bytes().last() == Some(&b' ') {
-        return Err(DriverError::Schema(SchemaErrorKind::WrongTableName(name)));
-    }
+    // Go `buildSequenceInfo` runs in the executor before `CreateTableWithInfo`
+    // looks at the schema, so a bad option outranks a missing database or an
+    // existing name.
+    let (info, comment) = build_create_sequence(create, &database, &name)?;
     if !catalog.has_database(&database) {
         return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
             database,
@@ -263,25 +321,6 @@ pub fn run_create_sequence_in(
             qualified(&database, &name),
         )));
     }
-    // Go rejects every table option but COMMENT and ENGINE. ENGINE is the
-    // parser's implicit InnoDB spelling and does not become sequence
-    // metadata; COMMENT is retained on SequenceDef like Go's SequenceInfo.
-    let mut comment = String::new();
-    for option in &create.table_options {
-        match option {
-            tidb_ast::TableOption::Comment(value) => comment = value.clone(),
-            tidb_ast::TableOption::Engine(_) => {}
-            _ => {
-                return Err(DriverError::SequenceUnsupportedTableOption(
-                    sequence_table_option_string_value(option),
-                ));
-            }
-        }
-    }
-    // RESTART is an ALTER-only option, and the PARSER already refuses it on a
-    // CREATE -- as real TiDB does (captured: `create sequence s restart with 5`
-    // is an error there too). No check is needed here.
-    let info = build_sequence_info(&create.options, &qualified(&database, &name))?;
     // Go builds the sequence's TableInfo, ID included, before it submits the
     // job.
     let id = catalog.allocate_table_id();
@@ -334,18 +373,7 @@ pub fn run_alter_sequence_in(
             )));
         }
     };
-    let info = apply_sequence_options(existing, &alter.options, false);
-    if !sequence_options_are_valid(&info) {
-        return Err(DriverError::Schema(
-            SchemaErrorKind::SequenceValuesConflicting(qualified(&database, &name)),
-        ));
-    }
-    let restart = alter.options.iter().find_map(|option| match option {
-        SequenceOption::RestartWith(value) => Some(*value),
-        // Go's bare `RESTART` restarts at the (possibly just-changed) START.
-        SequenceOption::Restart => Some(info.start),
-        _ => None,
-    });
+    let (info, restart) = alter_sequence_options(existing, &alter.options, &database, &name)?;
     let sequence_id = catalog
         .sequence_in(&database, &name)
         .map(|sequence| sequence.id);

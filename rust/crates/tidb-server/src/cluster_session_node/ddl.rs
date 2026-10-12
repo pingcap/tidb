@@ -2195,56 +2195,104 @@ where
         statement: &DdlStatement,
         cdc_write_source: u64,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
+        // Go `dropTableObject`: each target is its own job, a missing name is
+        // collected and reported once the list ends.
+        #[derive(Clone, Copy, PartialEq)]
+        enum DropObject {
+            Table,
+            View,
+            Sequence,
+        }
         let drop_list = match statement {
-            DdlStatement::DropTables { names, if_exists } => Some((names, *if_exists, false)),
+            DdlStatement::DropTables { names, if_exists } => {
+                Some((names, *if_exists, DropObject::Table))
+            }
             DdlStatement::DropView { names, if_exists } if names.len() != 1 => {
-                Some((names, *if_exists, true))
+                Some((names, *if_exists, DropObject::View))
+            }
+            DdlStatement::DropSequences { names, if_exists } => {
+                Some((names, *if_exists, DropObject::Sequence))
             }
             _ => None,
         };
-        if let Some((names, if_exists, view)) = drop_list {
+        if let Some((names, if_exists, object)) = drop_list {
             use tidb_executor::ddl::{drop_objects, DropObjectsError};
             let mut last = ClusterDdlReport::AlreadySatisfied {
                 detail: "no existing DROP targets".into(),
                 warnings: Vec::new(),
             };
+            let mut notes = Vec::new();
+            let missing_code = if object == DropObject::Sequence {
+                tidb_error::tidb::errcode::ErrUnknownSequence
+            } else {
+                1051
+            };
+            let missing_message = |names: &str| {
+                if object == DropObject::Sequence {
+                    format!("Unknown SEQUENCE: '{names}'")
+                } else {
+                    format!("Unknown table '{names}'")
+                }
+            };
             let missing = drop_objects(names, if_exists, |schema, name| {
-                let target = if view {
-                    DdlStatement::DropView {
+                let target = match object {
+                    DropObject::View => DdlStatement::DropView {
                         names: vec![(schema.to_owned(), name.to_owned())],
                         if_exists: false,
-                    }
-                } else {
-                    DdlStatement::DropTable {
+                    },
+                    DropObject::Table => DdlStatement::DropTable {
                         schema: schema.to_owned(),
                         table: name.to_owned(),
                         if_exists: false,
-                    }
+                    },
+                    DropObject::Sequence => DdlStatement::DropSequence {
+                        schema: schema.to_owned(),
+                        name: name.to_owned(),
+                    },
                 };
                 match self.execute(&target, cdc_write_source) {
                     Ok(report) => {
                         last = report;
                         Ok(true)
                     }
-                    Err(error) if error.code == 1051 => Ok(false),
+                    Err(error) if error.code == missing_code => Ok(false),
+                    // Go: a target that is not a sequence is a note under
+                    // IF EXISTS, and the list goes on.
+                    Err(error)
+                        if object == DropObject::Sequence
+                            && if_exists
+                            && error.code == tidb_error::mysql::errcode::ErrWrongObject =>
+                    {
+                        notes.push((
+                            tidb_exec::real_tikv_ddl::DdlWarningLevel::Note,
+                            error.code,
+                            error.message,
+                        ));
+                        Ok(true)
+                    }
                     Err(error) => Err(error),
                 }
             })
             .map_err(|error| match error {
                 DropObjectsError::Target(error) => error,
                 DropObjectsError::Missing(names) => SqlQueryError::new(
-                    1051,
-                    *b"42S02",
-                    format!("Unknown table '{}'", names.join(",")),
+                    missing_code,
+                    if object == DropObject::Sequence {
+                        *b"HY000"
+                    } else {
+                        *b"42S02"
+                    },
+                    missing_message(&names.join(",")),
                 ),
             })?;
             let (ClusterDdlReport::Applied { warnings, .. }
             | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut last;
+            warnings.extend(notes);
             warnings.extend(missing.into_iter().map(|name| {
                 (
                     tidb_exec::real_tikv_ddl::DdlWarningLevel::Note,
-                    1051,
-                    format!("Unknown table '{name}'"),
+                    missing_code,
+                    missing_message(&name),
                 )
             }));
             return Ok(last);

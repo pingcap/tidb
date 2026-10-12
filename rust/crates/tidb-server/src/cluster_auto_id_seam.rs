@@ -64,9 +64,10 @@ where
     service: Option<Arc<tidb_exec::auto_id_client::AutoIdClient>>,
     allocators: Mutex<HashMap<(i64, AutoIdKind), (AllocatorMark, TableAutoId)>>,
     /// The same lifetime rule for SEQUENCE allocators: one per sequence table
-    /// id for as long as the node runs, so a reserved cache batch is never
-    /// abandoned by a catalog rebuild.
-    sequences: Mutex<HashMap<i64, SequenceDef>>,
+    /// id and published `TableInfo` (its `update_ts`), so a reserved cache
+    /// batch is never abandoned by a catalog rebuild, and is abandoned by an
+    /// `ALTER SEQUENCE`.
+    sequences: Mutex<HashMap<i64, (u64, SequenceDef)>>,
 }
 
 impl<C, L, P> std::fmt::Debug for ClusterTableAutoIds<C, L, P>
@@ -119,8 +120,14 @@ where
     /// allocator object itself never re-reads between reservations.
     fn sequence(&self, db_id: i64, table: &TableInfo) -> SequenceDef {
         let mut sequences = self.sequences.lock().expect("sequence registry poisoned");
-        if let Some(held) = sequences.get(&table.id) {
-            return held.clone();
+        // Go builds a new table object -- and with it an empty sequence
+        // cache -- for every published `TableInfo`: an `ALTER SEQUENCE` that
+        // changes the options or `RESTART`s the counter must not keep issuing
+        // from the batch reserved before it.
+        if let Some((update_ts, held)) = sequences.get(&table.id) {
+            if *update_ts == table.update_ts {
+                return held.clone();
+            }
         }
         let stored_sequence = table
             .sequence
@@ -144,7 +151,7 @@ where
             comment: stored_sequence.comment,
             allocator: SequenceAllocator::over_counter(info, counter.shared()),
         };
-        sequences.insert(table.id, def.clone());
+        sequences.insert(table.id, (table.update_ts, def.clone()));
         def
     }
 }

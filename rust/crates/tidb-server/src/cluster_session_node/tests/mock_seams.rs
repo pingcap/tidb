@@ -480,6 +480,10 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::DropPlacementPolicy { .. }
             | DdlStatement::ModifyTableComment { .. }
             | DdlStatement::ShardRowId { .. }
+            | DdlStatement::CreateSequence { .. }
+            | DdlStatement::AlterSequence { .. }
+            | DdlStatement::DropSequence { .. }
+            | DdlStatement::DropSequences { .. }
             | DdlStatement::ModifyEngineAttribute { .. }
             | DdlStatement::RebaseAutoIncrementId { .. }
             | DdlStatement::IgnoredTableOption { .. }

@@ -746,6 +746,45 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Whether a missing table is a no-op rather than an error.
         if_exists: bool,
     },
+    /// `CREATE SEQUENCE [IF NOT EXISTS]`, Go's `ActionCreateSequence`: a
+    /// `TableInfo` carrying `Sequence`, built before the job
+    /// (`buildSequenceInfo`, `BuildTableInfo`).
+    CreateSequence {
+        /// The resolved database name.
+        schema: String,
+        /// The sequence name as written.
+        name: String,
+        /// Whether an existing name is a no-op rather than an error.
+        if_not_exists: bool,
+        /// The sequence's `TableInfo`, its id still unallocated.
+        info: Box<TableInfo>,
+    },
+    /// `ALTER SEQUENCE [IF EXISTS]`, Go's `ActionAlterSequence`.
+    AlterSequence {
+        /// The resolved database name.
+        schema: String,
+        /// The sequence name as written.
+        name: String,
+        /// Whether a missing sequence is a note rather than an error.
+        if_exists: bool,
+        /// The options as written, applied over the stored ones.
+        options: Vec<tidb_ast::SequenceOption>,
+    },
+    /// One `DROP SEQUENCE` target, Go's `ActionDropSequence`.
+    DropSequence {
+        /// The resolved database name.
+        schema: String,
+        /// The sequence name as written.
+        name: String,
+    },
+    /// `DROP SEQUENCE [IF EXISTS] a, b`: ordered targets the DDL execution
+    /// owner publishes one by one, as Go's `dropTableObject` does.
+    DropSequences {
+        /// Each `(schema, name)` in written order.
+        names: Vec<(String, String)>,
+        /// Whether missing sequences demote to notes rather than the error.
+        if_exists: bool,
+    },
     /// Ordered DROP targets. The DDL execution owner publishes each target
     /// independently and defers missing-name completion until the list ends.
     DropTables {
@@ -1256,6 +1295,40 @@ pub fn lower_ddl_with_context(
         DdlStmt::TruncateTable(name) => {
             let (schema, table) = split_name(name, default_schema, "table")?;
             Ok(Some(DdlStatement::TruncateTable { schema, table }))
+        }
+        DdlStmt::CreateSequence(create) => {
+            let (schema, name) = split_name(&create.name, default_schema, "sequence")?;
+            let (info, comment) = tidb_executor::build_create_sequence(create, &schema, &name)
+                .map_err(|error| {
+                    let error = error.to_mysql_error();
+                    DdlAdmissionError::with_code(error.code, error.message)
+                })?;
+            let info = build_sequence_table_info(&name, info, comment);
+            Ok(Some(DdlStatement::CreateSequence {
+                schema,
+                name,
+                if_not_exists: create.if_not_exists,
+                info: Box::new(info),
+            }))
+        }
+        DdlStmt::AlterSequence(alter) => {
+            let (schema, name) = split_name(&alter.name, default_schema, "sequence")?;
+            Ok(Some(DdlStatement::AlterSequence {
+                schema,
+                name,
+                if_exists: alter.if_exists,
+                options: alter.options.clone(),
+            }))
+        }
+        DdlStmt::DropSequence(drop) => {
+            let mut names = Vec::with_capacity(drop.names.len());
+            for path in &drop.names {
+                names.push(split_name(path, default_schema, "sequence")?);
+            }
+            Ok(Some(DdlStatement::DropSequences {
+                names,
+                if_exists: drop.if_exists,
+            }))
         }
         _ => Ok(None),
     }
@@ -7471,6 +7544,68 @@ pub struct CheckConstraintValidation {
 /// `View`. `ViewInfo.Cols` stays nil: the resolved column names already
 /// carry any explicit `CREATE VIEW v (...)` list.
 #[must_use]
+/// Go `CreateSequence`'s `BuildTableInfo(ctx, name, nil, nil, "", "")` with
+/// `Sequence` set: a column-less `TableInfo` of the current version.
+fn build_sequence_table_info(
+    name: &str,
+    info: tidb_executor::sequence::SequenceInfo,
+    comment: String,
+) -> TableInfo {
+    TableInfo {
+        name: CiString::new(name.to_owned()),
+        version: tidb_model::table_info::CURR_LATEST_TABLE_INFO_VERSION,
+        sequence: Some(GoShared::new(stored_sequence_info(info, comment))),
+        ..TableInfo::default()
+    }
+}
+
+/// Go `model.SequenceInfo` from the options that decide values.
+fn stored_sequence_info(
+    info: tidb_executor::sequence::SequenceInfo,
+    comment: String,
+) -> tidb_model::table::SequenceInfo {
+    tidb_model::table::SequenceInfo {
+        start: info.start,
+        cache: info.cache,
+        cycle: info.cycle,
+        min_value: info.min_value,
+        max_value: info.max_value,
+        increment: info.increment,
+        cache_value: info.cache_value,
+        comment,
+    }
+}
+
+/// The options of a stored `model.SequenceInfo` that decide values.
+fn sequence_options_of(
+    stored: &tidb_model::table::SequenceInfo,
+) -> tidb_executor::sequence::SequenceInfo {
+    tidb_executor::sequence::SequenceInfo {
+        start: stored.start,
+        increment: stored.increment,
+        min_value: stored.min_value,
+        max_value: stored.max_value,
+        cache_value: stored.cache_value,
+        cache: stored.cache,
+        cycle: stored.cycle,
+    }
+}
+
+/// Go `Mutator.sequenceKey` in the database hash: the sequence's counter.
+fn sequence_value_kv_key(db_id: i64, sequence_id: i64) -> Vec<u8> {
+    tidb_meta::structure::encode_hash_data_key(&key::db_key(db_id), &key::sequence_key(sequence_id))
+}
+
+/// Go `createSequenceWithCheck` / `restartSequenceValue`: the counter sits one
+/// step outside `value`, so the next congruence seek returns `value` itself.
+fn sequence_base_for(increment: i64, value: i64) -> i64 {
+    if increment >= 0 {
+        value - 1
+    } else {
+        value + 1
+    }
+}
+
 pub fn build_view_table_info(name: &str, view: &tidb_executor::ViewDef) -> TableInfo {
     use tidb_ast::{ViewAlgorithm, ViewCheckOption, ViewSecurity};
     use tidb_model::table::ViewInfo;
@@ -10218,6 +10353,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         }
         DdlStatement::TruncateTable { schema, table } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `TruncateTable`: a view or a sequence has no rows to
+            // truncate and reads as missing.
+            if stored.view.is_some() || stored.is_sequence() {
+                let database = find_database(&catalog, schema).expect("located above");
+                return Err(DdlPlanError::TableNotExists {
+                    schema: database.info.name.original().to_owned(),
+                    table: stored.name.original().to_owned(),
+                });
+            }
             let old_table_id = stored.id;
             // Go `onTruncateTable` reassigns the PARTITION ids as well as the
             // table's (`ddl/table.go:510`), and its comment says why: "all the
@@ -10395,10 +10539,175 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 warnings,
             ));
         }
-        DdlStatement::DropTables { .. } => {
+        DdlStatement::DropTables { .. } | DdlStatement::DropSequences { .. } => {
             return Err(DdlPlanError::Unsupported(
                 "multi-target DROP must use the ordered DDL completion owner".into(),
             ));
+        }
+        DdlStatement::CreateSequence {
+            schema,
+            name,
+            if_not_exists,
+            info,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            if find_table(database, name).is_some() {
+                // A sequence shares the table namespace (Go
+                // `checkTableNotExists`); `IF NOT EXISTS` demotes the 1050 to
+                // a note (`OnExistIgnore`).
+                if *if_not_exists {
+                    return Ok(already_with_warnings(
+                        format!("`{schema}`.`{name}` already exists"),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            tidb_error::tidb::errcode::ErrTableExists,
+                            format!("Table '{schema}.{name}' already exists"),
+                        )],
+                    ));
+                }
+                return Err(DdlPlanError::TableExists {
+                    schema: schema.clone(),
+                    table: name.clone(),
+                });
+            }
+            let db_id = database.info.id;
+            let table_id = global_ids.allocate(1)?[0];
+            created_id = Some(table_id);
+            let mut info = (**info).clone();
+            info.id = table_id;
+            info.state = SchemaState::PUBLIC;
+            info.update_ts = start_ts;
+            // Go `createSequenceWithCheck`.
+            check_table_info_valid(&info)?;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            // Go `CreateSequenceAndSetSeqValue`.
+            let sequence = info
+                .sequence
+                .as_ref()
+                .expect("a CREATE SEQUENCE carries its options")
+                .read()
+                .clone();
+            writes.push(BufferMutation::set(
+                sequence_value_kv_key(db_id, table_id),
+                value::encode_int_value(sequence_base_for(sequence.increment, sequence.start)),
+            )?);
+            diff.action_type = ActionType::ACTION_CREATE_SEQUENCE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AlterSequence {
+            schema,
+            name,
+            if_exists,
+            options,
+        } => {
+            // Go `AlterSequence`, in its order.
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, name) else {
+                if *if_exists {
+                    return Ok(already_with_warnings(
+                        format!("sequence `{schema}`.`{name}` does not exist"),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            tidb_error::tidb::errcode::ErrNoSuchTable,
+                            format!("Table '{schema}.{name}' doesn't exist"),
+                        )],
+                    ));
+                }
+                return Err(DdlPlanError::TableNotExists {
+                    schema: schema.clone(),
+                    table: name.clone(),
+                });
+            };
+            let Some(old) = stored.sequence.as_ref().map(|shared| shared.read().clone()) else {
+                return Err(coded_refusal(
+                    tidb_error::tidb::errcode::ErrWrongObject,
+                    format!("'{schema}.{name}' is not SEQUENCE"),
+                ));
+            };
+            let db_id = database.info.id;
+            let (options, restart) = tidb_executor::alter_sequence_options(
+                sequence_options_of(&old),
+                options,
+                schema,
+                name,
+            )
+            .map_err(|error| {
+                let error = error.to_mysql_error();
+                coded_refusal(error.code, error.message)
+            })?;
+            let altered = stored_sequence_info(options, old.comment.clone());
+            // Go `onAlterSequence`'s early return.
+            if altered == old && restart.is_none() {
+                return Ok(already(format!(
+                    "sequence `{schema}`.`{name}` already has those options"
+                )));
+            }
+            let mut info = stored.clone_like_go();
+            let increment = altered.increment;
+            info.sequence = Some(GoShared::new(altered));
+            if let Some(value) = restart {
+                // Go `restartSequenceValue`.
+                writes.push(BufferMutation::set(
+                    sequence_value_kv_key(db_id, info.id),
+                    value::encode_int_value(sequence_base_for(increment, value)),
+                )?);
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_SEQUENCE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::DropSequence { schema, name } => {
+            let found = find_database(&catalog, schema).and_then(|database| {
+                find_table(database, name).map(|table| (database.info.id, table))
+            });
+            let Some((db_id, stored)) = found else {
+                return Err(coded_refusal(
+                    tidb_error::tidb::errcode::ErrUnknownSequence,
+                    format!("Unknown SEQUENCE: '{schema}.{name}'"),
+                ));
+            };
+            if !stored.is_sequence() {
+                return Err(coded_refusal(
+                    tidb_error::tidb::errcode::ErrWrongObject,
+                    format!("'{schema}.{name}' is not SEQUENCE"),
+                ));
+            }
+            let table_id = stored.id;
+            // Go `Mutator.DropSequence`: the table, its auto-id fields
+            // (deleted only if this snapshot observed them, as `HDel` does),
+            // and the sequence counter.
+            writes.push(BufferMutation::delete(key::table_kv_key(db_id, table_id))?);
+            for field in [
+                key::auto_table_id_kv_key(db_id, table_id),
+                key::auto_increment_id_kv_key(db_id, table_id),
+                key::auto_random_table_id_kv_key(db_id, table_id),
+                sequence_value_kv_key(db_id, table_id),
+            ] {
+                if snapshot.get(&field)?.is_some() {
+                    writes.push(BufferMutation::delete(field)?);
+                }
+            }
+            diff.action_type = ActionType::ACTION_DROP_SEQUENCE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
         }
         DdlStatement::RenameTable {
             is_alter,

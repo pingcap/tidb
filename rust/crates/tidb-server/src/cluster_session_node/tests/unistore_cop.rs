@@ -12279,3 +12279,87 @@ fn shard_row_id_bits_create_alter_and_session_default_as_go_does() {
         )
     );
 }
+
+/// Go `CreateSequence` / `onCreateSequence`, `AlterSequence` /
+/// `onAlterSequence` and `dropTableObject` for sequences, from
+/// `ddl/sequence.test`: the counter is seeded one step outside START, an ALTER
+/// discards the reserved batch and RESTART moves the counter, a DROP reports
+/// a missing name (4139) once the list ends and a non-sequence (1347), and
+/// TRUNCATE reads a sequence as missing (1146). This node refused every
+/// sequence statement.
+#[test]
+fn sequence_ddl_runs_as_go_runs_it() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(998)).unwrap();
+    session
+        .execute_write("CREATE SEQUENCE test.s START 10 INCREMENT 2 CACHE 3 COMMENT 'c'")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT nextval(test.s), nextval(test.s)"
+        )),
+        [["10", "12"]]
+    );
+    session
+        .execute_write("CREATE SEQUENCE IF NOT EXISTS test.s")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [["Note", "1050", "Table 'test.s' already exists"]]
+    );
+    session
+        .execute_write("ALTER SEQUENCE test.s INCREMENT 5")
+        .unwrap();
+    // Seeded from the discarded batch's end, 14 (oracle).
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT nextval(test.s)")),
+        [["15"]]
+    );
+    session
+        .execute_write("ALTER SEQUENCE test.s RESTART WITH 100")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT nextval(test.s)")),
+        [["100"]]
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE SEQUENCE test.s"));
+    assert_eq!(
+        created[0][1],
+        "CREATE SEQUENCE `s` start with 10 minvalue 1 maxvalue 9223372036854775806 \
+         increment by 5 cache 3 nocycle ENGINE=InnoDB COMMENT='c'"
+    );
+    let error = session
+        .execute_write("ALTER SEQUENCE test.s MINVALUE 50")
+        .unwrap_err();
+    assert_eq!(error.code, 4136, "{}", error.message);
+
+    rows(&mut session, "CREATE TABLE test.t (a INT)");
+    let error = session.execute_write("TRUNCATE TABLE test.s").unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1146, "Table 'test.s' doesn't exist")
+    );
+    let error = session.execute_write("DROP SEQUENCE test.t").unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1347, "'test.t' is not SEQUENCE")
+    );
+    let error = session
+        .execute_write("DROP SEQUENCE test.s, test.nosuch")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (4139, "Unknown SEQUENCE: 'test.nosuch'")
+    );
+    session
+        .execute_write("DROP SEQUENCE IF EXISTS test.s, test.t")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [
+            ["Note", "1347", "'test.t' is not SEQUENCE"],
+            ["Note", "4139", "Unknown SEQUENCE: 'test.s'"]
+        ]
+    );
+}
