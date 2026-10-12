@@ -54,6 +54,21 @@ var (
 	InspectionRules        = inspectionRules
 )
 
+func TestBuildTableTaskForAdminCheck(t *testing.T) {
+	worker := &indexWorker{checkIndexValue: &checkIndexValue{}}
+	handle1 := kv.IntHandle(1)
+	handle2 := kv.IntHandle(2)
+
+	task := worker.buildTableTask(1, []kv.Handle{handle1, handle1, handle2, handle1}, nil)
+	require.Equal(t, []kv.Handle{handle1, handle1, handle2, handle1}, task.handles)
+	offsets, ok := task.indexOrder.Get(handle1)
+	require.True(t, ok)
+	require.Equal(t, []int{0, 1, 3}, offsets)
+	offsets, ok = task.indexOrder.Get(handle2)
+	require.True(t, ok)
+	require.Equal(t, []int{2}, offsets)
+}
+
 func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
 	return tables.MockTableFromMeta(&model.TableInfo{
 		ID:    1,

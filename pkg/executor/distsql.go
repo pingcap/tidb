@@ -98,11 +98,9 @@ type lookupTableTask struct {
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
-	// to do table request.
+	// to do table request. Values are int offsets for ordinary lookup, or []int
+	// containing all index row offsets for ADMIN CHECK (checkIndexValue != nil).
 	indexOrder *kv.HandleMap
-	// duplicatedIndexOrder map likes indexOrder. But it's used when checkIndexValue isn't nil and
-	// the same handle of index has multiple values.
-	duplicatedIndexOrder *kv.HandleMap
 
 	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
 	partitionTable table.PhysicalTable
@@ -1195,6 +1193,21 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 	if e.partitionTableMode && task.partitionTable != nil {
 		table = task.partitionTable
 	}
+	handles := task.handles
+	canReorderHandles := true
+	if e.checkIndexValue != nil && len(handles) > task.indexOrder.Len() {
+		// Deduplicate only the table request; keep every handle in the task
+		// so ADMIN CHECK can still compare all associated index rows.
+		slices.SortFunc(handles, func(i, j kv.Handle) int { return i.Compare(j) })
+		uniqueHandles := make([]kv.Handle, 0, len(handles))
+		for i, h := range handles {
+			if i == 0 || !h.Equal(handles[i-1]) {
+				uniqueHandles = append(uniqueHandles, h)
+			}
+		}
+		handles = uniqueHandles
+		canReorderHandles = false
+	}
 	tableReaderExec := &TableReaderExecutor{
 		BaseExecutorV2:             e.BuildNewBaseExecutorV2(e.stmtRuntimeStatsColl, e.Schema(), e.getTableRootPlanID()),
 		tableReaderExecutorContext: e.tableReaderExecutorContext,
@@ -1207,11 +1220,11 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		columns:                    e.columns,
 		corColInFilter:             e.corColInTblSide,
 		plans:                      e.tblPlans,
-		netDataSize:                e.avgRowSize * float64(len(task.handles)),
+		netDataSize:                e.avgRowSize * float64(len(handles)),
 		byItems:                    e.byItems,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, canReorderHandles)
 	if err != nil {
 		if ctx.Err() != context.Canceled {
 			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
@@ -2018,7 +2031,6 @@ func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTabl
 
 func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
-	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
@@ -2028,24 +2040,20 @@ func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *ch
 	}
 
 	if w.checkIndexValue != nil {
-		// Save the index order.
+		// Save all index row offsets for each handle.
 		indexOrder = kv.NewHandleMap()
-		duplicatedIndexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			if _, ok := indexOrder.Get(h); ok {
-				duplicatedIndexOrder.Set(h, i)
-			} else {
-				indexOrder.Set(h, i)
-			}
+			v, _ := indexOrder.Get(h)
+			offsets, _ := v.([]int)
+			indexOrder.Set(h, append(offsets, i))
 		}
 	}
 
 	task := &lookupTableTask{
-		id:                   taskID,
-		handles:              handles,
-		indexOrder:           indexOrder,
-		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
+		id:         taskID,
+		handles:    handles,
+		indexOrder: indexOrder,
+		idxRows:    retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -2313,7 +2321,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val any) bool {
-				idxRow := task.idxRows.GetRow(val.(int))
+				idxRow := task.idxRows.GetRow(val.([]int)[0])
 				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false
 			})
@@ -2329,43 +2337,42 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			if err != nil {
 				return err
 			}
-			v, ok := task.indexOrder.Get(handle)
-			if !ok {
-				v, _ = task.duplicatedIndexOrder.Get(handle)
-			}
-			offset, _ := v.(int)
+			v, _ := task.indexOrder.Get(handle)
+			offsets := v.([]int)
 			task.indexOrder.Delete(handle)
-			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			tc := w.idxLookup.ectx.GetEvalCtx().TypeCtx()
-			for i := range vals {
-				col := w.idxTblCols[i]
-				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
-				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
-				if err != nil {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxVal,
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
-				}
-				if cmpRes != 0 {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxRow.GetDatum(i, w.idxColTps[i]),
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
+			for _, offset := range offsets {
+				idxRow := task.idxRows.GetRow(offset)
+				for i := range vals {
+					col := w.idxTblCols[i]
+					idxVal := idxRow.GetDatum(i, w.idxColTps[i])
+					tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+					cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
+					if err != nil {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxVal,
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
+					if cmpRes != 0 {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxRow.GetDatum(i, w.idxColTps[i]),
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
 				}
 			}
 		}
@@ -2410,9 +2417,6 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 		if task.indexOrder != nil {
 			memUsage += task.indexOrder.MemUsage()
-		}
-		if task.duplicatedIndexOrder != nil {
-			memUsage += task.duplicatedIndexOrder.MemUsage()
 		}
 		memUsage += task.idxRows.MemoryUsage()
 		task.memUsage = memUsage
