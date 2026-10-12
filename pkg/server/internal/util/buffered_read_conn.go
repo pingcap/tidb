@@ -81,25 +81,6 @@ func unwrapSyscallConn(conn net.Conn) syscall.Conn {
 		if sc, ok := c.(syscall.Conn); ok {
 			return sc
 		}
-<<<<<<< HEAD
-		// nolint:errcheck
-		defer conn.SetReadDeadline(time.Time{})
-		// At the TCP level, a successful `Peek` operation doesn't guarantee
-		// the connection remains active. However, in the MySQL protocol,
-		// clients shouldn't send new data while the server is processing SQL.
-		// Therefore, we can safely assume `Peek` won't intercept any data
-		// during this period. Even if `Peek` does capture data, it only means
-		// the liveness check might be inaccurate - this won't impact the
-		// actual connection state or its operations.
-		_, err = conn.Peek(1)
-		if err == nil {
-			return 1
-		}
-		if err == io.EOF {
-			return 0
-		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			return 1
-=======
 		switch v := c.(type) {
 		case underlayConn:
 			c = v.NetConn()
@@ -107,9 +88,7 @@ func unwrapSyscallConn(conn net.Conn) syscall.Conn {
 			c = v.Conn
 		default:
 			return nil
->>>>>>> a40e9d6e76f (server: fix data race between connection liveness probe and packet read (#71855))
 		}
-		return 0
 	}
 	return nil
 }
