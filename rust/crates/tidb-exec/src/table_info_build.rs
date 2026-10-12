@@ -560,6 +560,7 @@ pub fn build_table_info_in_schema(
         table_charset,
         table_collate,
         clustered_mode,
+        context,
     )?;
     // Go `buildTableInfo`: FOREIGN KEY -> FKInfo (plus its auto index) runs
     // inside the constraint loop, before `BuildTableInfo` appends the check
@@ -708,9 +709,60 @@ pub fn build_table_info_in_schema(
                 }
             }
             table.partition = Some(GoShared::new(partition_info(&metadata)));
+            // Go `buildTablePartitionInfo`.
+            if table
+                .indices
+                .iter_deref()
+                .any(|index| index.read().has_condition())
+            {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    "Unsupported add partial index: partial index is not supported on partitioned \
+                     table",
+                ));
+            }
         }
     }
     Ok(table)
+}
+
+/// Go `BuildIndexInfo`'s partial-index half for `index` on `table`:
+/// `CheckAndBuildIndexConditionString`, then `buildAffectColumn` over the
+/// stored condition. An index with no condition is left as it is.
+pub(crate) fn build_index_condition(
+    table: &TableInfo,
+    index: &mut IndexInfo,
+    condition: Option<&Expr>,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    let column = |name: &str| {
+        tidb_model::column::find_column_info(&table.columns, name).map(|column| {
+            let column = column.read();
+            tidb_executor::ddl::IndexConditionColumn {
+                field_type: column.field_type.clone(),
+                generated: column.is_generated(),
+            }
+        })
+    };
+    index.condition_expr_string = tidb_executor::ddl::check_and_build_index_condition_string(
+        table.partition.is_some(),
+        &column,
+        condition,
+        context.connection_charset_info(),
+    )
+    .map_err(default_admission_error)?;
+    if index.has_condition() {
+        let columns =
+            tidb_executor::kv_table::extract_columns_from_index_condition(index, table, true)
+                .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error))?;
+        index.affect_column = tidb_model::GoSharedPointerSlice::from_handles(
+            tidb_executor::kv_table::dedup_index_columns(columns)
+                .into_iter()
+                .map(Some)
+                .collect(),
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn append_check_constraints(
@@ -837,7 +889,7 @@ fn partition_info(
 
 /// One constraint, in the single normalized shape Go's `ast.Constraint` has by
 /// the time `BuildTableInfo` sees it — inline column options included.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Constraint {
     kind: ConstraintKind,
     name: String,
@@ -847,6 +899,8 @@ struct Constraint {
     invisible: bool,
     global: bool,
     index_type: Option<IndexType>,
+    /// A partial index's `WHERE`.
+    condition: Option<Expr>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -921,6 +975,7 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         invisible: index.options.visibility == Some(tidb_ast::IndexVisibility::Invisible),
         global: index.options.global,
         index_type: index_type_of(&index.options),
+        condition: index.options.condition.clone(),
     })
 }
 
@@ -1457,6 +1512,7 @@ fn build_column(
                             invisible: false,
                             global: inline.global,
                             index_type: None,
+                            condition: None,
                         },
                     ));
                     field_type.add_flags(FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
@@ -1479,6 +1535,7 @@ fn build_column(
                             invisible: false,
                             global: inline.global,
                             index_type: None,
+                            condition: None,
                         },
                     ));
                     field_type.add_flags(FieldTypeFlags::UNIQUE_KEY);
@@ -1862,6 +1919,7 @@ fn stamp_constraint_flags(columns: &mut [ColumnInfo], constraint: &Constraint) -
 }
 
 /// Go `BuildTableInfo`: column IDs, the handle decision, then the indexes.
+#[allow(clippy::too_many_arguments)]
 fn build_table(
     create: &CreateTableStmt,
     mut columns: Vec<ColumnInfo>,
@@ -1869,6 +1927,7 @@ fn build_table(
     charset: String,
     collate: String,
     clustered_mode: ClusteredIndexDefMode,
+    context: &tidb_executor::StmtContext,
 ) -> Refusal<TableInfo> {
     let table_name = create.name.last().cloned().ok_or_else(|| {
         DdlAdmissionError::with_code(GENERIC_ERROR_CODE, "CREATE TABLE names no table")
@@ -1902,6 +1961,14 @@ fn build_table(
 
     for constraint in &constraints {
         if constraint.kind == ConstraintKind::PrimaryKey {
+            // Go `buildTableInfo` blocks every partial primary key.
+            if constraint.condition.is_some() {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    "Unsupported add partial index: create an primary key with partial index is \
+                     not supported",
+                ));
+            }
             let single_int = is_single_int_primary_key(constraint, &table);
             if should_build_clustered_index(clustered_mode, constraint.clustered, single_int) {
                 if single_int {
@@ -1999,7 +2066,7 @@ fn build_table(
             primary || constraint.kind == ConstraintKind::Unique,
         )?;
         table.max_index_id += 1;
-        table.indices.push_go(IndexInfo {
+        let mut index = IndexInfo {
             id: table.max_index_id,
             name: CiString::new(name),
             table: CiString::default(),
@@ -2013,7 +2080,9 @@ fn build_table(
             global: constraint.global,
             mv_index,
             ..IndexInfo::default()
-        });
+        };
+        build_index_condition(&table, &mut index, constraint.condition.as_ref(), context)?;
+        table.indices.push_go(index);
     }
     Ok(table)
 }

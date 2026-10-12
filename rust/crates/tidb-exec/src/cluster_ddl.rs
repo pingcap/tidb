@@ -214,6 +214,8 @@ pub enum AlterColumnAction {    /// `ADD COLUMN`, at its written position.
         /// Per key part, the expression of an expression part, whose hidden
         /// column the plan builds (Go `buildHiddenColumnInfoWithCheck`).
         expressions: Vec<Option<tidb_ast::Expr>>,
+        /// A partial index's `WHERE` (Go `IndexOption.Condition`).
+        condition: Option<tidb_ast::Expr>,
         /// SQL mode and location captured for existing-row evaluation.
         context: DdlStatementContext,
     },
@@ -695,6 +697,8 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// Per key part, the expression of an expression part, whose hidden
         /// column the plan builds (Go `buildHiddenColumnInfoWithCheck`).
         expressions: Vec<Option<tidb_ast::Expr>>,
+        /// A partial index's `WHERE` (Go `IndexOption.Condition`).
+        condition: Option<tidb_ast::Expr>,
         /// SQL mode and location captured for existing-row evaluation.
         context: DdlStatementContext,
     },
@@ -1413,12 +1417,14 @@ fn lower_alter_table_catalog(
                             if_not_exists,
                             index,
                             expressions,
+                            condition,
                             context,
                             ..
                         } => actions.push(AlterColumnAction::AddIndex {
                             if_not_exists,
                             index,
                             expressions,
+                            condition,
                             context,
                         }),
                         other => {
@@ -1941,12 +1947,14 @@ fn lower_alter_table_catalog(
                                 if_not_exists,
                                 index,
                                 expressions,
+                                condition,
                                 context,
                                 ..
                             } => actions.push(AlterColumnAction::AddIndex {
                                 if_not_exists,
                                 index,
                                 expressions,
+                                condition,
                                 context,
                             }),
                             other => unreachable!(
@@ -2370,6 +2378,17 @@ fn prepare_modify_column(
             table: table.to_owned(),
         });
     };
+    // Go `GetModifiableColumnJob` / `onModifyColumn`.
+    check_column_referenced_by_partial_condition(
+        stored,
+        stored
+            .columns
+            .get(position)
+            .expect("the position was just found")
+            .read()
+            .name
+            .original(),
+    )?;
     let new_name = column.name.go_to_lower();
     if new_name != wanted
         && stored
@@ -3623,13 +3642,6 @@ fn lower_create_index(
             )))
         }
     };
-    if create.options.condition.is_some() {
-        return Err(DdlAdmissionError::unsupported(
-            "a partial index (CREATE INDEX ... WHERE) is not supported by this node: \
-             nothing here evaluates the condition, so every row would be indexed under \
-             a partial index's name",
-        ));
-    }
     let mut columns = Vec::with_capacity(create.parts.len());
     let mut expressions = Vec::with_capacity(create.parts.len());
     for part in &create.parts {
@@ -3672,6 +3684,7 @@ fn lower_create_index(
         table,
         if_not_exists: create.if_not_exists,
         expressions,
+        condition: create.options.condition.clone(),
         context: DdlStatementContext(context.clone()),
         index: Box::new(IndexInfo {
             // The publishing transaction allocates it from the table's own
@@ -9015,6 +9028,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     AlterColumnAction::AddIndex {
                         index,
                         expressions,
+                        condition,
                         context,
                         ..
                     } => {
@@ -9022,8 +9036,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         // Go builds every sub-job from it; offsets now account
                         // for preceding disjoint jobs.
                         let name = settle_added_index_name(stored, index, expressions);
-                        let mut added =
-                            plan_added_index(&mut info, index, expressions, &name, &context.0)?;
+                        let mut added = plan_added_index(
+                            &mut info,
+                            index,
+                            expressions,
+                            condition.as_ref(),
+                            &name,
+                            &context.0,
+                        )?;
+                        check_partial_index_fast_reorg(schema, &added)?;
                         // The backfill decodes EXISTING rows against the
                         // evolved columns (a bundle-added column reads its
                         // origin default, an expression part its hidden
@@ -9445,6 +9466,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if_not_exists,
             index,
             expressions,
+            condition,
             context,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
@@ -9481,7 +9503,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 return Err(DdlPlanError::DuplicateKeyName(name));
             }
             let mut info = stored.clone_like_go();
-            let mut added = plan_added_index(&mut info, index, expressions, &name, &context.0)?;
+            let mut added = plan_added_index(
+                &mut info,
+                index,
+                expressions,
+                condition.as_ref(),
+                &name,
+                &context.0,
+            )?;
+            check_partial_index_fast_reorg(schema, &added)?;
             // The backfill decodes the EXISTING rows: the table with any hidden
             // column the index adds, without the index itself.
             let backfill_table = Box::new(info.clone_like_go());
@@ -11164,8 +11194,14 @@ fn on_create_foreign_key(
             tp: tidb_ast::IndexType::BTREE,
             ..IndexInfo::default()
         };
-        let mut added =
-            plan_added_index(info, &index, &[], fk.name.original(), &created.context.0)?;
+        let mut added = plan_added_index(
+            info,
+            &index,
+            &[],
+            None,
+            fk.name.original(),
+            &created.context.0,
+        )?;
         let backfill_table = Box::new(info.clone_like_go());
         info.max_index_id += 1;
         added.id = info.max_index_id;
@@ -11206,6 +11242,21 @@ fn on_create_foreign_key(
     }))
 }
 
+/// Go `createIndex`: the job's `ReorgMeta.IsFastReorg` is
+/// `vardef.EnableFastReorg`, off for a job on a system database
+/// (`initJobReorgMetaFromVariables`), and a partial index needs it.
+fn check_partial_index_fast_reorg(schema: &str, index: &IndexInfo) -> Result<(), DdlPlanError> {
+    let is_fast_reorg = tidb_vardef::ENABLE_FAST_REORG.load(std::sync::atomic::Ordering::SeqCst)
+        && !tidb_metadef::is_system_related_db(&schema.go_to_lower());
+    if index.has_condition() && !is_fast_reorg {
+        return Err(coded_refusal(
+            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            "Unsupported add partial index: add partial index without fast reorg is not supported",
+        ));
+    }
+    Ok(())
+}
+
 /// The rest of Go `createIndex` for one added index named `name`, planned
 /// against `info`, through the checks the in-process builder runs too:
 /// `checkTooLongIndex`; `BuildHiddenColumnInfo` for each expression part, its
@@ -11218,6 +11269,7 @@ fn plan_added_index(
     info: &mut TableInfo,
     index: &IndexInfo,
     expressions: &[Option<tidb_ast::Expr>],
+    condition: Option<&tidb_ast::Expr>,
     name: &str,
     context: &tidb_executor::StmtContext,
 ) -> Result<IndexInfo, DdlPlanError> {
@@ -11407,6 +11459,8 @@ fn plan_added_index(
         context,
     )
     .map_err(admission)?;
+    crate::table_info_build::build_index_condition(info, &mut added, condition, context)
+        .map_err(DdlPlanError::Admission)?;
     Ok(added)
 }
 

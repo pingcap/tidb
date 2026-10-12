@@ -388,6 +388,132 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
     rows(&mut session, "ADMIN CHECK TABLE test.child");
 }
 
+/// Go's partial indexes on the production node. The builders dropped `WHERE`
+/// (CREATE TABLE) or refused it (CREATE INDEX); now Go's
+/// `CheckAndBuildIndexConditionString` / `buildAffectColumn` store the
+/// condition, the loader and the backfill compile it, and Go's
+/// `checkIndexCondition`, partitioned-table, primary-key and 8272 refusals
+/// apply. Answers and messages are the Go oracle's for the same script.
+#[test]
+fn a_partial_index_holds_only_the_rows_its_condition_admits() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(142)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t (a INT, b INT, c VARCHAR(10), KEY ia (b) WHERE a > 2)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.t VALUES (1, 10, 'x'), (3, 30, 'y'), (5, 50, 'z')",
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(
+        created[0][1].contains("  KEY `ia` (`b`) WHERE `a` > 2\n"),
+        "{}",
+        created[0][1]
+    );
+    let through_ia = "SELECT b FROM test.t USE INDEX (ia) WHERE a > 2 AND b > 0 ORDER BY b";
+    assert_eq!(displayed(rows(&mut session, through_ia)), [["30"], ["50"]]);
+    rows(&mut session, "UPDATE test.t SET a = 10 WHERE b = 10");
+    assert_eq!(
+        displayed(rows(&mut session, through_ia)),
+        [["10"], ["30"], ["50"]]
+    );
+    // The backfill writes an entry for the rows the condition admits only.
+    session
+        .execute_write("CREATE INDEX ib ON test.t (b) WHERE a < 5")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b FROM test.t USE INDEX (ib) WHERE a < 5 AND b > 0"
+        )),
+        [["30"]]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.t");
+    let referenced =
+        "Cannot drop, change or modify column 'a': it is referenced in partial index 'ia'";
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE test.t MODIFY COLUMN a BIGINT",
+            8272,
+            referenced,
+        ),
+        ("ALTER TABLE test.t DROP COLUMN a", 8272, referenced),
+        (
+            "ALTER TABLE test.t CHANGE COLUMN a aa INT",
+            8272,
+            referenced,
+        ),
+        (
+            "ALTER TABLE test.t ADD INDEX bad1 (b) WHERE a + 1 > 2",
+            8200,
+            "Unsupported add partial index: partial index condition must include a column name \
+             in the binary operation",
+        ),
+        (
+            "ALTER TABLE test.t ADD INDEX bad3 (b) WHERE a = NULL",
+            8200,
+            "Unsupported add partial index: = NULL is not supported in partial index condition \
+             because it is always false",
+        ),
+        (
+            "ALTER TABLE test.t ADD INDEX bad5 (b) WHERE d > 1",
+            8200,
+            "Unsupported add partial index: column name `d` referenced in partial index \
+             condition is not found in table",
+        ),
+        (
+            "ALTER TABLE test.t ADD INDEX bad6 (b) WHERE a IS TRUE",
+            8200,
+            "Unsupported add partial index: the kind of partial index condition is not supported",
+        ),
+        (
+            "CREATE TABLE test.tp (a INT, b INT, KEY i (b) WHERE a > 1, \
+             PRIMARY KEY (a) WHERE a > 2)",
+            8200,
+            "Unsupported add partial index: create an primary key with partial index is not \
+             supported",
+        ),
+        (
+            "CREATE TABLE test.tq (a INT, b INT, KEY i (b) WHERE a > 5) \
+             PARTITION BY RANGE (b) (PARTITION p0 VALUES LESS THAN (5))",
+            8200,
+            "Unsupported add partial index: partial index is not supported on partitioned table",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    rows(
+        &mut session,
+        "CREATE TABLE test.tr (a INT PRIMARY KEY, b INT) PARTITION BY HASH (a) PARTITIONS 2",
+    );
+    let error = session
+        .execute_write("CREATE INDEX ir ON test.tr (b) WHERE b > 1")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            8200,
+            "Unsupported add partial index: partial index on partitioned table is not supported"
+        )
+    );
+    session
+        .execute_write("ALTER TABLE test.t DROP INDEX ia")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE test.t DROP INDEX ib")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE test.t MODIFY COLUMN a BIGINT")
+        .unwrap();
+}
+
 /// Go's table checks on the production node, answers from the Go oracle for
 /// the same script: `checkTooLongSchema` / `checkTableInfoValidExtra` / ADD
 /// COLUMN's name limit (1059), `buildColumnAndConstraint`'s reserved

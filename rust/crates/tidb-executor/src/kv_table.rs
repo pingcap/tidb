@@ -4041,7 +4041,9 @@ impl KvTable {
             })
     }
 
-    pub(crate) fn add_partial_index_condition(
+    /// Go `IndexInfo.ConditionExprString`, compiled beside its index: the
+    /// table's writes, backfills and readers honor a partial index through it.
+    pub fn add_partial_index_condition(
         &mut self,
         index_id: i64,
         index_name: &str,

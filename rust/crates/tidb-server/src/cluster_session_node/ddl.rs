@@ -2370,9 +2370,30 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         };
         let name = index.name.clone();
         match &plan.operation {
-            IndexBackfillOperation::Add(context) => table
-                .create_index_with_context(index, &context.0)
-                .map_err(backfill_failure)?,
+            IndexBackfillOperation::Add(context) => {
+                // A partial index's entries are the rows its condition holds
+                // for (Go `buildIndexConditionChecker` in the backfill).
+                let stored = plan.index.read();
+                if stored.has_condition() {
+                    let condition = stored
+                        .condition_expr()
+                        .map_err(|error| exchange_validation_internal(error.message))?;
+                    let (zone, escape) =
+                        (context.0.session_zone(), context.0.like_default_escape());
+                    table
+                        .add_partial_index_condition(
+                            stored.id,
+                            stored.name.original(),
+                            &condition,
+                            &zone,
+                            escape,
+                        )
+                        .map_err(backfill_failure)?;
+                }
+                table
+                    .create_index_with_context(index, &context.0)
+                    .map_err(backfill_failure)?
+            }
             IndexBackfillOperation::Drop => {
                 if !table.drop_index(&name).map_err(backfill_failure)? {
                     return Err(exchange_validation_internal(format!(

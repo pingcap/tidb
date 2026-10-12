@@ -954,6 +954,30 @@ pub(crate) fn cluster_table(
         let clustered_primary = (table.pk_is_handle || table.is_common_handle)
             && index.name.original().eq_ignore_ascii_case("PRIMARY");
         kv_table.add_index(kv_index(&index, &kv_table.columns)?, clustered_primary);
+        // Go `IndexInfo.ConditionExprString`: a partial index's predicate,
+        // built as `TableFromMeta` builds it, in the default context.
+        if index.has_condition() {
+            let condition = index.condition_expr().map_err(|error| {
+                format!(
+                    "its partial index {} has an unparsable condition: {}",
+                    index.name, error.message
+                )
+            })?;
+            kv_table
+                .add_partial_index_condition(
+                    index.id,
+                    index.name.original(),
+                    &condition,
+                    &tidb_datatype::SessionTimeZone::utc(),
+                    b'\\',
+                )
+                .map_err(|error| {
+                    format!(
+                        "its partial index {} cannot be built: {error:?}",
+                        index.name
+                    )
+                })?;
+        }
         // Go `model.IndexInfo.MVIndex`: DDL set the flag when exactly one key
         // part is an ARRAY-typed hidden column, and that column's
         // `Dependences` names the source it indexes

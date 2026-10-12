@@ -1057,6 +1057,9 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY) {
             self.publish_enable_foreign_key();
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG) {
+            self.publish_enable_fast_reorg();
+        }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL) {
             self.publish_enable_mdl();
         }
@@ -1359,6 +1362,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY {
             self.publish_enable_foreign_key();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG {
+            self.publish_enable_fast_reorg();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
             self.publish_enable_mdl();
         }
@@ -1422,6 +1428,20 @@ impl GlobalSysvars {
                 value.eq_ignore_ascii_case("ON") || value == "1"
             });
         tidb_vardef::set_enable_mdl(enabled);
+    }
+
+    /// Publishes Go's `vardef.EnableFastReorg` from the committed live GLOBAL
+    /// image, as `publish_enable_foreign_key` does.
+    fn publish_enable_fast_reorg(&self) {
+        if self.publishes_runtime_settings {
+            tidb_vardef::ENABLE_FAST_REORG.store(
+                self.global_bool_value(
+                    tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG,
+                    tidb_vardef::defaults::DEF_TIDB_ENABLE_FAST_REORG,
+                ),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
     }
 
     /// Publish only a committed live GLOBAL image, never a staged replacement.
@@ -1725,6 +1745,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY {
             self.publish_enable_foreign_key();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG {
+            self.publish_enable_fast_reorg();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_MDL {
             self.publish_enable_mdl();
         }
@@ -1900,6 +1923,7 @@ impl GlobalSysvars {
         // in the cluster until that node was stopped.
         self.publish_enable_mdl();
         self.publish_enable_foreign_key();
+        self.publish_enable_fast_reorg();
         if loaded_schema_cache_size {
             if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
                 self.publish_schema_cache_size(&value);
@@ -1999,6 +2023,7 @@ impl GlobalSysvars {
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
         self.publish_enable_foreign_key();
+        self.publish_enable_fast_reorg();
         // Go's effective global value is ON when the row is absent.  The
         // live registry must publish that default after every cluster image
         // replacement; otherwise a node that bootstraps before the row is

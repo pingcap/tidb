@@ -200,82 +200,134 @@ pub(crate) fn partial_index_column_dependency(column: &str, index: &str) -> Driv
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PartialLiteralKind {
-    Integer,
-    Floating,
-    String,
-    Binary,
-    Null,
-    Unsupported,
+/// What Go's `checkIndexCondition` reads of the column a condition names.
+pub struct IndexConditionColumn {
+    /// The column's type.
+    pub field_type: tidb_datatype::FieldType,
+    /// Whether the column is generated.
+    pub generated: bool,
 }
 
-fn partial_literal_kind(expression: &tidb_ast::Expr) -> PartialLiteralKind {
-    match expression {
-        tidb_ast::Expr::Int(_) | tidb_ast::Expr::Bool(_) => PartialLiteralKind::Integer,
-        tidb_ast::Expr::Decimal(_) | tidb_ast::Expr::Float(_) => PartialLiteralKind::Floating,
-        tidb_ast::Expr::String(_)
-        | tidb_ast::Expr::RawString(_)
-        | tidb_ast::Expr::CharsetString { .. } => PartialLiteralKind::String,
-        tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => PartialLiteralKind::Binary,
-        tidb_ast::Expr::CharsetBinary { value, .. } => match value.as_ref() {
-            tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => PartialLiteralKind::Binary,
-            _ => PartialLiteralKind::Unsupported,
-        },
-        tidb_ast::Expr::Null => PartialLiteralKind::Null,
-        _ => PartialLiteralKind::Unsupported,
-    }
-}
-
-/// Mirrors Go `checkIndexCondition` (`pkg/ddl/index.go:4090-4240`). Only a
-/// visible, non-generated column may appear in an `IS [NOT] NULL` predicate or
-/// on one side of a supported comparison; the other side must be a literal
-/// whose type family is compatible with that column.
-pub(crate) fn validate_partial_index_condition(
-    columns: &[KvColumn],
+/// The type Go's parser driver gives an `ast.ValueExpr` literal
+/// (`types.DefaultTypeForValue`, under the connection's charset and
+/// collation); `None` for any other expression.
+fn index_condition_literal_type(
     expression: &tidb_ast::Expr,
-) -> Result<(), DriverError> {
-    let column_for = |expr: &tidb_ast::Expr| -> Result<&KvColumn, DriverError> {
-        let tidb_ast::Expr::Column(path) = expr else {
-            return Err(unsupported_partial_index(
-                "partial index condition must include a column name",
-            ));
-        };
-        let Some(name) = path.last() else {
-            return Err(unsupported_partial_index(
-                "partial index condition must include a column name",
-            ));
-        };
-        let Some(column) = columns
-            .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(name))
-        else {
-            return Err(unsupported_partial_index(format!(
-                "column name `{name}` referenced in partial index condition is not found in table"
-            )));
-        };
-        if column.generated.is_some() {
-            return Err(unsupported_partial_index(format!(
-                "generated column {name} cannot be used in partial index condition"
-            )));
+    (charset, collation): (&str, &str),
+) -> Option<tidb_datatype::FieldType> {
+    use tidb_datatype::{default_field_type_for_value, FieldTypeValue};
+    Some(match expression {
+        tidb_ast::Expr::Int(text) => match text.parse::<i64>() {
+            Ok(value) => {
+                default_field_type_for_value(FieldTypeValue::Signed(value), charset, collation)
+            }
+            Err(_) => default_field_type_for_value(
+                FieldTypeValue::Unsigned(text.parse().ok()?),
+                charset,
+                collation,
+            ),
+        },
+        tidb_ast::Expr::Decimal(text) => {
+            let (decimal, _) = tidb_datatype::MyDecimal::from_string(text.as_bytes());
+            default_field_type_for_value(
+                FieldTypeValue::Decimal {
+                    display_len: decimal.to_string_bytes().len() as i64,
+                    fraction_digits: i64::from(decimal.digits_frac()),
+                },
+                charset,
+                collation,
+            )
         }
-        Ok(column)
-    };
+        tidb_ast::Expr::Float(value) => {
+            default_field_type_for_value(FieldTypeValue::Float64(*value), charset, collation)
+        }
+        tidb_ast::Expr::Hex(digits) => {
+            let literal = tidb_datatype::parse_hex_str(&format!("0x{digits}")).ok()?;
+            default_field_type_for_value(
+                FieldTypeValue::HexLiteral(literal.as_bytes()),
+                charset,
+                collation,
+            )
+        }
+        tidb_ast::Expr::Bit(value) => default_field_type_for_value(
+            FieldTypeValue::BitLiteral(value.as_bytes()),
+            charset,
+            collation,
+        ),
+        tidb_ast::Expr::String(value) | tidb_ast::Expr::RawString(value) => {
+            default_field_type_for_value(FieldTypeValue::String(value), charset, collation)
+        }
+        tidb_ast::Expr::CharsetString {
+            charset: introducer,
+            value,
+        } => {
+            let introducer = introducer.to_ascii_lowercase();
+            let collation = tidb_datatype::get_default_collation(&introducer).ok()?;
+            default_field_type_for_value(FieldTypeValue::String(value), &introducer, &collation)
+        }
+        tidb_ast::Expr::CharsetBinary {
+            charset: introducer,
+            value,
+        } => {
+            let introducer = introducer.to_ascii_lowercase();
+            let collation = tidb_datatype::get_default_collation(&introducer).ok()?;
+            index_condition_literal_type(value, (charset, collation.as_str()))?
+                .with_charset_name(&introducer)
+                .with_collation_name(&collation)
+        }
+        tidb_ast::Expr::Null => {
+            default_field_type_for_value(FieldTypeValue::Null, charset, collation)
+        }
+        tidb_ast::Expr::Bool(value) => {
+            default_field_type_for_value(FieldTypeValue::Bool(*value), charset, collation)
+        }
+        _ => return None,
+    })
+}
 
-    match expression {
+/// Go `checkIndexCondition` (`pkg/ddl/index.go`): a partial index's
+/// condition is `column IS [NOT] NULL`, or `column <op> literal` with `op`
+/// one of `= != > < >= <=`, over a column that is not generated and a
+/// literal whose type fits the column's. `column` finds a table column by its
+/// lowercase name; `connection` is the charset and collation a literal takes.
+pub fn check_index_condition(
+    column: &dyn Fn(&str) -> Option<IndexConditionColumn>,
+    condition: &tidb_ast::Expr,
+    connection: (&str, &str),
+) -> Result<(), DriverError> {
+    use tidb_datatype::FieldTypeCode as Tp;
+    let name_of = |expression: &tidb_ast::Expr| match expression {
+        tidb_ast::Expr::Column(path) => path.last().map(|name| tidb_hack::go_to_lower(name)),
+        _ => None,
+    };
+    let generated = |name: &str| {
+        unsupported_partial_index(format!(
+            "generated column {name} cannot be used in partial index condition"
+        ))
+    };
+    match condition {
         tidb_ast::Expr::Is {
             expr,
             target: tidb_ast::IsTarget::Null,
             ..
         } => {
-            column_for(expr)?;
+            let Some(name) = name_of(expr) else {
+                return Err(unsupported_partial_index(
+                    "partial index condition must include a column name in the IS NULL expression",
+                ));
+            };
+            let Some(info) = column(&name) else {
+                return Err(unsupported_partial_index(format!(
+                    "column name {name} referenced in partial index condition is not found in table"
+                )));
+            };
+            if info.generated {
+                return Err(generated(&name));
+            }
             Ok(())
         }
-        tidb_ast::Expr::Is { .. } => Err(unsupported_partial_index(
-            "only IS NULL and IS NOT NULL are supported",
-        )),
-        tidb_ast::Expr::Binary(op, left, right)
-            if matches!(
+        tidb_ast::Expr::Binary(op, left, right) => {
+            if !matches!(
                 op,
                 tidb_ast::BinaryOp::Eq
                     | tidb_ast::BinaryOp::Ne
@@ -283,79 +335,154 @@ pub(crate) fn validate_partial_index_condition(
                     | tidb_ast::BinaryOp::Lt
                     | tidb_ast::BinaryOp::Ge
                     | tidb_ast::BinaryOp::Le
-            ) =>
-        {
-            let (column, literal) = match (left.as_ref(), right.as_ref()) {
-                (tidb_ast::Expr::Column(_), other) => (column_for(left)?, other),
-                (other, tidb_ast::Expr::Column(_)) => (column_for(right)?, other),
-                _ => {
+            ) {
+                return Err(unsupported_partial_index(format!(
+                    "binary operation {} is not supported",
+                    op.opcode().name()
+                )));
+            }
+            let (name, another_side) = match (name_of(left), name_of(right)) {
+                (Some(name), _) => (name, right.as_ref()),
+                (None, Some(name)) => (name, left.as_ref()),
+                (None, None) => {
                     return Err(unsupported_partial_index(
                         "partial index condition must include a column name in the binary operation",
                     ));
                 }
             };
-            let literal_kind = partial_literal_kind(literal);
-            let code = column.field_type.code();
-            let compatible = match literal_kind {
-                PartialLiteralKind::Integer => {
-                    code.is_type_integer()
-                        || matches!(
-                            code,
-                            tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
-                        )
-                }
-                PartialLiteralKind::Floating => matches!(
-                    code,
-                    tidb_datatype::FieldTypeCode::Float
-                        | tidb_datatype::FieldTypeCode::Double
-                        | tidb_datatype::FieldTypeCode::NewDecimal
-                ),
-                PartialLiteralKind::String => {
-                    (code.is_string()
-                        && !column
-                            .field_type
-                            .charset_name()
-                            .eq_ignore_ascii_case("binary"))
-                        || code.is_type_temporal()
-                        || matches!(
-                            code,
-                            tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
-                        )
-                }
-                PartialLiteralKind::Binary => {
-                    code.is_type_blob()
-                        || ((code.is_type_char() || code.is_type_varchar())
-                            && column
-                                .field_type
-                                .charset_name()
-                                .eq_ignore_ascii_case("binary"))
-                }
-                PartialLiteralKind::Null | PartialLiteralKind::Unsupported => false,
+            let Some(info) = column(&name) else {
+                return Err(unsupported_partial_index(format!(
+                    "column name `{name}` referenced in partial index condition is not found in table"
+                )));
             };
-            if compatible {
-                Ok(())
-            } else {
-                let reason = if literal_kind == PartialLiteralKind::Null {
-                    "= NULL is not supported in partial index condition because it is always false"
-                        .to_owned()
-                } else if literal_kind == PartialLiteralKind::Unsupported {
-                    "partial index condition must include a literal value on the other side of the binary operation".to_owned()
-                } else {
-                    format!(
-                        "the type of column `{}` is not compatible with the literal value",
-                        column.name
-                    )
-                };
-                Err(unsupported_partial_index(reason))
+            if info.generated {
+                return Err(generated(&name));
+            }
+            let Some(literal) = index_condition_literal_type(another_side, connection) else {
+                return Err(unsupported_partial_index(
+                    "partial index condition must include a literal value on the other side of the binary operation",
+                ));
+            };
+            let incompatible = || {
+                unsupported_partial_index(format!(
+                    "the type {} of the column `{name}` in partial index condition is not compatible with the literal value type {literal}",
+                    info.field_type
+                ))
+            };
+            let column_tp = info.field_type.code();
+            match literal.code() {
+                Tp::Tiny | Tp::Short | Tp::Long | Tp::LongLong | Tp::Int24 | Tp::Bit | Tp::Year => {
+                    if !matches!(
+                        column_tp,
+                        Tp::Tiny
+                            | Tp::Short
+                            | Tp::Long
+                            | Tp::LongLong
+                            | Tp::Int24
+                            | Tp::Bit
+                            | Tp::Year
+                            | Tp::Enum
+                            | Tp::Set
+                    ) {
+                        return Err(incompatible());
+                    }
+                    Ok(())
+                }
+                Tp::Float | Tp::Double | Tp::NewDecimal => {
+                    if !matches!(column_tp, Tp::Float | Tp::Double | Tp::NewDecimal) {
+                        return Err(incompatible());
+                    }
+                    Ok(())
+                }
+                Tp::Varchar
+                | Tp::VarString
+                | Tp::String
+                | Tp::TinyBlob
+                | Tp::MediumBlob
+                | Tp::LongBlob
+                | Tp::Blob => {
+                    // Go `types.IsString`.
+                    if matches!(
+                        column_tp,
+                        Tp::String
+                            | Tp::Varchar
+                            | Tp::VarString
+                            | Tp::TinyBlob
+                            | Tp::MediumBlob
+                            | Tp::LongBlob
+                            | Tp::Blob
+                            | Tp::Unspecified
+                    ) {
+                        if info.field_type.charset_name() != literal.charset_name() {
+                            return Err(unsupported_partial_index(format!(
+                                "the charset {} of the column `{name}` in partial index condition is not compatible with the literal value charset {}",
+                                info.field_type.charset_name(),
+                                literal.charset_name()
+                            )));
+                        }
+                        return Ok(());
+                    }
+                    if matches!(
+                        column_tp,
+                        Tp::Timestamp | Tp::Date | Tp::Duration | Tp::NewDate | Tp::Datetime
+                    ) || matches!(column_tp, Tp::Enum | Tp::Set)
+                    {
+                        return Ok(());
+                    }
+                    Err(incompatible())
+                }
+                Tp::Null => Err(unsupported_partial_index(
+                    "= NULL is not supported in partial index condition because it is always false",
+                )),
+                _ => Err(unsupported_partial_index(format!(
+                    "the type {literal} of the literal value in partial index condition is not supported"
+                ))),
             }
         }
-        tidb_ast::Expr::Binary(op, ..) => Err(unsupported_partial_index(format!(
-            "binary operation {op:?} is not supported"
-        ))),
         _ => Err(unsupported_partial_index(
             "the kind of partial index condition is not supported",
         )),
     }
+}
+
+/// Go `CheckAndBuildIndexConditionString` (`pkg/ddl/index.go`): the checked
+/// condition restored as `IndexInfo.ConditionExprString`, empty without one.
+/// `partitioned` is whether the table already has partitions; CREATE TABLE
+/// refuses a partitioned partial index later, in `buildTablePartitionInfo`.
+pub fn check_and_build_index_condition_string(
+    partitioned: bool,
+    column: &dyn Fn(&str) -> Option<IndexConditionColumn>,
+    condition: Option<&tidb_ast::Expr>,
+    connection: (&str, &str),
+) -> Result<String, DriverError> {
+    let Some(condition) = condition else {
+        return Ok(String::new());
+    };
+    if partitioned {
+        return Err(unsupported_partial_index(
+            "partial index on partitioned table is not supported",
+        ));
+    }
+    check_index_condition(column, condition, connection)?;
+    Ok(condition.restore_with_flags(crate::generated_column::generated_restore_flags()))
+}
+
+/// The in-process table's `checkIndexCondition`.
+pub(crate) fn validate_partial_index_condition(
+    columns: &[KvColumn],
+    expression: &tidb_ast::Expr,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let column = |name: &str| {
+        columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(name))
+            .map(|column| IndexConditionColumn {
+                field_type: column.field_type.clone(),
+                generated: column.generated.is_some(),
+            })
+    };
+    check_index_condition(&column, expression, ctx.connection_charset_info())
 }
 
 /// The column names an index's key parts name, rejecting the forms this tier
@@ -455,7 +582,7 @@ fn build_index_definition(
     } = index;
     reject_duplicate_index_columns(parts)?;
     if let Some(condition) = condition {
-        validate_partial_index_condition(table.columns(), condition)?;
+        validate_partial_index_condition(table.columns(), condition, ctx)?;
     }
     if table
         .indexes()

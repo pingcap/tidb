@@ -333,8 +333,9 @@ pub mod index_prefix;
 mod indexes;
 pub mod modify_column_type;
 pub use indexes::{
-    build_index_columns, check_create_global_index, check_expression_index_auto_increment,
-    get_name_for_anonymous_index, IndexedTableColumn, ResolvedKeyPart,
+    build_index_columns, check_and_build_index_condition_string, check_create_global_index,
+    check_expression_index_auto_increment, check_index_condition, get_name_for_anonymous_index,
+    IndexConditionColumn, IndexedTableColumn, ResolvedKeyPart,
 };
 pub mod job_history;
 pub mod label_rules;
@@ -2064,7 +2065,7 @@ fn create_table_in(
         &table.indexes().iter().collect::<Vec<_>>(),
     )?;
     for (index_id, index_name, condition) in &partial_conditions {
-        crate::ddl::indexes::validate_partial_index_condition(table.columns(), condition)?;
+        crate::ddl::indexes::validate_partial_index_condition(table.columns(), condition, ctx)?;
         table
             .add_partial_index_condition(
                 *index_id,
