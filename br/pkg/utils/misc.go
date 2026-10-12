@@ -59,13 +59,13 @@ const (
 
 // IsTypeCompatible checks whether type target is compatible with type src
 // they're compatible if
-// - same unsigned flag
-// - not-null is compatible: src NOT NULL can restore into target nullable
-//   (e.g. old bind_info.create_time), but not the reverse
-// - have same evaluation type
-// - target's flen and decimal should be bigger or equals to src's
-// - elements in target is superset of elements in src if they're enum or set type
-// - same charset and collate if they're string types
+//   - same unsigned flag
+//   - not-null is compatible: src NOT NULL can restore into target nullable
+//     (e.g. old bind_info.create_time), but not the reverse
+//   - have same evaluation type
+//   - target's flen and decimal should be bigger or equals to src's
+//   - elements in target is superset of elements in src if they're enum or set type
+//   - same charset and collate if they're string types
 func IsTypeCompatible(src types.FieldType, target types.FieldType) (typeEq, collateEq bool) {
 	collateEq = src.GetCollate() == target.GetCollate()
 	// Backup NOT NULL data can always fit a nullable cluster column; the reverse
