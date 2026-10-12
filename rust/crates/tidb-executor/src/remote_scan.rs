@@ -606,6 +606,9 @@ pub struct PushdownStatementContext {
     /// The current transaction's (or, in autocommit, current statement's)
     /// staged-write tracker. See [`crate::kv_table::StagedWrites`].
     pub staged_writes: std::sync::Arc<crate::kv_table::StagedWrites>,
+    /// Go `DistSQLContext.MaxKeysRead`/`MaxKeysReadCounter`: the statement's
+    /// `tidb_max_keys_read` budget and the counter `tidb_keys_examined` sums.
+    pub keys_read: crate::KeysReadBudget,
 }
 
 impl Default for PushdownStatementContext {
@@ -638,6 +641,7 @@ impl Default for PushdownStatementContext {
             // behind it has no session value to send.
             div_precision_increment: 4,
             staged_writes: Arc::default(),
+            keys_read: crate::KeysReadBudget::default(),
         }
     }
 }
@@ -672,6 +676,7 @@ impl PushdownStatementContext {
             query_cop_store_limiter: ctx.query_cop_store_limiter(),
             div_precision_increment: ctx.div_precision_increment(),
             staged_writes: ctx.staged_writes_handle(),
+            keys_read: ctx.keys_read().clone(),
         }
     }
 

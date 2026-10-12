@@ -327,6 +327,19 @@ impl KeysReadBudget {
         Self { read, max }
     }
 
+    /// Go `DistSQLContext.MaxKeysRead`; 0 is unlimited.
+    #[must_use]
+    pub fn max(&self) -> u64 {
+        self.max
+    }
+
+    /// Go `DistSQLContext.MaxKeysReadCounter`: the statement-wide accumulator
+    /// every coprocessor iterator of the statement adds to.
+    #[must_use]
+    pub fn counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.read)
+    }
+
     /// The keys this statement's reads have processed so far.
     #[must_use]
     pub fn read(&self) -> u64 {

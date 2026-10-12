@@ -3466,6 +3466,7 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-error",
  "tidb-proto",
  "tidb-ristretto",
  "tidb-txnkv",

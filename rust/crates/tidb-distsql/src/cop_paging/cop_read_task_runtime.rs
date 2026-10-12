@@ -299,7 +299,8 @@ pub enum CopReadTaskError {
     UnorderedResponse,
     /// Partitioned range envelopes require a partition-aware coordinator.
     PartitionedRanges,
-    /// Statement-wide max-keys accounting has no transport feedback owner yet.
+    /// Go `ErrMaxKeysReadExceeded`: the statement's reads processed more keys
+    /// than `tidb_max_keys_read` allows.
     MaxKeysRead,
     /// No request ranges were supplied.
     MissingRanges,
@@ -489,6 +490,11 @@ impl CopReadTaskRuntime {
         crate::metrics::COPR_CLOSEST_READ
             .with_label_values(&[read_type])
             .inc();
+        // Go `pickKeysReadCounter`: a request without the statement's shared
+        // counter still enforces its cap, over a counter of its own.
+        if metadata.max_keys_read_counter.is_none() {
+            metadata.max_keys_read_counter = Some(Arc::new(std::sync::atomic::AtomicU64::new(0)));
+        }
         let ema = Arc::new(ReadBytesEma::new(seed_read_bytes));
         let tasks: Vec<LogicalCopReadTask> = envelopes
             .into_iter()
@@ -724,6 +730,24 @@ impl CopReadTaskRuntime {
                 request_version: prepared.task.buckets_version,
                 latest_version: response.latest_buckets_version,
             });
+        }
+
+        // Go `copIterator.Next`: the keys every response processed
+        // (`ScanDetail.ProcessedKeys`) add to the statement-wide counter --
+        // which is also the statement's `tidb_keys_examined` -- and a total
+        // past a nonzero `tidb_max_keys_read` fails the read.
+        if let Some(counter) = &self.metadata.max_keys_read_counter {
+            let processed = response
+                .exec_details_v2
+                .as_ref()
+                .and_then(|details| details.scan_detail_v2.as_ref())
+                .map_or(0, |scan| scan.processed_versions);
+            let total = counter
+                .fetch_add(processed, std::sync::atomic::Ordering::Relaxed)
+                .saturating_add(processed);
+            if self.metadata.max_keys_read > 0 && total > self.metadata.max_keys_read {
+                return Err(CopReadTaskError::MaxKeysRead);
+            }
         }
 
         // Cache restoration/insertion mutates the process-shared cache. Prove that the task-local
@@ -1058,12 +1082,29 @@ impl CopReadTaskRuntime {
             &self.next_paging_task_index,
             task.paging || self.metadata.paging.size_bytes > 0,
         );
+        // Go `handleTaskOnce`: a task carries the statement's REMAINING
+        // `tidb_max_keys_read` budget, and one dispatched after the budget is
+        // spent fails before it is sent.
+        let max_keys_read = match (
+            &self.metadata.max_keys_read_counter,
+            self.metadata.max_keys_read,
+        ) {
+            (Some(counter), max) if max > 0 => {
+                let scanned = counter.load(std::sync::atomic::Ordering::Relaxed);
+                if scanned >= max {
+                    return Err(CopReadTaskError::MaxKeysRead);
+                }
+                max - scanned
+            }
+            _ => 0,
+        };
         let mut request = CoprocessorRequestEnvelope::from_metadata_with_data(
             &self.metadata,
             ranges,
             self.data.clone(),
         )
-        .with_paging_size(paging_size);
+        .with_paging_size(paging_size)
+        .with_max_keys_read(max_keys_read);
         let lookup = self.cache.as_ref().and_then(|cache| {
             cache.prepare_request(
                 &mut request,
@@ -1141,9 +1182,6 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     }
     if !metadata.partition_id_and_ranges.is_empty() {
         return Err(CopReadTaskError::PartitionedRanges);
-    }
-    if metadata.max_keys_read > 0 || metadata.max_keys_read_counter.is_some() {
-        return Err(CopReadTaskError::MaxKeysRead);
     }
     let ranges = metadata
         .key_ranges

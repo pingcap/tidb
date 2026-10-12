@@ -277,6 +277,8 @@ pub enum DirectUnaryTransportError {
     LockRecovery(tidb_txnkv::lock::LockRecoveryError),
     /// The existing retry budget was exhausted; retain its source category.
     Backoff(tidb_txnkv::region::RegionBackoffExhausted),
+    /// Go `exeerrors.ErrMaxKeysReadExceeded` from the copIterator.
+    MaxKeysReadExceeded,
 }
 
 impl DirectUnaryTransportError {
@@ -290,6 +292,7 @@ impl DirectUnaryTransportError {
             Self::Request(_) => "request",
             Self::Cache(_) => "cache",
             Self::Coordinator(_) => "coordinator",
+            Self::MaxKeysReadExceeded => "max_keys_read_exceeded",
             Self::Client(_) => "client",
             Self::ClientLifecycle => "client_lifecycle",
             Self::Decode(_) => "decode",
@@ -338,6 +341,7 @@ impl std::fmt::Display for DirectUnaryTransportError {
             Self::DeadlineExceeded => formatter.write_str("query deadline exceeded"),
             Self::LockRecovery(message) => write!(formatter, "lock recovery failed: {message}"),
             Self::Backoff(error) => write!(formatter, "retry budget exhausted: {error:?}"),
+            Self::MaxKeysReadExceeded => formatter.write_str("tidb_max_keys_read limit exceeded"),
         }
     }
 }
@@ -356,6 +360,10 @@ impl From<DirectUnaryTransportError> for QueryResponseError {
     fn from(error: DirectUnaryTransportError) -> Self {
         match error {
             DirectUnaryTransportError::CallerCancelled => Self::Cancelled,
+            DirectUnaryTransportError::MaxKeysReadExceeded => Self::Sql {
+                code: tidb_error::tidb::errcode::ErrMaxKeysReadExceeded,
+                message: "tidb_max_keys_read limit exceeded".to_owned(),
+            },
             DirectUnaryTransportError::LockRecovery(
                 tidb_txnkv::lock::LockRecoveryError::CallerCancelled,
             ) => Self::Cancelled,
@@ -389,7 +397,10 @@ impl From<RegionRouteError> for DirectUnaryTransportError {
 
 impl From<CopReadTaskError> for DirectUnaryTransportError {
     fn from(error: CopReadTaskError) -> Self {
-        Self::Coordinator(error.to_string())
+        match error {
+            CopReadTaskError::MaxKeysRead => Self::MaxKeysReadExceeded,
+            error => Self::Coordinator(error.to_string()),
+        }
     }
 }
 

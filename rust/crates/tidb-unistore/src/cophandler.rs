@@ -254,7 +254,8 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         let Some(idx_scan) = scan.idx_scan.as_ref() else {
             return other_error("executor missing idx_scan body");
         };
-        return exec_index_scan(
+        let mut scanned_rows = 0;
+        let response = exec_index_scan(
             store,
             context,
             idx_scan,
@@ -262,7 +263,9 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
             limit,
             aggregation,
             topn.as_ref(),
+            &mut scanned_rows,
         );
+        return with_scan_detail(response, scanned_rows);
     }
     if scan.tp() != tipb::ExecType::TypeTableScan {
         return other_error("index scans (closure_exec.go) are a later course of this port");
@@ -270,7 +273,8 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
         return other_error("executor missing tbl_scan body");
     };
-    exec_table_scan(
+    let mut scanned_rows = 0;
+    let response = exec_table_scan(
         store,
         context,
         tbl_scan,
@@ -278,7 +282,27 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         limit,
         aggregation,
         topn.as_ref(),
-    )
+        &mut scanned_rows,
+    );
+    with_scan_detail(response, scanned_rows)
+}
+
+/// Go `buildResp`: every DAG response carries `ExecDetailsV2` whose
+/// `ScanDetailV2.ProcessedVersions` is the rows the table and index scan
+/// executors produced -- what TiDB's `copIterator` adds up against
+/// `tidb_max_keys_read` and into `tidb_keys_examined`.
+fn with_scan_detail(
+    mut response: coprocessor::Response,
+    scanned_rows: u64,
+) -> coprocessor::Response {
+    response.exec_details_v2 = Some(tidb_proto::kvrpcpb::ExecDetailsV2 {
+        scan_detail_v2: Some(tidb_proto::kvrpcpb::ScanDetailV2 {
+            processed_versions: scanned_rows,
+            ..tidb_proto::kvrpcpb::ScanDetailV2::default()
+        }),
+        ..tidb_proto::kvrpcpb::ExecDetailsV2::default()
+    });
+    response
 }
 
 /// Go `indexScanProcessor` and `indexScanProcessCore`: decode every index
@@ -295,6 +319,7 @@ fn exec_index_scan(
     limit: usize,
     aggregation: Option<&tipb::Aggregation>,
     topn: Option<&TopNSpec>,
+    scanned_rows: &mut u64,
 ) -> coprocessor::Response {
     use tidb_datatype::Datum;
     const EXTRA_HANDLE_ID: i64 = -1;
@@ -425,6 +450,8 @@ fn exec_index_scan(
             if row.len() != idx_scan.columns.len() {
                 return other_error("decoded index entry does not match its executor schema");
             }
+            // Go `indexScanExec.rowCnt`: every entry the scan produced.
+            *scanned_rows += 1;
             match conditions
                 .iter()
                 .map(|condition| {
@@ -609,6 +636,7 @@ fn exec_table_scan(
     limit: usize,
     aggregation: Option<&tipb::Aggregation>,
     topn: Option<&TopNSpec>,
+    scanned_rows: &mut u64,
 ) -> coprocessor::Response {
     let timezone = match context.time_zone.resolve() {
         Ok(timezone) => timezone,
@@ -754,6 +782,8 @@ fn exec_table_scan(
                     row_datums.push(Datum::Null);
                 }
             }
+            // Go `tableScanExec.rowCnt`: every row the scan produced.
+            *scanned_rows += 1;
             // Go `selectionProcessor`: a row survives only when EVERY
             // condition evaluates non-null and non-zero.
             match conditions

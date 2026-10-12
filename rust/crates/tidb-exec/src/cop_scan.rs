@@ -714,6 +714,7 @@ where
             cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
             cop_plan_ids,
             root_plan_id: request.statement.plan_id,
+            keys_read: request.statement.keys_read.clone(),
         };
         let iter = scan_result(|| open_scan(&self.factory, plan))
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
@@ -789,6 +790,8 @@ struct RemoteScanPlan {
     /// Physical IDs aligned with TiPB executors for runtime summaries.
     cop_plan_ids: Vec<isize>,
     root_plan_id: isize,
+    /// The statement's `tidb_max_keys_read` budget and keys-examined counter.
+    keys_read: tidb_executor::KeysReadBudget,
 }
 
 /// Go copIteratorWorker/liteCopIteratorWorker turns task panics into errors.
@@ -866,6 +869,11 @@ where
     context.request.priority = plan.priority;
     context.request.not_fill_cache = plan.not_fill_cache;
     context.request.query_cop_store_limiter = plan.query_cop_store_limiter;
+    // Go `SetFromSessionVars` copies `MaxKeysRead` and the statement-wide
+    // `MaxKeysReadCounter`; the counter is passed even without a limit so the
+    // processed keys still reach `tidb_keys_examined`.
+    context.request.max_keys_read = plan.keys_read.max();
+    context.execution.max_keys_read_counter = Some(plan.keys_read.counter());
     if let Some(min_size) = plan.paging_min_size {
         // Go's buildIndexSelectResultForRange raises both paging bounds to
         // the worker's first handle batch. Keep the normal session defaults

@@ -1566,9 +1566,9 @@ struct LookupBatchJob {
     /// `LookupFetch::LocalFallback` variant.
     handle_count: usize,
     /// The fetch outcome when the drain runs off-thread.
-    receiver: Option<std::sync::mpsc::Receiver<Result<LookupFetch, String>>>,
+    receiver: Option<std::sync::mpsc::Receiver<Result<LookupFetch, ExecError>>>,
     /// Windows that complete at collect time carry their payload directly.
-    ready: Option<Result<LookupFetch, String>>,
+    ready: Option<Result<LookupFetch, ExecError>>,
 }
 
 struct LookupBatchResult {
@@ -2869,15 +2869,17 @@ impl IndexRangeSourceExec {
             }
             let payload = if let Some(receiver) = job.receiver {
                 receiver.recv().unwrap_or_else(|_| {
-                    Err("remote table lookup failed: fetch worker exited".to_owned())
+                    Err(ExecError::internal(
+                        "remote table lookup failed: fetch worker exited",
+                    ))
                 })
             } else {
                 job.ready
                     .expect("a job without a receiver carries its payload")
             };
-            let payload = payload.map_err(|error| {
-                ExecError::unsupported(format!("remote table lookup failed: {error}"))
-            })?;
+            // Go's tableWorker hands its error to the reader unchanged, so a
+            // SQL error (8274 from `tidb_max_keys_read`, say) keeps its code.
+            let payload = payload?;
             match payload {
                 LookupFetch::Remote(rows, predicates_applied, wire_rows, indices) => {
                     let physical_ids = indices.iter().filter_map(|index| job.physical_ids.get(*index).copied()).collect::<Vec<_>>();
@@ -3007,9 +3009,7 @@ impl IndexRangeSourceExec {
                     &self.statement,
                     self.meta.max_chunk_size(),
                 )
-                .map_err(|error| {
-                    ExecError::unsupported(format!("remote table lookup failed: {error:?}"))
-                })?;
+                .map_err(ExecError::from)?;
             let Some(staged) = staged else {
                 return Ok(LookupBatchJob {
                     physical_ids,
@@ -3033,7 +3033,7 @@ impl IndexRangeSourceExec {
                     Ok(LookupFetch::RemoteChunk(chunk))
                 }
                 Ok(None) => Ok(LookupFetch::LocalFallback(handles)),
-                Err(error) => Err(format!("{error:?}")),
+                Err(error) => Err(ExecError::from(error)),
             };
             return Ok(LookupBatchJob {
                 physical_ids,
@@ -3065,7 +3065,7 @@ impl IndexRangeSourceExec {
                 worker_required_rows,
             ) {
                 Ok(staged) => staged,
-                Err(error) => return Err(format!("remote table lookup failed: {error:?}")),
+                Err(error) => return Err(ExecError::from(error)),
             };
             let Some(staged) = staged else {
                 return Ok(LookupFetch::LocalFallback(worker_handles));
@@ -3085,7 +3085,7 @@ impl IndexRangeSourceExec {
                     Ok(LookupFetch::RemoteChunk(chunk))
                 }
                 Ok(None) => Ok(LookupFetch::LocalFallback(worker_handles)),
-                Err(error) => Err(format!("{error:?}")),
+                Err(error) => Err(ExecError::from(error)),
             }
         };
         // Go's table worker is persistent across lookup tasks. Submit the

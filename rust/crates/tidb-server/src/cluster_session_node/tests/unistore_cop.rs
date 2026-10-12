@@ -13377,3 +13377,76 @@ fn resource_group_ddl_as_go_does() {
         (8249, "Unknown resource group 'rg1'")
     );
 }
+
+/// The error a query raises, whether at `execute` or while its rows stream.
+fn query_error(session: &mut ClusterServerSession, sql: &str) -> (u16, String) {
+    use crate::resultset_source::ResultSetSource;
+    let mut result = match session.execute(sql) {
+        Ok(result) => result,
+        Err(error) => return (error.code, error.message),
+    };
+    let source = result.source();
+    loop {
+        match source.next_batch(8) {
+            Ok(batch) if batch.is_empty() => panic!("{sql} streamed every row"),
+            Ok(_) => {}
+            Err(error) => return (error.code, error.message),
+        }
+    }
+}
+
+/// Go `copIterator` sums each response's `ScanDetailV2.ProcessedVersions`
+/// into the statement-wide `MaxKeysReadCounter`: a pushed scan past
+/// `tidb_max_keys_read` fails with 8274, an IndexLookUp's two iterators share
+/// one budget, and every processed key reaches `tidb_keys_examined`.
+#[test]
+fn pushed_scans_share_the_max_keys_read_budget_and_feed_keys_examined() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1017)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t_mrs (id INT PRIMARY KEY AUTO_INCREMENT, val INT, extra INT)")
+        .unwrap();
+    let values = (1..=20)
+        .map(|v| format!("({v}, 100)"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .execute_write(&format!("INSERT INTO t_mrs (val, extra) VALUES {values}"))
+        .unwrap();
+    session.execute_write("FLUSH STATUS").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*) FROM t_mrs")),
+        [["20"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW STATUS LIKE 'tidb_keys_examined'")),
+        [["tidb_keys_examined", "20"]]
+    );
+    assert_eq!(
+        query_error(
+            &mut session,
+            "SELECT /*+ SET_VAR(tidb_max_keys_read=2) */ * FROM t_mrs"
+        ),
+        (8274, "tidb_max_keys_read limit exceeded".to_owned())
+    );
+    session
+        .execute_write("CREATE INDEX idx_val ON t_mrs (val)")
+        .unwrap();
+    assert_eq!(
+        query_error(
+            &mut session,
+            "SELECT /*+ SET_VAR(tidb_max_keys_read=25), USE_INDEX(t_mrs, idx_val) */ extra \
+             FROM t_mrs WHERE val >= 1"
+        ),
+        (8274, "tidb_max_keys_read limit exceeded".to_owned())
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT /*+ SET_VAR(tidb_max_keys_read=50), USE_INDEX(t_mrs, idx_val) */ SUM(extra) \
+             FROM t_mrs WHERE val >= 1"
+        )),
+        [["2000"]]
+    );
+}

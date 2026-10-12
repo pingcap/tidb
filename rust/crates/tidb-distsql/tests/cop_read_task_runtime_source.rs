@@ -256,10 +256,6 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
         Some(RequestKeyRanges::new_partitioned(vec![vec![range("a", "z")]]).into());
     cases.push((request, "partitioned_ranges"));
 
-    let mut request = metadata(vec![range("a", "z")]);
-    request.max_keys_read = 10;
-    cases.push((request, "max_keys_read"));
-
     for (request, expected) in cases {
         assert_eq!(
             prepare(&request, &valid_topology, Some(cache()))
@@ -275,6 +271,56 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
             .unwrap_err()
             .kind(),
         "too_many_ranges"
+    );
+}
+
+/// Go `copIterator`: each task carries the REMAINING `tidb_max_keys_read`
+/// budget, every response's processed keys add to the statement-wide counter,
+/// a total past the cap fails with `ErrMaxKeysReadExceeded`, and a task
+/// dispatched once the budget is spent fails before it is sent.
+#[test]
+fn max_keys_read_is_one_statement_budget_across_tasks() {
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(3));
+    let mut request = metadata(vec![range("a", "z")]);
+    request.paging.enabled = false;
+    request.max_keys_read = 10;
+    request.max_keys_read_counter = Some(counter.clone());
+    let mut runtime = prepare(
+        &request,
+        &[topology(1, "a", "m"), topology(2, "m", "z")],
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        runtime.prepared_attempt(1).unwrap().request().max_keys_read,
+        7
+    );
+    let mut body = response("region-1", "a", "m", 0);
+    body.exec_details_v2
+        .as_mut()
+        .unwrap()
+        .scan_detail_v2
+        .as_mut()
+        .unwrap()
+        .processed_versions = 5;
+    runtime
+        .accept_response(1, body.clone(), None, Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 8);
+    assert_eq!(
+        runtime
+            .accept_response(2, body, None, Duration::from_secs(1))
+            .unwrap_err()
+            .kind(),
+        "max_keys_read"
+    );
+
+    counter.store(10, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        prepare(&request, &[topology(1, "a", "z")], None)
+            .unwrap_err()
+            .kind(),
+        "max_keys_read"
     );
 }
 
