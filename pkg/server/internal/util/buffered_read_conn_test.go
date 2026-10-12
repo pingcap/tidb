@@ -147,10 +147,19 @@ func TestBufferedReadConnConcurrentReadAndIsAlive(t *testing.T) {
 	require.Greater(t, probes, 0)
 }
 
-// embeddedConnWrapper mirrors third-party net.Conn wrappers (for example the
-// PROXY-protocol conn used when proxy-protocol is enabled) that embed a
-// net.Conn without promoting SyscallConn or NetConn. Its method set is only
-// net.Conn's, so the fd is reachable only by unwrapping the embedded field.
+// netConnWrapper mirrors third-party net.Conn wrappers that embed a net.Conn
+// and expose it through NetConn() net.Conn instead of promoting SyscallConn:
+// *tls.Conn and, since go-proxyprotocol v1.0.8, the PROXY-protocol conn used
+// when proxy-protocol is enabled. Its method set is net.Conn's plus NetConn.
+type netConnWrapper struct {
+	net.Conn
+}
+
+func (w *netConnWrapper) NetConn() net.Conn { return w.Conn }
+
+// embeddedConnWrapper mirrors a net.Conn wrapper that only embeds net.Conn and
+// promotes neither SyscallConn nor NetConn, so its file descriptor is not
+// reachable and the unwrap must report it as unwrappable.
 type embeddedConnWrapper struct {
 	net.Conn
 }
@@ -162,28 +171,30 @@ func TestUnwrapSyscallConn(t *testing.T) {
 		"a raw syscall.Conn must unwrap to itself")
 	require.NotNil(t, unwrapSyscallConn(NewBufferedReadConn(server)),
 		"a BufferedReadConn must unwrap to its embedded conn")
-	require.NotNil(t, unwrapSyscallConn(&embeddedConnWrapper{Conn: server}),
-		"a wrapper embedding a net.Conn must unwrap to the syscall.Conn")
+	require.NotNil(t, unwrapSyscallConn(&netConnWrapper{Conn: server}),
+		"a wrapper exposing NetConn must unwrap to the syscall.Conn")
 
-	// A wrapped conn that is not a syscall.Conn and does not expose NetConn or
-	// an embedded net.Conn must be reported as unwrappable.
-	require.Nil(t, unwrapSyscallConn(&embeddedConnWrapper{}),
-		"a wrapper with only a nil embedded conn exposes no syscall.Conn")
+	// A wrapper that exposes neither SyscallConn nor NetConn hides the fd and
+	// must be reported as unwrappable.
+	require.Nil(t, unwrapSyscallConn(&embeddedConnWrapper{Conn: server}),
+		"a wrapper with only an embedded net.Conn exposes no syscall.Conn")
 }
 
-// TestBufferedReadConnIsAliveThroughEmbeddedWrapper is the regression test for
+// TestBufferedReadConnIsAliveThroughNetConnWrapper is the regression test for
 // proxy-protocol connections: the liveness probe must reach the syscall.Conn
-// hidden behind a wrapper that only embeds net.Conn.
-func TestBufferedReadConnIsAliveThroughEmbeddedWrapper(t *testing.T) {
+// hidden behind a wrapper that only exposes NetConn (the PROXY-protocol conn
+// provides it since go-proxyprotocol v1.0.8, replacing the reflection-based
+// unwrap).
+func TestBufferedReadConnIsAliveThroughNetConnWrapper(t *testing.T) {
 	requireRawSocketProbeSupport(t)
 	client, server := newTCPConnPair(t)
-	c := NewBufferedReadConn(&embeddedConnWrapper{Conn: server})
+	c := NewBufferedReadConn(&netConnWrapper{Conn: server})
 
 	require.Equal(t, 1, c.IsAlive(),
-		"a live peer behind an embedded net.Conn wrapper must be alive")
+		"a live peer behind a NetConn wrapper must be alive")
 
 	require.NoError(t, client.Close())
 	require.Eventually(t, func() bool { return c.IsAlive() == 0 },
 		2*time.Second, 10*time.Millisecond,
-		"a closed peer behind an embedded wrapper must be reported as dead")
+		"a closed peer behind a NetConn wrapper must be reported as dead")
 }
