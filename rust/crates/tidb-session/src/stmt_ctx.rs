@@ -615,9 +615,23 @@ impl Session {
         // Go DDL reads `SessionVars.ForeignKeyChecks` (`checkTableForeignKeysValid`,
         // `CreateTableArgs.FKCheck`); the read-shaped context leaves it at ON.
         // `metabuild.WithClusteredIndexDefMode` reads `@@tidb_enable_clustered_index`.
+        // `metabuild.WithShardRowIDBits` / `WithPreSplitRegions` read
+        // `@@tidb_shard_row_id_bits` / `@@tidb_pre_split_regions`
+        // (`TidbOptUint64`, so an unreadable value is the default 0).
+        let uint_var = |name: &str| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0)
+        };
         self.statement_context(false)
             .with_foreign_key_checks(self.foreign_key_checks())
             .with_clustered_index_def_mode(self.clustered_index_mode())
+            .with_shard_row_id_defaults(
+                uint_var(tidb_vardef::tidb_vars::TIDB_SHARD_ROW_ID_BITS),
+                uint_var(tidb_vardef::tidb_vars::TIDB_PRE_SPLIT_REGIONS),
+            )
     }
 
     /// Shares evaluation policy and warnings with server-owned ANALYZE sampling.

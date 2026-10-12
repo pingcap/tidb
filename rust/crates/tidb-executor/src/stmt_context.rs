@@ -816,6 +816,13 @@ pub struct StmtContextData {
     /// `@@tidb_enable_clustered_index`, which decides whether CREATE TABLE
     /// clusters a primary key declared without CLUSTERED / NONCLUSTERED.
     clustered_index_def_mode: tidb_vardef::modes::ClusteredIndexDefMode,
+    /// Go `metabuild.WithShardRowIDBits`: the session's
+    /// `@@tidb_shard_row_id_bits`, which a heap CREATE TABLE takes before
+    /// its own options.
+    shard_row_id_bits: u64,
+    /// Go `metabuild.WithPreSplitRegions`: the session's
+    /// `@@tidb_pre_split_regions`.
+    pre_split_regions: u64,
     /// Go `SessionVars.CTEMaxRecursionDepth` (`@@cte_max_recursion_depth`,
     /// default `1000`): how many rounds a `WITH RECURSIVE` fixpoint may run
     /// before `ErrCTEMaxRecursionDepth`. Go's variable is signed and a
@@ -1903,6 +1910,15 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_shard_row_id_bits` and `@@tidb_pre_split_regions` for
+    /// this statement.
+    #[must_use]
+    pub fn with_shard_row_id_defaults(mut self, shard_row_id_bits: u64, pre_split_regions: u64) -> Self {
+        self.shard_row_id_bits = shard_row_id_bits;
+        self.pre_split_regions = pre_split_regions;
+        self
+    }
+
     /// Sets `@@tidb_allow_remove_auto_inc` for this statement.
     #[must_use]
     pub fn with_allow_remove_auto_inc(mut self, allow_remove_auto_inc: bool) -> Self {
@@ -2283,6 +2299,8 @@ impl StmtContext {
             clustered_index_def_mode: tidb_vardef::modes::ClusteredIndexDefMode(
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX,
             ),
+            shard_row_id_bits: 0,
+            pre_split_regions: 0,
             div_precision_increment: 4,
             windowing_use_high_precision: true,
             enable_pipelined_window_exec: true,
@@ -3763,6 +3781,18 @@ impl StmtContext {
     #[must_use]
     pub fn allow_remove_auto_inc(&self) -> bool {
         self.allow_remove_auto_inc
+    }
+
+    /// Go `metabuild.Context.GetShardRowIDBits`.
+    #[must_use]
+    pub fn shard_row_id_bits(&self) -> u64 {
+        self.shard_row_id_bits
+    }
+
+    /// Go `metabuild.Context.GetPreSplitRegions`.
+    #[must_use]
+    pub fn pre_split_regions(&self) -> u64 {
+        self.pre_split_regions
     }
 
     /// Go `metabuild.Context.GetClusteredIndexDefMode`.

@@ -858,6 +858,16 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// every holder's lock.
         is_cleanup: bool,
     },
+    /// `ALTER TABLE ... SHARD_ROW_ID_BITS = n`, Go's `ActionShardRowID`.
+    /// Metadata only.
+    ShardRowId {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The bit count, already clamped to `MaxShardRowIDBits`.
+        bits: u64,
+    },
     /// `ALTER TABLE ... COMMENT = '...'`, Go's
     /// `ActionModifyTableComment`. Metadata only.
     ModifyTableComment {
@@ -1975,6 +1985,22 @@ fn lower_alter_table_catalog(
                     schema,
                     table,
                     comment,
+                }));
+            }
+            // Go `AlterTable` clamps the value to `MaxShardRowIDBits` before
+            // `ShardRowID`.
+            if let tidb_ast::TableOption::ShardRowIdBits(value) = option {
+                let bits = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "SHARD_ROW_ID_BITS needs an integer value",
+                    )
+                })?;
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::ShardRowId {
+                    schema,
+                    table,
+                    bits: bits.min(tidb_vardef::tidb_vars::MAX_SHARD_ROW_ID_BITS),
                 }));
             }
             let (value, force) = match option {
@@ -3551,6 +3577,44 @@ fn apply_table_charset_and_collate(
         }
     }
     Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go `verifyNoOverflowShardBits`: the row-id allocator's next global id
+/// must leave the new shard bits clear (`tables.OverflowShardBits` with the
+/// sign bit reserved).
+fn verify_no_overflow_shard_bits<S: MetaSnapshot>(
+    snapshot: &mut S,
+    db_id: i64,
+    info: &TableInfo,
+    shard_row_id_bits: u64,
+) -> Result<(), DdlPlanError> {
+    if shard_row_id_bits == 0 {
+        return Ok(());
+    }
+    let schema_id = if info.auto_id_schema_id == 0 {
+        db_id
+    } else {
+        info.auto_id_schema_id
+    };
+    // The row-id counter holds the id last handed out; `NextGlobalAutoID` is
+    // one past it, and an absent key reads as 0.
+    let counter = match snapshot.get(&key::auto_table_id_kv_key(schema_id, info.id))? {
+        Some(value) => value::parse_int_value(&value)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+        None => 0,
+    };
+    let next_global = counter.wrapping_add(1);
+    const ROW_ID_BIT_LENGTH: u64 = 64;
+    let mask = ((1u64 << shard_row_id_bits) - 1) << (ROW_ID_BIT_LENGTH - shard_row_id_bits - 1);
+    if next_global & (mask as i64) > 0 {
+        return Err(coded_refusal(
+            tidb_error::mysql::errcode::ErrAutoincReadFailed,
+            format!(
+                "shard_row_id_bits {shard_row_id_bits} will cause next global auto ID {next_global} overflow"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// The auto-increment counter a multi-schema change has already moved inside
@@ -9694,8 +9758,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // merged sub-job at the end, preserving every other sub-job's
             // relative order. Execute the equivalent order here so later
             // metadata, backfill snapshots, and notifier sequence IDs agree.
-            let add_index_count = actions.iter().enumerate()
-                .filter(|(offset, action)| !prepared.skipped.contains_key(offset) && matches!(action, AlterColumnAction::AddIndex { .. }))
+            // Go merges `ActionAddIndex` sub-jobs only; an ADD PRIMARY KEY is
+            // `ActionAddPrimaryKey` and keeps its place.
+            let is_mergeable_add_index = |action: &AlterColumnAction| matches!(action, AlterColumnAction::AddIndex { index, .. } if !index.primary);
+            let add_index_count = actions
+                .iter()
+                .enumerate()
+                .filter(|(offset, action)| {
+                    !prepared.skipped.contains_key(offset) && is_mergeable_add_index(action)
+                })
                 .count();
             // Go `mergeAddIndex` keeps the order when a key is added: the key
             // needs the index queued for it to come first.
@@ -9705,12 +9776,62 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     .any(|action| matches!(action, AlterColumnAction::AddForeignKey { .. }));
             let mut action_order: Vec<_> = (0..actions.len()).filter(|offset| !prepared.skipped.contains_key(offset)).collect();
             if merge_add_index {
-                action_order.sort_by_key(|offset| {
-                    usize::from(matches!(
-                        actions[*offset],
-                        AlterColumnAction::AddIndex { .. }
-                    ))
-                });
+                action_order
+                    .sort_by_key(|offset| usize::from(is_mergeable_add_index(&actions[*offset])));
+            }
+            // Go `onMultiSchemaChange`'s `SubActionTypes`: each sub-job's
+            // type in order, the merged ADD INDEX one last; `SubmitBatch`'s
+            // BDR admission reads the same list.
+            let mut sub_action_types = Vec::with_capacity(action_order.len());
+            for offset in &action_order {
+                let action_type = match &actions[*offset] {
+                    AlterColumnAction::AddIndex { .. }
+                        if merge_add_index && is_mergeable_add_index(&actions[*offset]) =>
+                    {
+                        continue
+                    }
+                    AlterColumnAction::AddIndex { index, .. } if index.primary => {
+                        ActionType::ACTION_ADD_PRIMARY_KEY
+                    }
+                    AlterColumnAction::AddIndex { .. } => ActionType::ACTION_ADD_INDEX,
+                    AlterColumnAction::Add { .. } => ActionType::ACTION_ADD_COLUMN,
+                    AlterColumnAction::Modify { .. } | AlterColumnAction::Rename { .. } => {
+                        ActionType::ACTION_MODIFY_COLUMN
+                    }
+                    AlterColumnAction::Drop { .. } => ActionType::ACTION_DROP_COLUMN,
+                    AlterColumnAction::DropIndex { .. } => ActionType::ACTION_DROP_INDEX,
+                    AlterColumnAction::DropPrimaryKey => ActionType::ACTION_DROP_PRIMARY_KEY,
+                    AlterColumnAction::AddForeignKey { .. } => {
+                        // The index Go queues for the key's columns comes
+                        // first.
+                        if prepared
+                            .foreign_keys
+                            .get(offset)
+                            .is_some_and(|created| created.needs_index)
+                        {
+                            sub_action_types.push(ActionType::ACTION_ADD_INDEX);
+                        }
+                        ActionType::ACTION_ADD_FOREIGN_KEY
+                    }
+                    AlterColumnAction::DropForeignKey { .. } => ActionType::ACTION_DROP_FOREIGN_KEY,
+                    AlterColumnAction::AddCheck { .. } => ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+                    AlterColumnAction::RenameIndex { .. } => ActionType::ACTION_RENAME_INDEX,
+                    AlterColumnAction::IndexVisibility { .. } => {
+                        ActionType::ACTION_ALTER_INDEX_VISIBILITY
+                    }
+                    AlterColumnAction::SetDefault { .. } => ActionType::ACTION_SET_DEFAULT_VALUE,
+                    AlterColumnAction::RebaseAutoId { .. } => ActionType::ACTION_REBASE_AUTO_ID,
+                    AlterColumnAction::TableComment { .. } => {
+                        ActionType::ACTION_MODIFY_TABLE_COMMENT
+                    }
+                    AlterColumnAction::TableCharset { .. } => {
+                        ActionType::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE
+                    }
+                };
+                sub_action_types.push(action_type);
+            }
+            if merge_add_index {
+                sub_action_types.push(ActionType::ACTION_ADD_INDEX);
             }
             let active_action_count = action_order.len();
             // Go's multi-schema worker steps every sub-job through its
@@ -10093,6 +10214,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MULTI_SCHEMA_CHANGE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+            diff.sub_action_types = sub_action_types.into();
         }
         DdlStatement::TruncateTable { schema, table } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
@@ -10682,6 +10804,53 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 ActionType::ACTION_UNLOCK_TABLE,
                 first,
             )?;
+        }
+        DdlStatement::ShardRowId {
+            schema,
+            table,
+            bits,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `ShardRowID`, in its order.
+            if stored.temp_table_type != tidb_model::TempTableType::NONE {
+                return Err(coded_refusal(
+                    8006,
+                    "`shard_row_id_bits` is unsupported on temporary tables.".to_owned(),
+                ));
+            }
+            if *bits == stored.shard_row_id_bits {
+                return Ok(already(format!(
+                    "`{schema}`.`{table}` already has SHARD_ROW_ID_BITS = {bits}"
+                )));
+            }
+            if *bits > 0 && (stored.pk_is_handle || stored.is_common_handle) {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    8200,
+                    "Unsupported shard_row_id_bits for table with primary key as row id",
+                )));
+            }
+            let mut info = stored.clone_like_go();
+            // Go `onShardRowID`: lowering the count only narrows the shard;
+            // raising it first checks the next row id still fits, and moves
+            // `MaxShardRowIDBits` with it.
+            if *bits < info.shard_row_id_bits {
+                info.shard_row_id_bits = *bits;
+            } else {
+                verify_no_overflow_shard_bits(snapshot, db_id, &info, *bits)?;
+                info.shard_row_id_bits = *bits;
+                info.max_shard_row_id_bits = *bits;
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_SHARD_ROW_ID;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
         }
         DdlStatement::ModifyTableComment {
             schema,

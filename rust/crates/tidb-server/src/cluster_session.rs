@@ -893,6 +893,10 @@ pub(crate) fn cluster_table(
     // allocator starts from (`NewAllocatorFromTempTblInfo`); a permanent
     // table's counter lives in its cluster auto-id key instead.
     kv_table.set_auto_inc_id(table.auto_inc_id);
+    // Go `TableInfo.ShardRowIDBits`, which `AllocHandleIDs` composes into
+    // the high bits of every `_tidb_rowid`, and `PreSplitRegions`.
+    kv_table.set_shard_row_id_bits(table.shard_row_id_bits);
+    kv_table.set_pre_split_regions(table.pre_split_regions);
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
     // cluster-wide home would allocate from a fresh in-process cell and

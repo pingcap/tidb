@@ -349,6 +349,8 @@ pub fn build_table_info_in_schema(
     let mut auto_inc_id = 0i64;
     let mut auto_rand_id = 0i64;
     let mut auto_id_cache = 0i64;
+    let mut shard_row_id_bits = None;
+    let mut pre_split_regions = None;
     for option in &create.table_options {
         match option {
             TableOption::CharacterSet(charset) => declared_charset = Some(charset.clone()),
@@ -398,6 +400,23 @@ pub fn build_table_info_in_schema(
             // Validated above and applied once the table is built
             // (`handleEngineAttributeForCreateTable`).
             TableOption::EngineAttribute(_) | TableOption::StorageClass(_) => {}
+            // Go `handleTableOptions`, applied once the handle is known.
+            TableOption::ShardRowIdBits(value) => {
+                shard_row_id_bits = Some(value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "SHARD_ROW_ID_BITS needs an integer value",
+                    )
+                })?);
+            }
+            TableOption::PreSplitRegions(value) => {
+                pre_split_regions = Some(value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "PRE_SPLIT_REGIONS needs an integer value",
+                    )
+                })?);
+            }
             other => {
                 return Err(DdlAdmissionError::with_code(
                     GENERIC_ERROR_CODE,
@@ -618,6 +637,29 @@ pub fn build_table_info_in_schema(
         context,
     )
     .map_err(default_admission_error)?;
+    // Go `buildTableInfoWithCheck`: a heap table that is not temporary takes
+    // the session's `tidb_shard_row_id_bits` / `tidb_pre_split_regions`,
+    // which `handleTableOptions` then overrides.
+    let clustered = table.pk_is_handle || table.is_common_handle;
+    if !clustered && temporary == tidb_model::TempTableType::NONE {
+        table.shard_row_id_bits = context.shard_row_id_bits();
+        table.max_shard_row_id_bits = table.shard_row_id_bits;
+        table.pre_split_regions = context.pre_split_regions();
+    }
+    if let Some(bits) = shard_row_id_bits {
+        // A positive count on a table whose rows are keyed by the primary
+        // key is refused; otherwise it is clamped, never refused.
+        if bits > 0 && clustered {
+            return Err(default_admission_error(
+                tidb_executor::DriverError::UnsupportedShardRowIdBits,
+            ));
+        }
+        table.shard_row_id_bits = bits.min(tidb_vardef::tidb_vars::MAX_SHARD_ROW_ID_BITS);
+        table.max_shard_row_id_bits = table.shard_row_id_bits;
+    }
+    if let Some(regions) = pre_split_regions {
+        table.pre_split_regions = regions;
+    }
     if let Some(engine_attribute) = engine_attribute {
         if let Some(settings) =
             tidb_executor::ddl::storage_class::storage_class_settings_of(&engine_attribute)
@@ -633,6 +675,17 @@ pub fn build_table_info_in_schema(
     table.auto_inc_id = auto_inc_id;
     table.auto_id_cache = auto_id_cache;
     table.auto_rand_id = auto_rand_id;
+    // Go `handleTableOptions`' last step (`shardingBits`): PRE_SPLIT_REGIONS
+    // never exceeds the table's sharding bits, SHARD_ROW_ID_BITS else
+    // AUTO_RANDOM's.
+    let sharding_bits = if table.shard_row_id_bits > 0 {
+        table.shard_row_id_bits
+    } else {
+        table.auto_random_bits
+    };
+    if table.pre_split_regions > sharding_bits {
+        table.pre_split_regions = sharding_bits;
+    }
     // Go `BuildIndexInfo` calls `setGlobalIndexVersion` after every index has
     // been resolved against the completed table metadata.
     for index in table.indices.iter_deref() {

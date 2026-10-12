@@ -12198,3 +12198,84 @@ fn multi_schema_change_sub_jobs_run_as_go_runs_them() {
         (8200, "Unsupported operate same column 'b'")
     );
 }
+
+/// Go `handleTableOptions`' SHARD_ROW_ID_BITS / PRE_SPLIT_REGIONS, the
+/// session's `tidb_shard_row_id_bits` a heap CREATE TABLE takes first, and
+/// `ShardRowID` / `onShardRowID` for ALTER TABLE. This node refused the
+/// options and the ALTER, and a multi-schema change never reported its
+/// sub-job types (`SubActionTypes`).
+#[test]
+fn shard_row_id_bits_create_alter_and_session_default_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(997)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.s1 (a INT) SHARD_ROW_ID_BITS = 20 PRE_SPLIT_REGIONS = 30",
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.s1"));
+    assert!(
+        created[0][1].ends_with("/*T! SHARD_ROW_ID_BITS=15 PRE_SPLIT_REGIONS=15 */"),
+        "{}",
+        created[0][1]
+    );
+    let sharding = |session: &mut _, table: &str| {
+        displayed(rows(
+            session,
+            &format!(
+                "SELECT tidb_row_id_sharding_info FROM information_schema.tables \
+                 WHERE table_schema = 'test' AND table_name = '{table}'"
+            ),
+        ))
+    };
+    session
+        .execute_write("ALTER TABLE test.s1 SHARD_ROW_ID_BITS = 4")
+        .unwrap();
+    assert_eq!(sharding(&mut session, "s1"), [["SHARD_BITS=4"]]);
+
+    rows(&mut session, "SET @@tidb_shard_row_id_bits = 3");
+    rows(&mut session, "CREATE TABLE test.s2 (a INT)");
+    rows(
+        &mut session,
+        "CREATE TABLE test.s3 (a INT PRIMARY KEY CLUSTERED)",
+    );
+    assert_eq!(sharding(&mut session, "s2"), [["SHARD_BITS=3"]]);
+    assert_eq!(
+        sharding(&mut session, "s3"),
+        [["NOT_SHARDED(PK_IS_HANDLE)"]]
+    );
+    rows(&mut session, "SET @@tidb_shard_row_id_bits = 0");
+
+    for (sql, code, message) in [
+        (
+            "CREATE TABLE test.s4 (a INT PRIMARY KEY CLUSTERED) SHARD_ROW_ID_BITS = 2",
+            8200,
+            "Unsupported shard_row_id_bits for table with primary key as row id",
+        ),
+        (
+            "ALTER TABLE test.s3 SHARD_ROW_ID_BITS = 2",
+            8200,
+            "Unsupported shard_row_id_bits for table with primary key as row id",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    rows(
+        &mut session,
+        "CREATE GLOBAL TEMPORARY TABLE test.g (a INT) ON COMMIT DELETE ROWS",
+    );
+    let error = session
+        .execute_write("ALTER TABLE test.g SHARD_ROW_ID_BITS = 4")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            8006,
+            "`shard_row_id_bits` is unsupported on temporary tables."
+        )
+    );
+}
