@@ -22,15 +22,9 @@ import (
 	"fmt"
 	"testing"
 
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-=======
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	servererr "github.com/pingcap/tidb/pkg/server/err"
->>>>>>> e152661cf10 (server: detect client disconnects in explicit transactions (#70343) (#70777))
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -39,11 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
->>>>>>> e152661cf10 (server: detect client disconnects in explicit transactions (#70343) (#70777))
 	"github.com/stretchr/testify/require"
 )
 
