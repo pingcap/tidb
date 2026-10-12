@@ -78,7 +78,7 @@ impl Session {
                 let ranges = handle_ranges.clone();
                 let ctx = self.statement_context(false);
                 let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
-                let (names, rows) = self.with_catalog_mut(|catalog| {
+                let (columns, rows) = self.with_catalog_mut(|catalog| {
                     let table =
                         admin_check_table_mut(catalog, &database, &name, "admin check index")?;
                     tidb_executor::admin_check::check_index_ranges(
@@ -89,8 +89,6 @@ impl Session {
                     )
                     .map_err(admin_check_error)
                 })?;
-                let text = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let columns = names.into_iter().map(|name| (name, text.clone())).collect();
                 Ok(StmtOutput::Rows { columns, rows })
             }
         }

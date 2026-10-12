@@ -13820,3 +13820,23 @@ fn global_index_rules_on_the_production_create_table() {
         .unwrap();
     assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
 }
+
+/// Go `buildCheckIndexSchema`: `ADMIN CHECK INDEX t idx (lo, hi)` returns the
+/// indexed columns under their own types and a BIGINT `extra_handle`; the
+/// production text writer refused rows declared all-VARCHAR.
+#[test]
+fn admin_check_index_range_rows_carry_the_index_column_types() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1024)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE ci (a INT, b VARCHAR(10), INDEX a_b (a, b))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO ci VALUES (3, 'ab'), (2, 'cd'), (1, 'ef'), (-1, 'hi')")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "ADMIN CHECK INDEX ci a_b (2, 4)")),
+        [["1", "ef", "3"], ["2", "cd", "2"]]
+    );
+}

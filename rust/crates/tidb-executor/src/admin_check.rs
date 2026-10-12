@@ -528,7 +528,7 @@ pub fn check_index_ranges(
     index_name: &str,
     ranges: &[tidb_ast::AdminCheckHandleRange],
     context: &RowDecodeContext,
-) -> Result<(Vec<String>, Vec<Vec<Datum>>), AdminCheckError> {
+) -> Result<(Vec<(String, tidb_datatype::FieldType)>, Vec<Vec<Datum>>), AdminCheckError> {
     let index = table
         .index_list_for_check()
         .into_iter()
@@ -538,12 +538,20 @@ pub fn check_index_ranges(
             table: table.name.clone(),
         })?;
 
-    let mut columns: Vec<String> = index
+    // Go `buildCheckIndexSchema`: each indexed column under its own type,
+    // then `extra_handle` as a BIGINT.
+    let mut columns: Vec<(String, tidb_datatype::FieldType)> = index
         .column_offsets
         .iter()
-        .map(|offset| table.columns[*offset].name.clone())
+        .map(|offset| {
+            let column = &table.columns[*offset];
+            (column.name.clone(), column.field_type.clone())
+        })
         .collect();
-    columns.push("extra_handle".to_owned());
+    columns.push((
+        "extra_handle".to_owned(),
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    ));
 
     let rows = table
         .scan_physical_rows_with_handles(context)
