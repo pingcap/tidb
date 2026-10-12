@@ -29,7 +29,7 @@ var _pool = buffer.NewPool()
 
 func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	// create the slow query logger
-	sqLogger, prop, err := log.InitLogger(newSlowQueryLogConfig(cfg))
+	sqLogger, prop, err := initPingCAPLogger(newSlowQueryLogConfig(cfg), cfg.RotateByDay)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

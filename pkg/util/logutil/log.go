@@ -69,6 +69,7 @@ var EmptyFileLogConfig = FileLogConfig{}
 // FileLogConfig serializes file log related config in toml/json.
 type FileLogConfig struct {
 	log.FileLogConfig
+	RotateByDay bool `toml:"rotate-by-day" json:"rotate-by-day"`
 }
 
 // NewFileLogConfig creates a FileLogConfig.
@@ -88,6 +89,9 @@ type LogConfig struct {
 
 	// GeneralLogFile filenanme, default to File log config on empty.
 	GeneralLogFile string
+
+	// RotateByDay enables daily log rotation in addition to size-based rotation.
+	RotateByDay bool
 }
 
 // NewLogConfig creates a LogConfig.
@@ -101,6 +105,7 @@ func NewLogConfig(level, format, slowQueryFile string, generalLogFile string, fi
 		},
 		SlowQueryFile:  slowQueryFile,
 		GeneralLogFile: generalLogFile,
+		RotateByDay:    fileCfg.RotateByDay,
 	}
 	for _, opt := range opts {
 		opt(&c.Config)
@@ -130,7 +135,7 @@ var errVerboseLogger = log.L()
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
-	gl, props, err := log.InitLogger(&cfg.Config, opts...)
+	gl, props, err := initPingCAPLogger(&cfg.Config, cfg.RotateByDay, opts...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -200,7 +205,7 @@ func initGRPCLogger(gl *zap.Logger) {
 // ReplaceLogger replace global logger instance with given log config.
 func ReplaceLogger(cfg *LogConfig, opts ...zap.Option) error {
 	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
-	gl, props, err := log.InitLogger(&cfg.Config, opts...)
+	gl, props, err := initPingCAPLogger(&cfg.Config, cfg.RotateByDay, opts...)
 	if err != nil {
 		return errors.Trace(err)
 	}
