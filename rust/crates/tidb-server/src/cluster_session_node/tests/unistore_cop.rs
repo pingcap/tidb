@@ -12751,3 +12751,53 @@ fn exchange_and_collapse_honour_go_switches_and_counters() {
         [["60001"]]
     );
 }
+
+/// Go `AlterTablePlacement` / `onAlterTablePlacement`: the table takes the
+/// policy (or loses it under DEFAULT), an unknown one is 8239 and a
+/// temporary table 8006. This node refused the statement.
+#[test]
+fn alter_table_placement_policy_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1005)).unwrap();
+    rows(&mut session, "CREATE PLACEMENT POLICY p1 FOLLOWERS = 1");
+    rows(&mut session, "CREATE TABLE test.t (a INT)");
+    session
+        .execute_write("ALTER TABLE test.t PLACEMENT POLICY p1")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(
+        created[0][1].ends_with("/*T![placement] PLACEMENT POLICY=`p1` */"),
+        "{}",
+        created[0][1]
+    );
+    session
+        .execute_write("ALTER TABLE test.t PLACEMENT POLICY DEFAULT")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(!created[0][1].contains("PLACEMENT"), "{}", created[0][1]);
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE test.t PLACEMENT POLICY nosuch",
+            8239,
+            "Unknown placement policy 'nosuch'",
+        ),
+        (
+            "ALTER TABLE test.g PLACEMENT POLICY p1",
+            8006,
+            "`placement` is unsupported on temporary tables.",
+        ),
+    ] {
+        if sql.contains("test.g") {
+            rows(
+                &mut session,
+                "CREATE GLOBAL TEMPORARY TABLE test.g (a INT) ON COMMIT DELETE ROWS",
+            );
+        }
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+}

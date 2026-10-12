@@ -944,6 +944,16 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// The table name as written.
         table: String,
     },
+    /// `ALTER TABLE ... PLACEMENT POLICY [=] name`, Go's
+    /// `ActionAlterTablePlacement`.
+    AlterTablePlacement {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The policy as written; `DEFAULT` clears the table's.
+        policy: String,
+    },
     /// `ALTER TABLE ... SHARD_ROW_ID_BITS = n`, Go's `ActionShardRowID`.
     /// Metadata only.
     ShardRowId {
@@ -2096,6 +2106,14 @@ fn lower_alter_table_catalog(
                     schema,
                     table,
                     engine_attribute,
+                }));
+            }
+            if let tidb_ast::TableOption::PlacementPolicy(policy) = option {
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::AlterTablePlacement {
+                    schema,
+                    table,
+                    policy: policy.clone(),
                 }));
             }
             let ignored = match option {
@@ -11738,6 +11756,51 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 encoded,
             )?);
             diff.action_type = ActionType::ACTION_ALTER_TTLREMOVE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AlterTablePlacement {
+            schema,
+            table,
+            policy,
+        } => {
+            // Go `AlterTablePlacement`, then `onAlterTablePlacement`.
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            if stored.temp_table_type != tidb_model::TempTableType::NONE {
+                return Err(coded_refusal(
+                    8006,
+                    "`placement` is unsupported on temporary tables.".to_owned(),
+                ));
+            }
+            let reference = check_and_normalize_placement_policy(snapshot, policy)?;
+            let old_enables_placement = stored.placement_policy_ref.is_some();
+            let mut info = stored.clone_like_go();
+            info.placement_policy_ref = reference;
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            // `placement.NewTableBundle`, or an empty bundle when the table
+            // had placement before and has none now.
+            let policies = load_policies(snapshot)?;
+            let bundle = tidb_placement::new_table_bundle(&policies, &info).map_err(|error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("building placement rules: {error}"),
+                ))
+            })?;
+            match bundle {
+                Some(bundle) => placement_bundles.push(bundle),
+                None if old_enables_placement => {
+                    placement_bundles.push(tidb_placement::new_bundle(table_id))
+                }
+                None => {}
+            }
+            diff.action_type = ActionType::ACTION_ALTER_TABLE_PLACEMENT;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
