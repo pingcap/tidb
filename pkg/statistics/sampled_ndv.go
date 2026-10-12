@@ -57,6 +57,19 @@ func (s *FMSketch) Sampled() bool {
 	return s != nil && s.ndvCounts != nil
 }
 
+// NotNullRows returns the non-NULL rows that the ANALYZE of a sampled sketch
+// saw. A full-input sketch keeps no row counts, so it returns the sketch's
+// NDV, which is at most the non-NULL rows up to the estimation error.
+func (s *FMSketch) NotNullRows() int64 {
+	switch {
+	case s == nil:
+		return 0
+	case s.ndvCounts != nil:
+		return s.ndvCounts.rows - s.ndvCounts.nulls
+	}
+	return s.NDV()
+}
+
 func (s *FMSketch) sampledNDV() int64 {
 	counts := s.ndvCounts
 	// TiKV sets the sample count even if it sampled no row. The sketch is then
