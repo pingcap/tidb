@@ -17,58 +17,142 @@
 //! exchanges a table or partition rewrites the label rules naming it
 //! (`pkg/ddl/executor.go`, `table.go`, `partition.go`, `schema.go`).
 //!
-//! The rules live in the store's label manager ([`Catalog::put_label_rule`]
-//! and its siblings), outside the catalog's transaction, as Go's live in PD.
+//! The helpers here are shared by both engines: each reads the store's label
+//! manager ([`LabelRuleManager`]) where Go's does and returns the write Go's
+//! makes, as a [`LabelRuleWrite`]. The in-process engine applies it at once
+//! to its catalog's manager; the production node delivers it to the node's
+//! manager (PD, or the node's mock) before the job's transaction commits.
 //! Rule IDs carry the job's lower-case schema, table and partition names.
 //!
 //! NOT MODELLED (documented): Go's GC worker deletes a dropped table's rules
-//! (`doGCLabelRules`) when it processes the table's delete range. This tier
-//! has no GC worker, so those rules stay, hidden by the `ATTRIBUTES` reader's
-//! table-existence check exactly as they are in Go before GC runs.
+//! (`doGCLabelRules`) when it processes the table's delete range. Neither
+//! engine has that step, so those rules stay, hidden by the `ATTRIBUTES`
+//! reader's table-existence check exactly as they are in Go before GC runs.
 
 use std::collections::BTreeMap;
 
 use tidb_hack::GoToLower;
 
-use crate::ddl_label::{self, CodecV1, LabelCodec, Rule};
+use crate::ddl_label::{self, CodecV1, LabelCodec, LabelRulePatch, Rule};
+use crate::label_manager::LabelRuleManager;
 use crate::{Catalog, DriverError, KvTable, TableEntry};
 
-/// Go `getPartitionIDs`.
-fn get_partition_ids(table: &KvTable) -> Vec<i64> {
-    table.partition().map_or_else(Vec::new, |partition| {
-        partition
-            .definitions
-            .iter()
-            .map(|definition| definition.id)
-            .collect()
-    })
+/// What Go's label-rule helpers read of a `TableInfo`: its lower-case name,
+/// its ID, and its partitions' lower-case names and IDs in definition order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LabelRuleTable {
+    /// Go `tblInfo.Name.L`.
+    pub name: String,
+    /// Go `tblInfo.ID`.
+    pub id: i64,
+    /// Go `tblInfo.Partition.Definitions`' `Name.L` and `ID`.
+    pub partitions: Vec<(String, i64)>,
 }
 
-/// Go `getIDs([]*model.TableInfo{tblInfo})`: the table's ID, then its
-/// partitions'.
-pub(crate) fn get_ids(table: &KvTable) -> Vec<i64> {
-    let mut ids = vec![table.table_id];
-    ids.extend(get_partition_ids(table));
-    ids
+impl LabelRuleTable {
+    /// The in-process table's names and IDs.
+    #[must_use]
+    pub fn from_kv(table: &KvTable) -> Self {
+        Self {
+            name: table.name().go_to_lower(),
+            id: table.table_id,
+            partitions: table.partition().map_or_else(Vec::new, |partition| {
+                partition
+                    .definitions
+                    .iter()
+                    .map(|definition| (definition.name.go_to_lower(), definition.id))
+                    .collect()
+            }),
+        }
+    }
+
+    /// A stored `TableInfo`'s names and IDs.
+    #[must_use]
+    pub fn from_table_info(table: &tidb_model::TableInfo) -> Self {
+        Self {
+            name: table.name.lowercase().to_owned(),
+            id: table.id,
+            partitions: table
+                .get_partition_info()
+                .map(|partition| {
+                    partition
+                        .read()
+                        .definitions
+                        .snapshot()
+                        .iter()
+                        .map(|definition| (definition.name.lowercase().to_owned(), definition.id))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Go `getPartitionIDs`.
+    fn partition_ids(&self) -> Vec<i64> {
+        self.partitions.iter().map(|(_, id)| *id).collect()
+    }
+
+    /// Go `getIDs([]*model.TableInfo{tblInfo})`: the table's ID, then its
+    /// partitions'.
+    #[must_use]
+    pub fn ids(&self) -> Vec<i64> {
+        let mut ids = vec![self.id];
+        ids.extend(self.partition_ids());
+        ids
+    }
+
+    /// Go `getPartitionRuleIDs`.
+    fn partition_rule_ids(&self, codec: &dyn LabelCodec, schema_name: &str) -> Vec<String> {
+        self.partitions
+            .iter()
+            .map(|(name, _)| ddl_label::new_rule_id(codec, schema_name, &self.name, name))
+            .collect()
+    }
 }
 
-/// Go `getPartitionRuleIDs`.
-fn get_partition_rule_ids(codec: &dyn LabelCodec, db_name: &str, table: &KvTable) -> Vec<String> {
-    let table_name = table.name().go_to_lower();
-    table.partition().map_or_else(Vec::new, |partition| {
-        partition
-            .definitions
-            .iter()
-            .map(|definition| {
-                ddl_label::new_rule_id(codec, db_name, &table_name, &definition.name.go_to_lower())
-            })
-            .collect()
-    })
+/// One of Go's label-rule calls from a DDL job step.
+#[derive(Clone, Debug)]
+pub enum LabelRuleWrite {
+    /// Go `infosync.PutLabelRule`.
+    Put(Rule),
+    /// Go `infosync.UpdateLabelRules`.
+    Patch(LabelRulePatch),
+}
+
+impl LabelRuleWrite {
+    /// Makes the call against `manager`. An empty patch is no call, as Go's
+    /// `infosync.UpdateLabelRules` returns before reaching the manager.
+    pub fn apply(&self, manager: &dyn LabelRuleManager) -> Result<(), String> {
+        match self {
+            Self::Put(rule) => manager.put_label_rule(rule),
+            Self::Patch(patch) => {
+                if patch.set_rules.with_visible(<[_]>::is_empty)
+                    && patch.delete_rules.with_visible(<[_]>::is_empty)
+                {
+                    return Ok(());
+                }
+                manager.update_label_rules(patch)
+            }
+        }
+    }
+
+    /// Every rule ID the call sets or deletes.
+    #[must_use]
+    pub fn rule_ids(&self) -> Vec<String> {
+        match self {
+            Self::Put(rule) => vec![rule.id.clone()],
+            Self::Patch(patch) => {
+                let mut ids = patch.delete_rules.snapshot();
+                ids.extend(patch.set_rules.snapshot().into_iter().map(|rule| rule.id));
+                ids
+            }
+        }
+    }
 }
 
 /// What Go `getOldLabelRules` returns: the rule IDs a table and its
 /// partitions had under their old names, and the rules stored under them.
-pub(crate) struct OldLabelRules {
+pub struct OldLabelRules {
     table_rule_id: String,
     part_rule_ids: Vec<String>,
     old_rule_ids: Vec<String>,
@@ -77,38 +161,30 @@ pub(crate) struct OldLabelRules {
 
 impl OldLabelRules {
     /// Go's `oldRuleIDs`: the table's rule ID, then its partitions'.
-    pub(crate) fn old_rule_ids(&self) -> &[String] {
+    #[must_use]
+    pub fn old_rule_ids(&self) -> &[String] {
         &self.old_rule_ids
     }
 }
 
 /// Go `getOldLabelRules`. `table` supplies the partition definitions, whose
 /// order [`update_label_rules`] relies on.
-pub(crate) fn get_old_label_rules(
-    catalog: &Catalog,
-    table: &KvTable,
+pub fn get_old_label_rules(
+    manager: &dyn LabelRuleManager,
+    table: &LabelRuleTable,
     old_schema_name: &str,
     old_table_name: &str,
-) -> Result<OldLabelRules, DriverError> {
+) -> Result<OldLabelRules, String> {
     let codec = CodecV1;
     let table_rule_id = ddl_label::new_rule_id(&codec, old_schema_name, old_table_name, "");
-    let part_rule_ids = table.partition().map_or_else(Vec::new, |partition| {
-        partition
-            .definitions
-            .iter()
-            .map(|definition| {
-                ddl_label::new_rule_id(
-                    &codec,
-                    old_schema_name,
-                    old_table_name,
-                    &definition.name.go_to_lower(),
-                )
-            })
-            .collect()
-    });
+    let part_rule_ids = table
+        .partitions
+        .iter()
+        .map(|(name, _)| ddl_label::new_rule_id(&codec, old_schema_name, old_table_name, name))
+        .collect::<Vec<_>>();
     let mut old_rule_ids = vec![table_rule_id.clone()];
     old_rule_ids.extend(part_rule_ids.iter().cloned());
-    let old_rules = catalog.get_label_rules(&old_rule_ids)?;
+    let old_rules = manager.get_label_rules(&old_rule_ids)?;
     Ok(OldLabelRules {
         table_rule_id,
         part_rule_ids,
@@ -120,131 +196,114 @@ pub(crate) fn get_old_label_rules(
 /// Go `updateLabelRules`: re-keys the old rules to `table`'s current names
 /// and partition IDs under `new_schema_name`, the table itself as `table_id`,
 /// and deletes `delete_rule_ids`.
-pub(crate) fn update_label_rules(
-    catalog: &Catalog,
+#[must_use]
+pub fn update_label_rules(
     new_schema_name: &str,
-    table: &KvTable,
+    table: &LabelRuleTable,
     old: &OldLabelRules,
     delete_rule_ids: &[String],
     table_id: i64,
-) -> Result<(), DriverError> {
+) -> LabelRuleWrite {
     let codec = CodecV1;
-    let table_name = table.name().go_to_lower();
     let mut new_rules = Vec::new();
-    if let Some(partition) = table.partition() {
-        for (definition, part_rule_id) in partition.definitions.iter().zip(&old.part_rule_ids) {
-            if let Some(rule) = old.old_rules.get(part_rule_id) {
-                let mut rule = rule.clone_rule();
-                rule.reset(
-                    &codec,
-                    new_schema_name,
-                    &table_name,
-                    &definition.name.go_to_lower(),
-                    &[definition.id],
-                );
-                new_rules.push(rule);
-            }
+    for ((name, id), part_rule_id) in table.partitions.iter().zip(&old.part_rule_ids) {
+        if let Some(rule) = old.old_rules.get(part_rule_id) {
+            let mut rule = rule.clone_rule();
+            rule.reset(&codec, new_schema_name, &table.name, name, &[*id]);
+            new_rules.push(rule);
         }
     }
     if let Some(rule) = old.old_rules.get(&old.table_rule_id) {
         let mut ids = vec![table_id];
-        ids.extend(get_partition_ids(table));
+        ids.extend(table.partition_ids());
         let mut rule = rule.clone_rule();
-        rule.reset(&codec, new_schema_name, &table_name, "", &ids);
+        rule.reset(&codec, new_schema_name, &table.name, "", &ids);
         new_rules.push(rule);
     }
-    catalog.update_label_rules(&ddl_label::new_rule_patch(
+    LabelRuleWrite::Patch(ddl_label::new_rule_patch(
         new_rules,
         delete_rule_ids.to_vec(),
     ))
 }
 
 /// Go `alterTableLabelRule`: re-ranges the table's rule, when it has one,
-/// over `ids`, reporting whether it did.
-pub(crate) fn alter_table_label_rule(
-    catalog: &Catalog,
+/// over `ids`.
+pub fn alter_table_label_rule(
+    manager: &dyn LabelRuleManager,
     schema_name: &str,
-    table: &KvTable,
+    table: &LabelRuleTable,
     ids: &[i64],
-) -> Result<bool, DriverError> {
+) -> Result<Option<LabelRuleWrite>, String> {
     let codec = CodecV1;
-    let table_name = table.name().go_to_lower();
-    let table_rule_id = ddl_label::new_rule_id(&codec, schema_name, &table_name, "");
-    let old_rule = catalog.get_label_rules(std::slice::from_ref(&table_rule_id))?;
+    let table_rule_id = ddl_label::new_rule_id(&codec, schema_name, &table.name, "");
+    let old_rule = manager.get_label_rules(std::slice::from_ref(&table_rule_id))?;
     let Some(rule) = old_rule.get(&table_rule_id) else {
-        return Ok(false);
+        return Ok(None);
     };
     let mut rule = rule.clone_rule();
-    rule.reset(&codec, schema_name, &table_name, "", ids);
-    catalog.put_label_rule(&rule)?;
-    Ok(true)
+    rule.reset(&codec, schema_name, &table.name, "", ids);
+    Ok(Some(LabelRuleWrite::Put(rule)))
 }
 
 /// Go `dropLabelRules`: deletes the rules of the named partitions.
-pub(crate) fn drop_label_rules(
-    catalog: &Catalog,
+#[must_use]
+pub fn drop_label_rules(
     schema_name: &str,
     table_name: &str,
     part_names: &[String],
-) -> Result<(), DriverError> {
+) -> LabelRuleWrite {
     let codec = CodecV1;
     let delete_rules = part_names
         .iter()
         .map(|part_name| ddl_label::new_rule_id(&codec, schema_name, table_name, part_name))
         .collect();
-    catalog.update_label_rules(&ddl_label::new_rule_patch(Vec::new(), delete_rules))
+    LabelRuleWrite::Patch(ddl_label::new_rule_patch(Vec::new(), delete_rules))
 }
 
 /// The label half of Go `updateTruncatePartitionLabelRules` (the placement
-/// half delivers bundles this tier does not keep): the table's rule spans
-/// every current partition again, and each truncated partition's rule moves
-/// to the partition's new ID. `new_partitions` are the truncated partitions'
-/// names and new IDs.
-pub(crate) fn update_truncate_partition_label_rules(
-    catalog: &Catalog,
+/// half delivers bundles): the table's rule spans every current partition
+/// again, and each truncated partition's rule moves to the partition's new
+/// ID. `new_partitions` are the truncated partitions' lower-case names and
+/// new IDs.
+pub fn update_truncate_partition_label_rules(
+    manager: &dyn LabelRuleManager,
     schema_name: &str,
-    table: &KvTable,
+    table: &LabelRuleTable,
     new_partitions: &[(String, i64)],
-) -> Result<(), DriverError> {
+) -> Result<LabelRuleWrite, String> {
     let codec = CodecV1;
-    let table_name = table.name().go_to_lower();
-    let table_rule_id = ddl_label::new_rule_id(&codec, schema_name, &table_name, "");
+    let table_rule_id = ddl_label::new_rule_id(&codec, schema_name, &table.name, "");
     let old_part_rules = new_partitions
         .iter()
-        .map(|(name, _)| {
-            ddl_label::new_rule_id(&codec, schema_name, &table_name, &name.go_to_lower())
-        })
+        .map(|(name, _)| ddl_label::new_rule_id(&codec, schema_name, &table.name, name))
         .collect::<Vec<_>>();
     let mut rule_ids = old_part_rules.clone();
     rule_ids.push(table_rule_id.clone());
-    let rules = catalog.get_label_rules(&rule_ids)?;
+    let rules = manager.get_label_rules(&rule_ids)?;
     let mut new_rules = Vec::with_capacity(new_partitions.len() + 1);
     if let Some(rule) = rules.get(&table_rule_id) {
-        let mut ids = get_partition_ids(table);
-        ids.push(table.table_id);
+        let mut ids = table.partition_ids();
+        ids.push(table.id);
         let mut rule = rule.clone_rule();
-        rule.reset(&codec, schema_name, &table_name, "", &ids);
+        rule.reset(&codec, schema_name, &table.name, "", &ids);
         new_rules.push(rule);
     }
     for ((name, id), rule_id) in new_partitions.iter().zip(&old_part_rules) {
         if let Some(rule) = rules.get(rule_id) {
             let mut rule = rule.clone_rule();
-            rule.reset(
-                &codec,
-                schema_name,
-                &table_name,
-                &name.go_to_lower(),
-                &[*id],
-            );
+            rule.reset(&codec, schema_name, &table.name, name, &[*id]);
             new_rules.push(rule);
         }
     }
-    catalog.update_label_rules(&ddl_label::new_rule_patch(new_rules, Vec::new()))
+    Ok(LabelRuleWrite::Patch(ddl_label::new_rule_patch(
+        new_rules,
+        Vec::new(),
+    )))
 }
 
 /// Which of Go's partition jobs a statement ran, for its label-rule step.
-#[derive(Clone, Copy)]
-pub(super) enum PartitionLabelJob {
+#[derive(Clone, Copy, Debug)]
+pub enum PartitionLabelJob {
     /// `onAddTablePartition` and `onReorganizePartition` (REORGANIZE,
     /// COALESCE, HASH/KEY ADD, PARTITION BY, REMOVE PARTITIONING): the
     /// table's rule spans the table, the partitions it had, and the ones the
@@ -257,10 +316,68 @@ pub(super) enum PartitionLabelJob {
     Truncate,
 }
 
-/// Runs a partition job, then the label-rule step Go's job worker takes for
-/// it, derived from the table's partitions before and after: the IDs it
-/// added, dropped or replaced. A job that changed nothing (an `IF EXISTS` or
+/// The label-rule step Go's job worker takes for a partition job, derived
+/// from the table's partitions before and after it: the IDs it added,
+/// dropped or replaced. A job that changed nothing (an `IF EXISTS` or
 /// `IF NOT EXISTS` with nothing to do) submits none in Go, so takes no step.
+pub fn partition_label_writes(
+    manager: &dyn LabelRuleManager,
+    schema_name: &str,
+    before: &LabelRuleTable,
+    after: &LabelRuleTable,
+    job: PartitionLabelJob,
+) -> Result<Vec<LabelRuleWrite>, String> {
+    let after_ids = after.ids();
+    let before_ids = before.ids();
+    if after_ids == before_ids && after.partitions == before.partitions {
+        return Ok(Vec::new());
+    }
+    let mut writes = Vec::new();
+    match job {
+        PartitionLabelJob::AddOrReorganize => {
+            let mut ids = before_ids;
+            for id in after_ids {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            writes.extend(alter_table_label_rule(manager, schema_name, after, &ids)?);
+        }
+        PartitionLabelJob::Drop => {
+            let dropped = before
+                .partitions
+                .iter()
+                .filter(|(_, id)| !after_ids.contains(id))
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            writes.push(drop_label_rules(schema_name, &after.name, &dropped));
+            writes.extend(alter_table_label_rule(
+                manager,
+                schema_name,
+                after,
+                &after_ids,
+            )?);
+        }
+        PartitionLabelJob::Truncate => {
+            let replaced = after
+                .partitions
+                .iter()
+                .filter(|partition| !before.partitions.contains(partition))
+                .cloned()
+                .collect::<Vec<_>>();
+            writes.push(update_truncate_partition_label_rules(
+                manager,
+                schema_name,
+                after,
+                &replaced,
+            )?);
+        }
+    }
+    Ok(writes)
+}
+
+/// The in-process half of a partition job: runs it, then applies the label
+/// step [`partition_label_writes`] derives.
 pub(super) fn with_partition_label_rules(
     catalog: &mut Catalog,
     database: &str,
@@ -268,57 +385,46 @@ pub(super) fn with_partition_label_rules(
     job: PartitionLabelJob,
     run: impl FnOnce(&mut Catalog) -> Result<(), DriverError>,
 ) -> Result<(), DriverError> {
-    let partitions_of = |table: &KvTable| {
-        table.partition().map_or_else(Vec::new, |partition| {
-            partition
-                .definitions
-                .iter()
-                .map(|definition| (definition.name.go_to_lower(), definition.id))
-                .collect::<Vec<_>>()
-        })
-    };
     let before = match catalog.table_in(database, table_name) {
-        Some(TableEntry::Kv(table)) => (get_ids(table), partitions_of(table)),
+        Some(TableEntry::Kv(table)) => LabelRuleTable::from_kv(table),
         _ => return run(catalog),
     };
     run(catalog)?;
     let Some(TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Ok(());
     };
-    let after_ids = get_ids(table);
-    if after_ids == before.0 && partitions_of(table) == before.1 {
-        return Ok(());
-    }
-    let schema_name = database.go_to_lower();
-    match job {
-        PartitionLabelJob::AddOrReorganize => {
-            let mut ids = before.0;
-            for id in after_ids {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-            }
-            alter_table_label_rule(catalog, &schema_name, table, &ids)?;
-        }
-        PartitionLabelJob::Drop => {
-            let dropped = before
-                .1
-                .iter()
-                .filter(|(_, id)| !after_ids.contains(id))
-                .map(|(name, _)| name.clone())
-                .collect::<Vec<_>>();
-            drop_label_rules(catalog, &schema_name, &table.name().go_to_lower(), &dropped)?;
-            alter_table_label_rule(catalog, &schema_name, table, &after_ids)?;
-        }
-        PartitionLabelJob::Truncate => {
-            let replaced = partitions_of(table)
-                .into_iter()
-                .filter(|partition| !before.1.contains(partition))
-                .collect::<Vec<_>>();
-            update_truncate_partition_label_rules(catalog, &schema_name, table, &replaced)?;
-        }
+    let after = LabelRuleTable::from_kv(table);
+    let manager = std::sync::Arc::clone(catalog.label_rule_manager());
+    let writes = partition_label_writes(
+        manager.as_ref(),
+        &database.go_to_lower(),
+        &before,
+        &after,
+        job,
+    )
+    .map_err(label_error)?;
+    apply_label_writes(catalog, &writes)
+}
+
+/// Applies label writes to the in-process catalog's manager.
+pub(crate) fn apply_label_writes(
+    catalog: &Catalog,
+    writes: &[LabelRuleWrite],
+) -> Result<(), DriverError> {
+    for write in writes {
+        write
+            .apply(catalog.label_rule_manager().as_ref())
+            .map_err(label_error)?;
     }
     Ok(())
+}
+
+/// A label manager failure, as the in-process DDL reports one.
+pub(crate) fn label_error(error: String) -> DriverError {
+    DriverError::DdlCoded {
+        errno: 1105,
+        message: error,
+    }
 }
 
 /// Go `onExchangeTablePartition`'s label step, run once the physical IDs
@@ -350,7 +456,7 @@ pub(super) fn exchanged_partition_label_rules(
     }) else {
         return Ok(());
     };
-    ExchangePartitionLabelSwap {
+    let write = ExchangePartitionLabelSwap {
         partitioned_schema: database.go_to_lower(),
         partitioned_table: partitioned.name().go_to_lower(),
         partition: partition_name,
@@ -359,49 +465,102 @@ pub(super) fn exchanged_partition_label_rules(
         partition_id,
         standalone_id: standalone_table.table_id,
     }
-    .deliver(catalog)
+    .label_write(catalog.label_rule_manager().as_ref())
+    .map_err(label_error)?;
+    apply_label_writes(catalog, &[write])
 }
 
 /// The rule IDs Go's `onDropSchema` deletes when the schema leaves the
 /// public state: each table's partition rules, then its own.
-pub fn drop_schema_label_rules(catalog: &Catalog, schema_name: &str) -> Result<(), DriverError> {
+#[must_use]
+pub fn drop_schema_label_rules(schema_name: &str, tables: &[LabelRuleTable]) -> LabelRuleWrite {
     let codec = CodecV1;
-    let schema_name = schema_name.go_to_lower();
     let mut rule_ids = Vec::new();
-    for table_name in catalog.table_names(&schema_name).unwrap_or_default() {
-        if let Some(TableEntry::Kv(table)) = catalog.persistent_table_in(&schema_name, &table_name)
-        {
-            rule_ids.extend(get_partition_rule_ids(&codec, &schema_name, table));
-        }
-        rule_ids.push(ddl_label::new_rule_id(
-            &codec,
-            &schema_name,
-            &table_name.go_to_lower(),
-            "",
-        ));
+    for table in tables {
+        rule_ids.extend(table.partition_rule_ids(&codec, schema_name));
+        rule_ids.push(ddl_label::new_rule_id(&codec, schema_name, &table.name, ""));
     }
-    catalog.update_label_rules(&ddl_label::new_rule_patch(Vec::new(), rule_ids))
+    LabelRuleWrite::Patch(ddl_label::new_rule_patch(Vec::new(), rule_ids))
 }
 
-/// Go's `ErrInvalidAttributesSpec` (8237).
+/// The in-process `onDropSchema` label step over the catalog's tables.
+pub fn drop_schema_label_rules_in(catalog: &Catalog, schema_name: &str) -> Result<(), DriverError> {
+    let schema_name = schema_name.go_to_lower();
+    let tables = catalog
+        .table_names(&schema_name)
+        .unwrap_or_default()
+        .into_iter()
+        .map(
+            |table_name| match catalog.persistent_table_in(&schema_name, &table_name) {
+                Some(TableEntry::Kv(table)) => LabelRuleTable::from_kv(table),
+                _ => LabelRuleTable {
+                    name: table_name.go_to_lower(),
+                    ..LabelRuleTable::default()
+                },
+            },
+        )
+        .collect::<Vec<_>>();
+    apply_label_writes(catalog, &[drop_schema_label_rules(&schema_name, &tables)])
+}
+
+/// Go's `ErrInvalidAttributesSpec` (8237) message.
+#[must_use]
+pub fn invalid_attributes_spec_message(error: &ddl_label::LabelError) -> String {
+    format!("Invalid attributes: {error}")
+}
+
 fn invalid_attributes_spec(error: &ddl_label::LabelError) -> DriverError {
     DriverError::DdlCoded {
         errno: 8237,
-        message: format!("Invalid attributes: {error}"),
+        message: invalid_attributes_spec_message(error),
     }
+}
+
+/// Go `executor.AlterTableAttributes`' rule: the spec's labels over the table
+/// and every partition.
+pub fn table_attributes_rule(
+    spec: &tidb_ast::AttributesSpec,
+    schema_name: &str,
+    table: &LabelRuleTable,
+) -> Result<Rule, ddl_label::LabelError> {
+    let mut rule = Rule::new();
+    rule.apply_attributes_spec(spec)?;
+    rule.reset(&CodecV1, schema_name, &table.name, "", &table.ids());
+    Ok(rule)
+}
+
+/// Go `executor.AlterTablePartitionAttributes`' rule: the spec's labels over
+/// the one partition.
+pub fn partition_attributes_rule(
+    attributes: &Option<String>,
+    schema_name: &str,
+    table_name: &str,
+    partition_name: &str,
+    partition_id: i64,
+) -> Result<Rule, ddl_label::LabelError> {
+    let mut rule = Rule::new();
+    rule.apply_attributes_spec(&tidb_ast::AttributesSpec {
+        attributes: attributes.clone(),
+    })?;
+    rule.reset(
+        &CodecV1,
+        schema_name,
+        table_name,
+        partition_name,
+        &[partition_id],
+    );
+    Ok(rule)
 }
 
 /// Go `onAlterTableAttributes` / `onAlterTablePartitionAttributes`: a rule
 /// with no labels (`ATTRIBUTES=DEFAULT`, or an empty list) deletes the rule
 /// ID; any other replaces the stored rule.
-fn deliver_attributes_rule(catalog: &Catalog, rule: &Rule) -> Result<(), DriverError> {
+#[must_use]
+pub fn attributes_rule_write(rule: Rule) -> LabelRuleWrite {
     if rule.labels.with_visible(<[_]>::is_empty) {
-        return catalog.update_label_rules(&ddl_label::new_rule_patch(
-            Vec::new(),
-            vec![rule.id.clone()],
-        ));
+        return LabelRuleWrite::Patch(ddl_label::new_rule_patch(Vec::new(), vec![rule.id]));
     }
-    catalog.put_label_rule(rule)
+    LabelRuleWrite::Put(rule)
 }
 
 /// Go `executor.AlterTableAttributes` and its job, `onAlterTableAttributes`:
@@ -412,23 +571,18 @@ pub(super) fn alter_table_attributes_action(
     table_name: &str,
     spec: &tidb_ast::AttributesSpec,
 ) -> Result<(), DriverError> {
-    let mut rule = Rule::new();
-    rule.apply_attributes_spec(spec)
-        .map_err(|error| invalid_attributes_spec(&error))?;
     let Some(TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{table_name}"),
         )));
     };
-    let ids = get_ids(table);
-    rule.reset(
-        &CodecV1,
+    let rule = table_attributes_rule(
+        spec,
         &database.go_to_lower(),
-        &table.name().go_to_lower(),
-        "",
-        &ids,
-    );
-    deliver_attributes_rule(catalog, &rule)?;
+        &LabelRuleTable::from_kv(table),
+    )
+    .map_err(|error| invalid_attributes_spec(&error))?;
+    apply_label_writes(catalog, &[attributes_rule_write(rule)])?;
     // Go `updateVersionAndTableInfo(..., true)`: the job moves the schema
     // version.
     catalog.table_mut_in(database, table_name);
@@ -465,19 +619,15 @@ pub(super) fn alter_table_partition_attributes_action(
             table: table.name().to_owned(),
         });
     };
-    let mut rule = Rule::new();
-    rule.apply_attributes_spec(&tidb_ast::AttributesSpec {
-        attributes: attributes.clone(),
-    })
-    .map_err(|error| invalid_attributes_spec(&error))?;
-    rule.reset(
-        &CodecV1,
+    let rule = partition_attributes_rule(
+        attributes,
         &database.go_to_lower(),
         &table.name().go_to_lower(),
         &partition_name,
-        &[partition_id],
-    );
-    deliver_attributes_rule(catalog, &rule)?;
+        partition_id,
+    )
+    .map_err(|error| invalid_attributes_spec(&error))?;
+    apply_label_writes(catalog, &[attributes_rule_write(rule)])?;
     catalog.table_mut_in(database, table_name);
     Ok(())
 }
@@ -554,14 +704,14 @@ impl ExchangePartitionLabelSwap {
         ddl_label::new_rule_patch(set_rules, delete_rules)
     }
 
-    /// Go `onExchangeTablePartition`'s label step against this store's label
-    /// manager.
-    pub(crate) fn deliver(&self, catalog: &Catalog) -> Result<(), DriverError> {
+    /// Go `onExchangeTablePartition`'s label step: the patch over the rules
+    /// `manager` holds under the two IDs.
+    pub fn label_write(&self, manager: &dyn LabelRuleManager) -> Result<LabelRuleWrite, String> {
         let codec = CodecV1;
-        let rules = catalog
+        let rules = manager
             .get_label_rules(&self.rule_ids(&codec))?
             .into_values()
             .collect::<Vec<_>>();
-        catalog.update_label_rules(&self.patch(&codec, &rules))
+        Ok(LabelRuleWrite::Patch(self.patch(&codec, &rules)))
     }
 }

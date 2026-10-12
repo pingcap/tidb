@@ -56,10 +56,11 @@ use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
 
+/// What undoes a delivered label step: the rules its IDs held before it.
 struct LabelDeliveryReceipt {
-    endpoint: String,
+    manager: std::sync::Arc<dyn tidb_executor::label_manager::LabelRuleManager>,
     original: Vec<tidb_executor::ddl_label::Rule>,
-    rule_ids: [String; 2],
+    rule_ids: Vec<String>,
 }
 
 struct PlacementDeliveryReceipt {
@@ -100,35 +101,53 @@ fn deliver_placement_bundles(
     }))
 }
 
-fn deliver_exchange_label_rules(
-    endpoint: &str,
-    write: &DdlWrite,
-    timeout: Duration,
-) -> Result<Option<LabelDeliveryReceipt>, ClusterDdlError> {
-    let Some(swap) = &write.exchange_partition_label_swap else {
+/// Go's job step makes its label-rule calls before the version is
+/// published and fails the job when one fails. The step's calls go to the
+/// node's label manager here, before the catalog transaction commits; the
+/// rules they touch are read first, so a transaction that loses its commit
+/// race (or a later call that fails) puts them back.
+fn deliver_label_rules(write: &DdlWrite) -> Result<Option<LabelDeliveryReceipt>, ClusterDdlError> {
+    if write.label_rules.is_empty() {
         return Ok(None);
-    };
-    let codec = tidb_executor::ddl_label::CodecV1;
-    let rule_ids = swap.rule_ids(&codec);
-    let original =
-        crate::label_delivery::get_label_rules(endpoint, &rule_ids, timeout).map_err(|error| {
+    }
+    let manager = tidb_executor::label_manager::label_rule_manager();
+    let mut rule_ids = write
+        .label_rules
+        .iter()
+        .flat_map(|step| step.write.rule_ids())
+        .collect::<Vec<_>>();
+    rule_ids.sort();
+    rule_ids.dedup();
+    let original = manager
+        .get_label_rules(&rule_ids)
+        .map_err(|error| {
             ClusterDdlError::NotCommitted(format!("failed to get PD the label rules: {error}"))
-        })?;
-    let patch = swap.patch(&codec, &original);
-    crate::label_delivery::patch_label_rules(endpoint, &patch, timeout).map_err(|error| {
-        ClusterDdlError::NotCommitted(format!("failed to notify PD the label rules: {error}"))
-    })?;
-    Ok(Some(LabelDeliveryReceipt {
-        endpoint: endpoint.to_owned(),
+        })?
+        .into_values()
+        .collect();
+    let receipt = LabelDeliveryReceipt {
+        manager,
         original,
         rule_ids,
-    }))
+    };
+    for step in &write.label_rules {
+        if let Err(error) = step.write.apply(receipt.manager.as_ref()) {
+            let mut cause = ClusterDdlError::NotCommitted(match step.error_context {
+                Some(context) => format!("{context}: {error}"),
+                None => error,
+            });
+            if let Err(error) = restore_label_rules(&receipt) {
+                cause = ClusterDdlError::NotCommitted(format!(
+                    "{cause}; and restoring the attempt's label rules failed: {error}"
+                ));
+            }
+            return Err(cause);
+        }
+    }
+    Ok(Some(receipt))
 }
 
-fn restore_exchange_label_rules(
-    receipt: &LabelDeliveryReceipt,
-    timeout: Duration,
-) -> Result<(), crate::label_delivery::LabelDeliveryError> {
+fn restore_label_rules(receipt: &LabelDeliveryReceipt) -> Result<(), String> {
     let present = receipt
         .original
         .iter()
@@ -141,7 +160,7 @@ fn restore_exchange_label_rules(
         .cloned()
         .collect();
     let patch = tidb_executor::ddl_label::new_rule_patch(receipt.original.clone(), delete_rules);
-    crate::label_delivery::patch_label_rules(&receipt.endpoint, &patch, timeout)
+    receipt.manager.update_label_rules(&patch)
 }
 
 fn restore_placement(
@@ -158,7 +177,7 @@ fn compensate_external_delivery(
     timeout: Duration,
 ) -> ClusterDdlError {
     if let Some(receipt) = label_receipt {
-        if let Err(error) = restore_exchange_label_rules(receipt, timeout) {
+        if let Err(error) = restore_label_rules(receipt) {
             cause = ClusterDdlError::NotCommitted(format!(
                 "{cause}; and restoring the attempt's label rules failed: {error}"
             ));
@@ -561,21 +580,17 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     } else {
         None
     };
-    let label_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
-        match deliver_exchange_label_rules(&endpoint, &write, timeout) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                transaction.finish_without_writes()?;
-                return Err(compensate_external_delivery(
-                    error,
-                    placement_receipt.as_ref(),
-                    None,
-                    timeout,
-                ));
-            }
+    let label_receipt = match deliver_label_rules(&write) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            transaction.finish_without_writes()?;
+            return Err(compensate_external_delivery(
+                error,
+                placement_receipt.as_ref(),
+                None,
+                timeout,
+            ));
         }
-    } else {
-        None
     };
     // Go `createTableAffinityGroupsInPD`: inside the job, before the version
     // is published, cancelling the job when PD refuses. Idempotent, so a
@@ -1758,21 +1773,17 @@ fn commit_cluster_ddl_with_backfill_once<
     } else {
         None
     };
-    let label_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
-        match deliver_exchange_label_rules(&endpoint, &write, timeout) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                let _ = transaction.rollback();
-                return Err(compensate_external_delivery(
-                    error,
-                    placement_receipt.as_ref(),
-                    None,
-                    timeout,
-                ));
-            }
+    let label_receipt = match deliver_label_rules(&write) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            let _ = transaction.rollback();
+            return Err(compensate_external_delivery(
+                error,
+                placement_receipt.as_ref(),
+                None,
+                timeout,
+            ));
         }
-    } else {
-        None
     };
     // Go `createTableAffinityGroupsInPD`, as in the single-phase path.
     if let Err(error) = write.affinity_groups.apply_create() {

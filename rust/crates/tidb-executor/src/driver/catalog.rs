@@ -194,7 +194,7 @@ impl std::fmt::Debug for StatisticsCache {
 
 /// A label-manager or meta-history failure, which Go reports as a plain
 /// error (1105). The in-memory stores fail only to encode or decode JSON.
-fn label_manager_error(error: serde_json::Error) -> DriverError {
+fn label_manager_error(error: impl std::fmt::Display) -> DriverError {
     DriverError::DdlCoded {
         errno: 1105,
         message: error.to_string(),
@@ -243,7 +243,7 @@ pub struct Catalog {
     /// so every snapshot and staged copy of this catalog shares it, and a
     /// DDL job's label writes are not undone by a rolled-back transaction
     /// (Go writes them to PD, outside the job's transaction).
-    label_rules: Arc<std::sync::RwLock<crate::label_manager::MockLabelManager>>,
+    label_rules: Arc<dyn crate::label_manager::LabelRuleManager>,
     /// Go's meta `DDLJobHistory` hash: every finished DDL job's JSON by job
     /// ID, store-global like the label rules (Go files it in the job's own
     /// transaction, which this tier commits as the DDL runs).
@@ -900,7 +900,7 @@ impl Default for Catalog {
             plan_cache_epoch: Arc::default(),
             bdr_role: Arc::default(),
             regions: Arc::default(),
-            label_rules: Arc::default(),
+            label_rules: Arc::new(crate::label_manager::MockLabelManager::default()),
             ddl_job_history: Arc::default(),
             pessimistic_locks: Arc::default(),
             // Go `defaultPDHelper`'s capacity and TTL.
@@ -1435,11 +1435,25 @@ impl Catalog {
             .ranges_in(start, end)
     }
 
+    /// The store's label-rule manager (Go `InfoSyncer.labelRuleManager`).
+    #[must_use]
+    pub fn label_rule_manager(&self) -> &Arc<dyn crate::label_manager::LabelRuleManager> {
+        &self.label_rules
+    }
+
+    /// Hands this catalog the node's label-rule manager, so a production
+    /// node's catalog reads the rules its DDL wrote (PD's, or the node's
+    /// mock).
+    pub fn set_label_rule_manager(
+        &mut self,
+        manager: Arc<dyn crate::label_manager::LabelRuleManager>,
+    ) {
+        self.label_rules = manager;
+    }
+
     /// Go `infosync.PutLabelRule` against this store's label manager.
     pub fn put_label_rule(&self, rule: &crate::ddl_label::Rule) -> Result<(), DriverError> {
         self.label_rules
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .put_label_rule(rule)
             .map_err(label_manager_error)
     }
@@ -1450,8 +1464,6 @@ impl Catalog {
         patch: &crate::ddl_label::LabelRulePatch,
     ) -> Result<(), DriverError> {
         self.label_rules
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .update_label_rules(patch)
             .map_err(label_manager_error)
     }
@@ -1460,8 +1472,6 @@ impl Catalog {
     /// under the store's (classic, keyspace-less) codec.
     pub fn get_all_label_rules(&self) -> Result<Vec<crate::ddl_label::Rule>, DriverError> {
         self.label_rules
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_all_label_rules(&crate::ddl_label::CodecV1)
             .map_err(label_manager_error)
     }
@@ -1472,8 +1482,6 @@ impl Catalog {
         rule_ids: &[String],
     ) -> Result<std::collections::BTreeMap<String, crate::ddl_label::Rule>, DriverError> {
         self.label_rules
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_label_rules(rule_ids)
             .map_err(label_manager_error)
     }

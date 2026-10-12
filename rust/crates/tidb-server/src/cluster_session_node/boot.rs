@@ -424,6 +424,22 @@ pub(crate) fn run_cluster_session_node_with_spill(
             }
         }
     }));
+    // Go `InfoSyncer.initLabelRuleManager`: PD's region-label rules, which
+    // the DDL job workers write and `information_schema.attributes` reads.
+    tidb_executor::label_manager::init_label_rule_manager(config.pd_endpoints.first().and_then(
+        |endpoint| match tidb_exec::label_delivery::PdLabelManager::with_security(
+            &format!("http://{endpoint}"),
+            &config.cluster_security,
+        ) {
+            Ok(manager) => {
+                Some(Arc::new(manager) as Arc<dyn tidb_executor::label_manager::LabelRuleManager>)
+            }
+            Err(error) => {
+                eprintln!("label-rule PD client startup: {error}");
+                None
+            }
+        },
+    ));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
     let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
         Arc::clone(&catalog),

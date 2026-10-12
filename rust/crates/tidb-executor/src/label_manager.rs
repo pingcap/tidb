@@ -12,71 +12,220 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `infosync`'s `mockLabelManager` (`pkg/domain/infosync/label_manager.go`):
-//! the label-rule manager a store without PD gets. The in-process catalog owns
-//! one, shared by every snapshot of it, as Go's `InfoSyncer` owns one per
-//! domain.
+//! Go `infosync`'s label-rule manager (`pkg/domain/infosync/label_manager.go`):
+//! the `LabelRuleManager` seam, `mockLabelManager` (the manager a store
+//! without PD gets), and the package-level `PutLabelRule`, `UpdateLabelRules`,
+//! `GetAllLabelRules` and `GetLabelRules` over the node's manager, which
+//! `InfoSyncer.initLabelRuleManager` installs. `PDLabelManager` lives with the
+//! node's PD HTTP client (`tidb_exec::label_delivery`).
+//!
+//! The in-process catalog owns a mock of its own, shared by every snapshot of
+//! it, as Go's `InfoSyncer` owns one per domain; a production node's catalog
+//! is handed the node's manager.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use crate::ddl_label::{
     use_keyspace_aware_rules, LabelCodec, LabelRulePatch, Rule, KEYSPACE_PREFIX,
 };
 
+/// Go `LabelRuleManager`.
+pub trait LabelRuleManager: Send + Sync + std::fmt::Debug {
+    /// Go `PutLabelRule`.
+    fn put_label_rule(&self, rule: &Rule) -> Result<(), String>;
+    /// Go `UpdateLabelRules`.
+    fn update_label_rules(&self, patch: &LabelRulePatch) -> Result<(), String>;
+    /// Go `GetAllLabelRules`.
+    fn get_all_label_rules(&self, codec: &dyn LabelCodec) -> Result<Vec<Rule>, String>;
+    /// Go `GetLabelRules`: the stored rules among `rule_ids`, by ID.
+    fn get_label_rules(&self, rule_ids: &[String]) -> Result<BTreeMap<String, Rule>, String>;
+}
+
 /// Go `mockLabelManager`. Rules are kept as their JSON, as Go keeps them, so
 /// every read hands out a fresh copy that a later `Reset` cannot alias.
 ///
 /// Go keys a map, whose iteration order is random; the ordered map gives
-/// [`Self::get_all_label_rules`] rule-ID order.
+/// [`LabelRuleManager::get_all_label_rules`] rule-ID order.
 #[derive(Debug, Default)]
 pub struct MockLabelManager {
-    label_rules: BTreeMap<String, Vec<u8>>,
+    label_rules: RwLock<BTreeMap<String, Vec<u8>>>,
 }
 
-impl MockLabelManager {
-    /// Go `PutLabelRule`.
-    pub fn put_label_rule(&mut self, rule: &Rule) -> Result<(), serde_json::Error> {
-        let encoded = serde_json::to_vec(rule)?;
-        self.label_rules.insert(rule.id.clone(), encoded);
+impl LabelRuleManager for MockLabelManager {
+    fn put_label_rule(&self, rule: &Rule) -> Result<(), String> {
+        let encoded = serde_json::to_vec(rule).map_err(|error| error.to_string())?;
+        self.label_rules
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(rule.id.clone(), encoded);
         Ok(())
     }
 
-    /// Go `UpdateLabelRules`: the deletions, then the rules to set.
-    pub fn update_label_rules(&mut self, patch: &LabelRulePatch) -> Result<(), serde_json::Error> {
+    /// The deletions, then the rules to set.
+    fn update_label_rules(&self, patch: &LabelRulePatch) -> Result<(), String> {
+        let mut label_rules = self
+            .label_rules
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         patch.delete_rules.with_visible(|ids| {
             for id in ids {
-                self.label_rules.remove(id);
+                label_rules.remove(id);
             }
         });
         for rule in patch.set_rules.snapshot() {
-            let encoded = serde_json::to_vec(&rule)?;
-            self.label_rules.insert(rule.id.clone(), encoded);
+            let encoded = serde_json::to_vec(&rule).map_err(|error| error.to_string())?;
+            label_rules.insert(rule.id.clone(), encoded);
         }
         Ok(())
     }
 
-    /// Go `GetAllLabelRules`.
-    pub fn get_all_label_rules(
-        &self,
-        codec: &dyn LabelCodec,
-    ) -> Result<Vec<Rule>, serde_json::Error> {
+    fn get_all_label_rules(&self, codec: &dyn LabelCodec) -> Result<Vec<Rule>, String> {
         let rules = self
             .label_rules
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
             .values()
             .map(|encoded| serde_json::from_slice(encoded))
-            .collect::<Result<Vec<Rule>, _>>()?;
+            .collect::<Result<Vec<Rule>, _>>()
+            .map_err(|error| error.to_string())?;
         Ok(filter_rules_by_keyspace(rules, codec))
     }
 
-    /// Go `GetLabelRules`: the stored rules among `rule_ids`, by ID.
-    pub fn get_label_rules(
-        &self,
-        rule_ids: &[String],
-    ) -> Result<BTreeMap<String, Rule>, serde_json::Error> {
+    fn get_label_rules(&self, rule_ids: &[String]) -> Result<BTreeMap<String, Rule>, String> {
+        let label_rules = self
+            .label_rules
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut rules = BTreeMap::new();
         for rule_id in rule_ids {
-            if let Some(encoded) = self.label_rules.get(rule_id) {
-                rules.insert(rule_id.clone(), serde_json::from_slice(encoded)?);
+            if let Some(encoded) = label_rules.get(rule_id) {
+                rules.insert(
+                    rule_id.clone(),
+                    serde_json::from_slice(encoded).map_err(|error| error.to_string())?,
+                );
+            }
+        }
+        Ok(rules)
+    }
+}
+
+/// The `InfoSyncer`'s `labelRuleManager`.
+static LABEL_RULE_MANAGER: Mutex<Option<Arc<dyn LabelRuleManager>>> = Mutex::new(None);
+
+/// Go `InfoSyncer.initLabelRuleManager`: PD's manager, or a fresh mock when
+/// the node has no PD.
+pub fn init_label_rule_manager(manager: Option<Arc<dyn LabelRuleManager>>) {
+    *LABEL_RULE_MANAGER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) =
+        Some(manager.unwrap_or_else(|| Arc::new(MockLabelManager::default())));
+}
+
+/// The node's label-rule manager; a node that installed none gets a mock.
+pub fn label_rule_manager() -> Arc<dyn LabelRuleManager> {
+    Arc::clone(
+        LABEL_RULE_MANAGER
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(|| Arc::new(MockLabelManager::default())),
+    )
+}
+
+/// A job step's view of the label rules while its writes are still pending:
+/// reads see the step's own earlier writes over `base`, and writes stay here
+/// until the step delivers them. Go's step calls PD write by write, so a
+/// later read in the same step (the next pair of a multi-table RENAME) sees
+/// the earlier write; a step whose writes are delivered once, before its
+/// transaction commits, reads through this to see the same rules.
+#[derive(Debug)]
+pub struct StagedLabelRules {
+    base: Arc<dyn LabelRuleManager>,
+    /// Rule ID to its pending rule's JSON (kept encoded, as the mock keeps
+    /// it, so every read is a fresh copy); `None` is a pending delete.
+    staged: Mutex<BTreeMap<String, Option<Vec<u8>>>>,
+}
+
+impl StagedLabelRules {
+    /// A step reading through to `base`.
+    #[must_use]
+    pub fn new(base: Arc<dyn LabelRuleManager>) -> Self {
+        Self {
+            base,
+            staged: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+fn decode_rule(encoded: &[u8]) -> Result<Rule, String> {
+    serde_json::from_slice(encoded).map_err(|error| error.to_string())
+}
+
+impl LabelRuleManager for StagedLabelRules {
+    fn put_label_rule(&self, rule: &Rule) -> Result<(), String> {
+        let encoded = serde_json::to_vec(rule).map_err(|error| error.to_string())?;
+        self.staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(rule.id.clone(), Some(encoded));
+        Ok(())
+    }
+
+    fn update_label_rules(&self, patch: &LabelRulePatch) -> Result<(), String> {
+        let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
+        for id in patch.delete_rules.snapshot() {
+            staged.insert(id, None);
+        }
+        for rule in patch.set_rules.snapshot() {
+            let encoded = serde_json::to_vec(&rule).map_err(|error| error.to_string())?;
+            staged.insert(rule.id.clone(), Some(encoded));
+        }
+        Ok(())
+    }
+
+    fn get_all_label_rules(&self, codec: &dyn LabelCodec) -> Result<Vec<Rule>, String> {
+        let mut rules = self
+            .base
+            .get_all_label_rules(codec)?
+            .into_iter()
+            .map(|rule| (rule.id.clone(), rule))
+            .collect::<BTreeMap<_, _>>();
+        for (id, encoded) in self
+            .staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+        {
+            match encoded {
+                Some(encoded) => {
+                    rules.insert(id.clone(), decode_rule(encoded)?);
+                }
+                None => {
+                    rules.remove(id);
+                }
+            }
+        }
+        Ok(filter_rules_by_keyspace(
+            rules.into_values().collect(),
+            codec,
+        ))
+    }
+
+    fn get_label_rules(&self, rule_ids: &[String]) -> Result<BTreeMap<String, Rule>, String> {
+        let staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
+        let unstaged = rule_ids
+            .iter()
+            .filter(|id| !staged.contains_key(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut rules = if unstaged.is_empty() {
+            BTreeMap::new()
+        } else {
+            self.base.get_label_rules(&unstaged)?
+        };
+        for id in rule_ids {
+            if let Some(Some(encoded)) = staged.get(id) {
+                rules.insert(id.clone(), decode_rule(encoded)?);
             }
         }
         Ok(rules)
@@ -84,7 +233,7 @@ impl MockLabelManager {
 }
 
 /// Go `filterRulesByKeyspace`.
-fn filter_rules_by_keyspace(rules: Vec<Rule>, codec: &dyn LabelCodec) -> Vec<Rule> {
+pub fn filter_rules_by_keyspace(rules: Vec<Rule>, codec: &dyn LabelCodec) -> Vec<Rule> {
     if !use_keyspace_aware_rules(codec) {
         return rules;
     }
@@ -146,11 +295,53 @@ mod tests {
         );
     }
 
+    /// A step's reads see its own pending writes over the base manager, and
+    /// a pending delete hides the base rule; the base is untouched until the
+    /// step delivers.
+    #[test]
+    fn staged_reads_see_pending_writes_over_the_base() {
+        let base: Arc<dyn LabelRuleManager> = Arc::new(MockLabelManager::default());
+        base.put_label_rule(&rule("schema/db/a")).unwrap();
+        base.put_label_rule(&rule("schema/db/b")).unwrap();
+        let staged = StagedLabelRules::new(Arc::clone(&base));
+        staged
+            .update_label_rules(&crate::ddl_label::new_rule_patch(
+                vec![rule("schema/db/c")],
+                vec!["schema/db/a".to_owned()],
+            ))
+            .unwrap();
+        let ids = ["schema/db/a", "schema/db/b", "schema/db/c"].map(str::to_owned);
+        assert_eq!(
+            staged
+                .get_label_rules(&ids)
+                .unwrap()
+                .into_keys()
+                .collect::<Vec<_>>(),
+            ["schema/db/b", "schema/db/c"]
+        );
+        assert_eq!(
+            staged
+                .get_all_label_rules(&CodecV1)
+                .unwrap()
+                .into_iter()
+                .map(|rule| rule.id)
+                .collect::<Vec<_>>(),
+            ["schema/db/b", "schema/db/c"]
+        );
+        assert_eq!(
+            base.get_label_rules(&ids)
+                .unwrap()
+                .into_keys()
+                .collect::<Vec<_>>(),
+            ["schema/db/a", "schema/db/b"]
+        );
+    }
+
     /// The manager hands out copies: resetting a rule it returned does not
     /// change the stored one, as Go's JSON round trip guarantees.
     #[test]
     fn reads_are_copies_and_patches_delete_before_setting() {
-        let mut manager = MockLabelManager::default();
+        let manager = MockLabelManager::default();
         let mut stored = Rule::new();
         stored
             .apply_attributes_spec(&tidb_ast::AttributesSpec {

@@ -520,6 +520,8 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::SetTiFlashReplica { .. }
             | DdlStatement::AlterTableSetRegionSplitPolicy { .. }
             | DdlStatement::AlterTableAffinity { .. }
+            | DdlStatement::AlterTableAttributes { .. }
+            | DdlStatement::AlterTablePartitionAttributes { .. }
             | DdlStatement::CreateResourceGroup { .. }
             | DdlStatement::AlterResourceGroup { .. }
             | DdlStatement::DropResourceGroup { .. }

@@ -13450,3 +13450,80 @@ fn pushed_scans_share_the_max_keys_read_budget_and_feed_keys_examined() {
         [["2000"]]
     );
 }
+
+/// Go's label-rule DDL on the production node: `ALTER TABLE [PARTITION]
+/// ATTRIBUTES` writes the node's label manager (Go `onAlterTableAttributes`),
+/// RENAME TABLE re-keys the rules to the new names, `ATTRIBUTES=DEFAULT`
+/// deletes one, DROP DATABASE deletes its tables' rules (`onDropSchema`), and
+/// `information_schema.attributes` reads the same manager.
+#[test]
+fn label_rule_ddl_writes_the_nodes_label_manager() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1018)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE t1 (a INT) PARTITION BY RANGE (a) \
+             (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE t1 ATTRIBUTES='key=value'")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE t1 PARTITION p0 ATTRIBUTES='k2=v2'")
+        .unwrap();
+    let attributes = |session: &mut ClusterServerSession| {
+        displayed(rows(
+            session,
+            "SELECT ID, TYPE, ATTRIBUTES FROM information_schema.attributes ORDER BY ID",
+        ))
+    };
+    assert_eq!(
+        attributes(&mut session),
+        [
+            ["schema/test/t1", "key-range", "\"key=value\""],
+            ["schema/test/t1/p0", "key-range", "\"k2=v2\""],
+        ]
+    );
+    session.execute_write("RENAME TABLE t1 TO t2").unwrap();
+    session.execute_write("TRUNCATE TABLE t2").unwrap();
+    assert_eq!(
+        attributes(&mut session),
+        [
+            ["schema/test/t2", "key-range", "\"key=value\""],
+            ["schema/test/t2/p0", "key-range", "\"k2=v2\""],
+        ]
+    );
+    session
+        .execute_write("ALTER TABLE t2 ATTRIBUTES=DEFAULT")
+        .unwrap();
+    assert_eq!(
+        attributes(&mut session),
+        [["schema/test/t2/p0", "key-range", "\"k2=v2\""]]
+    );
+    let error = session
+        .execute_write("ALTER TABLE t2 ATTRIBUTES='nokey'")
+        .unwrap_err();
+    assert_eq!(error.code, 8237);
+    session.execute_write("CREATE TABLE plain (a INT)").unwrap();
+    let error = session
+        .execute_write("ALTER TABLE plain PARTITION p0 ATTRIBUTES='k=v'")
+        .unwrap_err();
+    assert_eq!(error.code, 1505);
+
+    session.execute_write("CREATE DATABASE d2").unwrap();
+    session.execute_write("CREATE TABLE d2.x (a INT)").unwrap();
+    session
+        .execute_write("ALTER TABLE d2.x ATTRIBUTES='a=b'")
+        .unwrap();
+    assert_eq!(attributes(&mut session).len(), 2);
+    session.execute_write("DROP DATABASE d2").unwrap();
+    assert_eq!(
+        tidb_executor::label_manager::label_rule_manager()
+            .get_label_rules(&["schema/d2/x".to_owned()])
+            .unwrap()
+            .len(),
+        0
+    );
+}

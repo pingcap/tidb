@@ -727,7 +727,7 @@ impl Session {
                             )?;
                             // Go `onDropSchema` deletes the tables' label
                             // rules as the schema leaves the public state.
-                            tidb_executor::ddl::label_rules::drop_schema_label_rules(
+                            tidb_executor::ddl::label_rules::drop_schema_label_rules_in(
                                 catalog, name,
                             )?;
                         }

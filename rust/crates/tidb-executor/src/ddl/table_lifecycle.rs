@@ -337,12 +337,15 @@ pub fn run_rename_table_in(
         // old names move to its new ones. (A view has no rules of its own:
         // ALTER TABLE ... ATTRIBUTES refuses one.)
         let old_label_rules = match catalog.table_in(&rename.from_db, &rename.from_name) {
-            Some(crate::TableEntry::Kv(table)) => Some(super::label_rules::get_old_label_rules(
-                catalog,
-                table,
-                &rename.from_db,
-                &rename.from_name,
-            )?),
+            Some(crate::TableEntry::Kv(table)) => Some(
+                super::label_rules::get_old_label_rules(
+                    catalog.label_rule_manager().as_ref(),
+                    &super::label_rules::LabelRuleTable::from_kv(table),
+                    &rename.from_db,
+                    &rename.from_name,
+                )
+                .map_err(super::label_rules::label_error)?,
+            ),
             _ => None,
         };
         crate::foreign_key::rewrite_table_references(
@@ -362,14 +365,14 @@ pub fn run_rename_table_in(
             old_label_rules,
             catalog.table_in(&rename.to_db, &rename.to_name),
         ) {
-            super::label_rules::update_label_rules(
-                catalog,
+            let write = super::label_rules::update_label_rules(
                 &rename.to_db,
-                table,
+                &super::label_rules::LabelRuleTable::from_kv(table),
                 &old_label_rules,
                 old_label_rules.old_rule_ids(),
                 table.table_id,
-            )?;
+            );
+            super::label_rules::apply_label_writes(catalog, &[write])?;
         }
     }
     Ok(())
@@ -511,20 +514,22 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
     // the truncated table and its partitions now have.
     let schema_name = database.go_to_lower();
     if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) {
+        let label_table = super::label_rules::LabelRuleTable::from_kv(table);
         let old_label_rules = super::label_rules::get_old_label_rules(
-            catalog,
-            table,
+            catalog.label_rule_manager().as_ref(),
+            &label_table,
             &schema_name,
-            &table.name().go_to_lower(),
-        )?;
-        super::label_rules::update_label_rules(
-            catalog,
+            &label_table.name,
+        )
+        .map_err(super::label_rules::label_error)?;
+        let write = super::label_rules::update_label_rules(
             &schema_name,
-            table,
+            &label_table,
             &old_label_rules,
             &[],
             table.table_id,
-        )?;
+        );
+        super::label_rules::apply_label_writes(catalog, &[write])?;
     }
     Ok(())
 }

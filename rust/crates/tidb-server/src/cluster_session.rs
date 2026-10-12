@@ -149,6 +149,9 @@ pub fn cluster_session_catalog_with_templates(
     mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
     let mut catalog = Catalog::default();
+    // Go's label rules live in the node's `InfoSyncer`, not in the schema:
+    // `information_schema.attributes` reads the node's manager.
+    catalog.set_label_rule_manager(tidb_executor::label_manager::label_rule_manager());
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.

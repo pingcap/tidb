@@ -470,6 +470,29 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// The level as written; Go parses it after resolving the table.
         level: String,
     },
+    /// Go `AlterTableAttributes` -> the `ActionAlterTableAttributes` job
+    /// (`onAlterTableAttributes`): the table's region-label rule.
+    AlterTableAttributes {
+        /// Database containing the table.
+        schema: String,
+        /// Table whose attributes are set.
+        table: String,
+        /// The attributes as written.
+        attributes: tidb_ast::AttributesSpec,
+    },
+    /// Go `AlterTablePartitionAttributes` -> the
+    /// `ActionAlterTablePartitionAttributes` job
+    /// (`onAlterTablePartitionAttributes`): one partition's region-label rule.
+    AlterTablePartitionAttributes {
+        /// Database containing the table.
+        schema: String,
+        /// Partitioned table.
+        table: String,
+        /// The partition as written.
+        partition: String,
+        /// The attributes, or `None` for `ATTRIBUTES=DEFAULT`.
+        attributes: Option<String>,
+    },
     /// Go `AlterTableSetRegionSplitPolicy` -> the
     /// `ActionAlterTableSetRegionSplitPolicy` job (`onAlterTableSetRegionSplitPolicy`):
     /// the normalized policy lands on the table or on the named index.
@@ -2628,6 +2651,26 @@ fn lower_alter_table_catalog(
                 standalone_table,
                 with_validation: *with_validation,
                 check_constraints: context.enable_check_constraint(),
+            }))
+        }
+        tidb_ast::AlterTableAction::SetAttributes(attributes) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterTableAttributes {
+                schema,
+                table,
+                attributes: attributes.clone(),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::SetAttributes {
+            partition,
+            attributes,
+        }) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterTablePartitionAttributes {
+                schema,
+                table,
+                partition: partition.clone(),
+                attributes: attributes.clone(),
             }))
         }
         tidb_ast::AlterTableAction::WithValidation => {
@@ -6194,7 +6237,7 @@ fn plan_persisted_check_constraint_job_step(
             cache_table_check: None,
             partition_reorg: None,
             mdl_info_update: None,
-            exchange_partition_label_swap: None,
+            label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
@@ -6307,7 +6350,7 @@ fn plan_persisted_create_schema_job_step(
             cache_table_check: None,
             partition_reorg: None,
             mdl_info_update: None,
-            exchange_partition_label_swap: None,
+            label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
@@ -6434,7 +6477,7 @@ fn plan_persisted_create_table_job_step(
     affinity_groups.create_for(&table_info).map_err(|error| {
         cancel_ddl_job(
             active,
-            affinity_plan_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
+            pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
         )
     })?;
 
@@ -6453,7 +6496,7 @@ fn plan_persisted_create_table_job_step(
             cache_table_check: None,
             partition_reorg: None,
             mdl_info_update: None,
-            exchange_partition_label_swap: None,
+            label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
@@ -6617,7 +6660,7 @@ fn plan_persisted_create_tables_job_step(
         affinity_groups.create_for(info).map_err(|error| {
             cancel_ddl_job(
                 active,
-                affinity_plan_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
+                pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
             )
         })?;
     }
@@ -6646,7 +6689,7 @@ fn plan_persisted_create_tables_job_step(
             cache_table_check: None,
             partition_reorg: None,
             mdl_info_update: None,
-            exchange_partition_label_swap: None,
+            label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
@@ -6791,6 +6834,15 @@ fn plan_persisted_rename_tables_job_step(
     if active.job.schema_state != SchemaState::PUBLIC {
         // Phase one: move the tables and bump the version once.
         let mut affected = Vec::with_capacity(resolved.len().saturating_sub(1));
+        let mut label_rules = LabelRuleSteps::new();
+        let schema_name = |schema_id: i64| {
+            catalog
+                .databases
+                .iter()
+                .find(|database| database.info.id == schema_id)
+                .map(|database| database.info.name.lowercase().to_owned())
+                .unwrap_or_default()
+        };
         for (index, move_plan) in resolved.iter().enumerate() {
             let info_handle = rename_infos
                 .get(index)
@@ -6814,8 +6866,27 @@ fn plan_persisted_rename_tables_job_step(
                 move_plan.old_schema_id,
                 move_plan.table.id,
             ))?);
+            // Go `checkAndRenameTables`: the rules named for the old names,
+            // then the same rules re-keyed under the new ones.
+            let old_rules = label_rules::get_old_label_rules(
+                label_rules.manager(),
+                &LabelRuleTable::from_table_info(&move_plan.table),
+                &schema_name(move_plan.old_schema_id),
+                move_plan.table.name.lowercase(),
+            )
+            .map_err(|error| pd_step_error(Some("failed to get old label rules from PD"), error))?;
             let mut table = move_plan.table.clone();
             table.name = move_plan.new_name.clone();
+            label_rules.push(
+                label_rules::update_label_rules(
+                    &schema_name(move_plan.new_schema_id),
+                    &LabelRuleTable::from_table_info(&table),
+                    &old_rules,
+                    old_rules.old_rule_ids(),
+                    table.id,
+                ),
+                Some("failed to update the label rule to PD"),
+            )?;
             // Go `checkAndRenameTables`: keep the auto ID anchored to the
             // original schema across a cross-schema rename.
             if table.auto_id_schema_id == 0 && move_plan.new_schema_id != move_plan.old_schema_id {
@@ -6867,7 +6938,7 @@ fn plan_persisted_rename_tables_job_step(
                 cache_table_check: None,
                 partition_reorg: None,
                 mdl_info_update: None,
-                exchange_partition_label_swap: None,
+                label_rules: label_rules.steps,
                 warnings: Vec::new(),
                 placement_bundles: Vec::new(),
                 placement_rollback_bundles: Vec::new(),
@@ -6942,7 +7013,7 @@ fn plan_persisted_rename_tables_job_step(
             cache_table_check: None,
             partition_reorg: None,
             mdl_info_update: None,
-            exchange_partition_label_swap: None,
+            label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
@@ -6989,7 +7060,29 @@ fn plan_persisted_drop_schema_job_step(
 
     let mut db_info = database;
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    let mut label_rules = LabelRuleSteps::new();
     let schema_version = schema_version + 1;
+    if db_info.state == SchemaState::PUBLIC {
+        // Go `onDropSchema`: as the schema leaves the public state, every
+        // table's and partition's label rule goes, under the job's schema
+        // name.
+        let tables = catalog
+            .databases
+            .iter()
+            .find(|database| database.info.id == db_info.id)
+            .map(|database| {
+                database
+                    .tables
+                    .iter()
+                    .map(LabelRuleTable::from_table_info)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        label_rules.push(
+            label_rules::drop_schema_label_rules(&active.job.schema_name.to_string(), &tables),
+            None,
+        )?;
+    }
     match db_info.state {
         SchemaState::PUBLIC => db_info.state = SchemaState::WRITE_ONLY,
         SchemaState::WRITE_ONLY => db_info.state = SchemaState::DELETE_ONLY,
@@ -7053,7 +7146,7 @@ fn plan_persisted_drop_schema_job_step(
             cache_table_check: None,
             partition_reorg: None,
             mdl_info_update: None,
-            exchange_partition_label_swap: None,
+            label_rules: label_rules.steps,
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
@@ -7153,7 +7246,7 @@ fn plan_persisted_drop_table_job_step(
             cache_table_check: None,
             partition_reorg: None,
             mdl_info_update: None,
-            exchange_partition_label_swap: None,
+            label_rules: Vec::new(),
             warnings: Vec::new(),
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
@@ -7213,9 +7306,10 @@ fn stored_resource_group(
 /// Go's wrapping of a `createTable` affinity failure.
 const CREATE_TABLE_AFFINITY_ERROR: &str = "failed to create table affinity groups in PD";
 
-/// An affinity group definition the job cannot build: Go's `errors.Errorf`,
-/// wrapped by its caller when it wraps one.
-fn affinity_plan_error(context: Option<&str>, error: String) -> DdlPlanError {
+/// A PD-side step of a job that failed -- an affinity group definition it
+/// cannot build, or a label-rule read -- as Go's `errors.Errorf` /
+/// `errors.Wrapf`, wrapped by its caller when it wraps one.
+fn pd_step_error(context: Option<&str>, error: String) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::with_code(
         GENERIC_ERROR_CODE,
         match context {
@@ -7248,7 +7342,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         cache_table_check: None,
         partition_reorg: None,
         mdl_info_update: None,
-        exchange_partition_label_swap: None,
+        label_rules: Vec::new(),
         warnings: Vec::new(),
         placement_bundles: Vec::new(),
         placement_rollback_bundles: Vec::new(),
@@ -7588,8 +7682,10 @@ pub struct DdlWrite {
     /// The `mysql.tidb_mdl_info` row that must be replaced atomically with
     /// this schema phase before the owner waits for acknowledgements.
     pub mdl_info_update: Option<MdlInfoUpdate>,
-    /// The PD region-label rule swap owed by `EXCHANGE PARTITION`.
-    pub exchange_partition_label_swap: Option<ExchangePartitionLabelSwap>,
+    /// The region-label rule writes the job step makes (Go
+    /// `infosync.PutLabelRule` / `UpdateLabelRules`), in order, delivered
+    /// to the node's label manager before the commit and failing the change.
+    pub label_rules: Vec<LabelRuleStep>,
     /// The warnings the change raises, if any.
     ///
     /// Go carries these as `job.Warning` (and, for the same adjustments made
@@ -7789,6 +7885,87 @@ impl MdlInfoUpdate {
 /// The names and post-exchange physical IDs Go uses to swap the standalone
 /// table and partition label rules in PD; shared with the in-process tier.
 pub use tidb_executor::ddl::label_rules::ExchangePartitionLabelSwap;
+use tidb_executor::ddl::label_rules::{self, LabelRuleTable, LabelRuleWrite};
+
+/// Go's wrapping of a failed label-rule write.
+const LABEL_RULES_NOTIFY_ERROR: &str = "failed to notify PD the label rules";
+
+/// One region-label rule write of a job step, with the context Go wraps its
+/// failure in (none when Go returns the error as is).
+#[derive(Clone, Debug)]
+pub struct LabelRuleStep {
+    /// The call.
+    pub write: LabelRuleWrite,
+    /// Go's `errors.Wrapf` context for a failed call.
+    pub error_context: Option<&'static str>,
+}
+
+/// The label-rule writes of one job step, staged over the node's manager so
+/// the step's later reads see its earlier writes, as Go's step, which writes
+/// PD call by call, does.
+pub(crate) struct LabelRuleSteps {
+    staged: tidb_executor::label_manager::StagedLabelRules,
+    steps: Vec<LabelRuleStep>,
+}
+
+impl LabelRuleSteps {
+    fn new() -> Self {
+        Self {
+            staged: tidb_executor::label_manager::StagedLabelRules::new(
+                tidb_executor::label_manager::label_rule_manager(),
+            ),
+            steps: Vec::new(),
+        }
+    }
+
+    /// The rules as the step sees them.
+    fn manager(&self) -> &dyn tidb_executor::label_manager::LabelRuleManager {
+        &self.staged
+    }
+
+    fn push(
+        &mut self,
+        write: LabelRuleWrite,
+        error_context: Option<&'static str>,
+    ) -> Result<(), DdlPlanError> {
+        write
+            .apply(&self.staged)
+            .map_err(|error| pd_step_error(error_context, error))?;
+        self.steps.push(LabelRuleStep {
+            write,
+            error_context,
+        });
+        Ok(())
+    }
+
+    /// A partition job's label step, from the table before and after it.
+    /// Go's `alterTableLabelRule` puts with "failed to notify PD label rule";
+    /// `dropLabelRules` and the truncate patch wrap with the plural context.
+    fn partition(
+        &mut self,
+        schema: &str,
+        before: &TableInfo,
+        after: &TableInfo,
+        job: label_rules::PartitionLabelJob,
+    ) -> Result<(), DdlPlanError> {
+        let writes = label_rules::partition_label_writes(
+            self.manager(),
+            &schema.go_to_lower(),
+            &LabelRuleTable::from_table_info(before),
+            &LabelRuleTable::from_table_info(after),
+            job,
+        )
+        .map_err(|error| pd_step_error(None, error))?;
+        for write in writes {
+            let context = match write {
+                LabelRuleWrite::Put(_) => "failed to notify PD label rule",
+                LabelRuleWrite::Patch(_) => LABEL_RULES_NOTIFY_ERROR,
+            };
+            self.push(write, Some(context))?;
+        }
+        Ok(())
+    }
+}
 
 /// The data half of an index change: which table's rows to walk, and what to
 /// do with the entries.
@@ -8541,7 +8718,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     let mut foreign_key_checks: Vec<ForeignKeyCheck> = Vec::new();
     let mut cache_table_check: Option<Box<TableInfo>> = None;
     let mut partition_reorg: Option<PartitionReorgStep> = None;
-    let mut exchange_partition_label_swap = None;
+    let mut label_rules = LabelRuleSteps::new();
     let mut warnings: Vec<(DdlWarningLevel, u16, String)> = Vec::new();
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
     let mut diff = SchemaDiff {
@@ -8745,6 +8922,17 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             for table in &database.tables {
                 affinity_groups.delete_for(table, None);
             }
+            // Go `onDropSchema` deletes every table's and partition's label
+            // rule as the schema leaves the public state.
+            let tables = database
+                .tables
+                .iter()
+                .map(LabelRuleTable::from_table_info)
+                .collect::<Vec<_>>();
+            label_rules.push(
+                label_rules::drop_schema_label_rules(database.info.name.lowercase(), &tables),
+                None,
+            )?;
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
             if !tidb_metadef::is_mem_or_sys_db(&name.go_to_lower()) {
@@ -9100,7 +9288,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             affinity_groups.create_error_context = Some(CREATE_TABLE_AFFINITY_ERROR);
             affinity_groups
                 .create_for(&info)
-                .map_err(|error| affinity_plan_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
+                .map_err(|error| pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
@@ -9435,7 +9623,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if info.affinity.is_some() {
                 affinity_groups
                     .create_for(&info)
-                    .map_err(|error| affinity_plan_error(None, error))?;
+                    .map_err(|error| pd_step_error(None, error))?;
             }
             if let Some(old) = stored.affinity.as_ref() {
                 let level_changed = info
@@ -9453,6 +9641,116 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
             diff.action_type = ActionType::ACTION_ALTER_TABLE_AFFINITY;
+            diff.schema_id = db_id;
+            diff.table_id = stored.id;
+        }
+        DdlStatement::AlterTableAttributes {
+            schema,
+            table,
+            attributes,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::TableNotExists {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            // Go `AlterTableAttributes`: the spec's labels over the table and
+            // every partition, under the job's schema name.
+            let rule = label_rules::table_attributes_rule(
+                attributes,
+                database.info.name.lowercase(),
+                &LabelRuleTable::from_table_info(stored),
+            )
+            .map_err(|error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidAttributesSpec,
+                    label_rules::invalid_attributes_spec_message(&error),
+                ))
+            })?;
+            // Go `onAlterTableAttributes`: PD first (failing the job), then
+            // `updateVersionAndTableInfo(..., true)`.
+            label_rules.push(
+                label_rules::attributes_rule_write(rule),
+                Some(LABEL_RULES_NOTIFY_ERROR),
+            )?;
+            let db_id = database.info.id;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, stored.id),
+                value::serialize_table_info(stored)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_TABLE_ATTRIBUTES;
+            diff.schema_id = db_id;
+            diff.table_id = stored.id;
+        }
+        DdlStatement::AlterTablePartitionAttributes {
+            schema,
+            table,
+            partition,
+            attributes,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::TableNotExists {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            let admission = |error: tidb_executor::DriverError| {
+                let error = error.to_mysql_error();
+                DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            };
+            // Go `AlterTablePartitionAttributes`: a partitioned table, and
+            // `tables.FindPartitionByName(meta, spec.PartitionNames[0].L)`.
+            let Some(partitioning) = stored.get_partition_info() else {
+                return Err(admission(
+                    tidb_executor::DriverError::PartitionManagementOnNonpartitioned,
+                ));
+            };
+            let partition_name = partition.go_to_lower();
+            let Some(partition_id) = partitioning
+                .read()
+                .definitions
+                .snapshot()
+                .iter()
+                .find(|definition| definition.name.lowercase() == partition_name)
+                .map(|definition| definition.id)
+            else {
+                return Err(admission(tidb_executor::DriverError::UnknownPartition {
+                    partition: partition_name,
+                    table: stored.name.original().to_owned(),
+                }));
+            };
+            let rule = label_rules::partition_attributes_rule(
+                attributes,
+                database.info.name.lowercase(),
+                stored.name.lowercase(),
+                &partition_name,
+                partition_id,
+            )
+            .map_err(|error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrInvalidAttributesSpec,
+                    label_rules::invalid_attributes_spec_message(&error),
+                ))
+            })?;
+            label_rules.push(
+                label_rules::attributes_rule_write(rule),
+                Some(LABEL_RULES_NOTIFY_ERROR),
+            )?;
+            let db_id = database.info.id;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, stored.id),
+                value::serialize_table_info(stored)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            diff.action_type = ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES;
             diff.schema_id = db_id;
             diff.table_id = stored.id;
         }
@@ -9934,6 +10232,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             }
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
+            // Go `onReorganizePartition`'s `alterTableLabelRule`.
+            label_rules.partition(
+                schema,
+                stored,
+                &info,
+                label_rules::PartitionLabelJob::AddOrReorganize,
+            )?;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -10151,6 +10456,18 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             }
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
+            // Go `onAddTablePartition`'s `alterTableLabelRule`, and
+            // `onDropTablePartition`'s `dropLabelRules` with it.
+            label_rules.partition(
+                schema,
+                stored,
+                &info,
+                if adding {
+                    label_rules::PartitionLabelJob::AddOrReorganize
+                } else {
+                    label_rules::PartitionLabelJob::Drop
+                },
+            )?;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -10320,7 +10637,9 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     check_constraints: *check_constraints,
                 });
             }
-            exchange_partition_label_swap = Some(ExchangePartitionLabelSwap {
+            // Go `onExchangeTablePartition`: the standalone table's rule
+            // moves to the partition and the partition's to the table.
+            let swap = ExchangePartitionLabelSwap {
                 partitioned_schema: schema.go_to_lower(),
                 partitioned_table: stored_partitioned.name.lowercase().to_owned(),
                 partition: original_definition.name.lowercase().to_owned(),
@@ -10328,7 +10647,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 standalone_table: stored_standalone.name.lowercase().to_owned(),
                 partition_id: original_standalone_id,
                 standalone_id: original_partition_id,
-            });
+            };
+            let write = swap
+                .label_write(label_rules.manager())
+                .map_err(|error| pd_step_error(Some("failed to get PD the label rules"), error))?;
+            label_rules.push(write, Some(LABEL_RULES_NOTIFY_ERROR))?;
 
             let mut partitioned_info = stored_partitioned.clone_like_go();
             let mut definitions = partitioned_info
@@ -10538,7 +10861,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if info.affinity.is_some() {
                 affinity_groups
                     .create_for(&info)
-                    .map_err(|error| affinity_plan_error(None, error))?;
+                    .map_err(|error| pd_step_error(None, error))?;
                 affinity_groups.delete_for(&info, Some(&old_definitions));
             }
             if let Some(replica) = &info.tiflash_replica {
@@ -10560,6 +10883,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     .into();
             }
             info.update_ts = start_ts;
+            // Go `updateTruncatePartitionLabelRules`.
+            label_rules.partition(
+                schema,
+                stored,
+                &info,
+                label_rules::PartitionLabelJob::Truncate,
+            )?;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -11429,11 +11759,31 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if info.affinity.is_some() {
                 affinity_groups
                     .create_for(&info)
-                    .map_err(|error| affinity_plan_error(None, error))?;
+                    .map_err(|error| pd_step_error(None, error))?;
             }
             if stored.affinity.is_some() {
                 affinity_groups.delete_for(stored, None);
             }
+            // Go `onTruncateTable`: the rules named for the table and its
+            // partitions re-range over the new IDs.
+            let label_table = LabelRuleTable::from_table_info(&info);
+            let old_rules = label_rules::get_old_label_rules(
+                label_rules.manager(),
+                &label_table,
+                &schema.go_to_lower(),
+                &label_table.name,
+            )
+            .map_err(|error| pd_step_error(Some("failed to get old label rules from PD"), error))?;
+            label_rules.push(
+                label_rules::update_label_rules(
+                    &schema.go_to_lower(),
+                    &label_table,
+                    &old_rules,
+                    &[],
+                    new_table_id,
+                ),
+                Some("failed to update the label rule to PD"),
+            )?;
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = new_table_id;
@@ -11738,11 +12088,20 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     start_ts,
                     &mut writes,
                     &mut diff,
+                    &mut label_rules,
                 )?;
             }
         }
         DdlStatement::RenameTables { pairs } => {
-            plan_rename_tables(&catalog, pairs, false, start_ts, &mut writes, &mut diff)?;
+            plan_rename_tables(
+                &catalog,
+                pairs,
+                false,
+                start_ts,
+                &mut writes,
+                &mut diff,
+                &mut label_rules,
+            )?;
         }
         DdlStatement::CreateIndex {
             schema,
@@ -12771,7 +13130,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         cache_table_check,
         partition_reorg,
         mdl_info_update,
-        exchange_partition_label_swap,
+        label_rules: label_rules.steps,
         warnings,
         placement_bundles,
         placement_rollback_bundles,
@@ -13069,6 +13428,7 @@ fn plan_rename_tables(
     start_ts: u64,
     writes: &mut Vec<BufferMutation>,
     diff: &mut SchemaDiff,
+    label_rules: &mut LabelRuleSteps,
 ) -> Result<(), DdlPlanError> {
     let database_ids = catalog
         .databases
@@ -13153,9 +13513,43 @@ fn plan_rename_tables(
         } else if new_schema_id == state.table.auto_id_schema_id {
             state.table.auto_id_schema_id = 0;
         }
+        // Go `checkAndRenameTables`' `getOldLabelRules`, under the names the
+        // table had before this pair.
+        let old_table_name = state.table.name.lowercase().to_owned();
+        let old_schema_name = catalog
+            .databases
+            .iter()
+            .find(|database| database.info.id == old_schema_id)
+            .map(|database| database.info.name.lowercase().to_owned())
+            .unwrap_or_else(|| from_schema.clone());
+        let old_rules = label_rules::get_old_label_rules(
+            label_rules.manager(),
+            &LabelRuleTable::from_table_info(&state.table),
+            &old_schema_name,
+            &old_table_name,
+        )
+        .map_err(|error| pd_step_error(Some("failed to get old label rules from PD"), error))?;
         state.current_schema_id = new_schema_id;
         state.table.name = CiString::new(pair.to_table.clone());
         state.table.update_ts = start_ts;
+        // ... then `updateLabelRules` to the new database's name, deleting
+        // the old IDs.
+        let new_schema_name = catalog
+            .databases
+            .iter()
+            .find(|database| database.info.id == new_schema_id)
+            .map(|database| database.info.name.lowercase().to_owned())
+            .unwrap_or_else(|| to_schema.clone());
+        label_rules.push(
+            label_rules::update_label_rules(
+                &new_schema_name,
+                &LabelRuleTable::from_table_info(&state.table),
+                &old_rules,
+                old_rules.old_rule_ids(),
+                state.table.id,
+            ),
+            Some("failed to update the label rule to PD"),
+        )?;
         let table_id = state.table.id;
         results.push(RenamePairResult {
             table_id,
