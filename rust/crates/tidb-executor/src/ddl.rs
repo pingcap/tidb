@@ -1349,10 +1349,10 @@ fn create_table_in(
         }
         copy.set_temp_table_type(temporary);
         check_table_info_valid_extra(
-            catalog,
             name,
             copy.columns().iter().map(|column| column.name.as_str()),
             copy.indexes().len(),
+            catalog.table_column_count_limit(),
         )?;
         register_created_table(catalog, &database, name, copy, temporary, ctx)?;
         return Ok(true);
@@ -2363,10 +2363,10 @@ fn create_table_in(
         return Ok(false);
     }
     check_table_info_valid_extra(
-        catalog,
         name,
         table.columns().iter().map(|column| column.name.as_str()),
         table.indexes().len(),
+        catalog.table_column_count_limit(),
     )?;
     // Go `CreateTableWithInfo` resolves the table's `PLACEMENT POLICY = name`
     // against the policies in the infoschema and refuses an unknown one with
@@ -2513,12 +2513,13 @@ fn create_target_is_free(
 
 /// Go `checkTableInfoValidExtra`'s name, duplicate-column and count checks
 /// over a table or view about to be created, after the existence check
-/// (`createTableWithInfoJob`).
-pub(crate) fn check_table_info_valid_extra<'a>(
-    catalog: &Catalog,
+/// (`createTableWithInfoJob`). `column_count_limit` is Go's
+/// `config.TableColumnCountLimit`.
+pub fn check_table_info_valid_extra<'a>(
     table_name: &str,
     columns: impl Iterator<Item = &'a str> + Clone,
     index_count: usize,
+    column_count_limit: usize,
 ) -> Result<(), DriverError> {
     check_too_long_identifier(table_name)?;
     let mut seen: Vec<String> = Vec::new();
@@ -2532,7 +2533,7 @@ pub(crate) fn check_table_info_valid_extra<'a>(
     for column in columns {
         check_too_long_identifier(column)?;
     }
-    if seen.len() > catalog.table_column_count_limit() {
+    if seen.len() > column_count_limit {
         return Err(DriverError::DdlCoded {
             errno: tidb_error::mysql::errcode::ErrTooManyFields,
             message: tidb_error::mysql::errname::ErrTooManyFields.raw.to_owned(),
@@ -2543,7 +2544,7 @@ pub(crate) fn check_table_info_valid_extra<'a>(
 
 /// Go `checkTooManyIndexes`: `ErrTooManyKeys` (1069) above the configured
 /// `index-limit`.
-pub(crate) fn check_too_many_indexes(index_count: usize) -> Result<(), DriverError> {
+pub fn check_too_many_indexes(index_count: usize) -> Result<(), DriverError> {
     let limit = tidb_config::config_tree::config::get_global_config().index_limit;
     if i64::try_from(index_count).unwrap_or(i64::MAX) > limit {
         return Err(DriverError::DdlCoded {

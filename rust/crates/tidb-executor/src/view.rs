@@ -53,10 +53,10 @@ pub fn run_create_view_in(
     // Go `CreateView` builds the view as a table of its column names, which
     // `createTableWithInfoJob` checks like any other table.
     crate::ddl::check_table_info_valid_extra(
-        catalog,
         &name,
         view.columns.iter().map(|(column, _)| column.as_str()),
         0,
+        catalog.table_column_count_limit(),
     )?;
     crate::ddl::bdr::submit(
         catalog,

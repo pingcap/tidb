@@ -1279,6 +1279,14 @@ fn build_column(
     generated_preceding: Option<&[ColumnInfo]>,
 ) -> Refusal<(ColumnInfo, Vec<(usize, Constraint)>)> {
     let name = &column.name;
+    // Go `buildColumnAndConstraint`: the hidden handle's name is reserved.
+    let lower = tidb_hack::go_to_lower(name);
+    if lower == "_tidb_rowid" {
+        return Err(DdlAdmissionError::with_code(
+            tidb_error::mysql::errcode::ErrWrongColumnName,
+            format!("Incorrect column name '{lower}'"),
+        ));
+    }
     if !column.qualifier.is_empty() {
         return Err(DdlAdmissionError::with_code(
             GENERIC_ERROR_CODE,
@@ -1901,6 +1909,20 @@ fn build_table(
                 } else {
                     table.is_common_handle = true;
                     table.common_handle_version = 1;
+                }
+                // Go `buildTableInfo`: a clustered primary key can be neither
+                // invisible nor global.
+                if constraint.invisible {
+                    return Err(DdlAdmissionError::with_code(
+                        tidb_error::tidb::errcode::ErrPKIndexCantBeInvisible,
+                        "A primary key index cannot be invisible",
+                    ));
+                }
+                if constraint.global {
+                    return Err(DdlAdmissionError::with_code(
+                        8200,
+                        "Unsupported create an index that is both a global index and a clustered index",
+                    ));
                 }
             }
             break;

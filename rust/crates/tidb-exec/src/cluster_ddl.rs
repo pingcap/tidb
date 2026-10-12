@@ -2180,6 +2180,20 @@ fn lower_alter_add_index(
     // NOT NULL), so it lowers through the same CreateIndex statement the
     // other index kinds use.
     let primary = index.kind == IndexConstraintKind::PrimaryKey;
+    // Go `CreatePrimaryKey` refuses a clustered key before it looks at the
+    // table.
+    if primary
+        && matches!(
+            index.options.primary_key_storage,
+            Some(tidb_ast::PrimaryKeyStorage::Clustered)
+        )
+    {
+        return Err(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            "Adding clustered primary key is not supported. Please consider adding \
+             NONCLUSTERED primary key instead",
+        ));
+    }
     let kind = match index.kind {
         IndexConstraintKind::Key | IndexConstraintKind::Index => tidb_ast::IndexKind::Ordinary,
         IndexConstraintKind::Unique
@@ -2820,17 +2834,18 @@ fn prepare_cluster_columns(
         ..Default::default()
     };
     // Go `checkMultiSchemaInfo`.
-    tidb_executor::ddl::check_multi_schema_names(&names).map_err(|error| match error {
-        tidb_executor::DriverError::DdlCoded { errno, message } => {
-            DdlPlanError::Admission(DdlAdmissionError::with_code(errno, message))
-        }
-        other => DdlPlanError::Encode(other.to_string()),
+    tidb_executor::ddl::check_multi_schema_names(&names).map_err(|error| {
+        let error = error.to_mysql_error();
+        coded_refusal(error.code, error.message)
     })?;
     check_visible_column_cnt(stored, names.add_columns.len(), names.drop_columns.len())?;
     check_operate_drop_index_use_by_foreign_key(
         stored,
         &names.drop_indexes.snapshot(),
         &add_foreign_keys,
+    )?;
+    check_add_column_too_many_columns(
+        (stored.columns.len() + names.add_columns.len()).saturating_sub(names.drop_columns.len()),
     )?;
     Ok(prepared)
 }
@@ -2855,6 +2870,8 @@ fn apply_add_column(
     if_not_exists: bool,
     context: &tidb_executor::StmtContext,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
+    // Go `AddColumn`, then `checkAndCreateNewColumn`.
+    check_add_column_too_many_columns(info.columns.len() + 1)?;
     let wanted = column.name.go_to_lower();
     if info
         .columns
@@ -2869,6 +2886,10 @@ fn apply_add_column(
         }
         return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
     }
+    tidb_executor::ddl::check_too_long_identifier(&column.name).map_err(|error| {
+        let error = error.to_mysql_error();
+        coded_refusal(error.code, error.message)
+    })?;
     // An admission refusal already carries Go's own error number (8200 for
     // `ErrUnsupportedDDLOperation`); wrapping it as an encode failure both
     // flattened that to the generic 1105 and prefixed the client's message
@@ -3233,6 +3254,71 @@ fn check_column_referenced_by_partial_condition(
                 ),
             ));
         }
+    }
+    Ok(())
+}
+
+/// Go `config.TableColumnCountLimit`.
+fn table_column_count_limit() -> usize {
+    tidb_config::config_tree::config::get_global_config().table_column_count_limit as usize
+}
+
+/// Go `checkTableInfoValidExtra` (`create_table.go`) over a table about to be
+/// published, as `createTableWithInfoJob` runs it after the existence check:
+/// the name, duplicate-column and count checks one port shares with the
+/// in-process builder, then `checkTableInfoValid`'s `checkInvisibleIndexOnPK`.
+fn check_table_info_valid_extra(info: &TableInfo) -> Result<(), DdlPlanError> {
+    let columns = info
+        .columns
+        .iter_deref()
+        .map(|column| column.read().name.original().to_owned())
+        .collect::<Vec<_>>();
+    tidb_executor::ddl::check_table_info_valid_extra(
+        info.name.original(),
+        columns.iter().map(String::as_str),
+        info.indices.len(),
+        table_column_count_limit(),
+    )
+    .map_err(|error| {
+        let error = error.to_mysql_error();
+        coded_refusal(error.code, error.message)
+    })?;
+    check_table_info_valid(info)
+}
+
+/// Go `checkTableInfoValid`, which `updateVersionAndTableInfoWithCheck` runs
+/// on the table a job step leaves: the observable half is
+/// `checkInvisibleIndexOnPK`, since a change can turn an invisible unique
+/// index into the implicit primary key. (`TableFromMeta`'s rebuild is the
+/// loader's, `build_generated_expr`.)
+fn check_table_info_valid(info: &TableInfo) -> Result<(), DdlPlanError> {
+    check_invisible_index_on_pk(info)
+}
+
+/// Go `checkInvisibleIndexOnPK` (`ddl/executor.go`).
+fn check_invisible_index_on_pk(info: &TableInfo) -> Result<(), DdlPlanError> {
+    if info.pk_is_handle {
+        return Ok(());
+    }
+    if info
+        .get_primary_key()
+        .is_some_and(|primary| primary.read().invisible)
+    {
+        return Err(coded_refusal(
+            tidb_error::tidb::errcode::ErrPKIndexCantBeInvisible,
+            "A primary key index cannot be invisible",
+        ));
+    }
+    Ok(())
+}
+
+/// Go `checkAddColumnTooManyColumns` (`ddl/column.go`).
+fn check_add_column_too_many_columns(col_num: usize) -> Result<(), DdlPlanError> {
+    if col_num > table_column_count_limit() {
+        return Err(coded_refusal(
+            tidb_error::mysql::errcode::ErrTooManyFields,
+            "Too many columns",
+        ));
     }
     Ok(())
 }
@@ -7052,6 +7138,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 }
                 return Err(DdlPlanError::DatabaseExists(name.clone()));
             }
+            // Go `checkTooLongSchema`.
+            tidb_executor::ddl::check_too_long_identifier(&name.go_to_lower()).map_err(
+                |error| {
+                    let error = error.to_mysql_error();
+                    coded_refusal(error.code, error.message)
+                },
+            )?;
             // Go `handleDatabasePlacement`.
             let placement_policy_ref = match placement_policy {
                 Some(policy) => check_and_normalize_placement_policy(snapshot, policy)?,
@@ -7157,6 +7250,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             }) {
                 info.indices.delete_go(offset, offset + 1);
             }
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -7324,6 +7418,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     unreachable!("LOCAL temporary CREATE LIKE is rejected during lowering")
                 }
             }
+            // Go `createTableWithInfoJob`.
+            check_table_info_valid_extra(&info)?;
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -7347,6 +7443,29 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
             };
+            let db_id = database.info.id;
+            // Go's create-table path publishes the TableInfo the builder
+            // produced; it does not call `TableInfo.Clone` on the way to
+            // `Mutator.CreateTableOrView`. A plain struct/header copy is all
+            // this immutable plan needs before stamping its two scalar
+            // transaction-owned fields. `clone_like_go()` would allocate an
+            // empty `Indices` slice even when the builder left it nil, turning
+            // Go's persisted `"index_info":null` into `[]`.
+            let mut info = build
+                .for_database(&database.info.charset, &database.info.collate)
+                .map_err(DdlPlanError::Admission)?;
+            // Go `CreateTable`: the built table's `checkTableForeignKeysValid`
+            // (executor.go:1106) comes before `createTableWithInfoJob`'s
+            // existence check, which is followed by `checkTableInfoValidExtra`
+            // and, in the job, the owner's `checkTableForeignKeyValidInOwner` +
+            // `allocateFKIndexID` (create_table.go:87). This planner runs every
+            // stage against the one snapshot it publishes from.
+            // A new parent also needs validation against existing children.
+            let fk_check = build.context.foreign_key_checks();
+            crate::foreign_key_build::check_table_foreign_keys_valid(
+                &catalog, schema, &info, fk_check,
+            )
+            .map_err(DdlPlanError::Admission)?;
             if let Some(existing) = find_table(database, table) {
                 if *if_not_exists {
                     return Ok(already(format!(
@@ -7359,33 +7478,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             }
-            let db_id = database.info.id;
-            // Go's create-table path publishes the TableInfo the builder
-            // produced; it does not call `TableInfo.Clone` on the way to
-            // `Mutator.CreateTableOrView`. A plain struct/header copy is all
-            // this immutable plan needs before stamping its two scalar
-            // transaction-owned fields. `clone_like_go()` would allocate an
-            // empty `Indices` slice even when the builder left it nil, turning
-            // Go's persisted `"index_info":null` into `[]`.
-            let mut info = build
-                .for_database(&database.info.charset, &database.info.collate)
-                .map_err(DdlPlanError::Admission)?;
-            // Go `checkTableForeignKeysValid` (executor.go:1106) at submission,
-            // then the owner's `checkTableForeignKeyValidInOwner` +
-            // `allocateFKIndexID` (create_table.go:87). This planner runs both
-            // stages against the one snapshot it publishes from.
-            {
-                // A new parent also needs validation against existing children.
-                let fk_check = build.context.foreign_key_checks();
-                crate::foreign_key_build::check_table_foreign_keys_valid(
-                    &catalog, schema, &info, fk_check,
-                )
-                .map_err(DdlPlanError::Admission)?;
-                crate::foreign_key_build::check_table_foreign_keys_valid_in_owner(
-                    &catalog, schema, &mut info, fk_check,
-                )
-                .map_err(DdlPlanError::Admission)?;
-            }
+            check_table_info_valid_extra(&info)?;
+            crate::foreign_key_build::check_table_foreign_keys_valid_in_owner(
+                &catalog, schema, &mut info, fk_check,
+            )
+            .map_err(DdlPlanError::Admission)?;
             // Go `assignIDsForTable` (`ddl/jobsubmit/submit.go`) draws
             // `1 + len(Definitions)` ids in ONE call: the table's own first,
             // then one physical table per partition in definition order.
@@ -7549,6 +7646,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let table_id = global_ids.allocate(1)?[0];
             created_id = Some(table_id);
             let mut info = (**info).clone();
+            // Go `createTableWithInfoJob` checks a view like any table.
+            check_table_info_valid_extra(&info)?;
             info.id = table_id;
             info.update_ts = start_ts;
             let encoded = value::serialize_table_info(&info)
@@ -8093,6 +8192,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         .into();
                 }
             }
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -8583,6 +8683,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 AlterColumnOutcome::Applied => {}
             }
             crate::cluster_bdr::admit_add_column(&bdr_role, schema, &column.options)?;
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -8642,6 +8743,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             let mut info = stored.clone_like_go();
             apply_drop_column(&mut info, column);
             plan_removed_column_indexes(stored, &info, use_new_collation, &mut backfill);
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -8666,6 +8768,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             };
             let mut info = stored.clone_like_go();
             apply_prepared_column(&mut info, column, &tidb_ast::ColumnPosition::Default, false)?;
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -8774,6 +8877,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 rename_from.as_deref(),
             )?;
             let new_name = column.name.go_to_lower();
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             if kind != ModifyColumnType::NoReorg {
                 column_reorg = Some(ColumnReorg {
@@ -9094,6 +9198,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     context,
                 });
             }
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9347,12 +9452,21 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // the name-duplicate check -- the existing `PRIMARY` index makes
             // the name check answer 1061 instead (oracle g-alter: a second
             // ADD PRIMARY KEY answers `Multiple primary key defined`).
-            if index.primary && find_index(stored, "PRIMARY").is_some() {
+            // Go `CreatePrimaryKey`: an integer handle is a primary key too.
+            if index.primary && (find_index(stored, "PRIMARY").is_some() || stored.pk_is_handle) {
                 return Err(DdlPlanError::Admission(
                     crate::table_info_build::DdlAdmissionError::with_code(
                         1068,
                         "Multiple primary key defined",
                     ),
+                ));
+            }
+            // Go `CreatePrimaryKey`: a primary key needs stored generated
+            // columns, and an expression part is a virtual one.
+            if index.primary && expressions.iter().any(Option::is_some) {
+                return Err(coded_refusal(
+                    tidb_error::mysql::errcode::ErrFunctionalIndexPrimaryKey,
+                    "The primary key cannot be an expression index",
                 ));
             }
             let name = settle_added_index_name(stored, index, expressions);
@@ -9402,6 +9516,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             }
             let added = GoShared::new(added);
             info.indices.push_handle_go(Some(added.clone()));
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9688,6 +9803,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     if *invisible { "invisible" } else { "visible" }
                 )));
             }
+            if *invisible && found.read().is_columnar_index() {
+                return Err(coded_refusal(
+                    8200,
+                    format!(
+                        "INVISIBLE can not be used in {} INDEX",
+                        found.read().tp.sql()
+                    ),
+                ));
+            }
             let wanted = index.go_to_lower();
             let mut info = stored.clone_like_go();
             // Go `setIndexVisibility` walks EVERY index and sets each one
@@ -9698,6 +9822,8 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     candidate.invisible = *invisible;
                 }
             }
+            // Go `updateVersionAndTableInfoWithCheck`.
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -9743,6 +9869,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 // `slices.Delete`s exactly that slot in the same backing.
                 info.indices.delete_go(offset, offset + 1);
             }
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -10012,6 +10139,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     candidate.name = CiString::new(to.clone());
                 }
             }
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -10066,6 +10194,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 )
                 .map_err(DdlPlanError::Admission)?;
             }
+            check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -11098,6 +11227,8 @@ fn plan_added_index(
         DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
     };
     tidb_executor::ddl::check_too_long_identifier(name).map_err(admission)?;
+    // Go `onCreateIndex`'s `checkTooManyIndexes`, counting the new index.
+    tidb_executor::ddl::check_too_many_indexes(info.indices.len() + 1).map_err(admission)?;
     let mut added = index.clone_like_go();
     added.name = CiString::new(name.to_owned());
     if expressions.iter().any(Option::is_some) {

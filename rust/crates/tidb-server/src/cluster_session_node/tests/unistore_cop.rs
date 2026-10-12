@@ -388,6 +388,99 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
     rows(&mut session, "ADMIN CHECK TABLE test.child");
 }
 
+/// Go's table checks on the production node, answers from the Go oracle for
+/// the same script: `checkTooLongSchema` / `checkTableInfoValidExtra` / ADD
+/// COLUMN's name limit (1059), `buildColumnAndConstraint`'s reserved
+/// `_tidb_rowid` (1166), a clustered or implicit primary key that would be
+/// invisible (3522, from `buildTableInfo` and from
+/// `updateVersionAndTableInfoWithCheck` after a change makes an invisible
+/// unique index the primary key), `CreatePrimaryKey`'s clustered (8200) and
+/// expression (3756) refusals, and a view's duplicate column (1060). This
+/// node accepted every one of them.
+#[test]
+fn a_table_is_checked_as_go_checks_it_before_it_is_published() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(141)).unwrap();
+    let long = "a".repeat(65);
+    let too_long = format!("Identifier name '{long}' is too long");
+    rows(&mut session, "CREATE TABLE test.t (a INT NOT NULL, b INT)");
+    rows(
+        &mut session,
+        "ALTER TABLE test.t ADD UNIQUE ub (b) INVISIBLE",
+    );
+    let invisible = "A primary key index cannot be invisible";
+    for (sql, code, message) in [
+        (format!("CREATE DATABASE {long}"), 1059, too_long.as_str()),
+        (
+            format!("CREATE TABLE test.t_long (c1 INT, {long} INT)"),
+            1059,
+            too_long.as_str(),
+        ),
+        (
+            format!("CREATE TABLE test.{long} (a INT)"),
+            1059,
+            too_long.as_str(),
+        ),
+        (
+            format!("ALTER TABLE test.t ADD COLUMN {long} INT"),
+            1059,
+            too_long.as_str(),
+        ),
+        (
+            "ALTER TABLE test.t ADD COLUMN `_tidb_rowid` INT".to_owned(),
+            1166,
+            "Incorrect column name '_tidb_rowid'",
+        ),
+        (
+            "CREATE TABLE test.tpk (c1 INT NOT NULL, PRIMARY KEY (c1) INVISIBLE)".to_owned(),
+            3522,
+            invisible,
+        ),
+        (
+            "ALTER TABLE test.t MODIFY COLUMN b INT NOT NULL".to_owned(),
+            3522,
+            invisible,
+        ),
+        (
+            "ALTER TABLE test.t ADD PRIMARY KEY (a) CLUSTERED".to_owned(),
+            8200,
+            "Adding clustered primary key is not supported. Please consider adding \
+             NONCLUSTERED primary key instead",
+        ),
+        (
+            "ALTER TABLE test.t ADD PRIMARY KEY ((a + b)) NONCLUSTERED".to_owned(),
+            3756,
+            "The primary key cannot be an expression index",
+        ),
+        (
+            "ALTER TABLE test.t ADD PRIMARY KEY (a) NONCLUSTERED INVISIBLE".to_owned(),
+            3522,
+            invisible,
+        ),
+        (
+            "CREATE VIEW test.v AS SELECT 1 AS x, 1 AS x".to_owned(),
+            1060,
+            "Duplicate column name 'x'",
+        ),
+    ] {
+        let error = session.execute_write(&sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(
+        created[0][1].contains(
+            "  `a` int NOT NULL,\n  `b` int DEFAULT NULL,\n  \
+             UNIQUE KEY `ub` (`b`) /*!80000 INVISIBLE */\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+}
+
 /// The session's cop client capability is shared, and a read that met
 /// another user of it answered "unary client is already in use by another
 /// response": the transport took it with `try_lock` and held it across the
