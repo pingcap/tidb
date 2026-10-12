@@ -6773,12 +6773,11 @@ impl ClusterServerSession {
     /// is refused before anything is persisted, and a statement that fails
     /// never reaches storage nor the node's live table.
     ///
-    /// An open transaction is committed first, for the same reason a DDL or
-    /// account statement commits one.
+    /// An open transaction stays open: Go's `SetGlobalSysVar` writes
+    /// `mysql.global_variables` through an internal session, so a
+    /// `SET GLOBAL` inside a transaction neither commits it nor loses its
+    /// `@@tidb_current_ts` (unlike a DDL or account statement, which commit).
     fn run_global_var_statement(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
-        if self.explicit.is_some() || self.session.in_transaction() {
-            self.control_transaction("COMMIT")?;
-        }
         let pending = self.sysvars.begin().map_err(SqlQueryError::unknown)?;
         let scratch = pending.table();
         let live = self.session.swap_globals(scratch);

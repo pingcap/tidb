@@ -13840,3 +13840,35 @@ fn admin_check_index_range_rows_carry_the_index_column_types() {
         [["1", "ef", "3"], ["2", "cd", "2"]]
     );
 }
+
+/// Go's `SET GLOBAL` writes `mysql.global_variables` through an internal
+/// session (`SetGlobalSysVar`), so it neither commits the issuing session's
+/// transaction nor clears `@@tidb_current_ts`: `set global
+/// tidb_external_ts=@@tidb_current_ts` inside a transaction reads that
+/// transaction's start timestamp. The production node committed first.
+#[test]
+fn set_global_inside_a_transaction_keeps_the_transaction_open() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1025)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session.execute_write("CREATE TABLE sg (a INT)").unwrap();
+    session
+        .execute_write("SET GLOBAL tidb_external_ts = 19980613")
+        .unwrap();
+    session.control_transaction("BEGIN").unwrap();
+    session.execute_write("INSERT INTO sg VALUES (1)").unwrap();
+    let start = displayed(rows(&mut session, "SELECT @@tidb_current_ts"));
+    session
+        .execute_write("SET GLOBAL tidb_external_ts = @@tidb_current_ts")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT @@tidb_current_ts")),
+        start
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT @@tidb_external_ts")),
+        start
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+    assert!(rows(&mut session, "SELECT * FROM sg").is_empty());
+}
