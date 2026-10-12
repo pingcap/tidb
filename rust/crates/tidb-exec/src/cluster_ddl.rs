@@ -353,7 +353,8 @@ impl DdlStatement {
             | Self::ModifyColumn { context, .. }
             | Self::AddForeignKey { context, .. }
             | Self::CreateIndex { context, .. }
-            | Self::SetColumnDefault { context, .. } => Some(&context.0),
+            | Self::SetColumnDefault { context, .. }
+            | Self::ReorganizePartitions { context, .. } => Some(&context.0),
             Self::MultiSchemaChange { actions, .. } => actions
                 .iter()
                 .find_map(AlterColumnAction::statement_context),
@@ -745,6 +746,20 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         table: String,
         /// Whether a missing table is a no-op rather than an error.
         if_exists: bool,
+    },
+    /// `REORGANIZE PARTITION`, `PARTITION BY` on an existing table and
+    /// `REMOVE PARTITIONING`: Go's `onReorganizePartition`, its rows moved to
+    /// the new physical tables in the DDL transaction.
+    ReorganizePartitions {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The partition action as written.
+        action: Box<tidb_ast::AlterPartitionAction>,
+        /// The context the new definitions are built and the rows moved
+        /// under.
+        context: DdlStatementContext,
     },
     /// `CREATE SEQUENCE [IF NOT EXISTS]`, Go's `ActionCreateSequence`: a
     /// `TableInfo` carrying `Sequence`, built before the job
@@ -2456,6 +2471,19 @@ fn lower_alter_table_catalog(
                     alter.clone(),
                 ))))
                 .restore(),
+            }))
+        }
+        tidb_ast::AlterTableAction::Partition(
+            action @ (tidb_ast::AlterPartitionAction::Reorganize { .. }
+            | tidb_ast::AlterPartitionAction::Repartition(_)
+            | tidb_ast::AlterPartitionAction::RemovePartitioning),
+        ) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::ReorganizePartitions {
+                schema,
+                table,
+                action: Box::new(action.clone()),
+                context: DdlStatementContext(context.clone()),
             }))
         }
         tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
@@ -6040,6 +6068,7 @@ fn plan_persisted_check_constraint_job_step(
             column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
+            partition_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -6150,6 +6179,7 @@ fn plan_persisted_create_schema_job_step(
             column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
+            partition_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -6281,6 +6311,7 @@ fn plan_persisted_create_table_job_step(
             column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
+            partition_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -6458,6 +6489,7 @@ fn plan_persisted_create_tables_job_step(
             column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
+            partition_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -6676,6 +6708,7 @@ fn plan_persisted_rename_tables_job_step(
                 column_reorgs: Vec::new(),
                 foreign_key_checks: Vec::new(),
                 cache_table_check: None,
+                partition_reorg: None,
                 mdl_info_update: None,
                 exchange_partition_label_swap: None,
                 warnings: Vec::new(),
@@ -6748,6 +6781,7 @@ fn plan_persisted_rename_tables_job_step(
             column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
+            partition_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -6845,6 +6879,7 @@ fn plan_persisted_drop_schema_job_step(
             column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
+            partition_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -6939,6 +6974,7 @@ fn plan_persisted_drop_table_job_step(
             column_reorgs: Vec::new(),
             foreign_key_checks: Vec::new(),
             cache_table_check: None,
+            partition_reorg: None,
             mdl_info_update: None,
             exchange_partition_label_swap: None,
             warnings: Vec::new(),
@@ -6972,6 +7008,7 @@ fn job_only_write(ddl_job_id: i64, mutations: Vec<BufferMutation>) -> DdlWrite {
         column_reorgs: Vec::new(),
         foreign_key_checks: Vec::new(),
         cache_table_check: None,
+        partition_reorg: None,
         mdl_info_update: None,
         exchange_partition_label_swap: None,
         warnings: Vec::new(),
@@ -7305,6 +7342,9 @@ pub struct DdlWrite {
     pub foreign_key_checks: Vec<ForeignKeyCheck>,
     /// The table an `ALTER TABLE ... CACHE` owes Go's `checkCacheTableSize`.
     pub cache_table_check: Option<Box<TableInfo>>,
+    /// The row move a partition reorganization owes (Go
+    /// `doPartitionReorgWork`, then the drop of the replaced data).
+    pub partition_reorg: Option<PartitionReorgStep>,
     /// The `mysql.tidb_mdl_info` row that must be replaced atomically with
     /// this schema phase before the owner waits for acknowledgements.
     pub mdl_info_update: Option<MdlInfoUpdate>,
@@ -7522,6 +7562,17 @@ pub struct ColumnReorg {
     pub action_offset: Option<usize>,
 }
 
+/// The rows a partition reorganization moves, staged in the DDL transaction.
+#[derive(Clone, Debug)]
+pub struct PartitionReorgStep {
+    /// The table as its stored rows have it, before the change.
+    pub table: Box<TableInfo>,
+    /// What moves where (`tidb_executor::kv_table::PartitionReorg`).
+    pub reorg: tidb_executor::kv_table::PartitionReorg,
+    /// SQL mode and location the rows are routed under.
+    pub context: DdlStatementContext,
+}
+
 /// Go `checkForeignKeyConstrain`, owed by an `ADD FOREIGN KEY` under
 /// `foreign_key_checks = ON` before the key becomes public: the child's
 /// existing rows against the parent, in the same transaction.
@@ -7612,6 +7663,49 @@ pub struct CheckConstraintValidation {
 /// `View`. `ViewInfo.Cols` stays nil: the resolved column names already
 /// carry any explicit `CREATE VIEW v (...)` list.
 #[must_use]
+/// The cluster catalog's side of a partition reorganization: ids from the
+/// global allocator, and the placement policies the snapshot holds.
+struct ClusterReorgHost<'a> {
+    global_ids: &'a mut GlobalIdAllocator,
+    policies: Vec<tidb_model::PolicyInfo>,
+    /// An allocator failure, which the trait cannot carry; the plan reports
+    /// it once the shared code returns.
+    failed: Option<DdlPlanError>,
+}
+
+impl tidb_executor::ddl::ReorgHost for ClusterReorgHost<'_> {
+    fn allocate_table_id(&mut self) -> i64 {
+        match self.global_ids.allocate(1) {
+            Ok(ids) => ids[0],
+            Err(error) => {
+                self.failed.get_or_insert(error);
+                0
+            }
+        }
+    }
+
+    fn resolve_placement(
+        &self,
+        definitions: &mut [tidb_executor::partition_routing::PartitionDef],
+    ) -> Result<(), tidb_executor::DriverError> {
+        for definition in definitions {
+            if let Some(reference) = definition.placement_policy.as_mut() {
+                let Some(found) = self
+                    .policies
+                    .iter()
+                    .find(|policy| policy.name.lowercase() == reference.name.lowercase())
+                else {
+                    return Err(tidb_executor::DriverError::PlacementPolicyNotExists(
+                        reference.name.original().to_owned(),
+                    ));
+                };
+                reference.id = found.id;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Whether a table option is one of Go's TTL family.
 fn is_ttl_table_option(option: &tidb_ast::TableOption) -> bool {
     matches!(
@@ -8115,6 +8209,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     let mut column_reorgs: Vec<ColumnReorg> = Vec::new();
     let mut foreign_key_checks: Vec<ForeignKeyCheck> = Vec::new();
     let mut cache_table_check: Option<Box<TableInfo>> = None;
+    let mut partition_reorg: Option<PartitionReorgStep> = None;
     let mut exchange_partition_label_swap = None;
     let mut warnings: Vec<(DdlWarningLevel, u16, String)> = Vec::new();
     let mut schema_change_events: Vec<(i64, SchemaChangeEvent)> = Vec::new();
@@ -9181,6 +9276,238 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     SchemaChangeEvent::modify_columns(info, vec![modified], false),
                 ));
             }
+        }
+        DdlStatement::ReorganizePartitions {
+            schema,
+            table,
+            action,
+            context,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // The table the loader serves, planned against without reading a
+            // row: Go's executor checks and the job's first state read only
+            // its metadata.
+            let detached = tidb_executor::cluster_storage::ClusterTableStorage::new(
+                tidb_executor::cluster_storage::MutationBuffer::new(),
+                std::sync::Arc::new(std::sync::Mutex::new(
+                    tidb_executor::cluster_storage::SwappableSnapshot::new(),
+                )),
+            );
+            let kv = crate::table_from_meta::cluster_table(
+                stored,
+                &detached,
+                &crate::table_from_meta::AutoIdSource::Unavailable,
+            )
+            .map_err(|reason| {
+                DdlPlanError::Unsupported(format!(
+                    "`{schema}`.`{table}` cannot be loaded: {reason}"
+                ))
+            })?;
+            let mut policies = Vec::new();
+            for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
+                policies.push(
+                    value::parse_policy_info(&encoded)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                );
+            }
+            let mut host = ClusterReorgHost {
+                global_ids: &mut global_ids,
+                policies,
+                failed: None,
+            };
+            let ctx = &context.0;
+            let planned = match action.as_ref() {
+                tidb_ast::AlterPartitionAction::Reorganize {
+                    names, definitions, ..
+                } => tidb_executor::ddl::plan_reorganize_partition(
+                    &kv,
+                    names,
+                    definitions,
+                    ctx,
+                    &mut host,
+                ),
+                tidb_ast::AlterPartitionAction::Repartition(partitioning) => {
+                    tidb_executor::ddl::plan_alter_table_partitioning(
+                        &kv,
+                        partitioning,
+                        ctx,
+                        &mut host,
+                    )
+                }
+                tidb_ast::AlterPartitionAction::RemovePartitioning => {
+                    tidb_executor::ddl::plan_remove_partitioning(&kv, &mut host)
+                }
+                other => unreachable!("lowered only for a reorganization, got {other:?}"),
+            };
+            if let Some(failed) = host.failed.take() {
+                return Err(failed);
+            }
+            let planned = planned.map_err(|error| {
+                let error = error.to_mysql_error();
+                coded_refusal(error.code, error.message)
+            })?;
+            let reorg = planned.reorg;
+            let old_table_id = stored.id;
+            let mut info = stored.clone_like_go();
+            let old_definitions = stored
+                .partition
+                .as_ref()
+                .filter(|partition| partition.read().enable)
+                .map(|partition| partition.read().definitions.snapshot())
+                .unwrap_or_default();
+            // Go's final state: the definitions the job added replace the ones
+            // it dropped ...
+            let (dropped, added) = match (&planned.stored, info.partition.as_ref()) {
+                (Some(final_metadata), Some(current)) if reorg.new_table_id.is_none() => {
+                    let rebuilt = crate::table_info_build::partition_info(final_metadata);
+                    let final_definitions = rebuilt.definitions.snapshot();
+                    current.write().definitions = final_definitions.clone().into();
+                    let kept =
+                        |id: i64| old_definitions.iter().any(|definition| definition.id == id);
+                    (
+                        old_definitions
+                            .iter()
+                            .filter(|definition| reorg.source_ids.contains(&definition.id))
+                            .map(|definition| definition.clone_like_go())
+                            .collect::<Vec<_>>(),
+                        final_definitions
+                            .into_iter()
+                            .filter(|definition| !kept(definition.id))
+                            .collect::<Vec<_>>(),
+                    )
+                }
+                (Some(final_metadata), _) => {
+                    let rebuilt = crate::table_info_build::partition_info(final_metadata);
+                    let added = rebuilt.definitions.snapshot();
+                    info.partition = Some(GoShared::new(rebuilt));
+                    (old_definitions.clone(), added)
+                }
+                (None, _) => {
+                    info.partition = None;
+                    (old_definitions.clone(), Vec::new())
+                }
+            };
+            // ... every recreated index moves to the end under its new id
+            // (Go appends the duplicate and drops the original) ...
+            for recreated in &reorg.recreated_indexes {
+                let Some(position) = info
+                    .indices
+                    .iter_deref()
+                    .position(|index| index.read().id == recreated.old_id)
+                else {
+                    continue;
+                };
+                let index = info
+                    .indices
+                    .get(position)
+                    .expect("the position was just found")
+                    .read()
+                    .clone_like_go();
+                info.indices.delete_go(position, position + 1);
+                let mut index = index;
+                index.id = recreated.new_id;
+                index.global = recreated.global;
+                index.global_index_version = recreated.global_index_version;
+                info.max_index_id = info.max_index_id.max(index.id);
+                info.indices.push_go(index);
+            }
+            // ... and PARTITION BY / REMOVE PARTITIONING give the table its
+            // `NewTableID`, carrying the auto-id counters across.
+            let mut old_physical_ids = reorg.source_ids.clone();
+            if let Some(new_table_id) = reorg.new_table_id {
+                writes.push(BufferMutation::delete(key::table_kv_key(
+                    db_id,
+                    old_table_id,
+                ))?);
+                for key_for in [
+                    key::auto_table_id_kv_key as fn(i64, i64) -> Vec<u8>,
+                    key::auto_increment_id_kv_key,
+                    key::auto_random_table_id_kv_key,
+                ] {
+                    if let Some(value) = snapshot.get(&key_for(db_id, old_table_id))? {
+                        writes.push(BufferMutation::set(key_for(db_id, new_table_id), value)?);
+                    }
+                }
+                if old_physical_ids.first() != Some(&old_table_id) {
+                    old_physical_ids.push(old_table_id);
+                }
+                info.id = new_table_id;
+            }
+            check_table_info_valid(&info)?;
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(BufferMutation::set(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            let new_physical_ids = match reorg.new_table_id {
+                Some(new_table_id) if info.partition.is_none() => vec![new_table_id],
+                _ => added.iter().map(|definition| definition.id).collect(),
+            };
+            if !new_physical_ids.is_empty() {
+                // Go `buildPlacementAffects`, both lists padded to one length.
+                let width = old_physical_ids.len().max(new_physical_ids.len());
+                diff.affected_options = GoSharedPointerSlice::from(
+                    (0..width)
+                        .map(|offset| tidb_model::AffectedOption {
+                            old_table_id: old_physical_ids.get(offset).copied().unwrap_or(0),
+                            table_id: new_physical_ids.get(offset).copied().unwrap_or(0),
+                            ..tidb_model::AffectedOption::default()
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+            diff.action_type = match action.as_ref() {
+                tidb_ast::AlterPartitionAction::Reorganize { .. } => {
+                    ActionType::ACTION_REORGANIZE_PARTITION
+                }
+                tidb_ast::AlterPartitionAction::Repartition(_) => {
+                    ActionType::ACTION_ALTER_TABLE_PARTITIONING
+                }
+                _ => ActionType::ACTION_REMOVE_PARTITIONING,
+            };
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+            if reorg.new_table_id.is_some() {
+                diff.old_table_id = old_table_id;
+            }
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                let event = match diff.action_type {
+                    ActionType::ACTION_REORGANIZE_PARTITION => {
+                        SchemaChangeEvent::reorganize_partitions(
+                            info.clone_like_go(),
+                            event_partition_info(added),
+                            event_partition_info(dropped),
+                        )
+                    }
+                    ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
+                        SchemaChangeEvent::add_partitioning(
+                            old_table_id,
+                            info.clone_like_go(),
+                            event_partition_info(added),
+                        )
+                    }
+                    _ => SchemaChangeEvent::remove_partitioning(
+                        old_table_id,
+                        info.clone_like_go(),
+                        event_partition_info(dropped),
+                    ),
+                };
+                schema_change_events.push((-1, event));
+            }
+            if let Some(warning) = planned.warning {
+                warnings.push((DdlWarningLevel::Warning, 1105, warning.to_owned()));
+            }
+            if let Some((original, replacement)) = planned.interval_rewrite {
+                context.0.rewrite_ddl_job_query(original, replacement);
+            }
+            partition_reorg = Some(PartitionReorgStep {
+                table: Box::new(stored.clone_like_go()),
+                reorg,
+                context: context.clone(),
+            });
         }
         DdlStatement::AddPartitions { schema, table, sql }
         | DdlStatement::DropPartitions { schema, table, sql } => {
@@ -11821,6 +12148,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         column_reorgs,
         foreign_key_checks,
         cache_table_check,
+        partition_reorg,
         mdl_info_update,
         exchange_partition_label_swap,
         warnings,

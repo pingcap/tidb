@@ -321,7 +321,8 @@ impl KvTable {
 /// What Go `onReorganizePartition` leaves behind once its job is done,
 /// applied in one synchronous step: REORGANIZE PARTITION, `ALTER TABLE ...
 /// PARTITION BY` and REMOVE PARTITIONING.
-pub(crate) struct PartitionReorg {
+#[derive(Clone, Debug)]
+pub struct PartitionReorg {
     /// The physical tables whose rows move, in the order Go backfills them:
     /// the dropped definitions in definition order, or the table itself when
     /// it was not partitioned.
@@ -344,9 +345,13 @@ pub(crate) struct PartitionReorg {
 
 /// One index `onReorganizePartition` duplicates (`AllocateIndexID`) and
 /// whose old copy it drops at the end.
-pub(crate) struct RecreatedIndex {
+#[derive(Clone, Debug)]
+pub struct RecreatedIndex {
+    /// The index's id before the change, whose entries are dropped.
     pub old_id: i64,
+    /// The duplicate's id (`AllocateIndexID`).
     pub new_id: i64,
+    /// Whether the duplicate is global.
     pub global: bool,
     /// Go `setGlobalIndexVersion` for the duplicate.
     pub global_index_version: u8,
@@ -364,7 +369,7 @@ impl KvTable {
     /// partitions after EXCHANGE PARTITION: when a row lands on a record key
     /// another moved row already holds, Go skips it if the stored bytes are
     /// the same and otherwise gives it a new `_tidb_rowid`.
-    pub(crate) fn reorganize_partitions(
+    pub fn reorganize_partitions(
         &mut self,
         reorg: PartitionReorg,
         ctx: &crate::StmtContext,

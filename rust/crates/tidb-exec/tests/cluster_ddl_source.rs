@@ -4084,18 +4084,41 @@ fn workload_repository_partition_changes_use_cluster_ddl() {
     assert_eq!(names, ["p20260831", "p20260901"]);
 }
 
+/// Go `AlterTablePartitioning` / `onReorganizePartition`: PARTITION BY on an
+/// existing table publishes the table under its `NewTableID`, partitioned,
+/// and owes the move of every row into the new partitions.
 #[test]
-fn cluster_repartition_has_no_direct_metadata_plan() {
-    for sql in [
+fn cluster_repartition_publishes_the_new_table_and_owes_the_row_move() {
+    let mut store = bootstrapped();
+    let created = plan(&mut store, "CREATE TABLE u6.t (a INT)", 470_100_010);
+    let old_id = created.created_id.expect("CREATE TABLE allocates an id");
+    apply(&mut store, &created);
+    let write = plan(
+        &mut store,
         "ALTER TABLE u6.t PARTITION BY HASH(a) PARTITIONS 2",
-        "ALTER TABLE u6.t PARTITION BY RANGE(a) \
-         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
-    ] {
-        let parsed = tidb_parser::parse(sql).expect("Go repartition syntax parses");
-        // This is a containment boundary, not a Go parity claim: the complete
-        // durable reorganization owner must precede a replacement live route.
-        assert!(lower_ddl(&parsed, "u6").unwrap().is_none(), "{sql}");
-    }
+        470_100_011,
+    );
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_ALTER_TABLE_PARTITIONING
+    );
+    assert_eq!(write.diff.old_table_id, old_id);
+    let new_id = write.diff.table_id;
+    assert_ne!(new_id, old_id);
+    let stored = stored_table(&write, new_id);
+    assert_eq!(
+        stored["partition"]["definitions"]
+            .as_array()
+            .expect("the new table is partitioned")
+            .len(),
+        2
+    );
+    let step = write
+        .partition_reorg
+        .as_ref()
+        .expect("the rows move in the DDL transaction");
+    assert_eq!(step.reorg.source_ids, [old_id]);
+    assert_eq!(step.reorg.new_table_id, Some(new_id));
 }
 
 #[test]

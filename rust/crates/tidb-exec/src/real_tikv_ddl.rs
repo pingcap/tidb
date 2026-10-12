@@ -530,6 +530,7 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     if !write.column_reorgs.is_empty()
         || !write.foreign_key_checks.is_empty()
         || write.cache_table_check.is_some()
+        || write.partition_reorg.is_some()
     {
         transaction.finish_without_writes()?;
         return Err(ClusterDdlError::BackfillUnavailable);
@@ -691,6 +692,22 @@ pub trait IndexBackfiller {
         _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
         Err(cache_table_check_unavailable())
+    }
+
+    /// Go `doPartitionReorgWork` and the drop of the replaced data: every row
+    /// of the source physical tables copied into the partition the new
+    /// definitions route it to, the indexes rebuilt for them.
+    fn stage_partition_reorg(
+        &self,
+        _step: &crate::cluster_ddl::PartitionReorgStep,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        Err(LockSqlError {
+            code: 1105,
+            state: *b"HY000",
+            message: "this path cannot move a table's rows between partitions".to_owned(),
+        })
     }
 }
 
@@ -1559,6 +1576,7 @@ fn commit_cluster_ddl_with_backfill_once<
         || !write.column_reorgs.is_empty()
         || !write.foreign_key_checks.is_empty()
         || write.cache_table_check.is_some()
+        || write.partition_reorg.is_some()
         || write.exchange_partition_validation.is_some()
         || write.check_constraint_validation.is_some()
     {
@@ -1613,6 +1631,11 @@ fn commit_cluster_ddl_with_backfill_once<
                     if let Some(table) = &write.cache_table_check {
                         backfiller
                             .stage_cache_table_check(table, Arc::clone(&handle), &buffer)
+                            .map_err(ClusterDdlError::IndexBackfill)?;
+                    }
+                    if let Some(step) = &write.partition_reorg {
+                        backfiller
+                            .stage_partition_reorg(step, Arc::clone(&handle), &buffer)
                             .map_err(ClusterDdlError::IndexBackfill)?;
                     }
                     if let Some(validation) = &write.exchange_partition_validation {

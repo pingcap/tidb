@@ -1767,7 +1767,7 @@ fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
 /// carries its own MySQL code (1365 for a zero divisor under
 /// `ERROR_FOR_DIVISION_BY_ZERO`), and rendering it as a generic parse failure
 /// would replace the code an application branches on.
-pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
+pub fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
         crate::kv_table::KvTableError::Storage(error) => error.into(),
         crate::kv_table::KvTableError::ColumnCast(error) => {

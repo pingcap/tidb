@@ -31,19 +31,6 @@ use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec, Range
 const STATS_OUTDATED_RELATED: &str = "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now";
 const STATS_OUTDATED_NEW: &str = "The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now";
 
-fn kv_table<'a>(
-    catalog: &'a Catalog,
-    database: &str,
-    table_name: &str,
-) -> Result<&'a crate::KvTable, DriverError> {
-    match catalog.table_in(database, table_name) {
-        Some(crate::TableEntry::Kv(table)) => Ok(table),
-        _ => Err(DriverError::unsupported(
-            "ALTER TABLE ... PARTITION needs a storage-backed table",
-        )),
-    }
-}
-
 fn visible_names_and_types(table: &crate::KvTable) -> (Vec<String>, Vec<FieldType>) {
     table
         .visible_columns()
@@ -59,21 +46,82 @@ fn handle_offsets(table: &crate::KvTable) -> Vec<usize> {
     }
 }
 
-/// Go `handlePartitionPlacement`: every policy a new definition names must
-/// exist, and the reference records its id.
-fn resolve_placement(
-    catalog: &Catalog,
-    definitions: &mut [PartitionDef],
-) -> Result<(), DriverError> {
-    for definition in definitions {
-        if let Some(reference) = definition.placement_policy.as_mut() {
-            let Some(found) = catalog.policy(reference.name.original()) else {
-                return Err(DriverError::PlacementPolicyNotExists(
-                    reference.name.original().to_owned(),
-                ));
-            };
-            reference.id = found.id;
+/// What a partition reorganization needs from the catalog that owns the
+/// table: the ids Go's submitter allocates, and the placement policies a new
+/// definition may name.
+pub trait ReorgHost {
+    /// Go `genGlobalIDs`, one id.
+    fn allocate_table_id(&mut self) -> i64;
+    /// Go `handlePartitionPlacement`: every policy a new definition names
+    /// must exist, and the reference records its id.
+    fn resolve_placement(&self, definitions: &mut [PartitionDef]) -> Result<(), DriverError>;
+}
+
+/// A partition reorganization planned against the table before it: Go's
+/// executor checks and the job's first state, and what `onReorganizePartition`
+/// leaves behind once the job is done.
+pub struct PartitionReorgPlan {
+    /// The data step and the partitioning afterwards.
+    pub reorg: PartitionReorg,
+    /// Go `rewritePartitionQueryString`: INTERVAL sugar's job query records
+    /// the partitions it generated, as (written, generated) text.
+    pub interval_rewrite: Option<(String, String)>,
+    /// The warning the job raises.
+    pub warning: Option<&'static str>,
+    /// The partition metadata the table stores afterwards, rendered as Go
+    /// stores it (folded COLUMNS bounds, written expression bounds), its ids
+    /// those of [`PartitionReorg::partition`]; `None` once partitioning is
+    /// removed.
+    pub stored: Option<table_partition::StoredPartitionMetadata>,
+}
+
+struct CatalogReorgHost<'a>(&'a mut Catalog);
+
+impl ReorgHost for CatalogReorgHost<'_> {
+    fn allocate_table_id(&mut self) -> i64 {
+        self.0.allocate_table_id()
+    }
+
+    fn resolve_placement(&self, definitions: &mut [PartitionDef]) -> Result<(), DriverError> {
+        for definition in definitions {
+            if let Some(reference) = definition.placement_policy.as_mut() {
+                let Some(found) = self.0.policy(reference.name.original()) else {
+                    return Err(DriverError::PlacementPolicyNotExists(
+                        reference.name.original().to_owned(),
+                    ));
+                };
+                reference.id = found.id;
+            }
         }
+        Ok(())
+    }
+}
+
+/// The in-process owner: plans against its own table, then applies the plan
+/// to it.
+fn run_in_catalog(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    ctx: &crate::StmtContext,
+    plan: impl FnOnce(&crate::KvTable, &mut dyn ReorgHost) -> Result<PartitionReorgPlan, DriverError>,
+) -> Result<(), DriverError> {
+    let table = match catalog.table_in(database, table_name) {
+        Some(crate::TableEntry::Kv(table)) => std::sync::Arc::clone(table),
+        _ => {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... PARTITION needs a storage-backed table",
+            ))
+        }
+    };
+    let planned = plan(&table, &mut CatalogReorgHost(catalog))?;
+    drop(table);
+    apply_reorg(catalog, database, table_name, planned.reorg, ctx)?;
+    if let Some((original, replacement)) = planned.interval_rewrite {
+        ctx.rewrite_ddl_job_query(original, replacement);
+    }
+    if let Some(warning) = planned.warning {
+        ctx.append_warning_parts(1105, warning);
     }
     Ok(())
 }
@@ -167,6 +215,19 @@ fn existing_method(partition: &PartitionSpec) -> Result<PartitionMethod, DriverE
     })
 }
 
+/// The stored metadata for `spec`, each definition carrying its allocated id.
+fn stored_with_ids(
+    clause: &TablePartitioning,
+    spec: &PartitionSpec,
+    ctx: &crate::StmtContext,
+) -> Result<table_partition::StoredPartitionMetadata, DriverError> {
+    let mut stored = table_partition::stored_partition_metadata(clause, spec, ctx)?;
+    for (definition, built) in stored.definitions.iter_mut().zip(&spec.definitions) {
+        definition.id = built.id;
+    }
+    Ok(stored)
+}
+
 fn stored_definition(definition: &PartitionDef) -> StoredPartitionDefinition {
     StoredPartitionDefinition {
         id: definition.id,
@@ -230,8 +291,21 @@ pub(super) fn reorganize_partition_action(
     definitions: &[PartitionDefinition],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let (mut spec, source_ids, recreated, new_offset) = {
-        let table = kv_table(catalog, database, table_name)?;
+    run_in_catalog(catalog, database, table_name, ctx, |table, host| {
+        plan_reorganize_partition(table, names, definitions, ctx, host)
+    })
+}
+
+/// Go `ReorganizePartitions` and the `checkReorgPartitionDefs` battery,
+/// planned against `table`.
+pub fn plan_reorganize_partition(
+    table: &crate::KvTable,
+    names: &[String],
+    definitions: &[PartitionDefinition],
+    ctx: &crate::StmtContext,
+    host: &mut dyn ReorgHost,
+) -> Result<PartitionReorgPlan, DriverError> {
+    let (mut spec, source_ids, recreated, new_offset, clause) = {
         let Some(partition) = table.partition() else {
             return Err(DriverError::PartitionManagementOnNonpartitioned);
         };
@@ -375,20 +449,16 @@ pub(super) fn reorganize_partition_action(
                 return Err(DriverError::PartitionRangeNotIncreasing);
             }
         }
-        resolve_placement(
-            catalog,
-            &mut spec.definitions[new_offset..new_offset + definitions.len()],
-        )?;
+        host.resolve_placement(&mut spec.definitions[new_offset..new_offset + definitions.len()])?;
         let source_ids = dropped.iter().map(|ordinal| old[*ordinal].id).collect();
         let recreated = recreated_indexes(table, |index| index.global);
-        (spec, source_ids, recreated, new_offset)
+        (spec, source_ids, recreated, new_offset, clause)
     };
     for definition in &mut spec.definitions[new_offset..new_offset + definitions.len()] {
-        definition.id = catalog.allocate_table_id();
+        definition.id = host.allocate_table_id();
     }
     // Go's reorganized table: the same method over the new definitions only.
     let routing = {
-        let table = kv_table(catalog, database, table_name)?;
         let (names, types) = visible_names_and_types(table);
         let partition = table.partition().expect("checked above");
         let kind = match partition.kind {
@@ -423,21 +493,19 @@ pub(super) fn reorganize_partition_action(
             &types,
         )?
     };
-    apply_reorg(
-        catalog,
-        database,
-        table_name,
-        PartitionReorg {
+    let stored = stored_with_ids(&clause, &spec, ctx)?;
+    Ok(PartitionReorgPlan {
+        reorg: PartitionReorg {
             source_ids,
             partition: Some(spec),
             routing: Some(routing),
             new_table_id: None,
             recreated_indexes: recreated,
         },
-        ctx,
-    )?;
-    ctx.append_warning_parts(1105, STATS_OUTDATED_RELATED);
-    Ok(())
+        interval_rewrite: None,
+        warning: Some(STATS_OUTDATED_RELATED),
+        stored: Some(stored),
+    })
 }
 
 /// Go `checkTwoRangeColumns` in both directions: neither bound is above the
@@ -474,8 +542,21 @@ pub(super) fn alter_table_partitioning_action(
     partitioning: &TablePartitioning,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    run_in_catalog(catalog, database, table_name, ctx, |table, host| {
+        plan_alter_table_partitioning(table, partitioning, ctx, host)
+    })
+}
+
+/// Go `AlterTablePartitioning`, planned against `table`: the table is
+/// repartitioned as `CREATE TABLE ... PARTITION BY` would partition it, and
+/// takes a new table id.
+pub fn plan_alter_table_partitioning(
+    table: &crate::KvTable,
+    partitioning: &TablePartitioning,
+    ctx: &crate::StmtContext,
+    host: &mut dyn ReorgHost,
+) -> Result<PartitionReorgPlan, DriverError> {
     let (mut spec, source_ids, recreated) = {
-        let table = kv_table(catalog, database, table_name)?;
         refuse_affinity(table, "ALTER TABLE PARTITIONING")?;
         let (names, types) = visible_names_and_types(table);
         let handle_offsets = handle_offsets(table);
@@ -507,7 +588,7 @@ pub(super) fn alter_table_partitioning_action(
             &mut spec,
             ctx,
         )?;
-        resolve_placement(catalog, &mut spec.definitions)?;
+        host.resolve_placement(&mut spec.definitions)?;
         // Go builds the reorganized table in the job's next state, and a KEY
         // method that resolved no column has no expression to build
         // (`extractPartitionExprColumns`).
@@ -537,9 +618,9 @@ pub(super) fn alter_table_partitioning_action(
     };
     // Go's submitter allocates the partition ids first, then NewTableID.
     for definition in &mut spec.definitions {
-        definition.id = catalog.allocate_table_id();
+        definition.id = host.allocate_table_id();
     }
-    let new_table_id = catalog.allocate_table_id();
+    let new_table_id = host.allocate_table_id();
     // Go `rewritePartitionQueryString`: INTERVAL sugar's job query records
     // the partitions it generated.
     let interval_rewrite = partitioning.method.interval.as_ref().map(|interval| {
@@ -553,24 +634,19 @@ pub(super) fn alter_table_partitioning_action(
             definitions.trim_start_matches('\n').to_owned(),
         )
     });
-    apply_reorg(
-        catalog,
-        database,
-        table_name,
-        PartitionReorg {
+    let stored = stored_with_ids(partitioning, &spec, ctx)?;
+    Ok(PartitionReorgPlan {
+        reorg: PartitionReorg {
             source_ids,
             partition: Some(spec),
             routing: None,
             new_table_id: Some(new_table_id),
             recreated_indexes: recreated,
         },
-        ctx,
-    )?;
-    if let Some((original, replacement)) = interval_rewrite {
-        ctx.rewrite_ddl_job_query(original, replacement);
-    }
-    ctx.append_warning_parts(1105, STATS_OUTDATED_NEW);
-    Ok(())
+        interval_rewrite,
+        warning: Some(STATS_OUTDATED_NEW),
+        stored: Some(stored),
+    })
 }
 
 /// Go `RemovePartitioning`, then the job: every row moves into the one
@@ -582,8 +658,17 @@ pub(super) fn remove_partitioning_action(
     table_name: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    run_in_catalog(catalog, database, table_name, ctx, |table, host| {
+        plan_remove_partitioning(table, host)
+    })
+}
+
+/// Go `RemovePartitioning`, planned against `table`.
+pub fn plan_remove_partitioning(
+    table: &crate::KvTable,
+    host: &mut dyn ReorgHost,
+) -> Result<PartitionReorgPlan, DriverError> {
     let (source_ids, recreated) = {
-        let table = kv_table(catalog, database, table_name)?;
         let Some(partition) = table.partition() else {
             return Err(DriverError::PartitionManagementOnNonpartitioned);
         };
@@ -595,18 +680,17 @@ pub(super) fn remove_partitioning_action(
             .collect::<Vec<_>>();
         (source_ids, recreated_indexes(table, |_| false))
     };
-    let new_table_id = catalog.allocate_table_id();
-    apply_reorg(
-        catalog,
-        database,
-        table_name,
-        PartitionReorg {
+    let new_table_id = host.allocate_table_id();
+    Ok(PartitionReorgPlan {
+        reorg: PartitionReorg {
             source_ids,
             partition: None,
             routing: None,
             new_table_id: Some(new_table_id),
             recreated_indexes: recreated,
         },
-        ctx,
-    )
+        interval_rewrite: None,
+        warning: None,
+        stored: None,
+    })
 }

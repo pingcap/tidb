@@ -12532,3 +12532,83 @@ fn a_pushed_correlated_condition_carries_each_iterations_binding() {
         [["2", "2", "2"]]
     );
 }
+
+/// Go `onReorganizePartition` on the production node: REORGANIZE PARTITION,
+/// `PARTITION BY` on an existing table and REMOVE PARTITIONING move every row
+/// to the physical table the new definitions route it to, rebuild the
+/// indexes, and give the table its `NewTableID` where Go does. This node
+/// refused all three.
+#[test]
+fn partition_reorganizations_move_rows_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1002)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.r (a INT, b INT, KEY ib (b)) PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.r VALUES (1, 1), (5, 5), (15, 15)",
+    );
+    session
+        .execute_write(
+            "ALTER TABLE test.r REORGANIZE PARTITION p0 INTO \
+             (PARTITION pa VALUES LESS THAN (4), PARTITION pb VALUES LESS THAN (10))",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1105",
+            "The statistics of related partitions will be outdated after reorganizing \
+             partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"
+        ]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a FROM test.r PARTITION (pb)")),
+        [["5"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a FROM test.r USE INDEX (ib) WHERE b > 0 ORDER BY a"
+        )),
+        [["1"], ["5"], ["15"]]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.r");
+
+    rows(
+        &mut session,
+        "CREATE TABLE test.h (a INT PRIMARY KEY, b INT, KEY ib (b))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.h VALUES (1, 1), (2, 2), (3, 3), (4, 4)",
+    );
+    session
+        .execute_write("ALTER TABLE test.h PARTITION BY HASH (a) PARTITIONS 2")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a FROM test.h PARTITION (p1) ORDER BY a"
+        )),
+        [["1"], ["3"]]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.h");
+    session
+        .execute_write("ALTER TABLE test.h REMOVE PARTITIONING")
+        .unwrap();
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.h"));
+    assert!(!created[0][1].contains("PARTITION"), "{}", created[0][1]);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a FROM test.h USE INDEX (ib) WHERE b > 0 ORDER BY a"
+        )),
+        [["1"], ["2"], ["3"], ["4"]]
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.h");
+}

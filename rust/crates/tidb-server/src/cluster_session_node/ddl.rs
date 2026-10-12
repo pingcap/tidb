@@ -2603,6 +2603,26 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             }
         })
     }
+    fn stage_partition_reorg(
+        &self,
+        step: &tidb_exec::cluster_ddl::PartitionReorgStep,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let mut table = cluster_table(&step.table, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?;
+        table
+            .reorganize_partitions(step.reorg.clone(), &step.context.0)
+            .map_err(|error| {
+                let error = tidb_executor::driver::kv_write_error(error).to_mysql_error();
+                LockSqlError {
+                    code: error.code,
+                    state: error.state,
+                    message: error.message,
+                }
+            })
+    }
     fn stage_cache_table_check(
         &self,
         table: &tidb_model::TableInfo,

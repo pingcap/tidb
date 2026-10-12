@@ -341,6 +341,10 @@ pub mod job_history;
 pub mod label_rules;
 mod partition_interval;
 mod partition_reorg;
+pub use partition_reorg::{
+    plan_alter_table_partitioning, plan_remove_partitioning, plan_reorganize_partition,
+    PartitionReorgPlan, ReorgHost,
+};
 pub mod placement_policy;
 pub mod preprocess;
 mod region_split;

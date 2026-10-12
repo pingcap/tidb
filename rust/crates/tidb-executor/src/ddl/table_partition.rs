@@ -2247,6 +2247,24 @@ pub fn build_partition_metadata(
         .partitioning
         .as_ref()
         .expect("a spec was built, so the clause is there");
+    Ok(Some((
+        stored_partition_metadata(partitioning, &spec, ctx)?,
+        spec,
+    )))
+}
+
+/// The STORED partition metadata a partitioning clause and the routing spec
+/// it built describe (Go `buildTablePartitionInfo` and
+/// `buildPartitionDefinitionsInfo`), the definition ids left at zero.
+///
+/// # Errors
+///
+/// A bound that cannot be rendered back.
+pub fn stored_partition_metadata(
+    partitioning: &tidb_ast::TablePartitioning,
+    spec: &PartitionSpec,
+    ctx: &crate::StmtContext,
+) -> Result<StoredPartitionMetadata, DriverError> {
     let method = &partitioning.method;
     // Go dispatches the stored shape on whether an EXPRESSION was written:
     // `pi.Expr` for one, `pi.Columns` for a written column list.
@@ -2269,8 +2287,8 @@ pub fn build_partition_metadata(
             (String::new(), written, false)
         }
     };
-    let definitions = stored_definitions_for(partitioning, &spec, ctx)?;
-    let built = StoredPartitionMetadata {
+    let definitions = stored_definitions_for(partitioning, spec, ctx)?;
+    Ok(StoredPartitionMetadata {
         kind: method.kind,
         // Every method this tier builds a spec for is one Go enables; the
         // ones Go stores disabled it refuses outright, above.
@@ -2280,8 +2298,7 @@ pub fn build_partition_metadata(
         columns,
         is_empty_columns,
         definitions,
-    };
-    Ok(Some((built, spec)))
+    })
 }
 
 /// The stored `LessThan`/`InValues` TEXT for each definition.

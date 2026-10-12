@@ -1022,7 +1022,7 @@ fn partition_refusal(error: tidb_executor::DriverError) -> DdlAdmissionError {
 }
 
 /// The stored `model.PartitionInfo` for a built clause.
-fn partition_info(
+pub(crate) fn partition_info(
     metadata: &tidb_executor::ddl::StoredPartitionMetadata,
 ) -> tidb_model::partition::PartitionInfo {
     let mut partition = tidb_model::partition::PartitionInfo {
