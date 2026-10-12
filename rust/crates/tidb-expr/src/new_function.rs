@@ -334,6 +334,8 @@ pub fn new_function_impl(
                 || ret_type.code() == FieldTypeCode::Unspecified
         })
         .unwrap_or(ret_type);
+    let mut ret_type = ret_type;
+    crate::rewriter::result_type::stamp_builtin_return_flags(func_name, &func_args, &mut ret_type);
 
     let function = ScalarFunction::new(
         CiString::new(if matches!(registered_name, "date_add" | "date_sub") {

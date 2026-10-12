@@ -484,6 +484,40 @@ pub(super) fn int_literal_type(printed_len: usize, unsigned: bool) -> FieldType 
     ft
 }
 
+/// Go `types.DefaultTypeForValue` for a `float64`: a binary, NOT NULL
+/// `DOUBLE` as wide as the shortest printed form and of unspecified scale.
+pub(super) fn float_literal_type(value: f64) -> FieldType {
+    let mut ft = FieldType::new(FieldTypeCode::Double);
+    ft.set_flen(tidb_datatype::go_strconv::format_float(value, b'f', -1, 64).len() as i64);
+    ft.set_decimal(-1);
+    set_binary_charset(&mut ft);
+    ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    ft
+}
+
+/// Go `types.DefaultTypeForValue` for a `nil`: the only literal that is not
+/// NOT NULL, typed `NULL`, zero wide, binary.
+pub(super) fn null_literal_type() -> FieldType {
+    let mut ft = FieldType::new(FieldTypeCode::Null);
+    ft.set_flen(0);
+    ft.set_decimal(0);
+    set_binary_charset(&mut ft);
+    ft
+}
+
+/// Go `types.DefaultTypeForValue` for a `bool`: a one-wide, binary, NOT NULL
+/// `BIGINT` that remembers it was boolean.
+pub(super) fn bool_literal_type() -> FieldType {
+    let mut ft = FieldType::new(FieldTypeCode::LongLong);
+    ft.set_flen(1);
+    ft.set_decimal(0);
+    set_binary_charset(&mut ft);
+    ft.add_flags(
+        tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::IS_BOOLEAN,
+    );
+    ft
+}
+
 /// Go `types.DefaultTypeForValue` for a `BitLiteral`/`HexLiteral`: a binary
 /// `VarString` three bytes wide per literal byte. Only the hex form is
 /// unsigned, which is what makes `0x41 + 0` read the bytes as a number.
@@ -516,7 +550,42 @@ pub(super) fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType 
 pub(crate) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     let mut ft = builtin_return_type_before_ret_tp(name, args)?;
     promote_wide_string_result(&mut ft);
+    stamp_builtin_return_flags(name, args, &mut ft);
     Some(ft)
+}
+
+/// The flag half of what every Go builtin's return type goes through:
+/// `newReturnFieldTypeForBaseBuiltinFunc` stamps `BinaryFlag` on every
+/// non-string result (JSON included), and `adjustNullFlagForReturnType` then
+/// settles NOT NULL by function name -- `isnull`/`nulleq` are always NOT NULL,
+/// `div`/`intdiv`/`mod` always nullable (division by zero), and
+/// `plus`/`minus`/`mul` NOT NULL exactly when every argument is. Applied to the
+/// ARGUMENTS the function was built over, so a caller that wraps its arguments
+/// in casts calls this after wrapping, as Go does.
+///
+/// Idempotent: it only adds `BINARY` and sets/clears `NOT_NULL`.
+pub(crate) fn stamp_builtin_return_flags(name: &str, args: &[Expression], ft: &mut FieldType) {
+    use tidb_datatype::{EvalType, FieldTypeFlags};
+    if !matches!(ft.eval_type(), EvalType::String) && ft.code() != FieldTypeCode::Null {
+        ft.add_flags(FieldTypeFlags::BINARY);
+    }
+    let not_null = |argument: &Expression| {
+        argument
+            .static_type()
+            .is_some_and(|ft| ft.flags() & FieldTypeFlags::NOT_NULL != 0)
+    };
+    match name {
+        "isnull" | "nulleq" => ft.add_flags(FieldTypeFlags::NOT_NULL),
+        "div" | "intdiv" | "mod" => ft.del_flags(FieldTypeFlags::NOT_NULL),
+        "plus" | "minus" | "mul" => {
+            if args.iter().all(not_null) {
+                ft.add_flags(FieldTypeFlags::NOT_NULL);
+            } else {
+                ft.del_flags(FieldTypeFlags::NOT_NULL);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Go `baseBuiltinFunc.getRetTp` (`pkg/expression/builtin.go`), the step every
@@ -2407,9 +2476,12 @@ fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
         // `getFunction`'s ETInt arm: `bf.tp.AddFlag(resFieldType.GetFlag())`
         // (`builtin_compare.go:523`), which is the ONLY arm that carries the
         // aggregate's flags onto the result -- so an all-unsigned GREATEST
-        // reports UNSIGNED and every other arm does not.
-        if merged.eval_type() == tidb_datatype::EvalType::Int && aggregated.is_unsigned() {
-            merged = merged.with_added_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        // reports UNSIGNED and every other arm does not. It adds the WHOLE
+        // mask: NOT NULL when every argument is, and whatever else the first
+        // argument's type carried (`GREATEST(a, b)` over a column reads
+        // `NO_DEFAULT_VALUE` too, as the oracle's wire flags show).
+        if merged.eval_type() == tidb_datatype::EvalType::Int {
+            merged = merged.with_added_flags(aggregated.flags());
         }
         return Some(merged);
     }

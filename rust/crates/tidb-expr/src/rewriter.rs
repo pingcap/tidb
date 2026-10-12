@@ -1005,7 +1005,7 @@ fn binary_expression(
     .or_else(|| crate::builtin_compare::infer_compare_type(name))
     .or_else(|| crate::builtin_op::infer_op_type(name));
     match ret_type {
-        Some(ret_type) => {
+        Some(mut ret_type) => {
             let mut args = vec![left, right];
             if matches!(name, "plus" | "minus" | "mul" | "div" | "mod") {
                 match ret_type.eval_type() {
@@ -1132,6 +1132,9 @@ fn binary_expression(
                     resolver.fold_constant(argument, ConstantFoldMode::Normal);
                 }
             }
+            // Go `adjustNullFlagForReturnType` runs on the arguments AFTER the
+            // implicit casts wrapped them.
+            result_type::stamp_builtin_return_flags(name, &args, &mut ret_type);
             if crate::builtin_compare::infer_compare_type(name).is_some() {
                 if let Some(ctx) = resolver.comparison_context() {
                     let mut expression = Expression::ScalarFunction(ScalarFunction::new(
@@ -1252,7 +1255,11 @@ fn wrap_case_branch(
     target: &FieldType,
     connection: (&str, &str),
 ) -> Result<(Expression, bool), EvalError> {
-    let already = branch.static_type().is_some_and(|source| source == target);
+    // Go `FieldType.Equal`: every flag but UNSIGNED is ignored, so a branch
+    // that merely differs in NOT NULL is passed through uncast.
+    let already = branch
+        .static_type()
+        .is_some_and(|source| source.equal(target));
     let was_cast = is_newly_built_cast(&branch);
     let wrapped = match target.eval_type() {
         EvalType::Int => wrap_with_cast_as_int(branch, Some(target))?,
@@ -1575,6 +1582,20 @@ fn rewrite_expr_resolved_inner(
         });
     }
     let mut built = rewrite_leaf(expr, resolver)?;
+    // Go stamps every builtin's return type as it is constructed (binary on a
+    // non-string result, NOT NULL by `adjustNullFlagForReturnType`); the arms
+    // above that build their own `ScalarFunction` are covered here, on the
+    // node this call produced -- its operands were stamped by their own
+    // rewrites.
+    if let Expression::ScalarFunction(function) = &mut built {
+        if let Some(ret_type) = function.ret_type.as_mut() {
+            result_type::stamp_builtin_return_flags(
+                &function.func_name.lowercase().to_owned(),
+                &function.args,
+                ret_type,
+            );
+        }
+    }
     derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
     // Go FuncCastExpr calls BuildCastFunctionWithCheck directly, outside
     // newFunctionWithInit's try/disabled-fold counters. JSON casts alone
@@ -1936,26 +1957,30 @@ fn rewrite_leaf_literal(
                 int_literal_type(printed_len, unsigned),
             )))
         }
-        Expr::Float(value) => Ok(constant(Datum::Real(*value), FieldTypeCode::Double)),
+        Expr::Float(value) => Ok(Expression::Constant(Constant::new(
+            Datum::Real(*value),
+            result_type::float_literal_type(*value),
+        ))),
         // A `TRUE`/`FALSE` literal is `0`/`1` typed `bigint(1)` with
         // `IsBooleanFlag` (Go `DefaultTypeForValue` -> `KindMysqlBool`), so
         // `JSON_ARRAY(true)` is `[true]`, not `[1]`.
-        Expr::Bool(value) => {
-            let mut ft = FieldType::new(FieldTypeCode::LongLong);
-            ft.set_flen(1);
-            ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
-            Ok(Expression::Constant(Constant::new(
-                Datum::Int(i64::from(*value)),
-                ft,
-            )))
-        }
-        Expr::Null => Ok(constant(Datum::Null, FieldTypeCode::Null)),
+        Expr::Bool(value) => Ok(Expression::Constant(Constant::new(
+            Datum::Int(i64::from(*value)),
+            result_type::bool_literal_type(),
+        ))),
+        Expr::Null => Ok(Expression::Constant(Constant::new(
+            Datum::Null,
+            result_type::null_literal_type(),
+        ))),
         Expr::String(text) => {
             let (charset, collation) = resolver.connection_charset_info();
             let mut field_type = FieldType::new(FieldTypeCode::VarString);
             field_type.set_flen(text.len() as i64);
             field_type.set_charset_name(charset);
             field_type.set_collation_name(collation);
+            // Go `DefaultTypeForValue` adds NotNull for every non-nil value.
+            field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            field_type.set_decimal(-1);
             let datum =
                 Datum::new_collation_string(text.as_bytes().to_vec(), field_type.collation());
             Ok(Expression::Constant(Constant::new(datum, field_type)))
@@ -2786,12 +2811,22 @@ fn rewrite_leaf_compound(
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
             ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
-            let call = Expression::ScalarFunction(ScalarFunction::new(
+            let mut call = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(name),
                 ret_type.clone(),
                 vec![arg],
             ));
             if *not {
+                // Go's `notToExpression` builds the operator through
+                // `newFunction` first, which folds it BEFORE the `not` is
+                // built over it -- so `a IS NOT NULL` over a NOT NULL column
+                // is `not(0)`, a folded constant that is itself NOT NULL.
+                if let Expression::ScalarFunction(function) = &mut call {
+                    if let Some(ret_type) = function.ret_type.as_mut() {
+                        result_type::stamp_builtin_return_flags(name, &function.args, ret_type);
+                    }
+                }
+                resolver.fold_constant(&mut call, resolver.fold_mode());
                 return Ok(Expression::ScalarFunction(ScalarFunction::new(
                     CiString::new(unary_op_name(UnaryOp::Not)),
                     ret_type,

@@ -14110,3 +14110,81 @@ fn view_window_columns_describe_as_nullable() {
         ]
     );
 }
+
+/// The column flags a client reads are Go's `ConvertColumnInfo` over the
+/// plan's result types: `DefaultTypeForValue` makes every non-NULL literal NOT
+/// NULL, every non-string builtin result BINARY (`newReturnField...`), and
+/// `adjustNullFlagForReturnType` settles NOT NULL by function name. Every
+/// expectation below was measured on this branch's Go (low 16 bits of the
+/// column flag): `'a'`=1, `1e0`=129, `NULL`=128, `a+1`=129 over a NOT NULL
+/// `a`, `b+1`=128, `isnull(b)`=129, `abs(a)`/`length(a)`=128,
+/// `a IN (1,2)`=128, `a IS NOT NULL`=129, `LEAST(a,1)`=4225.
+#[test]
+fn result_column_flags_follow_gos_null_and_binary_stamps() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1033)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t (a INT NOT NULL, b INT)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO t VALUES (1, 1)")
+        .unwrap();
+    for (sql, flag) in [
+        ("SELECT 'a' FROM t", 1),
+        ("SELECT 1e0 FROM t", 129),
+        ("SELECT NULL FROM t", 128),
+        ("SELECT TRUE FROM t", 129),
+        ("SELECT a FROM t", 4097),
+        ("SELECT a + 1 FROM t", 129),
+        ("SELECT b + 1 FROM t", 128),
+        ("SELECT a + b FROM t", 128),
+        ("SELECT a DIV 1 FROM t", 128),
+        ("SELECT isnull(b) FROM t", 129),
+        ("SELECT a <=> b FROM t", 129),
+        ("SELECT abs(a) FROM t", 128),
+        ("SELECT length(a) FROM t", 128),
+        ("SELECT a IN (1, 2) FROM t", 128),
+        ("SELECT a BETWEEN 1 AND 2 FROM t", 128),
+        ("SELECT a IS NOT NULL FROM t", 129),
+        ("SELECT LEAST(a, 1) FROM t", 4225),
+        ("SELECT GREATEST(a, b) FROM t", 4224),
+    ] {
+        let mut result = session.execute(sql).unwrap();
+        let columns = crate::resultset_source::ResultSetSource::columns(result.source()).unwrap();
+        assert_eq!(columns[0].flag, flag, "{sql}");
+    }
+}
+
+/// Go's `FieldType.Equal` ignores every flag but UNSIGNED when a CASE branch
+/// is wrapped, so `mul(price, minus(1, discount))` over NOT NULL columns --
+/// which now carries NOT NULL like Go's `adjustNullFlagForReturnType` gives
+/// it -- is NOT cast to the CASE's own (nullable) `decimal(31,4)`. TPC-H Q8
+/// and Q14 rendered a `cast(..., decimal(31,4) BINARY)` Go does not have.
+#[test]
+fn case_branch_differing_only_in_not_null_is_not_cast() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1034)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE li (k INT NOT NULL, price DECIMAL(15,2) NOT NULL, \
+             disc DECIMAL(15,2) NOT NULL)",
+        )
+        .unwrap();
+    let plan = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT SUM(CASE WHEN k > 1 THEN price * (1 - disc) ELSE 0.0000 END) \
+         FROM li",
+    ));
+    let text = plan
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !text.contains("cast("),
+        "unexpected cast in the plan:\n{text}"
+    );
+}
