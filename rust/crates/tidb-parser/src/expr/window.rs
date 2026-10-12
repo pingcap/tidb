@@ -33,9 +33,9 @@ impl Parser {
     /// this is instead a window AGGREGATE ([`Expr::Window`], sharing this
     /// same argument-parsing shape and preserving `DISTINCT`).
     pub(crate) fn parse_aggregate(&mut self) -> PResult<Expr> {
-        let name = agg_canonical(&self.bump().text)
-            .expect("aggregate name")
-            .to_string();
+        let written = self.bump().text.clone();
+        let name = agg_canonical(&written).expect("aggregate name").to_string();
+        let window_name = window_name_as_written(&written);
         self.expect_op("(")?;
         if self.is_op("*") {
             self.bump();
@@ -45,7 +45,7 @@ impl Parser {
                 self.bump();
                 let over = self.parse_over_clause()?;
                 return Ok(Expr::Window {
-                    name,
+                    name: window_name,
                     args: vec![arg],
                     distinct: false,
                     ignore_nulls: false,
@@ -114,7 +114,7 @@ impl Parser {
             self.bump();
             let over = self.parse_over_clause()?;
             return Ok(Expr::Window {
-                name,
+                name: window_name,
                 args,
                 distinct,
                 ignore_nulls: false,
@@ -139,7 +139,8 @@ impl Parser {
     /// own doc for the exact arity of each. Optional `FROM FIRST|LAST` and
     /// `IGNORE|RESPECT NULLS` modifiers are preserved in the AST.
     pub(crate) fn parse_window_func(&mut self) -> PResult<Expr> {
-        let name = window_func_canonical(&self.bump().text)
+        let written = self.bump().text.clone();
+        let name = window_func_canonical(&written)
             .expect("window function name")
             .to_string();
         self.expect_op("(")?;
@@ -211,7 +212,7 @@ impl Parser {
         self.expect_kw("OVER")?;
         let over = self.parse_over_clause()?;
         Ok(Expr::Window {
-            name,
+            name: window_name_as_written(&written),
             args,
             distinct: false,
             ignore_nulls,
@@ -433,6 +434,18 @@ impl Parser {
 /// Returns the canonical restore name for a (supported) window function, or
 /// `None`. Scope: only the zero-argument ranking functions — a frame-based
 /// window function (`SUM(x) OVER (...)`, `LEAD`/`LAG`/...) is not modelled.
+/// Go `parseWindowFuncExpr`'s `Name`: the function name AS WRITTEN, except
+/// that the `STD`/`STDDEV`/`VARIANCE` synonyms become `STDDEV_POP`/`VAR_POP`.
+/// The spelling is observable: `NewWindowFuncDesc` matches its NOT NULL
+/// fixups against it case-sensitively.
+fn window_name_as_written(written: &str) -> String {
+    match written.to_ascii_lowercase().as_str() {
+        "std" | "stddev" => "STDDEV_POP".to_owned(),
+        "variance" => "VAR_POP".to_owned(),
+        _ => written.to_owned(),
+    }
+}
+
 pub(super) fn window_func_canonical(name: &str) -> Option<&'static str> {
     match name.to_ascii_uppercase().as_str() {
         "ROW_NUMBER" => Some("ROW_NUMBER"),

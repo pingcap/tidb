@@ -364,6 +364,7 @@ mod boot;
 mod ddl;
 mod ddl_job_history_store;
 mod ddl_notifier;
+mod non_transactional_dml;
 mod record_set;
 mod ru_stats_writer;
 pub(crate) mod schema_lease;
@@ -8432,6 +8433,11 @@ impl QuerySession for ClusterServerSession {
                 )));
             }
             StatementRoute::Ordinary => {}
+        }
+        if let Stmt::Dml(dml) = stmt {
+            if let tidb_ast::DmlStmt::Batch(batch) = dml.as_ref() {
+                return self.run_non_transactional_dml(batch);
+            }
         }
         let process_statement = self.session.retain_process_statement(sql);
         let resource_group = self.session.statement_resource_group(stmt).into_owned();

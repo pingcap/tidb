@@ -153,26 +153,166 @@ fn lower(value: &str) -> String {
     tidb_util::stringutil::go_to_lower(value)
 }
 
+/// One BATCH statement between the statements its host runs for it.
+///
+/// Go `HandleNonTransactionalDML` reads the shard column with
+/// `se.ExecuteInternal` and runs every job with `se.ExecuteStmt`: each is a
+/// statement of its own, so an auto-committed job publishes its writes before
+/// the next job reads, and a later job's failure leaves earlier ones
+/// committed. Only the host can run a statement through its transaction
+/// lifecycle, so the session hands each one out as a
+/// [`NonTransactionalStep`] and takes its outcome back as a
+/// [`NonTransactionalInput`].
+pub struct NonTransactionalDml {
+    stmt: BatchDmlStmt,
+    read_staleness: Option<String>,
+    shard_select_overrides: Option<(Option<String>, Option<String>)>,
+    phase: NonTransactionalPhase,
+}
+
+enum NonTransactionalPhase {
+    Start,
+    ShardSelect {
+        table_name: TableSource,
+        shard_column_info: Option<ShardColumnInfo>,
+        max_chunk_size: usize,
+    },
+    Jobs(Box<JobRun>),
+    Finished,
+}
+
+/// Go `runJobs`'s worker state over the built jobs.
+struct JobRun {
+    jobs: Vec<Job>,
+    shard_column: ColumnName,
+    shard_column_type: FieldType,
+    original_condition: Option<Expr>,
+    redact: String,
+    ignore_error: bool,
+    next: usize,
+    split_statements: Vec<String>,
+}
+
+/// The outcome of the step the host last ran.
+pub enum NonTransactionalInput {
+    /// The first step: nothing has run yet.
+    Start,
+    /// The shard SELECT's rows, or why it failed.
+    ShardRows(Result<Vec<Vec<Datum>>, DriverError>),
+    /// Whether the job statement succeeded.
+    JobDone(Result<(), DriverError>),
+}
+
+/// What the host runs next for a BATCH statement.
+pub enum NonTransactionalStep {
+    /// The shard column SELECT (Go `ExecuteInternal`); its rows come back as
+    /// [`NonTransactionalInput::ShardRows`].
+    ShardSelect(String),
+    /// One job's DML as a statement of its own (Go `ExecuteStmt`); its
+    /// outcome comes back as [`NonTransactionalInput::JobDone`].
+    Job(String),
+    /// The statement's own answer.
+    Done(StmtOutput),
+}
+
 impl Session {
-    /// Go `HandleNonTransactionalDML`, the entry point of a non-transactional
-    /// DML statement.
+    /// Go `HandleNonTransactionalDML` with every step run by this session
+    /// itself.
     pub(crate) fn run_non_transactional_dml(
         &mut self,
         stmt: &BatchDmlStmt,
     ) -> Result<StmtOutput, DriverError> {
+        let mut dml = self.begin_non_transactional_dml(stmt);
+        let mut input = NonTransactionalInput::Start;
+        let outcome = loop {
+            input = match self.non_transactional_step(&mut dml, input) {
+                Err(error) => break Err(error),
+                Ok(NonTransactionalStep::Done(output)) => break Ok(output),
+                Ok(NonTransactionalStep::ShardSelect(sql)) => NonTransactionalInput::ShardRows(
+                    self.run_with_columns(&sql).and_then(|output| match output {
+                        StmtOutput::Rows { rows, .. } => Ok(rows),
+                        _ => Err(plain_error(
+                            "Non-transactional DML, expecting 1 record set, but got 0",
+                        )),
+                    }),
+                ),
+                Ok(NonTransactionalStep::Job(sql)) => {
+                    NonTransactionalInput::JobDone(self.run_with_columns(&sql).map(|_| ()))
+                }
+            };
+        };
+        self.finish_non_transactional_dml(dml);
+        outcome
+    }
+
+    /// Opens one BATCH statement. Every opened statement must reach
+    /// [`Self::finish_non_transactional_dml`], which restores the variables
+    /// the statement overrides.
+    pub fn begin_non_transactional_dml(&mut self, stmt: &BatchDmlStmt) -> NonTransactionalDml {
         // NT-DML is a write operation and should not be affected by
         // read_staleness, which is supposed to affect only SELECT.
         let read_staleness = self.override_system_var("tidb_read_staleness", "0");
-        let mut stmt = stmt.clone();
-        let result = self.handle_non_transactional_dml(&mut stmt);
-        self.restore_system_var("tidb_read_staleness", read_staleness);
-        result
+        NonTransactionalDml {
+            stmt: stmt.clone(),
+            read_staleness,
+            shard_select_overrides: None,
+            phase: NonTransactionalPhase::Start,
+        }
     }
 
-    fn handle_non_transactional_dml(
+    /// Closes one BATCH statement, restoring the variables it overrode.
+    pub fn finish_non_transactional_dml(&mut self, mut dml: NonTransactionalDml) {
+        self.restore_shard_select_overrides(&mut dml);
+        self.restore_system_var("tidb_read_staleness", dml.read_staleness);
+    }
+
+    /// Advances the statement by the outcome of the last step.
+    pub fn non_transactional_step(
         &mut self,
-        stmt: &mut BatchDmlStmt,
-    ) -> Result<StmtOutput, DriverError> {
+        dml: &mut NonTransactionalDml,
+        input: NonTransactionalInput,
+    ) -> Result<NonTransactionalStep, DriverError> {
+        let phase = std::mem::replace(&mut dml.phase, NonTransactionalPhase::Finished);
+        match (phase, input) {
+            (NonTransactionalPhase::Start, NonTransactionalInput::Start) => {
+                self.start_non_transactional_dml(dml)
+            }
+            (
+                NonTransactionalPhase::ShardSelect {
+                    table_name,
+                    shard_column_info,
+                    max_chunk_size,
+                },
+                NonTransactionalInput::ShardRows(rows),
+            ) => {
+                self.restore_shard_select_overrides(dml);
+                let jobs =
+                    build_shard_jobs(&dml.stmt, rows?, shard_column_info.as_ref(), max_chunk_size)?;
+                let run = self.prepare_non_transactional_jobs(jobs, &dml.stmt, &table_name)?;
+                self.advance_non_transactional_jobs(dml, run)
+            }
+            (NonTransactionalPhase::Jobs(mut run), NonTransactionalInput::JobDone(outcome)) => {
+                let index = run.next;
+                if let Err(error) = outcome {
+                    run.jobs[index].err = Some(error);
+                }
+                run.next += 1;
+                if let Some(error) = non_transactional_job_failure(&run, index) {
+                    return Err(error);
+                }
+                self.advance_non_transactional_jobs(dml, run)
+            }
+            _ => Err(plain_error(
+                "a non-transactional DML step answered out of order",
+            )),
+        }
+    }
+
+    fn start_non_transactional_dml(
+        &mut self,
+        dml: &mut NonTransactionalDml,
+    ) -> Result<NonTransactionalStep, DriverError> {
+        let stmt = &mut dml.stmt;
         self.preprocess_non_transactional_dml(stmt)?;
         self.check_non_transactional_constraint(stmt)?;
 
@@ -187,22 +327,29 @@ impl Session {
 
         let max_chunk_size = self.max_chunk_size_for_non_transactional_dml();
         if stmt.dry_run == BatchDmlDryRun::Query {
-            return Ok(dry_run_results(stmt.dry_run, vec![select_sql]));
+            return Ok(NonTransactionalStep::Done(dry_run_results(
+                stmt.dry_run,
+                vec![select_sql],
+            )));
         }
-
-        let mut jobs = self.build_shard_jobs(
-            stmt,
-            &select_sql,
-            shard_column_info.as_ref(),
+        // A NT-DML is not a SELECT: the SelectLimit must not cut the read,
+        // and as a write it takes no max execution time.
+        let select_limit = self.override_system_var("sql_select_limit", &u64::MAX.to_string());
+        let max_execution_time = self.override_system_var("max_execution_time", "0");
+        dml.shard_select_overrides = Some((select_limit, max_execution_time));
+        dml.phase = NonTransactionalPhase::ShardSelect {
+            table_name,
+            shard_column_info,
             max_chunk_size,
-        )?;
-        let original_condition = where_expr(&stmt.dml).cloned();
-        let split_statements =
-            self.run_non_transactional_jobs(&mut jobs, stmt, &table_name, original_condition)?;
-        if stmt.dry_run == BatchDmlDryRun::SplitDml {
-            return Ok(dry_run_results(stmt.dry_run, split_statements));
+        };
+        Ok(NonTransactionalStep::ShardSelect(select_sql))
+    }
+
+    fn restore_shard_select_overrides(&mut self, dml: &mut NonTransactionalDml) {
+        if let Some((select_limit, max_execution_time)) = dml.shard_select_overrides.take() {
+            self.restore_system_var("sql_select_limit", select_limit);
+            self.restore_system_var("max_execution_time", max_execution_time);
         }
-        self.build_execute_results(&jobs)
     }
 
     /// The part of Go `core.Preprocess` the split statements show: every
@@ -570,108 +717,14 @@ impl Session {
     /// Go `buildShardJobs`: reads the shard values in `max_chunk_size`
     /// chunks, as Go's record set returns them, and cuts a job whenever it
     /// holds `LIMIT` rows and the next value differs from the job's end.
-    fn build_shard_jobs(
+    /// Go `runJobs`'s setup: the shard column's type every job bound is
+    /// restored as, and the condition each job narrows.
+    fn prepare_non_transactional_jobs(
         &mut self,
+        jobs: Vec<Job>,
         stmt: &BatchDmlStmt,
-        select_sql: &str,
-        shard_column_info: Option<&ShardColumnInfo>,
-        max_chunk_size: usize,
-    ) -> Result<Vec<Job>, DriverError> {
-        let collation = shard_column_info
-            .map(|info| info.field_type.collation())
-            // Go `collate.GetCollator("")` for `_tidb_rowid`.
-            .unwrap_or(tidb_datatype::Collation::Binary);
-        // A NT-DML is not a SELECT: the SelectLimit must not cut the read,
-        // and as a write it takes no max execution time.
-        let select_limit = self.override_system_var("sql_select_limit", &u64::MAX.to_string());
-        let max_execution_time = self.override_system_var("max_execution_time", "0");
-        let result = self.run_with_columns(select_sql);
-        self.restore_system_var("sql_select_limit", select_limit);
-        self.restore_system_var("max_execution_time", max_execution_time);
-        let rows = match result? {
-            StmtOutput::Rows { rows, .. } => rows,
-            _ => {
-                return Err(plain_error(
-                    "Non-transactional DML, expecting 1 record set, but got 0",
-                ));
-            }
-        };
-
-        let batch_size = usize::try_from(stmt.limit).unwrap_or(usize::MAX);
-        if batch_size == 0 {
-            return Err(plain_error(
-                "Non-transactional DML, batch size should be positive",
-            ));
-        }
-        let mut job_count = 0;
-        let mut jobs: Vec<Job> = Vec::new();
-        let mut current_size = 0;
-        let mut current_start = Datum::Null;
-        let mut current_end = Datum::Null;
-        let append_job = |jobs: &mut Vec<Job>, id, start, end, size| {
-            jobs.push(Job {
-                start,
-                end,
-                err: None,
-                job_id: id,
-                job_size: size,
-                sql: String::new(),
-            });
-        };
-        for chunk in rows.chunks(max_chunk_size.max(1)) {
-            if !jobs.is_empty() && chunk.len() + current_size < batch_size {
-                // Not enough data for a batch.
-                current_size += chunk.len();
-                current_end = chunk.last().map(|row| row[0].clone()).unwrap_or_default();
-                continue;
-            }
-            for row in chunk {
-                let value = row[0].clone();
-                if current_size == 0 {
-                    current_start = value.clone();
-                }
-                if current_size >= batch_size {
-                    let ordering = value
-                        .compare(&current_end, collation)
-                        .map_err(|error| plain_error(error.to_string()))?;
-                    if ordering != std::cmp::Ordering::Equal {
-                        job_count += 1;
-                        append_job(
-                            &mut jobs,
-                            job_count,
-                            current_start.clone(),
-                            current_end.clone(),
-                            current_size,
-                        );
-                        current_size = 0;
-                        current_start = value.clone();
-                    }
-                }
-                current_end = value;
-                current_size += 1;
-            }
-        }
-        // There's remaining work.
-        if current_size > 0 {
-            append_job(
-                &mut jobs,
-                job_count + 1,
-                current_start,
-                current_end,
-                current_size,
-            );
-        }
-        Ok(jobs)
-    }
-
-    /// Go `runJobs`: the single-threaded worker over the jobs' key ranges.
-    fn run_non_transactional_jobs(
-        &mut self,
-        jobs: &mut [Job],
-        stmt: &mut BatchDmlStmt,
         table_name: &TableSource,
-        original_condition: Option<Expr>,
-    ) -> Result<Vec<String>, DriverError> {
+    ) -> Result<Box<JobRun>, DriverError> {
         let shard_column = stmt
             .shard_column
             .as_deref()
@@ -697,61 +750,72 @@ impl Session {
             .map(|value| value.into_owned())
             .unwrap_or_else(|_| "OFF".to_owned());
         let ignore_error = self.session_bool("tidb_nontransactional_ignore_error", false);
+        Ok(Box::new(JobRun {
+            jobs,
+            shard_column,
+            shard_column_type,
+            original_condition: where_expr(&stmt.dml).cloned(),
+            redact,
+            ignore_error,
+            next: 0,
+            split_statements: Vec::new(),
+        }))
+    }
 
-        let total = jobs.len();
-        let mut split_statements = Vec::with_capacity(total);
-        for index in 0..total {
-            if stmt.dry_run == BatchDmlDryRun::SplitDml {
-                if index > 0 && index + 1 < total {
-                    continue;
+    /// Go `runJobs`: the single-threaded worker over the jobs' key ranges,
+    /// up to the next job the host has to run.
+    fn advance_non_transactional_jobs(
+        &self,
+        dml: &mut NonTransactionalDml,
+        mut run: Box<JobRun>,
+    ) -> Result<NonTransactionalStep, DriverError> {
+        let total = run.jobs.len();
+        while run.next < total {
+            let index = run.next;
+            let JobRun {
+                jobs,
+                shard_column,
+                shard_column_type,
+                original_condition,
+                ..
+            } = &mut *run;
+            if dml.stmt.dry_run == BatchDmlDryRun::SplitDml {
+                if index == 0 || index + 1 == total {
+                    let split = do_one_job(
+                        &mut jobs[index],
+                        &mut dml.stmt,
+                        shard_column,
+                        shard_column_type,
+                        original_condition.as_ref(),
+                    );
+                    run.split_statements.extend(split);
                 }
-                let split = do_one_job(
-                    &mut jobs[index],
-                    stmt,
-                    &shard_column,
-                    &shard_column_type,
-                    original_condition.as_ref(),
-                );
-                split_statements.extend(split);
             } else if let Some(sql) = do_one_job(
                 &mut jobs[index],
-                stmt,
-                &shard_column,
-                &shard_column_type,
+                &mut dml.stmt,
+                shard_column,
+                shard_column_type,
                 original_condition.as_ref(),
             ) {
                 let job = &mut jobs[index];
                 job.sql = sql;
                 let text = format!("/* job {}/{total} */ {}", job.job_id, job.sql);
-                if let Err(error) = self.run_with_columns(&text) {
-                    job.err = Some(error);
-                }
+                dml.phase = NonTransactionalPhase::Jobs(run);
+                return Ok(NonTransactionalStep::Job(text));
             }
-
-            let job = &jobs[index];
-            let Some(error) = &job.err else {
-                continue;
-            };
-            // If the first job failed, there is a large chance that all jobs
-            // will fail, so return early. Go annotates the cause, which its
-            // server strips before the client sees it.
-            if index == 0 {
-                return Err(error.clone());
-            }
-            if !ignore_error {
-                return Err(DriverError::DdlCoded {
-                    errno: ERR_NON_TRANSACTIONAL_JOB_FAILURE,
-                    message: format!(
-                        "non-transactional job failed, job id: {}, total jobs: {total}. job range: [{}, {}], job sql: {}, err: {error}",
-                        job.job_id,
-                        go_datum_string(&job.start),
-                        go_datum_string(&job.end),
-                        job.describe(&redact),
-                    ),
-                });
+            run.next += 1;
+            if let Some(error) = non_transactional_job_failure(&run, index) {
+                return Err(error);
             }
         }
-        Ok(split_statements)
+        if dml.stmt.dry_run == BatchDmlDryRun::SplitDml {
+            return Ok(NonTransactionalStep::Done(dry_run_results(
+                dml.stmt.dry_run,
+                std::mem::take(&mut run.split_statements),
+            )));
+        }
+        self.build_execute_results(&run.jobs)
+            .map(NonTransactionalStep::Done)
     }
 
     /// Go `buildExecuteResults`.
@@ -821,6 +885,112 @@ impl Session {
             let _ = self.vars.set_system_var_without_validation(name, previous);
         }
     }
+}
+
+/// Go `buildShardJobs` over the shard SELECT's rows: jobs of about `LIMIT`
+/// rows whose bounds never split one shard value.
+fn build_shard_jobs(
+    stmt: &BatchDmlStmt,
+    rows: Vec<Vec<Datum>>,
+    shard_column_info: Option<&ShardColumnInfo>,
+    max_chunk_size: usize,
+) -> Result<Vec<Job>, DriverError> {
+    let collation = shard_column_info
+        .map(|info| info.field_type.collation())
+        // Go `collate.GetCollator("")` for `_tidb_rowid`.
+        .unwrap_or(tidb_datatype::Collation::Binary);
+    let batch_size = usize::try_from(stmt.limit).unwrap_or(usize::MAX);
+    if batch_size == 0 {
+        return Err(plain_error(
+            "Non-transactional DML, batch size should be positive",
+        ));
+    }
+    let mut job_count = 0;
+    let mut jobs: Vec<Job> = Vec::new();
+    let mut current_size = 0;
+    let mut current_start = Datum::Null;
+    let mut current_end = Datum::Null;
+    let append_job = |jobs: &mut Vec<Job>, id, start, end, size| {
+        jobs.push(Job {
+            start,
+            end,
+            err: None,
+            job_id: id,
+            job_size: size,
+            sql: String::new(),
+        });
+    };
+    for chunk in rows.chunks(max_chunk_size.max(1)) {
+        if !jobs.is_empty() && chunk.len() + current_size < batch_size {
+            // Not enough data for a batch.
+            current_size += chunk.len();
+            current_end = chunk.last().map(|row| row[0].clone()).unwrap_or_default();
+            continue;
+        }
+        for row in chunk {
+            let value = row[0].clone();
+            if current_size == 0 {
+                current_start = value.clone();
+            }
+            if current_size >= batch_size {
+                let ordering = value
+                    .compare(&current_end, collation)
+                    .map_err(|error| plain_error(error.to_string()))?;
+                if ordering != std::cmp::Ordering::Equal {
+                    job_count += 1;
+                    append_job(
+                        &mut jobs,
+                        job_count,
+                        current_start.clone(),
+                        current_end.clone(),
+                        current_size,
+                    );
+                    current_size = 0;
+                    current_start = value.clone();
+                }
+            }
+            current_end = value;
+            current_size += 1;
+        }
+    }
+    // There's remaining work.
+    if current_size > 0 {
+        append_job(
+            &mut jobs,
+            job_count + 1,
+            current_start,
+            current_end,
+            current_size,
+        );
+    }
+    Ok(jobs)
+}
+
+/// `runJobs`'s verdict on one finished job: the error the statement fails
+/// with, or `None` to go on.
+fn non_transactional_job_failure(run: &JobRun, index: usize) -> Option<DriverError> {
+    let total = run.jobs.len();
+    let job = &run.jobs[index];
+    let error = job.err.as_ref()?;
+    // If the first job failed, there is a large chance that all jobs will
+    // fail, so return early. Go annotates the cause, which its server strips
+    // before the client sees it.
+    if index == 0 {
+        return Some(error.clone());
+    }
+    if run.ignore_error {
+        return None;
+    }
+    Some(DriverError::DdlCoded {
+        errno: ERR_NON_TRANSACTIONAL_JOB_FAILURE,
+        message: format!(
+            "non-transactional job failed, job id: {}, total jobs: {total}. job range: [{}, {}], job sql: {}, err: {error}",
+            job.job_id,
+            go_datum_string(&job.start),
+            go_datum_string(&job.end),
+            job.describe(&run.redact),
+        ),
+    })
 }
 
 /// Go `checkReadClauses`.

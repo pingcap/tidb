@@ -325,6 +325,12 @@ impl UnistoreConnections {
             session,
             output_names: Vec::new(),
         };
+        // A handshake naming no schema leaves the connection with none
+        // selected, as `mysql_connection` applies it: `connect (c, h, u,,)`
+        // answers `SHOW TABLES` with 1046.
+        if database.is_none() {
+            session.session.deselect_database();
+        }
         for setup in MYSQL_TESTER_CONNECTION_SETUP {
             session
                 .run_with_columns(setup)

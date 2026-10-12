@@ -94,7 +94,11 @@ impl WindowFuncDesc {
         let mut base = BaseFuncDesc::new(ctx, &lowered, args)?;
 
         // Some window functions' return type must be nullable, or must not be.
-        match lowered.as_str() {
+        // Go switches on the name AS WRITTEN here (the argument checks above
+        // lower it), and its parser keeps the spelling: `row_number()` is NOT
+        // NULL while `ROW_NUMBER()` -- the spelling every stored view body
+        // restores to -- falls to the default and is nullable.
+        match name {
             names::ROW_NUMBER
             | names::RANK
             | names::DENSE_RANK

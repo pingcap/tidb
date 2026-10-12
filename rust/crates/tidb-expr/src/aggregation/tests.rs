@@ -1093,11 +1093,17 @@ fn need_count_need_value_and_is_all_first_row() {
 
 #[test]
 fn window_func_desc_applies_the_not_null_fixups() {
-    // ROW_NUMBER is forced NOT NULL.
-    let d = WindowFuncDesc::new(&NoColumns, "ROW_NUMBER", Vec::new(), false)
+    // row_number is forced NOT NULL -- but only as spelled in Go's switch:
+    // the name is matched as written, so `ROW_NUMBER` (every restored view
+    // body) falls to the default arm and is nullable.
+    let d = WindowFuncDesc::new(&NoColumns, names::ROW_NUMBER, Vec::new(), false)
         .unwrap()
         .unwrap();
     assert_ne!(d.base.ret_type.flags() & FieldTypeFlags::NOT_NULL, 0);
+    let d = WindowFuncDesc::new(&NoColumns, "ROW_NUMBER", Vec::new(), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(d.base.ret_type.flags() & FieldTypeFlags::NOT_NULL, 0);
 
     // FIRST_VALUE over a NOT NULL column loses the flag (the default arm).
     let mut not_null = FieldType::new(FieldTypeCode::Long);

@@ -166,12 +166,16 @@ fn upstream_window_executor_basic_and_nullable() {
     session
         .run("INSERT INTO agg VALUES (0,0,1),(1,1,2),(1,2,3),(1,3,4)")
         .unwrap();
+    // Go's NOT NULL fixups match the name as written, so the NOT NULL ones
+    // are spelled as Go's switch spells them and their upper-case twin is
+    // nullable.
     for (function, nullable) in [
         ("SUM(v)", true),
-        ("COUNT(v)", false),
-        ("ROW_NUMBER()", false),
-        ("RANK()", false),
-        ("DENSE_RANK()", false),
+        ("count(v)", false),
+        ("row_number()", false),
+        ("rank()", false),
+        ("dense_rank()", false),
+        ("ROW_NUMBER()", true),
     ] {
         let sql = format!(
             "SELECT {function} OVER (PARTITION BY p ORDER BY o ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS a FROM agg"

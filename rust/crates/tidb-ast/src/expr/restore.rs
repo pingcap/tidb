@@ -592,7 +592,9 @@ impl Expr {
                 from_last,
                 over,
             } => {
-                out.push_str(name);
+                // Go `WindowFuncExpr.Restore` writes the name with
+                // `WriteKeyWord`; the AST keeps it as written.
+                out.push_str(&name.to_ascii_uppercase());
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {

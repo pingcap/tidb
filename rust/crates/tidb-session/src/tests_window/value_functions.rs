@@ -455,7 +455,9 @@ fn window_lag_two_not_null_operands_drop_unsigned() {
         .run("INSERT INTO tu VALUES (2, 18446744073709551614, 18446744073709551609, 18446744073709551614)")
         .unwrap();
 
-    let both_not_null = "SELECT LAG(bu,1,bu2) OVER (ORDER BY id) FROM tu";
+    // Spelled as Go's `NewWindowFuncDesc` switch spells it: `LAG(...)` would
+    // miss the fixup and keep UNSIGNED (checked on this branch's Go).
+    let both_not_null = "SELECT lag(bu,1,bu2) OVER (ORDER BY id) FROM tu";
     match session.run_with_columns(both_not_null).unwrap() {
         StmtOutput::Rows { columns, .. } => {
             let ft = &columns[0].1;

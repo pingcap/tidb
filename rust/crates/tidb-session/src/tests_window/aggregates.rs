@@ -409,9 +409,17 @@ fn window_bit_and_variance_aggregates() {
     );
     assert_eq!(
         row_text(
-            session.run("SELECT BIT_AND(v) OVER (PARTITION BY g ORDER BY v) FROM tn ORDER BY g, v")
+            session.run("SELECT bit_and(v) OVER (PARTITION BY g ORDER BY v) FROM tn ORDER BY g, v")
         ),
         [["-1"], ["-1"], ["4"]]
+    );
+    // Go matches that fixup against the name AS WRITTEN, so `BIT_AND` misses
+    // it and keeps UNSIGNED (checked on this branch's Go: flag 160).
+    assert_eq!(
+        row_text(
+            session.run("SELECT BIT_AND(v) OVER (PARTITION BY g ORDER BY v) FROM tn ORDER BY g, v")
+        ),
+        [["18446744073709551615"], ["18446744073709551615"], ["4"]]
     );
     // The grouped twin of the same fold, for contrast: UNSIGNED there.
     assert_eq!(

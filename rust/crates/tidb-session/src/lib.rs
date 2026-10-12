@@ -1272,6 +1272,7 @@ mod load_stats_arm;
 mod memtable_retrievers;
 mod non_prepared_plan_cache;
 mod nontransactional;
+pub use nontransactional::{NonTransactionalDml, NonTransactionalInput, NonTransactionalStep};
 mod noop;
 mod observation;
 mod prepared_ast;

@@ -299,7 +299,7 @@ fn window_result_types() {
     let mut session = window_session();
 
     match session
-        .run_with_columns("SELECT ROW_NUMBER() OVER (ORDER BY v) FROM t")
+        .run_with_columns("SELECT row_number() OVER (ORDER BY v) FROM t")
         .unwrap()
     {
         StmtOutput::Rows { columns, .. } => {
@@ -360,9 +360,10 @@ fn window_result_types() {
     }
 
     // COUNT is the one framed function that is NOT NULL (an empty frame
-    // counts 0 rather than yielding NULL).
+    // counts 0 rather than yielding NULL) -- spelled `count`, as Go's
+    // `NewWindowFuncDesc` matches the name as written.
     match session
-        .run_with_columns("SELECT COUNT(v) OVER () FROM t")
+        .run_with_columns("SELECT count(v) OVER () FROM t")
         .unwrap()
     {
         StmtOutput::Rows { columns, .. } => {

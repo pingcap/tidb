@@ -253,10 +253,12 @@ fn window_percent_rank_and_cume_dist() {
     ));
 
     // Both are a NOT NULL DOUBLE (Go's `typeInfer4PercentRank` /
-    // `typeInfer4CumeDist`).
+    // `typeInfer4CumeDist`) when spelled as Go's `NewWindowFuncDesc` switch
+    // spells them; `PERCENT_RANK()` misses it and is nullable (checked on
+    // this branch's Go).
     for sql in [
-        "SELECT PERCENT_RANK() OVER (ORDER BY v) FROM pr",
-        "SELECT CUME_DIST() OVER (ORDER BY v) FROM pr",
+        "SELECT percent_rank() OVER (ORDER BY v) FROM pr",
+        "SELECT cume_dist() OVER (ORDER BY v) FROM pr",
     ] {
         match session.run_with_columns(sql).unwrap() {
             StmtOutput::Rows { columns, .. } => {

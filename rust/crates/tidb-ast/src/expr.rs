@@ -417,7 +417,9 @@ pub enum Expr {
     /// the enclosing [`SelectStmt::windows`] clause, and validating what
     /// an extension may add, both happen in `tidb_exec`, not here.
     Window {
-        /// The canonical (uppercase) function name.
+        /// The function name as written (Go `WindowFuncExpr.Name`), with
+        /// only the `STD`/`STDDEV`/`VARIANCE` synonyms normalized to
+        /// `STDDEV_POP`/`VAR_POP`; compare it case-insensitively.
         name: String,
         /// The call arguments — empty for a ranking function; see this
         /// variant's own doc for each function's exact arity.

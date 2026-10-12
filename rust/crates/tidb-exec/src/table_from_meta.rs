@@ -386,6 +386,12 @@ pub fn cluster_table(
             )
         } else if !column.default_is_expr
             && matches!(
+                column.get_type(),
+                tidb_datatype::FieldTypeCode::Date
+                    | tidb_datatype::FieldTypeCode::Datetime
+                    | tidb_datatype::FieldTypeCode::Timestamp
+            )
+            && matches!(
                 column.default_value.view(),
                 Some(GoAnyView::String(bytes))
                     if bytes.as_bytes().eq_ignore_ascii_case(b"CURRENT_DATE")
@@ -393,7 +399,10 @@ pub fn cluster_table(
         {
             // Go stores `DEFAULT (CURRENT_DATE)` as the word with
             // `DefaultIsExpr` false, like `CURRENT_TIMESTAMP`; every INSERT
-            // evaluates it.
+            // evaluates it. Only a time column's word is the clock: Go's
+            // `getColDefaultValue` reads it through `GetTimeValue` for
+            // DATE/DATETIME/TIMESTAMP alone, and a string column's
+            // `DEFAULT 'current_date'` is that text.
             let marker = tidb_ast::Expr::Func {
                 name: "CURRENT_DATE".to_owned(),
                 args: Vec::new(),

@@ -824,9 +824,10 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
         return Err(unmaterialisable(column, table));
     }
     if let Some(GoAnyView::String(bytes)) = column.default_value.view() {
-        if bytes
-            .as_bytes()
-            .eq_ignore_ascii_case(CURRENT_TIMESTAMP.as_bytes())
+        if is_time_column(column)
+            && bytes
+                .as_bytes()
+                .eq_ignore_ascii_case(CURRENT_TIMESTAMP.as_bytes())
         {
             return Err(unmaterialisable(column, table));
         }
@@ -922,6 +923,16 @@ pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnco
         .map_err(|_| unmaterialisable(column, table))
 }
 
+/// Go `getColDefaultValue` evaluates the clock words through `GetTimeValue`
+/// for these types alone; any other column's `CURRENT_TIMESTAMP` default is
+/// that text, cast like every other literal.
+fn is_time_column(column: &ColumnInfo) -> bool {
+    matches!(
+        column.get_type(),
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+    )
+}
+
 fn unmaterialisable(column: &ColumnInfo, table: &str) -> RowEncodeError {
     encode_error(format!(
         "{table}.{} declares a default this path cannot materialise",
@@ -942,9 +953,10 @@ fn materialise(
     // its default: an `INSERT` evaluates it, so a writer that stores the word
     // instead writes a row TiDB rejects as an `Incorrect time value`.
     if let (Some(GoAnyView::String(bytes)), Some(now)) = (declared.view(), current_timestamp) {
-        if bytes
-            .as_bytes()
-            .eq_ignore_ascii_case(CURRENT_TIMESTAMP.as_bytes())
+        if is_time_column(column)
+            && bytes
+                .as_bytes()
+                .eq_ignore_ascii_case(CURRENT_TIMESTAMP.as_bytes())
         {
             return Ok(Datum::new_time(now));
         }

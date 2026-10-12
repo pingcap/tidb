@@ -14023,3 +14023,90 @@ fn gbk_column_defaults_insert_as_the_text_they_store() {
         [["好", "BAC3"]]
     );
 }
+
+/// Go `HandleNonTransactionalDML` runs every job with `se.ExecuteStmt`, so an
+/// auto-committed job publishes before the next one reads: the second job
+/// sees the row the first moved and moves both. The node ran the jobs inside
+/// the BATCH statement's own buffer, where the second job's index lookup met
+/// the first job's unpublished row and failed, and the failure discarded
+/// every job's writes.
+#[test]
+fn non_transactional_jobs_each_commit_before_the_next_reads() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1030)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t (id INT, v INT, KEY (id))")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE t2 (id INT, v INT, KEY (id))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO t VALUES (1, 1), (2, 2), (3, 3)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO t2 VALUES (1, 1), (2, 2), (4, 4)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "BATCH ON test.t.id LIMIT 1 UPDATE t JOIN t2 ON t.id = t2.id SET t2.id = t2.id + 1"
+        )),
+        [["3", "all succeeded"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t2 ORDER BY v")),
+        [["4", "1"], ["4", "2"], ["4", "4"]]
+    );
+}
+
+/// Go `getColDefaultValue` evaluates the clock words through `GetTimeValue`
+/// for DATE/DATETIME/TIMESTAMP columns alone. The catalog loader refused any
+/// column whose literal default spelled `CURRENT_TIMESTAMP`, so a VARCHAR
+/// declaring that text vanished right after its CREATE, and a VARCHAR's
+/// `'current_date'` would have been evaluated as the clock.
+#[test]
+fn string_columns_keep_clock_words_as_their_text_default() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1031)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE t (id INT, a VARCHAR(20) DEFAULT 'cUrrent_tImestamp', \
+             b VARCHAR(20) DEFAULT 'current_date')",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO t (id) VALUES (1)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id, a, b FROM t")),
+        [["1", "cUrrent_tImestamp", "current_date"]]
+    );
+}
+
+/// Go `NewWindowFuncDesc` applies its NOT NULL fixups by the name AS WRITTEN,
+/// and a view's body is stored restored -- `ROW_NUMBER()` in upper case -- so
+/// `DESC` of the view re-plans a window column that missed the `row_number`
+/// arm and is nullable. The port lowered the name first and answered NO.
+#[test]
+fn view_window_columns_describe_as_nullable() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1032)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t1 (id INT NOT NULL, num INT)")
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE VIEW v AS SELECT id, row_number() OVER (PARTITION BY num) AS r FROM t1",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "DESC v")),
+        [
+            ["id", "int", "NO", "", "NULL", ""],
+            ["r", "bigint", "YES", "", "NULL", ""]
+        ]
+    );
+}
