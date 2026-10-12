@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -35,6 +36,8 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // StoreID: [1, storeCount]
@@ -286,6 +289,67 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
 	require.GreaterOrEqual(t, dura, 30*time.Second)
 	require.LessOrEqual(t, dura, 50*time.Second)
+}
+
+func TestBuildBatchCopTasksUnavailableDetail(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		hasTiFlashPeer bool
+	}{
+		{name: "no TiFlash peer"},
+		{name: "all TiFlash peers filtered", hasTiFlashPeer: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core, observed := observer.New(zap.InfoLevel)
+			logger, props, err := log.InitLogger(&log.Config{}, zap.WrapCore(func(zapcore.Core) zapcore.Core {
+				return core
+			}))
+			require.NoError(t, err)
+			defer log.ReplaceGlobals(logger, props)()
+
+			mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+			require.NoError(t, err)
+			_, _, regionID := testutils.BootstrapWithSingleStore(cluster)
+			var storeID, peerID uint64
+			if tc.hasTiFlashPeer {
+				storeID, peerID = cluster.AllocID(), cluster.AllocID()
+				cluster.AddStore(storeID, "tiflash",
+					&metapb.StoreLabel{Key: tikvrpc.EngineLabelKey, Value: tikvrpc.EngineLabelTiFlash},
+					&metapb.StoreLabel{Key: tikvrpc.EngineRoleLabelKey, Value: tikvrpc.EngineRoleWrite})
+				cluster.AddPeer(regionID, storeID, peerID)
+			}
+			store, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			// Exhaust the backoff budget after the first retry without contacting a TiFlash server.
+			bo := backoff.NewBackofferWithVars(context.Background(), 1, nil)
+			location, err := store.GetRegionCache().LocateKey(bo.TiKVBackoffer(), []byte("a"))
+			require.NoError(t, err)
+			tasks, err := buildBatchCopTasksCore(bo, &kvStore{store: store},
+				[]*KeyRanges{buildCopRanges("a", "z")}, kv.TiFlash, true, 0, false, 0, tiflash.AllReplicas, nil)
+			require.Error(t, err)
+			require.Nil(t, tasks)
+
+			entries := observed.FilterMessage("retry for TiFlash peer with region missing").All()
+			require.NotEmpty(t, entries)
+			for _, entry := range entries {
+				fields := entry.ContextMap()
+				require.Equal(t, regionID, fields["region_id"])
+				require.Equal(t, location.Region.GetVer(), fields["version"])
+				require.Equal(t, location.Region.GetConfVer(), fields["conf_ver"])
+				if tc.hasTiFlashPeer {
+					require.Equal(t, tikv.TiFlashRPCContextUnavailableAllStoresFiltered.String(), fields["reason"])
+					require.Equal(t, []any{storeID}, fields["store_ids"])
+					require.Equal(t, []any{peerID}, fields["peer_ids"])
+				} else {
+					require.Equal(t, tikv.TiFlashRPCContextUnavailableNoTiFlashAccessStore.String(), fields["reason"])
+					require.NotContains(t, fields, "store_ids")
+					require.NotContains(t, fields, "peer_ids")
+				}
+			}
+		})
+	}
 }
 
 func TestGetAllUsedTiFlashStores(t *testing.T) {

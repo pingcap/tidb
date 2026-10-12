@@ -85,7 +85,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 33,
+    shard_count = 34,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",
@@ -99,6 +99,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/mpp",
+        "@com_github_pingcap_log//:log",
         "@com_github_stathat_consistent//:consistent",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//config",
@@ -107,5 +108,7 @@ go_test(
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
