@@ -15,6 +15,7 @@
 package join
 
 import (
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -489,6 +490,195 @@ type testCase struct {
 	otherCondition            expression.CNFExprs
 	leftUsedByOtherCondition  []int
 	rightUsedByOtherCondition []int
+}
+
+func TestInnerJoinProbeJoinedRows(t *testing.T) {
+	newProbe := func(t *testing.T, noColumns, rightAsBuild bool, condition string) (*innerJoinProbe, *hashjoinWorkerResult) {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		fields := []*types.FieldType{tp}
+		used, otherUsed := []int{0}, []int{}
+		if noColumns {
+			used = []int{}
+		}
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().MaxChunkSize = 8
+		var other expression.CNFExprs
+		switch condition {
+		case "false":
+			other = expression.CNFExprs{expression.NewZero()}
+		case "error":
+			other = expression.CNFExprs{expression.NewFunctionInternal(ctx.GetExprCtx(), ast.Plus, tp,
+				&expression.Column{Index: 0, RetType: tp},
+				&expression.Constant{Value: types.NewIntDatum(math.MaxInt64), RetType: tp})}
+		}
+		if other != nil {
+			otherUsed = []int{0}
+		}
+		meta := newTableMeta([]int{0}, fields, fields, fields, otherUsed, used, false)
+		h := &HashJoinCtxV2{
+			hashTableMeta: meta, OtherCondition: other, BuildKeyTypes: fields, ProbeKeyTypes: fields,
+			RightAsBuildSide: rightAsBuild, LUsed: used, RUsed: used,
+			LUsedInOtherCondition: otherUsed, RUsedInOtherCondition: otherUsed,
+		}
+		h.SessCtx, h.JoinType, h.Concurrency = ctx, base.InnerJoin, 1
+		h.SetupPartitionInfo()
+		h.spillHelper = newHashJoinSpillHelper(nil, int(h.partitionNumber), nil, "")
+		h.initHashTableContext()
+		probe := NewJoinProbe(h, 0, base.InnerJoin, []int{0}, append(fields, fields...), fields, rightAsBuild).(*innerJoinProbe)
+		probe.resetJoinedRows(true)
+		builder := createRowTableBuilder([]int{0}, fields, h.partitionNumber, true, false, false, meta.nullMapLength)
+		build := chunk.New(fields, 8, 8)
+		for range 5 {
+			build.AppendInt64(0, 1)
+		}
+		require.NoError(t, builder.processOneChunk(build, ctx.GetSessionVars().StmtCtx.TypeCtx(), h, 0))
+		h.hashTableContext.mergeRowTablesToHashTable(h.partitionNumber, nil)
+		for i := range int(h.partitionNumber) {
+			h.hashTableContext.build(&buildTask{partitionIdx: i, segEndIdx: len(h.hashTableContext.hashTable.tables[i].rowData.segments)})
+		}
+		input := chunk.New(fields, 8, 8)
+		input.AppendInt64(0, 1)
+		input.AppendInt64(0, 2)
+		input.AppendNull(0)
+		require.NoError(t, probe.SetChunkForProbe(input))
+		// Force a hash collision: key 2 visits the key-1 chain but matches no pair.
+		probe.matchedRowsHeaders[1] = probe.matchedRowsHeaders[0]
+		probe.matchedRowsHashValue[1] = probe.matchedRowsHashValue[0]
+		resultTypes := append(fields, fields...)
+		if noColumns {
+			resultTypes = nil
+		}
+		return probe, &hashjoinWorkerResult{chk: chunk.New(resultTypes, 8, 8)}
+	}
+
+	for _, noColumns := range []bool{false, true} {
+		for _, rightAsBuild := range []bool{false, true} {
+			t.Run("partial batches columns="+strconv.FormatBool(!noColumns)+" right-build="+strconv.FormatBool(rightAsBuild), func(t *testing.T) {
+				probe, result := newProbe(t, noColumns, rightAsBuild, "")
+				result.chk.SetRequiredRows(2, 8)
+				for _, want := range []int64{2, 4, 5} {
+					result.chk.Reset()
+					_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+					require.NoError(t, result.err)
+					require.Equal(t, want, probe.joinedRows.Rows)
+					require.False(t, result.chk.IsInCompleteChunk())
+				}
+				require.True(t, probe.IsCurrentChunkProbeDone())
+				require.Equal(t, uint64(5), probe.GetProbeCollision())
+				// An empty batch and a spill-round reset must preserve the total.
+				result.chk.Reset()
+				_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+				require.NoError(t, result.err)
+				require.Equal(t, int64(5), probe.joinedRows.Rows)
+				probe.ResetProbe()
+				require.Equal(t, int64(5), probe.joinedRows.Rows)
+				require.NoError(t, probe.SetChunkForProbe(probe.currentChunk))
+				for !probe.IsCurrentChunkProbeDone() {
+					result.chk.Reset()
+					_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+					require.NoError(t, result.err)
+				}
+				require.Equal(t, int64(10), probe.joinedRows.Rows)
+				probe.resetJoinedRows(true)
+				require.Zero(t, probe.joinedRows.Rows)
+			})
+		}
+	}
+
+	t.Run("prefilled and full output", func(t *testing.T) {
+		probe, result := newProbe(t, true, true, "")
+		result.chk.SetRequiredRows(2, 8)
+		result.chk.SetNumVirtualRows(1)
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+		require.NoError(t, result.err)
+		require.Equal(t, int64(1), probe.joinedRows.Rows)
+		require.Equal(t, 2, result.chk.NumRows())
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+		require.NoError(t, result.err)
+		require.Equal(t, int64(1), probe.joinedRows.Rows)
+	})
+
+	for _, condition := range []string{"false", "error"} {
+		t.Run("residual "+condition, func(t *testing.T) {
+			probe, result := newProbe(t, true, true, condition)
+			_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+			if condition == "error" {
+				require.ErrorContains(t, result.err, "BIGINT value is out of range")
+			} else {
+				require.NoError(t, result.err)
+			}
+			require.Zero(t, result.chk.NumRows())
+			require.Equal(t, int64(5), probe.joinedRows.Rows)
+			require.True(t, probe.tmpChk.IsInCompleteChunk())
+		})
+	}
+
+	t.Run("cancel after partial work", func(t *testing.T) {
+		probe, result := newProbe(t, true, true, "")
+		result.chk.SetRequiredRows(2, 8)
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{Signal: sqlkiller.QueryInterrupted})
+		require.Error(t, result.err)
+		require.Equal(t, int64(2), probe.joinedRows.Rows)
+		require.False(t, result.chk.IsInCompleteChunk())
+	})
+
+	t.Run("panic during append retains current pair", func(t *testing.T) {
+		probe, result := newProbe(t, true, true, "")
+		// The third append panics after its candidate was accepted.
+		probe.cachedBuildRows = probe.cachedBuildRows[:2]
+		require.Panics(t, func() { _, _ = probe.Probe(result, &sqlkiller.SQLKiller{}) })
+		require.Equal(t, int64(3), probe.joinedRows.Rows)
+		require.False(t, result.chk.IsInCompleteChunk())
+	})
+
+	for _, noColumns := range []bool{false, true} {
+		for _, rightAsBuild := range []bool{false, true} {
+			t.Run("panic across probe rows columns="+strconv.FormatBool(!noColumns)+" right-build="+strconv.FormatBool(rightAsBuild), func(t *testing.T) {
+				probe, result := newProbe(t, noColumns, rightAsBuild, "")
+				input := probe.currentChunk
+				input.Reset()
+				for _, key := range []int64{1, 2, 1, 1} {
+					input.AppendInt64(0, key)
+				}
+				input.AppendNull(0)
+				// Reinitialize lookup for this input, including an unmatched collision.
+				probe.currentProbeRow = probe.chunkRows
+				require.NoError(t, probe.SetChunkForProbe(input))
+				probe.matchedRowsHeaders[1] = probe.matchedRowsHeaders[0]
+				probe.matchedRowsHashValue[1] = probe.matchedRowsHashValue[0]
+				// Finish two matching probe rows, then panic on the third pair of
+				// the last matching row: 5 + 5 + 3 accepted pairs in this batch.
+				result.chk.SetRequiredRows(16, 16)
+				probe.cachedBuildRows = probe.cachedBuildRows[:12]
+				require.Panics(t, func() { _, _ = probe.Probe(result, &sqlkiller.SQLKiller{}) })
+				require.Equal(t, int64(13), probe.joinedRows.Rows)
+				require.Len(t, probe.offsetAndLengthArray, 2)
+				require.Equal(t, uint64(5), probe.GetProbeCollision())
+				require.False(t, result.chk.IsInCompleteChunk())
+			})
+		}
+	}
+
+	t.Run("overflow across batches", func(t *testing.T) {
+		probe, result := newProbe(t, true, true, "")
+		probe.joinedRows.Rows = math.MaxInt64 - 1
+		result.chk.SetRequiredRows(2, 8)
+		for !probe.IsCurrentChunkProbeDone() {
+			result.chk.Reset()
+			_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+			require.NoError(t, result.err)
+			require.Equal(t, int64(-1), probe.joinedRows.Rows)
+		}
+	})
+
+	t.Run("collection disabled", func(t *testing.T) {
+		probe, result := newProbe(t, true, true, "")
+		probe.resetJoinedRows(false)
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+		require.NoError(t, result.err)
+		require.Equal(t, 5, result.chk.NumRows())
+		require.Nil(t, probe.joinedRows)
+	})
 }
 
 func TestInnerJoinProbeBasic(t *testing.T) {

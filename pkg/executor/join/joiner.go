@@ -243,6 +243,12 @@ func (c *joinRowCounter) addJoinedRow() {
 	}
 }
 
+func (c *joinRowCounter) addJoinedRows(rows int64) {
+	if c.joinedRows != nil {
+		c.joinedRows.AddRows(rows)
+	}
+}
+
 func (c *joinRowCounter) registerJoinedRows(stats *execdetails.RuntimeStatsColl, planID int) {
 	if c.joinedRows != nil && stats != nil {
 		stats.RegisterStats(planID, c.joinedRows)

@@ -398,6 +398,10 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	joinedRows, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(info.planID)
+	require.True(t, found)
+	// One non-spilling reference run plus ten executions that spill and restore.
+	require.Equal(t, int64(11*len(expectedResult)), joinedRows)
 	util.CheckNoLeakFiles(t, testFuncName)
 }
 
