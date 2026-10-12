@@ -77,6 +77,9 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	if !persist {
+		// `RECOMMEND INDEX RETURN RESULT FOR` is used by diagnostic TiDB, where all writes are
+		// forbidden. Skip column-statistics usage recording here so planning the
+		// workload does not trigger a deferred write in that mode.
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		originalSkipColumnStatsUsage := stmtCtx.SkipColumnStatsUsage
 		stmtCtx.SkipColumnStatsUsage = true
