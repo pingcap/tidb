@@ -93,6 +93,10 @@ const MAX_INT_WIDTH: i32 = 20;
 const MAX_REAL_WIDTH: i32 = 23;
 /// Go `types.UnspecifiedLength`.
 const UNSPECIFIED_LENGTH: i32 = -1;
+/// Go `mysql.MaxDecimalWidth` / `MaxDecimalScale`, the implicit DECIMAL
+/// cast's limits.
+const MAX_DECIMAL_WIDTH_I32: i32 = 65;
+const MAX_DECIMAL_SCALE_I32: i32 = 30;
 /// The `flen` Go's `newReturnFieldTypeForBaseBuiltinFunc` gives an `ETDecimal`
 /// return type before any per-family adjustment.
 const DECIMAL_RETURN_FLEN: i32 = 11;
@@ -2193,6 +2197,11 @@ pub enum PbScalar {
         args: Vec<PbScalar>,
         /// Result metadata inferred once by the control-function constructor.
         control: Option<Box<ControlMetadata>>,
+        /// The described function's own result type (Go's `RetType`, with
+        /// its collation forced in), which `scalarFuncToPBExpr` sends for
+        /// every function node; `None` for a call built from a name alone,
+        /// which takes the catalog's result type.
+        ret_type: Option<FieldType>,
     },
 }
 
@@ -2275,6 +2284,7 @@ impl PbScalar {
                 signature,
                 args,
                 control,
+                ..
             } => {
                 if let Some(control) = control {
                     return control.field_type.is_unsigned();
@@ -2316,6 +2326,7 @@ impl PbScalar {
                 signature,
                 args,
                 control,
+                ..
             } => match signature.ret_collation {
                 RetCollation::ControlBranches => control
                     .as_ref()
@@ -2348,6 +2359,7 @@ fn metadata_expression(scalar: &PbScalar) -> Option<Expression> {
             signature,
             args,
             control,
+            ..
         } => {
             if let Some(control) = control {
                 // Only the immutable metadata is needed by an enclosing inference.
@@ -2587,6 +2599,7 @@ pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
         signature,
         args,
         control,
+        ret_type: None,
     })
 }
 
@@ -2680,6 +2693,28 @@ fn from_expression_with_context(
                     charset: field.charset_name().to_owned(),
                     collation: field.collation_name().to_owned(),
                 };
+            }
+            // Go `scalarFuncToPBExpr` sends every function node's own
+            // `RetType`, with the function's collation forced into it -- a
+            // CAST's target width included, which a catalog default would
+            // lose.
+            if let Some(PbScalar::Call {
+                control: None,
+                ret_type,
+                ..
+            }) = &mut described
+            {
+                // A function built without a result type keeps the catalog's.
+                if let Some(field) = expression.static_type() {
+                    let mut field = field.clone();
+                    if tidb_datatype::new_collation_enabled() {
+                        let (_, collation) = function.collation.charset_and_collation();
+                        if !collation.is_empty() {
+                            field.set_collation_name(collation);
+                        }
+                    }
+                    *ret_type = Some(field);
+                }
             }
             // `to_binary` / `from_binary` carry their own result type (the
             // charset they convert to), which the encoder sends as is.
@@ -3036,6 +3071,7 @@ pub fn to_pb_in(
             signature,
             args,
             control,
+            ret_type,
         } => {
             let control_field = control.as_ref().map(|metadata| &metadata.field_type);
             let mut children = Vec::with_capacity(args.len());
@@ -3081,7 +3117,7 @@ pub fn to_pb_in(
                     children.push(coerced_to_pb(argument, required, columns, zone)?);
                 }
             }
-            let return_field_type = if let Some(field) = control_field {
+            let return_field_type = if let Some(field) = control_field.or(ret_type.as_ref()) {
                 field_type_to_pb(field)?
             } else {
                 signature.return_field_type(scalar.is_unsigned(), &children)?
@@ -3176,11 +3212,20 @@ fn coerced_to_pb(
     let Some(cast) = cast else {
         return Some(lowered);
     };
+    // Go `WrapWithCastAsInt` / `WrapWithCastAsDecimal` size the implicit
+    // cast from the argument's own type: a BIGINT becomes DECIMAL(20,0), not
+    // a default-width DECIMAL that would clamp its large values.
+    let source = lowered.field_type.as_ref();
+    let source_code = source
+        .and_then(|field| u8::try_from(field.tp()).ok())
+        .map(FieldTypeCode::from_mysql_type);
+    let source_flen = source.map_or(UNSPECIFIED_LENGTH, |field| field.flen());
+    let source_decimal = source.map_or(UNSPECIFIED_LENGTH, |field| field.decimal());
     let field_type = match required {
         EvalType::Int => int_field_type(
             FieldTypeCode::LongLong.mysql_type().into(),
             cast_flags(argument),
-            MAX_INT_WIDTH,
+            source_flen,
             0,
         ),
         EvalType::Real => int_field_type(
@@ -3189,12 +3234,28 @@ fn coerced_to_pb(
             MAX_REAL_WIDTH,
             UNSPECIFIED_LENGTH,
         ),
-        EvalType::Decimal => int_field_type(
-            FieldTypeCode::NewDecimal.mysql_type().into(),
-            cast_flags(argument),
-            DECIMAL_RETURN_FLEN,
-            0,
-        ),
+        EvalType::Decimal => {
+            let (mut flen, decimal) = if argument.eval_type() == EvalType::Int {
+                let width = source_code.map_or(i64::from(MAX_INT_WIDTH), |code| {
+                    crate::aggregation::wrap_cast::minimal_decimal_len_for_holding_integer(code)
+                });
+                (i32::try_from(width).unwrap_or(MAX_INT_WIDTH), 0)
+            } else {
+                (
+                    source_flen.min(MAX_DECIMAL_WIDTH_I32),
+                    source_decimal.min(MAX_DECIMAL_SCALE_I32),
+                )
+            };
+            if flen == UNSPECIFIED_LENGTH || flen > MAX_DECIMAL_WIDTH_I32 {
+                flen = MAX_DECIMAL_WIDTH_I32;
+            }
+            int_field_type(
+                FieldTypeCode::NewDecimal.mysql_type().into(),
+                cast_flags(argument),
+                flen,
+                decimal,
+            )
+        }
         _ => cast_target_field_type(argument, required)?,
     };
     Some(Expr {

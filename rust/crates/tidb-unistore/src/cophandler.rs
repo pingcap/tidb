@@ -761,7 +761,19 @@ fn exec_table_scan(
                     }
                     datums.get(position)
                 }) {
-                    row_datums.push(datum.clone());
+                    // ... and decodes it with the column's type
+                    // (`DecodeOne(..., col.Ft)`): a DATETIME key part is a
+                    // packed integer until it is restored to its time.
+                    match tidb_tablecodec::unflatten_datum(
+                        datum.clone(),
+                        &column_types[&column.column_id()],
+                        Some(&timezone),
+                    ) {
+                        Ok(datum) => row_datums.push(datum),
+                        Err(err) => {
+                            return other_error(&format!("decode common handle failed: {err:?}"))
+                        }
+                    }
                 } else if stored.is_some() {
                     row_datums.push(Datum::Null);
                 } else if !column.default_val().is_empty() {

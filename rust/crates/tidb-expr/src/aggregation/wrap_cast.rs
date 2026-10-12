@@ -168,7 +168,7 @@ pub fn wrap_with_cast_as_real(expr: Expression) -> Result<Expression, EvalError>
 }
 
 /// Go `minimalDecimalLenForHoldingInteger` (`builtin_cast.go:2713`).
-const fn minimal_decimal_len_for_holding_integer(code: FieldTypeCode) -> i64 {
+pub const fn minimal_decimal_len_for_holding_integer(code: FieldTypeCode) -> i64 {
     match code {
         FieldTypeCode::Tiny => 3,
         FieldTypeCode::Short => 5,

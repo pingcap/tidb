@@ -2642,6 +2642,17 @@ fn round_avg_result(kind: &AggKind, output_type: &FieldType, value: Datum) -> Da
         // holds 6 (TPC-DS q66 comparisons).
         return Datum::Decimal(value.round_to_scale(output_type.decimal() as i32));
     }
+    // Go `maxMin4Decimal.AppendFinalResult2Chunk` rounds the extremum to the
+    // result scale (`MaxDecimalScale` when unspecified), half up, so a
+    // division's hidden fraction digits never reach the client.
+    if matches!(kind, AggKind::Min | AggKind::Max) {
+        let scale = if output_type.decimal() == UNSPECIFIED_LENGTH {
+            MAX_DECIMAL_SCALE
+        } else {
+            output_type.decimal()
+        };
+        return Datum::Decimal(value.round_to_scale(scale as i32));
+    }
     if !matches!(kind, AggKind::Avg) {
         return Datum::Decimal(value);
     }

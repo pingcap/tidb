@@ -6342,6 +6342,7 @@ mod remote_cursor_tests {
             signature: resolve(name, &args).unwrap(),
             args,
             control: None,
+            ret_type: None,
         };
         let null = call("isnull", vec![column.clone()]);
         let nested = ScanPredicate::Builtin(call("not", vec![null]));

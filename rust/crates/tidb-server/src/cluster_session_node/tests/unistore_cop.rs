@@ -13718,3 +13718,68 @@ fn production_ddl_jobs_land_in_the_meta_history_as_go_files_them() {
         ]]
     );
 }
+
+/// Three wrong answers of the production engine's pushed reads:
+/// - Go `scalarFuncToPBExpr` sends every function node's own `RetType`, so
+///   a pushed `SUM(bigint / smallint)` casts the BIGINT to DECIMAL(20,0);
+///   a catalog-default DECIMAL(11,0) clamped it to 99999999999.
+/// - Go `maxMin4Decimal.AppendFinalResult2Chunk` rounds the extremum to the
+///   result scale, so a division's hidden digits never show.
+/// - Go decodes a clustered key column from the record key with its type
+///   (`DecodeOne(..., col.Ft)`): a DATETIME key part filtered in the
+///   coprocessor matched nothing while it stayed a packed integer.
+#[test]
+fn pushed_reads_answer_large_decimals_and_clustered_time_keys_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1022)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE td (col_bigint BIGINT, col_smallint SMALLINT)")
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO td VALUES (NULL, 22876), (9220557287087669248, 32767), (28030, 32767), \
+             (-3309864251140603904, 32767), (4, 0), (NULL, 0), (4, -23828), (54720, 32767), \
+             (0, 29815), (10017, -32661)",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT AVG(col_bigint / col_smallint) FROM td"
+        )),
+        [["25769363061037.62077260"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT MAX(col_bigint / 3) FROM td")),
+        [["3073519095695889749.3333"]]
+    );
+
+    session
+        .execute_write("SET @@tidb_enable_clustered_index = ON")
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE ck (id INT, logtime DATETIME, money INT, PRIMARY KEY (id, logtime))",
+        )
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO ck VALUES (1, '2022-06-09 00:00:00', 10), (2, '2022-06-10 00:00:00', 10)",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT money FROM ck WHERE logtime >= '2022-06-10 00:00:00'"
+        )),
+        [["10"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT SUM(money) FROM ck WHERE logtime >= '2022-06-09 00:00:00'"
+        )),
+        [["20"]]
+    );
+}
