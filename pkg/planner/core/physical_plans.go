@@ -905,6 +905,7 @@ type PhysicalTableScan struct {
 	// that are pushed down to table scan from selection by late materialization.
 	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
+	lateMaterializationSelectivity     float64
 	// ForcedLateMaterializationFilterColumnIDs records the columns specified by TIFLASH_LM_FILTER hints.
 	ForcedLateMaterializationFilterColumnIDs []int64
 
