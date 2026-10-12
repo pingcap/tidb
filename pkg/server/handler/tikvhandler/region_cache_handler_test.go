@@ -54,6 +54,15 @@ func (f *fakeCacheStore) RefreshStoreCache(ctx context.Context, storeID uint64) 
 	return f.refresh
 }
 
+func (f *fakeCacheStore) StartRefreshStoreCache(storeID uint64) tikv.StoreCacheStatus {
+	res := f.RefreshStoreCache(context.Background(), storeID)
+	f.status = tikv.StoreCacheStatus{
+		StoreID: storeID, Matched: res.Remaining, Failed: res.Failed,
+		Ready: res.Ready, ObservedAt: res.ObservedAt,
+	}
+	return f.status
+}
+
 func (f *fakeCacheStore) ResetStoreCacheRefresh(storeID uint64) error {
 	_ = storeID
 	f.resetCalled = true
@@ -211,12 +220,12 @@ func TestRegionCacheHandlerResetRespectsCancel(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	require.False(t, fake.resetCalled)
-	require.False(t, fake.refreshCalled)
+	require.True(t, fake.resetCalled)
+	require.True(t, fake.refreshCalled)
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.False(t, got.Ready)
-	require.Contains(t, got.Errors, context.Canceled.Error())
+	require.True(t, got.Ready)
+	require.Empty(t, got.Errors)
 }
 
 func TestRegionCacheHandlerSumsSystemAndBusinessStores(t *testing.T) {
@@ -309,13 +318,13 @@ func TestRegionCacheHandlerPostStopsLaterStoresAfterCancel(t *testing.T) {
 	h.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.True(t, first.refreshCalled)
-	require.False(t, second.refreshCalled)
+	require.True(t, second.refreshCalled)
 	var got regionCacheHTTPResult
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	require.False(t, got.Ready)
+	require.True(t, got.Ready)
 	require.False(t, got.InProgress)
 	require.Empty(t, got.Stores)
-	require.Contains(t, got.Errors, context.Canceled.Error())
+	require.Empty(t, got.Errors)
 }
 
 func TestRegionCacheHandlerZeroCountsKeepNotReady(t *testing.T) {
@@ -335,7 +344,7 @@ func TestRegionCacheHandlerZeroCountsKeepNotReady(t *testing.T) {
 	require.Equal(t, 0, got.Failed)
 	require.False(t, got.Ready)
 	require.False(t, got.InProgress)
-	require.Contains(t, got.Errors, "context canceled")
+	require.Empty(t, got.Errors)
 	require.Equal(t, int64(9), got.ObservedAt)
 }
 
@@ -355,6 +364,6 @@ func TestRegionCacheHandlerDiagnosticErrorsDoNotBlockReady(t *testing.T) {
 	require.Equal(t, 0, got.Remaining)
 	require.Equal(t, 0, got.Failed)
 	require.True(t, got.Ready)
-	require.Contains(t, got.Errors, "stale probe timeout")
+	require.Empty(t, got.Errors)
 	require.Equal(t, int64(11), got.ObservedAt)
 }

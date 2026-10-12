@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -30,6 +29,7 @@ import (
 
 type regionCacheStore interface {
 	GetStoreCacheStatus(storeID uint64) tikv.StoreCacheStatus
+	StartRefreshStoreCache(storeID uint64) tikv.StoreCacheStatus
 	RefreshStoreCache(ctx context.Context, storeID uint64) tikv.StoreCacheRefreshResult
 	ResetStoreCacheRefresh(storeID uint64) error
 	GetClusterID() uint64
@@ -179,15 +179,8 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			}
 		}
 	case http.MethodPost:
-		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
-		defer cancel()
 		reset := parseReset(req)
 		for _, st := range stores {
-			if ctx.Err() != nil {
-				out.veto = true
-				out.Errors = append(out.Errors, ctx.Err().Error())
-				break
-			}
 			if reset {
 				if err := st.ResetStoreCacheRefresh(storeID); err != nil {
 					item := regionCacheStoreDetail{
@@ -204,16 +197,16 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 					continue
 				}
 			}
-			res := st.RefreshStoreCache(ctx, storeID)
+			status := st.StartRefreshStoreCache(storeID)
 			item := regionCacheStoreDetail{
 				Keyspace:   st.GetKeyspace(),
 				ClusterID:  st.GetClusterID(),
-				Remaining:  res.Remaining,
-				Failed:     res.Failed,
-				Errors:     res.Errors,
-				ObservedAt: res.ObservedAt,
+				Remaining:  status.Matched,
+				Failed:     status.Failed,
+				InProgress: status.InProgress,
+				ObservedAt: status.ObservedAt,
 			}
-			item.Ready = res.Ready && item.Remaining == 0 && item.Failed == 0
+			item.Ready = status.Ready
 			if !item.Ready {
 				out.veto = true
 			}
