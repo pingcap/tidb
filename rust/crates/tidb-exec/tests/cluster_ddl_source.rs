@@ -1137,7 +1137,6 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         (
             DdlPlanError::UnknownIndexColumn {
                 column: "col".into(),
-                index: "idx".into(),
             },
             1072,
         ),
@@ -2167,15 +2166,6 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
             .raw_args
             .clone();
         let before = store.pairs.clone();
-        let mut broken = store.clone();
-        let (db, history) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
-        broken.pairs.remove(&key::table_kv_key(db.id, history.id));
-        let broken_before = broken.pairs.clone();
-        assert!(plan_worker_step(&mut broken, 900, 10_000).is_err());
-        assert_eq!(
-            broken.pairs, broken_before,
-            "a failed finalizer must keep cancellation retryable"
-        );
         let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
         assert!(
             step.terminal,
@@ -2278,7 +2268,10 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
 }
 
 #[test]
-fn history_failure_keeps_completed_job_recoverable() {
+fn history_table_failure_is_logged_and_the_job_still_finishes() {
+    // Go `AddHistoryDDLJob`: a failed `mysql.tidb_ddl_history` insert is
+    // only logged ("failed to add DDL job to history table"); the meta
+    // history entry is written and the job leaves the queue.
     for action in [ActionType::ACTION_CREATE_SCHEMA] {
         for state in [JobState::DONE, JobState::ROLLBACK_DONE, JobState::CANCELLED] {
             let mut store = bootstrapped();
@@ -2293,21 +2286,13 @@ fn history_failure_keeps_completed_job_recoverable() {
                 .append_insert(&mut job, false, "0", "0", false, &mut mutations)
                 .unwrap();
             apply_mutations(&mut store, &mutations);
-            // The old action writers discarded this error and removed the queue row.
             let (db, table) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
             store.pairs.remove(&key::table_kv_key(db.id, table.id));
-            let result = plan_worker_step(&mut store, 900, 10_000);
-            assert!(result.is_err());
-            assert_eq!(
-                queue
-                    .load_by_id(&mut store, 900)
-                    .unwrap()
-                    .unwrap()
-                    .job
-                    .state,
-                state
-            );
-            assert!(!store.pairs.contains_key(&key::ddl_job_history_kv_key(900)));
+            let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
+            assert!(step.terminal);
+            apply(&mut store, &step.write);
+            assert!(store.pairs.contains_key(&key::ddl_job_history_kv_key(900)));
+            assert!(queue.load_by_id(&mut store, 900).unwrap().is_none());
         }
     }
 }

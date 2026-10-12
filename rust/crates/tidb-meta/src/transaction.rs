@@ -495,6 +495,24 @@ pub trait DdlJobCodec: Sized {
     fn decode(encoded: &[u8]) -> Result<Self>;
 }
 
+impl DdlJobCodec for tidb_model::Job {
+    fn id(&self) -> i64 {
+        self.id
+    }
+
+    fn encode(&mut self, update_raw_args: bool) -> Result<Vec<u8>> {
+        tidb_model::Job::encode(self, update_raw_args)
+            .map_err(|error| MetaError::InvalidJson(error.to_string()))
+    }
+
+    fn decode(encoded: &[u8]) -> Result<Self> {
+        let mut job = tidb_model::Job::default();
+        job.decode(encoded)
+            .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
+        Ok(job)
+    }
+}
+
 /// Go `LastJobIterator`.
 pub trait LastJobIterator<J> {
     /// Go `GetLastJobs`.

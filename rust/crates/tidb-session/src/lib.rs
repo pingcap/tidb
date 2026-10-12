@@ -305,6 +305,16 @@ pub struct TableStorageStatistics {
     pub partitions: Vec<(i64, (u64, u64, u64, u64))>,
 }
 
+/// The cluster's DDL jobs, Go's `mysql.tidb_ddl_job` and meta
+/// `DDLJobHistory`, where a front end keeps them in a shared store rather
+/// than in its own catalog.
+pub trait DdlJobHistoryStore: Send + Sync {
+    /// Go `IterAllDDLJobs`' order: the running jobs (`GetAllDDLJobs`, by job
+    /// ID), then the meta history newest first
+    /// (`GetLastHistoryDDLJobsIterator`).
+    fn all_ddl_jobs(&self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), String>;
+}
+
 /// The cluster's BDR role, Go's meta key `BDRRole`, where a front end keeps
 /// it in a shared store rather than in its own catalog.
 pub trait BdrRoleStore: Send + Sync {
@@ -740,6 +750,9 @@ pub struct Session {
     /// Where the BDR role lives when it is not this catalog's (a cluster
     /// node's TiKV meta).
     bdr_role_store: Option<std::sync::Arc<dyn BdrRoleStore>>,
+    /// Where `ADMIN SHOW DDL JOBS` and `information_schema.DDL_JOBS` read
+    /// the cluster's DDL jobs; the catalog's own history without one.
+    ddl_job_history_store: Option<std::sync::Arc<dyn DdlJobHistoryStore>>,
     /// Go's session-local `SessionStatsItem`, swept into the statistics
     /// handle independently of statement execution.
     stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
@@ -1045,6 +1058,7 @@ impl Session {
             analyze_status: None,
             table_storage_stats: None,
             bdr_role_store: None,
+            ddl_job_history_store: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
                 tidb_stats_handle_usage::TableDeltaMap::new(),
@@ -1616,6 +1630,12 @@ impl Session {
     /// Installs the store that holds the cluster's BDR role.
     pub fn set_bdr_role_store(&mut self, store: std::sync::Arc<dyn BdrRoleStore>) {
         self.bdr_role_store = Some(store);
+    }
+
+    /// Installs the cluster store `ADMIN SHOW DDL JOBS` and
+    /// `information_schema.DDL_JOBS` read.
+    pub fn set_ddl_job_history_store(&mut self, store: std::sync::Arc<dyn DdlJobHistoryStore>) {
+        self.ddl_job_history_store = Some(store);
     }
 
     /// Whether the BDR role lives in an installed store.

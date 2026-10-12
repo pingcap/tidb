@@ -94,7 +94,7 @@ impl ClusterDdl for MockDdl {
     fn execute(
         &self,
         statement: &DdlStatement,
-        _cdc_write_source: u64,
+        _job_context: &tidb_executor::StmtContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         let current = self.catalog.load();
         let mut next = ClusterCatalog {

@@ -3769,7 +3769,6 @@ fn prepare_cluster_columns(
                         {
                             return Err(DdlPlanError::UnknownIndexColumn {
                                 column: indexed.name.original().to_owned(),
-                                index: name.clone(),
                             });
                         }
                         relative_columns.push(indexed.name.clone());
@@ -5401,8 +5400,6 @@ pub enum DdlPlanError {
     UnknownIndexColumn {
         /// The column name as written.
         column: String,
-        /// The index name as written.
-        index: String,
     },
     /// Go `GenGlobalIDs`' own limit: the user ID space is exhausted.
     GlobalIdExhausted {
@@ -5466,10 +5463,10 @@ impl fmt::Display for DdlPlanError {
                     "Can't DROP '{name}'; check that column/key exists"
                 )
             }
-            Self::UnknownIndexColumn { column, index } => write!(
-                formatter,
-                "Key column '{column}' doesn't exist in table (index {index})"
-            ),
+            // Go `buildIndexColumns`' `GenWithStack("column does not exist: %s")`.
+            Self::UnknownIndexColumn { column } => {
+                write!(formatter, "column does not exist: {column}")
+            }
             Self::GlobalIdExhausted { wanted } => write!(
                 formatter,
                 "global id:{wanted} exceeds the limit:{MAX_USER_GLOBAL_ID}"
@@ -6139,14 +6136,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         .encode(false)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut mutations = Vec::new();
-    crate::ddl_history_table::DdlHistoryTable::locate(catalog)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-        .append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    mutations.push(BufferMutation::set(
-        key::ddl_job_history_kv_key(active.job.id),
-        encoded,
-    )?);
+    append_history_ddl_job(catalog, snapshot, &active.job, encoded, &mut mutations)?;
     job_table
         .append_delete(active, &mut mutations)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
@@ -9024,7 +9014,14 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     start_ts: u64,
     use_new_collation: bool,
 ) -> Result<DdlPlan, DdlPlanError> {
-    plan_ddl_with_auto_ids(snapshot, statement, start_ts, use_new_collation, None, 0)
+    plan_ddl_with_auto_ids(
+        snapshot,
+        statement,
+        start_ts,
+        use_new_collation,
+        None,
+        &crate::table_info_build::default_ddl_statement_context(),
+    )
 }
 
 /// DDL uses the same process AutoID authority as SQL table writes.
@@ -9034,10 +9031,12 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
     start_ts: u64,
     use_new_collation: bool,
     auto_ids: Option<&std::sync::Arc<crate::auto_id_client::AutoIdClient>>,
-    // The issuing session's `tidb_cdc_write_source`: a change TiCDC
-    // replicates skips the BDR submit admission.
-    cdc_write_source: u64,
+    // What Go's submitter copies from the issuing session into the job: the
+    // statement text, SQL mode and `tidb_cdc_write_source` (a change TiCDC
+    // replicates skips the BDR submit admission).
+    job_context: &tidb_executor::StmtContext,
 ) -> Result<DdlPlan, DdlPlanError> {
+    let cdc_write_source = job_context.ddl_cdc_write_source();
     let catalog = load_cluster_catalog(snapshot)?;
     // Go `meta.Mutator.GetBDRRole`, at the plan's own snapshot.
     let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
@@ -10703,7 +10702,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         start_ts,
                         use_new_collation,
                         auto_ids,
-                        cdc_write_source,
+                        job_context,
                     );
                 }
             }
@@ -13416,106 +13415,6 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         &mut writes,
     )?;
 
-    // Go `finishDDLJob` writes every finished job into
-    // `mysql.tidb_ddl_history`, which is what `ADMIN SHOW DDL JOBS` reads
-    // (`fetchShowDDLJobs` over that table). The direct path has no persisted
-    // job, so the history rows are synthesized here from the same
-    // schema-change events the notifier announces: one row per event, ids
-    // contiguous from the job ID, each already SYNCED with its schema
-    // PUBLIC.
-    if !schema_change_events.is_empty() && diff.schema_id != 0 {
-        let history = crate::ddl_history_table::DdlHistoryTable::locate(&catalog)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        for (offset, (_, event)) in schema_change_events.iter().enumerate() {
-            let (schema_name_override, table_name) = match event.action_type() {
-                ActionType::ACTION_CREATE_TABLE => (
-                    None,
-                    Some(event.create_table_info().name.original().to_owned()),
-                ),
-                ActionType::ACTION_ADD_INDEX => (
-                    None,
-                    Some(event.add_index_info().0.name.original().to_owned()),
-                ),
-                ActionType::ACTION_DROP_TABLE => (
-                    None,
-                    Some(event.drop_table_info().name.original().to_owned()),
-                ),
-                ActionType::ACTION_TRUNCATE_TABLE => (
-                    None,
-                    Some(event.truncate_table_info().0.name.original().to_owned()),
-                ),
-                ActionType::ACTION_MODIFY_COLUMN => (
-                    None,
-                    Some(event.modify_column_info().0.name.original().to_owned()),
-                ),
-                ActionType::ACTION_ADD_TABLE_PARTITION => (
-                    None,
-                    Some(event.add_partition_info().0.name.original().to_owned()),
-                ),
-                ActionType::ACTION_DROP_TABLE_PARTITION => (
-                    None,
-                    Some(event.drop_partition_info().0.name.original().to_owned()),
-                ),
-                ActionType::ACTION_TRUNCATE_TABLE_PARTITION => (
-                    None,
-                    Some(event.truncate_partition_info().0.name.original().to_owned()),
-                ),
-                ActionType::ACTION_REORGANIZE_PARTITION => (
-                    None,
-                    Some(event.reorganize_partition_info().0.name.original().to_owned()),
-                ),
-                ActionType::ACTION_EXCHANGE_TABLE_PARTITION => (
-                    None,
-                    Some(event.exchange_partition_info().0.name.original().to_owned()),
-                ),
-                // Schema-only rows carry an EMPTY table name and their own
-                // db name; go's drop-schema history row reads schema_state
-                // 'none' (the schema is gone, not public).
-                ActionType::ACTION_CREATE_SCHEMA => (
-                    Some(event.create_schema_info().name.original().to_owned()),
-                    Some(String::new()),
-                ),
-                ActionType::ACTION_DROP_SCHEMA => (
-                    Some(event.drop_schema_info().name.original().to_owned()),
-                    Some(String::new()),
-                ),
-                _ => (None, None),
-            };
-            let Some(table_name) = table_name else {
-                continue;
-            };
-            let mut job = tidb_model::Job::default();
-            job.id = ddl_job_id + offset as i64;
-            job.type_ = event.action_type();
-            job.state = JobState::SYNCED;
-            job.schema_state = if event.action_type() == ActionType::ACTION_DROP_SCHEMA {
-                SchemaState::NONE
-            } else {
-                SchemaState::PUBLIC
-            };
-            job.schema_id = diff.schema_id;
-            job.table_id = diff.table_id;
-            job.start_ts = start_ts;
-            job.schema_name = schema_name_override
-                .unwrap_or_else(|| {
-                    catalog
-                        .databases
-                        .iter()
-                        .find(|database| database.info.id == diff.schema_id)
-                        .map(|database| database.info.name.original().to_owned())
-                        .unwrap_or_default()
-                })
-                .into();
-            job.table_name = table_name.into();
-            let encoded = job
-                .encode(false)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            history
-                .append_insert_ignore(snapshot, &job, &encoded, &mut writes)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        }
-    }
-
     // Go's submitter admits the job before it runs.
     let job_schema = catalog
         .databases
@@ -13529,6 +13428,27 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         })
         .unwrap_or_default();
     crate::cluster_bdr::admit_submit(&bdr_role, cdc_write_source, &job_schema, statement, &diff)?;
+
+    // Go `finishDDLJob` -> `AddHistoryDDLJob`: the finished job in the meta
+    // `DDLJobHistory` hash every reader iterates, and its copy in
+    // `mysql.tidb_ddl_history`.
+    let history_job = finished_direct_job(
+        &catalog,
+        statement,
+        &diff,
+        &writes,
+        ddl_job_id,
+        schema_version,
+        start_ts,
+        job_context,
+        &job_schema,
+    );
+    if let Some(mut job) = history_job {
+        let encoded = job
+            .encode(false)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        append_history_ddl_job(&catalog, snapshot, &job, encoded, &mut writes)?;
+    }
 
     // The version bump comes last so the write set always ends with the two
     // keys that make the change observable — and the version key is what a
@@ -13565,6 +13485,155 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         affinity_groups,
         resource_group_update,
     })))
+}
+
+/// Go `ddl.AddHistoryDDLJob`: the job's best-effort copy in
+/// `mysql.tidb_ddl_history` (`addHistoryDDLJob2Table`, whose failure Go only
+/// logs), then the meta `DDLJobHistory` entry every reader iterates.
+fn append_history_ddl_job<S: MetaSnapshot>(
+    catalog: &ClusterCatalog,
+    snapshot: &mut S,
+    job: &Job,
+    encoded: Vec<u8>,
+    writes: &mut Vec<BufferMutation>,
+) -> Result<(), DdlPlanError> {
+    let table_copy = crate::ddl_history_table::DdlHistoryTable::locate(catalog)
+        .and_then(|history| history.append_insert_ignore(snapshot, job, &encoded, writes));
+    if let Err(error) = table_copy {
+        tidb_ddl_logutil::ddl_logger().info(
+            "failed to add DDL job to history table",
+            &[tidb_log::Field::new(
+                "error",
+                tidb_log::Value::Str(error.to_string()),
+            )],
+        );
+    }
+    writes.push(BufferMutation::set(
+        key::ddl_job_history_kv_key(job.id),
+        encoded,
+    )?);
+    Ok(())
+}
+
+/// The job Go's worker files when a direct change finishes (`finishDDLJob`):
+/// the submitter's identity for it (`Job.SchemaName` / `TableName` /
+/// `SchemaID` / `TableID`, the statement text, SQL mode and CDC source), the
+/// done state Go's `Finish*Job` leaves, and the finished table or schema in
+/// `BinlogInfo`. A multi-schema change carries its sub-jobs.
+#[allow(clippy::too_many_arguments)]
+fn finished_direct_job(
+    catalog: &ClusterCatalog,
+    statement: &DdlStatement,
+    diff: &SchemaDiff,
+    writes: &[BufferMutation],
+    ddl_job_id: i64,
+    schema_version: i64,
+    start_ts: u64,
+    job_context: &tidb_executor::StmtContext,
+    job_schema: &str,
+) -> Option<Job> {
+    use tidb_executor::ddl::job_history::done_schema_state;
+    let action = diff.action_type;
+    if action == ActionType::ACTION_NONE {
+        return None;
+    }
+    // Go names a TRUNCATE TABLE job by the table it truncates.
+    let table_id = if action == ActionType::ACTION_TRUNCATE_TABLE {
+        diff.old_table_id
+    } else {
+        diff.table_id
+    };
+    let stored_table = |id: i64| {
+        catalog
+            .databases
+            .iter()
+            .flat_map(|database| database.tables.iter())
+            .find(|table| table.id == id)
+    };
+    // The table as the job leaves it: its new metadata when the change wrote
+    // one, else the stored one (a dropped table).
+    let finished_table = writes
+        .iter()
+        .find(|write| write.key() == key::table_kv_key(diff.schema_id, diff.table_id).as_slice())
+        .and_then(|write| tidb_meta::value::parse_table_info(write.value(), diff.schema_id).ok())
+        .or_else(|| stored_table(diff.table_id).map(TableInfo::clone_like_go));
+    let schema_name = match statement {
+        DdlStatement::CreatePlacementPolicy { name, .. }
+        | DdlStatement::AlterPlacementPolicy { name, .. }
+        | DdlStatement::DropPlacementPolicy { name, .. } => name.go_to_lower(),
+        DdlStatement::CreateResourceGroup { group }
+        | DdlStatement::AlterResourceGroup { group }
+        | DdlStatement::DropResourceGroup { group } => group.name.lowercase().to_owned(),
+        _ => job_schema.go_to_lower(),
+    };
+    let table_name = if table_id == 0 {
+        String::new()
+    } else {
+        stored_table(table_id)
+            .map(|table| table.name.lowercase().to_owned())
+            .or_else(|| {
+                finished_table
+                    .as_ref()
+                    .map(|table| table.name.lowercase().to_owned())
+            })
+            .unwrap_or_default()
+    };
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.id = ddl_job_id;
+    job.type_ = action;
+    job.schema_id = diff.schema_id;
+    job.table_id = table_id;
+    job.schema_name = schema_name.clone().into();
+    job.table_name = table_name.into();
+    job.state = JobState::SYNCED;
+    job.schema_state = done_schema_state(action);
+    // Go's partition sugar rewrites `QueryString` before the job copies it.
+    let rewrite = match statement {
+        DdlStatement::CreateTable { build, .. } => build.context.ddl_query_rewrite(),
+        _ => statement
+            .statement_context()
+            .and_then(tidb_executor::StmtContext::ddl_query_rewrite),
+    };
+    job.query =
+        tidb_executor::ddl::job_history::rewritten_query(job_context.ddl_query(), rewrite.as_ref())
+            .into();
+    job.sql_mode = job_context.ddl_sql_mode();
+    job.cdc_write_source = job_context.ddl_cdc_write_source();
+    job.start_ts = start_ts;
+    job.real_start_ts = start_ts;
+    let mut history = HistoryInfo {
+        schema_version,
+        finished_ts: start_ts,
+        ..HistoryInfo::default()
+    };
+    if table_id != 0 {
+        history.table_info = finished_table.map(GoShared::new);
+    } else if diff.schema_id != 0 {
+        let mut info = tidb_model::DBInfo::default();
+        info.id = diff.schema_id;
+        info.name = CiString::new(schema_name);
+        history.db_info = Some(GoShared::new(info));
+    }
+    job.binlog_info = Some(GoShared::new(history));
+    if action == ActionType::ACTION_MULTI_SCHEMA_CHANGE {
+        let sub_jobs = diff
+            .sub_action_types
+            .iter()
+            .map(|sub_action| {
+                let mut sub_job = tidb_model::SubJob::default();
+                sub_job.type_ = *sub_action;
+                sub_job.state = JobState::DONE;
+                sub_job.schema_state = done_schema_state(*sub_action);
+                Some(GoShared::new(sub_job))
+            })
+            .collect::<Vec<_>>();
+        job.multi_schema_info = Some(GoShared::new(tidb_model::MultiSchemaInfo {
+            sub_jobs: GoSharedPointerSlice::from_handles(sub_jobs),
+            ..tidb_model::MultiSchemaInfo::default()
+        }));
+    }
+    Some(job)
 }
 
 /// Go `IsModifyColumnDenied` over a MODIFY / CHANGE COLUMN this plan built:
@@ -14484,7 +14553,6 @@ fn plan_added_index(
         else {
             return Err(DdlPlanError::UnknownIndexColumn {
                 column: part.name.original().to_owned(),
-                index: name.to_owned(),
             });
         };
         offsets.push(offset);

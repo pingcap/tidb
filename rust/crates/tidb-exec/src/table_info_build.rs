@@ -786,6 +786,23 @@ pub fn build_table_info_in_schema(
                 }
             }
             table.partition = Some(GoShared::new(partition_info(&metadata)));
+            // Go `rewritePartitionQueryString`: the job of a table written
+            // with INTERVAL sugar records the partitions the sugar generated.
+            if let Some(interval) = create
+                .partitioning
+                .as_ref()
+                .and_then(|partitioning| partitioning.method.interval.as_ref())
+            {
+                let definitions = tidb_executor::ddl::append_partition_defs(
+                    &spec.definitions,
+                    &spec.kind,
+                    context.sql_mode().ansi_quotes,
+                );
+                context.rewrite_ddl_job_query(
+                    String::from_utf8_lossy(interval.original_text()).into_owned(),
+                    definitions.trim_start_matches('\n').to_owned(),
+                );
+            }
             // Go `buildTablePartitionInfo`.
             if table
                 .indices

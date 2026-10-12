@@ -29,7 +29,7 @@ impl ClusterDdl for ReportDdl {
     fn execute(
         &self,
         statement: &DdlStatement,
-        _cdc_write_source: u64,
+        _job_context: &tidb_executor::StmtContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         match (statement, &self.statement) {
             (
@@ -158,7 +158,11 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
 struct UndeterminedDdl(SqlQueryError);
 
 impl ClusterDdl for UndeterminedDdl {
-    fn execute(&self, _: &DdlStatement, _: u64) -> Result<ClusterDdlReport, SqlQueryError> {
+    fn execute(
+        &self,
+        _: &DdlStatement,
+        _: &tidb_executor::StmtContext,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
         Err(self.0.clone())
     }
 }
@@ -739,11 +743,10 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
     assert_eq!(code, 1061);
     assert_eq!(message, "Duplicate key name 'ix'");
 
-    let (code, _) = coded(DdlPlanError::UnknownIndexColumn {
+    let (code, message) = coded(DdlPlanError::UnknownIndexColumn {
         column: "c".to_owned(),
-        index: "ix".to_owned(),
     });
-    assert_eq!(code, 1072);
+    assert_eq!((code, message.as_str()), (1072, "column does not exist: c"));
 }
 
 /// REPRODUCTION PROBE (rung 8's 9007-at-COMMIT): a schema move landing under

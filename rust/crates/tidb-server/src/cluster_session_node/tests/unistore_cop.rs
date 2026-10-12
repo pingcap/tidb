@@ -13651,3 +13651,70 @@ fn generated_columns_read_build_and_modify_as_go_on_the_production_node() {
         )
     );
 }
+
+/// Go `finishDDLJob` files every finished job in the meta `DDLJobHistory`
+/// hash, and `information_schema.DDL_JOBS` / `ADMIN SHOW DDL JOBS` read it
+/// (running jobs first): on the production node each direct DDL leaves one
+/// Go-shaped job -- its schema and table, type, multi-schema sub-jobs and
+/// its statement text, with Go's INTERVAL query rewrite.
+#[test]
+fn production_ddl_jobs_land_in_the_meta_history_as_go_files_them() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1021)).unwrap();
+    session.execute_write("CREATE DATABASE hist_db").unwrap();
+    session
+        .execute_write("CREATE TABLE hist_db.t (a INT)")
+        .unwrap();
+    // Go `buildIndexColumns`: an index may not name a column the same
+    // statement adds.
+    let error = session
+        .execute_write("ALTER TABLE hist_db.t ADD COLUMN b INT, ADD INDEX ib (b)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1072, "column does not exist: b")
+    );
+    session
+        .execute_write("ALTER TABLE hist_db.t ADD COLUMN b INT, ADD INDEX ib (a)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT db_name, table_name, job_type FROM information_schema.DDL_JOBS LIMIT 5"
+        )),
+        [
+            ["hist_db", "t", "alter table multi-schema change"],
+            ["hist_db", "t", "add column /* subjob */"],
+            ["hist_db", "t", "add index /* subjob */"],
+            ["hist_db", "t", "create table"],
+            ["hist_db", "", "create schema"],
+        ]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT query FROM information_schema.DDL_JOBS WHERE job_type = 'create table' LIMIT 1"
+        )),
+        [["CREATE TABLE hist_db.t (a INT)"]]
+    );
+    // ADMIN SHOW DDL JOBS 1: one history job, with its sub-job rows.
+    assert_eq!(rows(&mut session, "ADMIN SHOW DDL JOBS 1").len(), 3);
+
+    session
+        .execute_write(
+            "CREATE TABLE hist_db.tp (id INT) PARTITION BY RANGE (id) INTERVAL (100) \
+             FIRST PARTITION LESS THAN (100) LAST PARTITION LESS THAN (300)",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT query FROM information_schema.DDL_JOBS LIMIT 1"
+        )),
+        [[
+            "CREATE TABLE hist_db.tp (id INT) PARTITION BY RANGE (id) (PARTITION `P_LT_100` \
+             VALUES LESS THAN (100),\n PARTITION `P_LT_200` VALUES LESS THAN (200),\n PARTITION \
+             `P_LT_300` VALUES LESS THAN (300))"
+        ]]
+    );
+}

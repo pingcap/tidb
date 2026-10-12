@@ -81,9 +81,22 @@ impl Session {
         self.run_internal_write(&sql).map(|_| ())
     }
 
-    /// The meta history newest-first (Go `GetLastHistoryDDLJobsIterator`).
-    pub(crate) fn last_history_ddl_jobs(&mut self) -> Result<Vec<Job>, DriverError> {
-        self.with_persistent_catalog_mut(|catalog| catalog.last_history_ddl_jobs())
+    /// Go `DDLJobRetriever.initial`: the running jobs (`GetAllDDLJobs`),
+    /// then the meta history newest first (`GetLastHistoryDDLJobsIterator`),
+    /// from the cluster's store when one is installed, else this catalog's
+    /// own history (which has no running job: its DDL runs to completion).
+    pub(crate) fn all_ddl_jobs(&mut self) -> Result<(Vec<Job>, Vec<Job>), DriverError> {
+        if let Some(store) = self.ddl_job_history_store.clone() {
+            return store
+                .all_ddl_jobs()
+                .map_err(|message| DriverError::DdlCoded {
+                    errno: 1105,
+                    message,
+                });
+        }
+        let history =
+            self.with_persistent_catalog_mut(|catalog| catalog.last_history_ddl_jobs())?;
+        Ok((Vec::new(), history))
     }
 }
 

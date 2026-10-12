@@ -1024,6 +1024,11 @@ pub struct StmtContextData {
     ddl_sql_mode: i64,
     /// Original DDL text persisted in Go `model.Job.Query` before submission.
     ddl_query: String,
+    /// Go's `sessionctx.QueryString` rewrite for partition syntactic sugar
+    /// (INTERVAL, FIRST / LAST PARTITION): the clause's source text and its
+    /// replacement. Shared by every copy of this statement's context, so a
+    /// production DDL plan reads what its shared helpers recorded.
+    ddl_query_rewrite: Arc<std::sync::Mutex<Option<(String, String)>>>,
     /// Go `SessionVars.CDCWriteSource`, persisted in every user DDL job.
     ddl_cdc_write_source: u64,
     /// Go `SessionVars.DDLReorgPriority`, used by ADD CHECK validation reads.
@@ -2396,6 +2401,7 @@ impl StmtContext {
             sql_mode: tidb_parser::SqlMode::default(),
             ddl_sql_mode: session.ddl_sql_mode,
             ddl_query: String::new(),
+            ddl_query_rewrite: Arc::default(),
             ddl_cdc_write_source: 0,
             // Go initializes `DDLReorgPriority` to `kv.PriorityLow`.
             ddl_reorg_priority: 1,
@@ -2743,9 +2749,23 @@ impl StmtContext {
 
     /// Rewrites the running DDL job's query (Go's INTERVAL sugar rewrite).
     pub fn rewrite_ddl_job_query(&self, original: String, replacement: String) {
+        *self
+            .ddl_query_rewrite
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((original.clone(), replacement.clone()));
         if let Some(sink) = &self.ddl_job_sink {
             sink.rewrite_query(original, replacement);
         }
+    }
+
+    /// The query rewrite this statement's DDL recorded, if any.
+    #[must_use]
+    pub fn ddl_query_rewrite(&self) -> Option<(String, String)> {
+        self.ddl_query_rewrite
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Rows the running DDL job processed (Go `Job.RowCount`).

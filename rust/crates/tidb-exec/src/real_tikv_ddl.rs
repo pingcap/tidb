@@ -827,8 +827,12 @@ pub trait DdlSchemaSync {
 
 #[derive(Clone, Copy)]
 enum DdlPhase<'statement> {
-    /// A direct change, and the issuing session's `tidb_cdc_write_source`.
-    Initial(&'statement DdlStatement, u64),
+    /// A direct change, and what Go's submitter copies from the issuing
+    /// session into its job.
+    Initial(
+        &'statement DdlStatement,
+        &'statement tidb_executor::StmtContext,
+    ),
     Persisted {
         ddl_job_id: i64,
         check_owner: &'statement dyn Fn() -> Result<(), String>,
@@ -946,9 +950,9 @@ pub fn commit_cluster_ddl_with_backfill<
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn DdlSchemaSync,
     auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
-    // The issuing session's `tidb_cdc_write_source`, which exempts a change
-    // TiCDC replicates from the BDR submit admission.
-    cdc_write_source: u64,
+    // What Go's submitter copies from the issuing session into the job:
+    // the statement text, SQL mode and `tidb_cdc_write_source`.
+    job_context: &tidb_executor::StmtContext,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
     if matches!(
         statement,
@@ -962,7 +966,7 @@ pub fn commit_cluster_ddl_with_backfill<
     let phase = |statement: &DdlStatement| {
         commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
-            DdlPhase::Initial(statement, cdc_write_source),
+            DdlPhase::Initial(statement, job_context),
             timeout,
             notifier,
             backfiller,
@@ -1543,14 +1547,14 @@ fn commit_cluster_ddl_with_backfill_once<
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
         match phase {
-            DdlPhase::Initial(statement, cdc_write_source) => {
+            DdlPhase::Initial(statement, job_context) => {
                 crate::cluster_ddl::plan_ddl_with_auto_ids(
                     &mut snapshot,
                     statement,
                     start_ts,
                     tidb_datatype::new_collation_enabled(),
                     auto_ids,
-                    cdc_write_source,
+                    job_context,
                 )
                 .map(|plan| (plan, false, None))
             }

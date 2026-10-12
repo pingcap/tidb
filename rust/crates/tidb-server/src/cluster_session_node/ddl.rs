@@ -69,14 +69,14 @@ pub trait ClusterDdl: Send + Sync {
     ///
     /// The two halves are one method because a caller that published without
     /// refreshing would answer the next statement from a catalog it knows to
-    /// be stale. `cdc_write_source` is the issuing session's
-    /// `tidb_cdc_write_source` (0 for the node's own changes), which Go copies
-    /// into the job and which exempts a change TiCDC replicates from the BDR
-    /// submit admission.
+    /// be stale. `job_context` is what Go's submitter copies from the issuing
+    /// session into the job: the statement text (`Job.Query`), SQL mode and
+    /// `tidb_cdc_write_source`, which exempts a change TiCDC replicates from
+    /// the BDR submit admission.
     fn execute(
         &self,
         statement: &DdlStatement,
-        cdc_write_source: u64,
+        job_context: &tidb_executor::StmtContext,
     ) -> Result<ClusterDdlReport, SqlQueryError>;
 
     /// Go `do.DDL().OwnerManager().IsOwner()`: whether this node owns the DDL
@@ -2193,7 +2193,7 @@ where
     fn execute(
         &self,
         statement: &DdlStatement,
-        cdc_write_source: u64,
+        job_context: &tidb_executor::StmtContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
         // Go `dropTableObject`: each target is its own job, a missing name is
         // collected and reported once the list ends.
@@ -2250,7 +2250,7 @@ where
                         name: name.to_owned(),
                     },
                 };
-                match self.execute(&target, cdc_write_source) {
+                match self.execute(&target, job_context) {
                     Ok(report) => {
                         last = report;
                         Ok(true)
@@ -2330,7 +2330,7 @@ where
             &KvTableIndexBackfiller,
             self.schema_sync.as_ref(),
             self.auto_ids.as_ref(),
-            cdc_write_source,
+            job_context,
         )
         .map_err(cluster_ddl_error)?;
         self.refresh_catalog();
@@ -2354,7 +2354,8 @@ where
                 table_id,
                 available,
             },
-            0,
+            // The domain's own job: no session, no statement text.
+            &tidb_executor::StmtContext::for_query(),
         )
         .map(|_| ())
         .map_err(|error| error.message)

@@ -362,6 +362,7 @@ mod bdr_role_store;
 mod binding_maintenance;
 mod boot;
 mod ddl;
+mod ddl_job_history_store;
 mod ddl_notifier;
 mod record_set;
 mod ru_stats_writer;
@@ -1106,6 +1107,7 @@ pub struct ClusterSessionFactory {
     /// The cluster's BDR role in TiKV meta, which every session's ADMIN
     /// BDR ROLE statements read and write.
     bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_session::BdrRoleStore>>,
+    ddl_job_history_store: std::sync::OnceLock<Arc<dyn tidb_session::DdlJobHistoryStore>>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
     auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
     /// Go Domain's capacity-16 historical-statistics mailbox.
@@ -1238,6 +1240,7 @@ impl ClusterSessionFactory {
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             ru_stats_writer: std::sync::OnceLock::new(),
             bdr_role_store: std::sync::OnceLock::new(),
+            ddl_job_history_store: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
@@ -1607,8 +1610,13 @@ impl ClusterSessionFactory {
         let _ = self
             .bdr_role_store
             .set(Arc::new(bdr_role_store::ClusterBdrRoleStore::new(
-                opener, timeout,
+                Arc::clone(&opener),
+                timeout,
             )));
+        // Go reads the DDL jobs through the same meta store.
+        let _ = self.ddl_job_history_store.set(Arc::new(
+            ddl_job_history_store::ClusterDdlJobHistoryStore::new(opener, timeout),
+        ));
     }
 
     /// Starts pinned Go `autoAnalyzeWorker`. Like Go, only a positive stats
@@ -3599,6 +3607,9 @@ impl ClusterSessionFactory {
         if let Some(store) = self.bdr_role_store.get() {
             session.set_bdr_role_store(Arc::clone(store));
         }
+        if let Some(store) = self.ddl_job_history_store.get() {
+            session.set_ddl_job_history_store(Arc::clone(store));
+        }
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
         )));
@@ -4871,7 +4882,7 @@ impl Drop for ClusterServerSession {
             if let Some(statement) = self.session.cluster_unlock_tables_statement() {
                 if let Err(error) = self
                     .ddl
-                    .execute(&statement, self.session.ddl_cdc_write_source())
+                    .execute(&statement, &self.session.ddl_statement_context())
                 {
                     eprintln!(
                         "{{\"event\":\"release_table_lock_failed\",\"conn\":{},\"error\":{}}}",
@@ -7424,6 +7435,7 @@ impl ClusterServerSession {
 
     fn run_ddl(
         &mut self,
+        sql: &str,
         parsed: &tidb_ast::Stmt,
         statement: &DdlStatement,
     ) -> Result<WriteOutcome, SqlQueryError> {
@@ -7448,9 +7460,9 @@ impl ClusterServerSession {
             .map_err(map_error)?;
         let lock_effect = self.session.cluster_ddl_lock_effect(statement);
         self.session.begin_cluster_lock_job(statement);
-        let report = self
-            .ddl
-            .execute(statement, self.session.ddl_cdc_write_source());
+        // Go `Job.Query` is the statement's original text.
+        let job_context = self.session.ddl_statement_context().with_ddl_query(sql);
+        let report = self.ddl.execute(statement, &job_context);
         // Go appends plan-time warnings to the session's statement context
         // before it submits the job, so they precede the job's own.
         if let Some(context) = statement.statement_context() {
@@ -7515,11 +7527,12 @@ impl ClusterServerSession {
 
     fn run_mixed_temporary_drop(
         &mut self,
+        sql: &str,
         parsed: &Stmt,
         statement: &DdlStatement,
         local: Vec<Vec<String>>,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let outcome = self.run_ddl(parsed, statement)?;
+        let outcome = self.run_ddl(sql, parsed, statement)?;
         self.session
             .drop_local_temporary_targets(local)
             .map_err(map_error)?;
@@ -7824,13 +7837,15 @@ impl QuerySession for ClusterServerSession {
         match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
                 return self
-                    .observe_routed_write(sql, stmt, |node| node.run_ddl(stmt, &statement))
+                    .observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))
                     .map(Some)
             }
             StatementRoute::MixedTemporaryDrop { statement, local } => {
-                return self.observe_routed_write(sql, stmt, |node| {
-                    node.run_mixed_temporary_drop(stmt, &statement, local)
-                }).map(Some);
+                return self
+                    .observe_routed_write(sql, stmt, |node| {
+                        node.run_mixed_temporary_drop(sql, stmt, &statement, local)
+                    })
+                    .map(Some);
             }
             StatementRoute::LocalTemporaryDdl => {
                 return self
@@ -8363,14 +8378,14 @@ impl QuerySession for ClusterServerSession {
         // statement runs exactly once either way.
         match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_ddl(stmt, &statement))?;
+                self.observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
             }
             StatementRoute::MixedTemporaryDrop { statement, local } => {
                 self.observe_routed_write(sql, stmt, |node| {
-                    node.run_mixed_temporary_drop(stmt, &statement, local)
+                    node.run_mixed_temporary_drop(sql, stmt, &statement, local)
                 })?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),

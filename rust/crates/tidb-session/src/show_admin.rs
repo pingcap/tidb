@@ -715,10 +715,12 @@ impl crate::Session {
         } else {
             DEF_NUM_HISTORY_JOBS
         };
-        let rows = self
-            .last_history_ddl_jobs()?
+        // Go `ShowDDLJobsExec.Next`: every running job, then at most
+        // `job_number` history jobs.
+        let (running, history) = self.all_ddl_jobs()?;
+        let rows = running
             .iter()
-            .take(job_number)
+            .chain(history.iter().take(job_number))
             .flat_map(|job| crate::ddl_jobs::ddl_job_rows(job, true))
             .collect::<Vec<_>>();
         let varchar = || FieldType::new(FieldTypeCode::Varchar);
