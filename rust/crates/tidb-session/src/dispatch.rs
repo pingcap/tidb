@@ -3052,28 +3052,7 @@ impl Session {
                 return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
             }
         }
-        // Go hands every statement that is not continuing an open transaction
-        // a FRESH membuffer, so `session.HasDirtyContent` answers false for
-        // every table at this point -- and `BEGIN` therefore starts from an
-        // empty one. This tier's `staged_writes` handle is that membuffer:
-        // replacing it with a fresh, empty one is the O(1) equivalent of Go
-        // discarding its old one, no catalog walk involved. This is the only
-        // door a statement arrives through, so it is the only place that has
-        // to say. See [`Session::staged_writes`]'s own doc.
-        if !self.in_transaction() {
-            self.staged_writes = std::sync::Arc::default();
-            // The same boundary is where a GLOBAL temporary table empties.
-            // Its rows live in Go's `TxnCtx.TemporaryTables`, which is built
-            // fresh for each transaction and whose keys `temporaryTableKV
-            // Filter` strips before commit, so nothing a previous transaction
-            // wrote is ever readable again -- `ON COMMIT DELETE ROWS` is that
-            // and nothing more, which is also why TiDB refuses
-            // `ON COMMIT PRESERVE ROWS` outright. In autocommit every
-            // statement is its own transaction, so clearing here covers both
-            // shapes: the statement before this one was the transaction that
-            // ended, and a `BEGIN` arriving here starts from empty.
-            self.discard_global_temporary_rows();
-        }
+        self.start_statement_transaction_scope();
         // Go parameterizes a non-prepared statement before optimization, then
         // sends the retained marker-bearing statement through the same plan
         // cache as PREPARE. Keep the candidate beside this ordinary statement

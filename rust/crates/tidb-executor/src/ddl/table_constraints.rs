@@ -959,8 +959,16 @@ fn check_inline_key_part(
 
 /// Go `isIntCol`: whether the column's type can carry a handle.
 pub(crate) fn is_int_column(column: &ColumnInfo) -> bool {
+    is_int_column_type(column.field_type.code())
+}
+
+/// Go `isIntCol`'s type switch. Narrower than
+/// [`FieldTypeCode::is_type_integer`]: a `YEAR` primary key is never the INT
+/// row handle -- it is clustered as a common handle or not at all.
+#[must_use]
+pub fn is_int_column_type(code: FieldTypeCode) -> bool {
     matches!(
-        column.field_type.code(),
+        code,
         FieldTypeCode::Long
             | FieldTypeCode::LongLong
             | FieldTypeCode::Tiny

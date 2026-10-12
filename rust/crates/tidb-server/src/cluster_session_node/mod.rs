@@ -4917,6 +4917,20 @@ impl ClusterServerSession {
                 "{feature} is not supported yet"
             )));
         }
+        // Go builds a fresh `TxnCtx` at every transaction boundary, and its
+        // GLOBAL temporary rows never reach a commit (`temporaryTableKVFilter`
+        // strips their keys), so a BEGIN, COMMIT or ROLLBACK starts this
+        // session's transaction-scoped state over.
+        if matches!(
+            control,
+            Some(
+                TransactionControl::Begin { .. }
+                    | TransactionControl::Commit
+                    | TransactionControl::Rollback { .. }
+            )
+        ) {
+            self.session.reset_transaction_scope();
+        }
         // Go's `BEGIN` inside an open transaction implicitly COMMITS it --
         // and the commit must run BEFORE the schema refresh below, in Go's
         // own order. The refresh replaces the session's shared catalog, and
@@ -7742,6 +7756,12 @@ impl QuerySession for ClusterServerSession {
         if let Some(transaction) = self.explicit.as_ref() {
             transaction.note_statement();
         }
+        // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
+        // for every statement no transaction continues into: neither this
+        // node's explicit transaction nor one the session itself opened.
+        if self.explicit.is_none() {
+            self.session.start_statement_transaction_scope();
+        }
         self.session.clear_statement_message();
         // Go resolves and plans against the current infoschema before it
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
@@ -8274,6 +8294,12 @@ impl QuerySession for ClusterServerSession {
         // transaction counts toward its COMMIT observation.
         if let Some(transaction) = self.explicit.as_ref() {
             transaction.note_statement();
+        }
+        // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
+        // for every statement no transaction continues into: neither this
+        // node's explicit transaction nor one the session itself opened.
+        if self.explicit.is_none() {
+            self.session.start_statement_transaction_scope();
         }
         self.session.clear_statement_message();
         // Refresh before access-shape classification. Waiting until the

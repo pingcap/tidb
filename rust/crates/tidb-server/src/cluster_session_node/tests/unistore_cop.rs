@@ -12801,3 +12801,92 @@ fn alter_table_placement_policy_as_go_does() {
         );
     }
 }
+
+/// Go `isIntCol` admits only the five integer types, so a `YEAR` primary key
+/// is never the INT row handle: under the default clustered mode it is a
+/// common handle. This node made it the int handle, which the record-range
+/// encoder does not accept, and every full scan read nothing
+/// (TestIssue20768).
+#[test]
+fn year_primary_key_is_not_the_row_handle_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1006)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.t1 (a YEAR, PRIMARY KEY (a))",
+    );
+    session
+        .execute_write("INSERT IGNORE INTO test.t1 VALUES (NULL)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO test.t1 VALUES (2001)")
+        .unwrap();
+    rows(&mut session, "CREATE TABLE test.t2 (a INT, KEY (a))");
+    session
+        .execute_write("INSERT INTO test.t2 VALUES (0)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT HEX(a), a + 0 FROM test.t1 ORDER BY a"
+        )),
+        [["0", "0"], ["7D1", "2001"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*) FROM test.t1")),
+        [["2"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT /*+ HASH_JOIN(t1) */ t1.a + 0, t2.a FROM test.t1 JOIN test.t2 ON t1.a = t2.a"
+        )),
+        [["0", "0"]]
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t1"));
+    assert!(
+        created[0][1].contains("PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */"),
+        "{}",
+        created[0][1]
+    );
+}
+
+/// Go builds a fresh `TxnCtx` for every autocommit statement and at every
+/// BEGIN / COMMIT / ROLLBACK, so the rows of an `ON COMMIT DELETE ROWS` table
+/// live exactly as long as the transaction that wrote them. This node kept
+/// them across autocommit statements.
+#[test]
+fn global_temporary_rows_end_with_their_transaction_as_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1007)).unwrap();
+    rows(
+        &mut session,
+        "CREATE GLOBAL TEMPORARY TABLE test.g (a INT) ON COMMIT DELETE ROWS",
+    );
+    session
+        .execute_write("INSERT INTO test.g VALUES (1)")
+        .unwrap();
+    assert!(rows(&mut session, "SELECT a FROM test.g").is_empty());
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO test.g VALUES (2)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a FROM test.g")),
+        [["2"]]
+    );
+    session.control_transaction("COMMIT").unwrap();
+    assert!(rows(&mut session, "SELECT a FROM test.g").is_empty());
+    // A BEGIN the query path runs opens the session's own transaction, which
+    // the next statement continues into just the same.
+    rows(&mut session, "BEGIN");
+    session
+        .execute_write("INSERT INTO test.g VALUES (3)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a FROM test.g")),
+        [["3"]]
+    );
+    rows(&mut session, "COMMIT");
+    assert!(rows(&mut session, "SELECT a FROM test.g").is_empty());
+}

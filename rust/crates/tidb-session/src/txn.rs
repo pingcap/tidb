@@ -1170,6 +1170,41 @@ impl Session {
         value
     }
 
+    /// Starts the transaction-scoped state a statement sees when it does not
+    /// continue an open transaction.
+    ///
+    /// Go hands every statement that is not continuing an open transaction
+    /// a FRESH membuffer, so `session.HasDirtyContent` answers false for
+    /// every table at this point -- and `BEGIN` therefore starts from an
+    /// empty one. This tier's `staged_writes` handle is that membuffer:
+    /// replacing it with a fresh, empty one is the O(1) equivalent of Go
+    /// discarding its old one, no catalog walk involved. Every statement door
+    /// -- this session's dispatch and the cluster node's routes -- calls this
+    /// first. See [`Session::staged_writes`]'s own doc.
+    ///
+    /// The same boundary is where a GLOBAL temporary table empties. Its rows
+    /// live in Go's `TxnCtx.TemporaryTables`, which is built fresh for each
+    /// transaction and whose keys `temporaryTableKVFilter` strips before
+    /// commit, so nothing a previous transaction wrote is ever readable again
+    /// -- `ON COMMIT DELETE ROWS` is that and nothing more, which is also why
+    /// TiDB refuses `ON COMMIT PRESERVE ROWS` outright. In autocommit every
+    /// statement is its own transaction, so clearing here covers both shapes:
+    /// the statement before this one was the transaction that ended, and a
+    /// `BEGIN` arriving here starts from empty.
+    pub fn start_statement_transaction_scope(&mut self) {
+        if !self.in_transaction() {
+            self.reset_transaction_scope();
+        }
+    }
+
+    /// [`Self::start_statement_transaction_scope`] for a door that owns the
+    /// transaction itself -- the cluster node, whose explicit transaction is
+    /// its own and which knows no transaction continues into this statement.
+    pub fn reset_transaction_scope(&mut self) {
+        self.staged_writes = std::sync::Arc::default();
+        self.discard_global_temporary_rows();
+    }
+
     /// Drops every row this session has written to a GLOBAL temporary table.
     ///
     /// See the call site in `dispatch` for why the transaction boundary is

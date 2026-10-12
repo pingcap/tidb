@@ -2516,8 +2516,11 @@ fn is_single_int_primary_key(constraint: &Constraint, table: &TableInfo) -> bool
                 .eq_ignore_ascii_case(&part.name)
         })
         // Go `isIntCol` looks at the type alone: an UNSIGNED BIGINT primary
-        // key is just as much a clustered handle as a signed one.
-        .is_some_and(|column| column.read().field_type.code().is_type_integer())
+        // key is just as much a clustered handle as a signed one, and a YEAR
+        // one is never the int handle.
+        .is_some_and(|column| {
+            tidb_executor::ddl::is_int_column_type(column.read().field_type.code())
+        })
 }
 
 /// Go `ShouldBuildClusteredIndex`.
