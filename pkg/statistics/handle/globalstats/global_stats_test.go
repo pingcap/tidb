@@ -1217,14 +1217,14 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table ndv (a int primary key, b int, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("create table ndv (a int, b int, primary key (a) nonclustered, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
 	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
 	tk.MustExec("analyze table ndv")
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv"))
 	require.NoError(t, err)
 	tbl := table.Meta()
 	part0, part1 := tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID
-	colB, idx := tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID
+	colA, colB, idx, pk := tbl.Columns[0].ID, tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID, tbl.FindIndexByName("primary").ID
 	tk.MustExec("update mysql.stats_meta set count=10 where table_id in (?,?)", part0, part1)
 	// sampledSketch returns a saved sketch of 10 rows, of which selected were
 	// sampled for NDV and 3 are NULL, with the given singleton hashes.
@@ -1298,6 +1298,15 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 			tk.MustExec("insert into mysql.stats_fm_sketch values (?, 0, ?, ?)", part1, colB, data)
 		})
 		checkNDV(t, int64(math.Round(2*math.Sqrt(10./3))))
+	})
+	t.Run("unique columns and indexes keep the exact NDV", func(t *testing.T) {
+		// The primary key keeps column a unique. Its column and index NDV must
+		// count all four rows seen by ANALYZE, not the two sampled hashes.
+		setSketches(data, data)
+		for _, async := range []bool{false, true} {
+			require.Equal(t, int64(4), mergedNDV(t, async, false, colA))
+			require.Equal(t, int64(4), mergedNDV(t, async, true, pk))
+		}
 	})
 	t.Run("deletes after ANALYZE keep the limit", func(t *testing.T) {
 		// Deletes can bring the row count down to the NULL count of the last ANALYZE, here
