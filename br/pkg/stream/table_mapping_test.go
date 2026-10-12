@@ -976,6 +976,42 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Empty(t, tm.DBReplaceMap[1].TableMap[11].TargetDBName)
 	})
 
+	t.Run("fill schema name missing from the log scan", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"test": 900}))
+
+		// The log scan observed only a table DDL, so the source schema has no name.
+		// The snapshot restore creates `test`, and its identity must be propagated
+		// so the log phase can refresh the schema metadata and reset table modes.
+		sourceDB := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "",
+				DbID: -1,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "snapshot_table1", TableID: -2},
+				},
+			},
+		}
+
+		err := tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{{
+				Source: &metautil.Database{Info: sourceDB},
+				Target: sourceDB.Clone(),
+			}},
+			[]*restoreutils.CreatedTable{{
+				OldTable: &metautil.Table{DB: sourceDB, Info: &model.TableInfo{ID: 11, Name: ast.NewCIStr("snapshot_table1")}},
+				Table:    &model.TableInfo{ID: 911, Name: ast.NewCIStr("snapshot_table1")},
+			}},
+			dom,
+		)
+		require.NoError(t, err)
+		require.Equal(t, "test", tm.DBReplaceMap[1].Name)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].DbID)
+		require.Equal(t, int64(911), tm.DBReplaceMap[1].TableMap[11].TableID)
+	})
+
 	t.Run("update tables from multiple source databases routed to one target", func(t *testing.T) {
 		dom := domain.NewMockDomain()
 		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"target": 900}))

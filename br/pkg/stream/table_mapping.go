@@ -1383,6 +1383,14 @@ func (tm *TableMappingManager) UpdateDownstreamIds(
 				dbReplace = NewDBReplace(existing.Name, existing.DbID)
 				dbReplace.Reused = existing.Reused
 				dbReplace.SchemaRouted = existing.SchemaRouted
+				if dbReplace.Name == "" {
+					// The log scan cannot name a schema whose only log entry is a
+					// table DDL (the database pre-dates the log window). Fall back
+					// to the schema identity created by the snapshot restore so the
+					// log phase can refresh its metadata and reset table modes.
+					dbReplace.Name = newDBInfo.Name.O
+					dbReplace.DbID = newDBInfo.ID
+				}
 			} else {
 				dbReplace = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
 				dbReplace.Reused = dbPlan.Reused
