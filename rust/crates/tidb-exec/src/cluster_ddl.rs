@@ -3956,6 +3956,8 @@ fn apply_drop_primary_key(
     // The removal walk rebuilds the dropped index's entry keys, so its table
     // must still CARRY the index.
     let backfill_table = Box::new(info.clone_like_go());
+    // Go `onDropIndex`: the primary key's columns lose PRI first.
+    drop_index_column_flag(info, &dropped);
     if let Some(offset) = info.indices.iter_handles().position(|candidate| {
         candidate
             .as_ref()
@@ -9612,7 +9614,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // lookup needs the same snapshot the rest of the statement plans
             // against; `CreateTableBuild` keeps the original statement, so
             // the written name is still in reach.
-            if let Some(policy_name) =
+            let written_policy =
                 build
                     .create
                     .table_options
@@ -9620,23 +9622,18 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     .find_map(|option| match option {
                         tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
                         _ => None,
-                    })
-            {
-                let Some(policy) = find_policy(snapshot, &policy_name)? else {
-                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                        8239,
-                        format!("Unknown placement policy '{policy_name}'"),
-                    )));
-                };
+                    });
+            if let Some(policy_name) = &written_policy {
+                // Go `checkAndNormalizePlacementPolicy`: `default` is no
+                // policy at all.
                 info.placement_policy_ref =
-                    Some(tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
-                        id: policy.id,
-                        name: CiString::new(policy_name),
-                    }));
+                    check_and_normalize_placement_policy(snapshot, policy_name)?;
             }
-            // Go `BuildTableInfoWithStmt`: a non-temporary table with no
-            // placement of its own takes the schema's default.
-            if info.placement_policy_ref.is_none()
+            // Go `BuildTableInfoWithStmt`: a non-temporary table that names no
+            // placement takes the schema's default. A written `default` is a
+            // reference there (cleared only afterwards), so it does not.
+            if written_policy.is_none()
+                && info.placement_policy_ref.is_none()
                 && info.temp_table_type == tidb_model::TempTableType::NONE
             {
                 if let Some(reference) = find_database(&catalog, schema)
@@ -11859,6 +11856,9 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         // keys, so its table must still CARRY the index —
                         // snapshot before the delete, evolved columns and all.
                         let backfill_table = Box::new(info.clone_like_go());
+                        // Go `onDropIndex`: flags and hidden columns first.
+                        drop_index_column_flag(&info, &dropped);
+                        remove_dependent_hidden_columns(&mut info, &dropped);
                         if let Some(offset) = info.indices.iter_handles().position(|candidate| {
                             candidate
                                 .as_ref()
@@ -13194,6 +13194,10 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             )
             .map_err(DdlPlanError::Admission)?;
             let mut info = stored.clone_like_go();
+            // Go `onDropIndex` at delete-reorganization: the column flags,
+            // the dependent hidden columns, then `removeIndexInfo`.
+            drop_index_column_flag(&info, &dropped);
+            remove_dependent_hidden_columns(&mut info, &dropped);
             if let Some(offset) = info.indices.iter_handles().position(|candidate| {
                 candidate
                     .as_ref()
@@ -14404,6 +14408,7 @@ fn on_create_foreign_key(
         info.max_index_id += 1;
         added.id = info.max_index_id;
         added.table = info.name.clone();
+        add_index_column_flag(info, &added);
         let added = GoShared::new(added);
         info.indices.push_handle_go(Some(added.clone()));
         backfill.push(IndexBackfill {
@@ -14701,6 +14706,8 @@ fn allocate_added_index(info: &mut TableInfo, added: &mut IndexInfo) {
     added.table = info.name.clone();
     set_global_index_version(info, added);
     if !added.primary {
+        // Go `onCreateIndex` at the public state.
+        add_index_column_flag(info, added);
         return;
     }
     let pk_columns: Vec<String> = added
@@ -14719,6 +14726,98 @@ fn allocate_added_index(info: &mut TableInfo, added: &mut IndexInfo) {
             column.field_type = field_type;
         }
     }
+}
+
+/// Go `AddIndexColumnFlag`: a primary key's columns take PRI; any other
+/// index flags its first column UNI (a one-column unique index) or MUL.
+fn add_index_column_flag(info: &TableInfo, index: &IndexInfo) {
+    use tidb_datatype::FieldTypeFlags;
+    let flag_column = |offset: i64, flag| {
+        if let Some(column) = usize::try_from(offset)
+            .ok()
+            .and_then(|offset| info.columns.get(offset))
+        {
+            column.write().field_type.add_flags(flag);
+        }
+    };
+    if index.primary {
+        for part in index.columns.iter_deref() {
+            flag_column(part.read().offset, FieldTypeFlags::PRI_KEY);
+        }
+        return;
+    }
+    let Some(first) = index.columns.get(0) else {
+        return;
+    };
+    let offset = first.read().offset;
+    if index.unique && index.columns.len() == 1 {
+        flag_column(offset, FieldTypeFlags::UNIQUE_KEY);
+    } else {
+        flag_column(offset, FieldTypeFlags::MULTIPLE_KEY);
+    }
+}
+
+/// Go `DropIndexColumnFlag`: the dropped index's flag leaves its columns,
+/// then every other index led by the same column flags it again.
+fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
+    use tidb_datatype::FieldTypeFlags;
+    let unflag_column = |offset: i64, flag| {
+        if let Some(column) = usize::try_from(offset)
+            .ok()
+            .and_then(|offset| info.columns.get(offset))
+        {
+            column.write().field_type.del_flags(flag);
+        }
+    };
+    let Some(first) = index.columns.get(0) else {
+        return;
+    };
+    if index.primary {
+        for part in index.columns.iter_deref() {
+            unflag_column(part.read().offset, FieldTypeFlags::PRI_KEY);
+        }
+    } else if index.unique && index.columns.len() == 1 {
+        unflag_column(first.read().offset, FieldTypeFlags::UNIQUE_KEY);
+    } else {
+        unflag_column(first.read().offset, FieldTypeFlags::MULTIPLE_KEY);
+    }
+    let first_name = first.read().name.lowercase().to_owned();
+    for other in info.indices.iter_deref() {
+        let other = other.read();
+        if other.name.lowercase() == index.name.lowercase() {
+            continue;
+        }
+        let leads = other
+            .columns
+            .get(0)
+            .is_some_and(|part| part.read().name.lowercase() == first_name);
+        if leads {
+            add_index_column_flag(info, &other);
+        }
+    }
+}
+
+/// Go `RemoveDependentHiddenColumns`: an expression index's hidden columns
+/// leave the table with it, moved to the end first so the remaining offsets
+/// stay dense.
+fn remove_dependent_hidden_columns(info: &mut TableInfo, index: &IndexInfo) {
+    let mut hidden_offsets = index
+        .columns
+        .iter_deref()
+        .filter_map(|part| {
+            let offset = usize::try_from(part.read().offset).ok()?;
+            let column = info.columns.get(offset)?;
+            let column = column.read();
+            column.hidden.then_some(column.offset)
+        })
+        .collect::<Vec<_>>();
+    hidden_offsets.sort_unstable_by(|a, b| b.cmp(a));
+    let end_offset = info.columns.len() as isize - 1;
+    for offset in &hidden_offsets {
+        info.move_column_info(*offset as isize, end_offset);
+    }
+    let len = info.columns.len();
+    info.columns.delete_go(len - hidden_offsets.len(), len);
 }
 
 /// The table's index of that name, matched the way MySQL matches one:

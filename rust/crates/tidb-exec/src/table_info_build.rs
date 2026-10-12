@@ -1838,12 +1838,9 @@ fn build_column(
             format!("Incorrect column name '{lower}'"),
         ));
     }
-    if !column.qualifier.is_empty() {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            format!("column `{name}` carries a qualifier, which CREATE TABLE does not accept here"),
-        ));
-    }
+    // A table-qualified column name (`CREATE TABLE t (t.a INT)`) was judged
+    // by Go's preprocess (`ErrWrongDBName` / `ErrWrongTableName`); the
+    // builder then reads the bare name, as `buildColumnAndConstraint` does.
 
     // Go `getCharsetAndCollateInColumnDef`: the declared CHARSET, plus the LAST
     // COLLATE option, before the table's own pair fills the gaps.

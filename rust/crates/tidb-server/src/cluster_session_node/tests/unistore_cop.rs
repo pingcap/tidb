@@ -13872,3 +13872,80 @@ fn set_global_inside_a_transaction_keeps_the_transaction_open() {
     session.control_transaction("ROLLBACK").unwrap();
     assert!(rows(&mut session, "SELECT * FROM sg").is_empty());
 }
+
+/// Go's preprocess judges a table-qualified column name in CREATE TABLE
+/// (1102 for another schema, 1103 for another table) and the builder then
+/// reads the bare name; the production builder refused every qualifier.
+#[test]
+fn create_table_accepts_a_column_qualified_by_its_own_table() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1026)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE q2 (a CHAR, q2.b INT)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW COLUMNS FROM q2"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    let error = session
+        .execute_write("CREATE TABLE q3 (q9.a CHAR)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1103, "Incorrect table name 'q9'")
+    );
+}
+
+/// Go's CREATE TABLE and DROP INDEX on the production node:
+/// - a written `PLACEMENT POLICY 'default'` is a reference Go's
+///   `checkAndNormalizePlacementPolicy` clears afterwards, so the table does
+///   not take the schema's default policy;
+/// - `onDropIndex` removes an expression index's hidden columns
+///   (`RemoveDependentHiddenColumns`), so their names are free again.
+#[test]
+fn create_table_default_policy_and_drop_index_hidden_columns_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1027)).unwrap();
+    session
+        .execute_write("CREATE PLACEMENT POLICY px FOLLOWERS=1")
+        .unwrap();
+    session
+        .execute_write("CREATE DATABASE pdb PLACEMENT POLICY px")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE pdb.t1 (a INT) PLACEMENT POLICY 'default'")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE pdb.t2 (a INT)")
+        .unwrap();
+    let show = |session: &mut ClusterServerSession, table: &str| {
+        displayed(rows(session, &format!("SHOW CREATE TABLE {table}")))[0][1].clone()
+    };
+    assert!(!show(&mut session, "pdb.t1").contains("PLACEMENT POLICY"));
+    assert!(show(&mut session, "pdb.t2").contains("PLACEMENT POLICY=`px`"));
+    session
+        .execute_write("CREATE TEMPORARY TABLE pdb.tmp LIKE pdb.t1")
+        .unwrap();
+
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE h (a INT, b REAL)")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE h ADD INDEX idx ((a + 1))")
+        .unwrap();
+    let error = session
+        .execute_write("ALTER TABLE h ADD COLUMN (_V$_idx_0 INT)")
+        .unwrap_err();
+    assert_eq!(error.code, 1060);
+    session
+        .execute_write("ALTER TABLE h DROP INDEX idx")
+        .unwrap();
+    session
+        .execute_write("ALTER TABLE h ADD COLUMN (_V$_idx_0 INT)")
+        .unwrap();
+}
