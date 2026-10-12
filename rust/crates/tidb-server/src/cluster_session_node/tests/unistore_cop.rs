@@ -391,6 +391,93 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
     rows(&mut session, "ADMIN CHECK TABLE test.child");
 }
 
+/// Go's expression defaults and clustered-index mode on the production node,
+/// answers from the Go oracle for the same script:
+/// - CREATE TABLE reads the session's `@@tidb_enable_clustered_index`
+///   (`metabuild.WithClusteredIndexDefMode`); the node built every primary
+///   key as if it were ON;
+/// - ADD COLUMN with an expression default evaluates it once into the origin
+///   default (`generateOriginDefaultValue`), after `CreateNewColumn` refuses
+///   an unreplayable call (1674) and an ENUM that cannot hold the value
+///   (1265, Go's argument-less `ErrTruncated`); the node refused every one;
+/// - a metadata-only MODIFY keeps the old origin and evaluates nothing;
+/// - `DEFAULT (CURRENT_DATE)`'s stored word is read through `GetTimeValue`;
+///   the loader had refused the table, which vanished (1146);
+/// - an AUTO_INCREMENT column takes no expression default (1067).
+#[test]
+fn expression_defaults_and_the_clustered_mode_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(144)).unwrap();
+    rows(
+        &mut session,
+        "SET @@tidb_enable_clustered_index = 'int_only'",
+    );
+    rows(
+        &mut session,
+        "CREATE TABLE test.tc (a INT, b INT, PRIMARY KEY (a, b))",
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.tc"));
+    assert!(
+        created[0][1].contains("PRIMARY KEY (`a`,`b`) /*T![clustered_index] NONCLUSTERED */"),
+        "{}",
+        created[0][1]
+    );
+    rows(&mut session, "CREATE TABLE test.t (c INT)");
+    rows(&mut session, "INSERT INTO test.t VALUES (1), (2)");
+    for sql in [
+        "ALTER TABLE test.t ADD COLUMN c3 DATETIME DEFAULT (STR_TO_DATE('1980-01-01','%Y-%m-%d'))",
+        "ALTER TABLE test.t ADD COLUMN c6 ENUM('y','n')",
+        "ALTER TABLE test.t MODIFY COLUMN c6 ENUM('y','n') DEFAULT (DATE_FORMAT(NOW(),'%Y-%m-%d'))",
+        "ALTER TABLE test.t ADD COLUMN c7 DATE DEFAULT (CURRENT_DATE)",
+    ] {
+        session
+            .execute_write(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE test.t ADD COLUMN c4 VARCHAR(32) DEFAULT (UPPER(UUID()))",
+            1674,
+            "Statement is unsafe because it uses a system function that may return a different \
+             value on the slave",
+        ),
+        (
+            "ALTER TABLE test.t ADD COLUMN c5 ENUM('y','n') DEFAULT (DATE_FORMAT(NOW(),'%Y-%m-%d'))",
+            1265,
+            "Data truncated for column '%s' at row %d",
+        ),
+        (
+            "CREATE TABLE test.ta (c INT, c1 INT AUTO_INCREMENT DEFAULT \
+             (STR_TO_DATE('1980-01-01','%Y-%m-%d')))",
+            1067,
+            "Invalid default value for 'c1'",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT c, c3, c7 IS NOT NULL FROM test.t ORDER BY c"
+        )),
+        [
+            ["1", "1980-01-01 00:00:00", "1"],
+            ["2", "1980-01-01 00:00:00", "1"]
+        ]
+    );
+    let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.t"));
+    assert!(
+        created[0][1].contains(
+            "  `c3` datetime DEFAULT (str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')),\n  \
+             `c6` enum('y','n') DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d')),\n  \
+             `c7` date DEFAULT (CURRENT_DATE)\n"
+        ),
+        "{}",
+        created[0][1]
+    );
+}
+
 /// Go `generateOriginDefaultValue` for an ADD COLUMN ... NOT NULL with no
 /// default, and `getColDefaultValue`'s cast of the stored text on read; the
 /// answers are the Go oracle's. This node refused SET, ENUM and JSON, stamped

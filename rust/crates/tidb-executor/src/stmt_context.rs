@@ -812,6 +812,10 @@ pub struct StmtContextData {
     /// Go `SessionVars.AllowRemoveAutoInc` (`@@tidb_allow_remove_auto_inc`,
     /// OFF by default), read by `ALTER TABLE ... MODIFY COLUMN`.
     allow_remove_auto_inc: bool,
+    /// Go `metabuild.WithClusteredIndexDefMode`: the session's
+    /// `@@tidb_enable_clustered_index`, which decides whether CREATE TABLE
+    /// clusters a primary key declared without CLUSTERED / NONCLUSTERED.
+    clustered_index_def_mode: tidb_vardef::modes::ClusteredIndexDefMode,
     /// Go `SessionVars.CTEMaxRecursionDepth` (`@@cte_max_recursion_depth`,
     /// default `1000`): how many rounds a `WITH RECURSIVE` fixpoint may run
     /// before `ErrCTEMaxRecursionDepth`. Go's variable is signed and a
@@ -1889,6 +1893,16 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_enable_clustered_index` for this statement.
+    #[must_use]
+    pub fn with_clustered_index_def_mode(
+        mut self,
+        mode: tidb_vardef::modes::ClusteredIndexDefMode,
+    ) -> Self {
+        self.clustered_index_def_mode = mode;
+        self
+    }
+
     /// Sets `@@tidb_allow_remove_auto_inc` for this statement.
     #[must_use]
     pub fn with_allow_remove_auto_inc(mut self, allow_remove_auto_inc: bool) -> Self {
@@ -2266,6 +2280,9 @@ impl StmtContext {
             pessimistic_check_in_prewrite: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
+            clustered_index_def_mode: tidb_vardef::modes::ClusteredIndexDefMode(
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX,
+            ),
             div_precision_increment: 4,
             windowing_use_high_precision: true,
             enable_pipelined_window_exec: true,
@@ -3746,6 +3763,12 @@ impl StmtContext {
     #[must_use]
     pub fn allow_remove_auto_inc(&self) -> bool {
         self.allow_remove_auto_inc
+    }
+
+    /// Go `metabuild.Context.GetClusteredIndexDefMode`.
+    #[must_use]
+    pub fn clustered_index_def_mode(&self) -> tidb_vardef::modes::ClusteredIndexDefMode {
+        self.clustered_index_def_mode
     }
 
     /// Attaches Go `SessionVars.IsolationReadEngines` to physical planning.

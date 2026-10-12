@@ -614,8 +614,10 @@ impl Session {
     pub fn ddl_statement_context(&self) -> tidb_executor::StmtContext {
         // Go DDL reads `SessionVars.ForeignKeyChecks` (`checkTableForeignKeysValid`,
         // `CreateTableArgs.FKCheck`); the read-shaped context leaves it at ON.
+        // `metabuild.WithClusteredIndexDefMode` reads `@@tidb_enable_clustered_index`.
         self.statement_context(false)
             .with_foreign_key_checks(self.foreign_key_checks())
+            .with_clustered_index_def_mode(self.clustered_index_mode())
     }
 
     /// Shares evaluation policy and warnings with server-owned ANALYZE sampling.

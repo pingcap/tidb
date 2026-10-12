@@ -125,7 +125,7 @@ impl CreateTableBuild {
             schema,
             CATALOG_CHARSET,
             CATALOG_COLLATION,
-            ClusteredIndexDefMode::On,
+            clustered_index_def_mode(context),
             context,
         )?;
         Ok(Self {
@@ -158,9 +158,18 @@ impl CreateTableBuild {
             &self.schema,
             charset,
             collate,
-            ClusteredIndexDefMode::On,
+            clustered_index_def_mode(&self.context),
             &self.context,
         )
+    }
+}
+
+/// The session's `@@tidb_enable_clustered_index` in the builder's terms.
+fn clustered_index_def_mode(context: &tidb_executor::StmtContext) -> ClusteredIndexDefMode {
+    match context.clustered_index_def_mode() {
+        tidb_vardef::modes::ClusteredIndexDefMode::ON => ClusteredIndexDefMode::On,
+        tidb_vardef::modes::ClusteredIndexDefMode::OFF => ClusteredIndexDefMode::Off,
+        _ => ClusteredIndexDefMode::IntOnly,
     }
 }
 
@@ -2451,7 +2460,10 @@ fn prepare_modify_column(
     changed.field_type = field_type;
     // Go: "new col's origin default value be the same as the new default
     // value" once the data may change; otherwise the old one stands.
-    if !check_value_range {
+    if check_value_range {
+        crate::table_info_build::stamp_modified_origin_default(&mut changed, &context.0)
+            .map_err(DdlPlanError::Admission)?;
+    } else {
         changed.origin_default_value = old.origin_default_value.clone();
         changed.origin_default_value_bit = old.origin_default_value_bit.clone();
     }
@@ -3603,9 +3615,9 @@ fn lower_create_table(
     // (`index_prefix_cut::cut_index_value`), and the read path treats cut
     // endpoints as inclusive ranges. The catalog loader never validated the
     // length away — the old refusal here predated that support.
-    // The server default `tidb_enable_clustered_index = ON`, which is what a
-    // real TiDB builds a user table under. Bootstrap is the one caller that
-    // uses a different mode, and it says so at its own call site.
+    // The session's `tidb_enable_clustered_index` (server default ON), which
+    // the context carries; bootstrap builds under its own mode at its own
+    // call site.
     let build = CreateTableBuild::new(create, &schema, context)?;
     Ok(DdlStatement::CreateTable {
         schema,

@@ -1187,6 +1187,34 @@ pub fn build_added_column(
             }
         }
     }
+    // Go `CreateNewColumn`: a default that calls one of these would give the
+    // existing rows a value no replica can reproduce, so it is refused before
+    // the column is built.
+    for option in &column.options {
+        let ColumnOption::Default(expr) = option else {
+            continue;
+        };
+        let mut expr = expr;
+        while let Expr::Paren(inner) = expr {
+            expr = inner.as_ref();
+        }
+        let Expr::Func { name, .. } = expr else {
+            continue;
+        };
+        match name.to_ascii_lowercase().as_str() {
+            "nextval" => {
+                return Err(default_admission_error(
+                    tidb_executor::DriverError::AddColumnSequenceDefault(column.name.clone()),
+                ));
+            }
+            "rand" | "uuid" | "uuid_to_bin" | "replace" | "upper" => {
+                return Err(default_admission_error(
+                    tidb_executor::DriverError::BinlogUnsafeSystemFunction,
+                ));
+            }
+            _ => {}
+        }
+    }
     let (mut info, _constraints) = build_column(
         0,
         column,
@@ -1199,7 +1227,7 @@ pub fn build_added_column(
     // Go ignores every constraint returned here. Unsupported key/FK options
     // were refused above; the only possible result is the inline CHECK that
     // pinned `ALTER TABLE ... ADD COLUMN` does not persist.
-    stamp_origin_default(&mut info)?;
+    stamp_origin_default(&mut info, context, true)?;
     Ok(info)
 }
 
@@ -1215,14 +1243,93 @@ pub fn build_modified_column(
     table_collate: &str,
     context: &tidb_executor::StmtContext,
 ) -> Refusal<ColumnInfo> {
-    let (mut info, _constraints) =
+    let (info, _constraints) =
         build_column(0, column, None, table_charset, table_collate, context, None)?;
-    stamp_origin_default(&mut info)?;
     Ok(info)
 }
 
-/// Go `generateOriginDefaultValue` over a column just built.
-fn stamp_origin_default(info: &mut ColumnInfo) -> Refusal<()> {
+/// Go `GetModifiableColumnJob`: once a MODIFY / CHANGE may change the
+/// column's data, `generateOriginDefaultValue(newCol, sctx, false)` gives it
+/// an origin default from its new default (an expression is evaluated, with
+/// no unsafe-function check); otherwise the old origin stands.
+pub(crate) fn stamp_modified_origin_default(
+    info: &mut ColumnInfo,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    stamp_origin_default(info, context, false)
+}
+
+/// Go `generateOriginDefaultValue`'s `DefaultIsExpr` arm: with
+/// `check_unsafe_func` only `DATE_FORMAT(NOW(), ...)` and `STR_TO_DATE` pass
+/// (`ErrBinlogUnsafeSystemFunction`, 1674); the expression is then evaluated
+/// once (`table.GetColDefaultValue`), cast to the column's type, and stored as
+/// its `ToString` text.
+fn expression_default_origin(
+    info: &ColumnInfo,
+    text: &str,
+    context: &tidb_executor::StmtContext,
+    check_unsafe_func: bool,
+) -> Refusal<String> {
+    let lower = text.to_lowercase();
+    if check_unsafe_func && !lower.contains("date_format(now(),") && !lower.contains("str_to_date")
+    {
+        return Err(default_admission_error(
+            tidb_executor::DriverError::BinlogUnsafeSystemFunction,
+        ));
+    }
+    let name = info.name.original();
+    let failed = |reason: String| {
+        DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!("the default of column {name} cannot be evaluated: {reason}"),
+        )
+    };
+    let expression = tidb_model::generated_expr::parse_expression(text)
+        .map_err(|error| failed(error.message))?;
+    let rewritten = tidb_expr::rewriter::rewrite_expr(&expression)
+        .map_err(|error| failed(format!("{error:?}")))?;
+    let value = tidb_expr::eval_expression_once(&rewritten, context)
+        .map_err(|error| failed(format!("{error:?}")))?;
+    if value.is_null() {
+        return Ok(String::new());
+    }
+    let converted = value
+        .convert_to_in(
+            &info.field_type,
+            context.ddl_default_conversion_flags(),
+            &context.session_zone(),
+        )
+        .map_err(|_| {
+            default_admission_error(tidb_executor::DriverError::InvalidDefault(name.to_owned()))
+        })?;
+    // Go `castColumnValue`: a value an ENUM / SET cannot hold is
+    // `types.ErrTruncated` with no arguments, which strict DDL raises.
+    if converted.event.is_some()
+        && matches!(
+            info.field_type.code(),
+            FieldTypeCode::Enum | FieldTypeCode::Set
+        )
+    {
+        return Err(DdlAdmissionError::with_code(
+            tidb_error::mysql::errcode::WarnDataTruncated,
+            "Data truncated for column '%s' at row %d",
+        ));
+    }
+    let value = converted.value;
+    let bytes = value
+        .to_bytes()
+        .map_err(|error| failed(error.to_string()))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Go `generateOriginDefaultValue` over a column just built, under the
+/// statement's context; `check_unsafe_func` is ADD COLUMN's, which refuses an
+/// expression default whose value would differ on a replica.
+fn stamp_origin_default(
+    info: &mut ColumnInfo,
+    context: &tidb_executor::StmtContext,
+    check_unsafe_func: bool,
+) -> Refusal<()> {
     // Go `generateOriginDefaultValue`: the value a row written BEFORE this
     // column reports. The declared default when there is one; the type's
     // zero value for NOT NULL without one; nothing for a nullable
@@ -1275,9 +1382,12 @@ fn stamp_origin_default(info: &mut ColumnInfo) -> Refusal<()> {
                 }
             })
         } else if info.default_is_expr {
-            return Err(DdlAdmissionError::unsupported(
-                "ADD COLUMN with an expression default waits on its DDL course",
-            ));
+            Some(expression_default_origin(
+                info,
+                &text,
+                context,
+                check_unsafe_func,
+            )?)
         } else {
             Some(text)
         }
@@ -2351,6 +2461,13 @@ fn persist_column_default(
                 })?;
         }
         StagedColumnDefault::Computed(text) => {
+            // Go `checkDefaultValue`: an AUTO_INCREMENT column takes no
+            // expression default.
+            if info.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT) {
+                return Err(default_admission_error(
+                    tidb_executor::DriverError::InvalidDefault(name.to_owned()),
+                ));
+            }
             // Go stores the expression spelling with `default_is_expr`; the
             // per-row evaluation re-runs it for every omitted column.
             info.default_is_expr = true;

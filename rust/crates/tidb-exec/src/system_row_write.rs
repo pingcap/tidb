@@ -849,6 +849,58 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
 /// evaluated any expression once, at that moment, and stored the result.
 pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEncodeError> {
     let default = column.get_origin_default_value();
+    // Go `getColDefaultValue` reads a time column's origin through
+    // `GetTimeValue`, which evaluates the words `CURRENT_TIMESTAMP` and
+    // `CURRENT_DATE` (the date part only) rather than parsing them.
+    if let (Some(time_type), Some(tidb_model::GoAnyView::String(bytes))) = (
+        match column.get_type() {
+            FieldTypeCode::Date | FieldTypeCode::NewDate => Some(tidb_datatype::TimeType::Date),
+            FieldTypeCode::Datetime => Some(tidb_datatype::TimeType::DateTime),
+            FieldTypeCode::Timestamp => Some(tidb_datatype::TimeType::Timestamp),
+            _ => None,
+        },
+        default.view(),
+    ) {
+        let word = bytes.as_bytes();
+        let current_date = word.eq_ignore_ascii_case(b"CURRENT_DATE");
+        if current_date || word.eq_ignore_ascii_case(CURRENT_TIMESTAMP.as_bytes()) {
+            use chrono::{Datelike, Timelike};
+            let now = chrono::Local::now();
+            let fsp = if time_type == tidb_datatype::TimeType::Date {
+                0
+            } else {
+                column.field_type.decimal().max(0)
+            };
+            let (hour, minute, second, micro) = if current_date {
+                (0, 0, 0, 0)
+            } else {
+                (
+                    now.hour(),
+                    now.minute(),
+                    now.second(),
+                    now.nanosecond() / 1000,
+                )
+            };
+            let micro = if fsp == 0 {
+                0
+            } else {
+                micro / 10u32.pow(6 - fsp as u32) * 10u32.pow(6 - fsp as u32)
+            };
+            let time = Time::from_date_checked(
+                now.year(),
+                now.month() as i32,
+                now.day() as i32,
+                hour as i32,
+                minute as i32,
+                second as i32,
+                micro as i32,
+                time_type,
+                i64::from(fsp),
+            )
+            .map_err(|_| unmaterialisable(column, table))?;
+            return Ok(Datum::new_time(time));
+        }
+    }
     let datum = materialise(column, &default, table, None)?;
     // Go `GetColOriginDefaultValueWithoutStrictSQLMode` -> `getColDefaultValue`
     // casts the stored text to the column's type (`CastColumnValue`,

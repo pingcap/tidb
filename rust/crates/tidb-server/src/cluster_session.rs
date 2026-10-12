@@ -663,6 +663,29 @@ pub(crate) fn cluster_table(
                 )
                 .map_err(|error| format!("its column {name} has a default {error:?}"))?,
             )
+        } else if !column.default_is_expr
+            && matches!(
+                column.default_value.view(),
+                Some(GoAnyView::String(bytes))
+                    if bytes.as_bytes().eq_ignore_ascii_case(b"CURRENT_DATE")
+            )
+        {
+            // Go stores `DEFAULT (CURRENT_DATE)` as the word with
+            // `DefaultIsExpr` false, like `CURRENT_TIMESTAMP`; every INSERT
+            // evaluates it.
+            let marker = tidb_ast::Expr::Func {
+                name: "CURRENT_DATE".to_owned(),
+                args: Vec::new(),
+                origin_position: 0,
+            };
+            Some(
+                tidb_executor::column_default::build(&marker, &column.field_type, |_| {
+                    Err(tidb_executor::column_default::DefaultError::Unsupported(
+                        "a clock marker never folds",
+                    ))
+                })
+                .map_err(|error| format!("its column {name} has a default {error:?}"))?,
+            )
         } else if column.default_is_expr {
             // Go stores the expression spelling with `default_is_expr`;
             // every INSERT re-runs it for omitted columns. Carry it as a
