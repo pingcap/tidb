@@ -850,27 +850,15 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
 pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEncodeError> {
     let default = column.get_origin_default_value();
     let datum = materialise(column, &default, table, None)?;
-    // Go `GetColOriginDefaultValueWithoutStrictSQLMode` casts the stored text
-    // to the column's type (`CastColumnValue`, non-strict), so a region fills
-    // a DATE column with a date and a DECIMAL column with a decimal -- not
-    // with the bytes of their printed form, which no reader of that column
-    // can hold.
+    // Go `GetColOriginDefaultValueWithoutStrictSQLMode` -> `getColDefaultValue`
+    // casts the stored text to the column's type (`CastColumnValue`,
+    // non-strict; a time type through `GetTimeValue`), for EVERY type: a
+    // region fills a DATE column with a date, a JSON column with a binary
+    // document and an ENUM column with a member -- never with the bytes of
+    // their printed form, which no reader of that column can hold.
     let Datum::Bytes(_) = &datum else {
         return Ok(datum);
     };
-    if !matches!(
-        column.get_type(),
-        FieldTypeCode::Date
-            | FieldTypeCode::NewDate
-            | FieldTypeCode::Datetime
-            | FieldTypeCode::Timestamp
-            | FieldTypeCode::Duration
-            | FieldTypeCode::NewDecimal
-            | FieldTypeCode::Float
-            | FieldTypeCode::Double
-    ) {
-        return Ok(datum);
-    }
     let flags = tidb_datatype::ConversionFlags::from_bits(
         tidb_datatype::ConversionFlags::IGNORE_TRUNCATE_ERR
             | tidb_datatype::ConversionFlags::ALLOW_NEGATIVE_TO_UNSIGNED

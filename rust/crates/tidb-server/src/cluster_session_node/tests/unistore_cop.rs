@@ -98,6 +98,9 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
                     Datum::Time(time) => time.to_string(),
                     Datum::Duration(duration) => duration.to_string(),
                     Datum::Json(json) => json.to_string(),
+                    Datum::Float32(v) => {
+                        tidb_datatype::go_strconv::format_float(f64::from(v), b'f', -1, 32)
+                    }
                     Datum::Null => "NULL".to_owned(),
                     other => format!("{other:?}"),
                 })
@@ -386,6 +389,59 @@ fn an_added_foreign_key_checks_rows_and_keeps_gos_ids_on_rollback() {
         created[0][1]
     );
     rows(&mut session, "ADMIN CHECK TABLE test.child");
+}
+
+/// Go `generateOriginDefaultValue` for an ADD COLUMN ... NOT NULL with no
+/// default, and `getColDefaultValue`'s cast of the stored text on read; the
+/// answers are the Go oracle's. This node refused SET, ENUM and JSON, stamped
+/// BIT as `"0"` (stored as the byte 0x30) and BINARY(n) as no bytes, and read
+/// a JSON origin default back as raw text ("binary JSON document").
+#[test]
+fn an_added_not_null_column_reads_gos_zero_value_on_existing_rows() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(143)).unwrap();
+    rows(&mut session, "CREATE TABLE test.t (id INT PRIMARY KEY)");
+    rows(&mut session, "INSERT INTO test.t VALUES (1), (2)");
+    for column in [
+        "s SET('a','b')",
+        "e ENUM('x','y')",
+        "b BIT(8)",
+        "j JSON",
+        "bn BINARY(3)",
+        "d DECIMAL(6,2)",
+        "f FLOAT",
+        "y YEAR",
+        "tm TIME(2)",
+    ] {
+        let sql = format!("ALTER TABLE test.t ADD COLUMN {column} NOT NULL");
+        session
+            .execute_write(&sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    let zero = [
+        "",
+        "x",
+        "0",
+        "null",
+        "000000",
+        "0.00",
+        "0",
+        "0",
+        "00:00:00.00",
+    ];
+    let read = displayed(rows(
+        &mut session,
+        "SELECT s, e, b + 0, j, HEX(bn), d, f, y + 0, tm FROM test.t ORDER BY id",
+    ));
+    assert_eq!(read, [zero, zero]);
+    let error = session
+        .execute_write("INSERT INTO test.t (id) VALUES (3)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1364, "Field 's' doesn't have a default value")
+    );
+    rows(&mut session, "ADMIN CHECK TABLE test.t");
 }
 
 /// Go's partial indexes on the production node. The builders dropped `WHERE`

@@ -1282,36 +1282,53 @@ fn stamp_origin_default(info: &mut ColumnInfo) -> Refusal<()> {
             Some(text)
         }
     } else if info.field_type.has_flag(FieldTypeFlags::NOT_NULL) {
-        // Go `table.GetZeroValue(col).ToString()`, for the families this
-        // node's CREATE TABLE admits.
-        Some(match info.field_type.code() {
+        // Go `generateOriginDefaultValue`: an ENUM takes its first element,
+        // every other type `table.GetZeroValue(col).ToString()`.
+        let field_type = &info.field_type;
+        Some(match field_type.code() {
             FieldTypeCode::Tiny
             | FieldTypeCode::Short
             | FieldTypeCode::Int24
             | FieldTypeCode::Long
             | FieldTypeCode::LongLong
             | FieldTypeCode::Year
-            | FieldTypeCode::Bit => "0".to_owned(),
-            FieldTypeCode::Float | FieldTypeCode::Double | FieldTypeCode::NewDecimal => {
-                "0".to_owned()
+            | FieldTypeCode::Float
+            | FieldTypeCode::Double
+            | FieldTypeCode::NewDecimal => "0".to_owned(),
+            // A fixed-width BINARY(n) zero value is n zero bytes.
+            FieldTypeCode::String
+                if field_type.flen() > 0 && field_type.charset_name() == "binary" =>
+            {
+                "\0".repeat(field_type.flen() as usize)
             }
-            FieldTypeCode::Varchar
-            | FieldTypeCode::String
+            FieldTypeCode::String
+            | FieldTypeCode::Varchar
             | FieldTypeCode::VarString
             | FieldTypeCode::TinyBlob
             | FieldTypeCode::Blob
             | FieldTypeCode::MediumBlob
             | FieldTypeCode::LongBlob => String::new(),
-            FieldTypeCode::Date => "0000-00-00".to_owned(),
-            FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
-                "0000-00-00 00:00:00".to_owned()
-            }
             FieldTypeCode::Duration => "00:00:00".to_owned(),
-            other => {
-                return Err(DdlAdmissionError::unsupported(format!(
-                    "ADD COLUMN ... NOT NULL of type {other:?} has no zero value this node can stamp yet"
-                )))
-            }
+            FieldTypeCode::Date => "0000-00-00".to_owned(),
+            FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "0000-00-00 00:00:00".to_owned(),
+            // `ZeroBinaryLiteral` and `Set{}` print as nothing.
+            FieldTypeCode::Bit | FieldTypeCode::Set => String::new(),
+            // `types.ParseEnumValue(col.GetElems(), 1)`.
+            FieldTypeCode::Enum => field_type
+                .elems()
+                .snapshot()
+                .first()
+                .map(|element| element.to_utf8_lossy_go())
+                .ok_or_else(|| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "an ENUM column with no element has no first value",
+                    )
+                })?,
+            FieldTypeCode::Json => "null".to_owned(),
+            FieldTypeCode::VectorFloat32 => "[]".to_owned(),
+            // An empty `Datum` prints as nothing.
+            _ => String::new(),
         })
     } else {
         None
