@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
@@ -492,7 +493,10 @@ type testCase struct {
 	rightUsedByOtherCondition []int
 }
 
+// newJoinedRowsProbeForTest builds five key-1 rows and probes with 1, 2, and NULL.
+// Key 2 is forced into the key-1 chain to exercise collisions without adding pairs.
 func newJoinedRowsProbeForTest(t testing.TB, joinType base.JoinType, noColumns, rightAsBuild bool, condition string) (ProbeV2, *baseJoinProbe, *hashjoinWorkerResult) {
+	t.Helper()
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	fields := []*types.FieldType{tp}
 	used, otherUsed := []int{0}, []int{}
@@ -503,12 +507,15 @@ func newJoinedRowsProbeForTest(t testing.TB, joinType base.JoinType, noColumns, 
 	ctx.GetSessionVars().MaxChunkSize = 8
 	var other expression.CNFExprs
 	switch condition {
+	case "":
 	case "false":
 		other = expression.CNFExprs{expression.NewZero()}
 	case "error":
 		other = expression.CNFExprs{expression.NewFunctionInternal(ctx.GetExprCtx(), ast.Plus, tp,
 			&expression.Column{Index: 0, RetType: tp},
 			&expression.Constant{Value: types.NewIntDatum(math.MaxInt64), RetType: tp})}
+	default:
+		t.Fatalf("unknown residual condition %q", condition)
 	}
 	if other != nil {
 		otherUsed = []int{0}
@@ -561,6 +568,7 @@ func newJoinedRowsProbeForTest(t testing.TB, joinType base.JoinType, noColumns, 
 
 func TestInnerJoinProbeJoinedRows(t *testing.T) {
 	newProbe := func(t *testing.T, noColumns, rightAsBuild bool, condition string) (*innerJoinProbe, *hashjoinWorkerResult) {
+		t.Helper()
 		probe, _, result := newJoinedRowsProbeForTest(t, base.InnerJoin, noColumns, rightAsBuild, condition)
 		return probe.(*innerJoinProbe), result
 	}
@@ -631,7 +639,7 @@ func TestInnerJoinProbeJoinedRows(t *testing.T) {
 		probe, result := newProbe(t, true, true, "")
 		result.chk.SetRequiredRows(2, 8)
 		_, result = probe.Probe(result, &sqlkiller.SQLKiller{Signal: sqlkiller.QueryInterrupted})
-		require.Error(t, result.err)
+		require.True(t, exeerrors.ErrQueryInterrupted.Equal(result.err), "unexpected error: %v", result.err)
 		require.Equal(t, int64(2), probe.joinedRows.Rows)
 		require.False(t, result.chk.IsInCompleteChunk())
 	})
@@ -693,62 +701,82 @@ func TestInnerJoinProbeJoinedRows(t *testing.T) {
 		require.Equal(t, 5, result.chk.NumRows())
 		require.Nil(t, probe.joinedRows)
 	})
-	t.Run("batched joined rows", func(t *testing.T) {
-		t.Run("semi right partial batches", func(t *testing.T) {
-			p, bp, result := newJoinedRowsProbeForTest(t, base.SemiJoin, true, true, "")
-			input := bp.currentChunk
-			input.Reset()
-			for range 3 {
-				input.AppendInt64(0, 1)
-			}
-			bp.currentProbeRow = bp.chunkRows
-			require.NoError(t, p.SetChunkForProbe(input))
-			result.chk.SetRequiredRows(2, 8)
-			for _, want := range []int64{2, 3} {
-				result.chk.Reset()
-				_, result = p.Probe(result, &sqlkiller.SQLKiller{})
-				require.NoError(t, result.err)
-				require.Equal(t, want, bp.joinedRows.Rows)
-			}
-			require.True(t, p.IsCurrentChunkProbeDone())
-		})
-		for _, mode := range []string{"normal", "cancel", "panic", "overflow", "disabled"} {
-			t.Run(mode, func(t *testing.T) {
-				p, bp, result := newJoinedRowsProbeForTest(t, base.SemiJoin, true, true, "")
-				if mode == "overflow" {
-					bp.joinedRows.Rows = math.MaxInt64
-				}
-				if mode == "disabled" {
-					bp.resetJoinedRows(false)
-				}
-				killer := &sqlkiller.SQLKiller{}
-				if mode == "cancel" {
-					killer.Signal = sqlkiller.QueryInterrupted
-				}
-				if mode == "panic" {
-					bp.usedRows = bp.usedRows[:0]
-					require.Panics(t, func() { _, _ = p.Probe(result, killer) })
-					require.Equal(t, int64(1), bp.joinedRows.Rows)
-					return
-				}
-				for !p.IsCurrentChunkProbeDone() {
-					result.chk.Reset()
-					_, result = p.Probe(result, killer)
-					if mode == "cancel" {
-						require.Error(t, result.err)
-						break
-					}
-					require.NoError(t, result.err)
-				}
-				if mode == "disabled" {
-					require.Nil(t, bp.joinedRows)
-				} else if mode == "overflow" {
-					require.Equal(t, int64(-1), bp.joinedRows.Rows)
-				} else {
-					require.Equal(t, int64(1), bp.joinedRows.Rows)
-				}
-			})
+}
+
+func TestSemiJoinProbeJoinedRows(t *testing.T) {
+	newProbe := func(t *testing.T) (*semiJoinProbe, *hashjoinWorkerResult) {
+		t.Helper()
+		probe, _, result := newJoinedRowsProbeForTest(t, base.SemiJoin, true, true, "")
+		return probe.(*semiJoinProbe), result
+	}
+
+	t.Run("partial batches", func(t *testing.T) {
+		probe, result := newProbe(t)
+		input := probe.currentChunk
+		input.Reset()
+		for range 3 {
+			input.AppendInt64(0, 1)
 		}
+		// Replace the default input with three matching probe rows.
+		probe.currentProbeRow = probe.chunkRows
+		require.NoError(t, probe.SetChunkForProbe(input))
+		result.chk.SetRequiredRows(2, 8)
+		for _, want := range []struct {
+			joinedRows int64
+			outputRows int
+		}{{2, 2}, {3, 1}} {
+			result.chk.Reset()
+			_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+			require.NoError(t, result.err)
+			require.Equal(t, want.joinedRows, probe.joinedRows.Rows)
+			require.Equal(t, want.outputRows, result.chk.NumRows())
+		}
+		require.True(t, probe.IsCurrentChunkProbeDone())
+	})
+
+	t.Run("normal", func(t *testing.T) {
+		probe, result := newProbe(t)
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+		require.NoError(t, result.err)
+		require.True(t, probe.IsCurrentChunkProbeDone())
+		require.Equal(t, int64(1), probe.joinedRows.Rows)
+		require.Equal(t, 1, result.chk.NumRows())
+	})
+
+	t.Run("cancel retains accepted pair", func(t *testing.T) {
+		probe, result := newProbe(t)
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{Signal: sqlkiller.QueryInterrupted})
+		require.True(t, exeerrors.ErrQueryInterrupted.Equal(result.err), "unexpected error: %v", result.err)
+		require.Equal(t, int64(1), probe.joinedRows.Rows)
+	})
+
+	t.Run("panic during output bookkeeping retains accepted pair", func(t *testing.T) {
+		probe, result := newProbe(t)
+		// The first accepted pair consumes capacity before looking up its output row.
+		// Truncating usedRows makes that lookup panic, before the row is emitted.
+		probe.usedRows = probe.usedRows[:0]
+		require.Panics(t, func() { _, _ = probe.Probe(result, &sqlkiller.SQLKiller{}) })
+		require.Equal(t, int64(1), probe.joinedRows.Rows)
+	})
+
+	t.Run("overflow", func(t *testing.T) {
+		probe, result := newProbe(t)
+		probe.joinedRows.Rows = math.MaxInt64
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+		require.NoError(t, result.err)
+		require.True(t, probe.IsCurrentChunkProbeDone())
+		require.Equal(t, int64(-1), probe.joinedRows.Rows)
+		require.Equal(t, 1, result.chk.NumRows())
+	})
+
+	t.Run("collection disabled", func(t *testing.T) {
+		probe, result := newProbe(t)
+		probe.resetJoinedRows(false)
+		_, result = probe.Probe(result, &sqlkiller.SQLKiller{})
+		require.NoError(t, result.err)
+		require.True(t, probe.IsCurrentChunkProbeDone())
+		require.Nil(t, probe.joinedRows)
+		require.Equal(t, 1, result.chk.NumRows())
 	})
 }
 
