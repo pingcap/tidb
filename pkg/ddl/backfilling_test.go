@@ -348,10 +348,13 @@ func assertDistSQLCtxEqual(t *testing.T, expected *distsqlctx.DistSQLContext, ac
 			"$.SessionMemTracker",
 			"$.Location",
 			"$.ErrCtx.warnHandler",
+			"$.KVVars.KillSignalHandler",
 		}),
 	)
 
 	// manually check
+	// DDL reorganization has no client connection to check.
+	require.Nil(t, actual.KVVars.KillSignalHandler)
 	// SessionMemTracker
 	require.Equal(t, expected.SessionMemTracker.Label(), actual.SessionMemTracker.Label())
 	require.Equal(t, expected.SessionMemTracker.GetBytesLimit(), actual.SessionMemTracker.GetBytesLimit())
