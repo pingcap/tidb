@@ -2457,7 +2457,7 @@ func (rc *LogClient) ValidateTableRouteTargetDatabases(
 }
 
 // ValidateTargetTableExistence rejects a log-only (or resumed) PiTR whose
-// effective target table name already exists in the downstream cluster with a
+// routed target table name already exists in the downstream cluster with a
 // different table ID. A name match with the expected downstream ID is a
 // legitimate continuation of a previous PiTR run and is allowed.
 func (rc *LogClient) ValidateTargetTableExistence(
@@ -2471,6 +2471,15 @@ func (rc *LogClient) ValidateTargetTableExistence(
 		}
 		for _, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut {
+				continue
+			}
+			// Only an explicit table route can project a source table onto an
+			// unrelated downstream name. Identity tables either match the
+			// downstream ID created by the snapshot phase, or still carry a
+			// temporary ID that ReplaceTemporaryIDs has not resolved yet; the
+			// former is not a conflict and the latter is caught by the log
+			// replay itself, so neither should be rejected here.
+			if tableReplace.TargetDBName == "" {
 				continue
 			}
 			dbName := tableReplace.EffectiveDBName(dbReplace)

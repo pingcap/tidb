@@ -1651,6 +1651,34 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		manager.DBReplaceMap[10].TableMap[20].TableID = 999
 		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
 	})
+
+	t.Run("ignore identity table with temporary downstream id", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		tk.MustExec("create database existing_db")
+		tk.MustExec("create table existing_db.t (id int)")
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+
+		// An identity table keeps the schema name, so its effective target is
+		// never unrelated to the source. Its downstream ID can still be a
+		// temporary allocation that ReplaceTemporaryIDs has not resolved yet,
+		// so it must not be compared against the existing table here.
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "existing_db",
+			DbID: 110,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {
+					Name:    "t",
+					TableID: -13,
+				},
+			},
+		}
+		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
+	})
 }
 
 func downstreamID(upstreamID int64) int64 {
