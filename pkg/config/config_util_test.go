@@ -81,6 +81,33 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, oriConf.Store, oldConf.Store)
 	require.Equal(t, oriConf.Port, oldConf.Port)
 	require.Equal(t, oriConf.AdvertiseAddress, oldConf.AdvertiseAddress)
+
+	zero, anotherZero, id := uint32(0), uint32(0), uint32(42)
+	for _, tc := range []struct {
+		name     string
+		old, new *uint32
+		changed  bool
+	}{
+		{name: "both nil"},
+		{name: "nil to zero", new: &zero, changed: true},
+		{name: "zero to nil", old: &zero, changed: true},
+		{name: "same value", old: &zero, new: &anotherZero},
+		{name: "different value", old: &zero, new: &id, changed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldConf := &Config{KeyspaceID: tc.old}
+			newConf := &Config{KeyspaceID: tc.new}
+			accepted, rejected := MergeConfigItems(oldConf, newConf)
+			require.Empty(t, accepted)
+			if tc.changed {
+				require.Equal(t, []string{"KeyspaceID"}, rejected)
+			} else {
+				require.Empty(t, rejected)
+			}
+			// Runtime identity is not a dynamically reloadable configuration item.
+			require.Equal(t, tc.old, oldConf.KeyspaceID)
+		})
+	}
 }
 
 func TestFlattenConfig(t *testing.T) {

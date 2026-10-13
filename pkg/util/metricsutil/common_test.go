@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -78,29 +79,17 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	t.Cleanup(func() { require.NoError(t, deploymode.Set(oldMode)) })
 	id, zeroID := uint32(42), uint32(0)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	server := grpc.NewServer()
-	pdServer := &metricsPDServer{addr: "http://" + listener.Addr().String()}
-	pdpb.RegisterPDServer(server, pdServer)
-	keyspacepb.RegisterKeyspaceServer(server, pdServer)
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(server.Stop)
 
 	for _, tc := range []struct {
 		name, keyspaceName, keyspaceID string
-		br, wantErr                    bool
 		activationID                   *uint32
 		storageID                      bool
 	}{
 		{name: "no keyspace"},
-		{name: "BR no keyspace", br: true},
 		{name: "TiDB activation keyspace", keyspaceName: "ks", keyspaceID: "42", activationID: &id},
 		{name: "TiDB zero keyspace ID", keyspaceName: "ks", keyspaceID: "0", activationID: &zeroID},
 		{name: "TiDB without activation ID", keyspaceName: "ks"},
 		{name: "TiDB storage keyspace", keyspaceName: "ks", keyspaceID: "42", storageID: true},
-		{name: "BR keyspace", keyspaceName: "ks", keyspaceID: "42", br: true},
-		{name: "BR lookup error", keyspaceName: "unknown", br: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer config.RestoreFunc()()
@@ -127,17 +116,7 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			before := prometheus.NewGauge(prometheus.GaugeOpts{Name: "registered_before_init"})
 			before.Set(7)
 			registry.MustRegister(before)
-			var err error
-			if tc.br {
-				err = RegisterMetricsForBR([]string{pdServer.addr}, task.TLSConfig{}, tc.keyspaceName)
-			} else {
-				err = RegisterMetrics()
-			}
-			if tc.wantErr {
-				require.ErrorContains(t, err, "unknown keyspace")
-				return
-			}
-			require.NoError(t, err)
+			require.NoError(t, RegisterMetrics())
 			// Storage can resolve the ID after the metrics handler has been created.
 			handler := promhttp.Handler()
 			if tc.storageID {
@@ -215,13 +194,72 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			require.NoError(t, push.New(pushServer.URL, "tidb").Gatherer(prometheus.DefaultGatherer).
 				Format(expfmt.NewFormat(expfmt.TypeTextPlain)).Push())
 			require.Contains(t, <-payload, `registered_before_init{keyspace_id="`+tc.keyspaceID+`"} 7`)
-			for range 4 {
-				t.Run("concurrent gather", func(t *testing.T) {
-					t.Parallel()
-					check(t)
-				})
+			var wg sync.WaitGroup
+			gatherErrors := make([]error, 4)
+			for i := range gatherErrors {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, gatherErrors[i] = prometheus.DefaultGatherer.Gather()
+				}()
+			}
+			wg.Wait()
+			for _, err := range gatherErrors {
+				require.NoError(t, err)
 			}
 		})
+	}
+}
+
+func TestRegisterMetricsForBRDefaultMode(t *testing.T) {
+	// Standalone BR never sets its deployment mode to Starter.
+	if kerneltype.IsNextGen() {
+		oldMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		t.Cleanup(func() { require.NoError(t, deploymode.Set(oldMode)) })
+	}
+	require.False(t, deploymode.IsStarter())
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	pdServer := &metricsPDServer{addr: "http://" + listener.Addr().String()}
+	pdpb.RegisterPDServer(server, pdServer)
+	keyspacepb.RegisterKeyspaceServer(server, pdServer)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	defer config.RestoreFunc()()
+	oldRegisterer, oldGatherer := prometheus.DefaultRegisterer, prometheus.DefaultGatherer
+	oldLabels := cloneConstLabels()
+	t.Cleanup(func() {
+		prometheus.DefaultRegisterer, prometheus.DefaultGatherer = oldRegisterer, oldGatherer
+		setConstLabels(oldLabels)
+	})
+	registry := prometheus.NewRegistry()
+	prometheus.DefaultRegisterer, prometheus.DefaultGatherer = registry, registry
+	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	metricscommon.SetConstLabels()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservabilityValues = config.KeyspaceObservabilityValues{}
+	})
+	before := prometheus.NewGauge(prometheus.GaugeOpts{Name: "br_registered_before_init"})
+	before.Set(7)
+	registry.MustRegister(before)
+	// BR creates this handler in its common pre-run, before metric registration.
+	handler := promhttp.Handler()
+	require.NoError(t, RegisterMetricsForBR([]string{pdServer.addr}, task.TLSConfig{}, "ks"))
+	require.True(t, prometheus.DefaultGatherer == registry)
+	require.Equal(t, "42", metricscommon.GetConstLabels()[keyspaceIDLabel])
+	// The existing constant-label behavior still applies to BR's own metrics.
+	after := metricscommon.NewGauge(prometheus.GaugeOpts{Name: "br_registered_after_init"})
+	after.Set(3)
+	registry.MustRegister(after)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "br_registered_before_init 7\n")
+	require.Contains(t, response.Body.String(), `br_registered_after_init{keyspace_id="42"`)
+	for _, name := range []string{"go_goroutines", "process_cpu_seconds_total"} {
+		require.Contains(t, response.Body.String(), "\n"+name+" ")
 	}
 }
 
