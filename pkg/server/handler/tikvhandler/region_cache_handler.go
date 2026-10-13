@@ -209,6 +209,9 @@ func (h *RegionCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			}
 			out.Remaining += item.Remaining
 			out.Failed += item.Failed
+			if item.InProgress {
+				out.InProgress = true
+			}
 			out.noteObserved(item.ObservedAt)
 			if detail {
 				out.Stores = append(out.Stores, item)

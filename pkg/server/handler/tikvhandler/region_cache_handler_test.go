@@ -31,6 +31,7 @@ import (
 type fakeCacheStore struct {
 	helper.Storage
 	status        tikv.StoreCacheStatus
+	startStatus   *tikv.StoreCacheStatus
 	refresh       tikv.StoreCacheRefreshResult
 	ks            string
 	cid           uint64
@@ -56,6 +57,11 @@ func (f *fakeCacheStore) RefreshStoreCache(ctx context.Context, storeID uint64) 
 
 func (f *fakeCacheStore) StartRefreshStoreCache(storeID uint64) tikv.StoreCacheStatus {
 	res := f.RefreshStoreCache(context.Background(), storeID)
+	if f.startStatus != nil {
+		f.status = *f.startStatus
+		f.status.StoreID = storeID
+		return f.status
+	}
 	f.status = tikv.StoreCacheStatus{
 		StoreID: storeID, Matched: res.Remaining, Failed: res.Failed,
 		Ready: res.Ready, ObservedAt: res.ObservedAt,
@@ -295,7 +301,7 @@ func TestRegionCacheHandlerPostContinuesAfterOneStoreFails(t *testing.T) {
 	require.True(t, got.Stores[1].Ready)
 }
 
-func TestRegionCacheHandlerPostStopsLaterStoresAfterCancel(t *testing.T) {
+func TestRegionCacheHandlerPostStartsLaterStoresAfterCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	first := &fakeCacheStore{
 		refresh: tikv.StoreCacheRefreshResult{Scanned: 1, Matched: 1, Updated: 1, Remaining: 0, Ready: true},
@@ -325,6 +331,32 @@ func TestRegionCacheHandlerPostStopsLaterStoresAfterCancel(t *testing.T) {
 	require.False(t, got.InProgress)
 	require.Empty(t, got.Stores)
 	require.Empty(t, got.Errors)
+}
+
+func TestRegionCacheHandlerPostReportsInProgressAcrossStores(t *testing.T) {
+	for _, runningFirst := range []bool{true, false} {
+		first := &fakeCacheStore{ks: "SYSTEM", cid: 11, startStatus: &tikv.StoreCacheStatus{Ready: true}}
+		second := &fakeCacheStore{ks: "keyspace1", cid: 11, startStatus: &tikv.StoreCacheStatus{Ready: true}}
+		running := second
+		if runningFirst {
+			running = first
+		}
+		running.startStatus = &tikv.StoreCacheStatus{Ready: false, InProgress: true}
+		h := NewRegionCacheHandler(&handler.TikvHandlerTool{Helper: helper.Helper{Store: first}})
+		h.listed = []regionCacheStore{first, second}
+		req := httptest.NewRequest(http.MethodPost, "/regions/cache/refresh?store_id=7&detail=1", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		require.True(t, first.refreshCalled)
+		require.True(t, second.refreshCalled)
+		var got regionCacheHTTPResult
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+		require.False(t, got.Ready)
+		require.True(t, got.InProgress, "POST must report any in-flight keyspace")
+		require.Len(t, got.Stores, 2)
+		require.NotEqual(t, got.Stores[0].InProgress, got.Stores[1].InProgress)
+	}
 }
 
 func TestRegionCacheHandlerZeroCountsKeepNotReady(t *testing.T) {
