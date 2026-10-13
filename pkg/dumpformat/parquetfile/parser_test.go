@@ -37,6 +37,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -2182,6 +2183,5 @@ func TestParquetParserTooLargeRow(t *testing.T) {
 
 	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
 	err := reader.ReadRow()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
+	require.ErrorIs(t, err, parsedef.ErrRowTooLarge)
 }
