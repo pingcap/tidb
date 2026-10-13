@@ -1443,24 +1443,29 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
-	restoreRocksDBMaxBackgroundJobs, oldRocksDBMaxBackgroundJobs, err := KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	var restoreRocksDBMaxBackgroundJobsFunc RestoreFunc
+	var oldRocksDBMaxBackgroundJobs string
 	rocksDBMaxBackgroundJobsRestorable := false
 	rocksDBMaxBackgroundJobsCheckpointPersisted := !cfg.UseCheckpoint
-	defer func() {
-		if cfg.UseCheckpoint && rocksDBMaxBackgroundJobsCheckpointPersisted && !rocksDBMaxBackgroundJobsRestorable {
-			log.Info("skip restore the rocksdb.max-background-jobs for next retry")
-			return
+	if cfg.RetainLatestMVCCVersion {
+		restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
-		log.Info("start to restore rocksdb.max-background-jobs", zap.String("jobs", oldRocksDBMaxBackgroundJobs))
-		if err := restoreRocksDBMaxBackgroundJobs(oldRocksDBMaxBackgroundJobs); err != nil {
-			log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
-		}
-		log.Info("finish restoring rocksdb.max-background-jobs")
-	}()
+		defer func() {
+			if cfg.UseCheckpoint && rocksDBMaxBackgroundJobsCheckpointPersisted && !rocksDBMaxBackgroundJobsRestorable {
+				log.Info("skip restore the rocksdb.max-background-jobs for next retry")
+				return
+			}
+
+			log.Info("start to restore rocksdb.max-background-jobs", zap.String("jobs", oldRocksDBMaxBackgroundJobs))
+			if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
+				log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
+			}
+			log.Info("finish restoring rocksdb.max-background-jobs")
+		}()
+	}
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
