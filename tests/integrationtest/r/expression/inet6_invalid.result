@@ -33,3 +33,89 @@ ref0
 +%o0
 drop table inet6_invalid,t0;
 set tidb_enable_vectorized_expression=default;
+set @saved_inet6_sql_mode=@@sql_mode;
+create table inet6_dml(id int primary key, a varbinary(16));
+create table inet6_generated(s varchar(64), a varbinary(16) as (inet6_aton(s)) stored);
+create table inet6_input(s varchar(64));
+insert into inet6_input values ('bad');
+set tidb_enable_vectorized_expression=0;
+set sql_mode='STRICT_TRANS_TABLES';
+insert into inet6_dml values (1,inet6_aton('bad'));
+Error 1411 (HY000): Incorrect string value: 'bad' for function inet6_aton
+insert into inet6_dml select 2,inet6_aton(s) from inet6_input;
+Error 1411 (HY000): Incorrect string value: 'bad' for function inet6_aton
+insert into inet6_generated(s) values ('bad');
+Error 1411 (HY000): Incorrect string value: 'bad' for function inet6_aton
+select count(*) from inet6_dml;
+count(*)
+0
+select count(*) from inet6_generated;
+count(*)
+0
+insert ignore into inet6_dml select 2,inet6_aton(s) from inet6_input;
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+select id,a is null from inet6_dml;
+id	a is null
+2	1
+set sql_mode='';
+insert into inet6_dml values (3,inet6_aton('bad'));
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+insert into inet6_generated(s) values ('bad');
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+select id,a is null from inet6_dml order by id;
+id	a is null
+2	1
+3	1
+select s,a is null from inet6_generated;
+s	a is null
+bad	1
+delete from inet6_dml;
+delete from inet6_generated;
+set tidb_enable_vectorized_expression=1;
+set sql_mode='STRICT_TRANS_TABLES';
+insert into inet6_dml values (1,inet6_aton('bad'));
+Error 1411 (HY000): Incorrect string value: 'bad' for function inet6_aton
+insert into inet6_dml select 2,inet6_aton(s) from inet6_input;
+Error 1411 (HY000): Incorrect string value: 'bad' for function inet6_aton
+insert into inet6_generated(s) values ('bad');
+Error 1411 (HY000): Incorrect string value: 'bad' for function inet6_aton
+select count(*) from inet6_dml;
+count(*)
+0
+select count(*) from inet6_generated;
+count(*)
+0
+insert ignore into inet6_dml select 2,inet6_aton(s) from inet6_input;
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+select id,a is null from inet6_dml;
+id	a is null
+2	1
+set sql_mode='';
+insert into inet6_dml values (3,inet6_aton('bad'));
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+insert into inet6_generated(s) values ('bad');
+show warnings;
+Level	Code	Message
+Warning	1411	Incorrect string value: 'bad' for function inet6_aton
+select id,a is null from inet6_dml order by id;
+id	a is null
+2	1
+3	1
+select s,a is null from inet6_generated;
+s	a is null
+bad	1
+delete from inet6_dml;
+delete from inet6_generated;
+drop table inet6_dml,inet6_generated,inet6_input;
+set sql_mode=@saved_inet6_sql_mode;
+set tidb_enable_vectorized_expression=default;

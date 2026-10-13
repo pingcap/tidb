@@ -753,8 +753,9 @@ func (b *builtinInet6AtonSig) evalString(ctx EvalContext, row chunk.Row) (string
 
 	ip := net.ParseIP(val)
 	if ip == nil {
-		ctx.AppendWarning(errWrongValueForType.GenWithStackByArgs("string", val, "inet6_aton"))
-		return "", true, nil
+		ec := errCtx(ctx)
+		err = ec.HandleError(errWrongValueForType.GenWithStackByArgs("string", val, "inet6_aton"))
+		return "", true, err
 	}
 
 	var isMappedIpv6 bool

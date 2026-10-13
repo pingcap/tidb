@@ -599,7 +599,10 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		val := buf.GetString(i)
 		ip := net.ParseIP(val)
 		if ip == nil {
-			ctx.AppendWarning(errWrongValueForType.GenWithStackByArgs("string", val, "inet6_aton"))
+			ec := errCtx(ctx)
+			if err := ec.HandleError(errWrongValueForType.GenWithStackByArgs("string", val, "inet6_aton")); err != nil {
+				return err
+			}
 			result.AppendNull()
 			continue
 		}

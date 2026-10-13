@@ -453,6 +453,14 @@ func TestInet6AtoN(t *testing.T) {
 			require.True(t, result.IsNull())
 			require.Equal(t, uint16(1), ctx.GetSessionVars().StmtCtx.WarningCount())
 			invalidCount++
+			// Strict DML must propagate invalid input rather than append a warning.
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.SetWarnings(nil)
+			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(false))
+			_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+			require.Zero(t, sc.WarningCount())
+			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 		} else {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, expect, result)
@@ -480,6 +488,12 @@ func TestInet6AtoN(t *testing.T) {
 	}
 	require.True(t, output.IsNull(len(tests)))
 	require.Equal(t, uint16(invalidCount), ctx.GetSessionVars().StmtCtx.WarningCount())
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.SetWarnings(nil)
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(false))
+	require.True(t, terror.ErrorEqual(vec.vecEvalString(ctx, input, output), errWrongValueForType))
+	require.Zero(t, sc.WarningCount())
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 	ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
