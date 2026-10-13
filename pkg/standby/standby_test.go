@@ -88,10 +88,24 @@ func TestActivateRequestMetadata(t *testing.T) {
 	var req ActivateRequest
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"keyspace_name": "ks",
+		"keyspace_id": 42,
 		"metadata": {
 			"meta_a": "value_a"
 		}
 	}`), &req))
+	encoded, err := json.Marshal(req)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	require.Equal(t, float64(42), fields["keyspace_id"])
+	require.NotNil(t, req.KeyspaceID)
+	require.Equal(t, uint32(42), *req.KeyspaceID)
+	var legacyReq ActivateRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"keyspace_name":"ks"}`), &legacyReq))
+	require.Nil(t, legacyReq.KeyspaceID)
+	require.NoError(t, json.Unmarshal([]byte(`{"keyspace_name":"ks","keyspace_id":0}`), &legacyReq))
+	require.NotNil(t, legacyReq.KeyspaceID)
+	require.Zero(t, *legacyReq.KeyspaceID)
 	require.Equal(t, map[string]string{
 		"meta_a": "value_a",
 	}, req.Metadata)
@@ -111,12 +125,17 @@ func TestActivateRequiresKeyspaceName(t *testing.T) {
 	resetStandbyTestState(t)
 	controller := NewLoadKeyspaceController(nil)
 	_, mux := controller.Handler(nil)
-	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{}`))
-	resp := httptest.NewRecorder()
-
-	mux.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusBadRequest, resp.Code)
+	for _, body := range []string{
+		`{}`,
+		`{"keyspace_name":"ks","keyspace_id":-1}`,
+		`{"keyspace_name":"ks","keyspace_id":4294967296}`,
+		`{"keyspace_name":"ks","keyspace_id":"42"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(body))
+		resp := httptest.NewRecorder()
+		mux.ServeHTTP(resp, req)
+		require.Equal(t, http.StatusBadRequest, resp.Code, body)
+	}
 }
 
 func TestActivateWaitsUntilServerReady(t *testing.T) {
@@ -124,7 +143,7 @@ func TestActivateWaitsUntilServerReady(t *testing.T) {
 	controller := NewLoadKeyspaceController(nil)
 	_, mux := controller.Handler(nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks"}`))
+	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks","keyspace_id":42}`))
 	resp := httptest.NewRecorder()
 	done := make(chan struct{})
 	var wg sync.WaitGroup
@@ -140,6 +159,9 @@ func TestActivateWaitsUntilServerReady(t *testing.T) {
 		defer mu.RUnlock()
 		return state == activatedState
 	}, time.Second, time.Millisecond*10)
+	mu.RLock()
+	require.Equal(t, uint32(42), *activateRequest.KeyspaceID)
+	mu.RUnlock()
 	select {
 	case <-done:
 		require.Fail(t, "activate request returned before server ready")

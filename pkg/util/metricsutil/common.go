@@ -50,7 +50,6 @@ import (
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
@@ -71,19 +70,8 @@ func RegisterMetrics() error {
 	if kerneltype.IsNextGen() {
 		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
-	if !keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) && cfg.Store == config.StoreTypeTiKV {
-		pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
-		if err != nil {
-			return err
-		}
-		err = loadKeyspaceIDConstLabel(pdAddrs, pd.SecurityOption{
-			CAPath:   cfg.Security.ClusterSSLCA,
-			CertPath: cfg.Security.ClusterSSLCert,
-			KeyPath:  cfg.Security.ClusterSSLKey,
-		}, cfg.KeyspaceName, time.Duration(cfg.PDClient.PDServerTimeout)*time.Second)
-		if err != nil {
-			return err
-		}
+	if !keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) && cfg.KeyspaceID != nil {
+		setKeyspaceIDConstLabel(*cfg.KeyspaceID)
 	}
 	return registerMetrics()
 }
@@ -102,9 +90,23 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
-	if err := loadKeyspaceIDConstLabel(pdAddrs, securityOpt, keyspaceName, 10*time.Second); err != nil {
+	pdClientOptions := []opt.ClientOption{
+		opt.WithCustomTimeoutOption(10 * time.Second),
+		opt.WithInitMetricsOption(false),
+	}
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
+	}
+	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt, pdClientOptions...)
+	if err != nil {
 		return err
 	}
+	defer pdCli.Close()
+	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
+	if err != nil {
+		return err
+	}
+	setKeyspaceIDConstLabel(keyspaceMeta.GetId())
 	return registerMetrics()
 }
 
@@ -134,14 +136,17 @@ func initMetrics() {
 func registerMetrics() error {
 	labels := cloneConstLabels()
 	maps.Copy(labels, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
-	if _, ok := labels[keyspaceIDLabel]; !ok {
-		labels[keyspaceIDLabel] = ""
-	}
 	setConstLabels(labels)
 	initMetrics()
 	keyspaceID := labels[keyspaceIDLabel]
 	initMetricsGatherer().keyspaceID.Store(&keyspaceID)
 	return nil
+}
+
+// SetKeyspaceID labels metrics after a non-standby server initializes its storage.
+func SetKeyspaceID(keyspaceID uint32) {
+	id := fmt.Sprint(keyspaceID)
+	initMetricsGatherer().keyspaceID.Store(&id)
 }
 
 type keyspaceGatherer struct {
@@ -199,28 +204,6 @@ func setConstLabels(labels map[string]string) {
 		kv = append(kv, k, v)
 	}
 	metricscommon.SetConstLabels(kv...)
-}
-
-func loadKeyspaceIDConstLabel(pdAddrs []string, securityOpt pd.SecurityOption, keyspaceName string, timeout time.Duration) error {
-	pdClientOptions := []opt.ClientOption{
-		opt.WithCustomTimeoutOption(timeout),
-		opt.WithInitMetricsOption(false),
-	}
-	if diagnosticmode.Enabled() {
-		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
-	}
-	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt, pdClientOptions...)
-	if err != nil {
-		return err
-	}
-	defer pdCli.Close()
-
-	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
-	if err != nil {
-		return err
-	}
-	setKeyspaceIDConstLabel(keyspaceMeta.GetId())
-	return nil
 }
 
 func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {

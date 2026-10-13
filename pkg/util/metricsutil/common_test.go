@@ -69,6 +69,7 @@ func TestRegisterMetricsWithKeyspaceObservabilityValues(t *testing.T) {
 }
 
 func TestRegisterMetricsKeyspaceID(t *testing.T) {
+	id, zeroID := uint32(42), uint32(0)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := grpc.NewServer()
@@ -81,12 +82,16 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 	for _, tc := range []struct {
 		name, keyspaceName, keyspaceID string
 		br, wantErr                    bool
+		activationID                   *uint32
+		storageID                      bool
 	}{
 		{name: "no keyspace"},
 		{name: "BR no keyspace", br: true},
-		{name: "TiDB keyspace", keyspaceName: "ks", keyspaceID: "42"},
+		{name: "TiDB activation keyspace", keyspaceName: "ks", keyspaceID: "42", activationID: &id},
+		{name: "TiDB zero keyspace ID", keyspaceName: "ks", keyspaceID: "0", activationID: &zeroID},
+		{name: "TiDB without activation ID", keyspaceName: "ks"},
+		{name: "TiDB storage keyspace", keyspaceName: "ks", keyspaceID: "42", storageID: true},
 		{name: "BR keyspace", keyspaceName: "ks", keyspaceID: "42", br: true},
-		{name: "TiDB lookup error", keyspaceName: "unknown", wantErr: true},
 		{name: "BR lookup error", keyspaceName: "unknown", br: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,8 +109,10 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			metricscommon.SetConstLabels()
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.Store = config.StoreTypeTiKV
-				conf.Path = listener.Addr().String()
+				// TiDB must use the supplied ID without parsing the PD path or dialing PD.
+				conf.Path = "unused?disableGC=invalid"
 				conf.KeyspaceName = tc.keyspaceName
+				conf.KeyspaceID = tc.activationID
 				conf.KeyspaceObservabilityValues = config.KeyspaceObservabilityValues{
 					MetricLabels: map[string]string{"keyspace_meta_tenant": "tenant"},
 				}
@@ -126,7 +133,12 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, tc.keyspaceID, metricscommon.GetConstLabels()[keyspaceIDLabel])
+			if tc.storageID {
+				require.Empty(t, metricscommon.GetConstLabels()[keyspaceIDLabel])
+				SetKeyspaceID(id)
+			} else {
+				require.Equal(t, tc.keyspaceID, metricscommon.GetConstLabels()[keyspaceIDLabel])
+			}
 			require.Equal(t, "tenant", metricscommon.GetConstLabels()["keyspace_meta_tenant"])
 
 			// Late registrations and metrics already labeled for another keyspace must work too.

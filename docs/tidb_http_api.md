@@ -26,7 +26,7 @@
     curl http://{TiDBIP}:10080/metrics
     ```
 
-    Every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Its value is the numeric ID of the configured keyspace, or an empty string when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Metrics sent to Pushgateway include the same label.
+    Every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. TiDB uses the ID supplied in the activation request, or the ID from the initialized storage codec when no activation ID is available; metric registration does not query PD for the ID. Its value is an empty string until an ID is available, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Metrics sent to Pushgateway include the same label.
 
 3. Get the metadata of all regions
 
@@ -769,6 +769,18 @@ timezone.*
      ```
 
      `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. `columnar_store_type` is this TiDB's `cse.columnar-store-type` (`tiflash`, `columnar`, or `both`). `reloaded` reports whether this request synced schema first. If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
+
+## Standby activation
+
+`POST /tidb-pool/activate` activates a TiDB process running in standby mode. Send the request to its status port. The response waits until the server is ready to accept connections.
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/tidb-pool/activate" \
+  -H 'Content-Type: application/json' \
+  -d '{"keyspace_name":"ks","keyspace_id":42}'
+```
+
+`keyspace_name` is required. `keyspace_id` is an optional unsigned 32-bit integer provided by the activation manager and used for metrics without a separate PD lookup. Zero is a valid supplied ID. If omitted, the ID is initially unavailable and the metric label is empty until storage initialization provides it. Invalid ID types, negative values, or values larger than `4294967295` return HTTP 400. Existing activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` remain supported.
 
 ## Test-only APIs (enableTestAPI failpoint)
 
