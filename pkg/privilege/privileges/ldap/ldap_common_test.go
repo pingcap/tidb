@@ -43,6 +43,9 @@ func TestCanonicalizeDN(t *testing.T) {
 	}
 	require.Equal(t, impl.canonicalizeDN("yka", "cn=y,dc=ping,dc=cap"), "cn=y,dc=ping,dc=cap")
 	require.Equal(t, impl.canonicalizeDN("yka", "+dc=ping,dc=cap"), "cn=yka,dc=ping,dc=cap")
+	// a user name carrying DN metacharacters must be escaped so it stays a single
+	// RDN value and cannot inject extra RDNs into the bound DN.
+	require.Equal(t, impl.canonicalizeDN("yka,dc=evil", "+dc=ping,dc=cap"), "cn=yka\\,dc=evil,dc=ping,dc=cap")
 }
 
 func TestConnectThrough636(t *testing.T) {

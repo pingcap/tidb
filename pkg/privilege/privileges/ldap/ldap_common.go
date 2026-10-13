@@ -82,7 +82,10 @@ func (impl *ldapAuthImpl) searchUser(userName string) (dn string, err error) {
 	result, err := l.Search(&ldap.SearchRequest{
 		BaseDN: impl.bindBaseDN,
 		Scope:  ldap.ScopeWholeSubtree,
-		Filter: fmt.Sprintf("(%s=%s)", impl.searchAttr, userName),
+		// userName comes from the login request, so escape it per RFC 4515 before
+		// embedding it in the filter, otherwise a name containing filter
+		// metacharacters (for example `*` or `)(`) changes which entries match.
+		Filter: fmt.Sprintf("(%s=%s)", impl.searchAttr, ldap.EscapeFilter(userName)),
 	})
 	if err != nil {
 		return
@@ -101,7 +104,10 @@ func (impl *ldapAuthImpl) searchUser(userName string) (dn string, err error) {
 // both `userName` and `dn` should be non-empty
 func (impl *ldapAuthImpl) canonicalizeDN(userName string, dn string) string {
 	if dn[0] == '+' {
-		return fmt.Sprintf("%s=%s,%s", impl.searchAttr, userName, dn[1:])
+		// userName is used as an RDN value here, so escape it per RFC 4514;
+		// an unescaped name containing `,`, `+` and similar could otherwise add
+		// or alter RDNs and change the DN that gets bound.
+		return fmt.Sprintf("%s=%s,%s", impl.searchAttr, ldap.EscapeDN(userName), dn[1:])
 	}
 
 	return dn
