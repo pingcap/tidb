@@ -52,7 +52,7 @@ func registerExampleTask(t testing.TB, ctrl *gomock.Controller, schedulerExt sch
 	executorExt := testutil.GetCommonTaskExecutorExt(ctrl, func(task *proto.Task) (execute.StepExecutor, error) {
 		return testutil.GetCommonStepExecutor(ctrl, task.Step, runSubtaskFn), nil
 	})
-	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(ctrl))
+	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleaner(ctrl))
 }
 
 func getCommonSubtaskRunFn(testCtx *testutil.TestContext) func(_ context.Context, subtask *proto.Subtask) error {
@@ -184,7 +184,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, func(task *proto.Task) (execute.StepExecutor, error) {
 		return stepExec, nil
 	})
-	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleaner(c.MockCtrl))
 	scope := handle.GetTargetScope()
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
@@ -276,7 +276,7 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	})
 }
 
-func TestFrameworkCleanUpRoutine(t *testing.T) {
+func TestFrameworkCleaner(t *testing.T) {
 	bak := scheduler.DefaultCleanUpInterval
 	defer func() {
 		scheduler.DefaultCleanUpInterval = bak
@@ -428,7 +428,7 @@ func TestMaxRuntimeSlots(t *testing.T) {
 				return nil
 			}), nil
 		})
-		testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+		testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleaner(c.MockCtrl))
 
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
 			func(_ *int, params *proto.ExtraParams) {
@@ -482,7 +482,7 @@ func TestMaxRuntimeSlots(t *testing.T) {
 				return nil
 			}), nil
 		})
-		testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+		testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleaner(c.MockCtrl))
 
 		scope := handle.GetTargetScope()
 		task, err := handle.SubmitTask(c.Ctx, "prepare-mode-disabled", proto.TaskTypeExample, c.Store.GetKeyspace(), 1, scope, 0, []byte(initialTaskMeta))

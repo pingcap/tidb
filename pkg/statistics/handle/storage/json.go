@@ -95,7 +95,7 @@ func GenJSONTableFromStats(
 		return nil, outerErr
 	}
 	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, idx.FMSketch, &idx.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
@@ -155,6 +155,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				statsVer = int64(statistics.Version1)
 			}
 			idx := &statistics.Index{
+				FMSketch:          statistics.FMSketchFromProto(jsonIdx.FMSketch),
 				Histogram:         *hist,
 				CMSketch:          cm,
 				TopN:              topN,

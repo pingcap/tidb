@@ -323,6 +323,8 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 		s.NoError(err)
 		return task.State == proto.TaskStateSucceed
 	}, 30*time.Second, 300*time.Millisecond)
+	var taskMeta importinto.TaskMeta
+	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
@@ -341,13 +343,18 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	s.EqualValues(12, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(sum.RowCnt.Load(), 10000)
+	logicalIngestSummary := taskMeta.Summary.IngestSummary
+	s.EqualValues(10000, logicalIngestSummary.RowCnt)
 	if kerneltype.IsClassic() {
-		s.EqualValues(sum.Processed.Load(), 2622604)
+		s.EqualValues(2622604, logicalIngestSummary.Bytes)
 	} else {
 		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
-		s.EqualValues(sum.Processed.Load(), 2782604)
+		s.EqualValues(2782604, logicalIngestSummary.Bytes)
 	}
+	// Runtime write progress is retry-inclusive. An ingest retry can move a region
+	// job back to regionScanned and rewrite its KVs; the data KV group also recounts rows.
+	s.GreaterOrEqual(sum.RowCnt.Load(), logicalIngestSummary.RowCnt)
+	s.GreaterOrEqual(sum.Processed.Load(), logicalIngestSummary.Bytes)
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	// No conflicts in this case, no need to rewrite the external subtask meta.
 	s.EqualValues(0, sum.PutReqCnt.Load())

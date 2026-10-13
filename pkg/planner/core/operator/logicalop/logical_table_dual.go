@@ -149,6 +149,4 @@ func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************

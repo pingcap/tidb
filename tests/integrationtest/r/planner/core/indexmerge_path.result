@@ -681,8 +681,8 @@ alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain format = 'brief' select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 id	estRows	task	access object	operator info
 IndexMerge	1.00	root		type: union
-├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing, b:unInitialized]
-└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing, b:unInitialized]
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
 drop table if exists t, t1;
 create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
 insert into t values ('[1,2,3]', 1);

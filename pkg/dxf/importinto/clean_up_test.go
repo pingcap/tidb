@@ -35,7 +35,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
+func TestImportCleanerBatchCleanUsesUnredactedStorageCredentials(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("this test is for nextgen kernel only")
 	}
@@ -47,7 +47,7 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 	require.NoError(t, backend.CreateBucket("cleanup-bucket"))
 	require.NoError(t, backend.CreateBucket("other-cleanup-bucket"))
 	fakeS3 := gofakes3.New(backend).Server()
-	listRequests := make(chan string, len(taskIDs))
+	listRequests := make(chan string, len(buckets))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Authorization"), "Credential="+accessKey+"/") {
 			http.Error(w, "unexpected access key", http.StatusForbidden)
@@ -58,7 +58,10 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 		}
 		fakeS3.ServeHTTP(w, r)
 	}))
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		server.Client().CloseIdleConnections()
+		server.Close()
+	})
 
 	ctx := context.Background()
 	cloudStorageURIs := make([]string, 0, len(buckets))
@@ -74,6 +77,7 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 		require.NoError(t, err)
 		taskID := taskIDs[i]
 		require.NoError(t, store.WriteFile(ctx, fmt.Sprintf("%d/data", taskID), []byte("data")))
+		require.NoError(t, store.WriteFile(ctx, fmt.Sprintf("conflicted-rows/%d/attempt/data", taskID), []byte("row")))
 		if i == 0 || i == 2 {
 			require.NoError(t, store.WriteFile(ctx, "kept/data", []byte("data")))
 		}
@@ -90,7 +94,7 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 		})
 	}
 
-	require.NoError(t, (&ImportCleanUp{}).CleanUpBatch(ctx, tasks))
+	require.NoError(t, (&ImportCleaner{}).BatchClean(ctx, tasks))
 	require.Equal(t, 2, len(listRequests))
 	listedBuckets := []string{<-listRequests, <-listRequests}
 	require.ElementsMatch(t, []string{"/cleanup-bucket", "/other-cleanup-bucket"}, listedBuckets)
@@ -101,6 +105,9 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 		exists, err := store.FileExists(ctx, fmt.Sprintf("%d/data", task.ID))
 		require.NoError(t, err)
 		require.False(t, exists)
+		exists, err = store.FileExists(ctx, fmt.Sprintf("conflicted-rows/%d/attempt/data", task.ID))
+		require.NoError(t, err)
+		require.True(t, exists)
 		if i == 0 || i == 2 {
 			exists, err = store.FileExists(ctx, "kept/data")
 			require.NoError(t, err)
@@ -108,12 +115,13 @@ func TestImportCleanUpBatchUsesUnredactedStorageCredentials(t *testing.T) {
 		}
 		store.Close()
 		require.NotContains(t, string(task.Meta), accessKey)
+		require.NotContains(t, string(task.Meta), "cleanup-secret")
 		require.Contains(t, string(task.Meta), "access-key=xxxxxx")
 	}
 }
 
-func TestSendMeterOnCleanUpInParallelSuccess(t *testing.T) {
-	tasks := make([]*proto.Task, cleanUpMeteringConcurrency*2)
+func TestSendMeterOnCleanInParallelSuccess(t *testing.T) {
+	tasks := make([]*proto.Task, cleanMeteringConcurrency*2)
 	for i := range tasks {
 		tasks[i] = &proto.Task{
 			TaskBase: proto.TaskBase{
@@ -129,17 +137,17 @@ func TestSendMeterOnCleanUpInParallelSuccess(t *testing.T) {
 		return nil
 	}
 
-	err := sendMeterOnCleanUpInParallel(context.Background(), tasks, sendFn)
+	err := sendMeterOnCleanInParallel(context.Background(), tasks, sendFn)
 	require.NoError(t, err)
 	require.Equal(t, int32(len(tasks)), processedTaskCount.Load())
 }
 
-func TestSendMeterOnCleanUpInParallelCancellation(t *testing.T) {
+func TestSendMeterOnCleanInParallelCancellation(t *testing.T) {
 	t.Run("send error stops starting pending tasks", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
-		tasks := make([]*proto.Task, cleanUpMeteringConcurrency*2)
+		tasks := make([]*proto.Task, cleanMeteringConcurrency*2)
 		releases := make([]chan error, len(tasks))
 		for i := range tasks {
 			tasks[i] = &proto.Task{
@@ -164,11 +172,11 @@ func TestSendMeterOnCleanUpInParallelCancellation(t *testing.T) {
 		}
 
 		go func() {
-			done <- sendMeterOnCleanUpInParallel(ctx, tasks, sendFn)
+			done <- sendMeterOnCleanInParallel(ctx, tasks, sendFn)
 		}()
 
-		startedTaskIDs := make([]int64, 0, cleanUpMeteringConcurrency)
-		for range cleanUpMeteringConcurrency {
+		startedTaskIDs := make([]int64, 0, cleanMeteringConcurrency)
+		for range cleanMeteringConcurrency {
 			select {
 			case taskID := <-startedTasks:
 				startedTaskIDs = append(startedTaskIDs, taskID)
@@ -194,14 +202,14 @@ func TestSendMeterOnCleanUpInParallelCancellation(t *testing.T) {
 		cancel()
 		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, State: proto.TaskStateSucceed}}}
 
-		err := sendMeterOnCleanUpInParallel(ctx, tasks, func(ctx context.Context, _ *proto.Task, _ *zap.Logger) error {
+		err := sendMeterOnCleanInParallel(ctx, tasks, func(ctx context.Context, _ *proto.Task, _ *zap.Logger) error {
 			return ctx.Err()
 		})
 		require.ErrorIs(t, err, context.Canceled)
 	})
 }
 
-func TestSendMeterOnCleanUpInParallelRecoversPanic(t *testing.T) {
+func TestSendMeterOnCleanInParallelRecoversPanic(t *testing.T) {
 	restoreLog := log.ReplaceGlobals(zap.NewNop(), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.FatalLevel)})
 	defer restoreLog()
 
@@ -215,6 +223,6 @@ func TestSendMeterOnCleanUpInParallelRecoversPanic(t *testing.T) {
 		panic("metering panic")
 	}
 
-	err := sendMeterOnCleanUpInParallel(context.Background(), tasks, sendFn)
+	err := sendMeterOnCleanInParallel(context.Background(), tasks, sendFn)
 	require.ErrorContains(t, err, "metering panic")
 }

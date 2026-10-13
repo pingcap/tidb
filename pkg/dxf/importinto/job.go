@@ -24,6 +24,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -65,14 +66,16 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 }
 
 // ShouldUseAsyncPrepare returns whether IMPORT INTO should use
-// DXF prepare-mode asynchronous prepare.
+// DXF prepare-mode asynchronous prepare. Starter imports are usually small, and
+// their maximum size is controlled by starter-params.max-import-data-size, so
+// synchronous prepare is fast and provides more responsive validation feedback.
 // Nextgen only supports global sort for IMPORT INTO in production, but local
 // sort can still be exercised in tests, so keep the IsGlobalSort check.
 func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
 	failpoint.Inject("mockDisableAsyncPrepare", func() {
 		failpoint.Return(false)
 	})
-	return plan != nil && kerneltype.IsNextGen() && plan.IsGlobalSort()
+	return plan != nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
 }
 
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {

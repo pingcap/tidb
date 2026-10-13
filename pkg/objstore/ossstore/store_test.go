@@ -15,12 +15,14 @@
 package ossstore
 
 import (
+	stdctx "context"
 	"fmt"
 	"io"
 	"path"
 	"testing"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -30,6 +32,68 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
+
+func TestURI(t *testing.T) {
+	for _, tc := range []struct {
+		prefix string
+		uri    string
+	}{
+		{"", "oss://bucket/"},
+		{"data", "oss://bucket/data/"},
+		{"data/", "oss://bucket/data/"},
+		{"data/nested%2E", "oss://bucket/data/nested%2E/"},
+	} {
+		t.Run(tc.prefix, func(t *testing.T) {
+			store := &OSSStore{Storage: newOSSStorageForTest(nil, &backuppb.S3{
+				Bucket: "bucket",
+				Prefix: tc.prefix,
+			}, nil)}
+			require.Equal(t, tc.uri, store.URI())
+		})
+	}
+}
+
+func TestIsTransientNoCredentialsError(t *testing.T) {
+	require.False(t, IsTransientNoCredentialsError(nil))
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf("some unrelated error")))
+	// A permanent misconfiguration, e.g. no credentials configured anywhere, is
+	// not retryable.
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: "+
+			"open /home/pingcap/.aliyun/config.json: no such file or directory")))
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain")))
+	// A timeout or deadline talking to the ECS metadata service is transient and
+	// retryable.
+	require.True(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: "+
+			"refresh Ecs sts token err: "+
+			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/tidbcloud-abc?": `+
+			"context deadline exceeded (Client.Timeout exceeded while awaiting headers)")))
+	require.True(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"unable to get credentials from any of the providers in the chain: "+
+			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": `+
+			"dial tcp 100.100.100.200:80: i/o timeout")))
+	// The metadata service was reached but refused the request: not retryable.
+	require.False(t, IsTransientNoCredentialsError(fmt.Errorf(
+		"unable to get credentials from any of the providers in the chain: "+
+			`Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/": `+
+			"dial tcp 100.100.100.200:80: connect: connection refused")))
+	// After the first call DefaultCredentialsProvider returns the cached
+	// provider's error without the chain prefix, so this must still match.
+	require.True(t, IsTransientNoCredentialsError(fmt.Errorf(
+		`get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": `+
+			"dial tcp 100.100.100.200:80: i/o timeout")))
+	// Messages like the ones produced in production: no credentials configured
+	// anywhere plus a timeout talking to the ECS metadata service, so they are
+	// transient.
+	for _, msg := range []string{
+		`failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: unable to get credentials from environment variables, Access key ID must be specified via environment variable (ALIBABA_CLOUD_ACCESS_KEY_ID), reading aliyun cli config from '/home/pingcap/.aliyun/config.json' failed open /home/pingcap/.aliyun/config.json: no such file or directory, ERROR: Can not open fileopen /home/pingcap/.alibabacloud/credentials: no such file or directory, get role name failed: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/?": dial tcp 100.100.100.200:80: i/o timeout`,
+		`failed to get credentials from default provider: unable to get credentials from any of the providers in the chain: unable to get credentials from environment variables, Access key ID must be specified via environment variable (ALIBABA_CLOUD_ACCESS_KEY_ID), reading aliyun cli config from '/home/pingcap/.aliyun/config.json' failed open /home/pingcap/.aliyun/config.json: no such file or directory, ERROR: Can not open fileopen /home/pingcap/.alibabacloud/credentials: no such file or directory, refresh Ecs sts token err: Get "http://100.100.100.200/latest/meta-data/ram/security-credentials/tidbcloud-4733fb75756c795202e84d8e2a58cd33-577c6ee7?": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`,
+	} {
+		require.True(t, IsTransientNoCredentialsError(fmt.Errorf("%s", msg)))
+	}
+}
 
 func TestStore(t *testing.T) {
 	// example: acs:ram::00000000000000:role
@@ -353,4 +417,56 @@ func TestCanUseInternalEndpoint(t *testing.T) {
 	require.False(t, canUseInternalEndpoint("", "cn-hangzhou"))
 	require.False(t, canUseInternalEndpoint("cn-beijing", "cn-hangzhou"))
 	require.True(t, canUseInternalEndpoint("cn-hangzhou", "cn-hangzhou"))
+}
+
+func TestSendCredentialsIsSupported(t *testing.T) {
+	ctx, cancel := context.Background().WithCancel()
+	cancel()
+	backend := &backuppb.S3{
+		Bucket:          "bucket",
+		Endpoint:        "https://oss-cn-hangzhou.aliyuncs.com",
+		AccessKey:       "access-key",
+		SecretAccessKey: "secret-key",
+		SessionToken:    "session-token",
+	}
+	_, err := NewOSSStorage(ctx, backend, &storeapi.Options{SendCredentials: true})
+	require.ErrorContains(t, err, "context canceled")
+	require.Equal(t, "access-key", backend.AccessKey)
+	require.Equal(t, "secret-key", backend.SecretAccessKey)
+	require.Equal(t, "session-token", backend.SessionToken)
+}
+
+func TestSetBackendCredentials(t *testing.T) {
+	providerCalls := 0
+	provider := credentials.CredentialsProviderFunc(func(stdctx.Context) (credentials.Credentials, error) {
+		providerCalls++
+		return credentials.Credentials{
+			AccessKeyID:     "current-access-key",
+			AccessKeySecret: "current-secret-key",
+			SecurityToken:   "current-session-token",
+		}, nil
+	})
+	backend := &backuppb.S3{}
+	require.NoError(t, setBackendCredentials(context.Background(), backend, provider, true))
+	require.Equal(t, "current-access-key", backend.AccessKey)
+	require.Equal(t, "current-secret-key", backend.SecretAccessKey)
+	require.Equal(t, "current-session-token", backend.SessionToken)
+	require.Equal(t, 1, providerCalls)
+
+	require.NoError(t, setBackendCredentials(context.Background(), backend, provider, false))
+	require.Empty(t, backend.AccessKey)
+	require.Empty(t, backend.SecretAccessKey)
+	require.Empty(t, backend.SessionToken)
+	require.Equal(t, 1, providerCalls)
+
+	backend.AccessKey = "existing-access-key"
+	backend.SecretAccessKey = "existing-secret-key"
+	backend.SessionToken = "existing-session-token"
+	errorProvider := credentials.CredentialsProviderFunc(func(stdctx.Context) (credentials.Credentials, error) {
+		return credentials.Credentials{}, fmt.Errorf("credentials unavailable")
+	})
+	require.ErrorContains(t, setBackendCredentials(context.Background(), backend, errorProvider, true), "credentials unavailable")
+	require.Equal(t, "existing-access-key", backend.AccessKey)
+	require.Equal(t, "existing-secret-key", backend.SecretAccessKey)
+	require.Equal(t, "existing-session-token", backend.SessionToken)
 }

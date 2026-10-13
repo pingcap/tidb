@@ -818,8 +818,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 	return expr, nil
 }
 
-func locateStringWithCollation(str, substr, coll string) int64 {
-	collator := collate.GetCollator(coll)
+func locateStringWithCollator(str, substr string, collator collate.Collator) int64 {
 	strKey := collator.KeyWithoutTrimRightSpace(str)
 	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
@@ -1393,19 +1392,19 @@ type ParamMarkerInPrepareChecker struct {
 	InPrepareStmt bool
 }
 
-// Enter implements Visitor Interface.
-func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (skipChildren bool) {
 	switch v := in.(type) {
 	case *driver.ParamMarkerExpr:
 		pc.InPrepareStmt = !v.InExecute
-		return v, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor Interface.
-func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements InPlaceVisitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(ast.Node) (proceed bool) {
+	return true
 }
 
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.

@@ -218,6 +218,7 @@ func TestTwoStates(t *testing.T) {
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
+	targetTableID := external.GetTableByName(t, tk, "test_db_state", "t").Meta().ID
 
 	prevState := model.StateNone
 	require.NoError(t, testInfo.parseSQLs(parser.New()))
@@ -232,6 +233,11 @@ func TestTwoStates(t *testing.T) {
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	tk.MustExec("drop table t_states_failpoint_probe")
 	runStateChecks := func(state model.SchemaState) {
+		switch state {
+		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+		default:
+			return
+		}
 		if state == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -284,6 +290,9 @@ func TestTwoStates(t *testing.T) {
 	}
 	runWithFailpointHook := func() {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+			if job.Type != model.ActionAddColumn || job.TableID != targetTableID {
+				return
+			}
 			runStateChecks(job.SchemaState)
 		})
 		tk.MustExec(alterTableSQL)
@@ -939,6 +948,31 @@ func TestShowIndex(t *testing.T) {
 	tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
+}
+
+// Regression test for issue 70049. Ordinary indexes with an underscore-delimited
+// suffix must not be mistaken for temporary indexes created by modify column.
+func TestAlterIndexVisibility(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	query := `select key_name, is_visible from information_schema.tidb_indexes
+		where table_schema = 'test' and table_name = '%s' order by key_name`
+	tk.MustExec("create table t_invisible (k int, key idx_k(k), key idx_k_1(k), key idx_k_copy(k))")
+	tk.MustExec("alter table t_invisible alter index idx_k invisible")
+	tk.MustQuery(fmt.Sprintf(query, "t_invisible")).Check(testkit.Rows(
+		"idx_k NO",
+		"idx_k_1 YES",
+		"idx_k_copy YES",
+	))
+
+	tk.MustExec("create table t_visible (k int, key idx_k(k) invisible, key idx_k_1(k) invisible, key idx_k_copy(k) invisible)")
+	tk.MustExec("alter table t_visible alter index idx_k visible")
+	tk.MustQuery(fmt.Sprintf(query, "t_visible")).Check(testkit.Rows(
+		"idx_k YES",
+		"idx_k_1 NO",
+		"idx_k_copy NO",
+	))
 }
 
 func TestParallelAlterIndex(t *testing.T) {

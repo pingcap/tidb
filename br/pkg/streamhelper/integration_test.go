@@ -151,6 +151,18 @@ func TestIntegration(t *testing.T) {
 		testCheckpointWatchProgressTimeout(t, streamhelper.AdvancerExt{MetaDataClient: metaCli})
 	})
 	t.Run("TestPauseTaskWithErr", func(t *testing.T) { testPauseTaskWithErr(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("TestGlobalCheckpointRevisionSurvivesCompaction", func(t *testing.T) {
+		testGlobalCheckpointRevisionSurvivesCompaction(t, streamhelper.AdvancerExt{MetaDataClient: metaCli})
+	})
+	t.Run("TestGetGlobalCheckpointRetriesTimeout", func(t *testing.T) {
+		testGetGlobalCheckpointRetriesTimeout(t, streamhelper.AdvancerExt{MetaDataClient: metaCli})
+	})
+	t.Run("TestUploadGlobalCheckpointRetriesTimeout", func(t *testing.T) {
+		testUploadGlobalCheckpointRetriesTimeout(t, streamhelper.AdvancerExt{MetaDataClient: metaCli})
+	})
+	t.Run("TestUploadGlobalCheckpointRetriesCommitTimeout", func(t *testing.T) {
+		testUploadGlobalCheckpointRetriesCommitTimeout(t, streamhelper.AdvancerExt{MetaDataClient: metaCli})
+	})
 }
 
 func TestChecking(t *testing.T) {
@@ -289,8 +301,21 @@ func testGetGlobalCheckPointTS(t *testing.T, metaCli streamhelper.MetaDataClient
 	require.Equal(t, globalTS, uint64(1003))
 }
 
+// receiveTaskEvent waits up to 10 seconds for the next stream task event.
+func receiveTaskEvent(t *testing.T, ch <-chan streamhelper.TaskEvent) (streamhelper.TaskEvent, bool) {
+	t.Helper()
+	select {
+	case event, ok := <-ch:
+		return event, ok
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stream task event")
+	}
+	return streamhelper.TaskEvent{}, false
+}
+
 func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	taskName := "simple"
 	taskInfo := simpleTask(taskName, 4)
 
@@ -302,28 +327,32 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	taskName2 := "simple2"
 	taskInfo2 := simpleTask(taskName2, 4)
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
-	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
 
-	first := <-ch
+	first, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, first.Type, streamhelper.EventAdd)
 	require.Equal(t, first.Name, taskName)
 	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
-	second := <-ch
+	second, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, second.Type, streamhelper.EventDel)
 	require.Equal(t, second.Name, taskName)
-	third := <-ch
+	third, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, third.Type, streamhelper.EventAdd)
 	require.Equal(t, third.Name, taskName2)
-	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
-	forth := <-ch
+	require.ElementsMatch(t, third.Ranges, simpleRanges(4))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+	forth, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)
 	cancel()
-	fifth, ok := <-ch
+	fifth, ok := receiveTaskEvent(t, ch)
 	require.True(t, ok)
 	require.Equal(t, fifth.Type, streamhelper.EventErr)
 	require.ErrorIs(t, fifth.Err, context.Canceled)
-	item, ok := <-ch
+	item, ok := receiveTaskEvent(t, ch)
 	require.False(t, ok, "%v", item)
 }
 
@@ -397,6 +426,94 @@ func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
 	req.NoError(err)
 	req.EqualValues(0, ts)
+}
+
+func testGlobalCheckpointRevisionSurvivesCompaction(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	task := "checkpoint_revision_compaction"
+	req := require.New(t)
+
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 100))
+	_, checkpointRev, err := streamhelper.GetGlobalCheckpointWithRevisionForTest(ctx, metaCli.MetaDataClient, task)
+	req.NoError(err)
+
+	advanceRevisionPrefix := "/test/advance-revision/" + task + "/"
+	for i := range 5 {
+		_, err := metaCli.KV.Put(ctx, fmt.Sprintf("%s%d", advanceRevisionPrefix, i), "value")
+		req.NoError(err)
+	}
+	resp, err := metaCli.KV.Get(ctx, advanceRevisionPrefix, clientv3.WithPrefix(), clientv3.WithCountOnly())
+	req.NoError(err)
+	compactedRev := resp.Header.Revision
+	req.Greater(compactedRev, checkpointRev)
+	_, err = metaCli.KV.Compact(ctx, compactedRev)
+	req.NoError(err)
+
+	checkpoint, rev, err := streamhelper.GetGlobalCheckpointWithRevisionForTest(ctx, metaCli.MetaDataClient, task)
+	req.NoError(err)
+	req.EqualValues(100, checkpoint)
+	req.GreaterOrEqual(rev, compactedRev)
+}
+
+func testGetGlobalCheckpointRetriesTimeout(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	task := "checkpoint_get_retry"
+	req := require.New(t)
+
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 200))
+	req.NoError(failpoint.Enable(
+		"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_get_global_checkpoint_request_timeout",
+		"2*return(true)"))
+	defer func() {
+		req.NoError(failpoint.Disable(
+			"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_get_global_checkpoint_request_timeout"))
+	}()
+
+	checkpoint, err := metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(200, checkpoint)
+}
+
+func testUploadGlobalCheckpointRetriesTimeout(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	task := "checkpoint_upload_retry"
+	req := require.New(t)
+
+	req.NoError(failpoint.Enable(
+		"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_request_timeout",
+		"2*return(true)"))
+	defer func() {
+		req.NoError(failpoint.Disable(
+			"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_request_timeout"))
+	}()
+
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 300))
+	checkpoint, err := metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(300, checkpoint)
+}
+
+func testUploadGlobalCheckpointRetriesCommitTimeout(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	task := "checkpoint_upload_commit_retry"
+	req := require.New(t)
+
+	req.NoError(failpoint.Enable(
+		"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_commit_timeout",
+		"1*return(true)"))
+	defer func() {
+		req.NoError(failpoint.Disable(
+			"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_upload_global_checkpoint_commit_timeout"))
+	}()
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 400))
+
+	checkpoint, err := metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(400, checkpoint)
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 350))
+	checkpoint, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(400, checkpoint)
 }
 
 func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {

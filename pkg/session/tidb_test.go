@@ -16,19 +16,126 @@ package session
 
 import (
 	"context"
+	"encoding/base64"
+	"runtime"
 	"testing"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+type recordingObserver struct {
+	count int
+}
+
+func (o *recordingObserver) Observe(float64) {
+	o.count++
+}
+
+func TestSharedLockLostRollsBackTransaction(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	testCases := []struct {
+		name           string
+		beginSQL       string
+		pessimistic    bool
+		sharedLockLost bool
+	}{
+		{
+			name:           "pessimistic shared lock lost",
+			beginSQL:       "begin pessimistic",
+			pessimistic:    true,
+			sharedLockLost: true,
+		},
+		{
+			name:           "optimistic shared lock lost mode mismatch",
+			beginSQL:       "begin optimistic",
+			pessimistic:    false,
+			sharedLockLost: true,
+		},
+		{
+			name:           "pessimistic deadlock unchanged",
+			beginSQL:       "begin pessimistic",
+			pessimistic:    true,
+			sharedLockLost: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			se, err := createSession(store)
+			require.NoError(t, err)
+			defer se.Close()
+
+			MustExec(t, se, testCase.beginSQL)
+			txnManager := sessiontxn.GetTxnManager(se)
+			txn, err := txnManager.ActivateTxn()
+			require.NoError(t, err)
+			require.True(t, txn.Valid())
+			require.Equal(t, testCase.pessimistic, txn.IsPessimistic())
+			require.NotNil(t, txnManager.GetContextProvider())
+
+			recorder := &recordingObserver{}
+			var restoreObserver func()
+			if testCase.pessimistic {
+				originalObserver := session_metrics.TransactionDurationPessimisticAbortGeneral
+				session_metrics.TransactionDurationPessimisticAbortGeneral = recorder
+				restoreObserver = func() {
+					session_metrics.TransactionDurationPessimisticAbortGeneral = originalObserver
+				}
+			} else {
+				originalObserver := session_metrics.TransactionDurationOptimisticAbortGeneral
+				session_metrics.TransactionDurationOptimisticAbortGeneral = recorder
+				restoreObserver = func() {
+					session_metrics.TransactionDurationOptimisticAbortGeneral = originalObserver
+				}
+			}
+			defer restoreObserver()
+
+			var stmtErr error
+			if testCase.sharedLockLost {
+				stmtErr = kv.ErrSharedLockLost.GenWithStackByArgs(txn.StartTS(), "6B6579")
+			} else {
+				stmtErr = exeerrors.ErrDeadlock
+			}
+			got := autoCommitAfterStmt(context.Background(), se, stmtErr, nil)
+			require.Same(t, stmtErr, got)
+			if testCase.sharedLockLost {
+				require.True(t, kv.ErrSharedLockLost.Equal(got))
+			} else {
+				require.True(t, exeerrors.ErrDeadlock.Equal(got))
+			}
+			require.False(t, se.sessionVars.InTxn())
+			require.False(t, se.txn.Valid())
+			require.Nil(t, txnManager.GetContextProvider())
+			require.Equal(t, 1, recorder.count)
+		})
+	}
+}
 
 func TestDomapHandleNil(t *testing.T) {
 	// this is required for enterprise plugins
@@ -36,6 +143,105 @@ func TestDomapHandleNil(t *testing.T) {
 	require.NotPanics(t, func() {
 		_, _ = domap.Get(nil)
 	})
+}
+
+func TestGlobalVariableInitDomainSkipsStatusEndpointClaim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create a file containing a colon, which is not allowed on Windows")
+	}
+	if kerneltype.IsNextGen() {
+		t.Skip("this classic-kernel startup path uses a store without a system keyspace")
+	}
+	integration.BeforeTestExternal(t)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Bootstrap without etcd first so the second startup exercises only the
+	// global-variable initialization Domain and the final serving Domain.
+	initialDomain, err := BootstrapSession(store)
+	require.NoError(t, err)
+	initialDomain.Close()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	mockStore := &mockEtcdBackend{
+		Storage: store,
+		pdAddrs: []string{cluster.Members[0].GRPCURL()},
+	}
+	previousConfig := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(previousConfig)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.AdvertiseAddress = "127.0.0.1"
+		conf.Status.ReportStatus = true
+		conf.Status.StatusPort = 10080
+	})
+
+	ctx := context.Background()
+	require.NoError(t, ddl.StartOwnerManager(ctx, mockStore))
+	defer ddl.CloseOwnerManager(mockStore)
+
+	endpoint := "127.0.0.1:10080"
+	claimKey := "/tidb/server/status_addr/" + base64.RawURLEncoding.EncodeToString([]byte(endpoint))
+	etcdClient := cluster.RandClient()
+	claimLease, err := etcdClient.Grant(ctx, ddlutil.SessionTTL)
+	require.NoError(t, err)
+	defer func() {
+		_, revokeErr := etcdClient.Revoke(ctx, claimLease.ID)
+		require.NoError(t, revokeErr)
+	}()
+	_, err = etcdClient.Put(ctx, claimKey, "existing-server", clientv3.WithLease(claimLease.ID))
+	require.NoError(t, err)
+
+	core, recorded := observer.New(zap.WarnLevel)
+	restoreLogger := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{
+			Core:  core,
+			Level: zap.NewAtomicLevelAt(zap.WarnLevel),
+		},
+	)
+	defer restoreLogger()
+
+	dom, err := BootstrapSession(mockStore)
+	require.NoError(t, err)
+	defer func() {
+		if dom != nil {
+			dom.Close()
+		}
+	}()
+
+	warnings := recorded.FilterMessage("advertised status endpoint already has an active claim").All()
+	require.Len(t, warnings, 1)
+	servingID := dom.DDL().GetID()
+	warningFields := warnings[0].ContextMap()
+	require.Equal(t, endpoint, warningFields["advertised-status-endpoint"])
+	require.Equal(t, claimKey, warningFields["claim-key"])
+	require.Equal(t, servingID, warningFields["local-server-info-id"])
+	require.Equal(t, "existing-server", warningFields["existing-server-info-id"])
+	require.Equal(t, util.FormatLeaseID(claimLease.ID), warningFields["existing-lease-id"])
+	require.NotEmpty(t, warningFields["action"])
+
+	// Start again without the external claim. The initialization Domain closes before
+	// BootstrapSession returns, so only the serving Domain can leave this claim behind.
+	dom.Close()
+	dom = nil
+	_, err = etcdClient.Delete(ctx, claimKey)
+	require.NoError(t, err)
+	dom, err = BootstrapSession(mockStore)
+	require.NoError(t, err)
+	servingID = dom.DDL().GetID()
+	claimResp, err := etcdClient.Get(ctx, claimKey)
+	require.NoError(t, err)
+	require.Len(t, claimResp.Kvs, 1)
+	require.Equal(t, servingID, string(claimResp.Kvs[0].Value))
+	serverInfoResp, err := etcdClient.Get(ctx, "/tidb/server/info/"+servingID)
+	require.NoError(t, err)
+	require.Len(t, serverInfoResp.Kvs, 1)
+	require.NotZero(t, claimResp.Kvs[0].Lease)
+	require.Equal(t, serverInfoResp.Kvs[0].Lease, claimResp.Kvs[0].Lease)
 }
 
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
@@ -67,89 +273,6 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	wg.Wait()
 }
 
-func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-
-	se, err := createSession(store)
-	require.NoError(t, err)
-
-	t.Run("standalone parse carries into next statement only once", func(t *testing.T) {
-		_, err = se.ParseWithParams(context.Background(), "select 1")
-		require.NoError(t, err)
-		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
-
-		stmt, err := se.ParseWithParams(context.Background(), "set @a=1")
-		require.NoError(t, err)
-		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
-
-		_, err = se.ExecuteStmt(context.Background(), stmt)
-		require.NoError(t, err)
-		require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
-		require.NotNil(t, se.sessionVars.RUV2Metrics)
-		require.Equal(t, int64(1), se.sessionVars.RUV2Metrics.SessionParserTotal())
-
-		dctx := se.GetDistSQLCtx()
-		require.Same(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
-	})
-
-	t.Run("internal others bypass skips parser ru accounting", func(t *testing.T) {
-		stmt, err := se.ParseWithParams(context.Background(), "set @b=1")
-		require.NoError(t, err)
-		require.Equal(t, int64(1), se.sessionVars.RUV2PendingSessionParserTotal.Load())
-
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-		_, err = se.ExecuteStmt(ctx, stmt)
-		require.NoError(t, err)
-		require.Zero(t, se.sessionVars.RUV2PendingSessionParserTotal.Load())
-		require.NotNil(t, se.sessionVars.RUV2Metrics)
-		require.True(t, se.sessionVars.RUV2Metrics.Bypass())
-		require.Zero(t, se.sessionVars.RUV2Metrics.SessionParserTotal())
-	})
-
-	t.Run("statement bypass decision follows internal analyze semantics", func(t *testing.T) {
-		statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-		origIsNextGenForRUV2 := isNextGenForRUV2
-		defer func() {
-			isNextGenForRUV2 = origIsNextGenForRUV2
-		}()
-
-		MustExec(t, se, "use test")
-		MustExec(t, se, "drop table if exists bypass_prepare")
-		MustExec(t, se, "create table bypass_prepare (a int)")
-
-		stmtID, _, _, err := se.PrepareStmt("analyze table bypass_prepare")
-		require.NoError(t, err)
-		prepStmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
-		require.NoError(t, err)
-		execAnalyzeStmt := &ast.ExecuteStmt{PrepStmt: prepStmt}
-
-		isNextGenForRUV2 = func() bool { return true }
-		require.True(t, shouldBypass(statsCtx, &ast.AnalyzeTableStmt{}, se.sessionVars))
-		require.True(t, shouldBypass(statsCtx, execAnalyzeStmt, se.sessionVars))
-
-		isNextGenForRUV2 = func() bool { return false }
-		require.False(t, shouldBypass(statsCtx, &ast.AnalyzeTableStmt{}, se.sessionVars))
-		require.False(t, shouldBypass(statsCtx, execAnalyzeStmt, se.sessionVars))
-		require.False(t, shouldBypass(statsCtx, &ast.SelectStmt{}, se.sessionVars))
-	})
-
-	t.Run("current-session restricted sql restores outer ruv2 metrics", func(t *testing.T) {
-		outerCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		outerMetrics := execdetails.RUV2MetricsFromContext(outerCtx)
-		require.NotNil(t, outerMetrics)
-		se.sessionVars.RUV2Metrics = outerMetrics
-
-		internalCtx := kv.WithInternalSourceType(outerCtx, kv.InternalTxnOthers)
-		_, _, err := se.ExecRestrictedSQL(internalCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select 1")
-		require.NoError(t, err)
-
-		require.Same(t, outerMetrics, se.sessionVars.RUV2Metrics)
-		require.False(t, outerMetrics.Bypass())
-	})
-}
-
 func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -165,6 +288,9 @@ func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
 }
 
 func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) {
+	originalBudget := vardef.PagingSizeBytes.Load()
+	t.Cleanup(func() { vardef.PagingSizeBytes.Store(originalBudget) })
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
@@ -179,7 +305,7 @@ func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) 
 	MustExec(t, se, "create resource group rg_paging_unlimited ru_per_sec=1000 burstable=unlimited")
 
 	const pagingSizeBytes = 4 * 1024 * 1024
-	se.sessionVars.PagingSizeBytes = pagingSizeBytes
+	MustExec(t, se, "set global tidb_paging_size_bytes = 4194304")
 
 	check := func(resourceGroupName string, rcEnabled bool, expected int) {
 		vardef.EnableResourceControl.Store(rcEnabled)
@@ -196,102 +322,137 @@ func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) 
 	check("rg_paging_capped", false, 0)
 }
 
-func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
+func TestDistSQLCtxPagingSizeBytesGlobalUpdate(t *testing.T) {
+	originalBudget := vardef.PagingSizeBytes.Load()
+	t.Cleanup(func() { vardef.PagingSizeBytes.Store(originalBudget) })
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 
+	writer, err := createSession(store)
+	require.NoError(t, err)
+	defer writer.Close()
+	oldBudget, err := writer.GetGlobalSysVar(vardef.TiDBPagingSizeBytes)
+	require.NoError(t, err)
+	oldRC, err := writer.GetGlobalSysVar(vardef.TiDBEnableResourceControl)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, writer.SetGlobalSysVar(context.Background(), vardef.TiDBPagingSizeBytes, oldBudget))
+		require.NoError(t, writer.SetGlobalSysVar(context.Background(), vardef.TiDBEnableResourceControl, oldRC))
+	}()
+	MustExec(t, writer, "set global tidb_enable_resource_control = on")
+	MustExec(t, writer, "set global tidb_paging_size_bytes = 0")
+	MustExec(t, writer, "create resource group rg_paging_global ru_per_sec=1000 burstable=off")
+
+	reader, err := createSession(store)
+	require.NoError(t, err)
+	defer reader.Close()
+	MustExec(t, reader, "set resource group rg_paging_global")
+	MustExec(t, reader, "begin")
+	MustExec(t, reader, "select 1")
+	previous := reader.GetDistSQLCtx()
+	require.Zero(t, previous.PagingSizeBytes)
+
+	for _, tc := range []struct {
+		value string
+		bytes int
+	}{
+		{"4194304", 4 * 1024 * 1024},
+		{"1048576", 1024 * 1024},
+		{"8388608", 8 * 1024 * 1024},
+		{"default", 0},
+		{"4194304", 4 * 1024 * 1024},
+		{"0", 0},
+	} {
+		previousBudget := previous.PagingSizeBytes
+		MustExec(t, writer, "set global tidb_paging_size_bytes = "+tc.value)
+		// Updating another session must not change an initialized context.
+		require.Same(t, previous, reader.GetDistSQLCtx())
+		require.Equal(t, previousBudget, reader.GetDistSQLCtx().PagingSizeBytes)
+
+		MustExec(t, reader, "select 1")
+		current := reader.GetDistSQLCtx()
+		require.NotSame(t, previous, current)
+		require.Equal(t, tc.bytes, current.PagingSizeBytes)
+		require.True(t, reader.sessionVars.InTxn())
+		previous = current
+	}
+	MustExec(t, reader, "rollback")
+
+	MustExec(t, writer, "set global tidb_paging_size_bytes = 4194304")
+	newReader, err := createSession(store)
+	require.NoError(t, err)
+	defer newReader.Close()
+	MustExec(t, newReader, "set resource group rg_paging_global")
+	rs := MustExecToRecodeSet(t, newReader, "select @@global.tidb_paging_size_bytes, @@tidb_paging_size_bytes")
+	rows, err := ResultSetToStringSlice(context.Background(), newReader, rs)
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"4194304", "4194304"}}, rows)
+	require.Equal(t, 4*1024*1024, newReader.GetDistSQLCtx().PagingSizeBytes)
+
+	// Cache rebuilds must restore the persisted budget, as on startup or a peer update.
+	vardef.PagingSizeBytes.Store(0)
+	dom.NotifyUpdateSysVarCache(true)
+	MustExec(t, reader, "select 1")
+	require.Equal(t, 4*1024*1024, reader.GetDistSQLCtx().PagingSizeBytes)
+}
+
+func TestScalarSubqueryRegistryTxnReplay(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
 	se, err := createSession(store)
 	require.NoError(t, err)
+	defer se.Close()
+	MustExec(t, se, "use test")
+	MustExec(t, se, "set tidb_disable_txn_auto_retry = off")
+	MustExec(t, se, "set tidb_retry_limit = 3")
+	MustExec(t, se, "set tidb_enable_non_prepared_plan_cache_for_dml = off")
+	MustExec(t, se, "create table scalar_registry_retry (id int primary key, v int)")
+	MustExec(t, se, "insert into scalar_registry_retry values (1, 1), (2, 2)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+	MustExec(t, se, "begin optimistic")
+	MustExec(t, se, "update scalar_registry_retry set v = (select max(v) from scalar_registry_retry) where id = 1")
+	require.Len(t, se.GetSessionVars().MapScalarSubQ, 1)
+	MustExec(t, se, "update scalar_registry_retry set v = v + 1 where id = 2")
 
-	ctx := context.Background()
-
-	// BEGIN
-	stmtBegin, err := se.ParseWithParams(ctx, "begin")
-	require.NoError(t, err)
-	_, err = se.ExecuteStmt(ctx, stmtBegin)
-	require.NoError(t, err)
-	metricsBegin := se.sessionVars.RUV2Metrics
-	require.NotNil(t, metricsBegin)
-
-	// Statement 1 inside the transaction
-	stmt1, err := se.ParseWithParams(ctx, "select 1")
-	require.NoError(t, err)
-	_, err = se.ExecuteStmt(ctx, stmt1)
-	require.NoError(t, err)
-	metrics1 := se.sessionVars.RUV2Metrics
-	require.NotNil(t, metrics1)
-
-	// Statement 2 inside the transaction
-	stmt2, err := se.ParseWithParams(ctx, "select 2")
-	require.NoError(t, err)
-	_, err = se.ExecuteStmt(ctx, stmt2)
-	require.NoError(t, err)
-	metrics2 := se.sessionVars.RUV2Metrics
-
-	// Each statement must get a fresh RUV2Metrics object so that RUv2 accounting
-	// stays isolated per statement, not reused from a previous one.
-	require.NotNil(t, metrics2)
-	require.NotSame(t, metricsBegin, metrics1, "stmt1 should have different metrics from BEGIN")
-	require.NotSame(t, metrics1, metrics2, "stmt2 should have different metrics from stmt1")
-
-	t.Run("optimistic autocommit retry count respects retry limit", func(t *testing.T) {
-		MustExec(t, se, "use test")
-		MustExec(t, se, "set @@session.tidb_txn_mode = 'optimistic'")
-		MustExec(t, se, "drop table if exists max_retry_count")
-		MustExec(t, se, "create table max_retry_count (id int primary key, v int)")
-		MustExec(t, se, "insert into max_retry_count values (1, 1)")
-		MustExec(t, se, "set @@session.tidb_retry_limit = 1")
-
-		func() {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
-			}()
-
-			_, err = exec(se, "update max_retry_count set v = v + 1 where id = 1")
-		}()
-
-		require.Error(t, err)
-		require.True(t, kv.ErrTxnRetryable.Equal(err), "error: %s", err)
-		require.Equal(t, uint64(1), se.GetSessionVars().StmtCtx.ExecRetryCount)
-
-		MustExec(t, se, "insert into max_retry_count values (2, 2)")
+	// Observe each rebuilt UPDATE before execution, using the existing
+	// session-scoped breakpoint rather than only inspecting COMMIT's context.
+	var registrySizes, scalarTreeCounts []int
+	var replayPlans []base.Plan
+	se.SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+		vars := se.GetSessionVars()
+		if !vars.RetryInfo.Retrying {
+			return
+		}
+		plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		if _, ok := plan.(*physicalop.Update); !ok {
+			return
+		}
+		replayPlans = append(replayPlans, plan)
+		registrySizes = append(registrySizes, len(vars.MapScalarSubQ))
+		scalarTreeCounts = append(scalarTreeCounts, len(plannercore.FlattenPhysicalPlan(plan, true).ScalarSubQueries))
 	})
+	defer se.ClearValue(breakpoint.NotifyBreakPointFuncKey)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "1*return(true)->return(false)")
+	MustExec(t, se, "commit")
+	require.Equal(t, uint64(1), se.GetSessionVars().StmtCtx.ExecRetryCount)
+	t.Logf("replay registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
 
-	t.Run("optimistic explicit retry count ignores pre-exec failure", func(t *testing.T) {
-		MustExec(t, se, "use test")
-		MustExec(t, se, "set @@session.tidb_txn_mode = 'optimistic'")
-		MustExec(t, se, "drop table if exists pre_exec_retry_count")
-		MustExec(t, se, "create table pre_exec_retry_count (id int primary key, v int)")
-		MustExec(t, se, "insert into pre_exec_retry_count values (1, 1)")
-		MustExec(t, se, "set @@session.tidb_retry_limit = 1")
-
-		func() {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", `return(true)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable"))
-			}()
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
-			}()
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/txnRetryPreExecError", `return(true)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/txnRetryPreExecError"))
-			}()
-
-			MustExec(t, se, "begin")
-			MustExec(t, se, "update pre_exec_retry_count set v = v + 1 where id = 1")
-			_, err = exec(se, "commit")
-		}()
-
-		require.Error(t, err)
-		require.ErrorContains(t, err, "mock txn retry pre-exec error")
-		require.Equal(t, uint64(0), se.GetSessionVars().StmtCtx.ExecRetryCount)
-
-		MustExec(t, se, "insert into pre_exec_retry_count values (2, 2)")
-	})
+	rs := MustExecToRecodeSet(t, se, "select id, v from scalar_registry_retry order by id")
+	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
+	require.Equal(t, [][]string{{"1", "2"}, {"2", "3"}}, rows)
+	require.Len(t, replayPlans, 2)
+	update, ok := replayPlans[1].(*physicalop.Update)
+	require.True(t, ok)
+	require.IsType(t, &physicalop.PointGetPlan{}, update.SelectPlan)
+	require.Equal(t, []int{1, 0}, scalarTreeCounts)
+	require.Equal(t, []int{1, 0}, registrySizes)
 }
 
 func TestSchemaCacheSizeVar(t *testing.T) {

@@ -35,3 +35,8 @@ func (m *Manager) CloseKS(targetKS string) {
 func (m *SessionManager) ServerStateSyncer() serverstate.Syncer {
 	return m.serverStateSyncer
 }
+
+// ServerInfoID returns the virtual server ID in tests.
+func (m *SessionManager) ServerInfoID() string {
+	return m.svrInfoSyncer.GetLocalServerInfo().ID
+}

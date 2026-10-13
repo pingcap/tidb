@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -343,6 +344,38 @@ func TestCastValue(t *testing.T) {
 	val, err = CastValue(ctx, types.NewDatum(""), &colInfoD, false, false)
 	require.NoError(t, err)
 	require.Equal(t, "00:00:00.000", val.GetMysqlDuration().String())
+
+	for _, tc := range []struct {
+		name                string
+		globalNewCollation  bool
+		contextNewCollation bool
+		expectedName        string
+		expectedValue       uint64
+	}{
+		{"matching legacy collation", false, false, "a", 2},
+		{"legacy collation on new-collation executor", true, false, "a", 2},
+		{"matching new collation", true, true, "A", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := collate.NewCollationEnabled()
+			collate.SetNewCollationEnabledForTest(tc.globalNewCollation)
+			t.Cleanup(func() { collate.SetNewCollationEnabledForTest(original) })
+
+			exprCtx := exprstatic.NewExprContext(exprstatic.WithNewCollationEnabled(tc.contextNewCollation))
+			for _, tp := range []byte{mysql.TypeEnum, mysql.TypeSet} {
+				colInfo := &model.ColumnInfo{FieldType: *types.NewFieldType(tp)}
+				colInfo.SetCharset(charset.CharsetUTF8MB4)
+				colInfo.SetCollate("utf8mb4_general_ci")
+				colInfo.SetElems([]string{"A", "a", "B"})
+
+				casted, err := CastColumnValue(exprCtx, types.NewStringDatum("a"), colInfo, false, false)
+				require.NoError(t, err)
+				require.Equal(t, tc.expectedName, casted.GetString())
+				require.Equal(t, tc.expectedValue, casted.GetUint64())
+				require.Equal(t, "utf8mb4_general_ci", casted.Collation())
+			}
+		})
+	}
 }
 
 func TestGetDefaultValue(t *testing.T) {

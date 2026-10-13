@@ -15,7 +15,6 @@
 package logicalop
 
 import (
-	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -187,28 +186,26 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 				childSchema[0], childSchema[1],
 				nil, nil)
 			rowCount = la.EqualCondOutCnt
-		} else if len(la.CorCols) > 0 {
-			// No explicit join keys; the inner plan is a correlated subquery.
-			// childStats[1] is derived for the inner plan as a standalone subtree
-			// (total rows of that plan), not a per-outer-row execution count.
-			// Dividing by the NDV of the outer correlated columns converts it to a
-			// per-outer-row estimate before multiplying by the left row count, mirroring
-			// the key-based selectivity division in EstimateFullJoinRowCount.
-			//
-			// TODO: when the inner plan is bounded by LIMIT or a scalar aggregate,
-			// rightProfile.RowCount is already effectively per-outer-row (LIMIT caps it;
-			// aggregates always return 1 row). In those cases this formula underestimates
-			// by ~NDV(outerCols). A future improvement should detect the LIMIT/aggregate
-			// case and skip the NDV scaling, restoring the correct left*right product.
-			outerCols := make([]*expression.Column, 0, len(la.CorCols))
-			for i := range la.CorCols {
-				outerCols = append(outerCols, &la.CorCols[i].Column)
-			}
-			outerNDV, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), outerCols, childSchema[0], leftProfile)
-			rowCount = leftProfile.RowCount * rightProfile.RowCount / math.Max(outerNDV, 1)
 		} else {
-			// No correlation at all: decorrelation will convert this to a plain cross
-			// join, so the Cartesian product is the correct upper-bound estimate.
+			// Without join keys the inner plan runs once per outer row and rightProfile
+			// already describes one such execution: stats for the inner subtree are derived
+			// with the correlated predicates pushed into it, so their selectivity is applied
+			// there. The rows the join produces are therefore the product of the two sides,
+			// whether or not the inner plan is correlated. Scaling the product down by the
+			// NDV of the correlated columns, as this used to do, applied that selectivity a
+			// second time and underestimated the join by roughly that NDV.
+			//
+			// For a LATERAL join like:
+			//   SELECT o.k1, f.k2
+			//   FROM outer_t o
+			//   JOIN LATERAL (
+			//       SELECT t2.k2 FROM inner_t t2 WHERE t2.k1 = o.k1
+			//   ) f;
+			//
+			// assume outer_t has 600 rows and 30 distinct k1 values, and inner_t has 1500 rows
+			// over the same 30 distinct k1 values. The right side has already applied
+			// `t2.k1 = o.k1`, so rightProfile.RowCount is 1500 / 30 = 50, not 1500.
+			// The Apply output should be 600 * 50 rows.
 			rowCount = leftProfile.RowCount * rightProfile.RowCount
 		}
 		if la.JoinType == base.LeftOuterJoin {
@@ -309,8 +306,6 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 }
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
 

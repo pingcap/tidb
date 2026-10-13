@@ -14,9 +14,10 @@
 
 package rule
 
-// These flags are used as optimizer rule bitmasks. Keep existing flag values
-// stable by appending new flags at the end. The rule execution order is defined
-// by optRuleList and its explicit flag mapping.
+// These flags are process-local optimizer rule bitmasks; their numeric values are
+// not persisted or sent over the wire. Append new flags at the end to avoid
+// unnecessary renumbering. The rule execution order is defined by optRuleList
+// and its explicit flag mapping.
 const (
 	FlagGcSubstitute uint64 = 1 << iota
 	FlagPruneColumns
@@ -29,7 +30,6 @@ const (
 	FlagEliminateProjection
 	FlagMaxMinEliminate
 	FlagConstantPropagation
-	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
 	FlagJoinKeyTypeCast
 	FlagEliminateOuterJoin

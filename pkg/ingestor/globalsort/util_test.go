@@ -22,7 +22,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -413,6 +415,15 @@ func TestExternalMetaPath(t *testing.T) {
 }
 
 func TestDivideMergeSortDataFilesBasic(t *testing.T) {
+	require.Equal(t, errors.RFCErrorCode("GlobalSort:TooManyDataFiles"), errdef.ErrTooManyDataFiles.RFCCode())
+
+	requireTooManyDataFiles := func(t *testing.T, err error, dataFileCnt, concurrency, threshold int) {
+		t.Helper()
+		expected := errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFileCnt, concurrency, threshold)
+		require.True(t, errors.ErrorEqual(err, expected))
+		require.EqualError(t, err, expected.Error())
+	}
+
 	testCases := []struct {
 		fileCnt       int
 		nodeCnt       int
@@ -443,6 +454,92 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 			require.EqualValues(t, tc.expectedSizes, actualSizes)
 		})
 	}
+
+	t.Run("exact target file count", func(t *testing.T) {
+		items := make([]string, 4580)
+		result, err := DivideMergeSortDataFiles(items, 8, 1)
+		require.NoError(t, err)
+		require.Len(t, result, 24)
+		expectedSizes := append(slices.Repeat([]int{250}, 16), 73, 73, 73, 73, 72, 72, 72, 72)
+		totalTargetFileCount := 0
+		for i, group := range result {
+			require.Len(t, group, expectedSizes[i])
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 24, totalTargetFileCount)
+		require.LessOrEqual(t, totalTargetFileCount, 250)
+	})
+
+	t.Run("at target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62500), 10, 1)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 250, totalTargetFileCount)
+	})
+
+	t.Run("remainder exceeds target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62501), 10, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62501, 1, 250)
+	})
+
+	t.Run("full groups exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62750), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62750, 1, 250)
+	})
+
+	t.Run("fixed targets and remainder exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62751), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62751, 1, 250)
+	})
+
+	t.Run("non-monotonic target file count exceeds threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 248128), 62, 64)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 248128, 64, 4000)
+	})
+
+	t.Run("preserves maximum input files per subtask", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 940000), 2, 17)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			require.LessOrEqual(t, len(group), 4000)
+			totalTargetFileCount += len(splitDataFiles(group, 17))
+		}
+		require.LessOrEqual(t, totalTargetFileCount, 4000)
+
+		result, err = DivideMergeSortDataFiles(make([]string, 940001), 2, 17)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 940001, 17, 4000)
+	})
+
+	t.Run("large node count", func(t *testing.T) {
+		var result [][]string
+		var err error
+		allocs := testing.AllocsPerRun(1, func() {
+			result, err = DivideMergeSortDataFiles(make([]string, 32000), 32000, 16)
+		})
+		require.NoError(t, err)
+		require.Less(t, allocs, float64(100))
+
+		result, err = DivideMergeSortDataFiles(make([]string, 1000000), 1000000, 16)
+		require.NoError(t, err)
+		require.Len(t, result, 250)
+		totalTargetFileCount := 0
+		maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(16)
+		for _, group := range result {
+			require.Len(t, group, 4000)
+			require.LessOrEqual(t, len(group), maxFiles)
+			totalTargetFileCount += len(splitDataFiles(group, 16))
+		}
+		require.Equal(t, 4000, totalTargetFileCount)
+	})
 }
 
 func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {

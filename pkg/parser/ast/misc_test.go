@@ -26,20 +26,20 @@ import (
 
 type visitor struct{}
 
-func (v visitor) Enter(in ast.Node) (ast.Node, bool) {
-	return in, false
+func (visitor) Enter(ast.Node) bool {
+	return false
 }
 
-func (v visitor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (visitor) Leave(ast.Node) bool {
+	return true
 }
 
 type visitor1 struct {
 	visitor
 }
 
-func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (visitor1) Enter(ast.Node) bool {
+	return true
 }
 
 func TestMiscVisitorCover(t *testing.T) {
@@ -80,13 +80,32 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
+		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
+		&ast.CancelMaterializedViewJobStmt{Tp: ast.CancelMaterializedViewJobTypeLogPurge},
+		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}},
+		&ast.RefreshMaterializedViewImplementStmt{RefreshStmt: &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}}},
 		&ast.ShutdownStmt{},
 	}
 
 	for _, v := range stmts {
-		v.Accept(visitor{})
-		v.Accept(visitor1{})
+		ast.Walk(v, visitor{})
+		ast.Walk(v, visitor1{})
 	}
+}
+
+func TestPurgeMaterializedViewLogStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.PurgeMaterializedViewLogStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCancelMaterializedViewJobStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CancelMaterializedViewJobStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.RefreshMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {
@@ -109,8 +128,8 @@ constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cas
 	stmts, _, err := parse.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
+		ast.Walk(stmt, visitor{})
+		ast.Walk(stmt, visitor1{})
 	}
 }
 
@@ -129,8 +148,8 @@ import into t from '/file.csv'`
 	stmts, _, err := p.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
+		ast.Walk(stmt, visitor{})
+		ast.Walk(stmt, visitor1{})
 	}
 }
 
@@ -307,6 +326,10 @@ func TestBRIESecureText(t *testing.T) {
 			input:   "backup database * to 'gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt'",
 			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix?\E((access-key=irrelevant|credentials-file=/home/user/secrets\.txt)(&|'$)){2}`,
 		},
+		{
+			input:   "backup database * to 'azure://container/prefix?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token'",
+			secured: `^\QBACKUP DATABASE * TO 'azure://container/prefix?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx'\E$`,
+		},
 	}
 
 	p := parser.New()
@@ -387,6 +410,12 @@ func TestRedactURL(t *testing.T) {
 		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
 		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
 		{args{"azure://container/file?account_key=123&encryption_key=456"}, "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"},
+		{args{"azure://container/file?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsv%3D2023-11-03%26sig%3Dsecret&sas-token=token"}, "azure://container/file?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx"},
+		{args{"azblob://container/file?EndPoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&access-tier=Hot"}, "azblob://container/file?EndPoint=xxxxxx&access-tier=Hot"},
+		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net"}, "azure://container/file?endpoint=xxxxxx"},
+		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%25zz%3Fsig%3Dsecret"}, "azure://container/file?endpoint=xxxxxx"},
+		{args{"azblob://container/file?endpoint=first-secret&endpoint=second-secret"}, "azblob://container/file?endpoint=xxxxxx"},
+		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {
@@ -446,6 +475,40 @@ func TestRedactTrafficStmt(t *testing.T) {
 		require.True(t, ok, tc.input)
 		require.Equal(t, tc.secured, n.SecureText(), tc.input)
 	}
+}
+
+func TestSetStmtSecureTextRedactsEmbeddingAPIKeys(t *testing.T) {
+	p := parser.New()
+	for _, name := range []string{
+		"tidb_exp_embed_jina_ai_api_key",
+		"tidb_exp_embed_openai_api_key",
+		"tidb_exp_embed_cohere_api_key",
+		"tidb_exp_embed_huggingface_api_key",
+		"tidb_exp_embed_nvidia_nim_api_key",
+		"tidb_exp_embed_gemini_api_key",
+	} {
+		input := fmt.Sprintf("SET @@GLOBAL.%s = 'secret-api-key'", name)
+		node, err := p.ParseOneStmt(input, "", "")
+		require.NoError(t, err, input)
+		stmt, ok := node.(*ast.SetStmt)
+		require.True(t, ok, input)
+		require.Equal(t, fmt.Sprintf("SET @@GLOBAL.`%s`='******'", name), stmt.SecureText(), input)
+	}
+
+	// A similarly named user variable is not a system API-key configuration.
+	node, err := p.ParseOneStmt("SET @tidb_exp_embed_openai_api_key = 'ordinary-user-value'", "", "")
+	require.NoError(t, err)
+	stmt := node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-user-value")
+	require.NotContains(t, stmt.SecureText(), "******")
+
+	// A system variable that merely shares the old prefix/suffix pattern must
+	// not be redacted unless it is one of the explicitly supported API-key variables.
+	node, err = p.ParseOneStmt("SET @@GLOBAL.tidb_exp_embed_future_api_key = 'ordinary-system-value'", "", "")
+	require.NoError(t, err)
+	stmt = node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-system-value")
+	require.NotContains(t, stmt.SecureText(), "******")
 }
 
 func TestSetPwdStmtSecureText(t *testing.T) {

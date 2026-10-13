@@ -656,8 +656,8 @@
           "  └─TableFullScan cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",
-          "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information."
+          "MPP mode may be blocked because left conditions are only supported for `left outer join` and `full outer join` now.",
+          "MPP mode may be blocked because left conditions are only supported for `left outer join` and `full outer join` now."
         ]
       }
     ]

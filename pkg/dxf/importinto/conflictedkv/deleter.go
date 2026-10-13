@@ -84,7 +84,7 @@ func NewDeleter(
 		snapshot:   NewLazyRefreshedSnapshot(store, trafficRec),
 		trafficRec: trafficRec,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, progressCollector, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, store.GetCodec(), encoder, deleter, progressCollector, logger)
 	var h Handler
 	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
@@ -142,7 +142,10 @@ func (d *Deleter) deleteKeysWithRetry(ctx context.Context, keys []tidbkv.Key) er
 	return dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, d.logger, func(ctx context.Context) (bool, error) {
 		err := d.deleteBufferedKeys(ctx, keys)
 		if err != nil {
-			return common.IsRetryableError(err), err
+			// KVs of one row should be handled by a single deleter, but for
+			// defensive programming without hurting readability, we still retry
+			// for errors like WRITE CONFLICT, no harm anyway.
+			return tidbkv.IsTxnRetryableError(err) || common.IsRetryableError(err), err
 		}
 		return true, nil
 	})
@@ -180,7 +183,7 @@ func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) (re
 }
 
 // HandleEncodedRow implements the EncodedRowHandler interface.
-func (d *Deleter) HandleEncodedRow(ctx context.Context, _ tidbkv.Handle, _ []types.Datum, kvPairs *kv.Pairs) error {
+func (d *Deleter) HandleEncodedRow(ctx context.Context, _ tidbkv.Key, _ []types.Datum, kvPairs *kv.Pairs) error {
 	return d.gatherAndDeleteKeysWithRetry(ctx, kvPairs.Pairs)
 }
 
@@ -206,11 +209,15 @@ func (d *Deleter) gatherAndDeleteKeysWithRetry(ctx context.Context, pairs []comm
 // 'insert SQL' will also generate this mount of data, so we shouldn't meet the
 // 'transaction too large' issue in normal case.
 // as all duplicate KVs are either removed or recorded during importing, and we
-// only delete existing KVs, so there will be no overlap in the KVs to be deleted
-// for any 2 conflict KVs in a single KV group, it's safe to resolve a single KV
-// group in multiple routines, and we can use a relatively stale snapshot to check
-// existence of the KVs to be deleted to avoid the overhead to refresh the TS
-// every time.
+// only delete existing KVs, so:
+//   - for data kv group and normal UK: there will be no overlap in the KVs to be deleted
+//     for any 2 conflict KVs in a single KV group, it's safe to resolve a single KV
+//     group in multiple routines, and we can use a relatively stale snapshot to check
+//     existence of the KVs to be deleted to avoid the overhead to refresh the TS
+//     every time.
+//   - for unique MV index: 2 UK might point to the same row, so the caller dispatches
+//     them to the same deleter to avoid write conflicts. Using a relatively stale
+//     snapshot is ok too.
 func (d *Deleter) gatherKeysToDelete(ctx context.Context, pairs []common.KvPair) (err error) {
 	allKeys := make([]tidbkv.Key, 0, len(pairs))
 	for _, p := range pairs {
