@@ -1652,7 +1652,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
 	})
 
-	t.Run("ignore identity table with temporary downstream id", func(t *testing.T) {
+	t.Run("allow a table owned by a previous run that this interval replaces", func(t *testing.T) {
 		s := utiltest.CreateRestoreSchemaSuite(t)
 		tk := testkit.NewTestKit(t, s.Mock.Storage)
 		tk.MustExec("create database existing_db")
@@ -1662,22 +1662,27 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
 
-		// An identity table keeps the schema name, so its effective target is
-		// never unrelated to the source. Its downstream ID can still be a
-		// temporary allocation that ReplaceTemporaryIDs has not resolved yet,
-		// so it must not be compared against the existing table here.
+		existing, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("existing_db"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+
+		// A previous run of this restore created existing_db.t. The current
+		// interval truncates/recreates the source table, so the new upstream ID
+		// still carries a temporary downstream ID. The existing table is owned by
+		// this restore and is replaced by the log replay, so it is not a conflict.
 		manager := stream.NewTableMappingManager()
 		manager.DBReplaceMap[10] = &stream.DBReplace{
 			Name: "existing_db",
 			DbID: 110,
 			TableMap: map[stream.UpstreamID]*stream.TableReplace{
-				20: {
-					Name:    "t",
-					TableID: -13,
-				},
+				20: {Name: "t", TableID: existing.Meta().ID, TargetDBName: "existing_db", TargetDBID: 210},
+				21: {Name: "t", TableID: -13, TargetDBName: "existing_db", TargetDBID: 210},
 			},
 		}
 		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
+
+		// The same temporary ID without an owning entry is still rejected.
+		delete(manager.DBReplaceMap[10].TableMap, 20)
+		require.ErrorContains(t, client.ValidateTargetTableExistence(ctx, manager), "already exists with table ID")
 	})
 }
 
