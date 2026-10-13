@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
@@ -59,18 +60,13 @@ var componentName = caller.Component("tidb-metrics-util")
 
 const keyspaceIDLabel = "keyspace_id"
 
-func init() {
-	// BR creates its HTTP handler before registering keyspace metrics.
-	initMetricsGatherer()
-}
-
 // RegisterMetrics registers metrics with keyspace metadata labels when available.
 func RegisterMetrics() error {
 	cfg := config.GetGlobalConfig()
 	if kerneltype.IsNextGen() {
 		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
-	if !keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) && cfg.KeyspaceID != nil {
+	if deploymode.IsStarter() && !keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) && cfg.KeyspaceID != nil {
 		setKeyspaceIDConstLabel(*cfg.KeyspaceID)
 	}
 	return registerMetrics()
@@ -136,17 +132,23 @@ func initMetrics() {
 func registerMetrics() error {
 	labels := cloneConstLabels()
 	maps.Copy(labels, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
-	setConstLabels(labels)
+	if len(labels) > 0 {
+		setConstLabels(labels)
+	}
 	initMetrics()
-	keyspaceID := labels[keyspaceIDLabel]
-	initMetricsGatherer().keyspaceID.Store(&keyspaceID)
+	if gatherer := initMetricsGatherer(); gatherer != nil {
+		keyspaceID := labels[keyspaceIDLabel]
+		gatherer.keyspaceID.Store(&keyspaceID)
+	}
 	return nil
 }
 
-// SetKeyspaceID labels metrics after a non-standby server initializes its storage.
+// SetKeyspaceID labels Starter metrics after the server initializes its storage.
 func SetKeyspaceID(keyspaceID uint32) {
-	id := fmt.Sprint(keyspaceID)
-	initMetricsGatherer().keyspaceID.Store(&id)
+	if gatherer := initMetricsGatherer(); gatherer != nil {
+		id := fmt.Sprint(keyspaceID)
+		gatherer.keyspaceID.Store(&id)
+	}
 }
 
 type keyspaceGatherer struct {
@@ -155,6 +157,9 @@ type keyspaceGatherer struct {
 }
 
 func initMetricsGatherer() *keyspaceGatherer {
+	if !deploymode.IsStarter() {
+		return nil
+	}
 	if gatherer, ok := prometheus.DefaultGatherer.(*keyspaceGatherer); ok {
 		return gatherer
 	}
@@ -164,6 +169,9 @@ func initMetricsGatherer() *keyspaceGatherer {
 }
 
 // Gather adds labels to early and third-party collectors for scraping and pushing.
+// The numeric ID matches the identity used by storage codecs, so Starter metrics
+// can be correlated with storage-side telemetry without resolving keyspace names.
+// keyspace_name remains available as descriptive context.
 func (g *keyspaceGatherer) Gather() ([]*dto.MetricFamily, error) {
 	labelName, keyspaceID := keyspaceIDLabel, ""
 	if id := g.keyspaceID.Load(); id != nil {

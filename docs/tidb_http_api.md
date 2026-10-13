@@ -26,7 +26,7 @@
     curl http://{TiDBIP}:10080/metrics
     ```
 
-    Every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. TiDB uses the ID supplied in the activation request, or the ID from the initialized storage codec when no activation ID is available; metric registration does not query PD for the ID. Its value is an empty string until an ID is available, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Metrics sent to Pushgateway include the same label.
+    In Starter deployment mode, every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Starter uses the ID supplied in the activation request, or the ID from the initialized storage codec when no activation ID is available; metric registration does not query PD for the ID. Its value is an empty string until an ID is available, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Starter metrics sent to Pushgateway include the same label. Classic, Premium, and Premium Reserved retain their existing metric labels.
 
 3. Get the metadata of all regions
 
@@ -780,7 +780,7 @@ curl -X POST "http://{TiDBIP}:10080/tidb-pool/activate" \
   -d '{"keyspace_name":"ks","keyspace_id":42}'
 ```
 
-`keyspace_name` is required. `keyspace_id` is an optional unsigned 32-bit integer provided by the activation manager and used for metrics without a separate PD lookup. Zero is a valid supplied ID. If omitted, the ID is initially unavailable and the metric label is empty until storage initialization provides it. Invalid ID types, negative values, or values larger than `4294967295` return HTTP 400. Existing activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` remain supported.
+`keyspace_name` is required. `keyspace_id` is an optional unsigned 32-bit integer provided by the activation manager and used for Starter metrics without a separate PD lookup. Zero is a valid supplied ID. If omitted in Starter mode, the ID is initially unavailable and the metric label is empty until storage initialization provides it. Invalid ID types, negative values, or values larger than `4294967295` return HTTP 400. Existing activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` remain supported.
 
 ## Test-only APIs (enableTestAPI failpoint)
 

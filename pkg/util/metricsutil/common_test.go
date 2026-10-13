@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -69,6 +71,12 @@ func TestRegisterMetricsWithKeyspaceObservabilityValues(t *testing.T) {
 }
 
 func TestRegisterMetricsKeyspaceID(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("all-metric keyspace labeling is only enabled for Starter")
+	}
+	oldMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() { require.NoError(t, deploymode.Set(oldMode)) })
 	id, zeroID := uint32(42), uint32(0)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -104,7 +112,6 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			})
 			registry := prometheus.NewRegistry()
 			prometheus.DefaultRegisterer, prometheus.DefaultGatherer = registry, registry
-			initMetricsGatherer()
 			registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 			metricscommon.SetConstLabels()
 			config.UpdateGlobal(func(conf *config.Config) {
@@ -120,8 +127,6 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			before := prometheus.NewGauge(prometheus.GaugeOpts{Name: "registered_before_init"})
 			before.Set(7)
 			registry.MustRegister(before)
-			// BR creates its HTTP handler before registering keyspace metrics.
-			earlyHandler := promhttp.Handler()
 			var err error
 			if tc.br {
 				err = RegisterMetricsForBR([]string{pdServer.addr}, task.TLSConfig{}, tc.keyspaceName)
@@ -133,6 +138,8 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			// Storage can resolve the ID after the metrics handler has been created.
+			handler := promhttp.Handler()
 			if tc.storageID {
 				require.Empty(t, metricscommon.GetConstLabels()[keyspaceIDLabel])
 				SetKeyspaceID(id)
@@ -191,7 +198,7 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			}
 			check(t)
 			response := httptest.NewRecorder()
-			earlyHandler.ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+			handler.ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 			require.Equal(t, 200, response.Code, response.Body.String())
 			require.Contains(t, response.Body.String(), `registered_before_init{keyspace_id="`+tc.keyspaceID+`"} 7`)
 			payload := make(chan string, 1)
@@ -214,6 +221,42 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 					check(t)
 				})
 			}
+		})
+	}
+}
+
+func TestRegisterMetricsNonStarter(t *testing.T) {
+	modes := []deploymode.Mode{deploymode.Premium}
+	if kerneltype.IsNextGen() {
+		modes = append(modes, deploymode.PremiumReserved)
+		oldMode := deploymode.Get()
+		t.Cleanup(func() { require.NoError(t, deploymode.Set(oldMode)) })
+	}
+	for _, mode := range modes {
+		t.Run(mode.String(), func(t *testing.T) {
+			if kerneltype.IsNextGen() {
+				require.NoError(t, deploymode.Set(mode))
+			}
+			defer config.RestoreFunc()()
+			oldRegisterer, oldGatherer := prometheus.DefaultRegisterer, prometheus.DefaultGatherer
+			oldLabels := cloneConstLabels()
+			t.Cleanup(func() {
+				prometheus.DefaultRegisterer, prometheus.DefaultGatherer = oldRegisterer, oldGatherer
+				setConstLabels(oldLabels)
+			})
+			registry := prometheus.NewRegistry()
+			prometheus.DefaultRegisterer, prometheus.DefaultGatherer = registry, registry
+			metricscommon.SetConstLabels()
+			id := uint32(42)
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = "ks"
+				conf.KeyspaceID = &id
+				conf.KeyspaceObservabilityValues = config.KeyspaceObservabilityValues{}
+			})
+			require.NoError(t, RegisterMetrics())
+			SetKeyspaceID(id)
+			require.True(t, prometheus.DefaultGatherer == registry, "non-Starter registration must preserve the default gatherer")
+			require.NotContains(t, metricscommon.GetConstLabels(), keyspaceIDLabel)
 		})
 	}
 }

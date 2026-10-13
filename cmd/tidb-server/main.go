@@ -664,7 +664,7 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
-	if config.GetGlobalConfig().KeyspaceID == nil && storage.GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
+	if deploymode.IsStarter() && config.GetGlobalConfig().KeyspaceID == nil && storage.GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
 		metricsutil.SetKeyspaceID(uint32(storage.GetCodec().GetKeyspaceID()))
 	}
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {

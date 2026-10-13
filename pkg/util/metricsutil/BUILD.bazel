@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//br/pkg/task",
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/domain/metrics",
@@ -55,6 +56,8 @@ go_test(
     deps = [
         "//br/pkg/task",
         "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/metrics/common",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",

@@ -153,6 +153,10 @@ func TestActivateWaitsUntilServerReady(t *testing.T) {
 		defer close(done)
 		mux.ServeHTTP(resp, req)
 	}()
+	t.Cleanup(func() {
+		controller.EndStandby(nil)
+		wg.Wait()
+	})
 
 	require.Eventually(t, func() bool {
 		mu.RLock()
@@ -160,8 +164,10 @@ func TestActivateWaitsUntilServerReady(t *testing.T) {
 		return state == activatedState
 	}, time.Second, time.Millisecond*10)
 	mu.RLock()
-	require.Equal(t, uint32(42), *activateRequest.KeyspaceID)
+	actualID := activateRequest.KeyspaceID
 	mu.RUnlock()
+	require.NotNil(t, actualID)
+	require.Equal(t, uint32(42), *actualID)
 	select {
 	case <-done:
 		require.Fail(t, "activate request returned before server ready")
