@@ -18,4 +18,9 @@ go_test(
     name = "sqlkiller_test",
     srcs = ["sqlkiller_test.go"],
     embed = [":sqlkiller"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testfailpoint",
+        "@com_github_stretchr_testify//require",
+    ],
 )
