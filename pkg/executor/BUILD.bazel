@@ -52,6 +52,7 @@ go_library(
         "metrics_reader.go",
         "mlog_purge.go",
         "mpp_gather.go",
+        "mview_complete_delta_apply.go",
         "mview_task.go",
         "operate_ddl_jobs.go",
         "opt_rule_blacklist.go",

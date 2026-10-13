@@ -143,7 +143,6 @@ const (
 	maxOfMaxAllowedPacket = 1 << 30
 	// DefMaxAllowedPacket is the default value of max_allowed_packet.
 	DefMaxAllowedPacket = 64 << 20
-	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps

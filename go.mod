@@ -32,7 +32,7 @@ require (
 	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
 	github.com/bazelbuild/rules_go v0.42.1-0.20231101215950-df20c987afcb
 	github.com/bits-and-blooms/bitset v1.14.3
-	github.com/blacktear23/go-proxyprotocol v1.0.6
+	github.com/blacktear23/go-proxyprotocol v1.0.8
 	github.com/butuzov/mirror v1.3.0
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/charithe/durationcheck v0.0.11
@@ -103,7 +103,7 @@ require (
 	github.com/pingcap/metering_sdk v0.0.0-20260814062708-9e3b68cd9adf
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20260908093239-fed7bc47c39d
+	github.com/pingcap/tipb v0.0.0-20261006155659-59b678398b17
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
