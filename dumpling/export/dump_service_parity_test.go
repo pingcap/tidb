@@ -237,8 +237,9 @@ func readParquetData(t *testing.T, dir string) []string {
 	t.Helper()
 	seen := make(map[string]struct{})
 	var schemas []string
-	var rows []string
-	for _, path := range parityDataFiles(t, dir, ".parquet") {
+	paths := parityDataFiles(t, dir, ".parquet")
+	rows := make([]string, 0, len(paths))
+	for _, path := range paths {
 		reader, err := file.OpenParquetFile(path, false)
 		require.NoError(t, err)
 		schema := reader.MetaData().Schema.String()
