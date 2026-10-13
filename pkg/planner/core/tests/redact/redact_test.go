@@ -195,15 +195,14 @@ func TestRedactForRangeInfo(t *testing.T) {
 	tk.MustExec("set session tidb_redact_log=ON")
 	tk.MustQuery("explain select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (10, 20, 30)").Check(
 		testkit.Rows(
-			"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-			"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-			"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-			"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-			"└─IndexLookUp_11(Probe) 37.46 root  ",
-			"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-			"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ?, ?, ?)], keep order:false, stats:pseudo",
-			"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		))
+			"IndexJoin_14 37.46 root  inner join, inner:IndexLookUp_13, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+			"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+			"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+			"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+			"└─IndexLookUp_13(Probe) 37.46 root  ",
+			"  ├─Selection_12(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+			"  │ └─IndexRangeScan_10 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ?, ?, ?)], keep order:false, stats:pseudo",
+			"  └─TableRowIDScan_11(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestJoinNotSupportedByTiFlash(t *testing.T) {
