@@ -26,6 +26,8 @@
     curl http://{TiDBIP}:10080/metrics
     ```
 
+    Every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Its value is the numeric ID of the configured keyspace, or an empty string when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Metrics sent to Pushgateway include the same label.
+
 3. Get the metadata of all regions
 
     ```shell
