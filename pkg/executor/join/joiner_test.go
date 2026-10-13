@@ -92,6 +92,36 @@ func joinerBaseForTest(t *testing.T, joiner Joiner) *baseJoiner {
 }
 
 func TestRequiredRows(t *testing.T) {
+	t.Run("joined rows on outer panic", func(t *testing.T) {
+		fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
+		for _, kind := range []base.JoinType{base.SemiJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin, base.AntiSemiJoin} {
+			for _, duringNext := range []bool{false, true} {
+				if kind == base.AntiSemiJoin && !duringNext {
+					continue
+				}
+				t.Run("", func(t *testing.T) {
+					j := NewJoiner(defaultCtx(), kind, false, []types.Datum{types.NewDatum(nil)}, nil, fields, fields, nil, false)
+					j.resetJoinedRows(true)
+					input := genTestChunk(4, 4, fields)
+					var iter chunk.Iterator = chunk.NewIterator4Chunk(input)
+					outputFields := []*types.FieldType{}
+					if duringNext {
+						iter = &joinedRowsPanicIterator{iter}
+						outputFields = append(fields, fields...)
+					}
+					iter.Begin()
+					result := chunk.New(outputFields, 4, 4)
+					require.Panics(t, func() { _, _ = j.TryToMatchOuters(iter, input.GetRow(0), result, nil) })
+					stats := execdetails.NewRuntimeStatsColl(nil)
+					j.registerJoinedRows(stats, 1)
+					rows, found := stats.GetRootJoinedRows(1)
+					require.True(t, found)
+					require.Equal(t, int64(1), rows)
+				})
+			}
+		}
+	})
+
 	t.Run("joined rows before residual filtering", func(t *testing.T) {
 		fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 		for _, joinType := range []base.JoinType{
@@ -221,3 +251,8 @@ func genTestChunk(maxChunkSize int, numRows int, fields []*types.FieldType) *chu
 	}
 	return chk
 }
+
+// Inject an iterator failure after the first candidate has been processed.
+type joinedRowsPanicIterator struct{ chunk.Iterator }
+
+func (*joinedRowsPanicIterator) Next() chunk.Row { panic("iterator panic") }

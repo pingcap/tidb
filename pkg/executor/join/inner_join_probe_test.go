@@ -492,63 +492,77 @@ type testCase struct {
 	rightUsedByOtherCondition []int
 }
 
+func newJoinedRowsProbeForTest(t testing.TB, joinType base.JoinType, noColumns, rightAsBuild bool, condition string) (ProbeV2, *baseJoinProbe, *hashjoinWorkerResult) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	fields := []*types.FieldType{tp}
+	used, otherUsed := []int{0}, []int{}
+	if noColumns {
+		used = []int{}
+	}
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().MaxChunkSize = 8
+	var other expression.CNFExprs
+	switch condition {
+	case "false":
+		other = expression.CNFExprs{expression.NewZero()}
+	case "error":
+		other = expression.CNFExprs{expression.NewFunctionInternal(ctx.GetExprCtx(), ast.Plus, tp,
+			&expression.Column{Index: 0, RetType: tp},
+			&expression.Constant{Value: types.NewIntDatum(math.MaxInt64), RetType: tp})}
+	}
+	if other != nil {
+		otherUsed = []int{0}
+	}
+	meta := newTableMeta([]int{0}, fields, fields, fields, otherUsed, used, joinType != base.InnerJoin && !rightAsBuild)
+	h := &HashJoinCtxV2{
+		hashTableMeta: meta, OtherCondition: other, BuildKeyTypes: fields, ProbeKeyTypes: fields,
+		RightAsBuildSide: rightAsBuild, LUsed: used, RUsed: used,
+		LUsedInOtherCondition: otherUsed, RUsedInOtherCondition: otherUsed,
+	}
+	h.SessCtx, h.JoinType, h.Concurrency = ctx, joinType, 1
+	h.SetupPartitionInfo()
+	h.spillHelper = newHashJoinSpillHelper(nil, int(h.partitionNumber), nil, "")
+	h.initHashTableContext()
+	p := NewJoinProbe(h, 0, joinType, []int{0}, append(fields, fields...), fields, rightAsBuild)
+	var probe *baseJoinProbe
+	switch p := p.(type) {
+	case *innerJoinProbe:
+		probe = &p.baseJoinProbe
+	case *semiJoinProbe:
+		probe = &p.baseJoinProbe
+	default:
+		t.Fatalf("unexpected probe %T", p)
+	}
+	probe.resetJoinedRows(true)
+	builder := createRowTableBuilder([]int{0}, fields, h.partitionNumber, true, false, false, meta.nullMapLength)
+	build := chunk.New(fields, 8, 8)
+	for range 5 {
+		build.AppendInt64(0, 1)
+	}
+	require.NoError(t, builder.processOneChunk(build, ctx.GetSessionVars().StmtCtx.TypeCtx(), h, 0))
+	h.hashTableContext.mergeRowTablesToHashTable(h.partitionNumber, nil)
+	for i := range int(h.partitionNumber) {
+		h.hashTableContext.build(&buildTask{partitionIdx: i, segEndIdx: len(h.hashTableContext.hashTable.tables[i].rowData.segments)})
+	}
+	input := chunk.New(fields, 8, 8)
+	input.AppendInt64(0, 1)
+	input.AppendInt64(0, 2)
+	input.AppendNull(0)
+	require.NoError(t, p.SetChunkForProbe(input))
+	// Force a hash collision: key 2 visits the key-1 chain but matches no pair.
+	probe.matchedRowsHeaders[1] = probe.matchedRowsHeaders[0]
+	probe.matchedRowsHashValue[1] = probe.matchedRowsHashValue[0]
+	resultTypes := append(fields, fields...)
+	if noColumns {
+		resultTypes = nil
+	}
+	return p, probe, &hashjoinWorkerResult{chk: chunk.New(resultTypes, 8, 8)}
+}
+
 func TestInnerJoinProbeJoinedRows(t *testing.T) {
 	newProbe := func(t *testing.T, noColumns, rightAsBuild bool, condition string) (*innerJoinProbe, *hashjoinWorkerResult) {
-		tp := types.NewFieldType(mysql.TypeLonglong)
-		fields := []*types.FieldType{tp}
-		used, otherUsed := []int{0}, []int{}
-		if noColumns {
-			used = []int{}
-		}
-		ctx := mock.NewContext()
-		ctx.GetSessionVars().MaxChunkSize = 8
-		var other expression.CNFExprs
-		switch condition {
-		case "false":
-			other = expression.CNFExprs{expression.NewZero()}
-		case "error":
-			other = expression.CNFExprs{expression.NewFunctionInternal(ctx.GetExprCtx(), ast.Plus, tp,
-				&expression.Column{Index: 0, RetType: tp},
-				&expression.Constant{Value: types.NewIntDatum(math.MaxInt64), RetType: tp})}
-		}
-		if other != nil {
-			otherUsed = []int{0}
-		}
-		meta := newTableMeta([]int{0}, fields, fields, fields, otherUsed, used, false)
-		h := &HashJoinCtxV2{
-			hashTableMeta: meta, OtherCondition: other, BuildKeyTypes: fields, ProbeKeyTypes: fields,
-			RightAsBuildSide: rightAsBuild, LUsed: used, RUsed: used,
-			LUsedInOtherCondition: otherUsed, RUsedInOtherCondition: otherUsed,
-		}
-		h.SessCtx, h.JoinType, h.Concurrency = ctx, base.InnerJoin, 1
-		h.SetupPartitionInfo()
-		h.spillHelper = newHashJoinSpillHelper(nil, int(h.partitionNumber), nil, "")
-		h.initHashTableContext()
-		probe := NewJoinProbe(h, 0, base.InnerJoin, []int{0}, append(fields, fields...), fields, rightAsBuild).(*innerJoinProbe)
-		probe.resetJoinedRows(true)
-		builder := createRowTableBuilder([]int{0}, fields, h.partitionNumber, true, false, false, meta.nullMapLength)
-		build := chunk.New(fields, 8, 8)
-		for range 5 {
-			build.AppendInt64(0, 1)
-		}
-		require.NoError(t, builder.processOneChunk(build, ctx.GetSessionVars().StmtCtx.TypeCtx(), h, 0))
-		h.hashTableContext.mergeRowTablesToHashTable(h.partitionNumber, nil)
-		for i := range int(h.partitionNumber) {
-			h.hashTableContext.build(&buildTask{partitionIdx: i, segEndIdx: len(h.hashTableContext.hashTable.tables[i].rowData.segments)})
-		}
-		input := chunk.New(fields, 8, 8)
-		input.AppendInt64(0, 1)
-		input.AppendInt64(0, 2)
-		input.AppendNull(0)
-		require.NoError(t, probe.SetChunkForProbe(input))
-		// Force a hash collision: key 2 visits the key-1 chain but matches no pair.
-		probe.matchedRowsHeaders[1] = probe.matchedRowsHeaders[0]
-		probe.matchedRowsHashValue[1] = probe.matchedRowsHashValue[0]
-		resultTypes := append(fields, fields...)
-		if noColumns {
-			resultTypes = nil
-		}
-		return probe, &hashjoinWorkerResult{chk: chunk.New(resultTypes, 8, 8)}
+		probe, _, result := newJoinedRowsProbeForTest(t, base.InnerJoin, noColumns, rightAsBuild, condition)
+		return probe.(*innerJoinProbe), result
 	}
 
 	for _, noColumns := range []bool{false, true} {
@@ -678,6 +692,63 @@ func TestInnerJoinProbeJoinedRows(t *testing.T) {
 		require.NoError(t, result.err)
 		require.Equal(t, 5, result.chk.NumRows())
 		require.Nil(t, probe.joinedRows)
+	})
+	t.Run("batched joined rows", func(t *testing.T) {
+		t.Run("semi right partial batches", func(t *testing.T) {
+			p, bp, result := newJoinedRowsProbeForTest(t, base.SemiJoin, true, true, "")
+			input := bp.currentChunk
+			input.Reset()
+			for range 3 {
+				input.AppendInt64(0, 1)
+			}
+			bp.currentProbeRow = bp.chunkRows
+			require.NoError(t, p.SetChunkForProbe(input))
+			result.chk.SetRequiredRows(2, 8)
+			for _, want := range []int64{2, 3} {
+				result.chk.Reset()
+				_, result = p.Probe(result, &sqlkiller.SQLKiller{})
+				require.NoError(t, result.err)
+				require.Equal(t, want, bp.joinedRows.Rows)
+			}
+			require.True(t, p.IsCurrentChunkProbeDone())
+		})
+		for _, mode := range []string{"normal", "cancel", "panic", "overflow", "disabled"} {
+			t.Run(mode, func(t *testing.T) {
+				p, bp, result := newJoinedRowsProbeForTest(t, base.SemiJoin, true, true, "")
+				if mode == "overflow" {
+					bp.joinedRows.Rows = math.MaxInt64
+				}
+				if mode == "disabled" {
+					bp.resetJoinedRows(false)
+				}
+				killer := &sqlkiller.SQLKiller{}
+				if mode == "cancel" {
+					killer.Signal = sqlkiller.QueryInterrupted
+				}
+				if mode == "panic" {
+					bp.usedRows = bp.usedRows[:0]
+					require.Panics(t, func() { _, _ = p.Probe(result, killer) })
+					require.Equal(t, int64(1), bp.joinedRows.Rows)
+					return
+				}
+				for !p.IsCurrentChunkProbeDone() {
+					result.chk.Reset()
+					_, result = p.Probe(result, killer)
+					if mode == "cancel" {
+						require.Error(t, result.err)
+						break
+					}
+					require.NoError(t, result.err)
+				}
+				if mode == "disabled" {
+					require.Nil(t, bp.joinedRows)
+				} else if mode == "overflow" {
+					require.Equal(t, int64(-1), bp.joinedRows.Rows)
+				} else {
+					require.Equal(t, int64(1), bp.joinedRows.Rows)
+				}
+			})
+		}
 	})
 }
 

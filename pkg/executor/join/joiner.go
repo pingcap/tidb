@@ -440,8 +440,10 @@ func (j *semiJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
-			j.addJoinedRow()
+		initialRemainCap := numToAppend
+		defer func() { j.addJoinedRows(int64(initialRemainCap - numToAppend)) }()
+		for ; outer != outers.End() && numToAppend > 0; outer = outers.Next() {
+			numToAppend--
 			chk.AppendRowByColIdxs(outer, j.lUsed)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
@@ -585,8 +587,10 @@ func (j *antiSemiJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.Row
 	outerRowStatus = outerRowStatus[:0]
 	numToAppend := chk.RequiredRows() - chk.NumRows()
 	if len(j.conditions) == 0 {
+		var joinedRows int64
+		defer func() { j.addJoinedRows(joinedRows) }()
 		for ; outers.Current() != outers.End(); outers.Next() {
-			j.addJoinedRow()
+			joinedRows++
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
@@ -664,8 +668,10 @@ func (j *leftOuterSemiJoiner) TryToMatchOuters(outers chunk.Iterator, inner chun
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
-			j.addJoinedRow()
+		initialRemainCap := numToAppend
+		defer func() { j.addJoinedRows(int64(initialRemainCap - numToAppend)) }()
+		for ; outer != outers.End() && numToAppend > 0; outer = outers.Next() {
+			numToAppend--
 			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
@@ -833,8 +839,10 @@ func (j *antiLeftOuterSemiJoiner) TryToMatchOuters(outers chunk.Iterator, inner 
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
-			j.addJoinedRow()
+		initialRemainCap := numToAppend
+		defer func() { j.addJoinedRows(int64(initialRemainCap - numToAppend)) }()
+		for ; outer != outers.End() && numToAppend > 0; outer = outers.Next() {
+			numToAppend--
 			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}

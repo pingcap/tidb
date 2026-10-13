@@ -253,6 +253,8 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 }
 
 func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+	initialRemainCap := remainCap
+	defer func() { s.addJoinedRows(int64(initialRemainCap - remainCap)) }()
 	meta := s.ctx.hashTableMeta
 	tagHelper := s.ctx.hashTableContext.tagHelper
 
@@ -266,10 +268,10 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 		if s.matchedRowsHeaders[s.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(s.matchedRowsHeaders[s.currentProbeRow])
 			if isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
-				s.addJoinedRow()
+				// Count the accepted pair before updating its output bookkeeping.
+				remainCap--
 				s.matchedRowsHeaders[s.currentProbeRow] = 0
 				s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
-				remainCap--
 				s.currentProbeRow++
 			} else {
 				s.probeCollision++
