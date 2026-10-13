@@ -944,6 +944,7 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
+<<<<<<< HEAD
         sha256 = "156ac8095023f9aa7a0bf0706508601443492fc063f0b73dd20e728e912c5bd0",
         strip_prefix = "github.com/blacktear23/go-proxyprotocol@v1.0.6",
         urls = [
@@ -952,6 +953,10 @@ def go_deps():
             "https://cache.hawkingrei.com/gomod/github.com/blacktear23/go-proxyprotocol/com_github_blacktear23_go_proxyprotocol-v1.0.6.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/blacktear23/go-proxyprotocol/com_github_blacktear23_go_proxyprotocol-v1.0.6.zip",
         ],
+=======
+        sum = "h1:XSu8kU3C9Oo2x3gdwfxpz1ZsE6NaMfe9821ahNPzAf4=",
+        version = "v1.0.8",
+>>>>>>> 033520580ea (server: fix data race between connection liveness probe and packet read (#71855) (#71908))
     )
     go_repository(
         name = "com_github_blizzy78_varnamelen",
