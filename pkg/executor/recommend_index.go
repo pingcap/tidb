@@ -48,14 +48,14 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.done = true
 
-	if e.Action == "set" {
+	if e.Action == ast.RecommendIndexActionSet {
 		return indexadvisor.SetOptions(e.Ctx(), e.Options...)
 	}
-	if e.Action == "show" {
+	if e.Action == ast.RecommendIndexActionShow {
 		return e.showOptions(req)
 	}
 
-	if e.Action != "run" && e.Action != "return" {
+	if e.Action != ast.RecommendIndexActionRun && e.Action != ast.RecommendIndexActionReturn {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 
@@ -74,7 +74,7 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	var results []*indexadvisor.Recommendation
 	var err error
-	if e.Action == "return" {
+	if e.Action == ast.RecommendIndexActionReturn {
 		results, err = indexadvisor.AdviseIndexesWithoutPersist(ctx, e.Ctx(), sqls, e.Options)
 	} else {
 		results, err = indexadvisor.AdviseIndexes(ctx, e.Ctx(), sqls, e.Options)

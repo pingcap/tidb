@@ -26282,7 +26282,7 @@ yynewstate:
 	case 2843:
 		{
 			x := &ast.RecommendIndexStmt{
-				Action:  "return",
+				Action:  ast.RecommendIndexActionReturn,
 				SQL:     yyS[yypt-1].ident,
 				Options: yyS[yypt-0].item.([]ast.RecommendIndexOption),
 			}
@@ -26292,7 +26292,7 @@ yynewstate:
 	case 2844:
 		{
 			x := &ast.RecommendIndexStmt{
-				Action:  "run",
+				Action:  ast.RecommendIndexActionRun,
 				SQL:     yyS[yypt-1].ident,
 				Options: yyS[yypt-0].item.([]ast.RecommendIndexOption),
 			}
@@ -26302,7 +26302,7 @@ yynewstate:
 	case 2845:
 		{
 			x := &ast.RecommendIndexStmt{
-				Action:  "run",
+				Action:  ast.RecommendIndexActionRun,
 				Options: yyS[yypt-0].item.([]ast.RecommendIndexOption),
 			}
 
@@ -26311,7 +26311,7 @@ yynewstate:
 	case 2846:
 		{
 			x := &ast.RecommendIndexStmt{
-				Action: "show",
+				Action: ast.RecommendIndexActionShow,
 			}
 
 			parser.yyVAL.statement = x
@@ -26319,7 +26319,7 @@ yynewstate:
 	case 2847:
 		{
 			x := &ast.RecommendIndexStmt{
-				Action: "apply",
+				Action: ast.RecommendIndexActionApply,
 				ID:     yyS[yypt-0].item.(int64),
 			}
 
@@ -26328,7 +26328,7 @@ yynewstate:
 	case 2848:
 		{
 			x := &ast.RecommendIndexStmt{
-				Action: "ignore",
+				Action: ast.RecommendIndexActionIgnore,
 				ID:     yyS[yypt-0].item.(int64),
 			}
 
@@ -26337,7 +26337,7 @@ yynewstate:
 	case 2849:
 		{
 			x := &ast.RecommendIndexStmt{
-				Action:  "set",
+				Action:  ast.RecommendIndexActionSet,
 				Options: yyS[yypt-0].item.([]ast.RecommendIndexOption),
 			}
 

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -52,7 +53,12 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	// opNum is collected via the common stats load rule, some operators may be cleaned like proj for later rule.
 	// so opNum is not that accurate, but it's enough for the memo hashmap's init capacity.
 	plan.SCtx().GetSessionVars().StmtCtx.OperatorNum = opNum
-	if len(predicateColumns) > 0 && !plan.SCtx().GetSessionVars().StmtCtx.SkipColumnStatsUsage {
+	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
+	// Ordinary read-only SELECT statements must still record predicate usage.
+	// Only the read-only RECOMMEND INDEX analysis is excluded because it does
+	// not represent an executed workload.
+	isRecommendIndexAnalysis := stmtCtx.IsReadOnly && stmtCtx.StmtType == ast.RecommendIndexStmtLabel
+	if len(predicateColumns) > 0 && !isRecommendIndexAnalysis {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
 

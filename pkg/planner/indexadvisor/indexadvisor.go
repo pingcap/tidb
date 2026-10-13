@@ -77,14 +77,16 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	// Index advisor analyzes a workload to recommend indexes; it does not
-	// execute that workload. Do not count predicates seen during RUN FOR or
-	// RETURN RESULT FOR as real workload usage, or a later background flush
-	// could write that analysis-only usage to mysql.column_stats_usage.
+	// execute that workload. Mark the analysis as read-only so predicate usage
+	// is not persisted as if the analyzed workload had actually run.
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	originalSkipColumnStatsUsage := stmtCtx.SkipColumnStatsUsage
-	stmtCtx.SkipColumnStatsUsage = true
+	originalIsReadOnly := stmtCtx.IsReadOnly
+	originalStmtType := stmtCtx.StmtType
+	stmtCtx.IsReadOnly = true
+	stmtCtx.StmtType = ast.RecommendIndexStmtLabel
 	defer func() {
-		stmtCtx.SkipColumnStatsUsage = originalSkipColumnStatsUsage
+		stmtCtx.IsReadOnly = originalIsReadOnly
+		stmtCtx.StmtType = originalStmtType
 	}()
 
 	advisorLogger().Info("index advisor option filled and start", zap.Any("option", option))

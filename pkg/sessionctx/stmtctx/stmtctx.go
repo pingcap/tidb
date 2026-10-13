@@ -287,10 +287,6 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InShowWarning          bool
 
-	// SkipColumnStatsUsage prevents planning from recording column usage that
-	// would later be persisted by the statistics collector.
-	SkipColumnStatsUsage bool
-
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
 
