@@ -460,6 +460,69 @@ func TestPiTRAndRestoreFromMid(t *testing.T) {
 	kit.tk.MustQuery("SELECT * FROM information_schema.tables WHERE table_name = ?", s.tbl).Check([][]any{})
 }
 
+// TestPiTRRestoreWithRename covers the PiTR --rename feature end to end: an
+// exact cross-schema table route and a schema-level route. The routed tables are
+// created before the log task starts, so they have no log event and their
+// downstream schema identity can only come from the snapshot phase.
+func TestPiTRRestoreWithRename(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	taskName := "test-pitr-rename"
+
+	drop := func() {
+		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_src")
+		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_schema")
+		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_dst")
+		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_renamed")
+	}
+	drop()
+	t.Cleanup(drop)
+
+	kit.tk.MustExec("CREATE DATABASE rn_src")
+	kit.tk.MustExec("CREATE DATABASE rn_schema")
+	kit.tk.MustExec("CREATE TABLE rn_src.t_log(id INT PRIMARY KEY, v VARCHAR(20))")
+	kit.tk.MustExec("CREATE TABLE rn_src.t_snapshot(id INT PRIMARY KEY, v VARCHAR(20))")
+	kit.tk.MustExec("CREATE TABLE rn_schema.t(id INT PRIMARY KEY, v VARCHAR(20))")
+	kit.tk.MustExec("INSERT INTO rn_src.t_log VALUES (1, 'before')")
+	kit.tk.MustExec("INSERT INTO rn_src.t_snapshot VALUES (1, 'snapshot')")
+	kit.tk.MustExec("INSERT INTO rn_schema.t VALUES (1, 'before')")
+
+	// Start the log task before the full backup so the full backup falls inside
+	// the log range. Every table predates the log range, so only DML is logged.
+	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+	kit.RunFullBackup(func(bc *task.BackupConfig) {})
+	kit.tk.MustExec("INSERT INTO rn_src.t_log VALUES (2, 'after')")
+	kit.tk.MustExec("INSERT INTO rn_schema.t VALUES (2, 'after')")
+	kit.forceFlushAndWait(taskName)
+
+	// Stop the task before dropping the sources so the drops stay outside the
+	// restored log range and the schemas have to come from the full backup.
+	kit.StopTaskIfExists(taskName)
+	kit.tk.MustExec("DROP DATABASE rn_src")
+	kit.tk.MustExec("DROP DATABASE rn_schema")
+
+	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+		rc.Rename = []string{
+			"rn_src.t_snapshot:rn_dst.copy",
+			"rn_schema:rn_renamed",
+		}
+		kit.SetFilter(&rc.Config, "rn_src.*", "rn_schema.*")
+	})
+
+	// The routed table is restored under the target schema and is queryable,
+	// which also proves the restore reset it from restore mode. It is created
+	// before the log task starts, so it has no log event and its downstream
+	// schema identity can only come from the snapshot phase.
+	kit.tk.MustQuery("SELECT id, v FROM rn_dst.copy").Check(testkit.Rows("1 snapshot"))
+	kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_src'").
+		Check(testkit.Rows("t_log"))
+	// The identity table keeps its source name and receives the replayed log rows.
+	kit.tk.MustQuery("SELECT id, v FROM rn_src.t_log ORDER BY id").Check(testkit.Rows("1 before", "2 after"))
+	// The schema-level route moves the whole schema.
+	kit.tk.MustQuery("SELECT id, v FROM rn_renamed.t ORDER BY id").Check(testkit.Rows("1 before", "2 after"))
+	kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_schema'").
+		Check([][]any{})
+}
+
 func TestPiTRAndManyBackups(t *testing.T) {
 	kit := NewLogBackupKit(t)
 	s := kit.simpleWorkload()
