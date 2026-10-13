@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/restore/internal/import_client",
     visibility = ["//br/pkg/restore:__subpackages__"],
     deps = [
+        "//br/pkg/logutil",
         "//br/pkg/restore/split",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
@@ -16,6 +17,7 @@ go_library(
         "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

@@ -47,6 +47,11 @@ type BackupFileSet struct {
 	// For Raw/Txn KV, table id is always 0
 	TableID int64
 
+	// RestoreTaskID identifies the original Classic Restore batch containing this
+	// set. Every member carries the same value, retained after checkpoint filtering.
+	// Zero means this set was not planned for RestoreRegion.
+	RestoreTaskID [32]byte
+
 	// For log Backup Changes, this field is null.
 	SSTFiles []*backuppb.File
 

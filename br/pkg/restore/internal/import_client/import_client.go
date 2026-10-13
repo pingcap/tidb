@@ -22,7 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
@@ -74,6 +76,9 @@ type ImporterClient interface {
 		storeID uint64,
 		req *import_sstpb.MultiIngestRequest,
 	) (*import_sstpb.IngestResponse, error)
+
+	// RestoreRegion restores source SSTs through the Region leader and waits for Apply.
+	RestoreRegion(ctx context.Context, storeID uint64, req *import_sstpb.RestoreRegionRequest) (*import_sstpb.IngestResponse, error)
 
 	SetDownloadSpeedLimit(
 		ctx context.Context,
@@ -161,6 +166,7 @@ func (ic *importClient) DownloadSST(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logutil.CL(ctx).Debug("sending import RPC", zap.String("method", "Download"), zap.Uint64("store-id", storeID))
 	return client.Download(ctx, req)
 }
 
@@ -173,6 +179,7 @@ func (ic *importClient) BatchDownloadSST(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logutil.CL(ctx).Debug("sending import RPC", zap.String("method", "BatchDownload"), zap.Uint64("store-id", storeID))
 	return client.BatchDownload(ctx, req)
 }
 
@@ -185,6 +192,7 @@ func (ic *importClient) BatchDownloadLatestMVCC(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logutil.CL(ctx).Debug("sending import RPC", zap.String("method", "BatchDownloadLatestMVCC"), zap.Uint64("store-id", storeID))
 	return client.BatchDownloadLatestMVCC(ctx, req)
 }
 
@@ -209,7 +217,21 @@ func (ic *importClient) MultiIngest(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logutil.CL(ctx).Debug("sending import RPC", zap.String("method", "MultiIngest"), zap.Uint64("store-id", storeID))
 	return client.MultiIngest(ctx, req)
+}
+
+func (ic *importClient) RestoreRegion(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.RestoreRegionRequest,
+) (*import_sstpb.IngestResponse, error) {
+	client, err := ic.GetIngestClient(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	logutil.CL(ctx).Debug("sending import RPC", zap.String("method", "RestoreRegion"), zap.Uint64("store-id", storeID))
+	return client.RestoreRegion(ctx, req)
 }
 
 func (ic *importClient) createGrpcConn(
