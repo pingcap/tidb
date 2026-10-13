@@ -20,6 +20,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -58,6 +59,11 @@ import (
 var componentName = caller.Component("tidb-metrics-util")
 
 const keyspaceIDLabel = "keyspace_id"
+
+func init() {
+	// BR creates its HTTP handler before registering keyspace metrics.
+	initMetricsGatherer()
+}
 
 // RegisterMetrics registers metrics with keyspace metadata labels when available.
 func RegisterMetrics() error {
@@ -133,27 +139,44 @@ func registerMetrics() error {
 	}
 	setConstLabels(labels)
 	initMetrics()
+	keyspaceID := labels[keyspaceIDLabel]
+	initMetricsGatherer().keyspaceID.Store(&keyspaceID)
+	return nil
+}
 
-	// Cover collectors initialized before constant labels and third-party metrics,
-	// including Go/process and HTTP instrumentation, for both scraping and pushing.
-	gatherer := prometheus.DefaultGatherer
-	labelName, keyspaceID := keyspaceIDLabel, labels[keyspaceIDLabel]
-	prometheus.DefaultGatherer = prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
-		families, err := gatherer.Gather()
-		for _, family := range families {
-			for _, metric := range family.Metric {
-				index, found := slices.BinarySearchFunc(metric.Label, labelName, func(pair *dto.LabelPair, name string) int {
-					return strings.Compare(pair.GetName(), name)
-				})
-				if !found {
-					// Collectors can share label slices across concurrent Gather calls.
-					metric.Label = slices.Insert(slices.Clone(metric.Label), index, &dto.LabelPair{Name: &labelName, Value: &keyspaceID})
-				}
+type keyspaceGatherer struct {
+	prometheus.Gatherer
+	keyspaceID atomic.Pointer[string]
+}
+
+func initMetricsGatherer() *keyspaceGatherer {
+	if gatherer, ok := prometheus.DefaultGatherer.(*keyspaceGatherer); ok {
+		return gatherer
+	}
+	gatherer := &keyspaceGatherer{Gatherer: prometheus.DefaultGatherer}
+	prometheus.DefaultGatherer = gatherer
+	return gatherer
+}
+
+// Gather adds labels to early and third-party collectors for scraping and pushing.
+func (g *keyspaceGatherer) Gather() ([]*dto.MetricFamily, error) {
+	labelName, keyspaceID := keyspaceIDLabel, ""
+	if id := g.keyspaceID.Load(); id != nil {
+		keyspaceID = *id
+	}
+	families, err := g.Gatherer.Gather()
+	for _, family := range families {
+		for _, metric := range family.Metric {
+			index, found := slices.BinarySearchFunc(metric.Label, labelName, func(pair *dto.LabelPair, name string) int {
+				return strings.Compare(pair.GetName(), name)
+			})
+			if !found {
+				// Collectors can share label slices across concurrent Gather calls.
+				metric.Label = slices.Insert(slices.Clone(metric.Label), index, &dto.LabelPair{Name: &labelName, Value: &keyspaceID})
 			}
 		}
-		return families, err
-	})
-	return nil
+	}
+	return families, err
 }
 
 func cloneConstLabels() map[string]string {

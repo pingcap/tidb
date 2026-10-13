@@ -99,6 +99,7 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			})
 			registry := prometheus.NewRegistry()
 			prometheus.DefaultRegisterer, prometheus.DefaultGatherer = registry, registry
+			initMetricsGatherer()
 			registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 			metricscommon.SetConstLabels()
 			config.UpdateGlobal(func(conf *config.Config) {
@@ -112,6 +113,8 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			before := prometheus.NewGauge(prometheus.GaugeOpts{Name: "registered_before_init"})
 			before.Set(7)
 			registry.MustRegister(before)
+			// BR creates its HTTP handler before registering keyspace metrics.
+			earlyHandler := promhttp.Handler()
 			var err error
 			if tc.br {
 				err = RegisterMetricsForBR([]string{pdServer.addr}, task.TLSConfig{}, tc.keyspaceName)
@@ -176,7 +179,7 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			}
 			check(t)
 			response := httptest.NewRecorder()
-			promhttp.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+			earlyHandler.ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 			require.Equal(t, 200, response.Code, response.Body.String())
 			require.Contains(t, response.Body.String(), `registered_before_init{keyspace_id="`+tc.keyspaceID+`"} 7`)
 			payload := make(chan string, 1)
