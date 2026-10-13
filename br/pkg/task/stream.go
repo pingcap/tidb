@@ -1407,28 +1407,9 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-<<<<<<< HEAD
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
 	if err != nil {
-=======
-	// It need disable GC in TiKV when PiTR.
-	// because the process of PITR is concurrent and kv events isn't sorted by tso.
-	var restoreGCFunc, restoreRocksDBMaxBackgroundJobsFunc RestoreConfigFunc
-	var oldGCRatio, oldRocksDBMaxBackgroundJobs string
-	if err := cfg.RestoreRegistry.OperationAfterWaitIDs(ctx, func() (err error) {
-		if restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage()); err != nil {
-			return errors.Trace(err)
-		}
-		if cfg.RetainLatestMVCCVersion {
-			restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		return nil
-	}); err != nil {
->>>>>>> da985f99c5f (br: update rocksdb jobs only when retain latest mvcc (#71849))
 		return errors.Trace(err)
 	}
 	// Always run the post-work even on error, so we don't stuck in the import
@@ -1459,49 +1440,32 @@ func restoreStream(
 		if err := restoreGc(oldRatio); err != nil {
 			log.Error("failed to set gc enabled", zap.Error(err))
 		}
-<<<<<<< HEAD
-=======
-		restoreFields := []zap.Field{zap.String("gc-ratio", oldGCRatio)}
-		if oldRocksDBMaxBackgroundJobs != "" {
-			restoreFields = append(restoreFields, zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
-		}
-		log.Info("start to restore tikv config", restoreFields...)
-		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
-			if err := restoreGCFunc(oldGCRatio); err != nil {
-				log.Error("failed to restore gc", zap.Error(err))
-				return errors.Trace(err)
-			}
-			// Only restore if we lowered it for retain-latest-mvcc-version.
-			if restoreRocksDBMaxBackgroundJobsFunc != nil {
-				if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
-					log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
-					return errors.Trace(err)
-				}
-			}
-			return nil
-		})
->>>>>>> da985f99c5f (br: update rocksdb jobs only when retain latest mvcc (#71849))
 		log.Info("finish restoring gc")
 	}()
 
-	restoreRocksDBMaxBackgroundJobs, oldRocksDBMaxBackgroundJobs, err := KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	var restoreRocksDBMaxBackgroundJobsFunc RestoreFunc
+	var oldRocksDBMaxBackgroundJobs string
 	rocksDBMaxBackgroundJobsRestorable := false
 	rocksDBMaxBackgroundJobsCheckpointPersisted := !cfg.UseCheckpoint
-	defer func() {
-		if cfg.UseCheckpoint && rocksDBMaxBackgroundJobsCheckpointPersisted && !rocksDBMaxBackgroundJobsRestorable {
-			log.Info("skip restore the rocksdb.max-background-jobs for next retry")
-			return
+	if cfg.RetainLatestMVCCVersion {
+		restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
-		log.Info("start to restore rocksdb.max-background-jobs", zap.String("jobs", oldRocksDBMaxBackgroundJobs))
-		if err := restoreRocksDBMaxBackgroundJobs(oldRocksDBMaxBackgroundJobs); err != nil {
-			log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
-		}
-		log.Info("finish restoring rocksdb.max-background-jobs")
-	}()
+		defer func() {
+			if cfg.UseCheckpoint && rocksDBMaxBackgroundJobsCheckpointPersisted && !rocksDBMaxBackgroundJobsRestorable {
+				log.Info("skip restore the rocksdb.max-background-jobs for next retry")
+				return
+			}
+
+			log.Info("start to restore rocksdb.max-background-jobs", zap.String("jobs", oldRocksDBMaxBackgroundJobs))
+			if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
+				log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
+			}
+			log.Info("finish restoring rocksdb.max-background-jobs")
+		}()
+	}
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
