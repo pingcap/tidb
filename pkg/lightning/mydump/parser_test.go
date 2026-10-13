@@ -909,7 +909,6 @@ func TestChunkParserTooLargeRow(t *testing.T) {
 		content := "INSERT INTO t VALUES ('" + strings.Repeat("d", 2*mydump.LargestEntryLimit) + "')"
 		parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, mydump.NewStringReader(content), blockBufSize, ioWorkersForCSV)
 		err := parser.ReadRow()
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
+		require.ErrorIs(t, err, parsedef.ErrRowTooLarge)
 	})
 }
