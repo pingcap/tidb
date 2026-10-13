@@ -16,11 +16,9 @@ The goal is "align with Go, fix all issues found". It is measured three ways:
    embedded unistore) and is compared with Go's recording. The harness is
    `rust/crates/tidb-server/src/cluster_session_node/tests/corpus_unistore.rs`.
    - Session start: 46888 matched / 127 diverged.
-   - Last *complete* full replay, at `ea92234161`: 46940 / 102.
-   - Later commits: the fixes in `fa7cc2d8ca` and `f38c8d2efb` were verified
-     topic by topic. A full replay of `f38c8d2efb` was started but had not
-     finished at handoff, so the number above does not include them yet.
-     Run it again first (see *Commands*).
+   - Full replay at `ea92234161`: 46940 / 102.
+   - Full replay at `f38c8d2efb` (the code state of this handoff): 46975 / 66,
+     no topic worse than at `ea92234161`.
 2. **In-process corpus.** The `tidb_session::Session` engine; part of the gate.
    It holds at 9 of 19960 compared statements diverging.
 3. **Differential probes.** The same SQL runs on the Go oracle (this
@@ -42,22 +40,25 @@ The goal is "align with Go, fix all issues found". It is measured three ways:
 
 ## What is left
 
-These are the 102 divergences of the last complete replay (topic: count),
-classified. "Fixed since" means fixed after that replay and verified by a
-targeted topic replay or a regression test. The next full replay should
-confirm them.
+These are the divergences of the `ea92234161` replay (topic: count),
+classified. The `f38c8d2efb` replay confirmed which were fixed.
 
-**Fixed since (about 30):**
+**Fixed by `fa7cc2d8ca` and `f38c8d2efb` (36, confirmed by the full replay):**
 - `executor/compact_table` 3, `executor/kv` 2, `executor/prepared` 4,
-  `session/clustered_index` 2, `session/common` 3, `session/session` 1,
+  `executor/executor` 4 (BIT default);
+- `session/clustered_index` 2, `session/common` 3, `session/session` 1,
   `table/index` 1;
 - `statistics/integration` 1, `planner/cardinality/selectivity` 4,
   `expression/charset_and_collation` 1;
 - `executor/grant` 2 of 3 (the name-length checks);
-- `executor/executor` 4 (BIT default; covered by a test, not yet by the
-  replay);
-- `explain_generate_column_substitute` and `explain_cte` (LIKE partition ids;
-  expected fixed, not yet replayed).
+- `explain_generate_column_substitute` 2 (LIKE partition ids);
+- with no targeted fix: `planner/core/integration` 2,
+  `executor/index_lookup_join` 1, `ddl/db_partition` 1,
+  `planner/core/partition_pruner` 1,
+  `planner/core/join_reorder_through_projection` 1.
+
+`explain_cte` (1) did not move: its outer-row duplication is not the LIKE
+bug. Re-probe it.
 
 **Real gaps still open:**
 - `executor/grant` (1): `mysql.tables_priv.Grantor` is NULL. Go writes the
@@ -119,18 +120,15 @@ confirm them.
 
 ## Next steps, in order
 
-1. Run the full replay on `f38c8d2efb` and compare it with 46940 / 102
-   (*Commands*). The recording config changes every topic's environment, so
-   look for topics that got worse as well as better.
-2. Run the four prepared differential batteries (partitions, columns and
+1. Run the four prepared differential batteries (partitions, columns and
    defaults, indexes/views/sequences, misc DDL/DML; listed in *Differential
    probes*). Triage every difference the same way: ask the Go oracle, then
    find the production code path. Write more batteries in areas where
    production has its own code: cluster DDL planner, catalog loader, account
    reconcile, statistics routes.
-3. `Grantor`, then `tidb_tmp_table_max_size`, then the index-join and
+2. `Grantor`, then `tidb_tmp_table_max_size`, then the index-join and
    index-merge row differences.
-4. Milestone 4 of the ExecPlan (retire the in-process transaction model)
+3. Milestone 4 of the ExecPlan (retire the in-process transaction model)
    stays the structural goal.
 
 ## Commands
