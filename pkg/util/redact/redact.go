@@ -290,16 +290,27 @@ var redactedKey = []byte("?")
 // the keys of nested shared locks) are replaced by '?' if redact log is enabled. The String() method is evaluated
 // lazily, so it is cheap to pass it to a logger whose level is not enabled.
 func LockInfo(lock *kvrpcpb.LockInfo) fmt.Stringer {
-	return lockInfoRedacted{lock}
+	return lockInfoRedacted{lock: lock}
+}
+
+// LockInfoWithMode is like LockInfo, but also masks keys when mode is ON or MARKER.
+// Process-global redaction still applies when mode is OFF or empty. All enabled modes
+// replace key bytes with '?', and formatting remains lazy.
+func LockInfoWithMode(lock *kvrpcpb.LockInfo, mode string) fmt.Stringer {
+	return lockInfoRedacted{
+		lock:        lock,
+		forceRedact: mode == errors.RedactLogEnable || mode == errors.RedactLogMarker,
+	}
 }
 
 type lockInfoRedacted struct {
-	lock *kvrpcpb.LockInfo
+	lock        *kvrpcpb.LockInfo
+	forceRedact bool
 }
 
 // String implements fmt.Stringer.
 func (l lockInfoRedacted) String() string {
-	if l.lock == nil || !NeedRedact() {
+	if l.lock == nil || !(l.forceRedact || NeedRedact()) {
 		return l.lock.String()
 	}
 	lockCopy := proto.Clone(l.lock).(*kvrpcpb.LockInfo)

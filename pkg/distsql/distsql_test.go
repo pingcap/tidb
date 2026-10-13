@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	pingcaperrors "github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -51,17 +52,44 @@ import (
 
 func TestSelectLockEventSQLRedaction(t *testing.T) {
 	const originalSQL = "SELECT * FROM t WHERE a = 'lock-event-secret'"
+	originalGlobalMode := pingcaperrors.RedactLogEnabled.Load()
+	t.Cleanup(func() { pingcaperrors.RedactLogEnabled.Store(originalGlobalMode) })
+	newLockInfo := func(redacted bool) *kvrpcpb.LockInfo {
+		key := func(value string) []byte {
+			if redacted {
+				return []byte("?")
+			}
+			return []byte(value)
+		}
+		return &kvrpcpb.LockInfo{
+			PrimaryLock: key("primary-key-secret"),
+			Key:         key("lock-key-secret"),
+			Secondaries: [][]byte{key("secondary-key-secret")},
+			LockVersion: 99,
+			SharedLockInfos: []*kvrpcpb.LockInfo{{
+				PrimaryLock: key("nested-primary-key-secret"),
+				Key:         key("nested-lock-key-secret"),
+				Secondaries: [][]byte{key("nested-secondary-key-secret")},
+				LockVersion: 100,
+			}},
+		}
+	}
 	for _, test := range []struct {
-		name string
-		mode string
-		stmt string
+		name       string
+		mode       string
+		globalMode string
+		stmt       string
+		redactLock bool
 	}{
-		{name: "default", stmt: originalSQL},
-		{name: "OFF", mode: "OFF", stmt: originalSQL},
-		{name: "ON", mode: "ON", stmt: "select * from `t` where `a` = ?"},
-		{name: "MARKER", mode: "MARKER", stmt: "select * from `t` where `a` = ‹lock-event-secret›"},
+		{name: "default", globalMode: "OFF", stmt: originalSQL},
+		{name: "OFF", mode: "OFF", globalMode: "OFF", stmt: originalSQL},
+		{name: "ON", mode: "ON", globalMode: "OFF", stmt: "select * from `t` where `a` = ?", redactLock: true},
+		{name: "MARKER", mode: "MARKER", globalMode: "OFF", stmt: "select * from `t` where `a` = ‹lock-event-secret›", redactLock: true},
+		{name: "global ON/session OFF", mode: "OFF", globalMode: "ON", stmt: originalSQL, redactLock: true},
+		{name: "global MARKER/session OFF", mode: "OFF", globalMode: "MARKER", stmt: originalSQL, redactLock: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			pingcaperrors.RedactLogEnabled.Store(test.globalMode)
 			sctx := newMockSessionContext()
 			sctx.GetSessionVars().StmtCtx.OriginalSQL = originalSQL
 			sctx.GetSessionVars().EnableRedactLog = test.mode
@@ -77,13 +105,19 @@ func TestSelectLockEventSQLRedaction(t *testing.T) {
 			// The callback can outlive the session's current statement context.
 			dctx.OriginalSQL = "SELECT 2"
 			dctx.EnableRedactLog = "OFF"
+			lockInfo := newLockInfo(false)
 			client.option.EventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
-				LockInfo: &kvrpcpb.LockInfo{LockVersion: 99},
+				LockInfo: lockInfo,
 			}))
 			entries := recorded.FilterMessage("coprocessor encounters lock").All()
 			require.Len(t, entries, 1)
 			require.Equal(t, uint64(42), entries[0].ContextMap()["startTS"])
 			require.Equal(t, test.stmt, entries[0].ContextMap()["stmt"])
+			require.Equal(t, newLockInfo(test.redactLock).String(), entries[0].ContextMap()["lock"])
+			require.Equal(t, newLockInfo(false), lockInfo)
+			if test.redactLock {
+				require.NotContains(t, entries[0].ContextMap()["lock"], "key-secret")
+			}
 			if test.mode == "ON" {
 				require.NotContains(t, entries[0].ContextMap()["stmt"], "lock-event-secret")
 			}

@@ -81,7 +81,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 			if ce := logutil.Logger(ctx).Check(zap.DebugLevel, "coprocessor encounters lock"); ce != nil {
 				ce.Write(
 					zap.Uint64("startTS", kvReq.StartTs),
-					zap.Stringer("lock", redact.LockInfo(copMeetLock.LockInfo)),
+					zap.Stringer("lock", redact.LockInfoWithMode(copMeetLock.LockInfo, redactMode)),
 					zap.String("stmt", parser.Normalize(originalSQL, redactMode)))
 			}
 		}

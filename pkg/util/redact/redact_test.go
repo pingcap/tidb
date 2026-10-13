@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -93,7 +94,8 @@ func TestRedactInitAndValueAndKey(t *testing.T) {
 }
 
 func TestRedactLockInfo(t *testing.T) {
-	defer InitRedact(false)
+	previousMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(previousMode) })
 	lock := &kvrpcpb.LockInfo{
 		PrimaryLock: []byte("secret-primary"),
 		LockVersion: 42,
@@ -122,6 +124,51 @@ func TestRedactLockInfo(t *testing.T) {
 
 	var nilLock *kvrpcpb.LockInfo
 	require.Equal(t, nilLock.String(), LockInfo(nilLock).String())
+
+	for _, test := range []struct {
+		globalMode string
+		mode       string
+		masked     bool
+	}{
+		{globalMode: "OFF", mode: "", masked: false},
+		{globalMode: "OFF", mode: "OFF", masked: false},
+		{globalMode: "OFF", mode: "ON", masked: true},
+		{globalMode: "OFF", mode: "MARKER", masked: true},
+		{globalMode: "ON", mode: "", masked: true},
+		{globalMode: "ON", mode: "OFF", masked: true},
+		{globalMode: "ON", mode: "ON", masked: true},
+		{globalMode: "ON", mode: "MARKER", masked: true},
+		{globalMode: "MARKER", mode: "", masked: true},
+		{globalMode: "MARKER", mode: "OFF", masked: true},
+		{globalMode: "MARKER", mode: "ON", masked: true},
+		{globalMode: "MARKER", mode: "MARKER", masked: true},
+	} {
+		t.Run("global="+test.globalMode+"/session="+test.mode, func(t *testing.T) {
+			errors.RedactLogEnabled.Store(test.globalMode)
+			formatted := LockInfoWithMode(lock, test.mode).String()
+			if test.masked {
+				require.Equal(t, redacted, formatted)
+				require.NotContains(t, formatted, "secret")
+			} else {
+				require.Equal(t, lock.String(), formatted)
+			}
+			require.Equal(t, nilLock.String(), LockInfoWithMode(nilLock, test.mode).String())
+			require.Equal(t, []byte("secret-primary"), lock.PrimaryLock)
+			require.Equal(t, []byte("secret-key"), lock.Key)
+			require.Equal(t, []byte("secret-secondary"), lock.Secondaries[0])
+			require.Equal(t, []byte("secret-shared-primary"), lock.SharedLockInfos[0].PrimaryLock)
+			require.Equal(t, []byte("secret-shared-key"), lock.SharedLockInfos[0].Key)
+		})
+	}
+
+	// Formatting remains lazy and checks the current process-global setting.
+	InitRedact(false)
+	formatted := LockInfoWithMode(lock, "OFF")
+	require.Equal(t, lock.String(), formatted.String())
+	InitRedact(true)
+	require.Equal(t, redacted, formatted.String())
+	InitRedact(false)
+	require.Equal(t, lock.String(), formatted.String())
 }
 
 func TestRedactRegionError(t *testing.T) {
