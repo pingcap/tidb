@@ -18,12 +18,9 @@ go_test(
     name = "sqlkiller_test",
     srcs = ["sqlkiller_test.go"],
     embed = [":sqlkiller"],
-<<<<<<< HEAD
-=======
     flaky = True,
     deps = [
         "//pkg/testkit/testfailpoint",
         "@com_github_stretchr_testify//require",
     ],
->>>>>>> 05c7dd7b962 (util: prevent SQLKiller panic during concurrent reset (#70557) (#70776))
 )
