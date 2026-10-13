@@ -4789,3 +4789,27 @@ func enableNonStarterDeployModeForEmbeddingTest(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalMode))
 	})
 }
+
+func TestCastZeroDatetimeFsp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("create table zero_datetime_fsp (id int primary key, c bigint)")
+	tk.MustExec("insert into zero_datetime_fsp values (1, 0), (2, 20240102030405), (3, NULL)")
+	for _, vectorized := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_vectorized_expression = %d", vectorized))
+		for fsp := 0; fsp <= 6; fsp++ {
+			suffix := ""
+			if fsp > 0 {
+				suffix = "." + strings.Repeat("0", fsp)
+			}
+			tk.MustQuery(fmt.Sprintf("select cast(0 as datetime(%d))", fsp)).Check(testkit.Rows("0000-00-00 00:00:00" + suffix))
+			tk.MustQuery(fmt.Sprintf("select cast(c as datetime(%d)) from zero_datetime_fsp order by id", fsp)).Check(testkit.Rows(
+				"0000-00-00 00:00:00"+suffix, "2024-01-02 03:04:05"+suffix, "<nil>",
+			))
+			tk.MustQuery(fmt.Sprintf("select min(cast(c as datetime(%d))) from zero_datetime_fsp", fsp)).Check(testkit.Rows("0000-00-00 00:00:00" + suffix))
+		}
+		tk.MustQuery("select cast(c as date) from zero_datetime_fsp order by id").Check(testkit.Rows("0000-00-00", "2024-01-02", "<nil>"))
+	}
+}
