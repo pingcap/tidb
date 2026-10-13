@@ -579,6 +579,14 @@ func TestVectorizedLocateCollation(t *testing.T) {
 	old := collate.NewCollationEnabled()
 	collate.SetNewCollationEnabledForTest(true)
 	t.Cleanup(func() { collate.SetNewCollationEnabledForTest(old) })
+	// A substring key must start at a character boundary, even if an earlier
+	// byte match spans the keys of two adjacent characters.
+	for _, tc := range []struct {
+		str  string
+		want int64
+	}{{"AA", 0}, {"AA䄀", 3}, {"䄀AA", 1}, {"AAAA", 0}} {
+		require.Equal(t, tc.want, locateStringWithCollator(tc.str, "䄀", collate.GetCollator("utf8mb4_general_ci")))
+	}
 	for _, collation := range []string{"utf8mb4_0900_ai_ci", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_bin", "utf8mb4_0900_bin"} {
 		for _, withPos := range []bool{false, true} {
 			ctx := createContext(t)
@@ -594,7 +602,7 @@ func TestVectorizedLocateCollation(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, f.vectorized() && f.isChildrenVectorized())
 			input := chunk.NewChunkWithCapacity([]*types.FieldType{strType, strType, intType}, 64)
-			for _, pair := range [][2]string{{"e", "é"}, {"e", "CAFÉ"}, {"e", "xéx"}, {"a", "Ａ"}, {"ss", "Straße"}, {"", "abc"}, {"z", "abc"}} {
+			for _, pair := range [][2]string{{"e", "é"}, {"e", "CAFÉ"}, {"e", "xéx"}, {"a", "Ａ"}, {"ss", "Straße"}, {"", "abc"}, {"z", "abc"}, {"䄀", "AA"}, {"䄀", "AA䄀"}, {"䄀", "䄀AA"}, {"䄀", "AAAA"}} {
 				for _, pos := range []int64{-1, 0, 1, 2, 4, 100} {
 					input.AppendString(0, pair[0])
 					input.AppendString(1, pair[1])

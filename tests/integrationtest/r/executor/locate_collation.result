@@ -44,3 +44,21 @@ id
 6
 drop table locate_source, locate_scalar, locate_vector;
 set tidb_enable_vectorized_expression=default;
+create table locate_boundaries(id int primary key, sub varchar(10) collate utf8mb4_general_ci, s varchar(20) collate utf8mb4_general_ci);
+insert into locate_boundaries values (1,'䄀','AA'),(2,'䄀','AA䄀'),(3,'䄀','䄀AA'),(4,'䄀','AAAA');
+set tidb_enable_vectorized_expression=0;
+select id,locate(sub,s),locate(sub,s,2) from locate_boundaries order by id;
+id	locate(sub,s)	locate(sub,s,2)
+1	0	0
+2	3	3
+3	1	0
+4	0	0
+set tidb_enable_vectorized_expression=1;
+select id,locate(sub,s),locate(sub,s,2) from locate_boundaries order by id;
+id	locate(sub,s)	locate(sub,s,2)
+1	0	0
+2	3	3
+3	1	0
+4	0	0
+drop table locate_boundaries;
+set tidb_enable_vectorized_expression=default;
