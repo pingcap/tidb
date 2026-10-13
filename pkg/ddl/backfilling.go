@@ -302,7 +302,7 @@ type backfillWorker struct {
 	backfiller
 	taskCh   chan *reorgBackfillTask
 	resultCh chan *backfillResult
-	ctx      context.Context
+	workCtx  context.Context
 	// resultCtx stays active when this worker is retired during a downscale, so
 	// the collector still receives the result of any task already in flight.
 	resultCtx context.Context
@@ -310,13 +310,13 @@ type backfillWorker struct {
 	wg        *sync.WaitGroup
 }
 
-func newBackfillWorker(ctx, resultCtx context.Context, bf backfiller) *backfillWorker {
-	bfCtx, cancel := context.WithCancel(ctx)
+func newBackfillWorker(workCtx, resultCtx context.Context, bf backfiller) *backfillWorker {
+	workCtx, cancel := context.WithCancel(workCtx)
 	return &backfillWorker{
 		backfiller: bf,
 		taskCh:     make(chan *reorgBackfillTask, 1),
 		resultCh:   make(chan *backfillResult, 1),
-		ctx:        bfCtx,
+		workCtx:    workCtx,
 		resultCtx:  resultCtx,
 		cancel:     cancel,
 	}
@@ -326,6 +326,8 @@ func (w *backfillWorker) String() string {
 	return fmt.Sprintf("backfill-worker %d, tp %s", w.GetCtx().id, w.backfiller.String())
 }
 
+// Close retires this worker by canceling only workCtx. The shared resultCtx
+// must outlive Close so in-flight results can still reach the collector.
 func (w *backfillWorker) Close() {
 	if w.cancel != nil {
 		w.cancel()
@@ -368,7 +370,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
+		taskCtx, err := bf.BackfillData(w.workCtx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -437,7 +439,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	}, false)
 	for {
 		select {
-		case <-w.ctx.Done():
+		case <-w.workCtx.Done():
 			logger.Info("backfill worker exit on context done")
 			return
 		case task, ok = <-w.taskCh:
