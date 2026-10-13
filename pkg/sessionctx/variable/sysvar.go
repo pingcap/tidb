@@ -2459,6 +2459,13 @@ var defaultSysVars = []*SysVar{
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiKVShortCircuitExpression, Value: BoolToOnOff(DefTiDBEnableTiKVShortCircuitExpression), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableTiKVShortCircuitExpression = TiDBOptOn(val)
+		if s.StmtCtx != nil {
+			s.StmtCtx.EnableTiKVShortCircuitExpression = s.EnableTiKVShortCircuitExpression
+		}
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			if TiDBOptOn(normalizedValue) {

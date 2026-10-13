@@ -1002,6 +1002,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.StatsLoad.ResultCh = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
+	sc.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 
 	vars.MemTracker.Detach()
 	vars.MemTracker.UnbindActions()
