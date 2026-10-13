@@ -37,6 +37,44 @@ The goal is "align with Go, fix all issues found". It is measured three ways:
 | `ea92234161` | Result-column wire flags follow Go: literal flags from `DefaultTypeForValue`, BINARY on non-string builtins, `adjustNullFlagForReturnType`, the GREATEST/LEAST int arm flags. CASE branches use Go's `FieldType.Equal`, which ignores every flag but UNSIGNED. |
 | `fa7cc2d8ca` | `CREATE TABLE ... LIKE` gets its own partition ids. BIT defaults are read through `GetDefaultValue()` (raw bytes, not the lossy JSON string). UnionScan merges added rows by handle. Production `DROP STATS` route. CREATE/RENAME USER length checks (1470, `%-.70s`). Note 1061 on `CREATE INDEX IF NOT EXISTS`. `checkIndexLengthWithNewCharset` on CONVERT TO. The replay harness runs the expensive-query sweeper and per-command query cancellation (`max_execution_time` and KILL work). |
 | `f38c8d2efb` | The BINARY attribute keeps its `_bin` collation under a COLLATE option. `ALTER TABLE ... COMPACT` is not a catalog change. The replay harness boots with `tests/integrationtest/config.toml`, the config the corpus was recorded under (`stats-lease = "0"`, table locks, new charset, expression indexes). |
+| `af35096d26` | A MERGE_JOIN hint gets no merge join on ENUM/SET or null-eq keys: Go `GetMergeJoin` returns before `getEnforcedMergeJoin` for both. Fixes `executor/index_lookup_merge_join` 2. **Committed, not pushed.** |
+
+## Uncommitted work in the tree (index-lookup pushdown)
+
+Both `executor/index_lookup_pushdown` wrong answers now match the Go oracle
+(`bash $S2/difftool/difftool.sh $S2/difftool/ilp.sql ILP`). Nothing else was
+run on it yet: no executor nextest, no topic replay, no gate. Three changes:
+
+- `tidb-executor/src/access_path.rs` `accept_scan_filter` refuses once the
+  source holds a row cut (`limit`, `top_n`, `partial_aggregate`). A root
+  `Selection(c != 500)` over `IndexLookUp ... limit embedded(offset:1,
+  count:6)` was taken into the source and filtered before the offset.
+- `tidb-executor/src/access_path.rs` `append_lookup_chunk` stops at `limit`.
+  The direct chunk path appended whole storage batches past the pushed count
+  (`limit 3` returned 4 rows).
+- `tidb-executor/src/driver/physical_builder.rs`
+  `lower_index_lookup_selections`: the build side of a `LocalIndexLookUp` is
+  lowered as index conditions (`set_index_conditions`), evaluated on entries
+  before the build-side `Limit` cuts them. Only the probe side and the
+  operators above the junction become the table-side scan filter. Before,
+  every Selection became a table-side residual, so the index stream was never
+  cut at `offset + count`.
+
+To finish:
+1. Add unistore_cop tests for both queries (t1 `LIMIT 1, 6` under a root
+   Selection; t2 `b < 3 and a < 'c' limit 3`).
+2. Run `cargo nextest run -p tidb-executor`, then the
+   `executor/index_lookup_pushdown` topic replay.
+3. Commit, then run the locked build and push (`af35096d26` goes with it).
+
+Two EXPLAIN differences in the same topic are still open:
+- Go labels the children of `LocalIndexLookUp` `(Build)` and `(Probe)`
+  (`│ ├─Limit(Build)`, `│ └─TableRowIDScan(Probe)`); Rust prints no label.
+  Start at Go `pkg/planner/core/flat_plan.go:312`.
+- `LocalIndexLookUp` estRows and its cloned probe `TableRowIDScan` follow
+  the build child's row count in Go: 3.00 under a `Limit 3`. Rust prints the
+  index scan's 126.89. Start at Go
+  `pkg/planner/core/operator/physicalop/physical_indexlookup.go:83-100`.
 
 ## What is left
 
@@ -89,9 +127,15 @@ bug. Re-probe it.
 - `infoschema/tables` (1): `statements_summary.exec_count` for `select ?`.
 - `executor/sample` (3): `TABLESAMPLE REGIONS()` row sets after
   `SPLIT TABLE ... REGIONS n`.
-- `executor/index_lookup_join` 2, `executor/index_lookup_merge_join` 2,
-  `executor/index_lookup_pushdown` 4, `index_merge` 3: wrong rows or row
-  order in index joins, the merge join and index-lookup pushdown.
+- `executor/index_lookup_join` 2 (one is `@@last_sql_use_alloc`),
+  `index_merge` 3 (an `EXECUTE` returns wrong rows): wrong rows or row order.
+  `executor/index_lookup_merge_join` 2 is fixed by `af35096d26`.
+  `executor/index_lookup_pushdown` 4: the two data rows are fixed in the
+  uncommitted work above, and the two EXPLAIN rows are still open.
+- `collation_pointget` (2): `where xxxxx.a` and an alias-hidden `t.a` are
+  accepted where Go errors. This is likely a point-get fast path that skips
+  name resolution. A simple table probe errored correctly, so start from the
+  corpus table's shape.
 - `ddl/db_partition` 5, `table/partition` 1, `generated_columns` 1,
   `util/ranger` 1, `collation_pointget` 2, `bindinfo/bind` 2,
   `executor/ddl` 1 (a view over `AS OF TIMESTAMP` must refuse with 1356),
@@ -120,12 +164,14 @@ bug. Re-probe it.
 
 ## Next steps, in order
 
-1. Run the four prepared differential batteries (partitions, columns and
-   defaults, indexes/views/sequences, misc DDL/DML; listed in *Differential
-   probes*). Triage every difference the same way: ask the Go oracle, then
-   find the production code path. Write more batteries in areas where
+0. Finish the uncommitted index-lookup pushdown work (see above), then push.
+1. The four prepared differential batteries were run (partitions, columns
+   and defaults, indexes/views/sequences, misc DDL/DML). Every difference
+   left was noise: testkit vs server display width, autoid step, connection
+   collation, and error code -1 vs 1105. Write new batteries where
    production has its own code: cluster DDL planner, catalog loader, account
-   reconcile, statistics routes.
+   reconcile, statistics routes. Triage each difference the same way: ask
+   the Go oracle, then find the production code path.
 2. `Grantor`, then `tidb_tmp_table_max_size`, then the index-join and
    index-merge row differences.
 3. Milestone 4 of the ExecPlan (retire the in-process transaction model)
