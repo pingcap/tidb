@@ -74,12 +74,12 @@ type blockParser struct {
 
 	checkRowLen bool
 	rowStartPos int64
-	// maxRowTextLen is the maximum number of source bytes a single row may
-	// occupy before the parser rejects it. The CSV parser sets it to the entry
-	// size limit, while the SQL parser allows up to twice that because binary
-	// values may be written as hex literals or escaped strings. A non-positive
-	// value disables the check.
-	maxRowTextLen int64
+	// maxRowSize is the maximum size, in source-text bytes, that a single row
+	// may occupy before the parser rejects it. The CSV parser sets it to the
+	// entry size limit, while the SQL parser allows up to twice that because
+	// binary values may be written as hex literals or escaped strings. A
+	// non-positive value disables the check.
+	maxRowSize int64
 }
 
 func makeBlockParser(
@@ -88,20 +88,20 @@ func makeBlockParser(
 	ioWorkers *worker.Pool,
 	metrics *metric.Metrics,
 	logger log.Logger,
-	maxRowTextLen int64,
+	maxRowSize int64,
 ) blockParser {
 	pool := zeropool.New[[]types.Datum](func() []types.Datum {
 		return make([]types.Datum, 0, 16)
 	})
 	return blockParser{
-		reader:        MakePooledReader(reader, ioWorkers),
-		blockBuf:      make([]byte, blockBufSize*config.BufferSizeScale),
-		remainBuf:     &bytes.Buffer{},
-		appendBuf:     &bytes.Buffer{},
-		Logger:        logger,
-		rowPool:       &pool,
-		metrics:       metrics,
-		maxRowTextLen: maxRowTextLen,
+		reader:     MakePooledReader(reader, ioWorkers),
+		blockBuf:   make([]byte, blockBufSize*config.BufferSizeScale),
+		remainBuf:  &bytes.Buffer{},
+		appendBuf:  &bytes.Buffer{},
+		Logger:     logger,
+		rowPool:    &pool,
+		metrics:    metrics,
+		maxRowSize: maxRowSize,
 	}
 }
 
@@ -206,7 +206,7 @@ func (parser *blockParser) endRowLenCheck() {
 }
 
 func (parser *blockParser) rowLenExceedsLimit(rowBytes int64) error {
-	if parser.maxRowTextLen > 0 && parser.checkRowLen && rowBytes > parser.maxRowTextLen {
+	if parser.maxRowSize > 0 && parser.checkRowLen && rowBytes > parser.maxRowSize {
 		return parsedef.ErrRowTooLarge
 	}
 	return nil
