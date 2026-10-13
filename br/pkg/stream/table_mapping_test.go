@@ -1221,6 +1221,35 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, "target", got.TargetDBName)
 		require.Equal(t, int64(900), got.TargetDBID)
 	})
+
+	t.Run("adopt the persisted target identity as a whole", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		// The new log interval re-resolved the renamed source table to another
+		// rule, but the persisted ID map had already restored it to y.copy. The
+		// target name and the target database ID must not come from two identities.
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "s",
+				DbID: 100,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "u", TableID: 201, TargetDBName: "x", TargetDBID: -1},
+				},
+			},
+		}
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+			1: {
+				Name: "s",
+				DbID: 100,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "copy", TableID: 200, TargetDBName: "y", TargetDBID: 900},
+				},
+			},
+		})
+		got := tm.DBReplaceMap[1].TableMap[11]
+		require.Equal(t, "copy", got.Name)
+		require.Equal(t, "y", got.TargetDBName)
+		require.Equal(t, int64(900), got.TargetDBID)
+	})
 }
 
 func TestExtractTableSimpleInfoTracksUnsupportedDependencies(t *testing.T) {

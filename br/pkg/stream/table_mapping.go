@@ -693,22 +693,17 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			// its final snapshot target by table ID instead of requiring it to
 			// remain under the same source DBReplace.
 			if base, exists := baseTableMap[upTableID]; exists {
-				// The persisted ID map owns an explicit route. A later log interval
-				// may contain only table DDLs, so the scan cannot resolve the source
-				// schema name and silently drops the route. Restore the routed target
-				// name and table name from the base map.
-				if existingTableReplace.TargetDBName == "" && base.table.TargetDBName != "" {
+				// A route persisted in the ID map is the table's stable downstream
+				// identity. The log scan can lose it (a table DDL cannot name its
+				// schema) or re-resolve it to a different rule after an upstream
+				// rename, so adopt the persisted target name and database ID as one
+				// unit instead of mixing them with the scanned target.
+				if base.table.TargetDBName != "" {
 					existingTableReplace.TargetDBName = base.table.TargetDBName
 					existingTableReplace.Name = base.table.Name
-				}
-				if existingTableReplace.Name == "" && base.table.Name != "" {
-					existingTableReplace.Name = base.table.Name
-				}
-				// TargetDBName marks an explicit route. The snapshot stage owns
-				// the allocated downstream ID, but must not introduce a route for
-				// an identity mapping or replace the route's stable target name.
-				if existingTableReplace.TargetDBName != "" {
 					existingTableReplace.TargetDBID = base.table.EffectiveDBID(base.db)
+				} else if existingTableReplace.Name == "" && base.table.Name != "" {
+					existingTableReplace.Name = base.table.Name
 				}
 				existingTableReplace.HasForeignKeys = existingTableReplace.HasForeignKeys || base.table.HasForeignKeys
 				mergeForeignKeyReferences(existingTableReplace, base.table)
@@ -735,15 +730,12 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 				} else {
 					// merge partition mappings for existing tables
 					existingTableReplace := existingDBReplace.TableMap[tableUpID]
-					if existingTableReplace.TargetDBName == "" && baseTableReplace.TargetDBName != "" {
+					if baseTableReplace.TargetDBName != "" {
 						existingTableReplace.TargetDBName = baseTableReplace.TargetDBName
 						existingTableReplace.Name = baseTableReplace.Name
-					}
-					if existingTableReplace.Name == "" && baseTableReplace.Name != "" {
-						existingTableReplace.Name = baseTableReplace.Name
-					}
-					if existingTableReplace.TargetDBName != "" {
 						existingTableReplace.TargetDBID = baseTableReplace.EffectiveDBID(baseDBReplace)
+					} else if existingTableReplace.Name == "" && baseTableReplace.Name != "" {
+						existingTableReplace.Name = baseTableReplace.Name
 					}
 					existingTableReplace.HasForeignKeys = existingTableReplace.HasForeignKeys || baseTableReplace.HasForeignKeys
 					mergeForeignKeyReferences(existingTableReplace, baseTableReplace)
