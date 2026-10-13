@@ -944,14 +944,8 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sha256 = "15d5799dc0a9c9fc3009ef71ca81e8404142cbb392c9a0b5a27eb3c8e8967661",
-        strip_prefix = "github.com/blacktear23/go-proxyprotocol@v1.0.8",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/blacktear23/go-proxyprotocol/com_github_blacktear23_go_proxyprotocol-v1.0.8.zip",
-            "http://ats.apps.svc/gomod/github.com/blacktear23/go-proxyprotocol/com_github_blacktear23_go_proxyprotocol-v1.0.8.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/blacktear23/go-proxyprotocol/com_github_blacktear23_go_proxyprotocol-v1.0.8.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/blacktear23/go-proxyprotocol/com_github_blacktear23_go_proxyprotocol-v1.0.8.zip",
-        ],
+        sum = "h1:XSu8kU3C9Oo2x3gdwfxpz1ZsE6NaMfe9821ahNPzAf4=",
+        version = "v1.0.8",
     )
     go_repository(
         name = "com_github_blizzy78_varnamelen",
@@ -7181,14 +7175,8 @@ def go_deps():
         build_tags = ["intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "bd7d6ebdf1818cfb909e5a51aba7b28f6d493696fc4c6311e1d072cb30ea126e",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20261012023734-588690d3c5fa",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20261012023734-588690d3c5fa.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20261012023734-588690d3c5fa.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20261012023734-588690d3c5fa.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20261012023734-588690d3c5fa.zip",
-        ],
+        sum = "h1:I2xbVvMqYXIbQ0vAXYLK01E6bA8HeG8/8PNttkK7pEY=",
+        version = "v2.0.8-0.20261012023734-588690d3c5fa",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
