@@ -1896,6 +1896,36 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 
 func TestPITRIDMapRouteFingerprintContinuity(t *testing.T) {
 	ctx := context.Background()
+	t.Run("routed resume keeps saved filters and allocated identities", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, dom, fakeSession{})
+		require.NoError(t, client.SetStorage(ctx, backend, nil))
+		saved := stream.NewTableMappingManager()
+		saved.DBReplaceMap[1] = &stream.DBReplace{
+			Name: "x", SourceName: "s", DbID: 800, FilteredOut: true, SchemaRouted: true,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				11: {Name: "copy", TableID: 901, TargetDBName: "y", TargetDBID: 900, FilteredOut: true},
+			},
+		}
+		require.NoError(t, client.TEST_saveIDMap(ctx, saved, nil, "route"))
+		scan := stream.NewTableMappingManager()
+		scan.DBReplaceMap[1] = &stream.DBReplace{
+			Name: "s", SourceName: "s", DbID: -1,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{11: {Name: "t", TableID: -2}},
+		}
+		require.NoError(t, client.GetBaseIDMapAndMerge(ctx, false, true, nil, scan, "route"))
+		require.Equal(t, "x", scan.DBReplaceMap[1].Name)
+		require.Equal(t, "s", scan.DBReplaceMap[1].SourceName)
+		require.Equal(t, int64(800), scan.DBReplaceMap[1].DbID)
+		require.True(t, scan.DBReplaceMap[1].FilteredOut)
+		require.True(t, scan.DBReplaceMap[1].TableMap[11].FilteredOut)
+		require.Equal(t, "copy", scan.DBReplaceMap[1].TableMap[11].Name)
+		require.Equal(t, int64(901), scan.DBReplaceMap[1].TableMap[11].TableID)
+		require.Equal(t, int64(900), scan.DBReplaceMap[1].TableMap[11].TargetDBID)
+	})
+
 	testCases := []struct {
 		name                 string
 		persistedFingerprint string

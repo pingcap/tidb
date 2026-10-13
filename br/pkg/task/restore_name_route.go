@@ -420,13 +420,24 @@ func applyNameRoutesToTableMapping(
 	history *stream.LogBackupTableHistoryManager,
 	mapping *stream.TableMappingManager,
 	sources *restoreNameSources,
-) {
+) error {
+	if sources != nil {
+		for dbID, name := range sources.databases {
+			if err := mapping.SetSourceDatabaseName(dbID, name.O); err != nil {
+				return err
+			}
+		}
+	}
 	type sourceDB struct {
 		name string
 	}
 	sourceDBs := make(map[int64]sourceDB, len(mapping.DBReplaceMap))
 	for dbID, dbReplace := range mapping.DBReplaceMap {
-		sourceDBs[dbID] = sourceDB{name: dbReplace.Name}
+		name := dbReplace.SourceName
+		if name == "" {
+			name = dbReplace.Name // Only scanned, pre-merge names are available here.
+		}
+		sourceDBs[dbID] = sourceDB{name: name}
 	}
 	sourceSchemaName := func(dbID int64) string {
 		if sources != nil {
@@ -438,7 +449,14 @@ func applyNameRoutesToTableMapping(
 	}
 
 	for dbID, dbReplace := range mapping.DBReplaceMap {
-		targetSchema, _, schemaRouted := router.Route(ast.NewCIStr(sourceSchemaName(dbID)), ast.CIStr{})
+		sourceName := sourceSchemaName(dbID)
+		if sourceName != "" {
+			dbReplace.SourceName = sourceName
+			if dbReplace.Name == "" {
+				dbReplace.Name = sourceName
+			}
+		}
+		targetSchema, _, schemaRouted := router.Route(ast.NewCIStr(sourceName), ast.CIStr{})
 		// DBReplace.Name is persisted in PitrDBMap and marks that a schema-level
 		// route owns the parent DB mapping. Exact table routes deliberately leave
 		// the source parent name unchanged.
@@ -455,6 +473,9 @@ func applyNameRoutesToTableMapping(
 			sourceTableName := tableReplace.Name
 			if locations, ok := tableHistory[tableID]; ok {
 				latest := locations[1]
+				// An unknown latest schema must remain unresolved until the base
+				// map supplies its source name; never borrow an old location.
+				sourceDBName = sourceDBs[latest.DbID].name
 				if dbName, exists := history.GetDBNameByID(latest.DbID); exists {
 					sourceDBName = dbName
 				}
@@ -469,6 +490,9 @@ func applyNameRoutesToTableMapping(
 				}
 			}
 			targetDB, targetTable, matched := router.Route(ast.NewCIStr(sourceDBName), ast.NewCIStr(sourceTableName))
+			if tableReplace.SourceName == "" {
+				tableReplace.SourceName = sourceTableName
+			}
 			if !matched {
 				continue
 			}
@@ -484,4 +508,5 @@ func applyNameRoutesToTableMapping(
 			tableReplace.TargetDBID = 0
 		}
 	}
+	return nil
 }

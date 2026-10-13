@@ -1473,9 +1473,10 @@ func RunStreamRestore(
 		}
 	}
 	metaInfoProcessor := logclient.NewMetaKVInfoProcessor(logClient)
-	// doesn't need to build if id map has been saved
+	// Routed resumes also scan committed lifetimes before replaying metadata;
+	// the saved ID map remains authoritative for IDs, routes and filters.
 	idMapSaved := isCurrentIdMapSaved(taskInfo.CheckpointInfo)
-	if !idMapSaved {
+	if !idMapSaved || cfg.hasNameRouting() {
 		// we restore additional tables at full snapshot phase when it is renamed into the filter range
 		// later in log backup.
 		// we also ignore the tables that currently in filter range but later renamed out of the filter.
@@ -1490,7 +1491,11 @@ func RunStreamRestore(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		applyNameRoutesToTableMapping(nameRouter, metaInfoProcessor.GetTableHistoryManager(), metaInfoProcessor.GetTableMappingManager(), nil)
+		if err := applyNameRoutesToTableMapping(
+			nameRouter, metaInfoProcessor.GetTableHistoryManager(), metaInfoProcessor.GetTableMappingManager(), nil,
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// Save PITR-related info to cfg for blocklist creation in defer function
@@ -2565,6 +2570,17 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	nameRouter, err := cfg.getNameRouter()
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if cfg.hasNameRouting() {
+		if err := cfg.tableMappingManager.BindUnresolvedTableRoutes(func(schema, table string) (string, string, bool) {
+			targetSchema, targetTable, matched := nameRouter.Route(ast.NewCIStr(schema), ast.NewCIStr(table))
+			return targetSchema.O, targetTable.O, matched
+		}, true); err != nil {
+			return errors.Trace(err)
+		}
+		if err := cfg.tableMappingManager.ValidateUniqueTargetNames(ctx, client.GetDomain().InfoSchema()); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if err := cfg.tableMappingManager.ValidateRoutedDependenciesWithRoute(func(schema, table string) (string, string, bool) {
 		targetSchema, targetTable, matched := nameRouter.Route(ast.NewCIStr(schema), ast.NewCIStr(table))

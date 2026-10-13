@@ -157,7 +157,7 @@ func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
 		},
 	}
 
-	applyNameRoutesToTableMapping(router, stream.NewTableHistoryManager(), mapping, nil)
+	require.NoError(t, applyNameRoutesToTableMapping(router, stream.NewTableHistoryManager(), mapping, nil))
 
 	require.Equal(t, "schema_target", mapping.DBReplaceMap[1].Name)
 	require.Equal(t, "schema_target", mapping.DBReplaceMap[1].TableMap[11].TargetDBName)
@@ -224,6 +224,37 @@ func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
 }
 
 func TestApplyNameRoutesUsesSnapshotSourceNames(t *testing.T) {
+	t.Run("unknown latest schema does not borrow a historical name", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"old.t:wrong.copy"})
+		require.NoError(t, err)
+		mapping := stream.NewTableMappingManager()
+		mapping.DBReplaceMap[1] = stream.NewDBReplace("old", -1)
+		mapping.DBReplaceMap[2] = stream.NewDBReplace("", -2)
+		mapping.DBReplaceMap[1].TableMap[22] = stream.NewTableReplace("t", -3)
+		mapping.DBReplaceMap[2].TableMap[22] = stream.NewTableReplace("t", -3)
+		history := stream.NewTableHistoryManager()
+		history.AddTableHistory(22, "t", 2, 20)
+		require.NoError(t, applyNameRoutesToTableMapping(router, history, mapping, nil))
+		require.Empty(t, mapping.DBReplaceMap[1].TableMap[22].TargetDBName)
+		require.Empty(t, mapping.DBReplaceMap[2].TableMap[22].TargetDBName)
+	})
+
+	t.Run("seed snapshot-only source parents before table routing", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"source.t:target.copy", "schema_source:schema_target"})
+		require.NoError(t, err)
+		mapping := stream.NewTableMappingManager()
+		sources := &restoreNameSources{
+			databases: map[int64]ast.CIStr{1: ast.NewCIStr("source"), 2: ast.NewCIStr("schema_source")},
+			tables:    map[int64]nameroute.ObjectName{},
+		}
+		require.NoError(t, applyNameRoutesToTableMapping(router, stream.NewTableHistoryManager(), mapping, sources))
+		require.Equal(t, "source", mapping.DBReplaceMap[1].Name)
+		require.Equal(t, "source", mapping.DBReplaceMap[1].SourceName)
+		require.Equal(t, "schema_target", mapping.DBReplaceMap[2].Name)
+		require.Equal(t, "schema_source", mapping.DBReplaceMap[2].SourceName)
+		require.True(t, mapping.DBReplaceMap[2].SchemaRouted)
+	})
+
 	router, err := nameroute.Parse([]string{"test.t:target.copy"})
 	require.NoError(t, err)
 
@@ -253,7 +284,7 @@ func TestApplyNameRoutesUsesSnapshotSourceNames(t *testing.T) {
 
 	t.Run("log-only resolution drops the route", func(t *testing.T) {
 		mapping := newMapping()
-		applyNameRoutesToTableMapping(router, history, mapping, nil)
+		require.NoError(t, applyNameRoutesToTableMapping(router, history, mapping, nil))
 		tableReplace := mapping.DBReplaceMap[130].TableMap[135]
 		require.Equal(t, "t", tableReplace.Name)
 		require.Empty(t, tableReplace.TargetDBName)
@@ -261,7 +292,7 @@ func TestApplyNameRoutesUsesSnapshotSourceNames(t *testing.T) {
 
 	t.Run("snapshot sources bind the route", func(t *testing.T) {
 		mapping := newMapping()
-		applyNameRoutesToTableMapping(router, history, mapping, sources)
+		require.NoError(t, applyNameRoutesToTableMapping(router, history, mapping, sources))
 		tableReplace := mapping.DBReplaceMap[130].TableMap[135]
 		require.Equal(t, "copy", tableReplace.Name)
 		require.Equal(t, "target", tableReplace.TargetDBName)

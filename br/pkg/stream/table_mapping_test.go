@@ -84,6 +84,17 @@ func (m *MockMetaInfoCollector) OnTableInfo(dbID, tableId int64, tableSimpleInfo
 }
 
 func TestToProto(t *testing.T) {
+	t.Run("persist the source schema independently of its target", func(t *testing.T) {
+		input := []*backuppb.PitrDBMap{{
+			Name: "target", SourceName: "source", SchemaRouted: true,
+			IdMap: &backuppb.IDMap{UpstreamId: 1, DownstreamId: 900},
+		}}
+		tm := NewTableMappingManager()
+		require.NoError(t, tm.FromDBReplaceMap(FromDBMapProto(input)))
+		require.Equal(t, "source", tm.ToProto()[0].SourceName)
+		require.Equal(t, "target", tm.ToProto()[0].Name)
+	})
+
 	var (
 		dbName, tblName            string       = "db1", "t1"
 		oldDBID                    UpstreamID   = 100
@@ -1183,6 +1194,198 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, "copy", got.Name)
 		require.Equal(t, "target", got.TargetDBName)
 		require.Equal(t, int64(900), got.TargetDBID)
+	})
+
+	t.Run("parent identity is independent of table route plan order", func(t *testing.T) {
+		for _, targetFirst := range []bool{true, false} {
+			for _, unnamedParent := range []bool{false, true} {
+				dom := domain.NewMockDomain()
+				dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"source": 800, "target": 900}))
+				sourceDB := &model.DBInfo{ID: 1, Name: ast.NewCIStr("source")}
+				source := &metautil.Database{Info: sourceDB}
+				plans := []*restoreutils.DatabaseRestorePlan{
+					{Source: source, Target: &model.DBInfo{Name: ast.NewCIStr("source")}},
+					{Source: source, Target: &model.DBInfo{Name: ast.NewCIStr("target")}, Reused: true},
+				}
+				if targetFirst {
+					plans[0], plans[1] = plans[1], plans[0]
+				}
+				tm := NewTableMappingManager()
+				if unnamedParent {
+					tm.DBReplaceMap[1] = NewDBReplace("", -1)
+				}
+				err := tm.UpdateDownstreamIds(plans, []*restoreutils.CreatedTable{
+					{
+						OldTable: &metautil.Table{DB: sourceDB, Info: &model.TableInfo{ID: 11, Name: ast.NewCIStr("t")}},
+						Table:    &model.TableInfo{ID: 911, Name: ast.NewCIStr("copy")}, TargetDB: ast.NewCIStr("target"),
+					},
+					{
+						OldTable: &metautil.Table{DB: sourceDB, Info: &model.TableInfo{ID: 12, Name: ast.NewCIStr("identity")}},
+						Table:    &model.TableInfo{ID: 812, Name: ast.NewCIStr("identity")}, TargetDB: ast.NewCIStr("source"),
+					},
+				}, dom)
+				require.NoError(t, err)
+				parent := tm.DBReplaceMap[1]
+				require.Equal(t, "source", parent.Name, "targetFirst=%v unnamedParent=%v", targetFirst, unnamedParent)
+				require.Equal(t, int64(800), parent.DbID)
+				require.False(t, parent.Reused)
+				require.Equal(t, "source", parent.TableMap[12].EffectiveDBName(parent))
+				require.Equal(t, int64(800), parent.TableMap[12].EffectiveDBID(parent))
+				require.Equal(t, "target", parent.TableMap[11].EffectiveDBName(parent))
+				require.Equal(t, int64(900), parent.TableMap[11].EffectiveDBID(parent))
+			}
+		}
+	})
+
+	t.Run("bind recreated IDs from persisted source schemas", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		collector := NewMockMetaInfoCollector()
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 22, 20, &tableSimpleInfo{Name: "t"}, collector))
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+			1: {
+				Name: "x", SourceName: "s", DbID: 800, SchemaRouted: true,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "copy", TableID: 901, TargetDBName: "y", TargetDBID: 900},
+				},
+			},
+		})
+		route := func(schema, table string) (string, string, bool) {
+			if schema == "s" && table == "t" {
+				return "y", "copy", true
+			}
+			if schema == "s" {
+				return "x", table, true
+			}
+			return schema, table, false
+		}
+		require.NoError(t, tm.BindUnresolvedTableRoutes(route, true))
+		parent := tm.DBReplaceMap[1]
+		require.Equal(t, "s", parent.SourceName)
+		require.Equal(t, "x", parent.Name)
+		require.True(t, parent.SchemaRouted)
+		require.Equal(t, "y", parent.TableMap[22].TargetDBName)
+		require.Equal(t, "copy", parent.TableMap[22].Name)
+		require.Equal(t, int64(0), parent.TableMap[22].TargetDBID)
+		require.Equal(t, int64(900), parent.TableMap[11].TargetDBID)
+
+		parent.SourceName = ""
+		parent.TableMap[22].TargetDBName = ""
+		require.ErrorContains(t, tm.BindUnresolvedTableRoutes(route, true), "cannot resolve source identity")
+		require.NoError(t, tm.BindUnresolvedTableRoutes(route, false))
+	})
+
+	t.Run("bind historical buckets using the latest source location", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		collector := NewMockMetaInfoCollector()
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 22, 10, &tableSimpleInfo{Name: "old"}, collector))
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(2, 22, 20, &tableSimpleInfo{Name: "new"}, collector))
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+			1: {Name: "s", SourceName: "s", DbID: 800, TableMap: map[UpstreamID]*TableReplace{}},
+			2: {Name: "moved", SourceName: "moved", DbID: 900, TableMap: map[UpstreamID]*TableReplace{}},
+		})
+		require.NoError(t, tm.BindUnresolvedTableRoutes(func(schema, table string) (string, string, bool) {
+			require.Equal(t, "moved", schema)
+			require.Equal(t, "new", table)
+			return "target", "copy", true
+		}, true))
+		require.Equal(t, "target", tm.DBReplaceMap[1].TableMap[22].TargetDBName)
+		require.Equal(t, "target", tm.DBReplaceMap[2].TableMap[22].TargetDBName)
+	})
+
+	t.Run("validate committed endpoint target names", func(t *testing.T) {
+		put := func(t *testing.T, tm *TableMappingManager, dbID, tableID int64, ts uint64) {
+			t.Helper()
+			ts += 1 << 60
+			value, err := json.Marshal(&model.TableInfo{ID: tableID, Name: ast.NewCIStr("t")})
+			require.NoError(t, err)
+			collector := NewMockMetaInfoCollector()
+			require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+				Key: utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts-1), Value: value,
+			}, consts.DefaultCF, ts-1, collector))
+			require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+				Key:   utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts),
+				Value: (&RawWriteCFValue{t: WriteTypePut, startTs: ts - 1}).EncodeTo(),
+			}, consts.WriteCF, ts, collector))
+			tr := tm.DBReplaceMap[dbID].TableMap[tableID]
+			tr.TargetDBName, tr.Name = "target", "copy"
+		}
+		remove := func(t *testing.T, tm *TableMappingManager, dbID, tableID int64, ts uint64, writeType WriteType) {
+			t.Helper()
+			ts += 1 << 60
+			require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+				Key:   utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.TableKey(tableID), ts),
+				Value: (&RawWriteCFValue{t: writeType, startTs: ts - 1}).EncodeTo(),
+			}, consts.WriteCF, ts, NewMockMetaInfoCollector()))
+		}
+		t.Run("two live IDs with the same source name must conflict", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			put(t, tm, 1, 11, 10)
+			put(t, tm, 1, 22, 30)
+			require.ErrorContains(t, tm.ValidateUniqueTargetNames(context.Background(), nil), "same restore target")
+		})
+		t.Run("committed truncate replacement is allowed", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			put(t, tm, 1, 11, 10)
+			remove(t, tm, 1, 11, 20, WriteTypeDelete)
+			put(t, tm, 1, 22, 30)
+			require.NoError(t, tm.ValidateUniqueTargetNames(context.Background(), nil))
+			// Older records arriving later cannot revive the deleted predecessor.
+			put(t, tm, 1, 11, 15)
+			require.NoError(t, tm.ValidateUniqueTargetNames(context.Background(), nil))
+		})
+		t.Run("a rollback does not delete the predecessor", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			put(t, tm, 1, 11, 10)
+			remove(t, tm, 1, 11, 20, WriteTypeRollback)
+			put(t, tm, 1, 22, 30)
+			require.ErrorContains(t, tm.ValidateUniqueTargetNames(context.Background(), nil), "same restore target")
+		})
+		t.Run("rename removes only the old location", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			put(t, tm, 1, 11, 10)
+			remove(t, tm, 1, 11, 20, WriteTypeDelete)
+			put(t, tm, 2, 11, 20)
+			require.NoError(t, tm.ValidateUniqueTargetNames(context.Background(), nil))
+			put(t, tm, 3, 22, 30)
+			require.ErrorContains(t, tm.ValidateUniqueTargetNames(context.Background(), nil), "same restore target")
+		})
+		t.Run("database deletion removes its tables", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			put(t, tm, 1, 11, 10)
+			require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+				Key:   utils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(1), (1<<60)+20),
+				Value: (&RawWriteCFValue{t: WriteTypeDelete, startTs: (1 << 60) + 19}).EncodeTo(),
+			}, consts.WriteCF, (1<<60)+20, NewMockMetaInfoCollector()))
+			put(t, tm, 2, 22, 30)
+			require.NoError(t, tm.ValidateUniqueTargetNames(context.Background(), nil))
+		})
+		t.Run("baseline table without source names still participates", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+				1: {Name: "target", DbID: 1, TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "dummy_table", TableID: 1001},
+				}},
+			})
+			put(t, tm, 2, 22, 30)
+			tm.DBReplaceMap[2].TableMap[22].Name = "dummy_table"
+			is := createMockInfoSchemaWithDBs(map[string]int64{"target": 1})
+			require.ErrorContains(t, tm.ValidateUniqueTargetNames(context.Background(), is), "same restore target")
+			tm.DBReplaceMap[1].TableMap[11].TableID = 1002
+			require.NoError(t, tm.ValidateUniqueTargetNames(context.Background(), is))
+		})
+		t.Run("historical alias of one table ID keeps one identity", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			// The same table ID appears under two source buckets after an upstream
+			// cross-schema rename; both resolve to the same target, so they are one
+			// surviving object rather than a duplicate target name.
+			put(t, tm, 1, 11, 10)
+			put(t, tm, 2, 11, 20)
+			require.NoError(t, tm.ValidateUniqueTargetNames(context.Background(), nil))
+			// A second, different identity for the same table ID is ambiguous and
+			// must be rejected.
+			tm.DBReplaceMap[2].TableMap[11].TargetDBName = "other"
+			require.ErrorContains(t, tm.ValidateUniqueTargetNames(context.Background(), nil), "conflicting target identities")
+		})
 	})
 
 	t.Run("record route for a snapshot-only table", func(t *testing.T) {

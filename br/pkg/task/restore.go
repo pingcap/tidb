@@ -1633,7 +1633,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// schema whose only log entry is a table DDL (DBReplace.Name stays empty).
 		// Re-bind with the snapshot-backed source names so a table-level route is
 		// not silently dropped from the PiTR ID map.
-		applyNameRoutesToTableMapping(nameRouter, cfg.logTableHistoryManager, cfg.tableMappingManager, nameSources)
+		if err := applyNameRoutesToTableMapping(
+			nameRouter, cfg.logTableHistoryManager, cfg.tableMappingManager, nameSources,
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	// The optional target-existence check needs the effective target names before
 	// AllocTableIDs/PreCheck run. Without routing the target names are identical

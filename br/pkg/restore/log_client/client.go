@@ -1224,6 +1224,11 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	if len(dbReplaces) != 0 {
 		tableMappingManager.SetFromPiTRIDMap()
 		tableMappingManager.MergeBaseDBReplace(dbReplaces)
+		if loadSavedIDMap {
+			// A routed resume may rescan lifetimes. Do not replace saved filters
+			// and allocated identities with the fresh scan's temporary mappings.
+			tableMappingManager.DBReplaceMap = dbReplaces
+		}
 	}
 	return nil
 }

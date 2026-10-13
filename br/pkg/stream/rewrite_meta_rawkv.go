@@ -45,6 +45,9 @@ type TableReplace struct {
 	TargetDBName   string
 	TargetDBID     DownstreamID
 	HasForeignKeys bool
+	// SourceName is the upstream table name observed before routing.
+	// It is runtime-only; persisted routes already own their target identity.
+	SourceName string
 	// ForeignKeyReferences contains source names observed while scanning log
 	// metadata. It is persisted in the PiTR ID map so checkpoint retries retain
 	// the same routed-dependency validation information.
@@ -89,6 +92,9 @@ type DBReplace struct {
 	TableMap    map[UpstreamID]*TableReplace
 	FilteredOut bool
 	Reused      bool
+	// SourceName identifies this upstream schema independently of the target Name.
+	// It is persisted so later log-only restores can route new upstream table IDs.
+	SourceName string
 	// SchemaRouted reports that an explicit schema-level rename rule matched
 	// this source schema. The schema itself is then restored even when every
 	// selected table is overridden to another target schema. It is persisted in

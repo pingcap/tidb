@@ -74,6 +74,24 @@ type tableMetaValue struct {
 	count int
 }
 
+// metadataEvent is the latest committed state of one source metadata key.
+// Rollbacks and default-CF values never establish an object's lifetime.
+type metadataEvent struct {
+	ts      uint64
+	deleted bool
+}
+
+type sourceTableLocation struct {
+	dbID int64
+	name string
+	ts   uint64
+}
+
+type tableLocationKey struct {
+	dbID    int64
+	tableID int64
+}
+
 // TableMappingManager processes each log backup meta kv and generate new id for DB, table and partition for
 // downstream cluster. It maintains the id mapping and passes down later to the rewrite logic.
 //
@@ -88,6 +106,13 @@ type tableMetaValue struct {
 type TableMappingManager struct {
 	DBReplaceMap  map[UpstreamID]*DBReplace
 	fromPitrIdMap bool
+
+	// These maps describe the scanned interval independently of routed names
+	// and of downstream metadata changed by a partially completed restore.
+	databaseEvents     map[UpstreamID]metadataEvent
+	tableEvents        map[tableLocationKey]metadataEvent
+	latestTableSources map[UpstreamID]sourceTableLocation
+	baseTableIDs       map[UpstreamID]struct{}
 
 	// used during scanning log to identify already seen id mapping. For example after exchange partition, the
 	// exchanged-in table already had an id mapping can be identified in the partition so don't allocate a new id.
@@ -300,6 +325,9 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMappingForWriteCf(
 			ts:   rawWriteCFValue.GetStartTs(),
 		}
 		delete(tm.tempDefaultKVDbMap, idx)
+		if rawWriteCFValue.IsDelete() {
+			tm.recordDatabaseEvent(dbId, commitTs, true)
+		}
 		return nil
 	}
 
@@ -363,9 +391,11 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(
 	}
 	if dbName != "" {
 		dbReplace.Name = dbName
+		dbReplace.SourceName = dbName
 		dbReplace.SourceDBInfo = dbInfo
 		normalizeForeignKeyReferences(dbReplace)
 	}
+	tm.recordDatabaseEvent(dbId, commitTs, false)
 	collector.OnDatabaseInfo(dbId, dbName, commitTs)
 	return nil
 }
@@ -380,7 +410,10 @@ func normalizeForeignKeyReferences(dbReplace *DBReplace) {
 		references := tableReplace.ForeignKeyReferences[:0]
 		for _, ref := range tableReplace.ForeignKeyReferences {
 			if ref.Schema == "" {
-				ref.Schema = dbReplace.Name
+				ref.Schema = dbReplace.SourceName
+				if ref.Schema == "" && !dbReplace.SchemaRouted {
+					ref.Schema = dbReplace.Name
+				}
 			}
 			key := strings.ToLower(ref.Schema) + "\x00" + strings.ToLower(ref.Table)
 			if _, ok := seen[key]; ok {
@@ -515,6 +548,9 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMappingForWriteCf(
 			ts:      rawWriteCFValue.GetStartTs(),
 		}
 		delete(tm.tempDefaultKVTableMap, idx)
+		if rawWriteCFValue.IsDelete() {
+			tm.recordTableEvent(dbId, tableId, commitTs, true)
+		}
 		return nil
 	}
 
@@ -581,6 +617,13 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
 	}
 	if tableSimpleInfo.Name != "" {
 		tableReplace.Name = tableSimpleInfo.Name
+		tableReplace.SourceName = tableSimpleInfo.Name
+		if tm.latestTableSources == nil {
+			tm.latestTableSources = make(map[UpstreamID]sourceTableLocation)
+		}
+		if previous, ok := tm.latestTableSources[tableId]; !ok || commitTs >= previous.ts {
+			tm.latestTableSources[tableId] = sourceTableLocation{dbID: dbId, name: tableSimpleInfo.Name, ts: commitTs}
+		}
 	}
 	// Keep the union across all table-info versions in the restore interval. A
 	// routed object is unsupported if any replayed version is a view or carries
@@ -615,6 +658,7 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
 			tableReplace.PartitionMap[partitionId] = newID
 		}
 	}
+	tm.recordTableEvent(dbId, tableId, commitTs, false)
 	collector.OnTableInfo(dbId, tableId, tableSimpleInfo, commitTs)
 	return nil
 }
@@ -653,11 +697,15 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 		db    *DBReplace
 	}
 	baseTableMap := make(map[UpstreamID]baseTable)
+	if tm.baseTableIDs == nil {
+		tm.baseTableIDs = make(map[UpstreamID]struct{})
+	}
 	// first pass: update all global IDs
 	for upstreamID, baseDBReplace := range baseMap {
 		tm.globalIdMap[upstreamID] = baseDBReplace.DbID
 
 		for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
+			tm.baseTableIDs[tableUpID] = struct{}{}
 			tm.globalIdMap[tableUpID] = baseTableReplace.TableID
 			baseTableMap[tableUpID] = baseTable{table: baseTableReplace, db: baseDBReplace}
 
@@ -678,6 +726,10 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			if existingDBReplace.Name == "" && baseDBReplace.Name != "" {
 				existingDBReplace.Name = baseDBReplace.Name
 			}
+			if existingDBReplace.SourceName == "" {
+				existingDBReplace.SourceName = baseDBReplace.SourceName
+			}
+			existingDBReplace.SchemaRouted = existingDBReplace.SchemaRouted || baseDBReplace.SchemaRouted
 			// update the reused flag of the db replace, maybe it is reused in snapshot restore.
 			if baseDBReplace.Reused {
 				existingDBReplace.Reused = true
@@ -693,6 +745,9 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			// its final snapshot target by table ID instead of requiring it to
 			// remain under the same source DBReplace.
 			if base, exists := baseTableMap[upTableID]; exists {
+				if existingTableReplace.SourceName == "" {
+					existingTableReplace.SourceName = base.table.SourceName
+				}
 				// A route persisted in the ID map is the table's stable downstream
 				// identity. The log scan can lose it (a table DDL cannot name its
 				// schema) or re-resolve it to a different rule after an upstream
@@ -747,6 +802,143 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			}
 		}
 	}
+	for _, dbReplace := range tm.DBReplaceMap {
+		normalizeForeignKeyReferences(dbReplace)
+	}
+}
+
+// SetSourceDatabaseName seeds a selected snapshot schema even when the log
+// interval contains no DBInfo or table metadata for it.
+func (tm *TableMappingManager) SetSourceDatabaseName(dbID UpstreamID, name string) error {
+	dbReplace, err := tm.getOrCreateDBReplace(dbID)
+	if err != nil {
+		return err
+	}
+	dbReplace.SourceName = name
+	if dbReplace.Name == "" {
+		dbReplace.Name = name
+	}
+	normalizeForeignKeyReferences(dbReplace)
+	return nil
+}
+
+func (tm *TableMappingManager) recordDatabaseEvent(dbID UpstreamID, ts uint64, deleted bool) {
+	if tm.databaseEvents == nil {
+		tm.databaseEvents = make(map[UpstreamID]metadataEvent)
+	}
+	if previous, ok := tm.databaseEvents[dbID]; !ok || ts >= previous.ts {
+		tm.databaseEvents[dbID] = metadataEvent{ts: ts, deleted: deleted}
+	}
+}
+
+func (tm *TableMappingManager) recordTableEvent(dbID, tableID UpstreamID, ts uint64, deleted bool) {
+	if tm.tableEvents == nil {
+		tm.tableEvents = make(map[tableLocationKey]metadataEvent)
+	}
+	key := tableLocationKey{dbID: dbID, tableID: tableID}
+	if previous, ok := tm.tableEvents[key]; !ok || ts >= previous.ts {
+		tm.tableEvents[key] = metadataEvent{ts: ts, deleted: deleted}
+	}
+}
+
+// BindUnresolvedTableRoutes binds new upstream table IDs after the base ID map
+// supplies source schema names missing from table-only log intervals. Historical
+// database buckets use the table's latest source location, not their own name.
+// Persisted table identities are left intact.
+func (tm *TableMappingManager) BindUnresolvedTableRoutes(
+	route func(schema, table string) (targetSchema, targetTable string, matched bool),
+	hasRules bool,
+) error {
+	if !hasRules {
+		return nil
+	}
+	for dbID, dbReplace := range tm.DBReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for tableID, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut || tableReplace.TargetDBName != "" {
+				continue
+			}
+			if _, persisted := tm.baseTableIDs[tableID]; persisted {
+				continue
+			}
+			sourceDBID, sourceName := dbID, tableReplace.SourceName
+			if latest, ok := tm.latestTableSources[tableID]; ok {
+				sourceDBID, sourceName = latest.dbID, latest.name
+			}
+			sourceDB := tm.DBReplaceMap[sourceDBID]
+			if sourceDB == nil || sourceDB.SourceName == "" || sourceName == "" {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"cannot resolve source identity for upstream database ID %d and table ID %d with restore rename rules", sourceDBID, tableID)
+			}
+			targetDB, targetTable, matched := route(sourceDB.SourceName, sourceName)
+			if !matched {
+				continue
+			}
+			tableReplace.Name = targetTable
+			tableReplace.TargetDBName = targetDB
+			// Resolve the ID for the newly bound name; a previous parent ID may
+			// belong to a different schema.
+			tableReplace.TargetDBID = 0
+			if strings.EqualFold(targetDB, dbReplace.Name) {
+				tableReplace.TargetDBID = dbReplace.DbID
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateUniqueTargetNames rejects different surviving upstream tables with
+// one effective target name. Committed deletes remove historical locations;
+// unchanged baseline entries are live only if their downstream table exists.
+// Source-name equality never substitutes for a committed deletion.
+func (tm *TableMappingManager) ValidateUniqueTargetNames(ctx context.Context, infoSchema infoschema.InfoSchema) error {
+	type targetKey struct {
+		db    string
+		table string
+	}
+	targets := make(map[targetKey]UpstreamID)
+	identities := make(map[UpstreamID]targetKey)
+	for dbID, dbReplace := range tm.DBReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for tableID, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			event, scanned := tm.tableEvents[tableLocationKey{dbID: dbID, tableID: tableID}]
+			dbEvent := tm.databaseEvents[dbID]
+			if (scanned && event.deleted) || (dbEvent.deleted && (!scanned || dbEvent.ts >= event.ts)) {
+				continue
+			}
+			if !scanned {
+				if infoSchema == nil {
+					continue
+				}
+				tbl, exists := infoSchema.TableByID(ctx, tableReplace.TableID)
+				if !exists || tbl.Meta().DBID != tableReplace.EffectiveDBID(dbReplace) {
+					continue
+				}
+			}
+			target := targetKey{
+				db: strings.ToLower(tableReplace.EffectiveDBName(dbReplace)), table: strings.ToLower(tableReplace.Name),
+			}
+			if previous, ok := identities[tableID]; ok && previous != target {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"upstream table ID %d has conflicting target identities %s.%s and %s.%s",
+					tableID, previous.db, previous.table, target.db, target.table)
+			}
+			if previousID, ok := targets[target]; ok && previousID != tableID {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"upstream table IDs %d and %d survive at the same restore target %s.%s",
+					previousID, tableID, target.db, target.table)
+			}
+			identities[tableID], targets[target] = target, tableID
+		}
+	}
+	return nil
 }
 
 func (tm *TableMappingManager) IsEmpty() bool {
@@ -1260,7 +1452,8 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 
 	for dbID, dr := range tm.DBReplaceMap {
 		dbm := backuppb.PitrDBMap{
-			Name: dr.Name,
+			Name:       dr.Name,
+			SourceName: dr.SourceName,
 			IdMap: &backuppb.IDMap{
 				UpstreamId:   dbID,
 				DownstreamId: dr.DbID,
@@ -1317,6 +1510,7 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 
 	for _, db := range dbMaps {
 		dr := NewDBReplace(db.Name, db.IdMap.DownstreamId)
+		dr.SourceName = db.SourceName
 		dr.FilteredOut = db.FilteredOut
 		dr.Reused = db.Reused
 		dr.SchemaRouted = db.SchemaRouted
@@ -1378,17 +1572,17 @@ func (tm *TableMappingManager) UpdateDownstreamIds(
 				dbReplace.Reused = existing.Reused
 				dbReplace.SchemaRouted = existing.SchemaRouted
 				if dbReplace.Name == "" {
-					// The log scan cannot name a schema whose only log entry is a
-					// table DDL (the database pre-dates the log window). Fall back
-					// to the schema identity created by the snapshot restore so the
-					// log phase can refresh its metadata and reset table modes.
-					dbReplace.Name = newDBInfo.Name.O
-					dbReplace.DbID = newDBInfo.ID
+					// Table-only logs cannot name their parent schema. Recover the
+					// source parent here; its own target ID is resolved below after
+					// all sibling target creation plans have been collected.
+					dbReplace.Name = dbPlan.Source.Info.Name.O
 				}
 			} else {
-				dbReplace = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
-				dbReplace.Reused = dbPlan.Reused
+				// A source can have several table-route targets. None of those
+				// creation plans owns the parent schema's identity.
+				dbReplace = NewDBReplace(dbPlan.Source.Info.Name.O, tm.generateTempID())
 			}
+			dbReplace.SourceName = dbPlan.Source.Info.Name.O
 			dbReplaces[upstreamDBID] = dbReplace
 		}
 	}
@@ -1399,25 +1593,26 @@ func (tm *TableMappingManager) UpdateDownstreamIds(
 	// a created target. This also covers multiple source schemas merged into one
 	// target even though the snapshot create plan contains that target only once.
 	for upstreamDBID, existing := range tm.DBReplaceMap {
-		newDBInfo, mappedParent := resolvedTargetDBs[ast.NewCIStr(existing.Name).L]
-		if !mappedParent {
-			continue
-		}
-		dbReplace, exists := dbReplaces[upstreamDBID]
-		if !exists {
-			dbReplace = NewDBReplace(existing.Name, existing.DbID)
+		if _, exists := dbReplaces[upstreamDBID]; !exists {
+			dbReplace := NewDBReplace(existing.Name, existing.DbID)
 			dbReplace.Reused = existing.Reused
 			dbReplace.SchemaRouted = existing.SchemaRouted
+			dbReplace.SourceName = existing.SourceName
 			dbReplaces[upstreamDBID] = dbReplace
+		}
+	}
+	for upstreamDBID, dbReplace := range dbReplaces {
+		newDBInfo, mappedParent := resolvedTargetDBs[ast.NewCIStr(dbReplace.Name).L]
+		if !mappedParent {
+			continue
 		}
 		dbReplace.Name = newDBInfo.Name.O
 		dbReplace.DbID = newDBInfo.ID
 		dbReplace.Reused = dbReplace.Reused || targetDBReused[newDBInfo.Name.L]
-		// MergeBaseDBReplace intentionally preserves a non-empty name from the
-		// log scan. Once the bound parent is resolved, normalize that persisted
-		// route to the actual downstream schema identity before merging.
-		existing.Name = newDBInfo.Name.O
-		existing.DbID = newDBInfo.ID
+		if existing, ok := tm.DBReplaceMap[upstreamDBID]; ok {
+			existing.Name = dbReplace.Name
+			existing.DbID = dbReplace.DbID
+		}
 		if dbReplace.Reused {
 			log.Info("the database is reused by snapshot restore",
 				zap.Stringer("db", newDBInfo.Name),
@@ -1457,11 +1652,13 @@ func (tm *TableMappingManager) UpdateDownstreamIds(
 			dbReplace = NewDBReplace(existing.Name, existing.DbID)
 			dbReplace.Reused = existing.Reused
 			dbReplace.SchemaRouted = existing.SchemaRouted
+			dbReplace.SourceName = existing.SourceName
 			dbReplaces[oldTable.DB.ID] = dbReplace
 		}
 
 		dbReplace.TableMap[oldTable.Info.ID] = &TableReplace{
 			Name:         newTable.Name.O,
+			SourceName:   oldTable.Info.Name.O,
 			TableID:      newTable.ID,
 			PartitionMap: restoreutils.GetPartitionIDMap(newTable, oldTable.Info),
 		}
