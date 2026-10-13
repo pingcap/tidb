@@ -1156,6 +1156,71 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, tm.DBReplaceMap[1].Reused)
 	})
+
+	t.Run("restore persisted route when the log scan cannot name the schema", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		// The log scan saw a table DDL but no database DDL, so it could not
+		// resolve the source schema name and silently dropped the route.
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "",
+				DbID: -1,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "t", TableID: -2},
+				},
+			},
+		}
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+			1: {
+				Name: "target",
+				DbID: 900,
+				TableMap: map[UpstreamID]*TableReplace{
+					11: {Name: "copy", TableID: 901, TargetDBName: "target", TargetDBID: 900},
+				},
+			},
+		})
+		got := tm.DBReplaceMap[1].TableMap[11]
+		require.Equal(t, "copy", got.Name)
+		require.Equal(t, "target", got.TargetDBName)
+		require.Equal(t, int64(900), got.TargetDBID)
+	})
+
+	t.Run("record route for a snapshot-only table", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		dom.MockInfoCacheAndLoadInfoSchema(createMockInfoSchemaWithDBs(map[string]int64{"source": 800, "target": 900}))
+
+		sourceDB := &model.DBInfo{ID: 1, Name: ast.NewCIStr("source")}
+		targetDB := &model.DBInfo{ID: 900, Name: ast.NewCIStr("target")}
+		tm := NewTableMappingManager()
+		// The route was configured, but the table has no log event, so the log
+		// mapping has no entry for it and cannot carry a route marker.
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name:     "source",
+				DbID:     800,
+				TableMap: map[UpstreamID]*TableReplace{},
+			},
+		}
+
+		err := tm.UpdateDownstreamIds(
+			[]*restoreutils.DatabaseRestorePlan{
+				{Source: &metautil.Database{Info: sourceDB}, Target: sourceDB.Clone()},
+				{Source: &metautil.Database{Info: sourceDB}, Target: targetDB},
+			},
+			[]*restoreutils.CreatedTable{{
+				OldTable: &metautil.Table{DB: sourceDB, Info: &model.TableInfo{ID: 11, Name: ast.NewCIStr("t")}},
+				Table:    &model.TableInfo{ID: 901, Name: ast.NewCIStr("copy")},
+				TargetDB: ast.NewCIStr("target"),
+			}},
+			dom,
+		)
+		require.NoError(t, err)
+		got := tm.DBReplaceMap[1].TableMap[11]
+		require.NotNil(t, got)
+		require.Equal(t, "copy", got.Name)
+		require.Equal(t, "target", got.TargetDBName)
+		require.Equal(t, int64(900), got.TargetDBID)
+	})
 }
 
 func TestExtractTableSimpleInfoTracksUnsupportedDependencies(t *testing.T) {

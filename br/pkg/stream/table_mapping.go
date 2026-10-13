@@ -693,6 +693,14 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			// its final snapshot target by table ID instead of requiring it to
 			// remain under the same source DBReplace.
 			if base, exists := baseTableMap[upTableID]; exists {
+				// The persisted ID map owns an explicit route. A later log interval
+				// may contain only table DDLs, so the scan cannot resolve the source
+				// schema name and silently drops the route. Restore the routed target
+				// name and table name from the base map.
+				if existingTableReplace.TargetDBName == "" && base.table.TargetDBName != "" {
+					existingTableReplace.TargetDBName = base.table.TargetDBName
+					existingTableReplace.Name = base.table.Name
+				}
 				if existingTableReplace.Name == "" && base.table.Name != "" {
 					existingTableReplace.Name = base.table.Name
 				}
@@ -727,6 +735,10 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 				} else {
 					// merge partition mappings for existing tables
 					existingTableReplace := existingDBReplace.TableMap[tableUpID]
+					if existingTableReplace.TargetDBName == "" && baseTableReplace.TargetDBName != "" {
+						existingTableReplace.TargetDBName = baseTableReplace.TargetDBName
+						existingTableReplace.Name = baseTableReplace.Name
+					}
 					if existingTableReplace.Name == "" && baseTableReplace.Name != "" {
 						existingTableReplace.Name = baseTableReplace.Name
 					}
@@ -977,16 +989,6 @@ type TargetDatabase struct {
 	// It is used to create the target schema instead of relying on defaults. It
 	// is nil for legacy persisted maps that don't carry source DBInfo.
 	SourceDBInfo *model.DBInfo
-}
-
-// TableRoute is the stable downstream identity bound to one upstream table ID.
-// A table can appear under more than one source DBReplace after an upstream
-// cross-schema rename, but every occurrence must resolve to this same route.
-type TableRoute struct {
-	TargetDBName    string
-	TargetDBID      DownstreamID
-	TargetTableName string
-	TargetTableID   DownstreamID
 }
 
 // ValidateRoutedDependencies preserves the conservative behavior for persisted
@@ -1471,33 +1473,20 @@ func (tm *TableMappingManager) UpdateDownstreamIds(
 			TableID:      newTable.ID,
 			PartitionMap: restoreutils.GetPartitionIDMap(newTable, oldTable.Info),
 		}
-		// An explicit route is already bound to the stable upstream table ID
-		// before snapshot restore. Preserve that marker in the snapshot base map
-		// so MergeBaseDBReplace can attach the actual target database ID without
-		// pinning identity routes to snapshot-era names.
-		if route, routed := tm.explicitTableRoute(oldTable.Info.ID); routed {
-			dbReplace.TableMap[oldTable.Info.ID].TargetDBName = route.TargetDBName
+		// An explicit route renames the table or moves it to another schema, so
+		// its downstream database identity must be recorded. Derive it from the
+		// created target and the source table: the log scan never sees a table
+		// that was created before the log window, so a route marker bound by the
+		// log mapping is not available for those snapshot-only tables. The marker
+		// is needed by MergeBaseDBReplace, EffectiveDBName/EffectiveDBID and the
+		// table mode reset during the log phase.
+		if targetDBName.L != oldTable.DB.Name.L || newTable.Name.L != oldTable.Info.Name.L {
+			dbReplace.TableMap[oldTable.Info.ID].TargetDBName = targetDBName.O
 			dbReplace.TableMap[oldTable.Info.ID].TargetDBID = newDBInfo.ID
 		}
 	}
 	tm.MergeBaseDBReplace(dbReplaces)
 	return nil
-}
-
-func (tm *TableMappingManager) explicitTableRoute(upstreamTableID UpstreamID) (TableRoute, bool) {
-	for _, dbReplace := range tm.DBReplaceMap {
-		tableReplace, exists := dbReplace.TableMap[upstreamTableID]
-		if !exists || tableReplace.FilteredOut || tableReplace.TargetDBName == "" {
-			continue
-		}
-		return TableRoute{
-			TargetDBName:    tableReplace.TargetDBName,
-			TargetDBID:      tableReplace.TargetDBID,
-			TargetTableName: tableReplace.Name,
-			TargetTableID:   tableReplace.TableID,
-		}, true
-	}
-	return TableRoute{}, false
 }
 
 // SetPreallocatedRange sets the preallocated ID range from snapshot restore
