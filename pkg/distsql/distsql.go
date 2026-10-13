@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -73,13 +74,16 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 
 	enabledRateLimitAction := dctx.EnabledRateLimitAction
 	originalSQL := dctx.OriginalSQL
+	redactMode := dctx.EnableRedactLog
 	eventCb := func(event trxevents.TransactionEvent) {
 		// Note: Do not assume this callback will be invoked within the same goroutine.
 		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
-			logutil.Logger(ctx).Debug("coprocessor encounters lock",
-				zap.Uint64("startTS", kvReq.StartTs),
-				zap.Stringer("lock", redact.LockInfo(copMeetLock.LockInfo)),
-				zap.String("stmt", originalSQL))
+			if ce := logutil.Logger(ctx).Check(zap.DebugLevel, "coprocessor encounters lock"); ce != nil {
+				ce.Write(
+					zap.Uint64("startTS", kvReq.StartTs),
+					zap.Stringer("lock", redact.LockInfo(copMeetLock.LockInfo)),
+					zap.String("stmt", parser.Normalize(originalSQL, redactMode)))
+			}
 		}
 	}
 

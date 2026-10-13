@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -34,15 +35,61 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestSelectLockEventSQLRedaction(t *testing.T) {
+	const originalSQL = "SELECT * FROM t WHERE a = 'lock-event-secret'"
+	for _, test := range []struct {
+		name string
+		mode string
+		stmt string
+	}{
+		{name: "default", stmt: originalSQL},
+		{name: "OFF", mode: "OFF", stmt: originalSQL},
+		{name: "ON", mode: "ON", stmt: "select * from `t` where `a` = ?"},
+		{name: "MARKER", mode: "MARKER", stmt: "select * from `t` where `a` = ‹lock-event-secret›"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sctx := newMockSessionContext()
+			sctx.GetSessionVars().StmtCtx.OriginalSQL = originalSQL
+			sctx.GetSessionVars().EnableRedactLog = test.mode
+			dctx := sctx.GetDistSQLCtx()
+			client := &analyzeTestClient{response: &analyzeTestResponse{}}
+			dctx.Client = client
+			core, recorded := observer.New(zap.DebugLevel)
+			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			response, err := Select(ctx, dctx, &kv.Request{StartTs: 42}, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, response.Close()) })
+
+			// The callback can outlive the session's current statement context.
+			dctx.OriginalSQL = "SELECT 2"
+			dctx.EnableRedactLog = "OFF"
+			client.option.EventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
+				LockInfo: &kvrpcpb.LockInfo{LockVersion: 99},
+			}))
+			entries := recorded.FilterMessage("coprocessor encounters lock").All()
+			require.Len(t, entries, 1)
+			require.Equal(t, uint64(42), entries[0].ContextMap()["startTS"])
+			require.Equal(t, test.stmt, entries[0].ContextMap()["stmt"])
+			if test.mode == "ON" {
+				require.NotContains(t, entries[0].ContextMap()["stmt"], "lock-event-secret")
+			}
+		})
+	}
+}
 
 func TestSelectNormal(t *testing.T) {
 	response, colTypes := createSelectNormal(t, 1, 2, nil, nil)
