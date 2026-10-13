@@ -156,8 +156,6 @@ func TestAddStatement(t *testing.T) {
 				MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
 				SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
 				MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
-				SumRUV2:           stmtExecInfo1.TotalRUV2,
-				MaxRUV2:           stmtExecInfo1.TotalRUV2,
 			},
 			resourceGroupName: stmtExecInfo1.ResourceGroupName,
 			StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
@@ -265,7 +263,6 @@ func TestAddStatement(t *testing.T) {
 		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
 		Succeed:   true,
 		RUDetail:  util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
-		TotalRUV2: 34567,
 		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
 				UnpackedBytesSentKVTotal:     100,
@@ -347,8 +344,6 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
-	expectedSummaryElement.SumRUV2 += stmtExecInfo2.TotalRUV2
-	expectedSummaryElement.MaxRUV2 = stmtExecInfo2.TotalRUV2
 	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo2.TiKVExecDetails)
 	expectedSummaryElement.storageKV = stmtExecInfo2.StmtCtx.IsTiKV.Load()
 	expectedSummaryElement.storageMPP = stmtExecInfo2.StmtCtx.IsTiFlash.Load()
@@ -431,7 +426,6 @@ func TestAddStatement(t *testing.T) {
 		StartTime:         time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
-		TotalRUV2:         123,
 		ResourceGroupName: "rg1",
 		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
@@ -488,7 +482,6 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
-	expectedSummaryElement.SumRUV2 += stmtExecInfo3.TotalRUV2
 	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo3.TiKVExecDetails)
 	expectedSummaryElement.storageKV = stmtExecInfo3.StmtCtx.IsTiKV.Load()
 	expectedSummaryElement.storageMPP = stmtExecInfo3.StmtCtx.IsTiFlash.Load()
@@ -761,7 +754,6 @@ func generateAnyExecInfo() *StmtExecInfo {
 		Succeed:           true,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
-		TotalRUV2:         23456,
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
 		TiKVExecDetails: &util.ExecDetails{
 			TrafficDetails: util.TrafficDetails{
@@ -919,8 +911,6 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		MaxRequestUnitWriteStr,
 		AvgQueuedRcTimeStr,
 		MaxQueuedRcTimeStr,
-		AvgRequestUnitV2Str,
-		MaxRequestUnitV2Str,
 		ResourceGroupName,
 		AvgTidbCPUTimeStr,
 		AvgTikvCPUTimeStr,
@@ -1028,6 +1018,77 @@ func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
 	}
 }
 
+func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
+	stats := &stmtSummaryStats{
+		execCount:            2,
+		commitCount:          0,
+		sumKVTotal:           10,
+		sumPDTotal:           20,
+		sumBackoffTotal:      30,
+		sumWriteSQLRespTotal: 40,
+	}
+	cases := []struct {
+		name     string
+		expected int64
+	}{
+		{name: AvgKvTimeStr, expected: 5},
+		{name: AvgPdTimeStr, expected: 10},
+		{name: AvgBackoffTotalTimeStr, expected: 15},
+		{name: AvgWriteSQLRespTimeStr, expected: 20},
+	}
+	for _, tc := range cases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		require.Equal(t, tc.expected, factory(nil, nil, nil, stats), tc.name)
+	}
+}
+
+func TestTableNamesSkipEmptyTables(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	stmtExecInfo := generateAnyExecInfo()
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2"},
+	}
+	ssMap.AddStatement(stmtExecInfo)
+
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo.SchemaName, stmtExecInfo.Digest, "", stmtExecInfo.PlanDigest, stmtExecInfo.ResourceGroupName, "")
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	require.Equal(t, "db1.table1", value.(*stmtSummaryByDigest).tableNames)
+
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2", Table: "table2"},
+		{DB: "db3"},
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		var summary stmtSummaryByDigest
+		summary.init(stmtExecInfo, 0, 0, 0)
+	})
+	require.LessOrEqual(t, allocs, float64(9))
+}
+
+func BenchmarkStmtSummaryByDigestInitTableNames(b *testing.B) {
+	stmtExecInfo := generateAnyExecInfo()
+	stmtExecInfo.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2", Table: "table2"},
+		{DB: "db3"},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		var summary stmtSummaryByDigest
+		summary.init(stmtExecInfo, 0, 0, 0)
+	}
+}
+
 // Test stmtSummaryByDigest.ToDatum.
 func TestToDatum(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
@@ -1082,7 +1143,6 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.TotalRUV2, stmtExecInfo1.TotalRUV2,
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),
 		isTiKV, isTiFlash}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -1134,7 +1194,6 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.TotalRUV2, stmtExecInfo1.TotalRUV2,
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime),
 		0, 0}
 	expectedDatum[4] = stmtExecInfo2.Digest
@@ -1153,14 +1212,12 @@ func TestToDatumIAColumns(t *testing.T) {
 	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
 
 	stmtExecInfo2 := generateAnyExecInfo()
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
 
 	ssMap.AddStatement(stmtExecInfo1)
 	ssMap.AddStatement(stmtExecInfo2)
 	reader := newStmtSummaryReaderWithColumnNamesForTest(
 		ssMap,
+		IAExecCountStr,
 		AvgIARemoteReadSegmentCountStr,
 		MaxIARemoteReadSegmentCountStr,
 		AvgIARemoteReadSegmentSizeStr,
@@ -1171,12 +1228,17 @@ func TestToDatumIAColumns(t *testing.T) {
 
 	rows := reader.GetStmtSummaryCurrentRows()
 	require.Len(t, rows, 1)
-	require.Equal(t, 4.0, rows[0][0].GetFloat64())
-	require.Equal(t, uint64(5), rows[0][1].GetUint64())
-	require.Equal(t, 6144.0, rows[0][2].GetFloat64())
-	require.Equal(t, uint64(8192), rows[0][3].GetUint64())
-	require.Equal(t, int64(7*time.Millisecond), rows[0][4].GetInt64())
-	require.Equal(t, int64(9*time.Millisecond), rows[0][5].GetInt64())
+	require.Equal(t, int64(1), rows[0][0].GetInt64())
+	require.Equal(t, 1.5, rows[0][1].GetFloat64())
+	require.Equal(t, uint64(3), rows[0][2].GetUint64())
+	require.Equal(t, 2048.0, rows[0][3].GetFloat64())
+	require.Equal(t, uint64(4096), rows[0][4].GetUint64())
+	require.Equal(t, int64(2500*time.Microsecond), rows[0][5].GetInt64())
+	require.Equal(t, int64(5*time.Millisecond), rows[0][6].GetInt64())
+
+	historyRows := reader.GetStmtSummaryHistoryRows()
+	require.Len(t, historyRows, 1)
+	require.Equal(t, int64(1), historyRows[0][0].GetInt64())
 }
 
 func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
@@ -1190,15 +1252,13 @@ func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
 	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
 
 	stmtExecInfo2 := generateAnyExecInfo()
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
 
 	ssMap.AddStatement(stmtExecInfo1)
 	ssMap.AddStatement(stmtExecInfo2)
 
 	reader := newStmtSummaryReaderWithColumnNamesForTest(
 		ssMap,
+		IAExecCountStr,
 		AvgIARemoteReadSegmentCountStr,
 		MaxIARemoteReadSegmentCountStr,
 		AvgIARemoteReadSegmentSizeStr,
@@ -1213,6 +1273,7 @@ func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
 	maxUnsignedType := types.NewFieldType(mysql.TypeLonglong)
 	maxUnsignedType.SetFlag(mysql.UnsignedFlag)
 	retTypes := []*types.FieldType{
+		maxUnsignedType.Clone(),
 		types.NewFieldType(mysql.TypeDouble),
 		maxUnsignedType,
 		types.NewFieldType(mysql.TypeDouble),
@@ -1224,12 +1285,13 @@ func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
 	mutRow.SetDatums(rows[0]...)
 	row := mutRow.ToRow()
 
-	require.Equal(t, 4.0, row.GetFloat64(0))
-	require.Equal(t, uint64(5), row.GetUint64(1))
-	require.Equal(t, 6144.0, row.GetFloat64(2))
-	require.Equal(t, uint64(8192), row.GetUint64(3))
-	require.Equal(t, int64(7*time.Millisecond), row.GetInt64(4))
-	require.Equal(t, int64(9*time.Millisecond), row.GetInt64(5))
+	require.Equal(t, uint64(1), row.GetUint64(0))
+	require.Equal(t, 1.5, row.GetFloat64(1))
+	require.Equal(t, uint64(3), row.GetUint64(2))
+	require.Equal(t, 2048.0, row.GetFloat64(3))
+	require.Equal(t, uint64(4096), row.GetUint64(4))
+	require.Equal(t, int64(2500*time.Microsecond), row.GetInt64(5))
+	require.Equal(t, int64(5*time.Millisecond), row.GetInt64(6))
 }
 
 // Regression test for issue #69913.
@@ -1824,6 +1886,35 @@ func TestSummaryHistory(t *testing.T) {
 	datum = reader.GetStmtSummaryHistoryRows()
 	// length of STATEMENT_SUMMARY_HISTORY == (history in cache) + (history evicted)
 	require.Equal(t, 6, len(datum))
+}
+
+func TestHistoryClearAndResizeKeepsLatestIntervals(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	require.NoError(t, ssMap.SetRefreshInterval(10))
+	require.NoError(t, ssMap.SetHistorySize(10))
+
+	stmtExecInfo := generateAnyExecInfo()
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo.SchemaName, stmtExecInfo.Digest, "", stmtExecInfo.PlanDigest, stmtExecInfo.ResourceGroupName, "")
+	for i := range 11 {
+		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
+		ssMap.AddStatement(stmtExecInfo)
+	}
+
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	ssbd := value.(*stmtSummaryByDigest)
+	require.NoError(t, ssMap.SetHistorySize(5))
+	elements := ssbd.collectHistorySummaries(nil, 5)
+	require.Len(t, elements, 5)
+	require.Equal(t, now+70, elements[0].beginTime)
+	require.Equal(t, now+110, elements[4].beginTime)
+
+	require.NoError(t, ssMap.SetHistoryEnabled(false))
+	elements = ssbd.collectHistorySummaries(nil, 5)
+	require.Len(t, elements, 1)
+	require.Equal(t, now+110, elements[0].beginTime)
 }
 
 // Test summary when PrevSQL is not empty.

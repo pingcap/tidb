@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -59,29 +60,6 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
-// isColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
-// single-column unique index whose only column has the given offset.
-func isColumnCoveredBySingleColUniqueIndex(tblInfo *model.TableInfo, colOffset int) bool {
-	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		if isSingleColNonPrefixUniqueIndex(idx) && idx.Columns[0].Offset == colOffset {
-			return true
-		}
-	}
-	return false
-}
-
-// isSingleColNonPrefixUniqueIndex returns true if the index is public, unique
-// (or primary), has exactly one column, and uses neither a prefix nor a
-// partial-index condition.
-func isSingleColNonPrefixUniqueIndex(idx *model.IndexInfo) bool {
-	return idx.State == model.StatePublic &&
-		(idx.Unique || idx.Primary) && len(idx.Columns) == 1 &&
-		!idx.HasPrefixIndex() && !idx.HasCondition()
-}
-
 func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -100,7 +78,7 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
-		return err
+		return errors.Join(err, firstResult.Close())
 	}
 	e.resultHandler.open(firstResult, secondResult)
 
@@ -119,10 +97,15 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	// Full-sampling analyze sorts collected samples by handle before computing
 	// correlation, so this request does not need KeepOrder.
+	storeBatchSize := e.ctx.GetSessionVars().AnalyzeStoreBatchSize
+	enableStoreBatch := storeBatchSize > 0
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
 		SetConcurrency(e.concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(enableStoreBatch).
+		SetExecuteBatchTasksSerially(enableStoreBatch).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
@@ -131,7 +114,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		return nil, err
 	}
 	failpoint.InjectCall("analyzeColumnsRequestBuilt", kvReq)
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx(), e.planID)
 	if err != nil {
 		return nil, err
 	}

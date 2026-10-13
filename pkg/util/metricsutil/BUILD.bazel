@@ -2,12 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "metricsutil",
-    srcs = ["common.go"],
+    srcs = [
+        "common.go",
+        "db_labels.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/metricsutil",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/task",
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/domain/metrics",
         "//pkg/executor/metrics",
@@ -19,6 +23,7 @@ go_library(
         "//pkg/server/metrics",
         "//pkg/session/metrics",
         "//pkg/session/txninfo",
+        "//pkg/sessionctx/variable",
         "//pkg/sessiontxn/isolation/metrics",
         "//pkg/statistics/handle/cache/metrics",
         "//pkg/statistics/handle/metrics",
@@ -27,6 +32,7 @@ go_library(
         "//pkg/store/mockstore/unistore/metrics",
         "//pkg/ttl/metrics",
         "//pkg/util",
+        "//pkg/util/diagclient",
         "//pkg/util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_tikv_pd_client//:client",
@@ -38,12 +44,19 @@ go_library(
 go_test(
     name = "metricsutil_test",
     timeout = "short",
-    srcs = ["common_test.go"],
+    srcs = [
+        "common_test.go",
+        "db_labels_test.go",
+    ],
     embed = [":metricsutil"],
     flaky = True,
     deps = [
         "//pkg/config",
         "//pkg/metrics/common",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/util/dbterror/plannererrors",
         "@com_github_stretchr_testify//require",
     ],
 )

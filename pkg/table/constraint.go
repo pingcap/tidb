@@ -86,7 +86,7 @@ func IsSupportedExpr(constr *ast.Constraint) (bool, error) {
 		allowed: true,
 		name:    constr.Name,
 	}
-	constr.Expr.Accept(checker)
+	ast.Walk(constr.Expr, checker)
 	return checker.allowed, checker.reason
 }
 
@@ -133,37 +133,37 @@ type checkConstraintChecker struct {
 	name    string
 }
 
-// Enter implements Visitor interface.
-func (checker *checkConstraintChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (checker *checkConstraintChecker) Enter(in ast.Node) (skipChildren bool) {
 	switch x := in.(type) {
 	case *ast.FuncCallExpr:
 		if _, ok := unsupportedNodeForCheckConstraint[x.FnName.L]; ok {
 			checker.allowed = false
 			checker.reason = dbterror.ErrCheckConstraintNamedFuncIsNotAllowed.GenWithStackByArgs(checker.name, x.FnName.L)
-			return in, true
+			return true
 		}
 	case *ast.VariableExpr:
 		// user defined or system variable is not allowed
 		checker.allowed = false
 		checker.reason = dbterror.ErrCheckConstraintVariables.GenWithStackByArgs(checker.name)
-		return in, true
+		return true
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		// subquery is not allowed
 		checker.allowed = false
 		checker.reason = dbterror.ErrCheckConstraintFuncIsNotAllowed.GenWithStackByArgs(checker.name)
-		return in, true
+		return true
 	case *ast.DefaultExpr:
 		// default expr is not allowed
 		checker.allowed = false
 		checker.reason = dbterror.ErrCheckConstraintNamedFuncIsNotAllowed.GenWithStackByArgs(checker.name, "default")
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *checkConstraintChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.allowed
+// Leave implements InPlaceVisitor interface.
+func (checker *checkConstraintChecker) Leave(ast.Node) (proceed bool) {
+	return checker.allowed
 }
 
 // ContainsAutoIncrementCol checks if there is auto-increment col in given cols

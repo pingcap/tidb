@@ -299,13 +299,6 @@ def go_deps():
         version = "v0.2.0",
     )
     go_repository(
-        name = "com_github_aliyun_alibaba_cloud_sdk_go",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/aliyun/alibaba-cloud-sdk-go",
-        sum = "h1:Q/yk4z/cHUVZfgTqtD09qeYBxHwshQAjVRX73qs8UH0=",
-        version = "v1.61.1581",
-    )
-    go_repository(
         name = "com_github_aliyun_alibabacloud_oss_go_sdk_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aliyun/alibabacloud-oss-go-sdk-v2",
@@ -771,8 +764,8 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sum = "h1:eTt6UMpEnq59NjON49b3Cay8Dm0sCs1nDliwgkyEsRM=",
-        version = "v1.0.6",
+        sum = "h1:XSu8kU3C9Oo2x3gdwfxpz1ZsE6NaMfe9821ahNPzAf4=",
+        version = "v1.0.8",
     )
     go_repository(
         name = "com_github_blizzy78_varnamelen",
@@ -1992,13 +1985,6 @@ def go_deps():
         importpath = "github.com/gogo/status",
         sum = "h1:+eIkrewn5q6b30y+g/BJINVVdi2xH7je5MPJ3ZPK3JA=",
         version = "v1.1.0",
-    )
-    go_repository(
-        name = "com_github_goji_httpauth",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/goji/httpauth",
-        sum = "h1:lBXNCxVENCipq4D1Is42JVOP4eQjlB8TQ6H69Yx5J9Q=",
-        version = "v0.0.0-20160601135302-2da839ab0f4d",
     )
     go_repository(
         name = "com_github_golang_freetype",
@@ -3791,8 +3777,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:JBrbgynAz4RkeXUvqXAOhySZK5FYFCeHdKWUrj+Z2Vw=",
-        version = "v0.0.0-20260724054804-059694ae4472",
+        sum = "h1:Z1gFEBIzhT7Cuc0IBAsKgUxMapL2kwqe3QQq7g9XiJw=",
+        version = "v0.0.0-20260820070758-623e58e60fa9",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3819,8 +3805,8 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:9I5GHZesmR+hv68t00BO7tayKMFfywi+hlpn119GscM=",
-        version = "v0.0.0-20260623093813-5f9928e91afe",
+        sum = "h1:GalvMypJTiQvfc6p8fs7OS0z+X9O5ZAN+hTZ67QpTYM=",
+        version = "v0.0.0-20261006155659-59b678398b17",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -4541,8 +4527,8 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:2A+FjDtw0Ej6TT6fX496j+/jDNj7wz4ENMXnjOqhc80=",
-        version = "v2.0.8-0.20260807103401-b75f6efa8ddd",
+        sum = "h1:R/KBFo6TCJompFfg1AZ0udz9z8AuyRCYE0Aalrc1Zl8=",
+        version = "v2.0.8-0.20260928031501-8edb23f6c7ee",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

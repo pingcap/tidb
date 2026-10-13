@@ -1742,7 +1742,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore)
+	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore,
+		readColumnarStorageEnabledForLog(mgr.GetDomain()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2448,16 +2449,33 @@ func getTiFlashNodeCount(ctx context.Context, pdClient pd.Client) (uint64, error
 	return uint64(len(tiFlashStores)), nil
 }
 
+// readColumnarStorageEnabledForLog reads tidb_columnar_storage_enabled for diagnostic logs.
+// The value is loaded via the BR-embedded Domain sysvar cache (cluster storage). Failures
+// are reported as "unavailable".
+func readColumnarStorageEnabledForLog(dom *domain.Domain) string {
+	if dom == nil {
+		return "unavailable"
+	}
+	val, err := dom.GetGlobalVar(vardef.TiDBColumnarStorageEnabled)
+	if err != nil {
+		return "unavailable"
+	}
+	return val
+}
+
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
+// columnarStorageEnabled is diagnostic-only for Next-Gen warn logs.
 func PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	pdClient pd.Client,
 	tables []*metautil.Table,
 	recorder *tiflashrec.TiFlashRecorder,
 	isNextGenRestore bool,
+	columnarStorageEnabled string,
 ) error {
 	if isNextGenRestore {
-		log.Warn("Restoring to NextGen TiFlash is experimental. TiFlash replicas are disabled; please reset them manually after restore.")
+		log.Warn("Restoring to NextGen TiFlash is experimental. TiFlash replicas are disabled; please reset them manually after restore.",
+			zap.String("tidb_columnar_storage_enabled", columnarStorageEnabled))
 		for _, tbl := range tables {
 			if tbl == nil || tbl.Info == nil {
 				// unreachable

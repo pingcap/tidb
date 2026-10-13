@@ -986,6 +986,20 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
 	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
 
+	// test tidb_opt_range_max_count
+	tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("1000"))
+	tk.MustExec("set global tidb_opt_range_max_count = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_opt_range_max_count value: '-1'"))
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_range_max_count = 1024")
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("1024"))
+	tk.MustExec("set session tidb_opt_range_max_count = 2048")
+	tk.MustQuery("select @@session.tidb_opt_range_max_count").Check(testkit.Rows("2048"))
+	tk.MustExec("set session tidb_opt_range_max_count = 0")
+	require.Zero(t, tk.Session().GetSessionVars().RangeMaxCount)
+	tk.MustExec("set global tidb_opt_range_max_count = default")
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("1000"))
+
 	// test for password validation
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.enable").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.length").Check(testkit.Rows("8"))
@@ -1564,6 +1578,7 @@ func TestSetConcurrency(t *testing.T) {
 	tk.MustQuery("select @@tidb_streamagg_concurrency;").Check(testkit.Rows(strconv.Itoa(vardef.DefTiDBStreamAggConcurrency)))
 	tk.MustQuery("select @@tidb_projection_concurrency;").Check(testkit.Rows(strconv.Itoa(vardef.ConcurrencyUnset)))
 	tk.MustQuery("select @@tidb_distsql_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(vardef.DefDistSQLScanConcurrency)))
+	tk.MustQuery("select @@tidb_query_cop_store_limit;").Check(testkit.Rows("15"))
 
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(vardef.DefIndexSerialScanConcurrency)))
 
@@ -1578,6 +1593,7 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, vardef.DefTiDBStreamAggConcurrency, vars.StreamAggConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ProjectionConcurrency())
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
+	require.Equal(t, 15, vars.QueryCopStoreLimit)
 
 	// test setting deprecated variables
 	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
@@ -1615,6 +1631,10 @@ func TestSetConcurrency(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set @@%s=1;", vardef.TiDBDistSQLScanConcurrency))
 	tk.MustQuery(fmt.Sprintf("select @@%s;", vardef.TiDBDistSQLScanConcurrency)).Check(testkit.Rows("1"))
 	require.Equal(t, 1, vars.DistSQLScanConcurrency())
+
+	tk.MustExec(fmt.Sprintf("set @@%s=8;", vardef.TiDBQueryCopStoreLimit))
+	tk.MustQuery(fmt.Sprintf("select @@%s;", vardef.TiDBQueryCopStoreLimit)).Check(testkit.Rows("8"))
+	require.Equal(t, 8, vars.QueryCopStoreLimit)
 
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))

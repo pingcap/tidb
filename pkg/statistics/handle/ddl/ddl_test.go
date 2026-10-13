@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -30,6 +31,38 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSubscriberHandlesMaterializedViewMetadataEvents(t *testing.T) {
+	mvInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("mv")}
+	mlogInfo := &model.TableInfo{ID: 2, Name: ast.NewCIStr("$mlog$t")}
+	oldMVInfo := mvInfo.Clone()
+	oldMLogInfo := mlogInfo.Clone()
+
+	tests := []struct {
+		name  string
+		event *notifier.SchemaChangeEvent
+	}{
+		{
+			name:  "refresh",
+			event: notifier.NewAlterMaterializedViewRefreshEvent(mvInfo, oldMVInfo),
+		},
+		{
+			name:  "attributes",
+			event: notifier.NewAlterMaterializedViewAttributesEvent(mvInfo, oldMVInfo),
+		},
+		{
+			name:  "log purge",
+			event: notifier.NewAlterMaterializedViewLogPurgeEvent(mlogInfo, oldMLogInfo),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := ddl.NewDDLHandler(nil, nil)
+			require.NoError(t, h.HandleDDLEvent(context.Background(), nil, tt.event))
+		})
+	}
+}
 
 func TestDDLAfterLoad(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
@@ -198,6 +231,59 @@ func TestTruncateTable(t *testing.T) {
 	require.Len(t, rows, 1)
 	// Version gets updated after truncate the table.
 	require.NotEqual(t, version, rows[0][0].(string))
+}
+
+func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_mview_enable = on")
+	originalHistoricalStats := testKit.MustQuery("select @@global.tidb_enable_historical_stats").Rows()[0][0]
+	testKit.MustExec("set global tidb_enable_historical_stats = 1")
+	defer testKit.MustExec(fmt.Sprintf("set global tidb_enable_historical_stats = %v", originalHistoricalStats))
+	testKit.MustExec("create table t_mv_oop_stats (a int not null, b int not null)")
+	testKit.MustExec("insert into t_mv_oop_stats values (1, 10), (1, 5), (2, 7)")
+	testKit.MustExec("create materialized view log on t_mv_oop_stats (a, b) purge next date_add(now(), interval 1 hour)")
+	testKit.MustExec("create materialized view mv_oop_stats (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_oop_stats group by a")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_oop_stats"))
+	require.NoError(t, err)
+	oldTableInfo := tbl.Meta()
+	testKit.MustExec("analyze table mv_oop_stats")
+	require.NoError(t, h.Update(context.Background(), is))
+	statsTbl := h.GetPhysicalTableStats(oldTableInfo.ID, oldTableInfo)
+	require.False(t, statsTbl.Pseudo)
+
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		oldTableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	oldVersion := rows[0][0].(string)
+
+	newTableInfo := oldTableInfo.Clone()
+	newTableInfo.ID = oldTableInfo.ID + 100000
+	cutoverEvent := notifier.NewMViewRefreshOutOfPlaceCutoverEvent(newTableInfo, oldTableInfo)
+	require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, cutoverEvent))
+
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		newTableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		oldTableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, oldVersion, rows[0][0].(string))
+	testKit.MustQuery(
+		"select count(*) from mysql.stats_meta_history where table_id = ? and source = ?",
+		oldTableInfo.ID,
+		statsutil.StatsMetaHistorySourceSchemaChange,
+	).Check(testkit.Rows("1"))
 }
 
 func TestTruncateAPartitionedTable(t *testing.T) {

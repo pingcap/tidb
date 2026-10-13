@@ -21,14 +21,31 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannercoreutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
+
+// statementRUWriteSnapshot owns the committed payload used by one RU calculation.
+// It is independent of RUv2 accumulation and does not retain live commit details.
+type statementRUWriteSnapshot struct {
+	keys  int64
+	bytes int64
+}
+
+func snapshotStatementRUWrites(details *clientutil.CommitDetails) statementRUWriteSnapshot {
+	if details == nil {
+		return statementRUWriteSnapshot{}
+	}
+	return statementRUWriteSnapshot{keys: int64(details.WriteKeys), bytes: int64(details.WriteSize)}
+}
 
 type statementRUFinalOutcome uint32
 
@@ -55,6 +72,10 @@ type statementRUOperatorResult struct {
 	outputRows int64
 }
 
+type statementRUPointResponseStatsProvider interface {
+	GetPointResponseStats() clientutil.PointResponseStats
+}
+
 // statementRUOwner owns the first-record-wins outcome and the first terminal
 // finalization for one ExecStmt. Its calculation setup is released when the
 // shared finishOnce is consumed.
@@ -65,6 +86,7 @@ type statementRUOwner struct {
 	// Install-time snapshots reject transient restricted/cursor classifications
 	// that may be restored before a delayed result-set terminal.
 	restrictedSQLAtInstall bool
+	ttlJobAtInstall        bool
 	cursorAtInstall        bool
 	calculationSetup       statementRUCalculationSetup
 }
@@ -79,6 +101,7 @@ func newStatementRUOwner(stmt *ExecStmt) *statementRUOwner {
 		return owner
 	}
 	owner.restrictedSQLAtInstall = sessVars.InRestrictedSQL
+	owner.ttlJobAtInstall = isStatementRUTTLJob(sessVars)
 	owner.cursorAtInstall = sessVars.HasStatusFlag(mysql.ServerStatusCursorExists)
 	return owner
 }
@@ -116,12 +139,16 @@ func (a *ExecStmt) abortStatementRU() {
 		return
 	}
 	owner.finishOnce.Do(func() {
+		fullReport := owner.calculationSetup.fullReport
 		owner.calculationSetup = statementRUCalculationSetup{}
+		if fullReport {
+			publishStatementRUFailureSafely(statementRUStatementError)
+		}
 	})
 }
 
-// recordStatementRURootEOF records that the root executor returned an empty
-// chunk. A successful statement does not imply this: a caller can
+// recordStatementRURootEOF records completion of a no-delay executor or the
+// empty chunk ending a result set. A successful statement does not imply this: a caller can
 // close a RecordSet cleanly before consuming all rows, for example when writing
 // rows to the client fails. Publishing that partial work as the statement's RU
 // would undercount, so RU v3 metric publication requires this independent bit.
@@ -133,16 +160,13 @@ func (a *ExecStmt) recordStatementRURootEOF() {
 	owner.rootEOF.Store(true)
 }
 
-// TODO: when the statement-RU failure metric lands, count the bounded failure
-// reasons at these fail-closed exits and publisher recoveries. Until then there
-// is deliberately no recorder-shaped no-op API.
-func (a *ExecStmt) finishStatementRU(terminalErr error) {
+func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 	owner := a.statementRUOwner
 	if owner == nil {
-		return
+		return 0
 	}
 
-	var finalized statementRUFinalizedSnapshot
+	finalized := statementRUFinalizedSnapshot{failure: statementRUNotFinished}
 	publishFinalized := false
 	owner.finishOnce.Do(func() {
 		calculationSetup := owner.calculationSetup
@@ -152,46 +176,120 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 		// lookup/generation, or calculation must neither make the owner retryable
 		// nor interrupt existing terminal bookkeeping.
 		defer func() {
-			_ = recover()
+			if recover() != nil {
+				publishFinalized = false
+				finalized.failure = statementRUPanic
+			}
+			if calculationSetup.fullReport && !publishFinalized {
+				publishStatementRUFailureSafely(finalized.failure)
+			}
 		}()
 
 		if statementRUFinalOutcome(owner.finalOutcome.Load()) != statementRUFinalOutcomeSuccess || terminalErr != nil {
+			if terminalErr != nil {
+				finalized.failure = statementRUStatementError
+			}
 			return
 		}
-		// a.Plan remains the statement eligibility guard even though the flat-plan
-		// view below comes from StatementContext.
-		if a.Ctx == nil || a.Plan == nil {
+		// Match the executed target, including EXPLAIN ANALYZE, against the
+		// flat-plan view borrowed from StatementContext.
+		planInfo := classifyStatementRUPlan(a.Plan)
+		if a.Ctx == nil || planInfo.plan == nil {
+			finalized.failure = statementRUInvalid
 			return
 		}
 
 		sessVars := a.Ctx.GetSessionVars()
 		// The snapshots catch eligibility that disappeared before terminal; the
 		// live checks catch a classification entered after owner installation.
-		if sessVars == nil || owner.restrictedSQLAtInstall || owner.cursorAtInstall ||
-			sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
+		if sessVars == nil || sessVars.StmtCtx == nil || owner.cursorAtInstall ||
+			((owner.restrictedSQLAtInstall || sessVars.InRestrictedSQL) && !owner.ttlJobAtInstall) ||
+			sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
+			finalized.failure = statementRUIneligible
+			return
+		}
+		if planInfo.kind == statementRUPlanCommit {
+			if !owner.rootEOF.Load() {
+				return
+			}
+			// COMMIT has no flattened physical operator. Its transaction
+			// payload belongs here, after the session has committed successfully.
+			calculator := newStatementRUCalculator(calculationSetup)
+			writes := snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail)
+			calculator.units.WriteKeys = float64(writes.keys)
+			calculator.units.WriteBytes = float64(writes.bytes)
+			finalized, publishFinalized = calculator.finalize()
+			finalized.sqlType = "commit" // An empty COMMIT still has its own statement type.
+			return
+		}
+
+		if planInfo.kind == statementRUPlanPointLookup {
+			finalized, publishFinalized = calculateStatementRUPointLookup(
+				planInfo.plan.ID(),
+				sessVars.StmtCtx.RuntimeStatsColl,
+				sessVars.RUV2Metrics,
+				calculationSetup,
+				owner.rootEOF.Load(),
+			)
 			return
 		}
 		flat := getFlatPlan(sessVars.StmtCtx)
 		if flat == nil {
+			finalized.failure = statementRUInvalid
 			return
 		}
 
-		// The fresh-session slice must use a flat plan rooted at this ExecStmt.
-		// General flat-plan generation identity remains outside this layer.
-		if len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin != a.Plan {
+		// The flat plan must be rooted at this statement's executed target.
+		// General flat-plan generation identity is not statement-RU evidence.
+		if len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin != planInfo.plan {
+			finalized.failure = statementRUInvalid
 			return
 		}
 		finalized, publishFinalized = calculateStatementRU(
 			flat,
 			sessVars.StmtCtx.RuntimeStatsColl,
 			sessVars.RUV2Metrics,
+			snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail),
 			calculationSetup,
 			owner.rootEOF.Load(),
 		)
 	})
 	if publishFinalized {
+		finalized.ttlJob = owner.ttlJobAtInstall
 		publishStatementRUFinalizedSnapshot(a, finalized)
+		return finalized.result.TotalRU
 	}
+	return 0
+}
+
+func calculateStatementRUPointLookup(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+) (statementRUFinalizedSnapshot, bool) {
+	if planID <= 0 {
+		return statementRUFailed(statementRUOperatorInvalid), false
+	}
+	calculator, ok := newStatementRUTerminalCalculator(metrics, setup, rootEOF)
+	if !ok {
+		return statementRUTerminalFailure(rootEOF), false
+	}
+	var beforePoint ruv2.StmtUnits
+	if calculator.report != nil {
+		beforePoint = calculator.units
+	}
+	if state := collectStatementRUPointLookupEvidence(planID, runtimeStatsColl, &calculator); state != statementRUOperatorComplete {
+		return statementRUFailed(state), false
+	}
+	calculator.units.OperatorNum++
+	calculator.compute[statementRUTiDB].operatorNum++
+	if calculator.report != nil {
+		pointUnits := calculator.units.Sub(beforePoint)
+		calculator.report.addOperator(statementRUTiDB, statementRUPointLookup, pointUnits)
+	}
+	return calculator.finalize()
 }
 
 // calculateStatementRU directly walks borrowed flat-plan occurrences without
@@ -203,35 +301,172 @@ func calculateStatementRU(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 ) (statementRUFinalizedSnapshot, bool) {
-	if !rootEOF || flat == nil || len(flat.Main) == 0 || len(flat.CTEs) != 0 || len(flat.ScalarSubQueries) != 0 {
-		return statementRUFinalizedSnapshot{}, false
+	return calculateStatementRUInternal(flat, runtimeStatsColl, metrics, writes, setup, rootEOF, nil)
+}
+
+func calculateStatementRUWithOperators(
+	flat *plannercore.FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+) (statementRUFinalizedSnapshot, *plannercore.ExplainRUResult, bool) {
+	operatorRUs := plannercore.NewExplainRUResult(flat)
+	finalized, ok := calculateStatementRUInternal(flat, runtimeStatsColl, metrics, writes, setup, rootEOF, operatorRUs)
+	if !ok {
+		return finalized, nil, false
 	}
-	calculator := newStatementRUCalculator(setup)
-	// Transport bytes are statement evidence in both the current producer and
-	// the demo model. Read them once; do not attribute the same aggregate to
-	// every Reader occurrence. Missing evidence contributes zero to the
-	// best-effort ResultOnly value.
-	if metrics != nil && !metrics.Bypass() {
-		netBytes := metrics.TiKVCoprocessorResponseBytes()
-		if netBytes < 0 {
-			return statementRUFinalizedSnapshot{}, false
-		}
-		calculator.units.NetBytes = float64(netBytes)
+	operatorRUs.TotalRU = finalized.result.TotalRU
+	return finalized, operatorRUs, true
+}
+
+// calculateStatementRUInternal shares one forest traversal between formal
+// statement-RU reporting and synchronous RU EXPLAIN.
+//
+// operatorRUs is nil on the formal path: that path constructs no
+// ExplainRUResult and skips the per-operator RU projection and writes.
+//
+// The recursion still threads the optional output slice and snapshots
+// calculator units before each subtree and operator, so ResultOnly's
+// zero-allocation contract covers only the EXPLAIN result shapes; it does
+// not mean that RU EXPLAIN instrumentation adds zero CPU work to formal
+// reporting.
+func calculateStatementRUInternal(
+	flat *plannercore.FlatPhysicalPlan,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+	operatorRUs *plannercore.ExplainRUResult,
+) (statementRUFinalizedSnapshot, bool) {
+	if flat == nil || len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin == nil {
+		return statementRUFailed(statementRUOperatorInvalid), false
+	}
+	calculator, ok := newStatementRUTerminalCalculator(metrics, setup, rootEOF)
+	if !ok {
+		return statementRUTerminalFailure(rootEOF), false
+	}
+	planInfo := classifyStatementRUPlan(flat.Main[0].Origin)
+	if planInfo.kind == statementRUPlanWrite || planInfo.kind == statementRUPlanCommit {
+		calculator.units.WriteKeys = float64(writes.keys)
+		calculator.units.WriteBytes = float64(writes.bytes)
 	}
 
-	planResult := calculateStatementRUPlan(
+	// The forest consumes only currently visible typed evidence. Response-level
+	// total-key-size, complete cop summaries, and per-execution Sort/TopN work
+	// are not all available yet, so the finalized calibration
+	// remains Incomplete and the result is neither exact nor a mathematical upper
+	// or lower bound. Invalid values and malformed tree structure still fail closed.
+	if planInfo.kind == statementRUPlanWrite {
+		calculator.units.WriteStatement = 1
+	}
+	mainRootUnits := calculator.units
+	mainResult := calculateStatementRUPlan(
 		flat.Main,
 		0,
 		runtimeStatsColl,
 		&calculator,
+		mainRootUnits,
+		statementRUExplainTree(operatorRUs, statementRUForestMain, 0),
 	)
-	if planResult.state != statementRUOperatorComplete {
-		return statementRUFinalizedSnapshot{}, false
+	if mainResult.state != statementRUOperatorComplete {
+		return statementRUFailed(mainResult.state), false
 	}
-	return calculator.finalize()
+	// FlattenPhysicalPlan deduplicates definitions by CTE.IDForStorage. Walking
+	// each tree once therefore charges one shared producer once; consumers stay
+	// in their owning trees and keep their own output-row evidence for parents.
+	for treeOrdinal, tree := range flat.CTEs {
+		result := calculateStatementRUPlan(
+			tree,
+			0,
+			runtimeStatsColl,
+			&calculator,
+			ruv2.StmtUnits{},
+			statementRUExplainTree(operatorRUs, statementRUForestCTE, treeOrdinal),
+		)
+		if result.state != statementRUOperatorComplete {
+			return statementRUFailed(result.state), false
+		}
+	}
+	for treeOrdinal, tree := range flat.ScalarSubQueries {
+		result := calculateStatementRUPlan(
+			tree,
+			0,
+			runtimeStatsColl,
+			&calculator,
+			ruv2.StmtUnits{},
+			statementRUExplainTree(operatorRUs, statementRUForestScalarSubQuery, treeOrdinal),
+		)
+		if result.state != statementRUOperatorComplete {
+			return statementRUFailed(result.state), false
+		}
+	}
+	finalized, ok := calculator.finalize()
+	if ok {
+		finalized.sqlType = planInfo.sqlType
+	}
+	return finalized, ok
+}
+
+func newStatementRUTerminalCalculator(
+	metrics *execdetails.RUV2Metrics,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+) (statementRUCalculator, bool) {
+	if !rootEOF {
+		return statementRUCalculator{}, false
+	}
+	calculator := newStatementRUCalculator(setup)
+	// Add the statement-wide RUv2 TiKV coprocessor response bytes once.
+	// Per-reader accounting would count the same aggregate more than once.
+	if metrics != nil && !metrics.Bypass() {
+		netBytes := metrics.TiKVCoprocessorResponseBytes()
+		if netBytes < 0 {
+			return statementRUCalculator{}, false
+		}
+		calculator.units.NetBytes = float64(netBytes)
+		if calculator.report != nil && netBytes != 0 {
+			calculator.report.add(statementRUTiKV, statementRUCopTransport, ruv2.StmtUnits{NetBytes: float64(netBytes)})
+		}
+	}
+	return calculator, true
+}
+
+type statementRUForestKind uint8
+
+const (
+	statementRUForestMain statementRUForestKind = iota
+	statementRUForestCTE
+	statementRUForestScalarSubQuery
+)
+
+func statementRUExplainTree(
+	result *plannercore.ExplainRUResult,
+	kind statementRUForestKind,
+	treeOrdinal int,
+) []plannercore.ExplainRUOperatorResult {
+	if result == nil {
+		return nil
+	}
+	switch kind {
+	case statementRUForestMain:
+		return result.Main
+	case statementRUForestCTE:
+		if treeOrdinal >= 0 && treeOrdinal < len(result.CTEs) {
+			return result.CTEs[treeOrdinal]
+		}
+	case statementRUForestScalarSubQuery:
+		if treeOrdinal >= 0 && treeOrdinal < len(result.ScalarSubQueries) {
+			return result.ScalarSubQueries[treeOrdinal]
+		}
+	}
+	return nil
 }
 
 // calculateStatementRUPlan evaluates one subtree from a canonical
@@ -245,14 +480,59 @@ func calculateStatementRUPlan(
 	operatorIndex int,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
+	rootOwnedUnits ruv2.StmtUnits,
+	operatorRUs []plannercore.ExplainRUOperatorResult,
 ) statementRUOperatorResult {
+	if !validateStatementRUFlatTree(tree) {
+		return statementRUOperatorResult{state: statementRUOperatorInvalid}
+	}
 	return calculateStatementRUPlanChildFirst(
 		tree,
 		operatorIndex,
 		runtimeStatsColl,
 		calculator,
 		len(tree),
+		rootOwnedUnits,
+		operatorRUs,
 	)
+}
+
+// validateStatementRUFlatTree verifies the canonical depth-first shape without
+// allocating occurrence state on the ResultOnly path. Every child subtree must
+// begin exactly where the preceding subtree ends, so duplicate references,
+// backward/cyclic edges, and unreachable entries all fail closed.
+func validateStatementRUFlatTree(tree plannercore.FlatPlanTree) bool {
+	if len(tree) == 0 {
+		return false
+	}
+	next, ok := validateStatementRUFlatSubtree(tree, 0, len(tree))
+	return ok && next == len(tree)
+}
+
+func validateStatementRUFlatSubtree(
+	tree plannercore.FlatPlanTree,
+	operatorIndex int,
+	remainingDepth int,
+) (int, bool) {
+	if operatorIndex < 0 || operatorIndex >= len(tree) || remainingDepth <= 0 {
+		return 0, false
+	}
+	operator := tree[operatorIndex]
+	if operator == nil || operator.Origin == nil {
+		return 0, false
+	}
+	next := operatorIndex + 1
+	for _, childIndex := range operator.ChildrenIdx {
+		if childIndex != next || childIndex <= operatorIndex {
+			return 0, false
+		}
+		var ok bool
+		next, ok = validateStatementRUFlatSubtree(tree, childIndex, remainingDepth-1)
+		if !ok {
+			return 0, false
+		}
+	}
+	return next, true
 }
 
 func calculateStatementRUPlanChildFirst(
@@ -261,6 +541,8 @@ func calculateStatementRUPlanChildFirst(
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 	remainingDepth int,
+	rootOwnedUnits ruv2.StmtUnits,
+	operatorRUs []plannercore.ExplainRUOperatorResult,
 ) statementRUOperatorResult {
 	if operatorIndex < 0 || operatorIndex >= len(tree) || calculator == nil || remainingDepth <= 0 {
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
@@ -269,7 +551,12 @@ func calculateStatementRUPlanChildFirst(
 	if operator == nil || operator.Origin == nil {
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
-
+	var beforeSubtree ruv2.StmtUnits
+	var beforeSubtreeTiFlashRU float64
+	if operatorRUs != nil {
+		beforeSubtree = calculator.units
+		beforeSubtreeTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
+	}
 	children := make([]statementRUOperatorResult, len(operator.ChildrenIdx))
 	childState := statementRUOperatorComplete
 	for childOrdinal, childIndex := range operator.ChildrenIdx {
@@ -279,6 +566,8 @@ func calculateStatementRUPlanChildFirst(
 			runtimeStatsColl,
 			calculator,
 			remainingDepth-1,
+			rootOwnedUnits,
+			operatorRUs,
 		)
 		childState = mergeStatementRUOperatorState(childState, children[childOrdinal].state)
 	}
@@ -287,19 +576,84 @@ func calculateStatementRUPlanChildFirst(
 	}
 
 	outputRows := int64(0)
+	// After successful statement teardown, absent local counters contribute zero.
+	// Missing cop summaries likewise contribute no rows to the best-effort value;
+	// independently observed descendant work and request scans remain chargeable.
 	if runtimeStatsColl != nil {
 		if operator.IsRoot {
-			outputRows = runtimeStatsColl.GetPlanActRows(operator.Origin.ID())
+			snapshot := runtimeStatsColl.GetRootRowsSnapshot(operator.Origin.ID())
+			if snapshot.Invalid() {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+			outputRows = snapshot.Rows
+		} else if statementRUOperatorRunsAtMPP(operator) {
+			snapshot, _ := runtimeStatsColl.GetTiFlashExecutionUnits(operator.Origin.ID())
+			if snapshot.Invalid || snapshot.Rows > math.MaxInt64 {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+			outputRows = int64(snapshot.Rows)
 		} else {
-			_, outputRows = runtimeStatsColl.GetCopCountAndRows(operator.Origin.ID())
+			snapshot := runtimeStatsColl.GetCopRowsSnapshot(operator.Origin.ID())
+			if snapshot.Invalid {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+			outputRows = snapshot.Rows
 		}
 	}
 	if outputRows < 0 {
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
 
+	beforeCPU, beforeHashState := calculator.units.CPUWork, calculator.units.HashStateRows
+	beforeJoinOutput, beforeNet, beforeCrossAZ := calculator.units.JoinOutputRows, calculator.units.NetBytes, calculator.units.CrossAZNetBytes
+	var beforeOperator ruv2.StmtUnits
+	var beforeOperatorTiFlashRU float64
+	if calculator.report != nil || operatorRUs != nil {
+		beforeOperator = calculator.units
+	}
+	if operatorRUs != nil {
+		beforeOperatorTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
+	}
+
 	switch origin := operator.Origin.(type) {
+	case *physicalop.Insert, *physicalop.Update, *physicalop.Delete:
+		if !operator.IsRoot || runtimeStatsColl == nil {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		work, found := runtimeStatsColl.GetRootWriteCPUWork(operator.Origin.ID())
+		if !found {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if !addStatementRUCPUWork(calculator, work) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *plannercore.Simple:
+		_, isCommit := origin.Statement.(*ast.CommitStmt)
+		if !operator.IsRoot || len(children) != 0 || !isCommit {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *plannercore.Analyze:
+		// ANALYZE can issue independent requests for indexes, partitions, and
+		// split ranges. Its scan-byte estimate is accumulated once per logical
+		// request before their nonlinear scan-detail fields are flattened.
+		if !operator.IsRoot || len(operator.ChildrenIdx) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if runtimeStatsColl != nil {
+			scanBytes, found := runtimeStatsColl.GetAnalyzeScanBytes(origin.ID())
+			if found && !addStatementRUScanBytes(calculator, scanBytes) {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+		}
 	case *physicalop.PhysicalTableReader:
+		// An MPP Reader adds no CPUWork. It owns all descendant scan bytes once;
+		// those bytes belong to TiFlash, while this Reader's OperatorNum is TiDB's.
+		if operator.IsRoot && origin.StoreType == kv.TiFlash && origin.ReadReqType == physicalop.MPP && len(children) == 1 {
+			if state := collectStatementRUMPPScanBytes(tree, operator.ChildrenIdx[0], runtimeStatsColl, calculator); state != statementRUOperatorComplete {
+				return statementRUOperatorResult{state: state}
+			}
+			break
+		}
 		// Scan-byte accounting is performed at Reader boundaries. A TableReader
 		// contributes scan evidence from its single TiKV table request exactly once.
 		if !operator.IsRoot || origin.StoreType != kv.TiKV || origin.ReadReqType != physicalop.Cop ||
@@ -346,19 +700,204 @@ func calculateStatementRUPlanChildFirst(
 		); state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
 		}
+	case *physicalop.PhysicalIndexMergeReader:
+		// Before statement-level charges, IndexMerge subtree RU is:
+		// sum(child subtree RU) plus the weighted sum of partial and table
+		// scan bytes.
+		// Each request estimates scanBytes = ProcessedKeysSize / ProcessedKeys *
+		// TotalKeys when those counters are usable; missing/unavailable evidence
+		// contributes zero. Child RU covers pushed operators such as Selection.
+		// TiDB handle union/intersection has no separate charge in this model.
+		// Network and frontend RU are added once at the statement root.
+		if !operator.IsRoot || origin.TablePlan == nil {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		requestRoots := make([]base.Plan, 0, len(origin.PartialPlansRaw)+1)
+		for _, partial := range origin.PartialPlansRaw {
+			requestRoots = append(requestRoots, partial)
+		}
+		requestRoots = append(requestRoots, origin.TablePlan)
+		if state := collectStatementRUReaderScanBytes(
+			tree, operator, runtimeStatsColl, calculator, requestRoots,
+		); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		// Point Get and Batch Point Get are root-only operators. Their client-go
+		// snapshot stats own both storage scan evidence and logical response
+		// payload, so collect both once at the plan occurrence.
+		if !operator.IsRoot || len(operator.ChildrenIdx) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		// DML lookup leaves do not yet own reliable point-response evidence.
+		// Keep their occurrence count without attributing remote read work here.
+		if calculator.units.WriteStatement != 0 {
+			break
+		}
+		if state := collectStatementRUPointLookupEvidence(
+			operator.Origin.ID(), runtimeStatsColl, calculator,
+		); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.CTEDefinition:
+		// A CTEDefinition is the zero-self-RU ownership wrapper for one shared
+		// materialization. FlattenPhysicalPlan emits it once per IDForStorage;
+		// seed and recursive descendants already carry runtime evidence merged
+		// across actual rounds and must not be multiplied by consumer count or a
+		// separately inferred recursion count. Until direct phase/opportunity
+		// evidence exists, an intentionally skipped phase and missing evidence
+		// can both appear as zero; only a zero caused by missing evidence may
+		// undercount actual work. Forest calibration is therefore Incomplete and
+		// the result is not a mathematical bound.
+		if !operator.IsRoot || len(children) < 1 || len(children) > 2 ||
+			tree[operator.ChildrenIdx[0]].Label != plannercore.SeedPart ||
+			(len(children) == 2 && tree[operator.ChildrenIdx[1]].Label != plannercore.RecursivePart) {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalCTE:
+		// The consumer owns no producer work. Its observed rows remain the
+		// occurrence output consumed by a parent Selection/Join/Aggregation.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalCTETable:
+		// A recursive CTE-table read is an orchestration leaf with zero modeled
+		// self RU; its actual output rows still feed the recursive parent tree.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *plannercore.ScalarSubqueryEvalCtx:
+		// ScalarSubqueryEvalCtx only owns the independent-tree boundary. The
+		// physical child was executed during optimization and owns all modeled
+		// work; it does not need another main-record-set EOF.
+		if !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalProjection:
+		// Projection CPU work is one expression slot per actual input row. This
+		// is linear across repeated executions, so merged child rows are the
+		// sufficient statistic for the current model.
+		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		expressionCount := len(origin.Exprs)
+		if !addStatementRUCPUWork(
+			calculator,
+			float64(children[0].outputRows)*float64(expressionCount),
+		) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalUnionScan:
+		// UnionScan overlays transaction-local rows on one child stream. The
+		// current model charges one unit of CPU work per typed child output row.
+		// The formula is linear across repeated shared-ID executions.
+		if !operator.IsRoot {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalMaxOneRow:
+		// MaxOneRow examines the direct child's actual output. It must not use
+		// the NULL row synthesized for an empty scalar subquery as input work.
+		if !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalMemTable:
+		// Memory-table access has no modeled self units. Its observed output
+		// still supplies input rows to parent operators.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalLock:
+		// Lock has no modeled self units; the child retains its read work.
+		if !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalTableDual:
+		// TableDual has zero modeled self RU. Runtime evidence, rather than the
+		// optimizer estimate, distinguishes its actual zero/one output for a
+		// parent operator.
+		if !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalUnionAll:
+		// UnionAll is a zero-self-RU orchestration wrapper; each executed child
+		// subtree contributes independently.
+		if !operator.IsRoot || len(children) == 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalApply:
+		// Apply is a zero-self-RU orchestration wrapper in this model. Child
+		// runtime rows accumulate repeated inner work, but the current evidence
+		// cannot distinguish cache/filter skips from missing attempts and cannot
+		// reconstruct repeated nonlinear Sort/TopN work. The best-effort result
+		// therefore may undercount, remains Incomplete, and must not be treated as
+		// exact or as a mathematical bound.
+		if !operator.IsRoot || len(children) != 2 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalShuffle:
+		if !operator.IsRoot || (origin.SplitterType != physicalop.PartitionHashSplitterType &&
+			origin.SplitterType != physicalop.PartitionRangeSplitterType) {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if state := collectStatementRUShuffleUnits(origin, runtimeStatsColl, calculator); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalShuffleReceiverStub:
+		// A receiver is a zero-self exchange wrapper. Its explicit flat child is
+		// the original data source; worker clones share the root row statistic.
+		if !operator.IsRoot {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalSequence:
+		// Sequence orders CTE orchestration and the main query but owns no modeled
+		// self RU. Its explicit children remain responsible for their own work.
+		if !operator.IsRoot || len(children) == 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
 	case *physicalop.PhysicalSelection:
 		// CPU work for Selection is defined as the child output-row count
-		// multiplied by the number of conditions evaluated per row.
+		// multiplied by len(Conditions), not the surviving output-row count.
+		// Condition slots are counted without modeling short-circuit evaluation.
 		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)*float64(len(origin.Conditions))) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
+	case *physicalop.PhysicalWindow:
+		// CPUWork = child rows * (window functions + partition keys + order keys
+		// + start/end range-frame CalcFuncs). A child Sort owns sorting work
+		// separately; this formula applies to both root and MPP Window.
+		if !operator.IsRoot && !statementRUOperatorRunsAtMPP(operator) {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+		expressionCount := statementRUWindowExpressionCount(origin)
+		if !addStatementRUCPUWork(
+			calculator,
+			float64(children[0].outputRows)*float64(expressionCount),
+		) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
 	case *physicalop.PhysicalSort:
 		// For n > 0, CPU work for Sort is defined as n * log2(max(n, 2)), where n
-		// is the child output-row count. Only root Sort is supported.
-		if !operator.IsRoot || len(children) != 1 {
+		// is the child output-row count. Root and MPP Sort are supported. When one
+		// occurrence is reopened by recursive CTE or Apply, current row evidence
+		// merges the executions before this nonlinear formula; superadditivity can
+		// overestimate their separately accumulated work until lifecycle-ready
+		// ordering evidence is available.
+		if (!operator.IsRoot && !statementRUOperatorRunsAtMPP(operator)) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 		statementRUAssertOrderingMaterialized(origin.ByItems)
@@ -368,7 +907,9 @@ func calculateStatementRUPlanChildFirst(
 	case *physicalop.PhysicalTopN:
 		// For n > 0 and k > 0, CPU work for TopN is defined as
 		// n * log2(max(min(n, k), 2)). Root k is Offset + Count; for pushed TopN,
-		// the planner has already folded Offset into Count.
+		// the planner has already folded Offset into Count. Repeated executions
+		// are currently merged before this nonlinear formula and can overestimate
+		// the sum of per-lifecycle work.
 		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -394,13 +935,57 @@ func calculateStatementRUPlanChildFirst(
 		}
 	case *physicalop.PhysicalLimit:
 		// CPU work for Limit is defined as its child output-row count.
+		// MPP uses the reported child work, not min(child rows, Count): tasks may
+		// have produced additional rows before the limit stops consumption.
 		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
+	case *physicalop.PhysicalHashJoin, *physicalop.PhysicalMergeJoin,
+		*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
+		*physicalop.PhysicalIndexMergeJoin:
+		state := collectStatementRUJoinUnits(
+			operator, children, outputRows, runtimeStatsColl, calculator,
+		)
+		if state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
+		state := collectStatementRUAggregationUnits(
+			operator, children, outputRows, runtimeStatsColl, calculator,
+		)
+		if state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalExchangeSender, *physicalop.PhysicalExchangeReceiver:
+		// Neither exchange adds CPUWork. Sender adds its reported send bytes;
+		// Receiver adds no network bytes, since the sending occurrence owns them.
+		// Receiver's own reported rows still feed its parent's CPU formula (e.g.
+		// after broadcast); the sender's source row count is not substituted.
+		if !statementRUOperatorRunsAtMPP(operator) || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if _, sender := origin.(*physicalop.PhysicalExchangeSender); sender {
+			if !collectStatementRUMPPNetwork(operator.Origin.ID(), runtimeStatsColl, calculator) {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+		}
 	case *physicalop.PhysicalTableScan, *physicalop.PhysicalIndexScan:
+		if statementRUOperatorRunsAtMPP(operator) {
+			// An ordinary MPP TableScan adds no CPUWork. Remote-read send bytes
+			// belong here, but UserReadBytes are collected at the owning Reader.
+			// Its output rows remain the input evidence for a parent operator.
+			scan, ok := origin.(*physicalop.PhysicalTableScan)
+			if !ok || len(children) != 0 || len(scan.UsedColumnarIndexes) != 0 {
+				return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+			}
+			if !collectStatementRUMPPNetwork(scan.ID(), runtimeStatsColl, calculator) {
+				return statementRUOperatorResult{state: statementRUOperatorInvalid}
+			}
+			break
+		}
 		// TableScan and IndexScan do not contribute units directly. Their scan
 		// evidence is accounted for by the owning Reader boundary.
 		if operator.IsRoot || len(operator.ChildrenIdx) != 0 {
@@ -410,12 +995,283 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 	default:
-		// Operators not listed above, including Projection, are outside the
+		// Operators not listed above are outside the
 		// supported statement-RU model and therefore fail closed.
 		return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 	}
 
-	return statementRUOperatorResult{state: statementRUOperatorComplete, outputRows: outputRows}
+	calculator.units.OperatorNum++
+	engine := statementRUTiDB
+	if statementRUOperatorRunsAtMPP(operator) {
+		engine = statementRUTiFlash
+	} else if !operator.IsRoot {
+		engine = statementRUTiKV
+	}
+	compute := &calculator.compute[engine]
+	compute.cpuWork += calculator.units.CPUWork - beforeCPU
+	compute.hashStateRows += calculator.units.HashStateRows - beforeHashState
+	compute.operatorNum++
+	compute.joinOutputRows += calculator.units.JoinOutputRows - beforeJoinOutput
+	compute.netBytes += calculator.units.NetBytes - beforeNet
+	compute.crossAZNetBytes += calculator.units.CrossAZNetBytes - beforeCrossAZ
+	var selfUnits ruv2.StmtUnits
+	if calculator.report != nil || operatorRUs != nil {
+		selfUnits = calculator.units.Sub(beforeOperator)
+	}
+	if calculator.report != nil {
+		reportUnits := selfUnits
+		if reader, ok := operator.Origin.(*physicalop.PhysicalTableReader); ok && reader.StoreType == kv.TiFlash {
+			calculator.report.add(statementRUTiFlash, statementRUReader, ruv2.StmtUnits{ScanBytes: reportUnits.ScanBytes})
+			reportUnits.ScanBytes = 0
+		}
+		calculator.report.addOperator(engine, statementRUOperatorForPlan(operator.Origin), reportUnits)
+	}
+	if operatorRUs != nil {
+		if len(operatorRUs) != len(tree) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+		cumUnits := calculator.units.Sub(beforeSubtree)
+		if operatorIndex == 0 {
+			selfUnits = selfUnits.Add(rootOwnedUnits)
+			cumUnits = cumUnits.Add(rootOwnedUnits)
+		}
+		weights := currentStatementRUWeights()
+		selfResult, _ := ruv2.Calculate(selfUnits, weights)
+		cumResult, _ := ruv2.Calculate(cumUnits, weights)
+		tiFlashRU := calculator.tiFlashRU(weights)
+		selfResult.TotalRU += (tiFlashRU - beforeOperatorTiFlashRU) * (statementRUTiFlashMultiplier - 1)
+		cumResult.TotalRU += (tiFlashRU - beforeSubtreeTiFlashRU) * (statementRUTiFlashMultiplier - 1)
+		operatorRUs[operatorIndex].SelfRU = selfResult.TotalRU
+		operatorRUs[operatorIndex].CumRU = cumResult.TotalRU
+	}
+
+	return statementRUOperatorResult{
+		state:      statementRUOperatorComplete,
+		outputRows: outputRows,
+	}
+}
+
+// collectStatementRUJoinUnits charges one supported root Join or MPP HashJoin using
+// these formulas:
+//
+//	CPUWork = (left child rows + right child rows) * expression count
+//	JoinOutputRows = output rows
+//	HashStateRows = constructed HashJoin lookup-state rows
+//
+// statementRUJoinContractForPlan defines the expression count for each Join
+// subtype. MPP uses both children's merged rows, including ExchangeReceiver rows,
+// and the Join's own reported output for JoinOutputRows. Its hash state comes from
+// TiFlash hash-table stats, not the build child's output or the join result size.
+// TiKV Cop and FullOuter joins remain unsupported.
+func collectStatementRUJoinUnits(
+	operator *plannercore.FlatOperator,
+	children []statementRUOperatorResult,
+	outputRows int64,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	delta := statementRUCalculator{}
+	if !operator.IsRoot && !statementRUOperatorRunsAtMPP(operator) {
+		return statementRUOperatorUnsupported
+	}
+	if statementRUOperatorRunsAtMPP(operator) {
+		if _, ok := operator.Origin.(*physicalop.PhysicalHashJoin); !ok {
+			return statementRUOperatorUnsupported
+		}
+	}
+	contract, ok := statementRUJoinContractForPlan(operator.Origin)
+	if !ok {
+		return statementRUOperatorUnsupported
+	}
+	inputRows := float64(children[0].outputRows) + float64(children[1].outputRows)
+	if !addStatementRUCPUWork(&delta, inputRows*float64(contract.expressionCount)) ||
+		!addStatementRUJoinOutputRows(&delta, float64(outputRows)) {
+		return statementRUOperatorInvalid
+	}
+	if contract.hashState {
+		if state := collectStatementRUOperatorHashStateRows(operator, runtimeStatsColl, &delta); state != statementRUOperatorComplete {
+			return state
+		}
+	}
+	if !mergeStatementRUUnitDelta(calculator, delta.units) {
+		return statementRUOperatorInvalid
+	}
+	return statementRUOperatorComplete
+}
+
+type statementRUJoinContract struct {
+	expressionCount int
+	hashState       bool
+}
+
+// statementRUJoinContractForPlan is the single support matrix for root Join and MPP HashJoin
+// accounting. Its expression count formulas are:
+//
+//	HashJoin       = EqualConditions + NAEqualConditions + LeftConditions + RightConditions + OtherConditions
+//	MergeJoin      = CompareFuncs + LeftConditions + RightConditions + OtherConditions
+//	IndexJoin      = OuterJoinKeys + LeftConditions + RightConditions + OtherConditions + CompareFilters.OpType
+//	IndexHashJoin  = OuterHashKeys + LeftConditions + RightConditions + OtherConditions + CompareFilters.OpType
+//	IndexMergeJoin = CompareFuncs + OuterCompareFuncs + LeftConditions + RightConditions + OtherConditions + CompareFilters.OpType
+func statementRUJoinContractForPlan(plan base.Plan) (statementRUJoinContract, bool) {
+	contract := statementRUJoinContract{}
+	compareFilterCount := func(filters *physicalop.ColWithCmpFuncManager) int {
+		if filters == nil {
+			return 0
+		}
+		return len(filters.OpType)
+	}
+	var joinType base.JoinType
+	switch join := plan.(type) {
+	case *physicalop.PhysicalHashJoin:
+		joinType = join.JoinType
+		contract.hashState = true
+		contract.expressionCount = len(join.EqualConditions) + len(join.NAEqualConditions) +
+			len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions)
+	case *physicalop.PhysicalMergeJoin:
+		joinType = join.JoinType
+		contract.expressionCount = len(join.CompareFuncs) + len(join.LeftConditions) +
+			len(join.RightConditions) + len(join.OtherConditions)
+	case *physicalop.PhysicalIndexJoin:
+		joinType = join.JoinType
+		contract.expressionCount = len(join.OuterJoinKeys) + len(join.LeftConditions) +
+			len(join.RightConditions) + len(join.OtherConditions) + compareFilterCount(join.CompareFilters)
+	case *physicalop.PhysicalIndexHashJoin:
+		joinType = join.JoinType
+		contract.expressionCount = len(join.OuterHashKeys) + len(join.LeftConditions) +
+			len(join.RightConditions) + len(join.OtherConditions) + compareFilterCount(join.CompareFilters)
+	case *physicalop.PhysicalIndexMergeJoin:
+		joinType = join.JoinType
+		contract.expressionCount = len(join.CompareFuncs) + len(join.OuterCompareFuncs) +
+			len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions) +
+			compareFilterCount(join.CompareFilters)
+	default:
+		return statementRUJoinContract{}, false
+	}
+	return contract, joinType != base.FullOuterJoin
+}
+
+// collectStatementRUAggregationUnits charges one supported root, TiKV cop, or MPP
+// Aggregation occurrence using these formulas:
+//
+//	CPUWork = child rows * (GroupByItems + AggFuncs)
+//	HashStateRows = constructed root HashAgg group-map rows, or observed TiKV HashAgg output rows
+//	HashStateRows = reported TiFlash hash-table sizes for MPP HashAgg
+//
+// A response with a missing summary contributes no rows while other valid
+// responses remain chargeable. StreamAgg has no hash state. Missing summaries
+// do not prevent calculation. MPP hash state comes from TiFlash hash-table stats.
+// Each MPP partial/final aggregation occurrence is charged separately using its
+// own child rows and expression slots; group-map sizes are not replaced by the
+// number of final result groups or multiplied by the number of tasks.
+func collectStatementRUAggregationUnits(
+	operator *plannercore.FlatOperator,
+	children []statementRUOperatorResult,
+	outputRows int64,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	delta := statementRUCalculator{}
+	if !statementRUOperatorRunsAtSupportedSite(operator) {
+		return statementRUOperatorUnsupported
+	}
+	var baseAgg *physicalop.BasePhysicalAgg
+	hashAgg := false
+	switch agg := operator.Origin.(type) {
+	case *physicalop.PhysicalHashAgg:
+		hashAgg = true
+		baseAgg = &agg.BasePhysicalAgg
+	case *physicalop.PhysicalStreamAgg:
+		baseAgg = &agg.BasePhysicalAgg
+	default:
+		return statementRUOperatorUnsupported
+	}
+	expressionCount := len(baseAgg.GroupByItems) + len(baseAgg.AggFuncs)
+	if !addStatementRUCPUWork(
+		&delta,
+		float64(children[0].outputRows)*float64(expressionCount),
+	) {
+		return statementRUOperatorInvalid
+	}
+	if !hashAgg {
+		if !mergeStatementRUUnitDelta(calculator, delta.units) {
+			return statementRUOperatorInvalid
+		}
+		return statementRUOperatorComplete
+	}
+	if operator.IsRoot || statementRUOperatorRunsAtMPP(operator) {
+		if state := collectStatementRUOperatorHashStateRows(operator, runtimeStatsColl, &delta); state != statementRUOperatorComplete {
+			return state
+		}
+		if !mergeStatementRUUnitDelta(calculator, delta.units) {
+			return statementRUOperatorInvalid
+		}
+		return statementRUOperatorComplete
+	}
+	// Each valid TiKV HashAgg execution summary reports the group states produced
+	// by that response. Missing response summaries are marked by execdetails and
+	// skipped; outputRows contains only the observed summaries.
+	if !addStatementRUHashStateRows(&delta, float64(outputRows)) {
+		return statementRUOperatorInvalid
+	}
+	if !mergeStatementRUUnitDelta(calculator, delta.units) {
+		return statementRUOperatorInvalid
+	}
+	return statementRUOperatorComplete
+}
+
+// collectStatementRUHashStateRows retains all published construction work,
+// including partial state from children stopped by a successful parent.
+func collectStatementRUHashStateRows(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	if runtimeStatsColl == nil {
+		return statementRUOperatorComplete
+	}
+	snapshot, _ := runtimeStatsColl.GetRootHashStateRowsSnapshot(planID)
+	if snapshot.Invalid() || !addStatementRUHashStateRows(calculator, float64(snapshot.Rows)) {
+		return statementRUOperatorInvalid
+	}
+	return statementRUOperatorComplete
+}
+
+func statementRUWindowExpressionCount(window *physicalop.PhysicalWindow) int {
+	count := len(window.WindowFuncDescs) + len(window.PartitionBy) + len(window.OrderBy)
+	if window.Frame != nil {
+		if window.Frame.Start != nil {
+			count += len(window.Frame.Start.CalcFuncs)
+		}
+		if window.Frame.End != nil {
+			count += len(window.Frame.End.CalcFuncs)
+		}
+	}
+	return count
+}
+
+// collectStatementRUShuffleUnits computes CPUWork = sum_i(n_i * (k_i + 1)),
+// where n_i is DataSources[i]'s output-row count and k_i is
+// len(ByItemArrays[i]). The +1 accounts for partitioning each row.
+// Worker clones share row statistics, so concurrency is not another multiplier.
+func collectStatementRUShuffleUnits(
+	shuffle *physicalop.PhysicalShuffle,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	if runtimeStatsColl == nil {
+		return statementRUOperatorComplete
+	}
+	for sourceOrdinal, dataSource := range shuffle.DataSources {
+		rows := runtimeStatsColl.GetRootRowsSnapshot(dataSource.ID())
+		if rows.Invalid() {
+			return statementRUOperatorInvalid
+		}
+		multiplier := len(shuffle.ByItemArrays[sourceOrdinal]) + 1
+		if !addStatementRUCPUWork(calculator, float64(rows.Rows)*float64(multiplier)) {
+			return statementRUOperatorInvalid
+		}
+	}
+	return statementRUOperatorComplete
 }
 
 func mergeStatementRUOperatorState(left, right statementRUOperatorState) statementRUOperatorState {
@@ -429,7 +1285,7 @@ func mergeStatementRUOperatorState(left, right statementRUOperatorState) stateme
 }
 
 func statementRUOperatorRunsAtSupportedSite(operator *plannercore.FlatOperator) bool {
-	return operator.IsRoot || (operator.StoreType == kv.TiKV && operator.ReqType == physicalop.Cop)
+	return operator.IsRoot || statementRUOperatorRunsAtMPP(operator) || (operator.StoreType == kv.TiKV && operator.ReqType == physicalop.Cop)
 }
 
 func collectStatementRUReaderScanBytes(
@@ -439,6 +1295,11 @@ func collectStatementRUReaderScanBytes(
 	calculator *statementRUCalculator,
 	requestRoots []base.Plan,
 ) statementRUOperatorState {
+	// GetCopScanDetail currently exposes totals merged across responses. Applying
+	// the processed-byte ratio after that merge can estimate above or below the
+	// sum of response-local physical sizes even when every field is present. A
+	// later producer change will consume response-level total-key-size evidence;
+	// until then the whole forest remains calibration-Incomplete.
 	if len(operator.ChildrenIdx) != len(requestRoots) {
 		return statementRUOperatorUnsupported
 	}
@@ -476,6 +1337,93 @@ func collectStatementRUReaderScanBytes(
 		}
 	}
 	return statementRUOperatorComplete
+}
+
+func collectStatementRUPointLookupEvidence(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	if runtimeStatsColl == nil {
+		return statementRUOperatorComplete
+	}
+	rootStats, exists := runtimeStatsColl.GetRootStatsIfExists(planID)
+	if !exists || rootStats == nil {
+		return statementRUOperatorComplete
+	}
+
+	_, groups := rootStats.MergeStats()
+	var aggregate clientutil.PointResponseStats
+	for _, group := range groups {
+		stats, ok := statementRUPointResponseStatsSnapshot(group)
+		if !ok {
+			continue
+		}
+		if !mergeStatementRUPointResponseStats(&aggregate, stats) {
+			return statementRUOperatorInvalid
+		}
+	}
+	// No provider (an unexecuted point lookup) or a valid zero-value snapshot
+	// (for example a transaction-buffer hit) contributes zero remote work.
+	if !aggregate.PayloadComplete() {
+		if aggregate.PayloadBytes != 0 ||
+			aggregate.ScanDetail.TotalKeys != 0 || aggregate.ScanDetail.ProcessedKeys != 0 ||
+			aggregate.ScanDetail.ProcessedKeysSize != 0 {
+			return statementRUOperatorInvalid
+		}
+		return statementRUOperatorComplete
+	}
+	if !aggregate.ScanDetailComplete() {
+		return statementRUOperatorUnsupported
+	}
+
+	scanEvidence := classifyStatementRUScanEvidence(
+		aggregate.ScanDetail.TotalKeys,
+		aggregate.ScanDetail.ProcessedKeys,
+		aggregate.ScanDetail.ProcessedKeysSize,
+	)
+	switch scanEvidence.state {
+	case statementRUScanEvidenceValid:
+		if !addStatementRUScanBytes(calculator, scanEvidence.scanBytes) {
+			return statementRUOperatorInvalid
+		}
+	case statementRUScanEvidenceUnavailable:
+		// Complete response coverage does not give protobuf scalar fields
+		// presence bits. Keep the best-effort value and add no scan bytes.
+	default:
+		return statementRUOperatorInvalid
+	}
+	calculator.units.NetBytes += float64(aggregate.PayloadBytes)
+	return statementRUOperatorComplete
+}
+
+func statementRUPointResponseStatsSnapshot(
+	group execdetails.RuntimeStats,
+) (clientutil.PointResponseStats, bool) {
+	provider, ok := group.(statementRUPointResponseStatsProvider)
+	if !ok {
+		return clientutil.PointResponseStats{}, false
+	}
+	// The promoted getter handles a nil embedded snapshot, but accessing it
+	// through a nil outer wrapper would panic before reaching client-go.
+	if runtimeStats, concrete := group.(*runtimeStatsWithSnapshot); concrete && runtimeStats == nil {
+		invalid := clientutil.PointResponseStats{}
+		invalid.Invalidate()
+		return invalid, true
+	}
+	return provider.GetPointResponseStats(), true
+}
+
+func mergeStatementRUPointResponseStats(
+	aggregate *clientutil.PointResponseStats,
+	stats clientutil.PointResponseStats,
+) bool {
+	if !stats.IsValid() || stats.ScanDetail.TotalKeys < 0 ||
+		stats.ScanDetail.ProcessedKeys < 0 || stats.ScanDetail.ProcessedKeysSize < 0 {
+		return false
+	}
+	aggregate.Merge(stats)
+	return true
 }
 
 func statementRUSortWork(inputRows int64, retainedRows uint64) float64 {
@@ -516,4 +1464,38 @@ func addStatementRUScanBytes(calculator *statementRUCalculator, scanBytes float6
 	}
 	calculator.units.ScanBytes += scanBytes
 	return !math.IsInf(calculator.units.ScanBytes, 0)
+}
+
+func addStatementRUHashStateRows(calculator *statementRUCalculator, rows float64) bool {
+	if calculator == nil || rows < 0 || math.IsNaN(rows) || math.IsInf(rows, 0) {
+		return false
+	}
+	calculator.units.HashStateRows += rows
+	return !math.IsInf(calculator.units.HashStateRows, 0)
+}
+
+func addStatementRUJoinOutputRows(calculator *statementRUCalculator, rows float64) bool {
+	if calculator == nil || rows < 0 || math.IsNaN(rows) || math.IsInf(rows, 0) {
+		return false
+	}
+	calculator.units.JoinOutputRows += rows
+	return !math.IsInf(calculator.units.JoinOutputRows, 0)
+}
+
+// mergeStatementRUUnitDelta commits one fully validated operator occurrence.
+// Mutating a copy prevents a later field overflow from retaining a partial
+// occurrence in the statement-local calculator.
+func mergeStatementRUUnitDelta(calculator *statementRUCalculator, delta ruv2.StmtUnits) bool {
+	if calculator == nil {
+		return false
+	}
+	merged := *calculator
+	if !addStatementRUCPUWork(&merged, delta.CPUWork) ||
+		!addStatementRUScanBytes(&merged, delta.ScanBytes) ||
+		!addStatementRUHashStateRows(&merged, delta.HashStateRows) ||
+		!addStatementRUJoinOutputRows(&merged, delta.JoinOutputRows) {
+		return false
+	}
+	*calculator = merged
+	return true
 }

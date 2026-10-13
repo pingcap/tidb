@@ -778,10 +778,12 @@ type candidatePath struct {
 	matchWithAdvisorySortItems bool
 	// partialPathMatchResults stores each partial path's matchProperty result.
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
-	partialPathMatchResults []property.PhysicalPropMatchResult
-	indexJoinCols           int  // how many index columns are used in access conditions in this IndexJoin.
-	isFullRange             bool // cached result of whether this path covers the full scan range.
-	eqOrInCount             int  // cached result of equalPredicateCount().
+	partialPathMatchResults      []property.PhysicalPropMatchResult
+	indexJoinCols                int     // how many index columns are used in access conditions in this IndexJoin.
+	countAfterAccess4IndexJoin   float64 // adjusted CountAfterAccess used only by index join candidate comparison.
+	countAfterAccess4IndexJoinOK bool    // whether countAfterAccess4IndexJoin is stable enough for skyline pruning.
+	isFullRange                  bool    // cached result of whether this path covers the full scan range.
+	eqOrInCount                  int     // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
@@ -848,6 +850,16 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	return 0, 0
 }
 
+func (c *candidatePath) getCountAfterAccess4SkylinePruning() (float64, bool) {
+	if c.indexJoinCols > 0 {
+		if !c.countAfterAccess4IndexJoinOK {
+			return 0, false
+		}
+		return c.countAfterAccess4IndexJoin, true
+	}
+	return c.path.CountAfterAccess, true
+}
+
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
@@ -885,7 +897,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
-	eqOrInResult := compareEqOrIn(lhs, rhs)
+	eqOrInResult := compareEqOrIn(lhs, rhs, sctx.GetSessionVars().RangeMaxCount)
 
 	// predicateResult is separated out. An index may "win" because it has a better
 	// accessResult - but that access has high risk.
@@ -915,7 +927,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
-	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
+	lhsCountAfterAccess, lhsCountAfterAccessOK := lhs.getCountAfterAccess4SkylinePruning()
+	rhsCountAfterAccess, rhsCountAfterAccessOK := rhs.getCountAfterAccess4SkylinePruning()
+	// For IndexJoin inner candidates, CountAfterAccess is safe for this strong skyline pruning rule only
+	// when the unaccounted runtime join key has stable NDV. Otherwise skip this empirical row-count rule
+	// and let the later IndexJoin-specific NDV/cost comparison decide. Normal DataSource candidates still
+	// use the original AccessPath.CountAfterAccess, so their behavior here is unchanged.
+	if lhsCountAfterAccessOK && rhsCountAfterAccessOK &&
+		lhsCountAfterAccess > 100 && rhsCountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
@@ -923,10 +942,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		if threshold > 0 { // set it to 0 to disable this rule
 			// corrResult is included to ensure we don't preference to a higher risk plan given that
 			// this rule does not check the other criteria included below.
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && riskResult <= 0 {
+			if lhsCountAfterAccess/rhsCountAfterAccess > threshold && riskResult <= 0 {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && riskResult >= 0 {
+			if rhsCountAfterAccess/lhsCountAfterAccess > threshold && riskResult >= 0 {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
@@ -1009,21 +1028,30 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 	return 0
 }
 
-// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie).
+// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
+// unless its range count exceeds rangeMaxCount. Zero disables this threshold.
 // For example:
 //
 //	where a=1 and b=1 and c=1 and d=1
 //	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
 //	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
-func compareEqOrIn(lhs, rhs *candidatePath) (predCompare int) {
+func compareEqOrIn(lhs, rhs *candidatePath, rangeMaxCount int64) (predCompare int) {
 	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
 		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
 		return 0
 	}
 	if lhs.eqOrInCount > rhs.eqOrInCount {
+		// More equality/IN predicates can produce many seeks. Do not give that path an
+		// advantage on predicate count alone; leave the other skyline dimensions intact.
+		if rangeMaxCount > 0 && int64(len(lhs.path.Ranges)) > rangeMaxCount {
+			return 0
+		}
 		return 1
 	}
 	if lhs.eqOrInCount < rhs.eqOrInCount {
+		if rangeMaxCount > 0 && int64(len(rhs.path.Ranges)) > rangeMaxCount {
+			return 0
+		}
 		return -1
 	}
 	// We didn't find a winner
@@ -1691,8 +1719,13 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	return candidate
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
-	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
+	candidate := &candidatePath{
+		path:                         path,
+		indexJoinCols:                indexJoinCols,
+		countAfterAccess4IndexJoin:   countAfterAccess4IndexJoin,
+		countAfterAccess4IndexJoinOK: countAfterAccess4IndexJoinOK,
+	}
 	candidate.matchPropResult = property.PropNotMatched
 	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)

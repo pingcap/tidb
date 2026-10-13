@@ -210,6 +210,11 @@ func (c *s3Client) DeleteObject(ctx context.Context, name string) error {
 
 // PresignObject creates a presigned URL for the given object.
 // It implements the presignableClient interface used by s3like.Storage.
+// TODO: A URL signed with temporary credentials can expire before the requested
+// duration. The shared PresignFile contract returns only the URL, so callers
+// cannot report the effective lifetime. Make presigning expiration-aware by
+// refreshing credentials with sufficient remaining lifetime or returning the
+// effective expiration through the shared contract.
 func (c *s3Client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
 	key := c.ObjectKey(name)
 	input := &s3.GetObjectInput{

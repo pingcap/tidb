@@ -216,6 +216,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildAdminPlugins(v)
 	case *plannercore.DDL:
 		return b.buildDDL(v)
+	case *plannercore.PurgeMaterializedViewLog:
+		return b.buildPurgeMaterializedViewLog(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *physicalop.Delete:
@@ -858,6 +860,7 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
+	b.attachAdaptiveLimitController(v, e, childExec)
 
 	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
@@ -870,6 +873,146 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
+}
+
+func (b *executorBuilder) attachAdaptiveLimitController(
+	limitPlan *physicalop.PhysicalLimit, limitExec *LimitExec, childExec exec.Executor,
+) {
+	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
+		return
+	}
+	// V1 recognizes two roots. Unsupported reader modes retain the existing path:
+	//
+	//	Limit -> Projection* -> ordered IndexLookUpJoin
+	//	Limit -> Projection* -> keep-order IndexLookUp
+	indexJoin := findAdaptiveLimitIndexJoin(childExec)
+	if indexJoin != nil {
+		if !indexJoin.AdaptiveLimitEligible {
+			return
+		}
+		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(indexJoin.Children(0))
+		if outerIndexLookup == nil {
+			return
+		}
+		demandRows := limitPlan.Offset + limitPlan.Count
+		config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
+		config.InitialOuterWindow = adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexJoinBatchSize)
+		config.MaxOuterWindow = uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) *
+			uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
+		controller := exec.NewAdaptiveLimitController(config)
+		outerIndexLookup.adaptiveLimitController = controller
+		indexJoin.AdaptiveLimitController = controller
+		limitExec.adaptiveLimitController = controller
+		return
+	}
+
+	indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec)
+	if indexLookup == nil {
+		return
+	}
+	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
+		limitPlan.Offset+limitPlan.Count,
+		indexLookup,
+	))
+	indexLookup.adaptiveLimitController = controller
+	indexLookup.reportAdaptiveLimitStats = true
+	limitExec.adaptiveLimitController = controller
+}
+
+func (b *executorBuilder) buildAdaptiveLimitConfig(
+	demandRows uint64, indexLookup *IndexLookUpExecutor,
+) exec.AdaptiveLimitConfig {
+	sessionVars := b.sctx.GetSessionVars()
+	initialLookupWindow := adaptiveLimitInitialWindow(demandRows, sessionVars.IndexLookupSize)
+	return exec.AdaptiveLimitConfig{
+		DemandRows:          demandRows,
+		InitialLookupWindow: initialLookupWindow,
+		MaxLookupWindow: uint64(sessionVars.IndexLookupSize) *
+			uint64(sessionVars.IndexLookupConcurrency()),
+		InitialLookupBatchSize: adaptiveLimitInitialLookupBatchSize(
+			initialLookupWindow,
+			indexLookup.indexPaging,
+			sessionVars.MaxChunkSize,
+			sessionVars.IndexLookupSize,
+		),
+		MaxLookupBatchSize: uint64(sessionVars.IndexLookupSize),
+	}
+}
+
+func adaptiveLimitInitialWindow(demandRows uint64, ceiling int) uint64 {
+	if demandRows == 0 || ceiling <= 1 {
+		return 1
+	}
+	return min(demandRows, uint64(ceiling))
+}
+
+// adaptiveLimitInitialLookupBatchSize keeps paging tasks aligned with the
+// initial logical window. Without paging, it preserves at least one chunk of
+// execution granularity while respecting the configured lookup batch limit.
+func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool, maxChunkSize, maxBatchSize int) uint64 {
+	if indexPaging {
+		return initialWindow
+	}
+	return min(max(initialWindow, uint64(maxChunkSize)), uint64(maxBatchSize))
+}
+
+func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
+	if indexJoin, ok := executor.(*join.IndexLookUpJoin); ok {
+		return indexJoin
+	}
+	if _, ok := executor.(*ProjectionExec); !ok {
+		return nil
+	}
+	children := executor.AllChildren()
+	if len(children) != 1 {
+		return nil
+	}
+	return findAdaptiveLimitIndexJoin(children[0])
+}
+
+func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+	for {
+		switch e := executor.(type) {
+		case *IndexLookUpExecutor:
+			if e.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(e) {
+				return nil
+			}
+			return e
+		case *ProjectionExec:
+			children := e.AllChildren()
+			if len(children) != 1 {
+				return nil
+			}
+			executor = children[0]
+		default:
+			return nil
+		}
+	}
+}
+
+func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
+	// Merge-sort double reads create all SelectResults before rolling handle
+	// admission. PushedLimit already applies its own index-side offset/count
+	// boundary, and pushed-down lookup does not preserve order. Concurrency 1
+	// cannot run the index and table workers at the same time in the shared pool.
+	// Keep these paths unchanged in v1.
+	return indexLookup.PushedLimit == nil && indexLookup.keepOrder && indexLookup.indexLookupConcurrency > 1 &&
+		!adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) && !indexLookup.indexLookUpPushDown
+}
+
+func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) bool {
+	if indexLookup.partitionTableMode || len(indexLookup.groupedRanges) > 0 {
+		return true
+	}
+	if len(indexLookup.byItems) == 0 {
+		return false
+	}
+	if len(indexLookup.idxPlans) == 0 {
+		return true
+	}
+	// Correlated access can rebuild groupedRanges from GroupByColIdxs in Open.
+	indexScan, ok := indexLookup.idxPlans[0].(*physicalop.PhysicalIndexScan)
+	return !ok || len(indexScan.GroupByColIdxs) > 0
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) exec.Executor {
@@ -997,6 +1140,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
 			jobID:        uint64(s.JobID),
 		}
+	case *ast.CancelMaterializedViewJobStmt:
+		return &CancelMaterializedViewJobExec{
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
+			stmt:         s,
+		}
 	}
 	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
@@ -1019,6 +1167,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) exec.Executor {
 		vars:         v.VarAssigns,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildPurgeMaterializedViewLog(v *plannercore.PurgeMaterializedViewLog) exec.Executor {
+	return &PurgeMaterializedViewLogExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }
 
 func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) exec.Executor {
@@ -1045,9 +1200,26 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.sctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
+	op := "INSERT"
+	sourceStmt := tables.MLogSourceInsert
+	if v.IsReplace {
+		op = "REPLACE"
+		sourceStmt = tables.MLogSourceReplace
+	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, v.Table.Meta(), "", op))
+		return true
+	})
+	insertTable := b.wrapTableWithMLogIfExists(v.Table, sourceStmt)
+	if b.err != nil {
+		return nil
+	}
+
 	ivs := &InsertValues{
 		BaseExecutor:              baseExec,
-		Table:                     v.Table,
+		Table:                     insertTable,
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
 		GenExprs:                  v.GenCols.Exprs,
@@ -1089,8 +1261,20 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "IMPORT"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
+		return nil
+	}
+	if meta := tbl.Meta(); meta.MaterializedViewBase != nil && meta.MaterializedViewBase.MLogID != 0 {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"IMPORT INTO on tables with materialized view log",
+		)
 		return nil
 	}
 
@@ -1121,8 +1305,18 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "LOAD"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		return nil
+	}
+	tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceLoadData)
+	if b.err != nil {
 		return nil
 	}
 
@@ -2606,6 +2800,7 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBHotRegions),
 			strings.ToLower(infoschema.TableConstraints),
 			strings.ToLower(infoschema.TableTiFlashReplica),
+			strings.ToLower(infoschema.TableStorageClassTransitions),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
@@ -3016,11 +3211,11 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
-		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
 			multiUpdateOnSameTable[info.TblID] = true
+			continue
 		}
-		tblID2table[info.TblID] = tbl
+		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
 			// Replace the original table with the partitioned table to support partition selection.
@@ -3028,10 +3223,21 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 			// Using the table in v.PartitionedTable returns a proper error, while using the original table can't.
 			for _, p := range v.PartitionedTable {
 				if info.TblID == p.Meta().ID {
-					tblID2table[info.TblID] = p
+					tbl = p
 				}
 			}
 		}
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.sctx.GetSessionVars()
+			intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "UPDATE"))
+			return true
+		})
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceUpdate)
+		if b.err != nil {
+			return nil
+		}
+		tblID2table[info.TblID] = tbl
 	}
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
@@ -3097,7 +3303,18 @@ func (b *executorBuilder) buildDelete(v *physicalop.Delete) exec.Executor {
 	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
-		tblID2table[info.TblID], _ = b.is.TableByID(context.Background(), info.TblID)
+		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.sctx.GetSessionVars()
+			intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "DELETE"))
+			return true
+		})
+		tbl = b.wrapTableWithMLogIfExists(tbl, tables.MLogSourceDelete)
+		if b.err != nil {
+			return nil
+		}
+		tblID2table[info.TblID] = tbl
 	}
 
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -3128,13 +3345,45 @@ func (b *executorBuilder) buildDelete(v *physicalop.Delete) exec.Executor {
 	return deleteExec
 }
 
+// wrapTableWithMLogIfExists wraps a base table with its MLog table when configured.
+func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, sourceStmt tables.MLogSourceStmt) table.Table {
+	if tbl == nil {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta == nil || meta.MaterializedViewBase == nil || meta.MaterializedViewBase.MLogID == 0 {
+		return tbl
+	}
+	if meta.GetPartitionInfo() != nil {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("materialized view log on partitioned tables")
+		return nil
+	}
+	mlogID := meta.MaterializedViewBase.MLogID
+	mlogTable, ok := b.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		b.err = errors.Errorf(
+			"cannot get materialized view log table id=%d (base=%s id=%d)",
+			mlogID,
+			meta.Name.O,
+			meta.ID,
+		)
+		return nil
+	}
+	wrapped, err := tables.WrapTableWithMaterializedViewLog(tbl, mlogTable, sourceStmt)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return wrapped
+}
+
 func (b *executorBuilder) updateForUpdateTS() error {
 	// GetStmtForUpdateTS will auto update the for update ts if it is necessary
 	_, err := sessiontxn.GetTxnManager(b.sctx).GetStmtForUpdateTS()
 	return err
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, planID int) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
 	sc := b.sctx.GetSessionVars().StmtCtx
@@ -3149,6 +3398,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3190,6 +3440,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	task plannercore.AnalyzeColumnsTask,
 	opts map[ast.AnalyzeOptionType]uint64,
 	schemaForVirtualColEval *expression.Schema,
+	planID int,
 ) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -3266,6 +3517,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3413,14 +3665,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID()))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze, v.ID()))
 		if b.err != nil {
 			return nil
 		}
@@ -3658,12 +3910,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 			ColLens:       v.IdxColLens,
 			HasPrefixCol:  hasPrefixCol,
 		},
-		WorkerWg:      new(sync.WaitGroup),
-		IsOuterJoin:   v.JoinType.IsOuterJoin(),
-		IndexRanges:   v.Ranges,
-		KeyOff2IdxOff: v.KeyOff2IdxOff,
-		LastColHelper: v.CompareFilters,
-		Finished:      &atomic.Value{},
+		WorkerWg:              new(sync.WaitGroup),
+		IsOuterJoin:           v.JoinType.IsOuterJoin(),
+		IndexRanges:           v.Ranges,
+		KeyOff2IdxOff:         v.KeyOff2IdxOff,
+		LastColHelper:         v.CompareFilters,
+		Finished:              &atomic.Value{},
+		AdaptiveLimitEligible: v.GetChildReqProps(1 - v.InnerChildIdx).NeedKeepOrder(),
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {

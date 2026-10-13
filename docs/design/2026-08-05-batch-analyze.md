@@ -14,6 +14,7 @@
         * [Add a Finalizer](#add-a-finalizer)
         * [Explicitly Opt-in](#explicitly-opt-in)
         * [Concurrency Control](#concurrency-control)
+        * [RPC Timeout](#rpc-timeout)
 * [Test Design](#test-design)
     * [Functional Tests](#functional-tests)
     * [Scenario Tests](#scenario-tests)
@@ -175,6 +176,12 @@ Manual `ANALYZE` uses the session value; Auto Analyze uses the global value.
 
 `tidb_analyze_distsql_scan_concurrency` remains the outer RPC concurrency. **TiDB requests serial execution, so each batched RPC has at most one active Region task and batching does not change this limit.**
 
+#### RPC Timeout
+
+TiKV bounds a serially executed batch, including its finalizer, by the main task's deadline, and client-go derives that deadline from the RPC timeout. Sending a batch with the single-request timeout would force every task in it to share the budget one Region task normally gets, and under a busy read pool the batch could expire in the queue before any task runs.
+
+When TiDB requests serial execution, it therefore multiplies the RPC timeout by the number of tasks in the RPC, the main task plus its `StoreBatchTask` entries. The rule applies to both `copr-req-timeout` and `tikv_client_read_timeout`. Store batches that run concurrently keep the single-request timeout because TiKV gives each of their child tasks its own deadline.
+
 ## Test Design
 
 ### Functional Tests
@@ -205,6 +212,7 @@ For each scan-concurrency setting, compare every serial batch-size configuration
 ### Risks
 
 - Serial batching can increase RPC tail latency.
+- A serial batch RPC can stay in flight for up to `tidb_analyze_store_batch_size + 1` times the single-request timeout before TiDB gives up on a stuck store.
 - A large batch can increase buffered memory and response size, especially for Bernoulli samples; `tidb_analyze_store_batch_size` remains the explicit bound.
 
 
@@ -215,7 +223,7 @@ For each scan-concurrency setting, compare every serial batch-size configuration
 
 ## Unresolved Questions
 
-- Should batched `ANALYZE` use a longer default RPC timeout than regular coprocessor requests?
+None
 
 ## Future Possibility
 

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -422,12 +423,29 @@ func TestTableFromMetaWithCollateUsesFixedMode(t *testing.T) {
 				FieldType: *types.NewFieldType(mysql.TypeVarchar),
 			},
 		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:                  1,
+				Name:                ast.NewCIStr("idx"),
+				State:               model.StatePublic,
+				Columns:             []*model.IndexColumn{{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength}},
+				ConditionExprString: "a = 'A'",
+			},
+		},
 	}
+	tblInfo.Columns[0].SetCharset("utf8mb4")
+	tblInfo.Columns[0].SetCollate("utf8mb4_general_ci")
 
+	origin := collate.NewCollationEnabled()
+	defer collate.SetNewCollationEnabledForTest(origin)
 	for _, useNewCollate := range []bool{false, true} {
+		collate.SetNewCollationEnabledForTest(!useNewCollate)
 		tbl, err := tables.TableFromMetaWithCollate(useNewCollate, autoid.NewAllocators(false), tblInfo)
 		require.NoError(t, err)
 		require.Equal(t, useNewCollate, tbl.UseNewCollate())
+		meet, err := tbl.Indices()[0].MeetPartialCondition(types.MakeDatums("a"))
+		require.NoError(t, err)
+		require.Equal(t, useNewCollate, meet)
 	}
 }
 
