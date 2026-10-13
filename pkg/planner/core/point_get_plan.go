@@ -1287,7 +1287,8 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		}
 		// Point-update builds assignment expressions directly in the planner.
 		// Keep the implicit CAST for most target column types so the fast path stays
-		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
+		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets
+		// (or non-binary strings assigned to TIME columns, see below):
 		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
 		// must be decided by executor-side table.CastValue under the current statement
 		// context and sql_mode.
@@ -1299,7 +1300,15 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			(castToTP.EvalType() == types.ETInt ||
 				castToTP.EvalType() == types.ETDecimal ||
 				castToTP.EvalType() == types.ETReal)
-		if !isUnsignedNumericTarget {
+		// A non-binary string assigned to a TIME column is left to table.CastValue as
+		// well: it stores an empty string as a zero duration, while CAST('' AS TIME) is
+		// NULL. The check uses the static type, which the plan cache also matches on.
+		// Binary strings keep the CAST because hex and bit literals share that type and
+		// table.CastValue cannot convert them, so an empty binary string (including ''
+		// under a binary connection charset) is still rejected here.
+		isStringToTime := castToTP.GetType() == mysql.TypeDuration &&
+			types.IsNonBinaryStr(expr.GetType(ctx.GetExprCtx().GetEvalCtx()))
+		if !isUnsignedNumericTarget && !isStringToTime {
 			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
 		}
 		if allAssignmentsAreConstant {
