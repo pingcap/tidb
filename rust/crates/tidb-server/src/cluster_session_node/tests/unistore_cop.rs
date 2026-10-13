@@ -14526,3 +14526,46 @@ fn compact_table_without_a_replica_warns_instead_of_refusing() {
         .unwrap_err();
     assert_eq!(error.code, 1146);
 }
+
+/// Go `GetMergeJoin` returns nil for ENUM/SET join keys before it reaches
+/// `getEnforcedMergeJoin` (issues 24473/25669: the index orders an ENUM by
+/// its ordinal, the merge compares it by name). The port refused only the
+/// naturally ordered form, so a MERGE_JOIN hint built a merge join over the
+/// ordinal-ordered index and dropped every row whose name order disagreed.
+#[test]
+fn merge_join_hint_does_not_merge_enum_or_set_keys() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1045)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for column in [
+        "ENUM('y','b','1','x','0','null')",
+        "SET('y','b','1','x','0','null')",
+    ] {
+        session.execute_write("DROP TABLE IF EXISTS mjx").unwrap();
+        session
+            .execute_write(&format!(
+                "CREATE TABLE mjx (a {column} DEFAULT NULL, KEY a (a))"
+            ))
+            .unwrap();
+        session
+            .execute_write("INSERT INTO mjx VALUES ('x'), ('x'), ('b'), ('y')")
+            .unwrap();
+        let mut answer = displayed(rows(
+            &mut session,
+            "SELECT /*+ merge_join (t2,t3) */ t2.a, t3.a FROM mjx t2 INNER JOIN mjx t3 ON t2.a = t3.a",
+        ));
+        answer.sort();
+        assert_eq!(
+            answer,
+            [
+                ["b", "b"],
+                ["x", "x"],
+                ["x", "x"],
+                ["x", "x"],
+                ["x", "x"],
+                ["y", "y"]
+            ],
+            "{column}"
+        );
+    }
+}

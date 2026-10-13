@@ -180,11 +180,11 @@ pub struct LogicalJoin {
     pub has_null_eq: bool,
     /// Whether some join key's type is ENUM or SET.
     ///
-    /// Go refuses the PLAIN merge-join enumeration for these
+    /// Go `GetMergeJoin` returns nil for these before anything else
     /// (`physical_merge_join.go:57-66`, issues 24473/25669: merge join
-    /// conflicts with index order for them) — but NOT the hint-enforced
-    /// form, which checks only `hasNullEQ`. That asymmetry is Go's, and it
-    /// is reproduced, not repaired.
+    /// conflicts with index order for them). `getEnforcedMergeJoin` is
+    /// called only at the end of `GetMergeJoin`, past that return, so a
+    /// MERGE_JOIN hint gets no merge join either.
     pub keys_contain_enum_or_set: bool,
     /// Whether the join carries null-aware equality keys (Go
     /// `LogicalJoin.NAEQConditions`); `CanUseHashJoinV2` refuses them.
@@ -448,8 +448,10 @@ pub fn exhaust_join(
     // that NO_MERGE_JOIN is ignored); then the enforced candidate under
     // MERGE_JOIN, or when `ShouldSkipHashJoin` ("generate as many other types
     // of join as possible to avoid 'cant-find-plan' error").
+    // Both up-front refusals of `GetMergeJoin` (ENUM/SET keys, then null-eq
+    // keys) return before its enforced candidate is considered.
     let mut out = Vec::new();
-    if !join.no_merge || join.force_merge {
+    if !join.keys_contain_enum_or_set && !join.has_null_eq && (!join.no_merge || join.force_merge) {
         out.extend(merge_join_candidates(join, prop));
         if join.force_merge || skip_hash_join {
             out.extend(enforced_merge_join_candidates(join, prop));
@@ -469,9 +471,10 @@ fn enforced_merge_join_candidates(
     join: &LogicalJoin,
     prop: &PhysicalProperty,
 ) -> Vec<EnumeratedJoin> {
-    // `getEnforcedMergeJoin` refuses null-eq keys (`physical_merge_join.go:150`)
-    // — and ONLY those; the ENUM/SET refusal guards the plain form alone.
-    if join.has_null_eq {
+    // `getEnforcedMergeJoin` refuses null-eq keys itself
+    // (`physical_merge_join.go:150`); ENUM/SET keys never reach it, because
+    // `GetMergeJoin`, its only caller, has already returned for them.
+    if join.has_null_eq || join.keys_contain_enum_or_set {
         return Vec::new();
     }
     // No keys at all is still a candidate: Go builds the keyless (cartesian)
