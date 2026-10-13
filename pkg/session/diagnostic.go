@@ -45,6 +45,7 @@ func bootstrapSessionImplDiagnostic(ctx context.Context, store kv.Storage) (_ *d
 	}
 
 	// step3: get the Domain that owns this store's query runtime.
+	// Diagnostic mode initializes the Domain at this point before starting its query services.
 	dom, err := domap.Get(store)
 	if err != nil {
 		return nil, err
