@@ -664,6 +664,9 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
+	if deploymode.IsStarter() && storage.GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
+		metricsutil.SetKeyspaceID(uint32(storage.GetCodec().GetKeyspaceID()))
+	}
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
