@@ -67,8 +67,13 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // In each phase, before writing, it will verify whether the storage is suitable for writing, that is:
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
+<<<<<<< HEAD:br/pkg/storage/locking.go
 func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
 	if _, ok := s.(StrongConsistency); !ok {
+=======
+func (w conditionalPut) CommitTo(ctx context.Context, s storeapi.Storage) (uuid.UUID, error) {
+	if storeapi.FeatureOf(s)&storeapi.FeatureStrongConsistency == 0 {
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576)):pkg/objstore/locking.go
 		log.Warn("The external storage implementation doesn't provide a strong consistency guarantee. "+
 			"Please avoid concurrently accessing it if possible.",
 			zap.String("type", fmt.Sprintf("%T", s)))

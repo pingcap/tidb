@@ -42,8 +42,13 @@ func initTestKit(t *testing.T) *testkit.TestKit {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	cfg := config.GetGlobalConfig()
+<<<<<<< HEAD
 	cfg.Store = "tikv"
 	cfg.Path = "127.0.0.1:2379"
+=======
+	cfg.Store = config.StoreTypeTiKV
+	cfg.Path = realtikvtest.CurrentPDAddr()
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)

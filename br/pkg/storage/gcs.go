@@ -144,8 +144,14 @@ func (s *GCSStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopyS
 	return nil
 }
 
+<<<<<<< HEAD:br/pkg/storage/gcs.go
 func (s *GCSStorage) MarkStrongConsistency() {
 	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
+=======
+// Features implements FeatureProvider.
+func (s *GCSStorage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency | storeapi.FeatureSupportsStartAfter
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576)):pkg/objstore/gcs.go
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.

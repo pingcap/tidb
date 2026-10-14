@@ -25,9 +25,16 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/operation",
         "//br/pkg/pdutil",
+<<<<<<< HEAD
         "//br/pkg/storage",
+=======
+        "//br/pkg/repo",
+        "//br/pkg/restore",
+        "//br/pkg/restore/log_client",
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
         "//br/pkg/stream",
         "//br/pkg/task",
+        "//br/pkg/task/repo",
         "//br/pkg/utils",
         "//pkg/domain",
         "//pkg/meta/model",

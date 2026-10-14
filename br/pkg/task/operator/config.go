@@ -9,8 +9,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+=======
+	"github.com/pingcap/tidb/br/pkg/repo"
+	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
+	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
+	"github.com/pingcap/tidb/pkg/objstore"
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	"github.com/spf13/pflag"
 )
 
@@ -220,6 +228,8 @@ func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 
 type ChecksumWithRewriteRulesConfig struct {
 	task.Config
+	Layout   repo.Layout
+	BackupID repo.BackupID
 }
 
 func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
@@ -231,6 +241,20 @@ func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) 
 	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
 	if err != nil {
 		return
+	}
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.BackupID, err = taskrepo.ParseSnapshotBackupIDFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := taskrepo.ValidateSnapshotRestoreStorage(
+		cfg.Layout,
+		cfg.BackupID,
+	); err != nil {
+		return errors.Trace(err)
 	}
 	return cfg.Config.ParseFromFlags(flags)
 }

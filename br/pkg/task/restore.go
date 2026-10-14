@@ -21,6 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/registry"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
@@ -292,6 +295,13 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+<<<<<<< HEAD
+=======
+	Layout          repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
+	BackupID        repo.BackupID               `json:"backup-id" toml:"backup-id"`
+	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
+	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -333,6 +343,8 @@ type immutableRestoreConfig struct {
 	CmdName           string
 	UpstreamClusterID uint64
 	Storage           string
+	Layout            string `json:"storage-layout,omitempty"`
+	BackupID          string `json:"backup-id,omitempty"`
 	ExplictFilter     bool
 	FilterStr         []string
 	WithSysTable      bool
@@ -341,10 +353,18 @@ type immutableRestoreConfig struct {
 }
 
 func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
+	layout := ""
+	backupID := ""
+	if cfg.Layout.IsRepo() {
+		layout = cfg.Layout.String()
+		backupID = cfg.BackupID.String()
+	}
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
 		Storage:           ast.RedactURL(cfg.Storage),
+		Layout:            layout,
+		BackupID:          backupID,
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
 		FastLoadSysTables: cfg.FastLoadSysTables,
@@ -425,6 +445,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
+	}
+	if len(cfg.FullBackupStorage) == 0 && (flags.Changed("storage-layout") || flags.Changed("backup-id")) {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s and --%s require --%s for point restore",
+			"storage-layout",
+			"backup-id",
+			FlagStreamFullBackupStorage,
+		)
 	}
 
 	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
@@ -511,6 +539,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.BackupID, err = taskrepo.ParseSnapshotBackupIDFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cfg.CheckpointStorage, err = flags.GetString(flagCheckpointStorage)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagCheckpointStorage)
@@ -527,6 +563,25 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
+<<<<<<< HEAD
+=======
+	if err := taskrepo.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
+		return err
+	}
+	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
+	}
+	cfg.RestoreInPhase = flags.Changed(FlagRestorePhase) || cfg.RestorePhase > 0
+	if cfg.RestoreInPhase && cfg.RestorePhase != 1 && cfg.RestorePhase != 2 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
+			FlagRestorePhase)
+	}
+	if cfg.RestoreInPhase && !cfg.UseCheckpoint {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
+			FlagRestorePhase, flagUseCheckpoint)
+	}
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -895,6 +950,38 @@ func printRestoreMetrics() {
 	log.Info("Metric: upload_sst_meta_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTMetaForPiTRSeconds)))
 }
 
+<<<<<<< HEAD
+=======
+func checkSnapshotRestoreMode(ctx context.Context, cfg *RestoreConfig) error {
+	var backupMeta *backuppb.BackupMeta
+	var err error
+	if cfg.BackupID.IsZero() {
+		_, _, backupMeta, err = ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	} else {
+		u, s, storageErr := GetStorage(ctx, cfg.Storage, &cfg.Config)
+		if storageErr != nil {
+			return errors.Trace(storageErr)
+		}
+		resolvedStorage := &taskrepo.SnapshotStorageRef{
+			BackupID:    cfg.BackupID,
+			RootBackend: u,
+			RootStorage: s,
+		}
+		if err := resolvedStorage.Validate(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		backupMeta, err = resolvedStorage.LoadBackupMeta(ctx, &cfg.CipherInfo, cfg.CheckRequirements)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
+		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
+	}
+	return nil
+}
+
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
 	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
@@ -1197,10 +1284,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// reads out information from backup meta file and do requirement checking if needed
-	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	u, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	resolvedStorage := &taskrepo.SnapshotStorageRef{
+		BackupID:    cfg.BackupID,
+		RootBackend: u,
+		RootStorage: s,
+	}
+	if err := resolvedStorage.Validate(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo, cfg.CheckRequirements)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	u = resolvedStorage.RootBackend
+	s = resolvedStorage.MetadataStorage()
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
@@ -2728,7 +2829,19 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			}
 		} else {
 			// For snapshot restore, get cluster ID from backup meta
-			_, _, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+			u, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			resolvedStorage := &taskrepo.SnapshotStorageRef{
+				BackupID:    cfg.BackupID,
+				RootBackend: u,
+				RootStorage: s,
+			}
+			if err := resolvedStorage.Validate(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo, cfg.CheckRequirements)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2752,6 +2865,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// create registration info from config to find matching tasks
 	registrationInfo := registry.RegistrationInfo{
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, cfg.BackupID),
 		FilterStrings:     cfg.FilterStr,
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,

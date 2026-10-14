@@ -474,8 +474,14 @@ func progress(s string) (finished, total int, err error) {
 	return
 }
 
+<<<<<<< HEAD:br/pkg/storage/azblob.go
 func (*AzureBlobStorage) MarkStrongConsistency() {
 	// See https://github.com/MicrosoftDocs/azure-docs/issues/105331#issuecomment-1450252384
+=======
+// Features implements FeatureProvider.
+func (*AzureBlobStorage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency
+>>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576)):pkg/objstore/azblob.go
 }
 
 func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
