@@ -754,3 +754,69 @@ UPDATE tp SET b = 333;
 
 SELECT *, _tidb_rowid FROM tp ORDER BY a;
 DROP TABLE t, tp;
+
+# Issue 71951, a row of a nonclustered partitioned table that matches several joined rows is updated once
+DROP TABLE IF EXISTS t, t2, t3, tx;
+CREATE TABLE t2 (b INT, x INT);
+INSERT INTO t2 VALUES (1, 100), (1, 200);
+CREATE TABLE t (a INT, b INT, e INT, UNIQUE KEY ue (e, a))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+TRUNCATE TABLE t;
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a;
+--disable_info
+SELECT a, e FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+CREATE TABLE t (a INT, b INT, e INT, KEY ke (e, a))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+CREATE TABLE t (a INT, b INT, e INT, UNIQUE KEY ue (e) GLOBAL, KEY ke (e, b) GLOBAL)
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+SELECT COUNT(*) FROM t USE INDEX (ue) WHERE e IS NOT NULL;
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+# Rows in different partitions share a _tidb_rowid after EXCHANGE PARTITION, each is updated once
+CREATE TABLE t (a INT, b INT, e INT, KEY ke (e))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20));
+INSERT INTO t VALUES (1, 1, NULL);
+CREATE TABLE tx (a INT, b INT, e INT, KEY ke (e));
+INSERT INTO tx VALUES (11, 1, NULL);
+ALTER TABLE t EXCHANGE PARTITION p1 WITH TABLE tx;
+SELECT a, _tidb_rowid FROM t ORDER BY a;
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+UPDATE t SET b = b + 1;
+--disable_info
+SELECT a, b, e - a IN (100, 200), _tidb_rowid FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+DROP TABLE t, tx;
+# An unmatched outer join row is all NULL and has no partition
+CREATE TABLE t (a INT, e INT) PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1, 2));
+INSERT INTO t VALUES (1, 0);
+CREATE TABLE t3 (a INT, x INT);
+INSERT INTO t3 VALUES (1, 0), (3, 0);
+--enable_info
+UPDATE t3 LEFT JOIN t ON t3.a = t.a SET t3.x = 1, t.e = 1;
+--disable_info
+SELECT * FROM t;
+SELECT * FROM t3 ORDER BY a;
+DROP TABLE t, t2, t3;
