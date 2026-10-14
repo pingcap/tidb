@@ -663,11 +663,6 @@ func (e *HashJoinV2Exec) initMaxSpillRound() {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
-	defer func() {
-		for _, w := range e.ProbeWorkers {
-			w.JoinProbe.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
-		}
-	}()
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -698,6 +693,11 @@ func (e *HashJoinV2Exec) Close() error {
 		w.joinChkResourceCh = nil
 	}
 
+	defer func() {
+		for _, w := range e.ProbeWorkers {
+			w.JoinProbe.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+		}
+	}()
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
@@ -725,9 +725,6 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 
 // OpenSelf opens hash join itself and initializes the hash join context.
 func (e *HashJoinV2Exec) OpenSelf() error {
-	for _, w := range e.ProbeWorkers {
-		w.JoinProbe.resetJoinedRows(e.RuntimeStats() != nil)
-	}
 	e.prepared = false
 	e.inRestore = false
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
@@ -767,6 +764,9 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 
+	for _, w := range e.ProbeWorkers {
+		w.JoinProbe.resetJoinedRows(e.RuntimeStats() != nil)
+	}
 	if e.RuntimeStats() != nil && e.stats == nil {
 		e.stats = &hashJoinRuntimeStatsV2{concurrent: int(e.Concurrency)}
 	}

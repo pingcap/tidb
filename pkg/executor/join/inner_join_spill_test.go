@@ -458,6 +458,17 @@ func TestHashJoinV2HashStateAcrossRepeatedOpen(t *testing.T) {
 	require.Equal(t, int64(18), snapshot.Rows)
 	require.False(t, snapshot.Invalid())
 
+	joinedRows, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(hashJoinExec.ID())
+	require.True(t, found)
+	require.Equal(t, int64(18), joinedRows)
+
+	// Opening and closing without probing must not publish the previous count again.
+	require.NoError(t, hashJoinExec.Open(t.Context()))
+	require.NoError(t, hashJoinExec.Close())
+	joinedRows, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(hashJoinExec.ID())
+	require.True(t, found)
+	require.Equal(t, int64(18), joinedRows)
+
 	// A later attempt failing before lookup construction must retain the rows
 	// already built. Statement outcome, not the counter, controls publication.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue51998", "return(true)")
@@ -469,4 +480,7 @@ func TestHashJoinV2HashStateAcrossRepeatedOpen(t *testing.T) {
 	require.True(t, found)
 	require.False(t, snapshot.Invalid())
 	require.Equal(t, int64(18), snapshot.Rows)
+	joinedRows, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(hashJoinExec.ID())
+	require.True(t, found)
+	require.Equal(t, int64(18), joinedRows)
 }

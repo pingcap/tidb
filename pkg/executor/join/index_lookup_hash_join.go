@@ -136,6 +136,9 @@ type indexHashJoinTask struct {
 
 // Open implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
+	if e.RuntimeStats() != nil {
+		e.stats = &indexLookUpJoinRuntimeStats{}
+	}
 	for _, w := range e.Joiners {
 		w.resetJoinedRows(e.RuntimeStats() != nil)
 	}
@@ -154,9 +157,6 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	e.cancelFunc = nil
 	e.innerPtrBytes = make([][]byte, 0, 8)
-	if e.RuntimeStats() != nil {
-		e.stats = &indexLookUpJoinRuntimeStats{}
-	}
 	e.Finished.Store(false)
 	return nil
 }
