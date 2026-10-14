@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -878,4 +879,36 @@ func TestMoreEmptyFiles(t *testing.T) {
 
 	runTestCases(t, mysql.ModeNone, 1, testCases)
 	runTestCases(t, mysql.ModeNoBackslashEscapes, 1, testCases)
+}
+
+func TestChunkParserTooLargeRow(t *testing.T) {
+	bak := mydump.LargestEntryLimit
+	t.Cleanup(func() {
+		mydump.LargestEntryLimit = bak
+	})
+	mydump.LargestEntryLimit = 1024
+	blockBufSize := int64(64)
+
+	t.Run("hex literal source text longer than value limit", func(t *testing.T) {
+		// A binary/blob value may be written as a hex literal, so its source
+		// text is twice as long as the value. Such a row must not be rejected
+		// even though its text exceeds the entry size limit.
+		valueLen := mydump.LargestEntryLimit / 2
+		content := "INSERT INTO t VALUES (0x" + strings.Repeat("ab", valueLen) + ")"
+		require.Greater(t, len(content), mydump.LargestEntryLimit)
+		require.Less(t, len(content), 2*mydump.LargestEntryLimit)
+
+		parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, mydump.NewStringReader(content), blockBufSize, ioWorkersForCSV)
+		require.NoError(t, parser.ReadRow())
+		require.Len(t, parser.LastRow().Row[0].GetBytes(), valueLen)
+	})
+
+	t.Run("source text too long", func(t *testing.T) {
+		// Source text longer than twice the entry size limit can never decode
+		// into a valid row, so it must be rejected instead of buffered until OOM.
+		content := "INSERT INTO t VALUES ('" + strings.Repeat("d", 2*mydump.LargestEntryLimit) + "')"
+		parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, mydump.NewStringReader(content), blockBufSize, ioWorkersForCSV)
+		err := parser.ReadRow()
+		require.ErrorIs(t, err, parsedef.ErrRowTooLarge)
+	})
 }
