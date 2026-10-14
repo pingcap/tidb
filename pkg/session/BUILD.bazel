@@ -187,6 +187,7 @@ go_test(
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/util",
