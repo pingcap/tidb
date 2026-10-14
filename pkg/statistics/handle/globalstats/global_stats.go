@@ -74,7 +74,6 @@ type GlobalStats struct {
 	Hg                    []*statistics.Histogram
 	Cms                   []*statistics.CMSketch
 	TopN                  []*statistics.TopN
-	Fms                   []*statistics.FMSketch
 	MissingPartitionStats []string
 	Num                   int
 	Count                 int64
@@ -88,7 +87,6 @@ func newGlobalStats(histCount int) *GlobalStats {
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
 	globalStats.TopN = make([]*statistics.TopN, globalStats.Num)
-	globalStats.Fms = make([]*statistics.FMSketch, globalStats.Num)
 
 	return globalStats
 }
@@ -314,9 +312,10 @@ func blockingMergePartitionStats2GlobalStats(
 			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
 			continue
 		}
-		// FMSketch use many memory, so we first deal with it and then destroy it.
+		// FMSketch use a lot of memory, so we first deal with it and then destroy it.
 		// Merge FMSketch.
 		// NOTE: allFms maybe contain empty.
+<<<<<<< HEAD
 		globalStats.Fms[i] = allFms[i][0]
 		for j := 1; j < len(allFms[i]); j++ {
 			if globalStats.Fms[i] == nil {
@@ -324,15 +323,31 @@ func blockingMergePartitionStats2GlobalStats(
 			} else {
 				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
 				allFms[i][j].DestroyAndPutToPool()
+=======
+		// missedNotNull is the non-NULL rows of the partitions whose TopN and histogram
+		// are empty, because their sample had only NULL values. Their sketches count these rows.
+		var missedNotNull int64
+		var ndvMerger statistics.PartitionNDVMerger
+		for j, fms := range allFms[i] {
+			if topNHistNotNull(allHg[i][j], allTopN[i][j]) == 0 {
+				missedNotNull += fms.NotNullRows()
+>>>>>>> 6e7213df1bb (statistics: save sampled FM sketches and merge them across partitions (#71882))
 			}
+			ndvMerger.Merge(fms)
+			allFms[i][j] = nil // Release for GC.
 		}
 
 		// Update the global NDV.
+<<<<<<< HEAD
 		globalStatsNDV := globalStats.Fms[i].NDV()
 		if globalStatsNDV > globalStats.Count {
 			globalStatsNDV = globalStats.Count
 		}
 		globalStats.Fms[i].DestroyAndPutToPool()
+=======
+		globalStatsNDV := min(ndvMerger.NDV(), globalStats.Count)
+		sampled := ndvMerger.Sampled()
+>>>>>>> 6e7213df1bb (statistics: save sampled FM sketches and merge them across partitions (#71882))
 
 		// Merge CMSketch.
 		globalStats.Cms[i] = allCms[i][0]
@@ -368,6 +383,14 @@ func blockingMergePartitionStats2GlobalStats(
 		// Both merges already leave bucket NDV = 0; here we just set the
 		// table-level NDV.
 		if globalStats.Hg[i] != nil {
+<<<<<<< HEAD
+=======
+			if isLocalUnique(globalTableInfo, isIndex, histIDs[i]) {
+				globalStatsNDV = uniqueGlobalNDV(allHg[i], globalStats.Count)
+			} else if sampled {
+				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.TopN[i], missedNotNull, globalStats.Count)
+			}
+>>>>>>> 6e7213df1bb (statistics: save sampled FM sketches and merge them across partitions (#71882))
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
@@ -458,4 +481,22 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 		}
 	}
 	return err
+}
+
+// sampledGlobalNDV limits a sampled NDV, which GEE can scale too high, to the
+// current row count and to the non-NULL rows that ANALYZE saw. Those are the
+// rows of the merged TopN and histogram, plus missedNotNull for the partitions
+// where both are empty.
+func sampledGlobalNDV(ndv int64, hist *statistics.Histogram, topN *statistics.TopN, missedNotNull, count int64) int64 {
+	notNull := topNHistNotNull(hist, topN) + missedNotNull
+	return min(ndv, notNull, count)
+}
+
+// topNHistNotNull returns the non-NULL rows that a TopN and histogram hold.
+func topNHistNotNull(hist *statistics.Histogram, topN *statistics.TopN) int64 {
+	notNull := int64(topN.TotalCount())
+	if hist != nil {
+		notNull += int64(hist.NotNullCount())
+	}
+	return notNull
 }

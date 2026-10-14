@@ -200,10 +200,22 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	protoSketch := new(tipb.FMSketch)
 	if s != nil {
 		protoSketch.Mask = s.mask
+<<<<<<< HEAD
 		s.hashset.Iter(func(val uint64, _ bool) bool {
 			protoSketch.Hashset = append(protoSketch.Hashset, val)
 			return false
 		})
+=======
+		for val, repeated := range s.hashset {
+			// The hashset field of a sampled sketch has only the hashes seen once.
+			// The hashes seen more than once go to multi_hashset.
+			if repeated {
+				protoSketch.MultiHashset = append(protoSketch.MultiHashset, val)
+			} else {
+				protoSketch.Hashset = append(protoSketch.Hashset, val)
+			}
+		}
+>>>>>>> 6e7213df1bb (statistics: save sampled FM sketches and merge them across partitions (#71882))
 	}
 	return protoSketch
 }
@@ -226,6 +238,9 @@ func EncodeFMSketch(c *FMSketch) ([]byte, error) {
 	if c == nil {
 		return nil, nil
 	}
+	if c.ndvCounts != nil {
+		return c.encodeSampled()
+	}
 	p := FMSketchToProto(c)
 	protoData, err := p.Marshal()
 	return protoData, err
@@ -235,6 +250,12 @@ func EncodeFMSketch(c *FMSketch) ([]byte, error) {
 func DecodeFMSketch(data []byte) (*FMSketch, error) {
 	if data == nil {
 		return nil, nil
+	}
+	// Sampled sketches start with zero, an invalid protobuf tag. This separates
+	// them from legacy sketches and makes older TiDB reject them instead of
+	// estimating NDV without the sampling counts.
+	if len(data) > 0 && data[0] == sampledFMSketchMarker {
+		return decodeSampledFMSketch(data)
 	}
 	p := &tipb.FMSketch{}
 	err := p.Unmarshal(data)

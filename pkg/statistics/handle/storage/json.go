@@ -34,6 +34,7 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*util.JSONExtendedStats {
 	if statsColl == nil || len(statsColl.Stats) == 0 {
 		return nil
@@ -71,6 +72,10 @@ func extendedStatsFromJSON(statsColl []*util.JSONExtendedStats) *statistics.Exte
 
 func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *util.JSONColumn {
 	jsonCol := &util.JSONColumn{
+=======
+func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) (*statsutil.JSONColumn, error) {
+	jsonCol := &statsutil.JSONColumn{
+>>>>>>> 6e7213df1bb (statistics: save sampled FM sketches and merge them across partitions (#71882))
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
@@ -82,9 +87,17 @@ func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn
 		jsonCol.CMSketch = statistics.CMSketchToProto(cmsketch, topn)
 	}
 	if fmsketch != nil {
-		jsonCol.FMSketch = statistics.FMSketchToProto(fmsketch)
+		if !fmsketch.Sampled() {
+			jsonCol.FMSketch = statistics.FMSketchToProto(fmsketch)
+		} else {
+			data, err := statistics.EncodeFMSketch(fmsketch)
+			if err != nil {
+				return nil, err
+			}
+			jsonCol.SampledFMSketch = data
+		}
 	}
-	return jsonCol
+	return jsonCol, nil
 }
 
 // GenJSONTableFromStats generate jsonTable from tableInfo and stats
@@ -114,7 +127,11 @@ func GenJSONTableFromStats(
 			outerErr = errors.Trace(err)
 			return true
 		}
-		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		proto, err := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
+		if err != nil {
+			outerErr = err
+			return true
+		}
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
@@ -129,7 +146,15 @@ func GenJSONTableFromStats(
 		return nil, outerErr
 	}
 	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+<<<<<<< HEAD
 		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
+=======
+		proto, err := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, idx.FMSketch, &idx.StatsVer)
+		if err != nil {
+			outerErr = err
+			return true
+		}
+>>>>>>> 6e7213df1bb (statistics: save sampled FM sketches and merge them across partitions (#71882))
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
@@ -189,7 +214,15 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				// we set it to 1.
 				statsVer = int64(statistics.Version1)
 			}
+			fms, err := decodeJSONFMSketch(jsonIdx)
+			if err != nil {
+				return nil, err
+			}
 			idx := &statistics.Index{
+<<<<<<< HEAD
+=======
+				FMSketch:          fms,
+>>>>>>> 6e7213df1bb (statistics: save sampled FM sketches and merge them across partitions (#71882))
 				Histogram:         *hist,
 				CMSketch:          cm,
 				TopN:              topN,
@@ -229,7 +262,10 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				return nil, errors.Trace(err)
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
-			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
+			fms, err := decodeJSONFMSketch(jsonCol)
+			if err != nil {
+				return nil, err
+			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
 			statsVer := int64(statistics.Version0)
 			if jsonCol.StatsVer != nil {
@@ -374,4 +410,11 @@ func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snaps
 	jsonTbl.ModifyCount = modifyCount
 	jsonTbl.IsHistoricalStats = true
 	return jsonTbl, true, nil
+}
+
+func decodeJSONFMSketch(column *statsutil.JSONColumn) (*statistics.FMSketch, error) {
+	if column.SampledFMSketch != nil {
+		return statistics.DecodeFMSketch(column.SampledFMSketch)
+	}
+	return statistics.FMSketchFromProto(column.FMSketch), nil
 }
