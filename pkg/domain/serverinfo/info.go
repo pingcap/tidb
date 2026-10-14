@@ -70,9 +70,6 @@ type StaticInfo struct {
 	// SYSTEM keyspace to join the online schema change process, to make sure the
 	// info schema is correctly synced.
 	AssumedKeyspace string `json:"assumed_keyspace,omitempty"`
-	// SupportsClusteredGlobalIndexV1 describes this binary's ability to read and
-	// write partition-aware clustered global-index keys. Older binaries omit it.
-	SupportsClusteredGlobalIndexV1 bool `json:"clustered_global_index_v1_supported,omitempty"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
 	// which will be changed on occasions such as connection to PD is restored after broken.
 	ServerIDGetter func() uint64 `json:"-"`

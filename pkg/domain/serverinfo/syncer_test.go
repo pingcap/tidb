@@ -89,16 +89,6 @@ func TestTopology(t *testing.T) {
 	require.Equal(t, "bar", v)
 	selfInfo := info.GetLocalServerInfo()
 	require.Equal(t, selfInfo.ToTopologyInfo(), *topology)
-	require.True(t, selfInfo.SupportsClusteredGlobalIndexV1)
-	require.True(t, selfInfo.Clone().SupportsClusteredGlobalIndexV1)
-	serverInfoBytes, err := selfInfo.Marshal()
-	require.NoError(t, err)
-	var decodedInfo ServerInfo
-	require.NoError(t, decodedInfo.Unmarshal(serverInfoBytes))
-	require.True(t, decodedInfo.SupportsClusteredGlobalIndexV1)
-	var legacyInfo ServerInfo
-	require.NoError(t, legacyInfo.Unmarshal([]byte(`{"version":"8.0.11-TiDB-v8.5.8"}`)))
-	require.False(t, legacyInfo.SupportsClusteredGlobalIndexV1)
 
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
 	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
@@ -1162,5 +1152,4 @@ func TestAssumedServerInfoSyncer(t *testing.T) {
 	require.Equal(t, info.Keyspace, decoded.Keyspace)
 	require.Equal(t, info.AssumedKeyspace, decoded.AssumedKeyspace)
 	require.Equal(t, uint64(1), decoded.JSONServerID)
-	require.True(t, decoded.SupportsClusteredGlobalIndexV1)
 }
