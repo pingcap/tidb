@@ -357,6 +357,21 @@ func GetNextGenObjStoreURI(path string) string {
 	return getNextGenObjStoreURIWithArgs(path, "&provider=minio")
 }
 
+// SetupNextGenGlobalSort configures the global `tidb_cloud_storage_uri` to point
+// at the NextGen test object store so that DDL requiring global sort (such as
+// ADD INDEX / MODIFY COLUMN) can run on the NextGen kernel. It is a no-op on the
+// Classic kernel and clears the variable again when the test finishes.
+func SetupNextGenGlobalSort(t *testing.T, tk *testkit.TestKit) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s'", GetNextGenObjStoreURI("addindex/"+t.Name())))
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_cloud_storage_uri = ''")
+	})
+}
+
 func getNextGenObjStoreURIWithArgs(path string, args string) string {
 	return fmt.Sprintf("s3://next-gen-test/%s?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%%3a%%2f%%2f0.0.0.0%%3a9000%s", path, args)
 }

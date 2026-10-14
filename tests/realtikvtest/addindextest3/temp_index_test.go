@@ -33,6 +33,7 @@ import (
 func TestMergeTempIndexBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode=''")
 
@@ -170,6 +171,7 @@ func TestMergeTempIndexBasic(t *testing.T) {
 func TestMergeTempIndexStuck(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, a bigint)")

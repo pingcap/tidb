@@ -245,6 +245,7 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
@@ -282,6 +283,7 @@ func TestAddIndexDistCancel(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -469,6 +471,7 @@ func TestAddIndexInvalidDistTaskVariableSetting(t *testing.T) {
 func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -491,6 +494,7 @@ func TestAddUKErrorMessage(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -509,6 +513,7 @@ func TestAddUKErrorMessage(t *testing.T) {
 func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	if kerneltype.IsClassic() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
@@ -539,6 +544,7 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 func TestAddIndexScheduleAway(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	if kerneltype.IsClassic() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
@@ -602,6 +608,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
