@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -575,6 +574,7 @@ type RuntimeStatsColl struct {
 	rootStats                  map[int]*RootRuntimeStats
 	copStats                   map[int]*CopRuntimeStats
 	analyzeScanBytes           map[int]float64
+	tiFlashExecutionUnits      map[int]TiFlashExecutionUnits
 	copResponseSummaryExpected map[int]copResponseSummaryExpectation
 	stmtCopStats               StmtCopRuntimeStats
 	mu                         sync.Mutex
@@ -599,6 +599,7 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		for k := range reuse.copStats {
 			delete(reuse.copStats, k)
 		}
+		clear(reuse.tiFlashExecutionUnits)
 		for k := range reuse.analyzeScanBytes {
 			delete(reuse.analyzeScanBytes, k)
 		}
@@ -1339,44 +1340,20 @@ func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label 
 	buf.WriteString("}")
 }
 
-// RURuntimeStats wraps RU details and statement-level RU v2 metrics for EXPLAIN output.
-// RUVersion controls which RU accounting version produces output:
-//   - 1 (v1): shows RRU + WRU
-//   - 2 (v2): shows total RU from v2 metrics
-//   - 0 / unknown: defaults to v1
+// RURuntimeStats wraps RU v1 details for EXPLAIN output.
 type RURuntimeStats struct {
 	*util.RUDetails
-	Metrics   *RUV2Metrics
-	Weights   RUV2Weights
-	RUVersion rmclient.RUVersion
 }
 
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
-	switch e.RUVersion {
-	case rmclient.RUVersionV2:
-		var tiKVRU, tiFlashRU float64
-		if e.RUDetails != nil {
-			tiKVRU = e.RUDetails.TiKVRUV2()
-			tiFlashRU = e.RUDetails.TiflashRU()
-		}
-		totalRU := e.Metrics.TotalRU(e.Weights, tiKVRU, tiFlashRU)
-		if totalRU == 0 {
-			return ""
-		}
-		buf := bytes.NewBuffer(make([]byte, 0, 8))
-		buf.WriteString("RU:")
-		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
-		return buf.String()
-	default: // v1 or unknown
-		if e.RUDetails != nil {
-			buf := bytes.NewBuffer(make([]byte, 0, 8))
-			buf.WriteString("RU:")
-			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
-			return buf.String()
-		}
+	if e.RUDetails == nil {
+		return ""
 	}
-	return ""
+	buf := bytes.NewBuffer(make([]byte, 0, 8))
+	buf.WriteString("RU:")
+	buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
@@ -1390,9 +1367,6 @@ func (e *RURuntimeStats) Clone() RuntimeStats {
 	}
 	return &RURuntimeStats{
 		RUDetails: ruDetails,
-		Metrics:   e.Metrics.Clone(),
-		Weights:   e.Weights,
-		RUVersion: e.RUVersion,
 	}
 }
 
@@ -1403,17 +1377,6 @@ func (e *RURuntimeStats) Merge(other RuntimeStats) {
 			e.RUDetails.Merge(tmp.RUDetails)
 		} else if e.RUDetails == nil && tmp.RUDetails != nil {
 			e.RUDetails = tmp.RUDetails.Clone()
-		}
-		if e.Metrics != nil {
-			e.Metrics.Merge(tmp.Metrics)
-		} else {
-			e.Metrics = tmp.Metrics.Clone()
-		}
-		if e.Weights == (RUV2Weights{}) {
-			e.Weights = tmp.Weights
-		}
-		if e.RUVersion == 0 {
-			e.RUVersion = tmp.RUVersion
 		}
 	}
 }

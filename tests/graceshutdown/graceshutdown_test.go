@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
@@ -60,6 +61,14 @@ func stopService(name string, cmd *exec.Cmd) (err error) {
 	}
 	log.Info("service Interrupt", zap.String("name", name))
 	if err = cmd.Wait(); err != nil {
+		// Since https://github.com/pingcap/tidb/pull/68096, tidb-server exits with
+		// 128+SIGINT instead of 0 when gracefully shutting down on SIGINT, and
+		// SIGINT is exactly the signal used here to stop the service, so treat
+		// it as a graceful stop.
+		if cmd.ProcessState.ExitCode() == 128+int(syscall.SIGINT) {
+			log.Info("service stopped gracefully", zap.String("name", name))
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	log.Info("service stopped gracefully", zap.String("name", name))

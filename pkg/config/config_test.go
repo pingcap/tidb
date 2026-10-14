@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -131,7 +132,10 @@ func TestLogConfig(t *testing.T) {
 		require.Equal(t, expectedDisableErrorStack, conf.Log.DisableErrorStack)
 		require.Equal(t, expectedEnableTimestamp, conf.Log.EnableTimestamp)
 		require.Equal(t, expectedDisableTimestamp, conf.Log.DisableTimestamp)
-		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
+		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp,
+			func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose },
+			func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+		), conf.Log.ToLogConfig())
 		err := f.Truncate(0)
 		require.NoError(t, err)
 		_, err = f.Seek(0, 0)
@@ -170,6 +174,24 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
+}
+
+func TestLogTimeoutAction(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.TimeoutAction)
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = "DISCARD"
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.TimeoutAction)
+
+	conf.Log.TimeoutAction = "invalid"
+	require.EqualError(t, conf.Valid(), "log.timeout-action should be one of [panic, discard]")
 }
 
 func TestErrorMessageExtensionConfig(t *testing.T) {
@@ -959,7 +981,54 @@ engines = ["tikv", "tiflash", "tidb"]
 	require.NoError(t, err)
 }
 
+func TestEnableStorageClassConfig(t *testing.T) {
+	require.False(t, NewConfig().EnableStorageClass)
+	for _, tt := range []struct {
+		name    string
+		content string
+		initial bool
+		want    bool
+	}{
+		{name: "missing"},
+		{name: "enabled", content: "enable-storage-class = true", want: true},
+		{name: "disabled", content: "enable-storage-class = false", initial: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(configFile, []byte(tt.content), 0600))
+			conf := NewConfig()
+			conf.EnableStorageClass = tt.initial
+			require.NoError(t, conf.Load(configFile))
+			require.Equal(t, tt.want, conf.EnableStorageClass)
+
+			data, err := json.Marshal(conf)
+			require.NoError(t, err)
+			var settings map[string]any
+			require.NoError(t, json.Unmarshal(data, &settings))
+			require.Equal(t, tt.want, settings["enable-storage-class"])
+		})
+	}
+}
+
 func TestConfig(t *testing.T) {
+	t.Run("cross AZ weight is not configurable", func(t *testing.T) {
+		conf := NewConfig()
+		_, err := toml.Decode("[ru-v2.stmt-weights]\nCrossAZNetByte = 2\ncross-az-net-byte = 2\n", conf)
+		require.NoError(t, err)
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		require.NoError(t, json.Unmarshal([]byte(`{"ru-v2":{"stmt-weights":{"CrossAZNetByte":2,"cross-az-net-byte":2}}}`), conf))
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		conf.RUV2.StmtWeights.CrossAZNetByte = 2
+		data, err := json.Marshal(conf.RUV2.StmtWeights)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "CrossAZ")
+		require.NotContains(t, string(data), "cross-az")
+		var encoded bytes.Buffer
+		require.NoError(t, toml.NewEncoder(&encoded).Encode(conf.RUV2.StmtWeights))
+		require.NotContains(t, encoded.String(), "CrossAZ")
+		require.NotContains(t, encoded.String(), "cross-az")
+	})
+
 	t.Run("RU v2 statement weights", func(t *testing.T) {
 		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
 		require.True(t, ok)
@@ -1030,6 +1099,35 @@ write-byte = 29
 			conf := NewConfig()
 			conf.RUV2.ReportMode = mode
 			require.ErrorContains(t, conf.Valid(), "invalid ru-v2.report-mode")
+		}
+	})
+	t.Run("DDL RU weights", func(t *testing.T) {
+		conf := NewConfig()
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		path := filepath.Join(t.TempDir(), "ru.toml")
+		require.NoError(t, os.WriteFile(path, []byte(`[ru-v2.ddl-weights]
+txn-kv-bytes = 2
+ingest-kv-bytes = 3
+`), 0600))
+		require.NoError(t, conf.Load(path))
+		require.NoError(t, conf.Valid())
+		require.Equal(t, float64(2), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(3), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		encoded, err := json.Marshal(conf.RUV2.DDLWeights)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"txn-kv-bytes":2,"ingest-kv-bytes":3}`, string(encoded))
+
+		for _, invalid := range []float64{-1, math.NaN(), math.Inf(1)} {
+			conf := NewConfig()
+			conf.RUV2.DDLWeights.TxnKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.txn-kv-bytes")
+
+			conf = NewConfig()
+			conf.RUV2.DDLWeights.IngestKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
 		}
 	})
 	conf := new(Config)
@@ -1306,8 +1404,6 @@ grpc-keepalive-timeout = 0.01
 	require.NoError(t, conf.Load(configFile))
 
 	require.Equal(t, RUReportModeResult, conf.RUV2.ReportMode)
-	require.Equal(t, 2.01, conf.RUV2.RUScale)
-	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
@@ -1317,7 +1413,10 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
+	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false,
+		func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+	), conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
@@ -2199,13 +2298,4 @@ func TestMetering(t *testing.T) {
 			tc.checkFunc(t, mcfg)
 		})
 	}
-}
-
-func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {
-	conf := NewConfig()
-	conf.RUV2.RUScale = 123
-	conf.TiKVClient.RUV2.RUScale = 0
-
-	tikvConf := conf.GetTiKVConfig()
-	require.Zero(t, tikvConf.TiKVClient.RUV2.RUScale)
 }

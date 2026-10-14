@@ -20,11 +20,107 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSessionTTLJobRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.ReportMode = config.RUReportModeFull })
+	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	t.Cleanup(func() { config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original) })
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ttl_ru(id int primary key, v int)")
+	tk.MustExec("insert into ttl_ru values (1, 10), (2, 20)")
+	vars := tk.Session().GetSessionVars()
+	vars.InRestrictedSQL = true
+	se := session.NewSession(tk.Session(), func() {})
+	ctx := context.Background()
+	jobCtx := session.WithJobContext(ctx, "job-1")
+
+	exec := func(ctx context.Context, sql string, counted bool) {
+		t.Helper()
+		before := testutil.ToFloat64(metrics.RUV2Total)
+		ttlBefore := testutil.ToFloat64(metrics.RUV2TTLTotal)
+		_, err := se.ExecuteSQL(ctx, sql)
+		require.NoError(t, err)
+		after := testutil.ToFloat64(metrics.RUV2Total)
+		ttlAfter := testutil.ToFloat64(metrics.RUV2TTLTotal)
+		if counted {
+			require.Greater(t, after, before, sql)
+			require.InDelta(t, after-before, ttlAfter-ttlBefore, 1e-9, sql)
+		} else {
+			require.Equal(t, before, after, sql)
+			require.Equal(t, ttlBefore, ttlAfter, sql)
+		}
+		require.Empty(t, vars.TTLJobID)
+		require.True(t, vars.InRestrictedSQL)
+	}
+	exec(ctx, "select * from ttl_ru", false)
+	exec(session.WithJobContext(jobCtx, ""), "select * from ttl_ru", false)
+	exec(jobCtx, "select * from ttl_ru", true)
+	exec(jobCtx, "delete from ttl_ru where id=1", true)
+
+	var statements, jobIDs []string
+	var committedKeys, committedBytes float64
+	var publications int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest", func(
+		connectionID uint64, _ string, _, _, _, _, _, _ float64,
+		_ float64, _ float64, keys, bytes float64, _ float64,
+	) {
+		if connectionID == vars.ConnectionID {
+			publications++
+			committedKeys += keys
+			committedBytes += bytes
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
+		if stmt.Ctx == tk.Session() {
+			statements = append(statements, stmt.GetTextToLog(false))
+			jobIDs = append(jobIDs, vars.TTLJobID)
+		}
+	})
+	require.NoError(t, se.RunInTxn(jobCtx, func() error {
+		exec(jobCtx, "delete from ttl_ru where id=2", true)
+		// A global query in the same transaction must not inherit job attribution.
+		exec(ctx, "select count(*) from ttl_ru", false)
+		return nil
+	}, session.TxnModeOptimistic))
+	require.Equal(t, []string{"job-1", "job-1", "", "job-1"}, jobIDs, statements)
+	require.Equal(t, 2, publications, "DELETE and COMMIT each publish once")
+	require.Positive(t, committedKeys)
+	require.Positive(t, committedBytes)
+	require.Empty(t, vars.TTLJobID)
+
+	// A derived context uses the new job. Cancellation must not prevent rollback
+	// or retain either job on the pooled session.
+	jobIDs = nil
+	cancelCtx, cancel := context.WithCancel(jobCtx)
+	defer cancel()
+	job2Ctx := session.WithJobContext(cancelCtx, "job-2")
+	require.ErrorContains(t, se.RunInTxn(job2Ctx, func() error {
+		cancel()
+		return errors.New("abort job transaction")
+	}, session.TxnModeOptimistic), "abort job transaction")
+	require.Equal(t, []string{"job-2", "job-2"}, jobIDs)
+	require.Empty(t, vars.TTLJobID)
+
+	_, err := se.ExecuteSQL(jobCtx, "select * from missing_ttl_ru_table")
+	require.Error(t, err)
+	require.Empty(t, vars.TTLJobID)
+	exec(jobCtx, "select * from ttl_ru", true)
+	exec(ctx, "select * from ttl_ru", false)
+}
 
 func TestSessionRunInTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)

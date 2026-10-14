@@ -186,6 +186,7 @@ go_library(
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
         "//pkg/util/ranger/context",
+        "//pkg/util/regionsplit",
         "//pkg/util/rowcodec",
         "//pkg/util/sem",
         "//pkg/util/sem/compat",

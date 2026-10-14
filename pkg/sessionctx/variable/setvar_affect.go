@@ -98,6 +98,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_index_merge_intersection_concurrency":       {},
 	"tidb_opt_projection_push_down":                   {},
 	"tidb_enable_vectorized_expression":               {},
+	"tidb_enable_tikv_short_circuit_expression":       {},
 	"tidb_opt_join_reorder_threshold":                 {},
 	"tidb_opt_enable_advanced_join_reorder":           {},
 	"tidb_enable_index_merge":                         {},
@@ -117,6 +118,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_enable_non_prepared_plan_cache":             {},
 	"tidb_plan_cache_max_plan_size":                   {},
 	"tidb_opt_range_max_size":                         {},
+	"tidb_opt_range_max_count":                        {},
 	"tidb_opt_advanced_join_hint":                     {},
 	"tidb_opt_prefix_index_single_scan":               {},
 	"tidb_store_batch_size":                           {},
@@ -142,6 +144,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_hash_join_version":                          {},
 	"tidb_allow_tiflash_cop":                          {},
 	"tidb_enable_cache_prepare_stmt":                  {},
+	"tidb_dml_max_execution_time":                     {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},

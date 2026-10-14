@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
@@ -45,8 +47,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
@@ -239,6 +243,50 @@ func TestPickBackfillType(t *testing.T) {
 		require.True(t, job.ReorgMeta.UseCloudStorage)
 		require.Equal(t, model.ReorgTypeIngest, job.ReorgMeta.ReorgTp)
 	})
+}
+
+func TestInitForReorgIndexesRequiresGlobalSortWithSEM(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("global sort is only enforced on the NextGen kernel")
+	}
+
+	oldCloudStorageURI := vardef.CloudStorageURI.Load()
+	oldLitInitialized := ingest.LitInitialized
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(oldCloudStorageURI)
+		ingest.LitInitialized = oldLitInitialized
+	})
+
+	for _, semVer := range []string{sem.V1, sem.V2} {
+		t.Run(semVer, func(t *testing.T) {
+			defer sem.SwitchToSEMForTest(t, semVer)()
+
+			newJob := func(isFastReorg bool) *model.Job {
+				return &model.Job{
+					ID: 1,
+					ReorgMeta: &model.DDLReorgMeta{
+						IsFastReorg: isFastReorg,
+						IsDistReorg: isFastReorg,
+					},
+				}
+			}
+			w := &worker{workCtx: context.Background(), ddlCtx: &ddlCtx{}}
+
+			// local sort is rejected
+			vardef.CloudStorageURI.Store("")
+			err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
+			require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+			require.ErrorContains(t, err, "add index or modify column with local sort")
+
+			// jobs without fast reorg don't sort locally, so they are still allowed
+			require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
+
+			// global sort is allowed
+			ingest.LitInitialized = true
+			vardef.CloudStorageURI.Store("s3://bucket")
+			require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
+		})
+	}
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
@@ -787,4 +835,23 @@ func TestSplitRangesByKeys(t *testing.T) {
 		result := splitRangesByKeys(tt.ranges, tt.splitKeys)
 		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
 	}
+}
+
+func TestMergeTempIndexResultSinkReportsWrittenBytes(t *testing.T) {
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+
+	src := operator.NewSimpleDataChannel(make(chan tempIdxResult, 2))
+	src.Channel() <- tempIdxResult{addCount: 2, writtenBytes: 120}
+	src.Channel() <- tempIdxResult{addCount: 3, writtenBytes: 80}
+	close(src.Channel())
+
+	collector := &mergeTempIndexCollector{}
+	sink := newTempIndexResultSink(wctx, nil, collector)
+	sink.SetSource(src)
+	require.NoError(t, sink.Open())
+	require.NoError(t, sink.Close())
+
+	require.Equal(t, 5, collector.addCount)
+	require.Equal(t, int64(200), collector.writtenBytes)
 }

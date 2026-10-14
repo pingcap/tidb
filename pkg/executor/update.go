@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime/trace"
 	"slices"
 
@@ -371,31 +370,17 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.collectRuntimeStatsEnabled() {
 			ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
 		}
-		numRows, rowsColMultiply, err := e.updateRows(ctx)
+		numRows, err := e.updateRows(ctx)
 		if err != nil {
 			return err
 		}
 		e.drained = true
 		e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(numRows))
-		recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
 	}
 	return nil
 }
 
-func (e *UpdateExec) rowsColMultiplyForPreparedRow() int64 {
-	var columnCount int64
-	for i, content := range e.tblColPosInfos {
-		if i >= len(e.tableUpdatable) || !e.tableUpdatable[i] || i >= len(e.changed) || e.changed[i] {
-			continue
-		}
-		if content.End > content.Start {
-			columnCount += int64(content.End - content.Start)
-		}
-	}
-	return columnCount
-}
-
-func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
+func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := exec.RetTypes(e.Children(0))
 	colsInfo := physicalop.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
@@ -412,9 +397,8 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-	var rowsColMultiply int64
 
 	if e.virtualAssignmentsOffset < len(e.OrderedList) {
 		e.assignmentsPerTable = make(map[int][]*expression.Assignment, 0)
@@ -435,7 +419,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 		e.memTracker.Consume(-memUsageOfChk)
 		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
-			return 0, 0, err
+			return 0, err
 		}
 
 		if chk.NumRows() == 0 {
@@ -462,22 +446,16 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 			datumRow := chunkRow.GetDatumRow(fields)
 			// precomputes handles
 			if err := e.prepare(datumRow); err != nil {
-				return 0, 0, err
-			}
-			rowColMultiply := e.rowsColMultiplyForPreparedRow()
-			if rowsColMultiply > math.MaxInt64-rowColMultiply {
-				rowsColMultiply = math.MaxInt64
-			} else {
-				rowsColMultiply += rowColMultiply
+				return 0, err
 			}
 			// compose non-generated columns
 			newRow, err := composeFunc(globalRowIdx, datumRow, colsInfo)
 			if err != nil {
-				return 0, 0, err
+				return 0, err
 			}
 			// merge non-generated columns
 			if err := e.mergeNonGenerated(datumRow, newRow); err != nil {
-				return 0, 0, err
+				return 0, err
 			}
 
 			if e.virtualAssignmentsOffset < len(e.OrderedList) {
@@ -487,14 +465,14 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 			if err := e.exec(
 				ctx, e.Children(0).Schema(),
 				globalRowIdx, datumRow, newRow, dupKeyCheck); err != nil {
-				return 0, 0, err
+				return 0, err
 			}
 			globalRowIdx++
 		}
 		totalNumRows += chk.NumRows()
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
-	return totalNumRows, rowsColMultiply, nil
+	return totalNumRows, nil
 }
 
 func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {

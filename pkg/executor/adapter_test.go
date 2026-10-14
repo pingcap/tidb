@@ -20,32 +20,28 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/config"
-	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -53,34 +49,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
-
-type mockRUV2ConsumptionReporter struct {
-	group     string
-	tikvRUV2  float64
-	tidbRUV2  float64
-	tiflashRU float64
-}
-
-func (*mockRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
-
-func (m *mockRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
-	m.group = resourceGroupName
-	m.tikvRUV2 = tikvRUV2
-	m.tidbRUV2 = tidbRUV2
-	m.tiflashRU = tiflashRUV2
-}
-
-type mockRUV2ReportingContext struct {
-	*mock.Context
-	reporter resourcegroup.ConsumptionReporter
-}
-
-func (c *mockRUV2ReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
-	dctx := c.Context.GetDistSQLCtx()
-	dctx.RUConsumptionReporter = c.reporter
-	dctx.ResourceGroupName = c.GetSessionVars().StmtCtx.ResourceGroupName
-	return dctx
-}
 
 func TestFormatSQL(t *testing.T) {
 	val := executor.FormatSQL("aaaa")
@@ -545,198 +513,6 @@ func TestWriteSlowLog(t *testing.T) {
 	checkWriteSlowLog(true)
 }
 
-func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
-	t.Skip("Deprecated")
-	original := config.GetGlobalConfig()
-	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
-	t.Cleanup(func() {
-		if original != nil {
-			config.StoreGlobalConfig(original)
-		}
-		variable.GenerateBinaryPlan.Store(originalGenerateBinaryPlan)
-	})
-	variable.GenerateBinaryPlan.Store(false)
-
-	cfg := config.NewConfig()
-	cfg.RUV2 = config.DefaultRUV2Config()
-	cfg.Instance.EnableSlowLog.Store(false)
-	cfg.Instance.RecordPlanInSlowLog = 0
-	config.StoreGlobalConfig(cfg)
-
-	reporter := &mockRUV2ConsumptionReporter{}
-	ctx := &mockRUV2ReportingContext{
-		Context:  mock.NewContext(),
-		reporter: reporter,
-	}
-	sessVars := ctx.GetSessionVars()
-	sessVars.StartTime = time.Now()
-	sessVars.StmtCtx.StmtType = "Select"
-	sessVars.StmtCtx.OriginalSQL = "select 1"
-	sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
-	sessVars.StmtCtx.ResourceGroupName = "rg1"
-
-	goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
-	sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
-	require.NotNil(t, sessVars.RUV2Metrics)
-	sessVars.RUV2Metrics.AddResultChunkCells(100)
-	sessVars.RUV2Metrics.AddPlanCnt(2)
-	sessVars.RUV2Metrics.AddSessionParserTotal(3)
-	ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
-	ruDetails.AddTiKVRUV2(23456)
-	rawRUV2 := &kvrpcpb.RUV2{
-		ReadRpcCount:                 5,
-		WriteRpcCount:                7,
-		StorageProcessedKeysBatchGet: 11,
-	}
-	ruDetails.AddRUV2(rawRUV2)
-	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
-	commitDetails := &util.CommitDetails{
-		WriteKeys: 3,
-		WriteSize: 66,
-	}
-	sessVars.StmtCtx.SyncExecDetails.MergeExecDetails(commitDetails)
-	// Build expected metrics by cloning the current state and manually adding
-	// the pending counters (without draining ruDetails, since FinishExecuteStmt will drain).
-	expected := sessVars.RUV2Metrics.Clone()
-	execdetails.UpdateRUV2MetricsFromRUV2(expected, rawRUV2)
-	execdetails.UpdateRUV2MetricsFromCommitDetails(expected, commitDetails)
-
-	execStmt := &executor.ExecStmt{
-		Ctx:      ctx,
-		GoCtx:    goCtx,
-		StmtNode: &ast.SelectStmt{},
-	}
-	execStmt.FinishExecuteStmt(0, nil, false)
-
-	require.Equal(t, float64(23456), ruDetails.TiKVRUV2())
-	require.Equal(t, int64(5), sessVars.RUV2Metrics.ResourceManagerReadCnt())
-	require.Equal(t, int64(7), sessVars.RUV2Metrics.ResourceManagerWriteCnt())
-	require.Equal(t, int64(11), sessVars.RUV2Metrics.TiKVStorageProcessedKeysBatchGet())
-	require.Equal(t, int64(3), sessVars.RUV2Metrics.WriteKeys())
-	require.Equal(t, int64(66), sessVars.RUV2Metrics.WriteSize())
-	require.Equal(t, "rg1", reporter.group)
-	require.Equal(t, float64(23456), reporter.tikvRUV2)
-	require.Equal(t, expected.CalculateRUValues(sessVars.RUV2Weights()), reporter.tidbRUV2)
-	require.Equal(t, float64(412), reporter.tiflashRU)
-
-	t.Run("stmt summary ignores optimistic autocommit retry count", func(t *testing.T) {
-		store := testkit.CreateMockStore(t)
-		tk := testkit.NewTestKit(t, store)
-		// Toggle stmt summary off and back on to clear any in-memory rows left by earlier tests.
-		tk.MustExec("set global tidb_enable_stmt_summary = 0")
-		tk.MustExec("set global tidb_enable_stmt_summary = 1")
-
-		tk = testkit.NewTestKit(t, store)
-		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-		tk.MustExec("use test")
-		tk.MustExec("set @@session.tidb_txn_mode = 'optimistic'")
-		tk.MustExec("create table stmt_summary_retry (id int primary key, v int)")
-		tk.MustExec("insert into stmt_summary_retry values (1, 1)")
-
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `1*return(true)->return(false)`))
-		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
-		}()
-
-		updateSQL := "update stmt_summary_retry set v = v + 1 where id = 1"
-		tk.MustExec(updateSQL)
-		tk.MustQuery(
-			"select sum_exec_retry, sum_exec_retry_time from information_schema.statements_summary where digest_text like ?",
-			"update `stmt_summary_retry`%",
-		).Check(testkit.Rows("0 0"))
-	})
-
-	t.Run("bypass ru skips final reporting", func(t *testing.T) {
-		reporter := &mockRUV2ConsumptionReporter{}
-		ctx := &mockRUV2ReportingContext{
-			Context:  mock.NewContext(),
-			reporter: reporter,
-		}
-		sessVars := ctx.GetSessionVars()
-		sessVars.StartTime = time.Now()
-		sessVars.StmtCtx.StmtType = "Select"
-		sessVars.StmtCtx.OriginalSQL = "select 1"
-		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
-		sessVars.StmtCtx.ResourceGroupName = "rg1"
-
-		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
-		require.NotNil(t, sessVars.RUV2Metrics)
-		sessVars.RUV2Metrics.SetBypass(true)
-		sessVars.RUV2Metrics.AddResultChunkCells(100)
-
-		ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
-		ruDetails.AddTiKVRUV2(12345)
-		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 10, WRU: 20})
-
-		execStmt := &executor.ExecStmt{
-			Ctx:      ctx,
-			GoCtx:    goCtx,
-			StmtNode: &ast.SelectStmt{},
-		}
-		execStmt.FinishExecuteStmt(0, nil, false)
-
-		require.Empty(t, reporter.group)
-		require.Zero(t, reporter.tikvRUV2)
-		require.Zero(t, reporter.tidbRUV2)
-		require.Zero(t, reporter.tiflashRU)
-	})
-
-	t.Run("network traffic stats are read atomically", func(t *testing.T) {
-		reporter := &mockRUV2ConsumptionReporter{}
-		ctx := &mockRUV2ReportingContext{
-			Context:  mock.NewContext(),
-			reporter: reporter,
-		}
-		sessVars := ctx.GetSessionVars()
-		sessVars.StartTime = time.Now()
-		sessVars.StmtCtx.StmtType = "Select"
-		sessVars.StmtCtx.OriginalSQL = "select 1"
-		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
-		sessVars.RUV2Metrics = execdetails.NewRUV2Metrics()
-
-		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		tikvExecDetail := goCtx.Value(util.ExecDetailsKey).(*util.ExecDetails)
-		execStmt := &executor.ExecStmt{
-			Ctx:      ctx,
-			GoCtx:    goCtx,
-			StmtNode: &ast.SelectStmt{},
-		}
-
-		done := make(chan struct{})
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-done:
-					return
-				default:
-					atomic.AddInt64(&tikvExecDetail.WaitKVRespDuration, int64(time.Millisecond))
-					atomic.AddInt64(&tikvExecDetail.WaitPDRespDuration, int64(time.Millisecond))
-					atomic.AddInt64(&tikvExecDetail.BackoffDuration, int64(time.Millisecond))
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentKVTotal, 1)
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal, 1)
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone, 1)
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone, 1)
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal, 1)
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal, 1)
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone, 1)
-					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone, 1)
-				}
-			}
-		}()
-
-		for range 64 {
-			execStmt.FinishExecuteStmt(0, nil, false)
-		}
-
-		close(done)
-		wg.Wait()
-	})
-}
-
 func TestSlowLogMaxPerSec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -946,16 +722,9 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			// Use range scan instead of point get to avoid optimization
 			startTime := time.Now()
 			if tc.expectTimeout {
-				err := tk.QueryToErr("select * from t where a >= 1")
-				if err != nil {
-					require.Contains(t, err.Error(), "maximum statement execution time exceeded")
-				} else {
-					pi := tk.Session().ShowProcess()
-					require.NotNil(t, pi)
-					processElapsed := time.Since(pi.Time)
-					require.GreaterOrEqual(t, processElapsed, time.Duration(tc.maxExecutionTime)*time.Millisecond,
-						"ProcessInfo elapsed time should exceed max_execution_time. Got %v", processElapsed)
-				}
+				rs, err := tk.Exec("select * from t where a >= 1")
+				require.Nil(t, rs)
+				require.ErrorContains(t, err, "maximum statement execution time exceeded")
 			} else {
 				tk.MustQuery("select * from t where a >= 1")
 			}
@@ -980,81 +749,103 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 	}
 }
 
-func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {
+func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int, c int)")
-	tk.MustExec("create table src(a int primary key, b int, c int)")
-	tk.MustExec("insert into src values (10, 11, 12), (20, 21, 22)")
-
-	runInsert := func(sql string) int64 {
-		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		tk.MustExecWithContext(ctx, sql)
-		metrics := execdetails.RUV2MetricsFromContext(ctx)
-		require.NotNil(t, metrics)
-		return metrics.ExecutorL5InsertRows()
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set @@tidb_dml_max_execution_time = 50")
+	vars := tk.Session().GetSessionVars()
+	checkReleased := func() {
+		require.Empty(t, vars.MemTracker.GetChildrenForTest())
+		require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+		require.Nil(t, vars.StmtCtx.CTEStorageMap)
 	}
+	const cteQuery = "with recursive cte(n) as (select 1 union all select n+1 from cte where n<3) select n from cte"
 
-	require.Equal(t, int64(6), runInsert("insert into t values (1, 2, 3), (2, 3, 4)"))
-	require.Equal(t, int64(4), runInsert("insert into t(a, c) values (3, 5), (4, 6)"))
-	require.Equal(t, int64(4), runInsert("insert into t(a, b) select a, b from src"))
+	const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+	func() {
+		require.NoError(t, failpoint.Enable(failpointName, "return(300)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		}()
 
-	oldEnableBatchDML := vardef.EnableBatchDML.Load()
-	vardef.EnableBatchDML.Store(true)
-	defer vardef.EnableBatchDML.Store(oldEnableBatchDML)
+		rs, err := tk.Exec("insert into t " + cteQuery)
+		require.Nil(t, rs)
+		require.ErrorContains(t, err, "maximum statement execution time exceeded")
+		checkReleased()
+	}()
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 
-	tk.MustExec("set @@session.tidb_batch_insert=1")
-	tk.MustExec("set @@session.tidb_dml_batch_size=2")
-	tk.MustExec("create table batch_t(a int primary key, b int, c int)")
-	tk.MustExec("insert into batch_t values (100, 100, 100)")
+	// A returned record set must keep its resources until it is closed.
+	func() {
+		rs, err := tk.Exec(cteQuery)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, rs.Close()) }()
+		require.NotEmpty(t, vars.MemTracker.GetChildrenForTest())
+		require.Len(t, vars.StmtCtx.CTEStorageMap, 1)
+		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Len(t, rows, 3)
+	}()
+	checkReleased()
 
-	ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
-	_, err := tk.ExecWithContext(ctx, "insert into batch_t values (1, 2, 3), (2, 3, 4), (100, 5, 6), (3, 4, 5)")
-	require.Error(t, err)
-	metrics := execdetails.RUV2MetricsFromContext(ctx)
-	require.NotNil(t, metrics)
-	require.Equal(t, int64(12), metrics.ExecutorL5InsertRows())
-	tk.MustQuery("select a, b, c from batch_t order by a").Check(testkit.Rows(
-		"1 2 3",
-		"2 3 4",
-		"100 100 100",
-	))
+	// Other early returns also need statement cleanup, even after executor.Close.
+	tk.MustExec("set tidb_low_resolution_tso = ON")
+	tk.MustExec("begin optimistic")
+	err := tk.ExecToErr("select * from t for update")
+	require.ErrorContains(t, err, "can not execute select for update statement")
+	checkReleased()
+	tk.MustExec("rollback")
 }
 
-func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
+type canceledBuildTxnManager struct {
+	sessiontxn.TxnManager
+	onGetForUpdateTS func()
+}
+
+func (m canceledBuildTxnManager) GetStmtForUpdateTS() (uint64, error) {
+	m.onGetForUpdateTS()
+	return 0, context.Canceled
+}
+
+func TestDMLBuildCancellationPreservesTimeout(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int, c int)")
+	setup := testkit.NewTestKit(t, store)
+	setup.MustExec("use test")
+	setup.MustExec("create table build_cancel (a int primary key)")
+	setup.MustExec("insert into build_cancel values (1)")
+	for _, panicOnBuild := range []bool{false, true} {
+		t.Run(fmt.Sprintf("panic=%v", panicOnBuild), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_dml_max_execution_time = 10000")
+			vars := tk.Session().GetSessionVars()
 
-	runDML := func(sql string) int64 {
-		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		tk.MustExecWithContext(ctx, sql)
-		metrics := execdetails.RUV2MetricsFromContext(ctx)
-		require.NotNil(t, metrics)
-		return metrics.ExecutorL5InsertRows()
+			originalGetTxnManager := sessiontxn.GetTxnManager
+			t.Cleanup(func() { sessiontxn.GetTxnManager = originalGetTxnManager })
+			sessiontxn.GetTxnManager = func(sctx sessionctx.Context) sessiontxn.TxnManager {
+				manager := originalGetTxnManager(sctx)
+				if sctx.GetSessionVars() != vars {
+					return manager
+				}
+				return canceledBuildTxnManager{TxnManager: manager, onGetForUpdateTS: func() {
+					vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+					if panicOnBuild {
+						panic(exeerrors.ErrMaxExecTimeExceeded)
+					}
+				}}
+			}
+
+			// UPDATE requests its for-update timestamp while building the executor.
+			// Cleanup must preserve the kill reason before detaching its trackers.
+			rs, err := tk.Exec("update build_cancel set a = a + 1 where a > 0")
+			sessiontxn.GetTxnManager = originalGetTxnManager
+			require.Nil(t, rs)
+			require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err), "%v", err)
+			require.Empty(t, vars.MemTracker.GetChildrenForTest())
+			require.Empty(t, vars.DiskTracker.GetChildrenForTest())
+			tk.MustQuery("select * from build_cancel").Check(testkit.Rows("1"))
+		})
 	}
-
-	require.Equal(t, int64(6), runDML("replace into t values (1, 2, 3), (2, 3, 4)"))
-	require.Equal(t, int64(6), runDML("update t set b = b + 10 where a in (1, 2)"))
-	require.Equal(t, int64(3), runDML("delete from t where a = 1"))
-
-	tk.MustExec("create table multi_del_l(a int primary key)")
-	tk.MustExec("create table multi_del_r(a int primary key)")
-	tk.MustExec("insert into multi_del_l values (1), (2)")
-	tk.MustExec("insert into multi_del_r values (1), (2)")
-	require.Equal(t, int64(4), runDML("delete multi_del_l, multi_del_r from multi_del_l join multi_del_r on multi_del_l.a = multi_del_r.a"))
-
-	tk.MustExec("create table outer_l(a int primary key, b int)")
-	tk.MustExec("create table outer_r(a int primary key, b int)")
-	tk.MustExec("insert into outer_l values (1, 10), (2, 20)")
-	tk.MustExec("insert into outer_r values (1, 100)")
-	require.Equal(t, int64(2), runDML("update outer_l left join outer_r on outer_l.a = outer_r.a set outer_r.b = outer_r.b + 1"))
-
-	tk.MustExec("create table dup_t(a int primary key, b int)")
-	tk.MustExec("create table dup_s(a int, b int)")
-	tk.MustExec("insert into dup_t values (1, 10)")
-	tk.MustExec("insert into dup_s values (1, 100), (1, 200)")
-	require.Equal(t, int64(2), runDML("update dup_t join dup_s on dup_t.a = dup_s.a set dup_t.b = dup_t.b + 1"))
 }
