@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package importer
+package gcutil_test
 
 import (
 	"context"
@@ -21,10 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 )
 
-func TestQueryGCBarrier(t *testing.T) {
+func TestGCBarrier(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -32,15 +33,16 @@ func TestQueryGCBarrier(t *testing.T) {
 	ctl := store.(kv.StorageWithPD).GetPDClient().GetGCInternalController(uint32(store.GetCodec().GetKeyspaceID()))
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	readTS := ver.Ver
+	ts := ver.Ver
 
-	require.NoError(t, SetQueryGCBarrier(ctx, store, readTS, time.Hour))
-	res, err := ctl.AdvanceTxnSafePoint(ctx, readTS+100)
+	require.NoError(t, gcutil.SetGCBarrier(ctx, store, "test-barrier", ts, time.Hour))
+	res, err := ctl.AdvanceTxnSafePoint(ctx, ts+100)
 	require.NoError(t, err)
-	require.Equal(t, readTS, res.NewTxnSafePoint)
+	require.Equal(t, ts, res.NewTxnSafePoint)
 
-	require.NoError(t, DeleteQueryGCBarrier(ctx, store, readTS))
-	res, err = ctl.AdvanceTxnSafePoint(ctx, readTS+100)
+	require.NoError(t, gcutil.DeleteGCBarrier(ctx, store, "test-barrier"))
+	require.NoError(t, gcutil.DeleteGCBarrier(ctx, store, "test-barrier"))
+	res, err = ctl.AdvanceTxnSafePoint(ctx, ts+100)
 	require.NoError(t, err)
-	require.Equal(t, readTS+100, res.NewTxnSafePoint)
+	require.Equal(t, ts+100, res.NewTxnSafePoint)
 }
