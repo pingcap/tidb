@@ -329,7 +329,10 @@ func ClearCleanerFactory() {
 // scheduler, it also runs for tasks that are waiting for resources or paused.
 // Implementations must be idempotent and return promptly when ctx is done.
 type TaskKeeper interface {
-	KeepTask(ctx context.Context, taskRuntime sqlsvrapi.Runtime, task *proto.Task) error
+	// KeepTask keeps one task. acquireRuntime returns the runtime of the task
+	// keyspace and its release function; it is costly, so call it only when the
+	// task needs it.
+	KeepTask(ctx context.Context, task *proto.Task, acquireRuntime func() (sqlsvrapi.Runtime, func(), error)) error
 }
 
 var taskKeeperMap = struct {

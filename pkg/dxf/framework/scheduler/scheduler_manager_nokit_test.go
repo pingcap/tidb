@@ -935,11 +935,22 @@ type taskKeeperRecorder struct {
 	runtimes   []sqlsvrapi.Runtime
 	taskIDs    []int64
 	failTaskID int64
+	skipTaskID int64
 }
 
-func (r *taskKeeperRecorder) KeepTask(_ context.Context, taskRuntime sqlsvrapi.Runtime, task *proto.Task) error {
-	r.runtimes = append(r.runtimes, taskRuntime)
+func (r *taskKeeperRecorder) KeepTask(
+	_ context.Context, task *proto.Task, acquireRuntime func() (sqlsvrapi.Runtime, func(), error),
+) error {
 	r.taskIDs = append(r.taskIDs, task.ID)
+	if task.ID == r.skipTaskID {
+		return nil
+	}
+	taskRuntime, release, err := acquireRuntime()
+	if err != nil {
+		return err
+	}
+	defer release()
+	r.runtimes = append(r.runtimes, taskRuntime)
 	if task.ID == r.failTaskID {
 		return errors.New("keep task failed")
 	}
@@ -964,7 +975,7 @@ func TestRunTaskKeepers(t *testing.T) {
 		store := &storeWithKS{ks: "user_ks"}
 		runtime := newMockRuntime(ctrl, store, nil)
 		expectRuntimeFromNewSession(ctrl, taskMgr, runtime)
-		keeper := &taskKeeperRecorder{failTaskID: 1}
+		keeper := &taskKeeperRecorder{failTaskID: 1, skipTaskID: 2}
 		RegisterTaskKeeper(proto.TaskTypeExample, keeper)
 
 		taskMgr.EXPECT().GetAllTasks(gomock.Any()).Return([]*proto.TaskBase{
@@ -983,8 +994,7 @@ func TestRunTaskKeepers(t *testing.T) {
 		mgr.runTaskKeepers()
 
 		require.Equal(t, []int64{1, 2}, keeper.taskIDs)
-		for _, r := range keeper.runtimes {
-			require.Same(t, runtime, r)
-		}
+		require.Len(t, keeper.runtimes, 1)
+		require.Same(t, runtime, keeper.runtimes[0])
 	})
 }

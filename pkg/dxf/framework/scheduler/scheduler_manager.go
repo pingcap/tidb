@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
@@ -480,12 +481,11 @@ func (sm *Manager) keepTask(keeper TaskKeeper, taskID int64) error {
 		}
 		return err
 	}
-	taskRuntime, release, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, task.Keyspace, dxfutil.GenHolderID("keeper", task.ID))
-	if err != nil {
-		return err
-	}
-	defer release()
-	return keeper.KeepTask(sm.ctx, taskRuntime, task)
+	ctx, cancel := context.WithTimeout(sm.ctx, DefaultKeepTaskInterval)
+	defer cancel()
+	return keeper.KeepTask(ctx, task, func() (sqlsvrapi.Runtime, func(), error) {
+		return dxfutil.AcquireTaskRuntime(sm.taskMgr, task.Keyspace, dxfutil.GenHolderID("keeper", task.ID))
+	})
 }
 
 func (sm *Manager) expiredFileCleanLoop() {
