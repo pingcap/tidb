@@ -55,11 +55,6 @@ type RequestBuilder struct {
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest
-
-	// rowCountUpperBound is a proven upper bound of the number of rows the key ranges can return.
-	// It is only valid when hasRowCountUpperBound is true. See SetRowCountUpperBound.
-	rowCountUpperBound    uint64
-	hasRowCountUpperBound bool
 }
 
 // Build builds a "kv.Request".
@@ -191,17 +186,19 @@ func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *Req
 
 const estimatedRegionRowCount = 100000
 
-// SetRowCountUpperBound sets a proven upper bound of the number of rows that the key ranges of the request
-// can return, e.g. when every range is a point on a unique key. It must be called before SetDAGRequest.
-func (builder *RequestBuilder) SetRowCountUpperBound(n uint64) *RequestBuilder {
-	intest.Assert(builder.dag == nil, "SetRowCountUpperBound must be called before SetDAGRequest")
-	builder.rowCountUpperBound = n
-	builder.hasRowCountUpperBound = true
-	return builder
-}
-
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
+	return builder.setDAGRequest(dag, 0, false)
+}
+
+// SetDAGRequestWithRowCountUpperBound is SetDAGRequest for key ranges that are proven to return at most
+// rowCountUpperBound rows, e.g. when every range is a point on a unique key. A Scan -> Limit DAG keeps the
+// normal concurrency when the bound is not larger than the limit.
+func (builder *RequestBuilder) SetDAGRequestWithRowCountUpperBound(dag *tipb.DAGRequest, rowCountUpperBound uint64) *RequestBuilder {
+	return builder.setDAGRequest(dag, rowCountUpperBound, true)
+}
+
+func (builder *RequestBuilder) setDAGRequest(dag *tipb.DAGRequest, rowCountUpperBound uint64, hasRowCountUpperBound bool) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
@@ -222,7 +219,7 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 					// execCnt == 2 indicates TableScan / IndexScan -> Limit.
 					// If the key ranges are proven to return no more rows than the limit, the limit can never
 					// be reached before all cop tasks finish, so sending them one by one only adds latency.
-					minimalConcurrency = !builder.hasRowCountUpperBound || builder.rowCountUpperBound > limit.Limit
+					minimalConcurrency = !hasRowCountUpperBound || rowCountUpperBound > limit.Limit
 				} else {
 					// if execCnt > 2 and the limit's parent is IndexLookup,
 					// it means the DAG is a push-down IndexLookUp and its build side is IndexScan -> Limit.

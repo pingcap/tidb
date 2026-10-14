@@ -343,9 +343,11 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	// They are two different sources of ranges, and should not appear together.
 	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
+	// The bound only matters for a Scan -> Limit DAG whose limit is not smaller than the number of ranges.
 	// When partRangeMap is set, e.ranges is not what is sent to each partition, so no bound is derived.
 	e.hasRowCountUpperBound = false
-	if len(e.partRangeMap) == 0 && e.table != nil {
+	if limit, ok := scanLimitOf(e.dagPB); ok && uint64(len(e.ranges)) <= limit &&
+		len(e.partRangeMap) == 0 && e.table != nil {
 		e.rowCountUpperBound, e.hasRowCountUpperBound = ranger.RowCountUpperBoundByUniqueKey(
 			e.rctx.TypeCtx, e.table.Meta(), e.idxCols, e.colLens, e.ranges)
 	}
@@ -387,14 +389,27 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 	return results, nil
 }
 
+// scanLimitOf returns the limit of a Scan -> Limit DAG.
+func scanLimitOf(dag *tipb.DAGRequest) (uint64, bool) {
+	if dag == nil || len(dag.Executors) != 2 {
+		return 0, false
+	}
+	limit := dag.Executors[1].GetLimit()
+	if limit == nil {
+		return 0, false
+	}
+	return limit.GetLimit(), true
+}
+
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(r)
 	if e.hasRowCountUpperBound {
-		builder.SetRowCountUpperBound(e.rowCountUpperBound)
+		builder.SetDAGRequestWithRowCountUpperBound(e.dagPB, e.rowCountUpperBound)
+	} else {
+		builder.SetDAGRequest(e.dagPB)
 	}
-	builder.SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
+	builder.SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).

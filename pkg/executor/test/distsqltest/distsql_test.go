@@ -187,9 +187,16 @@ func TestIndexReaderLimitConcurrencyWithUniqueKeyPoints(t *testing.T) {
 	query := "select listing_id, object_id from %s force index(idx_lo) where listing_id in (%s) " +
 		"order by listing_id, object_id limit 100"
 	q := fmt.Sprintf(query, "t", inList(35))
-	plan := tk.MustQuery("explain format='brief' " + q).String()
-	require.Contains(t, plan, "IndexReader")
-	require.Contains(t, plan, "cop[tikv]  offset:0, count:100")
+	// The request must be a Scan -> Limit DAG under an IndexReader: columns are id, estRows, task, access object,
+	// operator info.
+	var hasReader, hasCopLimit bool
+	for _, row := range tk.MustQuery("explain format='brief' " + q).Rows() {
+		id, task, info := row[0].(string), row[2].(string), row[4].(string)
+		hasReader = hasReader || strings.Contains(id, "IndexReader")
+		hasCopLimit = hasCopLimit || (strings.Contains(id, "Limit") && task == "cop[tikv]" && info == "offset:0, count:100")
+	}
+	require.True(t, hasReader)
+	require.True(t, hasCopLimit)
 	require.Len(t, tk.MustQueryWithContext(expectConcurrency(vardef.DefDistSQLScanConcurrency), q).Rows(), 35)
 
 	// More unique points than the limit: the limit may stop the scan early, keep the minimal concurrency.

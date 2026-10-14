@@ -799,28 +799,27 @@ func TestScanLimitConcurrencyWithRowCountUpperBound(t *testing.T) {
 	dctx := NewDistSQLContextForTest()
 	for _, tt := range []struct {
 		name        string
-		limit       uint64
 		upperBound  uint64
 		hasBound    bool
 		concurrency int
 	}{
-		{"NoBound", 100, 0, false, 1},
-		{"BoundBelowLimit", 100, 35, true, dctx.DistSQLConcurrency},
-		{"BoundEqualsLimit", 100, 100, true, dctx.DistSQLConcurrency},
-		{"BoundAboveLimit", 100, 101, true, 1},
+		{"NoBound", 0, false, 1},
+		{"BoundBelowLimit", 35, true, dctx.DistSQLConcurrency},
+		{"BoundEqualsLimit", 100, true, dctx.DistSQLConcurrency},
+		{"BoundAboveLimit", 101, true, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			idxScan := &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: &tipb.IndexScan{}}
-			limitExec := &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: tt.limit}}
-			dag := &tipb.DAGRequest{Executors: []*tipb.Executor{idxScan, limitExec}}
+			dag := &tipb.DAGRequest{Executors: []*tipb.Executor{
+				{Tp: tipb.ExecType_TypeIndexScan, IdxScan: &tipb.IndexScan{}},
+				{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: 100}},
+			}}
 			builder := &RequestBuilder{}
 			if tt.hasBound {
-				builder.SetRowCountUpperBound(tt.upperBound)
+				builder.SetDAGRequestWithRowCountUpperBound(dag, tt.upperBound)
+			} else {
+				builder.SetDAGRequest(dag)
 			}
-			actual, err := builder.
-				SetDAGRequest(dag).
-				SetFromSessionVars(dctx).
-				Build()
+			actual, err := builder.SetFromSessionVars(dctx).Build()
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)
 		})
@@ -835,8 +834,7 @@ func TestScanLimitConcurrencyWithRowCountUpperBound(t *testing.T) {
 		{Tp: tipb.ExecType_TypeIndexLookUp, IndexLookup: &tipb.IndexLookUp{}},
 	}}
 	actual, err := (&RequestBuilder{}).
-		SetRowCountUpperBound(1).
-		SetDAGRequest(dag).
+		SetDAGRequestWithRowCountUpperBound(dag, 1).
 		SetFromSessionVars(dctx).
 		Build()
 	require.NoError(t, err)
