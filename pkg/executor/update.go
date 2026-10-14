@@ -170,7 +170,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
-		handle := e.handles[i]
+		rowKey := e.rowKeys[i]
 		flags := e.assignFlag[content.Start:content.End]
 
 		if e.mergedRowData[content.TblID] == nil {
@@ -179,7 +179,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 		tbl := e.tblID2table[content.TblID]
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
-		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
+		if v, ok := e.mergedRowData[content.TblID].Get(rowKey); ok {
 			mergedData = v
 			for i, flag := range flags {
 				if tbl.WritableCols()[i].IsGenerated() {
@@ -196,8 +196,8 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 			mergedData = slices.Clone(newTableData)
 		}
 
-		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
-		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+		memDelta := e.mergedRowData[content.TblID].Set(rowKey, mergedData)
+		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(rowKey.ExtraMemSize())
 		totalMemDelta += memDelta
 	}
 	e.memTracker.Consume(totalMemDelta)
@@ -227,7 +227,7 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 		// Each matched row is updated once, even if it matches the conditions multiple times.
 		return nil
 	}
-	handle := e.handles[i]
+	rowKey := e.rowKeys[i]
 	flags := e.assignFlag[content.Start:content.End]
 
 	if e.mergedRowData[content.TblID] == nil {
@@ -238,7 +238,7 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 	newTableData := newData[content.Start:content.End]
 
 	// We don't check the second return value here because we have already called mergeNonGenerated() before.
-	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
+	mergedData, _ = e.mergedRowData[content.TblID].Get(rowKey)
 	for i, flag := range flags {
 		if !tbl.WritableCols()[i].IsGenerated() {
 			continue
@@ -259,8 +259,8 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 		}
 	}
 
-	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
-	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+	memDelta := e.mergedRowData[content.TblID].Set(rowKey, mergedData)
+	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(rowKey.ExtraMemSize())
 	totalMemDelta += memDelta
 
 	e.memTracker.Consume(totalMemDelta)
