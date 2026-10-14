@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -185,6 +184,7 @@ func (kit *LogBackupKit) tempFile(name string, content []byte) string {
 func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
+		task.ApplyTiDBRuntimeConfig(&cfg.Config)
 		cfg.Storage = kit.LocalURI("full")
 		cfg.FilterStr = []string{"test.*"}
 		var err error
@@ -202,6 +202,7 @@ func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 func (kit *LogBackupKit) RunStreamRestore(extConfig func(*task.RestoreConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
+		task.ApplyTiDBRuntimeConfig(&cfg.Config)
 		cfg.Storage = kit.LocalURI("incr")
 		cfg.FullBackupStorage = kit.LocalURI("full")
 		cfg.CheckRequirements = false
@@ -224,6 +225,7 @@ func (kit *LogBackupKit) SetFilter(cfg *task.Config, f ...string) {
 func (kit *LogBackupKit) RunFullBackup(extConfig func(*task.BackupConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultBackupConfig(task.DefaultConfig())
+		task.ApplyTiDBRuntimeConfig(&cfg.Config)
 		cfg.Storage = kit.LocalURI("full")
 
 		extConfig(&cfg)
@@ -327,7 +329,7 @@ func (kit *LogBackupKit) runAndCheck(f func(context.Context) error) {
 func (kit *LogBackupKit) forceFlush() {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultConfig()
-		cfg.PD = append(cfg.PD, config.GetGlobalConfig().Path)
+		task.ApplyTiDBRuntimeConfig(&cfg)
 		err := operator.RunForceFlush(ctx, &operator.ForceFlushConfig{
 			Config:        cfg,
 			StoresPattern: regexp.MustCompile(".*"),

@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/operation"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
@@ -371,6 +372,7 @@ func expectedDefaultBackupConfig() BackupConfig {
 		IgnoreStats:      true,
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,
+		Layout:           repo.LayoutLegacy,
 		TableConcurrency: 64,
 	}
 }
@@ -406,6 +408,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		RegionScanConcurrency:    256,
 		SplitRegionIndexStep:     restoresplit.DefaultRegionIndexStep,
 		WithPlacementPolicy:      "STRICT",
+		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,
 		nameRouter:               emptyRouter,

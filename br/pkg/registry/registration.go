@@ -245,6 +245,9 @@ type RegistrationInfo struct {
 	RouteStrings []string
 	// RouteHash is the stable SHA-256 identity of RouteStrings.
 	RouteHash string
+	// FilterHashInput is the exact input hashed into filter_hash when looking up
+	// or creating registrations. It should already include any repo backup scope.
+	FilterHashInput string
 
 	// time range for restore
 	StartTS    uint64
@@ -263,6 +266,13 @@ type RegistrationInfo struct {
 type RegistrationInfoWithID struct {
 	RegistrationInfo
 	restoreID uint64
+}
+
+func registrationFilterHashInput(info RegistrationInfo) string {
+	if info.FilterHashInput != "" {
+		return info.FilterHashInput
+	}
+	return strings.Join(info.FilterStrings, FilterSeparator)
 }
 
 // Registry manages registrations of restore tasks
@@ -487,9 +497,11 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 	if err != nil {
 		return 0, 0, err
 	}
+	filterHashInput := registrationFilterHashInput(info)
 
 	log.Info("attempting to resume or create registration",
 		zap.String("filter_strings", filterStrings),
+		zap.String("filter_hash_input", filterHashInput),
 		zap.Strings("route_strings", info.RouteStrings),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
@@ -504,11 +516,11 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// first look for an existing task with the same parameters
 		lookupTemplate := lookupRegistrationSQLTemplate
-		lookupArgs := []any{filterStrings, info.RouteHash, info.StartTS, info.RestoredTS,
+		lookupArgs := []any{filterHashInput, info.RouteHash, info.StartTS, info.RestoredTS,
 			info.UpstreamClusterID, info.WithSysTable, info.Cmd}
 		if len(info.RouteStrings) == 0 {
 			lookupTemplate = legacyLookupRegistrationSQLTemplate
-			lookupArgs = []any{filterStrings, info.StartTS, info.RestoredTS,
+			lookupArgs = []any{filterHashInput, info.StartTS, info.RestoredTS,
 				info.UpstreamClusterID, info.WithSysTable, info.Cmd}
 		}
 		lookupSQL := fmt.Sprintf(lookupTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
@@ -562,11 +574,11 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		// no existing task found, create a new one
 		currentTime := time.Now().UTC().Unix()
 		insertTemplate := createNewTaskSQLTemplate
-		insertArgs := []any{legacyRoutedFilterStrings, filterStrings, filterStrings, routeStrings, info.RouteHash,
+		insertArgs := []any{legacyRoutedFilterStrings, filterHashInput, filterStrings, routeStrings, info.RouteHash,
 			info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime}
 		if len(info.RouteStrings) == 0 {
 			insertTemplate = legacyCreateNewTaskSQLTemplate
-			insertArgs = []any{filterStrings, filterStrings, info.StartTS, info.RestoredTS,
+			insertArgs = []any{filterStrings, filterHashInput, info.StartTS, info.RestoredTS,
 				info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime}
 		}
 		insertSQL := fmt.Sprintf(insertTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
@@ -1002,17 +1014,17 @@ func (r *Registry) resolveRestoreTS(
 	info RegistrationInfo,
 	isRestoredTSUserSpecified bool,
 ) (uint64, error) {
-	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+	filterHashInput := registrationFilterHashInput(info)
 
 	// look for tasks with same filter, startTS, cluster, sysTable, cmd
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 
 	checkTemplate := selectConflictingTaskSQLTemplate
-	checkArgs := []any{filterStrings, info.RouteHash, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+	checkArgs := []any{filterHashInput, info.RouteHash, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd}
 	if len(info.RouteStrings) == 0 {
 		checkTemplate = legacySelectConflictingTaskSQLTemplate
-		checkArgs = []any{filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+		checkArgs = []any{filterHashInput, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd}
 	}
 	checkSQL := fmt.Sprintf(checkTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, checkSQL, checkArgs...)
@@ -1317,9 +1329,11 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 	}
 
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+	filterHashInput := registrationFilterHashInput(info)
 
 	log.Info("searching for matching task to delete",
 		zap.String("filter_strings", filterStrings),
+		zap.String("filter_hash_input", filterHashInput),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
@@ -1332,11 +1346,11 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// find and lock the task that matches the configuration
 		lookupTemplate := lookupRegistrationSQLTemplate
-		lookupArgs := []any{filterStrings, info.RouteHash, info.StartTS, info.RestoredTS,
+		lookupArgs := []any{filterHashInput, info.RouteHash, info.StartTS, info.RestoredTS,
 			info.UpstreamClusterID, info.WithSysTable, info.Cmd}
 		if len(info.RouteStrings) == 0 {
 			lookupTemplate = legacyLookupRegistrationSQLTemplate
-			lookupArgs = []any{filterStrings, info.StartTS, info.RestoredTS,
+			lookupArgs = []any{filterHashInput, info.StartTS, info.RestoredTS,
 				info.UpstreamClusterID, info.WithSysTable, info.Cmd}
 		}
 		lookupSQL := fmt.Sprintf(lookupTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
