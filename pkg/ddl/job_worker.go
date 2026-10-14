@@ -580,6 +580,15 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
+	if job.Type == model.ActionAlterResourceGroup && job.IsCancelled() {
+		// Keep the cancelled job durable until PD agrees with the persisted
+		// metadata, even if compensation failed or the owner changed.
+		if err := reconcileCancelledResourceGroupAlter(jobCtx, job); err != nil {
+			w.sess.Rollback()
+			return err
+		}
+	}
+
 	err := w.finishDDLJob(jobCtx, job)
 	if err != nil {
 		w.sess.Rollback()

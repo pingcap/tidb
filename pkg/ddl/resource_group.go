@@ -158,6 +158,26 @@ func (c *jobContext) compensateResourceGroupAlter() {
 	}
 }
 
+// reconcileCancelledResourceGroupAlter restores PD from durable metadata before
+// a cancelled ALTER job is removed. Returning an error leaves the job retryable.
+func reconcileCancelledResourceGroupAlter(jobCtx *jobContext, job *model.Job) error {
+	group, err := jobCtx.metaMut.GetResourceGroup(job.SchemaID)
+	if meta.ErrResourceGroupNotExists.Equal(err) {
+		// The ALTER may have been cancelled because the group did not exist.
+		return nil
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	protoGroup, err := resourcegroup.NewGroupFromOptions(group.Name.L, group.ResourceGroupSettings)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx, cancel := context.WithTimeout(jobCtx.ctx, defaultInfosyncTimeout)
+	defer cancel()
+	return infosync.ModifyResourceGroup(ctx, protoGroup)
+}
+
 func checkResourceGroupExist(t *meta.Mutator, job *model.Job, groupID int64) (*model.ResourceGroupInfo, error) {
 	groupInfo, err := t.GetResourceGroup(groupID)
 	if err == nil {
