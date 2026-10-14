@@ -349,39 +349,35 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int, columnarIndexType m
 }
 
 // Set global index version for new global indexes.
-// Version 1 is needed to prevent collisions after EXCHANGE PARTITION when
-// different partitions contain duplicate handles.
+// Version 1 is needed for non-clustered tables to prevent collisions after
+// EXCHANGE PARTITION due to duplicate _tidb_rowid values.
 // For non-unique indexes, the handle is always encoded in the key.
 // For unique indexes with NULL values, the handle is also encoded in the key
 // (since NULL != NULL, multiple NULLs are allowed).
 // In both cases, we need the partition ID in the key to distinguish rows
-// from different partitions that may have the same handle.
+// from different partitions that may have the same _tidb_rowid.
+// Clustered tables don't have this issue and use version 0.
 func setGlobalIndexVersion(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	idxInfo.GlobalIndexVersion = 0
-	if !idxInfo.Global {
+	if !model.GetGlobalIndexV1Supported() {
 		return
 	}
-	supported := model.GetGlobalIndexV1Supported()
-	if tblInfo.HasClusteredIndex() {
-		supported = model.GetClusteredGlobalIndexV1Supported()
-	}
-	if !supported {
-		return
-	}
-	needPartitionInKey := !idxInfo.Unique
-	if !needPartitionInKey {
-		nullCols := getNullColInfos(tblInfo, idxInfo.Columns)
-		if len(nullCols) > 0 {
-			needPartitionInKey = true
-		}
-	}
-	if needPartitionInKey {
-		idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
-		failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
-			if valInt, ok := val.(int); ok {
-				idxInfo.GlobalIndexVersion = uint8(valInt)
+	if idxInfo.Global && !tblInfo.HasClusteredIndex() {
+		needPartitionInKey := !idxInfo.Unique
+		if !needPartitionInKey {
+			nullCols := getNullColInfos(tblInfo, idxInfo.Columns)
+			if len(nullCols) > 0 {
+				needPartitionInKey = true
 			}
-		})
+		}
+		if needPartitionInKey {
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+				if valInt, ok := val.(int); ok {
+					idxInfo.GlobalIndexVersion = uint8(valInt)
+				}
+			})
+		}
 	}
 }
 
@@ -2699,8 +2695,8 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				actualHandle := handle
 				// For global indexes V1+ on partitioned tables, we need to wrap the handle
 				// with the partition ID to create a PartitionHandle.
-				// This is critical after EXCHANGE PARTITION, where duplicate handles
-				// can exist across partitions.
+				// This is critical for non-clustered tables after EXCHANGE PARTITION,
+				// where duplicate _tidb_rowid values exist across partitions.
 				// Legacy indexes (version 0) don't use PartitionHandle in the key.
 				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
 					actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
@@ -2750,9 +2746,8 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 		return errors.Trace(err)
 	}
 	if idxInfo.Global {
-		// Global index values decode to a PartitionHandle even for legacy NOT NULL
-		// unique indexes. Normalize the current row too so Equal compares both
-		// partition ID and handle, rather than accepting an equal handle in another partition.
+		// Equal compares partition IDs only when both handles are PartitionHandles.
+		// The same inner handle in another partition is a different row.
 		if _, ok := handle.(kv.PartitionHandle); !ok {
 			handle = kv.NewPartitionHandle(w.physicalID, handle)
 		}
