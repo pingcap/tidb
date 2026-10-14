@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -683,6 +684,89 @@ func TestPiTRRestoreWithRename(t *testing.T) {
 		kit.tk.MustQuery("SELECT * FROM rn_alias_target.copy ORDER BY id").Check(testkit.Rows("1", "2"))
 		kit.tk.MustQuery("SELECT default_character_set_name, default_collation_name FROM information_schema.schemata WHERE schema_name='rn_alias_target'").Check(testkit.Rows("latin1 latin1_bin"))
 		kit.tk.MustQuery("SELECT schema_name FROM information_schema.schemata WHERE schema_name='rn_alias_before'").Check(testkit.Rows())
+	})
+
+	t.Run("schema route ownership", func(t *testing.T) {
+		for _, testCase := range []struct {
+			name  string
+			empty bool
+		}{
+			{name: "empty schema recreation", empty: true},
+			{name: "all tables override"},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				kit := NewLogBackupKit(t)
+				drop := func() {
+					for _, name := range []string{"rn_owner_source", "rn_owner_target", "rn_owner_other", "rn_owner_copy"} {
+						kit.tk.MustExec("DROP DATABASE IF EXISTS " + name)
+					}
+				}
+				drop()
+				t.Cleanup(drop)
+				kit.tk.MustExec("CREATE DATABASE rn_owner_source CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+				kit.tk.MustExec("CREATE DATABASE rn_owner_other")
+				kit.tk.MustExec("CREATE TABLE rn_owner_other.u(id INT PRIMARY KEY)")
+				kit.tk.MustExec("INSERT INTO rn_owner_other.u VALUES (1)")
+				if !testCase.empty {
+					kit.tk.MustExec("CREATE TABLE rn_owner_source.t(id INT PRIMARY KEY)")
+					kit.tk.MustExec("INSERT INTO rn_owner_source.t VALUES (1)")
+				}
+				taskName := "test-pitr-schema-route-owner"
+				kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+				kit.RunFullBackup(func(bc *task.BackupConfig) {})
+				if testCase.empty {
+					kit.tk.MustExec("DROP DATABASE rn_owner_source")
+					kit.tk.MustExec("CREATE DATABASE rn_owner_source CHARACTER SET latin1 COLLATE latin1_bin")
+				} else {
+					kit.tk.MustExec("INSERT INTO rn_owner_source.t VALUES (2)")
+				}
+				kit.tk.MustExec("INSERT INTO rn_owner_other.u VALUES (2)")
+				kit.forceFlushAndWait(taskName)
+				kit.StopTaskIfExists(taskName)
+				drop()
+				rules := []string{"rn_owner_source:rn_owner_target"}
+				if !testCase.empty {
+					rules = append(rules, "rn_owner_source.t:rn_owner_copy.copy")
+				}
+				configure := func(rc *task.RestoreConfig) {
+					rc.Rename = rules
+					kit.SetFilter(&rc.Config, "rn_owner_source.*", "rn_owner_other.*")
+				}
+				// An older task claims the independently restored schema. Use a
+				// real registration so the rejection is deterministic before DDL.
+				ctx := context.Background()
+				reg, err := registry.NewRestoreRegistry(ctx, kit.Glue(), domain.GetDomain(kit.tk.Session()))
+				require.NoError(t, err)
+				t.Cleanup(reg.Close)
+				ownerID, _, err := reg.ResumeOrCreateRegistration(ctx, registry.RegistrationInfo{
+					FilterStrings: []string{"rn_claim.u"}, RouteStrings: []string{"rn_claim.u:rn_owner_target.u"},
+					StartTS: 1, RestoredTS: 2, UpstreamClusterID: 1, Cmd: task.PointRestoreCmd,
+				}, true)
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					if ownerID != 0 {
+						require.NoError(t, reg.Unregister(ctx, ownerID))
+					}
+				})
+				kit.WithChecker(func(err error) {
+					require.ErrorContains(t, err, "database rn_owner_target cannot be restored concurrently")
+				}, func() { kit.RunStreamRestore(configure) })
+				kit.tk.MustQuery("SELECT schema_name FROM information_schema.schemata WHERE schema_name IN ('rn_owner_target', 'rn_owner_copy')").Check(testkit.Rows())
+				require.NoError(t, reg.Unregister(ctx, ownerID))
+				ownerID = 0
+				kit.RunStreamRestore(configure)
+				kit.tk.MustQuery("SELECT * FROM rn_owner_other.u ORDER BY id").Check(testkit.Rows("1", "2"))
+				settings := "utf8mb4 utf8mb4_bin"
+				if testCase.empty {
+					settings = "latin1 latin1_bin"
+					kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema='rn_owner_target'").Check(testkit.Rows())
+				} else {
+					kit.tk.MustQuery("SELECT * FROM rn_owner_copy.copy ORDER BY id").Check(testkit.Rows("1", "2"))
+				}
+				kit.tk.MustQuery("SELECT default_character_set_name, default_collation_name FROM information_schema.schemata WHERE schema_name='rn_owner_target'").Check(testkit.Rows(settings))
+				kit.tk.MustQuery("SELECT schema_name FROM information_schema.schemata WHERE schema_name='rn_owner_source'").Check(testkit.Rows())
+			})
+		}
 	})
 
 	t.Run("independent log-only tasks", func(t *testing.T) {

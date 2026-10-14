@@ -110,6 +110,16 @@ type DBReplace struct {
 	SourceDBInfo *model.DBInfo
 }
 
+// SchemaRouteTarget returns the independently restored target of a selected
+// schema-level rule. Table-level overrides do not remove this ownership, so
+// creation, ID allocation and conflict checks must include it.
+func (dr *DBReplace) SchemaRouteTarget() (string, bool) {
+	if dr.FilteredOut || !dr.SchemaRouted || dr.Name == "" {
+		return "", false
+	}
+	return dr.Name, true
+}
+
 // RestoresDatabaseMetadata reports whether this mapping still owns its target
 // database metadata. When every selected table is explicitly routed to another
 // schema, replaying the parent DBInfo would create an unrelated empty source

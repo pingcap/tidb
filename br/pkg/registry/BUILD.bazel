@@ -39,6 +39,7 @@ go_test(
     shard_count = 4,
     deps = [
         "//br/pkg/glue",
+        "//br/pkg/metautil",
         "//br/pkg/restore/nameroute",
         "//br/pkg/utils",
         "//pkg/domain",

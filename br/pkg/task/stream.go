@@ -2524,9 +2524,17 @@ func checkLogOnlyPiTRRegistryConflicts(
 	// and filtered unselected objects. Pass effective names with no routes so
 	// they cannot be applied twice by the registry.
 	targets := utils.NewPiTRIdTracker()
+	trackSchema := func(name string) {
+		if _, exists := targets.DBNameToTableNames[name]; !exists {
+			targets.DBNameToTableNames[name] = make(map[string]struct{})
+		}
+	}
 	for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
+		}
+		if name, routed := dbReplace.SchemaRouteTarget(); routed {
+			trackSchema(name)
 		}
 		hasSelectedTable := false
 		for _, tableReplace := range dbReplace.TableMap {
@@ -2537,7 +2545,7 @@ func checkLogOnlyPiTRRegistryConflicts(
 			targets.TrackTableName(tableReplace.EffectiveDBName(dbReplace), tableReplace.Name)
 		}
 		if !hasSelectedTable {
-			targets.DBNameToTableNames[dbReplace.Name] = make(map[string]struct{})
+			trackSchema(dbReplace.Name)
 		}
 	}
 

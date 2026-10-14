@@ -672,6 +672,42 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[100].TableID)
 	})
 
+	t.Run("schema-only route shares recreated database IDs", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {Name: "x", SourceName: "b", DbID: -1, SchemaRouted: true,
+				SourceDBInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("b"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}},
+			2: {Name: "x", SourceName: "b", DbID: -2, SchemaRouted: true,
+				SourceDBInfo: &model.DBInfo{ID: 2, Name: ast.NewCIStr("b"), Charset: "latin1", Collate: "latin1_bin"}},
+		}
+		tm.recordDatabaseEvent(1, 10, true)
+		tm.recordDatabaseEvent(2, 20, false)
+		var requested int
+		err := tm.ReplaceTemporaryIDs(context.Background(), func(_ context.Context, n int) ([]int64, error) {
+			requested = n
+			ids := make([]int64, n)
+			for i := range ids {
+				ids[i] = int64(900 + i)
+			}
+			return ids, nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, requested)
+		require.Equal(t, int64(900), tm.DBReplaceMap[1].DbID)
+		require.Equal(t, tm.DBReplaceMap[1].DbID, tm.DBReplaceMap[2].DbID)
+		targets, err := tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.Equal(t, "latin1", targets[0].SourceDBInfo.Charset)
+		require.Equal(t, int64(2), targets[0].SourceDBInfo.ID)
+		tm.DBReplaceMap[2].DbID = 901
+		err = tm.ReplaceTemporaryIDs(context.Background(), func(context.Context, int) ([]int64, error) {
+			t.Fatal("conflicting allocated IDs must fail before allocation")
+			return nil, nil
+		})
+		require.ErrorContains(t, err, "conflicting downstream IDs")
+	})
+
 	t.Run("schema route recreated source uses live owner settings", func(t *testing.T) {
 		tm := NewTableMappingManager()
 		oldInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("b"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}

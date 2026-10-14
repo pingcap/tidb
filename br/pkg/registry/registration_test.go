@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -259,6 +260,50 @@ func TestPiTRRegistrationsConflictAtRoutedTargetSchema(t *testing.T) {
 		disjointRouter,
 		2,
 	))
+
+	overriddenTracker := utils.NewPiTRIdTracker()
+	overriddenTracker.TrackTableName("b", "t")
+	unrelatedTracker := utils.NewPiTRIdTracker()
+	unrelatedTracker.TrackTableName("c", "t")
+	ownerFilter, err := filter.Parse([]string{"q.u"})
+	require.NoError(t, err)
+	ownerRouter, err := nameroute.Parse([]string{"q.u:x.u"})
+	require.NoError(t, err)
+	otherOwnerRouter, err := nameroute.Parse([]string{"q.u:z.u"})
+	require.NoError(t, err)
+	for _, testCase := range []struct {
+		name    string
+		tracker *utils.PiTRIdTracker
+		dbs     []*metautil.Database
+		tables  []*metautil.Table
+		rules   []string
+		cmd     string
+	}{
+		{name: "schema target survives all table overrides", tracker: overriddenTracker,
+			rules: []string{"b:x", "b.t:y.copy"}, cmd: "Point Restore"},
+		{name: "empty schema target survives other tracked tables", tracker: unrelatedTracker,
+			dbs:   []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("b")}}},
+			rules: []string{"b:x"}, cmd: "Point Restore"},
+		{name: "snapshot schema target is independent of its tables",
+			dbs:    []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("b")}}},
+			tables: []*metautil.Table{{DB: &model.DBInfo{Name: ast.NewCIStr("b")}, Info: &model.TableInfo{Name: ast.NewCIStr("t")}}},
+			rules:  []string{"b:x", "b.t:y.copy"}, cmd: "Full Restore"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			router, err := nameroute.Parse(testCase.rules)
+			require.NoError(t, err)
+			registration := RegistrationInfoWithID{RegistrationInfo: RegistrationInfo{Cmd: testCase.cmd}, restoreID: 1}
+			err = registry.checkForTableConflicts(testCase.tracker, testCase.dbs, testCase.tables,
+				registration, filter.CaseInsensitive(ownerFilter), router, ownerRouter, 2)
+			require.ErrorContains(t, err, "database x cannot be restored concurrently")
+			require.NoError(t, registry.checkForTableConflicts(testCase.tracker, testCase.dbs, testCase.tables,
+				registration, filter.CaseInsensitive(ownerFilter), router, otherOwnerRouter, 2))
+			tableOnlyRouter, err := nameroute.Parse([]string{"b.t:y.copy"})
+			require.NoError(t, err)
+			require.NoError(t, registry.checkForTableConflicts(testCase.tracker, testCase.dbs, testCase.tables,
+				registration, filter.CaseInsensitive(ownerFilter), tableOnlyRouter, ownerRouter, 2))
+		})
+	}
 
 	emptySchemaTracker := utils.NewPiTRIdTracker()
 	emptySchemaTracker.DBNameToTableNames["target"] = map[string]struct{}{}

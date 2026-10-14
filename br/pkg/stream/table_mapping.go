@@ -1139,6 +1139,9 @@ func (tm *TableMappingManager) assignSharedTargetDatabaseIDs() error {
 		if dbReplace.FilteredOut {
 			continue
 		}
+		if name, routed := dbReplace.SchemaRouteTarget(); routed {
+			activeTargets[ast.NewCIStr(name).L] = struct{}{}
+		}
 		for _, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut || tableReplace.TargetDBName == "" {
 				continue
@@ -1347,8 +1350,8 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 	}
 	liveOwners := make(map[schemaRouteOwner]struct{})
 	for dbID, dbReplace := range tm.DBReplaceMap {
-		if !dbReplace.FilteredOut && dbReplace.SchemaRouted && dbReplace.SourceName != "" &&
-			dbReplace.Name != "" && !tm.IsSourceDatabaseDeleted(dbID) {
+		if _, routed := dbReplace.SchemaRouteTarget(); routed && dbReplace.SourceName != "" &&
+			!tm.IsSourceDatabaseDeleted(dbID) {
 			liveOwners[ownerKey(dbReplace)] = struct{}{}
 		}
 	}
@@ -1359,7 +1362,7 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 		}
 		// A schema-level rename rule restores the schema itself, even when every
 		// selected table is overridden to another target schema.
-		if dbReplace.SchemaRouted && dbReplace.Name != "" {
+		if name, routed := dbReplace.SchemaRouteTarget(); routed {
 			sourceDBInfo := dbReplace.SourceDBInfo
 			if _, replaced := liveOwners[ownerKey(dbReplace)]; replaced && tm.IsSourceDatabaseDeleted(dbID) {
 				// DROP/CREATE of the same source schema starts a new lifetime.
@@ -1367,7 +1370,7 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 				// still contributes its ID so conflicting mappings remain errors.
 				sourceDBInfo = nil
 			}
-			if err := mergeTarget(ast.NewCIStr(dbReplace.Name).L, dbReplace.Name, dbReplace.DbID,
+			if err := mergeTarget(ast.NewCIStr(name).L, name, dbReplace.DbID,
 				sourceDBInfo); err != nil {
 				return nil, err
 			}

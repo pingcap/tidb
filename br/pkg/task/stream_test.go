@@ -147,6 +147,22 @@ func TestCheckLogOnlyPiTRRegistryConflictsUsesEffectiveTargets(t *testing.T) {
 		"empty_target": {},
 	}, checker.targets.GetDBNameToTableName())
 
+	t.Run("schema route keeps its target when all tables go elsewhere", func(t *testing.T) {
+		checker := &recordingRestoreConflictChecker{}
+		t.Cleanup(func() { delete(mapping.DBReplaceMap, 4) })
+		mapping.DBReplaceMap[4] = &stream.DBReplace{
+			Name: "schema_target", SourceName: "b", SchemaRouted: true,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				14: {Name: "copy", TargetDBName: "table_target"},
+			},
+		}
+		require.NoError(t, checkLogOnlyPiTRRegistryConflicts(context.Background(), cfg, checker))
+		require.Equal(t, map[string]map[string]struct{}{
+			"target": {"orders_copy": {}}, "empty_target": {},
+			"schema_target": {}, "table_target": {"copy": {}},
+		}, checker.targets.GetDBNameToTableName())
+	})
+
 	cfg.FullBackupStorage = "local:///snapshot"
 	require.NoError(t, checkLogOnlyPiTRRegistryConflicts(context.Background(), cfg, checker))
 	require.Equal(t, 1, checker.called)

@@ -865,26 +865,43 @@ func (r *Registry) checkForTableConflicts(
 			dbName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
 	}
 
+	checkedTargetSchemas := make(map[string]struct{})
+	checkSchema := func(name ast.CIStr) error {
+		if _, checked := checkedTargetSchemas[name.L]; checked {
+			return nil
+		}
+		if registrationClaimsTarget(registeredRouter, f, name.O, "", regInfo.WithSysTable) {
+			return handleSchemaConflict(name.O)
+		}
+		checkedTargetSchemas[name.L] = struct{}{}
+		return nil
+	}
+	// An explicit schema rule owns its target even when every selected table
+	// is overridden to another schema, or the schema is empty. Snapshot schemas
+	// may have no entry in the table-name tracker.
+	for _, db := range dbs {
+		if target, _, routed := currentRouter.Route(db.Info.Name, ast.CIStr{}); routed {
+			if err := checkSchema(target); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Use PiTRTableTracker if available for PiTR task
 	if tracker != nil && len(tracker.GetDBNameToTableName()) > 0 {
-		checkedTargetSchemas := make(map[string]struct{})
 		for dbName, tableNames := range tracker.GetDBNameToTableName() {
-			// A log-only PiTR can restore a database that has no selected tables.
-			// In that case the DBInfo metadata still owns the target schema.
-			if len(tableNames) == 0 {
-				targetDB, _, _ := currentRouter.Route(ast.NewCIStr(dbName), ast.CIStr{})
-				if registrationClaimsTarget(registeredRouter, f, targetDB.O, "", regInfo.WithSysTable) {
-					return handleSchemaConflict(targetDB.O)
+			// Log-created schemas may exist only in the tracker. A schema rule
+			// still owns its independent target when table rules override it.
+			targetDB, _, schemaRouted := currentRouter.Route(ast.NewCIStr(dbName), ast.CIStr{})
+			if schemaRouted || len(tableNames) == 0 {
+				if err := checkSchema(targetDB); err != nil {
+					return err
 				}
-				checkedTargetSchemas[targetDB.L] = struct{}{}
 			}
 			for tableName := range tableNames {
 				targetDB, targetTable, _ := currentRouter.Route(ast.NewCIStr(dbName), ast.NewCIStr(tableName))
-				if _, checked := checkedTargetSchemas[targetDB.L]; !checked {
-					if registrationClaimsTarget(registeredRouter, f, targetDB.O, "", regInfo.WithSysTable) {
-						return handleSchemaConflict(targetDB.O)
-					}
-					checkedTargetSchemas[targetDB.L] = struct{}{}
+				if err := checkSchema(targetDB); err != nil {
+					return err
 				}
 				if registrationClaimsTarget(registeredRouter, f, targetDB.O, targetTable.O, regInfo.WithSysTable) {
 					return handleTableConflict(targetDB.O, targetTable.O)
@@ -896,8 +913,8 @@ func (r *Registry) checkForTableConflicts(
 		if regInfo.Cmd == "Point Restore" {
 			for _, db := range dbs {
 				targetDB, _, _ := currentRouter.Route(db.Info.Name, ast.CIStr{})
-				if registrationClaimsTarget(registeredRouter, f, targetDB.O, "", regInfo.WithSysTable) {
-					return handleSchemaConflict(targetDB.O)
+				if err := checkSchema(targetDB); err != nil {
+					return err
 				}
 			}
 		}
