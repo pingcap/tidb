@@ -48,6 +48,9 @@ type TableReplace struct {
 	// SourceName is the upstream table name observed before routing.
 	// It is runtime-only; persisted routes already own their target identity.
 	SourceName string
+	// SkipMetaDelete prevents a historical source location from deleting the
+	// same downstream key owned by the table's latest location. Runtime-only.
+	SkipMetaDelete bool
 	// ForeignKeyReferences contains source names observed while scanning log
 	// metadata. It is persisted in the PiTR ID map so checkpoint retries retain
 	// the same routed-dependency validation information.
@@ -699,6 +702,47 @@ func (sr *SchemasReplace) GetDeletedTables() map[UpstreamID]map[UpstreamID]struc
 	return sr.deletedTables
 }
 
+// skipHistoricalAliasDelete protects metadata keys shared by routed source
+// locations, including their auto-ID counters. The final source location still
+// owns actual DROP tombstones.
+func (sr *SchemasReplace) skipHistoricalAliasDelete(key *RawMetaKey, value []byte, cf string) (bool, error) {
+	if cf != consts.WriteCF || !meta.IsDBkey(key.Key) {
+		return false, nil
+	}
+	var parseID func([]byte) (int64, error)
+	switch {
+	case meta.IsTableKey(key.Field):
+		parseID = meta.ParseTableKey
+	case meta.IsAutoIncrementIDKey(key.Field):
+		parseID = meta.ParseAutoIncrementIDKey
+	case meta.IsAutoTableIDKey(key.Field):
+		parseID = meta.ParseAutoTableIDKey
+	case meta.IsSequenceKey(key.Field):
+		parseID = meta.ParseSequenceKey
+	case meta.IsAutoRandomTableIDKey(key.Field):
+		parseID = meta.ParseAutoRandomTableIDKey
+	default:
+		return false, nil
+	}
+	dbID, err := meta.ParseDBKey(key.Key)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	tableID, err := parseID(key.Field)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	db := sr.DbReplaceMap[dbID]
+	if db == nil || db.TableMap[tableID] == nil || !db.TableMap[tableID].SkipMetaDelete {
+		return false, nil
+	}
+	var write RawWriteCFValue
+	if err := write.ParseFrom(value); err != nil {
+		return false, errors.Trace(err)
+	}
+	return write.IsDelete(), nil
+}
+
 // RewriteMetaKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
 func (sr *SchemasReplace) RewriteMetaKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
 	if !utils.IsMetaDBKey(e.Key) {
@@ -722,6 +766,12 @@ func (sr *SchemasReplace) RewriteMetaKvEntry(e *kv.Entry, cf string) (*kv.Entry,
 	rawKey, err := ParseTxnMetaKeyFrom(e.Key)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if skip, err := sr.skipHistoricalAliasDelete(rawKey, e.Value, cf); err != nil {
+		return nil, err
+	} else if skip {
+		return nil, nil
 	}
 
 	if meta.IsDBkey(rawKey.Field) {

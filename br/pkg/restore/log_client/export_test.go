@@ -85,7 +85,7 @@ func (rc *LogClient) TEST_initSchemasMap(
 	restoreTS uint64,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]*backuppb.PitrDBMap, error) {
-	backupMeta, err := rc.loadSchemasMap(ctx, restoreTS, logCheckpointMetaManager)
+	backupMeta, err := rc.loadSchemasMap(ctx, restoreTS, logCheckpointMetaManager, false)
 	if err != nil {
 		return nil, err
 	}

@@ -1292,6 +1292,91 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, "target", tm.DBReplaceMap[2].TableMap[22].TargetDBName)
 	})
 
+	t.Run("a routed rename must not delete its surviving target", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		collector := NewMockMetaInfoCollector()
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 22, 10, &tableSimpleInfo{Name: "old"}, collector))
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(2, 22, 20, &tableSimpleInfo{Name: "new"}, collector))
+		for dbID, name := range map[int64]string{1: "s", 2: "moved"} {
+			db := tm.DBReplaceMap[dbID]
+			db.Name, db.SourceName = name, name
+			db.TableMap[22].TableID = 901
+		}
+		require.NoError(t, tm.BindUnresolvedTableRoutes(func(schema, table string) (string, string, bool) {
+			require.Equal(t, "moved", schema)
+			require.Equal(t, "new", table)
+			return "target", "copy", true
+		}, true))
+		for _, db := range tm.DBReplaceMap {
+			db.TableMap[22].TargetDBID = 1000
+		}
+		sr := MockEmptySchemasReplace(nil, tm.DBReplaceMap)
+		for _, field := range [][]byte{meta.TableKey(22), meta.AutoIncrementIDKey(22), meta.AutoTableIDKey(22), meta.AutoRandomTableIDKey(22), meta.SequenceKey(22)} {
+			rewritten, err := sr.RewriteMetaKvEntry(&kv.Entry{
+				Key:   utils.EncodeTxnMetaKey(meta.DBkey(1), field, (1<<60)+20),
+				Value: (&RawWriteCFValue{t: WriteTypeDelete, startTs: (1 << 60) + 19}).EncodeTo(),
+			}, consts.WriteCF)
+			require.NoError(t, err)
+			require.Nil(t, rewritten, "the old alias tombstone collides with the new location's put")
+		}
+		require.Empty(t, sr.GetDeletedTables())
+		value, err := json.Marshal(&model.TableInfo{ID: 22, Name: ast.NewCIStr("new")})
+		require.NoError(t, err)
+		rewritten, err := sr.RewriteMetaKvEntry(&kv.Entry{
+			Key: utils.EncodeTxnMetaKey(meta.DBkey(2), meta.TableKey(22), (1<<60)+19), Value: value,
+		}, consts.DefaultCF)
+		require.NoError(t, err)
+		require.NotNil(t, rewritten)
+		rewritten, err = sr.RewriteMetaKvEntry(&kv.Entry{
+			Key:   utils.EncodeTxnMetaKey(meta.DBkey(2), meta.TableKey(22), (1<<60)+20),
+			Value: (&RawWriteCFValue{t: WriteTypePut, startTs: (1 << 60) + 19}).EncodeTo(),
+		}, consts.WriteCF)
+		require.NoError(t, err)
+		require.NotNil(t, rewritten)
+		// A later actual DROP from the final location must still be replayed.
+		rewritten, err = sr.RewriteMetaKvEntry(&kv.Entry{
+			Key:   utils.EncodeTxnMetaKey(meta.DBkey(2), meta.TableKey(22), (1<<60)+30),
+			Value: (&RawWriteCFValue{t: WriteTypeDelete, startTs: (1 << 60) + 29}).EncodeTo(),
+		}, consts.WriteCF)
+		require.NoError(t, err)
+		require.NotNil(t, rewritten)
+		require.Contains(t, sr.GetDeletedTables()[2], int64(22))
+	})
+
+	t.Run("ignore metadata-only IDs absent from the base map", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+			Key: utils.EncodeTxnMetaKey(meta.DBkey(99), meta.AutoIncrementIDKey(11), 1<<60), Value: []byte("1"),
+		}, consts.DefaultCF, 1<<60, NewMockMetaInfoCollector()))
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{})
+		require.NoError(t, tm.BindUnresolvedTableRoutes(func(_, _ string) (string, string, bool) {
+			t.Fatal("an ID without TableInfo or a baseline identity cannot be routed")
+			return "", "", false
+		}, true))
+		require.True(t, tm.DBReplaceMap[99].TableMap[11].FilteredOut)
+		require.True(t, tm.DBReplaceMap[99].FilteredOut)
+		require.False(t, tm.DBReplaceMap[99].RestoresDatabaseMetadata())
+	})
+
+	t.Run("historical aliases recover an unrouted legacy parent source", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		collector := NewMockMetaInfoCollector()
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 22, 10, &tableSimpleInfo{Name: "old"}, collector))
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(2, 22, 20, &tableSimpleInfo{Name: "new"}, collector))
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+			1: {Name: "s", DbID: 800, TableMap: map[UpstreamID]*TableReplace{}},
+			2: {Name: "moved", DbID: 900, TableMap: map[UpstreamID]*TableReplace{}},
+		})
+		require.NoError(t, tm.BindUnresolvedTableRoutes(func(schema, table string) (string, string, bool) {
+			require.Equal(t, "moved", schema)
+			require.Equal(t, "new", table)
+			return "target", "copy", true
+		}, true))
+		require.Equal(t, "moved", tm.DBReplaceMap[2].SourceName)
+		require.Equal(t, "target", tm.DBReplaceMap[1].TableMap[22].TargetDBName)
+		require.Equal(t, "target", tm.DBReplaceMap[2].TableMap[22].TargetDBName)
+	})
+
 	t.Run("validate committed endpoint target names", func(t *testing.T) {
 		put := func(t *testing.T, tm *TableMappingManager, dbID, tableID int64, ts uint64) {
 			t.Helper()

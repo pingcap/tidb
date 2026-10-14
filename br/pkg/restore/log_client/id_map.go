@@ -168,6 +168,7 @@ func (rc *LogClient) loadSchemasMap(
 	ctx context.Context,
 	restoredTS uint64,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	loadPreviousTask bool,
 ) (*backuppb.BackupMeta, error) {
 	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
 		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
@@ -175,7 +176,7 @@ func (rc *LogClient) loadSchemasMap(
 		return backupMeta, errors.Trace(err)
 	}
 	if rc.pitrIDMapTableExists() {
-		backupMeta, err := rc.loadSchemasMapFromTable(ctx, restoredTS)
+		backupMeta, err := rc.loadSchemasMapFromTable(ctx, restoredTS, loadPreviousTask)
 		return backupMeta, errors.Trace(err)
 	}
 	log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
@@ -227,16 +228,39 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 func (rc *LogClient) loadSchemasMapFromTable(
 	ctx context.Context,
 	restoredTS uint64,
+	loadPreviousTask bool,
 ) (*backuppb.BackupMeta, error) {
 	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
 
 	var getPitrIDMapSQL string
 	var args []any
 
+	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+	restoreID := rc.restoreID
+	if hasRestoreIDColumn && loadPreviousTask {
+		// A new task has a different restore ID from its predecessor. Select
+		// one owner at the boundary before reading any segments; never combine
+		// independent tasks' maps or choose an arbitrary one.
+		owners, _, err := execCtx.ExecRestrictedSQL(kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil,
+			"SELECT DISTINCT restore_id FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? AND upstream_cluster_id = %? LIMIT 2;",
+			restoredTS, rc.upstreamClusterID)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to find the previous PiTR ID map owner")
+		}
+		if len(owners) == 0 {
+			return nil, nil
+		}
+		if len(owners) > 1 {
+			return nil, errors.Errorf("multiple PiTR ID maps exist at restored TS %d for upstream cluster %d; cannot choose a predecessor task",
+				restoredTS, rc.upstreamClusterID)
+		}
+		restoreID = owners[0].GetUint64(0)
+	}
+
 	if hasRestoreIDColumn {
 		// new version with restore_id column
 		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-		args = []any{rc.restoreID, restoredTS, rc.upstreamClusterID}
+		args = []any{restoreID, restoredTS, rc.upstreamClusterID}
 	} else {
 		// old version without restore_id column
 		log.Info("mysql.tidb_pitr_id_map table does not have restore_id column, using backward compatible mode")
@@ -244,7 +268,6 @@ func (rc *LogClient) loadSchemasMapFromTable(
 		args = []any{restoredTS, rc.upstreamClusterID}
 	}
 
-	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,

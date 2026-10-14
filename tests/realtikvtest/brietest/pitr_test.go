@@ -460,67 +460,188 @@ func TestPiTRAndRestoreFromMid(t *testing.T) {
 	kit.tk.MustQuery("SELECT * FROM information_schema.tables WHERE table_name = ?", s.tbl).Check([][]any{})
 }
 
-// TestPiTRRestoreWithRename covers the PiTR --rename feature end to end: an
-// exact cross-schema table route and a schema-level route. The routed tables are
-// created before the log task starts, so they have no log event and their
-// downstream schema identity can only come from the snapshot phase.
+// TestPiTRRestoreWithRename covers the PiTR --rename feature end to end:
+// snapshot-only routes, independent log-only continuations after replacement
+// DDL, legacy source identity recovery, and conflicts between a routed and an
+// identity table.
 func TestPiTRRestoreWithRename(t *testing.T) {
-	kit := NewLogBackupKit(t)
-	taskName := "test-pitr-rename"
+	t.Run("snapshot routes", func(t *testing.T) {
+		kit := NewLogBackupKit(t)
+		taskName := "test-pitr-rename"
 
-	drop := func() {
-		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_src")
-		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_schema")
-		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_dst")
-		kit.tk.MustExec("DROP DATABASE IF EXISTS rn_renamed")
-	}
-	drop()
-	t.Cleanup(drop)
-
-	kit.tk.MustExec("CREATE DATABASE rn_src")
-	kit.tk.MustExec("CREATE DATABASE rn_schema")
-	kit.tk.MustExec("CREATE TABLE rn_src.t_log(id INT PRIMARY KEY, v VARCHAR(20))")
-	kit.tk.MustExec("CREATE TABLE rn_src.t_snapshot(id INT PRIMARY KEY, v VARCHAR(20))")
-	kit.tk.MustExec("CREATE TABLE rn_schema.t(id INT PRIMARY KEY, v VARCHAR(20))")
-	kit.tk.MustExec("INSERT INTO rn_src.t_log VALUES (1, 'before')")
-	kit.tk.MustExec("INSERT INTO rn_src.t_snapshot VALUES (1, 'snapshot')")
-	kit.tk.MustExec("INSERT INTO rn_schema.t VALUES (1, 'before')")
-
-	// Start the log task before the full backup so the full backup falls inside
-	// the log range. Every table predates the log range, so only DML is logged.
-	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
-	kit.RunFullBackup(func(bc *task.BackupConfig) {})
-	kit.tk.MustExec("INSERT INTO rn_src.t_log VALUES (2, 'after')")
-	kit.tk.MustExec("INSERT INTO rn_schema.t VALUES (2, 'after')")
-	kit.forceFlushAndWait(taskName)
-
-	// Stop the task before dropping the sources so the drops stay outside the
-	// restored log range and the schemas have to come from the full backup.
-	kit.StopTaskIfExists(taskName)
-	kit.tk.MustExec("DROP DATABASE rn_src")
-	kit.tk.MustExec("DROP DATABASE rn_schema")
-
-	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-		rc.Rename = []string{
-			"rn_src.t_snapshot:rn_dst.copy",
-			"rn_schema:rn_renamed",
+		drop := func() {
+			kit.tk.MustExec("DROP DATABASE IF EXISTS rn_src")
+			kit.tk.MustExec("DROP DATABASE IF EXISTS rn_schema")
+			kit.tk.MustExec("DROP DATABASE IF EXISTS rn_dst")
+			kit.tk.MustExec("DROP DATABASE IF EXISTS rn_renamed")
 		}
-		kit.SetFilter(&rc.Config, "rn_src.*", "rn_schema.*")
+		drop()
+		t.Cleanup(drop)
+
+		kit.tk.MustExec("CREATE DATABASE rn_src")
+		kit.tk.MustExec("CREATE DATABASE rn_schema")
+		kit.tk.MustExec("CREATE TABLE rn_src.t_log(id INT PRIMARY KEY, v VARCHAR(20))")
+		kit.tk.MustExec("CREATE TABLE rn_src.t_snapshot(id INT PRIMARY KEY, v VARCHAR(20))")
+		kit.tk.MustExec("CREATE TABLE rn_schema.t(id INT PRIMARY KEY, v VARCHAR(20))")
+		kit.tk.MustExec("INSERT INTO rn_src.t_log VALUES (1, 'before')")
+		kit.tk.MustExec("INSERT INTO rn_src.t_snapshot VALUES (1, 'snapshot')")
+		kit.tk.MustExec("INSERT INTO rn_schema.t VALUES (1, 'before')")
+
+		// Start the log task before the full backup so the full backup falls inside
+		// the log range. Every table predates the log range, so only DML is logged.
+		kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+		kit.RunFullBackup(func(bc *task.BackupConfig) {})
+		kit.tk.MustExec("INSERT INTO rn_src.t_log VALUES (2, 'after')")
+		kit.tk.MustExec("INSERT INTO rn_schema.t VALUES (2, 'after')")
+		kit.forceFlushAndWait(taskName)
+
+		// Stop the task before dropping the sources so the drops stay outside the
+		// restored log range and the schemas have to come from the full backup.
+		kit.StopTaskIfExists(taskName)
+		kit.tk.MustExec("DROP DATABASE rn_src")
+		kit.tk.MustExec("DROP DATABASE rn_schema")
+
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			rc.Rename = []string{
+				"rn_src.t_snapshot:rn_dst.copy",
+				"rn_schema:rn_renamed",
+			}
+			kit.SetFilter(&rc.Config, "rn_src.*", "rn_schema.*")
+		})
+
+		// The routed table is restored under the target schema and is queryable,
+		// which also proves the restore reset it from restore mode. It is created
+		// before the log task starts, so it has no log event and its downstream
+		// schema identity can only come from the snapshot phase.
+		kit.tk.MustQuery("SELECT id, v FROM rn_dst.copy").Check(testkit.Rows("1 snapshot"))
+		kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_src'").
+			Check(testkit.Rows("t_log"))
+		// The identity table keeps its source name and receives the replayed log rows.
+		kit.tk.MustQuery("SELECT id, v FROM rn_src.t_log ORDER BY id").Check(testkit.Rows("1 before", "2 after"))
+		// The schema-level route moves the whole schema.
+		kit.tk.MustQuery("SELECT id, v FROM rn_renamed.t ORDER BY id").Check(testkit.Rows("1 before", "2 after"))
+		kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_schema'").
+			Check([][]any{})
 	})
 
-	// The routed table is restored under the target schema and is queryable,
-	// which also proves the restore reset it from restore mode. It is created
-	// before the log task starts, so it has no log event and its downstream
-	// schema identity can only come from the snapshot phase.
-	kit.tk.MustQuery("SELECT id, v FROM rn_dst.copy").Check(testkit.Rows("1 snapshot"))
-	kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_src'").
-		Check(testkit.Rows("t_log"))
-	// The identity table keeps its source name and receives the replayed log rows.
-	kit.tk.MustQuery("SELECT id, v FROM rn_src.t_log ORDER BY id").Check(testkit.Rows("1 before", "2 after"))
-	// The schema-level route moves the whole schema.
-	kit.tk.MustQuery("SELECT id, v FROM rn_renamed.t ORDER BY id").Check(testkit.Rows("1 before", "2 after"))
-	kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_schema'").
-		Check([][]any{})
+	t.Run("independent log-only tasks", func(t *testing.T) {
+		kit := NewLogBackupKit(t)
+		taskName := "test-pitr-rename-split"
+		drop := func() {
+			for _, name := range []string{"rn_split", "rn_move", "rn_target", "rn_split_schema"} {
+				kit.tk.MustExec("DROP DATABASE IF EXISTS " + name)
+			}
+		}
+		drop()
+		t.Cleanup(drop)
+		kit.tk.MustExec("CREATE DATABASE rn_split")
+		kit.tk.MustExec("CREATE DATABASE rn_move")
+		kit.tk.MustExec("CREATE TABLE rn_split.t(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_split.rebuild(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_split.keep(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_move.anchor(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_move.moved(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_split.c1(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_split.t VALUES (1)")
+		kit.tk.MustExec("INSERT INTO rn_split.rebuild VALUES (1)")
+		kit.tk.MustExec("INSERT INTO rn_split.keep VALUES (1)")
+		kit.tk.MustExec("INSERT INTO rn_move.moved VALUES (1)")
+		kit.tk.MustExec("INSERT INTO rn_split.c1 VALUES (9)")
+		kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+		kit.RunFullBackup(func(bc *task.BackupConfig) {})
+		kit.tk.MustExec("INSERT INTO rn_split.keep VALUES (2)")
+		firstTS := kit.TSO()
+
+		kit.tk.MustExec("TRUNCATE TABLE rn_split.t")
+		kit.tk.MustExec("INSERT INTO rn_split.t VALUES (2)")
+		kit.tk.MustExec("DROP TABLE rn_split.rebuild")
+		kit.tk.MustExec("CREATE TABLE rn_split.rebuild(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_split.rebuild VALUES (2)")
+		// This new ID has no persisted table route. Both historical buckets
+		// must use the final source location when binding after the base merge.
+		kit.tk.MustExec("DROP TABLE rn_move.moved")
+		kit.tk.MustExec("CREATE TABLE rn_split.moving(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_split.moving VALUES (3)")
+		kit.tk.MustExec("RENAME TABLE rn_split.moving TO rn_move.moved")
+		secondTS := kit.TSO()
+
+		kit.tk.MustExec("DROP TABLE rn_split.c1")
+		kit.tk.MustExec("CREATE TABLE rn_split.c1(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_move.conflict(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_split.c1 VALUES (10)")
+		kit.tk.MustExec("INSERT INTO rn_move.conflict VALUES (20)")
+		conflictTS := kit.TSO()
+		kit.forceFlushAndWait(taskName)
+		kit.StopTaskIfExists(taskName)
+		kit.tk.MustExec("DROP DATABASE rn_split")
+		kit.tk.MustExec("DROP DATABASE rn_move")
+
+		rename := []string{
+			"rn_split:rn_split_schema",
+			"rn_split.t:rn_target.copy",
+			"rn_split.rebuild:rn_target.recreated",
+			"rn_move.moved:rn_target.alias",
+			"rn_split.c1:rn_move.conflict",
+		}
+		configure := func(rc *task.RestoreConfig) {
+			rc.Rename = rename
+			kit.SetFilter(&rc.Config, "rn_split.*", "rn_move.*")
+		}
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			configure(rc)
+			rc.RestoreTS = firstTS
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_target.copy").Check(testkit.Rows("1"))
+		kit.tk.MustQuery("SELECT * FROM rn_target.recreated").Check(testkit.Rows("1"))
+		kit.tk.MustQuery("SELECT * FROM rn_target.alias").Check(testkit.Rows("1"))
+		kit.tk.MustQuery("SELECT * FROM rn_move.conflict").Check(testkit.Rows("9"))
+		kit.tk.MustQuery("SELECT * FROM rn_split_schema.keep ORDER BY id").Check(testkit.Rows("1", "2"))
+
+		// Exercise a legacy parent without source_name. Only an unrouted
+		// parent is recoverable from Name; the schema-routed parent keeps its
+		// source_name so exact overrides still beat the schema-level rule.
+		rows := kit.tk.MustQuery("SELECT restore_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = ? ORDER BY segment_id", firstTS).Rows()
+		require.Len(t, rows, 1)
+		var meta backup.BackupMeta
+		require.NoError(t, meta.Unmarshal([]byte(rows[0][1].(string))))
+		found := false
+		for _, db := range meta.DbMaps {
+			if db.SourceName == "rn_move" {
+				require.False(t, db.SchemaRouted)
+				db.SourceName = ""
+				found = true
+			}
+		}
+		require.True(t, found)
+		data, err := meta.Marshal()
+		require.NoError(t, err)
+		kit.tk.MustExec("UPDATE mysql.tidb_pitr_id_map SET id_map = ? WHERE restored_ts = ? AND restore_id = ? AND segment_id = 0", data, firstTS, rows[0][0])
+
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			configure(rc)
+			rc.FullBackupStorage = ""
+			rc.StartTS, rc.RestoreTS = firstTS, secondTS
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_target.copy").Check(testkit.Rows("2"))
+		kit.tk.MustQuery("SELECT * FROM rn_target.recreated").Check(testkit.Rows("2"))
+		kit.tk.MustQuery("SELECT * FROM rn_target.alias").Check(testkit.Rows("3"))
+		kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_split_schema'").Check(testkit.Rows("keep"))
+		kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'rn_target' ORDER BY table_name").Check(testkit.Rows("alias", "copy", "recreated"))
+		kit.tk.MustQuery("SELECT COUNT(DISTINCT restore_id) FROM mysql.tidb_pitr_id_map WHERE restored_ts IN (?, ?)", firstTS, secondTS).Check(testkit.Rows("2"))
+
+		kit.WithChecker(func(err error) {
+			require.ErrorContains(t, err, "same restore target")
+		}, func() {
+			kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+				configure(rc)
+				rc.FullBackupStorage = ""
+				rc.StartTS, rc.RestoreTS = secondTS, conflictTS
+			})
+		})
+		// The failed interval must leave the previously restored table intact.
+		kit.tk.MustQuery("SELECT * FROM rn_move.conflict").Check(testkit.Rows("9"))
+		kit.tk.MustQuery("SELECT * FROM rn_target.copy").Check(testkit.Rows("2"))
+	})
 }
 
 func TestPiTRAndManyBackups(t *testing.T) {

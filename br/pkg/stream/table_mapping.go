@@ -857,10 +857,19 @@ func (tm *TableMappingManager) BindUnresolvedTableRoutes(
 			continue
 		}
 		for tableID, tableReplace := range dbReplace.TableMap {
+			_, persisted := tm.baseTableIDs[tableID]
+			_, observed := tm.latestTableSources[tableID]
+			if !persisted && !observed && tableReplace.SourceName == "" && tableReplace.Name == "" {
+				// Auto-ID and delete-only metadata can allocate placeholders for
+				// tables excluded from the baseline. Without a TableInfo in the
+				// interval, there is no new table to bind or restore.
+				tableReplace.FilteredOut = true
+				continue
+			}
 			if tableReplace.FilteredOut || tableReplace.TargetDBName != "" {
 				continue
 			}
-			if _, persisted := tm.baseTableIDs[tableID]; persisted {
+			if persisted {
 				continue
 			}
 			sourceDBID, sourceName := dbID, tableReplace.SourceName
@@ -868,6 +877,11 @@ func (tm *TableMappingManager) BindUnresolvedTableRoutes(
 				sourceDBID, sourceName = latest.dbID, latest.name
 			}
 			sourceDB := tm.DBReplaceMap[sourceDBID]
+			if sourceDB != nil && sourceDB.SourceName == "" && !sourceDB.SchemaRouted {
+				// Older ID maps have no source_name. An unrouted parent's Name
+				// still denotes the source schema; a schema-routed target does not.
+				sourceDB.SourceName = sourceDB.Name
+			}
 			if sourceDB == nil || sourceDB.SourceName == "" || sourceName == "" {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
 					"cannot resolve source identity for upstream database ID %d and table ID %d with restore rename rules", sourceDBID, tableID)
@@ -884,6 +898,39 @@ func (tm *TableMappingManager) BindUnresolvedTableRoutes(
 			if strings.EqualFold(targetDB, dbReplace.Name) {
 				tableReplace.TargetDBID = dbReplace.DbID
 			}
+		}
+		if dbReplace.Name == "" && dbReplace.SourceName == "" {
+			// A nameless parent containing only excluded placeholders has no
+			// database metadata to refresh after the replay either.
+			dbReplace.FilteredOut = true
+			for _, tableReplace := range dbReplace.TableMap {
+				if !tableReplace.FilteredOut {
+					dbReplace.FilteredOut = false
+					break
+				}
+			}
+		}
+	}
+	// Different source locations of one routed table can collapse to one
+	// downstream metadata key. Keep its latest Put, not the old location's
+	// relocation Delete, regardless of their order within the log batch.
+	for dbID, dbReplace := range tm.DBReplaceMap {
+		for tableID, tableReplace := range dbReplace.TableMap {
+			tableReplace.SkipMetaDelete = false
+			latest, ok := tm.latestTableSources[tableID]
+			if !ok || latest.dbID == dbID || tableReplace.FilteredOut || dbReplace.FilteredOut {
+				continue
+			}
+			latestDB := tm.DBReplaceMap[latest.dbID]
+			if latestDB == nil || latestDB.FilteredOut {
+				continue
+			}
+			latestTable := latestDB.TableMap[tableID]
+			if latestTable == nil || latestTable.FilteredOut || latestTable.TableID != tableReplace.TableID {
+				continue
+			}
+			name := tableReplace.EffectiveDBName(dbReplace)
+			tableReplace.SkipMetaDelete = name != "" && strings.EqualFold(name, latestTable.EffectiveDBName(latestDB))
 		}
 	}
 	return nil

@@ -1802,6 +1802,51 @@ func TestPITRIDMap(t *testing.T) {
 		}
 	}
 
+	t.Run("independent task loads the predecessor map", func(t *testing.T) {
+		previous := logclient.TEST_NewLogClient(123, 1, 10, 3, s.Mock.Domain, se)
+		previous.SetRestoreID(101)
+		require.NoError(t, previous.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
+		next := logclient.TEST_NewLogClient(123, 10, 20, 3, s.Mock.Domain, se)
+		next.SetRestoreID(102)
+		mapping := stream.NewTableMappingManager()
+		require.NoError(t, next.GetBaseIDMapAndMerge(ctx, false, false, nil, mapping, ""))
+		require.Equal(t, baseTableMappingManager.DBReplaceMap[1].DbID, mapping.DBReplaceMap[1].DbID)
+	})
+
+	t.Run("missing checkpoint map cannot use the predecessor", func(t *testing.T) {
+		previous := logclient.TEST_NewLogClient(123, 1, 30, 3, s.Mock.Domain, se)
+		previous.SetRestoreID(103)
+		require.NoError(t, previous.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
+		next := logclient.TEST_NewLogClient(123, 30, 40, 3, s.Mock.Domain, se)
+		next.SetRestoreID(103)
+		err := next.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
+		require.ErrorContains(t, err, "saved PiTR ID map is missing")
+	})
+
+	t.Run("an existing empty checkpoint map is valid", func(t *testing.T) {
+		client := logclient.TEST_NewLogClient(123, 1, 70, 3, s.Mock.Domain, se)
+		client.SetRestoreID(107)
+		require.NoError(t, client.TEST_saveIDMap(ctx, stream.NewTableMappingManager(), nil))
+		require.NoError(t, client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), ""))
+	})
+
+	t.Run("ambiguous predecessor tasks are rejected", func(t *testing.T) {
+		for _, restoreID := range []uint64{104, 105} {
+			previous := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+			previous.SetRestoreID(restoreID)
+			require.NoError(t, previous.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
+		}
+		next := logclient.TEST_NewLogClient(123, 50, 60, 3, s.Mock.Domain, se)
+		next.SetRestoreID(106)
+		err := next.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager(), "")
+		require.ErrorContains(t, err, "multiple PiTR ID maps")
+		// Current-task loading must retain restore_id isolation even at an
+		// endpoint for which several independent maps exist.
+		owner := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		owner.SetRestoreID(104)
+		require.NoError(t, owner.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), ""))
+	})
+
 	t.Run("reject newer backup schema version", func(t *testing.T) {
 		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
 		err = se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %?;",

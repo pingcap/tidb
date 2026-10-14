@@ -1187,9 +1187,13 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	// this is a retry, id map saved last time, load it from external storage
 	if loadSavedIDMap {
 		log.Info("try to load previously saved pitr id maps")
-		backupMeta, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
+		backupMeta, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager, false)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if backupMeta == nil {
+			return errors.Errorf("saved PiTR ID map is missing for restore ID %d at restored TS %d; cannot resume with a predecessor map",
+				rc.restoreID, rc.restoreTS)
 		}
 		if err := validateRouteFingerprint(backupMeta); err != nil {
 			return err
@@ -1198,9 +1202,9 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(backupMeta.GetDbMaps()) <= 0 && !hasFullBackupStorageConfig {
+	if !loadSavedIDMap && len(backupMeta.GetDbMaps()) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		backupMeta, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
+		backupMeta, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1214,7 +1218,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	}
 
 	dbMaps := backupMeta.GetDbMaps()
-	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
+	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig && !loadSavedIDMap {
 		log.Error("no id maps found")
 		return errors.New("no base id map found from saved id or last restored PiTR")
 	}

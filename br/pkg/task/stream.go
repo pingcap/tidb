@@ -1678,7 +1678,7 @@ func restoreStream(
 			restoreFields = append(restoreFields, zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
 		}
 		log.Info("start to restore tikv config", restoreFields...)
-		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
+		restoreConfigErr := cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
 				return errors.Trace(err)
@@ -1692,6 +1692,8 @@ func restoreStream(
 			}
 			return nil
 		})
+		// Cleanup must not erase the error that stopped metadata or data replay.
+		err = multierr.Append(err, restoreConfigErr)
 		log.Info("finish restoring gc")
 	}()
 
