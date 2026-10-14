@@ -35,8 +35,20 @@ import (
 // Split the pitr_id_map data into 512 KiB chunks to avoid one kv entry size too large.
 const PITRIdMapBlockSize int = 524288
 
+// PitrIDMapsFilename is the legacy ownerless filename. Such a file cannot be
+// safely selected for a new task or used as another task's checkpoint map.
 func PitrIDMapsFilename(clusterID, restoredTS uint64) string {
 	return fmt.Sprintf("pitr_id_maps/pitr_id_map.cluster_id:%d.restored_ts:%d", clusterID, restoredTS)
+}
+
+// PitrIDMapsFilenameForTask isolates storage maps by both upstream identity and
+// task owner. A route fingerprint cannot distinguish tasks with equal rules.
+func PitrIDMapsFilenameForTask(clusterID, upstreamClusterID, restoredTS, restoreID uint64) string {
+	return fmt.Sprintf("%srestore-%d.meta", pitrIDMapsPrefix(clusterID, upstreamClusterID, restoredTS), restoreID)
+}
+
+func pitrIDMapsPrefix(clusterID, upstreamClusterID, restoredTS uint64) string {
+	return fmt.Sprintf("pitr_id_maps/v2/cluster-%d/upstream-%d/restored-%d/", clusterID, upstreamClusterID, restoredTS)
 }
 
 func (rc *LogClient) pitrIDMapTableExists() bool {
@@ -98,7 +110,7 @@ func (rc *LogClient) saveIDMap2Storage(
 	routeFingerprint string,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := PitrIDMapsFilename(clusterID, rc.restoreTS)
+	metaFileName := PitrIDMapsFilenameForTask(clusterID, rc.upstreamClusterID, rc.restoreTS, rc.restoreID)
 	metaWriter := metautil.NewMetaWriter(storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.ClusterId = clusterID
@@ -172,7 +184,7 @@ func (rc *LogClient) loadSchemasMap(
 ) (*backuppb.BackupMeta, error) {
 	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
 		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
-		backupMeta, err := rc.loadSchemasMapFromStorage(ctx, checkpointStorage, restoredTS)
+		backupMeta, err := rc.loadSchemasMapFromStorage(ctx, checkpointStorage, restoredTS, loadPreviousTask)
 		return backupMeta, errors.Trace(err)
 	}
 	if rc.pitrIDMapTableExists() {
@@ -180,7 +192,7 @@ func (rc *LogClient) loadSchemasMap(
 		return backupMeta, errors.Trace(err)
 	}
 	log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
-	backupMeta, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
+	backupMeta, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS, loadPreviousTask)
 	return backupMeta, errors.Trace(err)
 }
 
@@ -202,14 +214,47 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
 	storage storeapi.Storage,
 	restoredTS uint64,
+	loadPreviousTask bool,
 ) (*backuppb.BackupMeta, error) {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := PitrIDMapsFilename(clusterID, restoredTS)
+	legacyExists, err := storage.FileExists(ctx, PitrIDMapsFilename(clusterID, restoredTS))
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to check legacy PiTR ID map")
+	}
+	metaFileName := PitrIDMapsFilenameForTask(clusterID, rc.upstreamClusterID, restoredTS, rc.restoreID)
+	if loadPreviousTask {
+		if legacyExists {
+			return nil, errors.Errorf("legacy PiTR ID map at restored TS %d has no task owner or upstream identity; cannot safely choose a predecessor", restoredTS)
+		}
+		prefix := pitrIDMapsPrefix(clusterID, rc.upstreamClusterID, restoredTS)
+		metaFileName = ""
+		err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(path string, _ int64) error {
+			var owner uint64
+			if n, err := fmt.Sscanf(path, prefix+"restore-%d.meta", &owner); err != nil || n != 1 ||
+				path != PitrIDMapsFilenameForTask(clusterID, rc.upstreamClusterID, restoredTS, owner) {
+				return errors.Errorf("invalid PiTR ID map owner filename %q", path)
+			}
+			if metaFileName != "" {
+				return errors.Errorf("multiple PiTR ID maps exist at restored TS %d for upstream cluster %d; cannot choose a predecessor task", restoredTS, rc.upstreamClusterID)
+			}
+			metaFileName = path
+			return nil
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if metaFileName == "" {
+			return nil, nil
+		}
+	}
 	exist, err := storage.FileExists(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
 	}
 	if !exist {
+		if legacyExists {
+			return nil, errors.Errorf("legacy PiTR ID map at restored TS %d has no task owner; cannot safely resume restore ID %d", restoredTS, rc.restoreID)
+		}
 		log.Info("pitr id map does not exist", zap.String("file", metaFileName), zap.Uint64("restored ts", restoredTS))
 		return nil, nil
 	}

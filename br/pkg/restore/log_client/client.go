@@ -2549,6 +2549,17 @@ func (rc *LogClient) ensureTableRouteTargetDatabases(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Validate all creation metadata before any DDL. Otherwise a later
+	// target lacking settings can leave earlier schemas created with IDs
+	// which were never saved in the restore map.
+	if allowCreate {
+		for _, target := range targets {
+			if _, exists := rc.dom.InfoSchema().SchemaByName(ast.NewCIStr(target.Name)); !exists && target.SourceDBInfo == nil {
+				return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+					"cannot create table-route target database %s: source database settings are unavailable; refusing to use DDL defaults", target.Name)
+			}
+		}
+	}
 	for _, target := range targets {
 		if dbInfo, exists := rc.dom.InfoSchema().SchemaByName(ast.NewCIStr(target.Name)); exists {
 			if dbInfo.ID != target.ID {
@@ -2583,16 +2594,9 @@ func (rc *LogClient) ensureTableRouteTargetDatabases(
 }
 
 // targetInfoForCreate builds the DBInfo used to create a table-route target
-// schema. It clones the source schema metadata so charset, collation and
-// placement are preserved instead of falling back to DDL defaults. When the
-// source metadata is unavailable (legacy persisted maps), it degrades to an
-// ID/name-only DBInfo.
+// schema after its source metadata has been validated. Charset, collation
+// and placement are preserved instead of falling back to DDL defaults.
 func targetInfoForCreate(target stream.TargetDatabase) *model.DBInfo {
-	if target.SourceDBInfo == nil {
-		log.Warn("table-route target database has no source metadata; creating it with defaults",
-			zap.String("target", target.Name))
-		return &model.DBInfo{ID: target.ID, Name: ast.NewCIStr(target.Name)}
-	}
 	targetInfo := target.SourceDBInfo.Clone()
 	targetInfo.ID = target.ID
 	targetInfo.Name = ast.NewCIStr(target.Name)

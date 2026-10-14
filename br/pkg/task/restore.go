@@ -1628,7 +1628,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	var nameSources *restoreNameSources
 	if isPiTR && cfg.hasNameRouting() {
-		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables)
+		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables, cfg.tableMappingManager)
 		// The pre-snapshot binding only had the log history, which cannot name a
 		// schema whose only log entry is a table DDL (DBReplace.Name stays empty).
 		// Re-bind with the snapshot-backed source names so a table-level route is
@@ -1725,7 +1725,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 	if isPiTR && cfg.hasNameRouting() {
-		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables)
+		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables, cfg.tableMappingManager)
 	}
 	namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
 	if err != nil {

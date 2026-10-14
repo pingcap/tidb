@@ -1358,7 +1358,28 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.False(t, tm.DBReplaceMap[99].RestoresDatabaseMetadata())
 	})
 
-	t.Run("historical aliases recover an unrouted legacy parent source", func(t *testing.T) {
+	t.Run("reject a legacy target name as an unverified source", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 22, 20, &tableSimpleInfo{Name: "t"}, NewMockMetaInfoCollector()))
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+			1: {Name: "x", DbID: 800, TableMap: map[UpstreamID]*TableReplace{
+				11: {Name: "copy", TableID: 901, TargetDBName: "x", TargetDBID: 800},
+			}},
+		})
+		called := false
+		err := tm.BindUnresolvedTableRoutes(func(schema, table string) (string, string, bool) {
+			called = true
+			if schema == "s" && table == "t" {
+				return "x", "copy", true
+			}
+			return schema, table, false
+		}, true)
+		require.ErrorContains(t, err, "cannot resolve source identity")
+		require.False(t, called)
+		require.Empty(t, tm.DBReplaceMap[1].SourceName)
+	})
+
+	t.Run("legacy parents cannot prove their source from Name alone", func(t *testing.T) {
 		tm := NewTableMappingManager()
 		collector := NewMockMetaInfoCollector()
 		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 22, 10, &tableSimpleInfo{Name: "old"}, collector))
@@ -1367,14 +1388,10 @@ func TestMergeBaseDBReplace(t *testing.T) {
 			1: {Name: "s", DbID: 800, TableMap: map[UpstreamID]*TableReplace{}},
 			2: {Name: "moved", DbID: 900, TableMap: map[UpstreamID]*TableReplace{}},
 		})
-		require.NoError(t, tm.BindUnresolvedTableRoutes(func(schema, table string) (string, string, bool) {
-			require.Equal(t, "moved", schema)
-			require.Equal(t, "new", table)
-			return "target", "copy", true
-		}, true))
-		require.Equal(t, "moved", tm.DBReplaceMap[2].SourceName)
-		require.Equal(t, "target", tm.DBReplaceMap[1].TableMap[22].TargetDBName)
-		require.Equal(t, "target", tm.DBReplaceMap[2].TableMap[22].TargetDBName)
+		require.ErrorContains(t, tm.BindUnresolvedTableRoutes(func(_, _ string) (string, string, bool) {
+			t.Fatal("an unverified legacy name must not be routed")
+			return "", "", false
+		}, true), "cannot resolve source identity")
 	})
 
 	t.Run("validate committed endpoint target names", func(t *testing.T) {

@@ -33,6 +33,41 @@ import (
 )
 
 func TestBuildRestoreNamePlanUsesPiTRLatestSourceName(t *testing.T) {
+	t.Run("an unrelated route preserves the latest source database settings", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"c.u:y.copy"})
+		require.NoError(t, err)
+		a := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("a"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}}
+		b := &metautil.Database{Info: &model.DBInfo{ID: 2, Name: ast.NewCIStr("b"), Charset: "latin1", Collate: "latin1_bin"}}
+		c := &metautil.Database{Info: &model.DBInfo{ID: 3, Name: ast.NewCIStr("c"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}}
+		table := &metautil.Table{DB: a.Info, Info: &model.TableInfo{ID: 10, Name: ast.NewCIStr("t")}}
+		other := &metautil.Table{DB: c.Info, Info: &model.TableInfo{ID: 30, Name: ast.NewCIStr("u")}}
+		dbs, tables := []*metautil.Database{a, b, c}, []*metautil.Table{table, other}
+		history := stream.NewTableHistoryManager()
+		history.AddTableHistory(10, "t", 2, 100)
+		tracker := brutils.NewPiTRIdTracker()
+		tracker.TrackTableId(2, 10)
+		tracker.TrackTableId(3, 30)
+		sources := buildPiTRRestoreNameSources(history, tracker, dbs, tables)
+		plan, err := buildRestoreNamePlan(router, dbs, tables, sources)
+		require.NoError(t, err)
+		require.Equal(t, "b", plan.tables[0].TargetDB.Name.O)
+		require.Equal(t, "latin1", plan.tables[0].TargetDB.Charset)
+		require.Equal(t, "latin1_bin", plan.tables[0].TargetDB.Collate)
+		require.Equal(t, "a", table.DB.Name.O)
+		require.Equal(t, "utf8mb4", table.DB.Charset)
+		// A recreated schema can reuse the name of an older schema ID.
+		history.RecordDBIdToName(4, "a", 200)
+		history.AddTableHistory(10, "t", 4, 200)
+		tracker.TrackTableId(4, 10)
+		mapping := stream.NewTableMappingManager()
+		mapping.DBReplaceMap[4] = &stream.DBReplace{SourceDBInfo: &model.DBInfo{ID: 4, Name: ast.NewCIStr("a"), Charset: "latin1", Collate: "latin1_bin"}}
+		sources = buildPiTRRestoreNameSources(history, tracker, dbs, tables, mapping)
+		plan, err = buildRestoreNamePlan(router, dbs, tables, sources)
+		require.NoError(t, err)
+		require.Equal(t, int64(4), plan.tables[0].TargetDB.ID)
+		require.Equal(t, "latin1", plan.tables[0].TargetDB.Charset)
+	})
+
 	router, err := nameroute.Parse([]string{"latest_db.latest_table:target_db.target_table"})
 	require.NoError(t, err)
 
@@ -51,16 +86,19 @@ func TestBuildRestoreNamePlanUsesPiTRLatestSourceName(t *testing.T) {
 	tracker := brutils.NewPiTRIdTracker()
 	tracker.TrackTableId(2, 10)
 
+	mapping := stream.NewTableMappingManager()
+	mapping.DBReplaceMap[2] = &stream.DBReplace{SourceDBInfo: &model.DBInfo{ID: 2, Name: ast.NewCIStr("latest_db")}}
 	sources := buildPiTRRestoreNameSources(
-		history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable})
+		history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable}, mapping)
 	plan, err := buildRestoreNamePlan(
 		router, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable}, sources)
 	require.NoError(t, err)
 	require.Len(t, plan.tables, 1)
 	require.Equal(t, "target_db", plan.tables[0].TargetDB.Name.O)
 	require.Equal(t, "target_table", plan.tables[0].TargetInfo.Name.O)
-	require.Len(t, plan.databases, 1)
+	require.Len(t, plan.databases, 2)
 	require.Equal(t, "target_db", plan.databases[0].Target.Name.O)
+	require.Equal(t, "snapshot_db", plan.databases[1].Target.Name.O)
 	require.Equal(t, "snapshot_db", snapshotTable.DB.Name.O)
 	require.Equal(t, "snapshot_table", snapshotTable.Info.Name.O)
 }

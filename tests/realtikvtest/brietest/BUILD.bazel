@@ -35,6 +35,7 @@ go_test(
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",

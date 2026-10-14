@@ -1454,26 +1454,26 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		client.SetStorage(ctx, backend, nil)
-		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte(""))
+		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 2, 0), []byte(""))
 		require.NoError(t, err)
-		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 1), []byte("123"))
+		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 1, 0), []byte("123"))
 		require.NoError(t, err)
 		err = client.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
-		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 1))
+		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 1, 0))
 		require.NoError(t, err)
 	}
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		client.SetStorage(ctx, backend, nil)
-		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte("123"))
+		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 2, 0), []byte("123"))
 		require.NoError(t, err)
 		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
-		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 2))
+		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 2, 0))
 		require.NoError(t, err)
 	}
 
@@ -1487,14 +1487,15 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
 		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "no base id map found from saved id or last restored PiTR")
+		require.Contains(t, err.Error(), "saved PiTR ID map is missing")
 
 		ids, err := client.GenGlobalIDs(ctx, 1)
 		require.NoError(t, err)
 		manager := stream.NewTableMappingManager()
 		manager.DBReplaceMap[10] = &stream.DBReplace{
-			Name: "source_db",
-			DbID: 110,
+			Name:         "source_db",
+			DbID:         110,
+			SourceDBInfo: &model.DBInfo{ID: 10, Name: ast.NewCIStr("source_db"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
 			TableMap: map[stream.UpstreamID]*stream.TableReplace{
 				20: {
 					Name:         "log_created_table",
@@ -1577,6 +1578,38 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.Len(t, session.refreshArgs, 1)
 		require.Equal(t, int64(120), session.refreshArgs[0].TableID)
 		require.Equal(t, "target_db", session.refreshArgs[0].InvolvedDB)
+	})
+
+	t.Run("reject missing target database settings", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "source", SourceName: "source", DbID: 110,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {Name: "copy", TableID: 120, TargetDBName: "missing_settings_target", TargetDBID: 900},
+			},
+		}
+		manager.DBReplaceMap[30] = &stream.DBReplace{
+			Name: "known", SourceName: "known", DbID: 130,
+			SourceDBInfo: &model.DBInfo{ID: 30, Name: ast.NewCIStr("known"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				40: {Name: "copy", TableID: 140, TargetDBName: "aaa_known_settings_target", TargetDBID: 910},
+			},
+		}
+		require.ErrorContains(t, client.EnsureTableRouteTargetDatabases(ctx, manager), "source database settings are unavailable")
+		_, created := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("aaa_known_settings_target"))
+		require.False(t, created, "validate every target before creating the first schema")
+		_, exists := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("missing_settings_target"))
+		require.False(t, exists)
+		tk.MustExec("CREATE DATABASE missing_settings_target")
+		info, _ := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("missing_settings_target"))
+		manager.DBReplaceMap[10].TableMap[20].TargetDBID = info.ID
+		require.NoError(t, client.EnsureTableRouteTargetDatabases(ctx, manager))
 	})
 
 	t.Run("create table-route target database with source schema metadata", func(t *testing.T) {
@@ -1932,7 +1965,7 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 		err = client.SetStorage(ctx, backend, nil)
 		require.NoError(t, err)
 		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
-		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
+		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 3, 2, 0), data))
 
 		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
 		require.ErrorContains(t, err, "requires schema version")
@@ -2039,6 +2072,61 @@ func TestPITRIDMapRouteFingerprintContinuity(t *testing.T) {
 }
 
 func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
+	t.Run("storage maps retain task ownership at a shared boundary", func(t *testing.T) {
+		ctx := context.Background()
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		storage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		manager := checkpoint.NewLogStorageMetaManager(storage, nil, 123, "test", 101)
+		first := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		first.SetRestoreID(101)
+		first.SetUseCheckpoint()
+		firstMap := stream.NewTableMappingManager()
+		firstMap.DBReplaceMap[1] = &stream.DBReplace{Name: "first", SourceName: "first", DbID: 800, TableMap: map[stream.UpstreamID]*stream.TableReplace{}}
+		require.NoError(t, first.TEST_saveIDMap(ctx, firstMap, manager, "same-routes"))
+		next := logclient.TEST_NewLogClient(123, 50, 60, 3, s.Mock.Domain, se)
+		next.SetRestoreID(103)
+		next.SetUseCheckpoint()
+		merged := stream.NewTableMappingManager()
+		require.NoError(t, next.GetBaseIDMapAndMerge(ctx, false, false, manager, merged, "same-routes"))
+		require.Equal(t, "first", merged.DBReplaceMap[1].Name)
+		second := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		second.SetRestoreID(102)
+		second.SetUseCheckpoint()
+		secondMap := stream.NewTableMappingManager()
+		secondMap.DBReplaceMap[1] = &stream.DBReplace{Name: "second", SourceName: "second", DbID: 900, TableMap: map[stream.UpstreamID]*stream.TableReplace{}}
+		require.NoError(t, second.TEST_saveIDMap(ctx, secondMap, manager, "same-routes"))
+		loaded, err := first.TEST_initSchemasMap(ctx, 50, manager)
+		require.NoError(t, err)
+		require.Equal(t, "first", loaded[0].Name)
+		require.ErrorContains(t, next.GetBaseIDMapAndMerge(ctx, false, false, manager, stream.NewTableMappingManager(), "same-routes"), "multiple PiTR ID maps")
+		missing := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		missing.SetRestoreID(103)
+		missing.SetUseCheckpoint()
+		require.ErrorContains(t, missing.GetBaseIDMapAndMerge(ctx, false, true, manager, stream.NewTableMappingManager(), "same-routes"), "saved PiTR ID map is missing")
+		upstream := logclient.TEST_NewLogClient(123, 1, 50, 4, s.Mock.Domain, se)
+		upstream.SetRestoreID(101)
+		upstream.SetUseCheckpoint()
+		require.NoError(t, upstream.TEST_saveIDMap(ctx, secondMap, manager, "same-routes"))
+		loaded, err = first.TEST_initSchemasMap(ctx, 50, manager)
+		require.NoError(t, err)
+		require.Equal(t, "first", loaded[0].Name)
+		otherNext := logclient.TEST_NewLogClient(123, 50, 60, 4, s.Mock.Domain, se)
+		otherNext.SetRestoreID(103)
+		otherNext.SetUseCheckpoint()
+		require.NoError(t, otherNext.GetBaseIDMapAndMerge(ctx, false, false, manager, stream.NewTableMappingManager(), "same-routes"))
+		legacy, err := proto.Marshal(&backuppb.BackupMeta{DbMaps: firstMap.ToProto(), BackupSchemaVersion: backuppb.BackupSchemaVersion})
+		require.NoError(t, err)
+		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 80), legacy))
+		legacyNext := logclient.TEST_NewLogClient(123, 80, 90, 3, s.Mock.Domain, se)
+		legacyNext.SetRestoreID(105)
+		legacyNext.SetUseCheckpoint()
+		require.ErrorContains(t, legacyNext.GetBaseIDMapAndMerge(ctx, false, false, manager, stream.NewTableMappingManager(), "same-routes"), "has no task owner")
+	})
+
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)

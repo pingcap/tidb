@@ -286,6 +286,12 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 	}
 
 	dbInfo.ID = dbMap.DbID
+	if _, protected := sr.protectedTargetDBIDs[dbMap.DbID]; protected {
+		// The target is an independent shared container. Skipping the source
+		// DROP tombstone is insufficient: its earlier DBInfo Puts also carry
+		// WriteOnly/DeleteOnly states which must not survive in the target.
+		dbInfo.State = model.StatePublic
+	}
 	if dbMap.Name != "" {
 		dbInfo.Name = ast.NewCIStr(dbMap.Name)
 	}

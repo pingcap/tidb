@@ -43,9 +43,11 @@ type restoreNamePlan struct {
 // point. Snapshot metadata remains immutable; these names are used only to
 // resolve a stable target for each upstream object ID.
 type restoreNameSources struct {
-	databases map[int64]ast.CIStr
-	tables    map[int64]nameroute.ObjectName
-	objects   []nameroute.ObjectName
+	databaseInfos    map[int64]*metautil.Database
+	tableDatabaseIDs map[int64]int64
+	databases        map[int64]ast.CIStr
+	tables           map[int64]nameroute.ObjectName
+	objects          []nameroute.ObjectName
 }
 
 func (cfg *RestoreConfig) getNameRouter() (*nameroute.Router, error) {
@@ -211,11 +213,19 @@ func buildRestoreNamePlan(
 	}
 
 	databaseByID := make(map[int64]*metautil.Database, len(dbs))
+	databaseByName := make(map[string]*metautil.Database, len(dbs))
 	for _, db := range dbs {
 		databaseByID[db.Info.ID] = db
+		databaseByName[db.Info.Name.L] = db
+	}
+	if sources != nil {
+		for dbID, db := range sources.databaseInfos {
+			databaseByID[dbID] = db
+		}
 	}
 
 	tableDBIDs := make(map[int64]struct{}, len(tables))
+	upstreamMovedFrom := make(map[int64]bool)
 	for _, table := range tables {
 		tableDBIDs[table.DB.ID] = struct{}{}
 		sourceObject := nameroute.ObjectName{Schema: table.DB.Name, Table: table.Info.Name}
@@ -234,7 +244,21 @@ func buildRestoreNamePlan(
 				"restore rename does not support selected table %s.%s with foreign keys", sourceObject.Schema.O, sourceObject.Table.O)
 		}
 		sourceDB := databaseByID[table.DB.ID]
-		targetDB, err := addTargetDB(sourceDB, table.DB, targetSchema)
+		if sources != nil {
+			if sourceObject.Schema.L != table.DB.Name.L {
+				upstreamMovedFrom[table.DB.ID] = true
+			}
+			if dbID, ok := sources.tableDatabaseIDs[table.Info.ID]; ok {
+				sourceDB = databaseByID[dbID]
+			} else {
+				sourceDB = databaseByName[sourceObject.Schema.L]
+			}
+		}
+		if sourceDB == nil {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
+				"cannot resolve database settings for latest source schema %s of table %s", sourceObject.Schema.O, sourceObject.Table.O)
+		}
+		targetDB, err := addTargetDB(sourceDB, sourceDB.Info, targetSchema)
 		if err != nil {
 			return nil, err
 		}
@@ -256,10 +280,16 @@ func buildRestoreNamePlan(
 			}
 		}
 		targetSchema, _, schemaRouted := router.Route(sourceSchema, ast.CIStr{})
-		if _, hasSelectedTable := tableDBIDs[db.Info.ID]; hasSelectedTable && !schemaRouted {
+		if _, hasSelectedTable := tableDBIDs[db.Info.ID]; hasSelectedTable && !schemaRouted && !upstreamMovedFrom[db.Info.ID] {
 			continue
 		}
-		if _, err := addTargetDB(db, db.Info, targetSchema); err != nil {
+		sourceDB := db
+		if sources != nil {
+			if latest := sources.databaseInfos[db.Info.ID]; latest != nil {
+				sourceDB = latest
+			}
+		}
+		if _, err := addTargetDB(sourceDB, sourceDB.Info, targetSchema); err != nil {
 			return nil, err
 		}
 	}
@@ -298,10 +328,13 @@ func buildPiTRRestoreNameSources(
 	tracker *brutils.PiTRIdTracker,
 	dbs []*metautil.Database,
 	tables []*metautil.Table,
+	mappings ...*stream.TableMappingManager,
 ) *restoreNameSources {
 	sources := &restoreNameSources{
-		databases: make(map[int64]ast.CIStr),
-		tables:    make(map[int64]nameroute.ObjectName),
+		databaseInfos:    make(map[int64]*metautil.Database),
+		tableDatabaseIDs: make(map[int64]int64),
+		databases:        make(map[int64]ast.CIStr),
+		tables:           make(map[int64]nameroute.ObjectName),
 	}
 	snapshotDBs := make(map[int64]*metautil.Database, len(dbs))
 	// Seed from the selected snapshot objects first, so a selected empty schema
@@ -309,12 +342,24 @@ func buildPiTRRestoreNameSources(
 	// and the tracker only refine names or add log-created objects on top.
 	for _, db := range dbs {
 		snapshotDBs[db.Info.ID] = db
+		sources.databaseInfos[db.Info.ID] = db
 		sources.databases[db.Info.ID] = db.Info.Name
 	}
 	for _, table := range tables {
 		sources.tables[table.Info.ID] = nameroute.ObjectName{Schema: table.DB.Name, Table: table.Info.Name}
+		sources.tableDatabaseIDs[table.Info.ID] = table.DB.ID
 	}
 
+	// Production supplies scanned metadata, including schemas created after
+	// the snapshot. The table's immutable SST source cannot provide these
+	// latest source-schema settings after a cross-schema upstream rename.
+	for _, mapping := range mappings {
+		for dbID, db := range mapping.DBReplaceMap {
+			if db.SourceDBInfo != nil {
+				sources.databaseInfos[dbID] = &metautil.Database{Info: db.SourceDBInfo}
+			}
+		}
+	}
 	// Add log-created databases, then override every name with the latest one
 	// observed in the log history.
 	for dbID := range tracker.DBIds {
@@ -338,6 +383,7 @@ func buildPiTRRestoreNameSources(
 			continue
 		}
 		latest := locations[1]
+		sources.tableDatabaseIDs[tableID] = latest.DbID
 		if dbName, exists := history.GetDBNameByID(latest.DbID); exists {
 			sources.tables[tableID] = nameroute.ObjectName{
 				Schema: ast.NewCIStr(dbName),

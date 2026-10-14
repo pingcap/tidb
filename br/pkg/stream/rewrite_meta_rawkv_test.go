@@ -183,6 +183,26 @@ func TestRewriteDBInfo(t *testing.T) {
 		require.NotContains(t, sr.GetDeletedTables(), UpstreamID(1))
 	})
 
+	t.Run("shared targets do not inherit source DROP states", func(t *testing.T) {
+		sr := MockEmptySchemasReplace(nil, map[UpstreamID]*DBReplace{
+			1: NewDBReplace("target_db", 200),
+			2: NewDBReplace("target_db", 200),
+		})
+		for _, state := range []model.SchemaState{model.StateWriteOnly, model.StateDeleteOnly} {
+			value, err := json.Marshal(&model.DBInfo{ID: 1, Name: ast.NewCIStr("source"), State: state})
+			require.NoError(t, err)
+			rewritten, err := sr.RewriteMetaKvEntry(&kv.Entry{
+				Key: utils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(1), 100), Value: value,
+			}, consts.DefaultCF)
+			require.NoError(t, err)
+			require.NotNil(t, rewritten)
+			var info model.DBInfo
+			require.NoError(t, json.Unmarshal(rewritten.Value, &info))
+			require.Equal(t, model.StatePublic, info.State)
+			require.Equal(t, int64(200), info.ID)
+		}
+	})
+
 	t.Run("source DB delete cannot remove a shared schema-route target", func(t *testing.T) {
 		const targetDBID int64 = 200
 		sr := MockEmptySchemasReplace(nil, map[UpstreamID]*DBReplace{

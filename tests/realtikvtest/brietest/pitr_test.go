@@ -43,6 +43,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -524,6 +527,85 @@ func TestPiTRRestoreWithRename(t *testing.T) {
 			Check([][]any{})
 	})
 
+	t.Run("shared schema survives its source owner DROP", func(t *testing.T) {
+		kit := NewLogBackupKit(t)
+		taskName := "test-pitr-shared-drop"
+		drop := func() {
+			for _, name := range []string{"rn_check", "rn_owner", "rn_guest", "rn_shared"} {
+				kit.tk.MustExec("DROP DATABASE IF EXISTS " + name)
+			}
+		}
+		drop()
+		t.Cleanup(drop)
+		kit.tk.MustExec("CREATE DATABASE rn_owner")
+		kit.tk.MustExec("CREATE DATABASE rn_guest")
+		kit.tk.MustExec("CREATE TABLE rn_owner.gone(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_guest.t(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_guest.t VALUES (1)")
+		kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+		kit.RunFullBackup(func(bc *task.BackupConfig) {})
+		kit.tk.MustExec("DROP DATABASE rn_owner")
+		kit.tk.MustExec("INSERT INTO rn_guest.t VALUES (2)")
+		kit.forceFlushAndWait(taskName)
+		kit.StopTaskIfExists(taskName)
+		kit.tk.MustExec("DROP DATABASE rn_guest")
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			rc.Rename = []string{"rn_owner:rn_shared", "rn_guest.t:rn_shared.copy"}
+			kit.SetFilter(&rc.Config, "rn_owner.*", "rn_guest.*")
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_shared.copy ORDER BY id").Check(testkit.Rows("1", "2"))
+		kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema='rn_shared'").Check(testkit.Rows("copy"))
+		dbInfo, exists := domain.GetDomain(kit.tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("rn_shared"))
+		require.True(t, exists)
+		require.NoError(t, kv.RunInNewTxn(context.Background(), kit.tk.Session().GetStore(), false, func(_ context.Context, txn kv.Transaction) error {
+			persisted, err := meta.NewMutator(txn).GetDatabase(dbInfo.ID)
+			if err != nil {
+				return err
+			}
+			require.NotNil(t, persisted)
+			require.Equal(t, model.StatePublic, persisted.State)
+			return nil
+		}))
+		kit.tk.MustExec("CREATE DATABASE rn_check")
+		kit.tk.MustExec("CREATE TABLE rn_check.child(id INT PRIMARY KEY, FOREIGN KEY (id) REFERENCES rn_shared.copy(id))")
+		require.Error(t, kit.tk.ExecToErr("DROP DATABASE rn_shared"))
+		kit.tk.MustQuery("SELECT * FROM rn_shared.copy ORDER BY id").Check(testkit.Rows("1", "2"))
+	})
+
+	t.Run("upstream move with an unrelated route", func(t *testing.T) {
+		kit := NewLogBackupKit(t)
+		taskName := "test-pitr-unrelated-route-move"
+		drop := func() {
+			for _, name := range []string{"rn_before", "rn_after", "rn_other", "rn_copy"} {
+				kit.tk.MustExec("DROP DATABASE IF EXISTS " + name)
+			}
+		}
+		drop()
+		t.Cleanup(drop)
+		kit.tk.MustExec("CREATE DATABASE rn_before CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+		kit.tk.MustExec("CREATE DATABASE rn_after CHARACTER SET latin1 COLLATE latin1_bin")
+		kit.tk.MustExec("CREATE DATABASE rn_other CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+		kit.tk.MustExec("CREATE TABLE rn_before.t(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_other.u(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_before.t VALUES (1)")
+		kit.tk.MustExec("INSERT INTO rn_other.u VALUES (1)")
+		kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+		kit.RunFullBackup(func(bc *task.BackupConfig) {})
+		kit.tk.MustExec("RENAME TABLE rn_before.t TO rn_after.t")
+		kit.tk.MustExec("INSERT INTO rn_after.t VALUES (2)")
+		kit.forceFlushAndWait(taskName)
+		kit.StopTaskIfExists(taskName)
+		drop()
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			rc.Rename = []string{"rn_other.u:rn_copy.copy"}
+			kit.SetFilter(&rc.Config, "rn_before.*", "rn_after.*", "rn_other.*")
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_after.t ORDER BY id").Check(testkit.Rows("1", "2"))
+		kit.tk.MustQuery("SELECT * FROM rn_copy.copy").Check(testkit.Rows("1"))
+		kit.tk.MustQuery("SELECT default_character_set_name, default_collation_name FROM information_schema.schemata WHERE schema_name='rn_after'").Check(testkit.Rows("latin1 latin1_bin"))
+		kit.tk.MustQuery("SELECT schema_name FROM information_schema.schemata WHERE schema_name='rn_before'").Check(testkit.Rows("rn_before"))
+	})
+
 	t.Run("independent log-only tasks", func(t *testing.T) {
 		kit := NewLogBackupKit(t)
 		taskName := "test-pitr-rename-split"
@@ -597,11 +679,12 @@ func TestPiTRRestoreWithRename(t *testing.T) {
 		kit.tk.MustQuery("SELECT * FROM rn_move.conflict").Check(testkit.Rows("9"))
 		kit.tk.MustQuery("SELECT * FROM rn_split_schema.keep ORDER BY id").Check(testkit.Rows("1", "2"))
 
-		// Exercise a legacy parent without source_name. Only an unrouted
-		// parent is recoverable from Name; the schema-routed parent keeps its
-		// source_name so exact overrides still beat the schema-level rule.
+		// A persisted Name is not proof of source identity, even without a
+		// schema route. Reject the legacy map before replay, then reinstate
+		// the verified baseline for supported continuation.
 		rows := kit.tk.MustQuery("SELECT restore_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = ? ORDER BY segment_id", firstTS).Rows()
 		require.Len(t, rows, 1)
+		originalMap := []byte(rows[0][1].(string))
 		var meta backup.BackupMeta
 		require.NoError(t, meta.Unmarshal([]byte(rows[0][1].(string))))
 		found := false
@@ -616,6 +699,17 @@ func TestPiTRRestoreWithRename(t *testing.T) {
 		data, err := meta.Marshal()
 		require.NoError(t, err)
 		kit.tk.MustExec("UPDATE mysql.tidb_pitr_id_map SET id_map = ? WHERE restored_ts = ? AND restore_id = ? AND segment_id = 0", data, firstTS, rows[0][0])
+		kit.WithChecker(func(err error) {
+			require.ErrorContains(t, err, "cannot resolve source identity")
+		}, func() {
+			kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+				configure(rc)
+				rc.FullBackupStorage = ""
+				rc.StartTS, rc.RestoreTS = firstTS, secondTS
+			})
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_target.alias").Check(testkit.Rows("1"))
+		kit.tk.MustExec("UPDATE mysql.tidb_pitr_id_map SET id_map = ? WHERE restored_ts = ? AND restore_id = ? AND segment_id = 0", originalMap, firstTS, rows[0][0])
 
 		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
 			configure(rc)

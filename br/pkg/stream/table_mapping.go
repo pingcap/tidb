@@ -877,14 +877,12 @@ func (tm *TableMappingManager) BindUnresolvedTableRoutes(
 				sourceDBID, sourceName = latest.dbID, latest.name
 			}
 			sourceDB := tm.DBReplaceMap[sourceDBID]
-			if sourceDB != nil && sourceDB.SourceName == "" && !sourceDB.SchemaRouted {
-				// Older ID maps have no source_name. An unrouted parent's Name
-				// still denotes the source schema; a schema-routed target does not.
-				sourceDB.SourceName = sourceDB.Name
-			}
+			// Legacy maps may have a table-route target in the parent's Name
+			// even without SchemaRouted. Only SourceName or scanned DBInfo can
+			// prove source identity; never infer it from a persisted target.
 			if sourceDB == nil || sourceDB.SourceName == "" || sourceName == "" {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
-					"cannot resolve source identity for upstream database ID %d and table ID %d with restore rename rules", sourceDBID, tableID)
+					"cannot resolve source identity for upstream database ID %d and table ID %d (observed table name %q) with restore rename rules; the baseline must preserve source_name or the interval must contain DBInfo", sourceDBID, tableID, sourceName)
 			}
 			targetDB, targetTable, matched := route(sourceDB.SourceName, sourceName)
 			if !matched {
