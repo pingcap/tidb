@@ -296,8 +296,6 @@ type Config struct {
 
 	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
 	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
-	// KeyspaceID is supplied during activation; nil means it was not provided.
-	KeyspaceID *uint32 `toml:"-" json:"-"`
 
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`

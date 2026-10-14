@@ -62,10 +62,9 @@ var tidbExit = signal.TiDBExit
 
 // ActivateRequest is the request body for activating the tidb server.
 type ActivateRequest struct {
-	KeyspaceName   string  `json:"keyspace_name"`
-	KeyspaceID     *uint32 `json:"keyspace_id,omitempty"`
-	ExportID       string  `json:"export_id"`
-	MaxIdleSeconds uint    `json:"max_idle_seconds"`
+	KeyspaceName   string `json:"keyspace_name"`
+	ExportID       string `json:"export_id"`
+	MaxIdleSeconds uint   `json:"max_idle_seconds"`
 	// Metadata is keyspace metadata sent by the manager during activation, such as tenant, project, and cluster identifiers.
 	Metadata map[string]string `json:"metadata,omitempty"`
 
@@ -536,7 +535,6 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 
 	config.UpdateGlobal(func(c *config.Config) {
 		c.KeyspaceName = activateRequest.KeyspaceName
-		c.KeyspaceID = activateRequest.KeyspaceID
 		if deploymode.IsStarter() && activateRequest.ExportID != "" {
 			c.StarterParams.ExportID = activateRequest.ExportID
 		}

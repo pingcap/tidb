@@ -26,7 +26,7 @@
     curl http://{TiDBIP}:10080/metrics
     ```
 
-    In Starter deployment mode, every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Starter uses the ID supplied in the activation request, or the ID from the initialized storage codec when no activation ID is available; metric registration does not query PD for the ID. Its value is an empty string until an ID is available, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Starter metrics sent to Pushgateway include the same label. Classic, Premium, and Premium Reserved retain their existing metric labels. Standalone BR is outside this Starter-specific change: it retains its existing constant labels, and its Go/process and other collectors are not automatically given `keyspace_id`.
+    In Starter deployment mode, every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Starter obtains the ID from the initialized storage codec; metric registration does not query PD for the ID. Its value is an empty string until storage initialization provides an ID, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Starter metrics sent to Pushgateway include the same label, although pushes before storage initialization use an empty value. Classic, Premium, and Premium Reserved retain their existing metric labels. Standalone BR is outside this Starter-specific change: it retains its existing constant labels, and its Go/process and other collectors are not automatically given `keyspace_id`.
 
 3. Get the metadata of all regions
 
@@ -777,10 +777,10 @@ timezone.*
 ```shell
 curl -X POST "http://{TiDBIP}:10080/tidb-pool/activate" \
   -H 'Content-Type: application/json' \
-  -d '{"keyspace_name":"ks","keyspace_id":42}'
+  -d '{"keyspace_name":"ks"}'
 ```
 
-`keyspace_name` is required. `keyspace_id` is an optional unsigned 32-bit integer provided by the activation manager and used for Starter metrics without a separate PD lookup. Zero is a valid supplied ID. If omitted in Starter mode, the ID is initially unavailable and the metric label is empty until storage initialization provides it. Invalid ID types, negative values, or values larger than `4294967295` return HTTP 400. Existing activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` remain supported.
+`keyspace_name` is required. Starter obtains the metric `keyspace_id` from the initialized storage codec, so the activation request does not need to supply it. Activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` are also supported.
 
 ## Test-only APIs (enableTestAPI failpoint)
 

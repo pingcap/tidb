@@ -72,7 +72,7 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 		}
 		return nil, []string{fieldPath}
 	}
-	if t.Kind() == reflect.Ptr && !dstConf.IsNil() && !newConf.IsNil() {
+	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 		dstConf = dstConf.Elem()
 		newConf = newConf.Elem()

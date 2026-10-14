@@ -66,9 +66,6 @@ func RegisterMetrics() error {
 	if kerneltype.IsNextGen() {
 		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
-	if deploymode.IsStarter() && !keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) && cfg.KeyspaceID != nil {
-		setKeyspaceIDConstLabel(*cfg.KeyspaceID)
-	}
 	return registerMetrics()
 }
 
@@ -136,10 +133,7 @@ func registerMetrics() error {
 		setConstLabels(labels)
 	}
 	initMetrics()
-	if gatherer := initMetricsGatherer(); gatherer != nil {
-		keyspaceID := labels[keyspaceIDLabel]
-		gatherer.keyspaceID.Store(&keyspaceID)
-	}
+	initMetricsGatherer()
 	return nil
 }
 

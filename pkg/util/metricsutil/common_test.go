@@ -81,15 +81,13 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 	id, zeroID := uint32(42), uint32(0)
 
 	for _, tc := range []struct {
-		name, keyspaceName, keyspaceID string
-		activationID                   *uint32
-		storageID                      bool
+		name, keyspaceName, expectedID string
+		storageID                      *uint32
 	}{
 		{name: "no keyspace"},
-		{name: "TiDB activation keyspace", keyspaceName: "ks", keyspaceID: "42", activationID: &id},
-		{name: "TiDB zero keyspace ID", keyspaceName: "ks", keyspaceID: "0", activationID: &zeroID},
-		{name: "TiDB without activation ID", keyspaceName: "ks"},
-		{name: "TiDB storage keyspace", keyspaceName: "ks", keyspaceID: "42", storageID: true},
+		{name: "TiDB before storage initialization", keyspaceName: "ks"},
+		{name: "TiDB zero storage keyspace ID", keyspaceName: "ks", expectedID: "0", storageID: &zeroID},
+		{name: "TiDB storage keyspace", keyspaceName: "ks", expectedID: "42", storageID: &id},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer config.RestoreFunc()()
@@ -105,10 +103,9 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			metricscommon.SetConstLabels()
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.Store = config.StoreTypeTiKV
-				// TiDB must use the supplied ID without parsing the PD path or dialing PD.
+				// Metric registration must not parse the PD path or dial PD.
 				conf.Path = "unused?disableGC=invalid"
 				conf.KeyspaceName = tc.keyspaceName
-				conf.KeyspaceID = tc.activationID
 				conf.KeyspaceObservabilityValues = config.KeyspaceObservabilityValues{
 					MetricLabels: map[string]string{"keyspace_meta_tenant": "tenant"},
 				}
@@ -119,11 +116,13 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			require.NoError(t, RegisterMetrics())
 			// Storage can resolve the ID after the metrics handler has been created.
 			handler := promhttp.Handler()
-			if tc.storageID {
-				require.Empty(t, metricscommon.GetConstLabels()[keyspaceIDLabel])
-				SetKeyspaceID(id)
-			} else {
-				require.Equal(t, tc.keyspaceID, metricscommon.GetConstLabels()[keyspaceIDLabel])
+			require.NotContains(t, metricscommon.GetConstLabels(), keyspaceIDLabel)
+			initialResponse := httptest.NewRecorder()
+			handler.ServeHTTP(initialResponse, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+			require.Equal(t, http.StatusOK, initialResponse.Code, initialResponse.Body.String())
+			require.Contains(t, initialResponse.Body.String(), `registered_before_init{keyspace_id=""} 7`)
+			if tc.storageID != nil {
+				SetKeyspaceID(*tc.storageID)
 			}
 			require.Equal(t, "tenant", metricscommon.GetConstLabels()["keyspace_meta_tenant"])
 
@@ -151,7 +150,7 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 							}
 							if label.GetName() == keyspaceIDLabel {
 								count++
-								expected := tc.keyspaceID
+								expected := tc.expectedID
 								if family.GetName() == "other_keyspace" {
 									expected = "43"
 								}
@@ -179,7 +178,7 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
 			require.Equal(t, 200, response.Code, response.Body.String())
-			require.Contains(t, response.Body.String(), `registered_before_init{keyspace_id="`+tc.keyspaceID+`"} 7`)
+			require.Contains(t, response.Body.String(), `registered_before_init{keyspace_id="`+tc.expectedID+`"} 7`)
 			payload := make(chan string, 1)
 			pushServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
@@ -193,7 +192,7 @@ func TestRegisterMetricsKeyspaceID(t *testing.T) {
 			t.Cleanup(pushServer.Close)
 			require.NoError(t, push.New(pushServer.URL, "tidb").Gatherer(prometheus.DefaultGatherer).
 				Format(expfmt.NewFormat(expfmt.TypeTextPlain)).Push())
-			require.Contains(t, <-payload, `registered_before_init{keyspace_id="`+tc.keyspaceID+`"} 7`)
+			require.Contains(t, <-payload, `registered_before_init{keyspace_id="`+tc.expectedID+`"} 7`)
 			var wg sync.WaitGroup
 			gatherErrors := make([]error, 4)
 			for i := range gatherErrors {
@@ -288,7 +287,6 @@ func TestRegisterMetricsNonStarter(t *testing.T) {
 			id := uint32(42)
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.KeyspaceName = "ks"
-				conf.KeyspaceID = &id
 				conf.KeyspaceObservabilityValues = config.KeyspaceObservabilityValues{}
 			})
 			require.NoError(t, RegisterMetrics())
