@@ -89,9 +89,6 @@ func buildImportQueryExecutor(
 		return nil, errors.New("import query did not produce a physical SELECT plan")
 	}
 	failpoint.InjectCall("afterImportQueryOptimize", p)
-	failpoint.Inject("failAfterImportQueryOptimize", func() {
-		failpoint.Return(nil, errors.New("injected failure after import query optimization"))
-	})
 	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil)
 	b.forDataReaderBuilder = true
 	b.dataReaderTS = workerSession.GetSessionVars().SnapshotTS
