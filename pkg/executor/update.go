@@ -72,6 +72,7 @@ type UpdateExec struct {
 	stats *updateRuntimeStats
 
 	handles        []kv.Handle
+	rowKeys        []kv.Handle // handles plus the partition ID for nonclustered partitioned tables, see partitionRowKey
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
@@ -89,6 +90,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		e.updatedRowKeys = make(map[int]*kv.MemAwareHandleMap[bool])
 	}
 	e.handles = e.handles[:0]
+	e.rowKeys = e.rowKeys[:0]
 	e.tableUpdatable = e.tableUpdatable[:0]
 	e.changed = e.changed[:0]
 	e.matches = e.matches[:0]
@@ -124,6 +126,13 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 			updatable = false
 		}
 		e.tableUpdatable = append(e.tableUpdatable, updatable)
+		rowKey := handle
+		if updatable {
+			if rowKey, err = e.partitionRowKey(content, handle, row); err != nil {
+				return err
+			}
+		}
+		e.rowKeys = append(e.rowKeys, rowKey)
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if ok {
@@ -135,6 +144,20 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		}
 	}
 	return nil
+}
+
+// partitionRowKey adds the partition ID to the handle of a nonclustered partitioned table,
+// since _tidb_rowid is only unique within a partition after EXCHANGE PARTITION.
+func (e *UpdateExec) partitionRowKey(content physicalop.TblColPosInfo, handle kv.Handle, row []types.Datum) (kv.Handle, error) {
+	pt, ok := e.tblID2table[content.TblID].(table.PartitionedTable)
+	if !ok || pt.Meta().HasClusteredIndex() {
+		return handle, nil
+	}
+	p, err := pt.GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), row[content.Start:content.End])
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewPartitionHandle(p.GetPhysicalID(), handle), nil
 }
 
 func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
@@ -157,7 +180,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
-		handle := e.handles[i]
+		rowKey := e.rowKeys[i]
 		flags := e.assignFlag[content.Start:content.End]
 
 		if e.mergedRowData[content.TblID] == nil {
@@ -166,7 +189,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 		tbl := e.tblID2table[content.TblID]
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
-		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
+		if v, ok := e.mergedRowData[content.TblID].Get(rowKey); ok {
 			mergedData = v
 			for i, flag := range flags {
 				if tbl.WritableCols()[i].IsGenerated() {
@@ -183,8 +206,8 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 			mergedData = slices.Clone(newTableData)
 		}
 
-		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
-		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+		memDelta := e.mergedRowData[content.TblID].Set(rowKey, mergedData)
+		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(rowKey.ExtraMemSize())
 		totalMemDelta += memDelta
 	}
 	e.memTracker.Consume(totalMemDelta)
@@ -214,7 +237,7 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 		// Each matched row is updated once, even if it matches the conditions multiple times.
 		return nil
 	}
-	handle := e.handles[i]
+	rowKey := e.rowKeys[i]
 	flags := e.assignFlag[content.Start:content.End]
 
 	if e.mergedRowData[content.TblID] == nil {
@@ -225,7 +248,7 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 	newTableData := newData[content.Start:content.End]
 
 	// We don't check the second return value here because we have already called mergeNonGenerated() before.
-	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
+	mergedData, _ = e.mergedRowData[content.TblID].Get(rowKey)
 	for i, flag := range flags {
 		if !tbl.WritableCols()[i].IsGenerated() {
 			continue
@@ -246,8 +269,8 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEva
 		}
 	}
 
-	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
-	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+	memDelta := e.mergedRowData[content.TblID].Set(rowKey, mergedData)
+	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(rowKey.ExtraMemSize())
 	totalMemDelta += memDelta
 
 	e.memTracker.Consume(totalMemDelta)
