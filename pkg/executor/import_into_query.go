@@ -40,29 +40,31 @@ func parseStmt(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
 	return p.ParseOneStmt(sql, charset, collation)
 }
 
-func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
+// parseImportQuery parses an IMPORT INTO ... FROM SELECT statement and returns
+// it together with its SELECT.
+func parseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt, ast.StmtNode, error) {
 	node, err := parseStmt(sctx, sql)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	stmt, ok := node.(*ast.ImportIntoStmt)
 	if !ok {
-		return nil, errors.New("import query requires a SELECT")
+		return nil, nil, errors.New("import query requires a SELECT")
 	}
 
-	node, ok = stmt.Select.(ast.StmtNode)
+	selectNode, ok := stmt.Select.(ast.StmtNode)
 	if !ok {
-		return nil, errors.New("import query requires a SELECT")
+		return nil, nil, errors.New("import query requires a SELECT")
 	}
 
-	return node, nil
+	return stmt, selectNode, nil
 }
 
 // GenerateImportQueryPlan generates the query plan with the given query.
 // It will collect session vars, table metas and ts.
 func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.QueryPlan, error) {
-	node, err := parseImportQuery(sctx, sql)
+	_, node, err := parseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -76,20 +78,18 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 		Tables:      make(map[int64][]*model.TableInfo),
 	}
 
-	// Keep inherited planning/execution settings here; remote scan and TiFlash
-	// concurrency are independent of the TiDB worker CPU allocation.
+	// Keep the settings that affect the query result, and the engine and TiFlash
+	// settings applied by MV maintenance. TiDB-side concurrency follows the worker.
 	vars := sctx.GetSessionVars()
 	for _, name := range []string{
-		vardef.SQLModeVar, vardef.TiDBDistSQLScanConcurrency,
-		vardef.CharacterSetClient, vardef.CharacterSetConnection,
-		vardef.CharacterSetResults, vardef.CollationConnection,
-		vardef.TiDBHashAggPartialConcurrency, vardef.TiDBHashAggFinalConcurrency,
-		vardef.TiDBEnableVectorizedExpression, vardef.TiDBMaxTiFlashThreads,
+		vardef.SQLModeVar, vardef.DivPrecisionIncrement,
+		vardef.CharacterSetConnection, vardef.CollationConnection,
+		vardef.TiDBIsolationReadEngines, vardef.TiDBAllowMPPExecution, vardef.TiDBEnforceMPPExecution,
+		vardef.TiDBMaxTiFlashThreads,
 		vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy,
 		vardef.TiDBMaxBytesBeforeTiFlashExternalSort, vardef.TiFlashMemQuotaQueryPerNode,
-		vardef.TiFlashQuerySpillRatio, vardef.TiFlashHashJoinVersion,
+		vardef.TiFlashQuerySpillRatio,
 		vardef.TiFlashFineGrainedShuffleStreamCount, vardef.TiFlashFineGrainedShuffleBatchSize,
-		vardef.TiDBIsolationReadEngines, vardef.TiDBAllowMPPExecution, vardef.TiDBEnforceMPPExecution,
 	} {
 		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), name)
 		if err != nil {
@@ -98,7 +98,6 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 		q.SessionVars[name] = value
 	}
 	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
-	q.PushDownFlags = vars.StmtCtx.PushDownFlags()
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	if err := collectImportQueryTables(
 		sctx, txnManager.GetTxnInfoSchema(),

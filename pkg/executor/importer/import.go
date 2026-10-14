@@ -272,8 +272,7 @@ type QueryPlan struct {
 	Tables map[int64][]*model.TableInfo
 	// SessionVars is an explicit subset of SELECT settings inherited from the submitter,
 	// which is used by session on the worker.
-	SessionVars   map[string]string
-	PushDownFlags uint64
+	SessionVars map[string]string
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
