@@ -260,9 +260,8 @@ type LoadDataReaderInfo struct {
 }
 
 // QueryPlan records source metadata and session settings after tenant privilege checks.
-// The worker optimizes the task statement against this captured source schema.
 type QueryPlan struct {
-	// ReadTS is the submitting SELECT snapshot, reused by every worker attempt.
+	// ReadTS is the submitting SELECT snapshot.
 	ReadTS    uint64
 	CurrentDB string
 	Timestamp int64
@@ -271,16 +270,14 @@ type QueryPlan struct {
 	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
 	// Persist table definitions grouped by database ID explicitly.
 	Tables map[int64][]*model.TableInfo
-	// SessionVars is an explicit subset of SELECT settings inherited from the submitter.
-	// Extend the subset when another setting must be preserved on the worker.
-	// TiDB worker memory limits are configured separately.
+	// SessionVars is an explicit subset of SELECT settings inherited from the submitter,
+	// which is used by session on the worker.
 	SessionVars   map[string]string
 	PushDownFlags uint64
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
-	// Query is present only for distributed IMPORT FROM SELECT.
 	Query  *QueryPlan `json:",omitempty"`
 	DBName string
 	DBID   int64

@@ -33,7 +33,7 @@ func TestCaptureImportQuery(t *testing.T) {
 	t.Run("source tables", func(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		q, err := executor.CaptureImportQuery(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
+		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
 		require.Len(t, q.Databases, 1)
 		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
@@ -44,13 +44,13 @@ func TestCaptureImportQuery(t *testing.T) {
 			tables = append(tables, tbl.Name.L)
 		}
 		require.ElementsMatch(t, []string{"query_src", "query_other"}, tables)
-		_, err = executor.CaptureImportQuery(tk.Session(), "import into unused_target from select ? from query_src")
+		_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select ? from query_src")
 		require.ErrorContains(t, err, "unexpected '?'")
 		for _, sql := range []string{
 			"select @v from query_src", "select @v:=i from query_src",
 			"select @@sql_mode", "with c as (select @v) select * from c",
 		} {
-			_, err = executor.CaptureImportQuery(tk.Session(), "import into unused_target from ("+sql+")")
+			_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from ("+sql+")")
 			require.ErrorContains(t, err, "variables in IMPORT INTO FROM SELECT")
 		}
 	})
@@ -72,7 +72,7 @@ func TestCaptureImportQuery(t *testing.T) {
 		latest, err := queryTK.Session().GetLatestInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("query_capture_schema"))
 		require.NoError(t, err)
 		require.Len(t, latest.Columns, 2)
-		q, err := executor.CaptureImportQuery(queryTK.Session(), "import into unused_target from select * from query_capture_schema")
+		q, err := executor.GenerateImportQueryPlan(queryTK.Session(), "import into unused_target from select * from query_capture_schema")
 		require.NoError(t, err)
 		db, ok := txnIS.SchemaByName(ast.NewCIStr("test"))
 		require.True(t, ok)

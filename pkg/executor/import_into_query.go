@@ -54,15 +54,12 @@ func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error)
 	return node, nil
 }
 
-// CaptureImportQuery records source metadata and read TS after privilege checks.
-func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPlan, error) {
+// GenerateImportQueryPlan generates the query plan with the given query.
+// It will collect session vars, table metas and ts.
+func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.QueryPlan, error) {
 	node, err := parseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, err
-	}
-	checker := &importQueryVariableChecker{}
-	if !ast.Walk(node, checker) {
-		return nil, checker.err
 	}
 
 	q := &importer.QueryPlan{
@@ -73,9 +70,10 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		Databases:   make(map[int64]*model.DBInfo),
 		Tables:      make(map[int64][]*model.TableInfo),
 	}
-	vars := sctx.GetSessionVars()
+
 	// Keep inherited planning/execution settings here; remote scan and TiFlash
 	// concurrency are independent of the TiDB worker CPU allocation.
+	vars := sctx.GetSessionVars()
 	for _, name := range []string{
 		vardef.SQLModeVar, vardef.TiDBDistSQLScanConcurrency,
 		vardef.CharacterSetClient, vardef.CharacterSetConnection,
@@ -118,7 +116,8 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		if tblInfo.IsView() ||
 			tblInfo.TempTableType != model.TempTableNone ||
 			tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("views, temporary or cached source tables in IMPORT INTO FROM SELECT")
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+				"views, temporary or cached source tables in IMPORT INTO FROM SELECT")
 		}
 		if !seen[tblInfo.ID] {
 			seen[tblInfo.ID] = true
@@ -127,21 +126,5 @@ func CaptureImportQuery(sctx sessionctx.Context, sql string) (*importer.QueryPla
 		}
 	}
 	q.ReadTS, err = txnManager.GetStmtReadTS()
-	if err != nil {
-		return nil, err
-	}
 	return q, nil
-}
-
-type importQueryVariableChecker struct {
-	err error
-}
-
-func (*importQueryVariableChecker) Enter(ast.Node) bool { return false }
-
-func (c *importQueryVariableChecker) Leave(node ast.Node) bool {
-	if _, ok := node.(*ast.VariableExpr); ok {
-		c.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("variables in IMPORT INTO FROM SELECT")
-	}
-	return c.err == nil
 }
