@@ -1514,6 +1514,79 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		}, true), "cannot resolve source identity")
 	})
 
+	t.Run("validate surviving schema target owners", func(t *testing.T) {
+		for _, testCase := range []struct {
+			name      string
+			configure func(*TableMappingManager)
+			wantErr   bool
+		}{
+			{name: "identity source collides with routed baseline", wantErr: true},
+			{name: "empty routed baseline still owns its target", wantErr: true, configure: func(tm *TableMappingManager) {
+				tm.DBReplaceMap[1].TableMap = nil
+			}},
+			{name: "schema owner survives all table overrides", wantErr: true, configure: func(tm *TableMappingManager) {
+				tm.DBReplaceMap[1].TableMap[11].TargetDBName = "other"
+				tm.DBReplaceMap[1].TableMap[11].TargetDBID = 3
+			}},
+			{name: "committed schema deletion expires the old owner", configure: func(tm *TableMappingManager) {
+				tm.recordDatabaseEvent(1, 20, true)
+			}},
+			{name: "filtered schema is not an owner", configure: func(tm *TableMappingManager) {
+				tm.DBReplaceMap[1].FilteredOut = true
+			}},
+			{name: "table-only routes can share the target container", configure: func(tm *TableMappingManager) {
+				tm.DBReplaceMap[1].Name = "b"
+				tm.DBReplaceMap[1].SchemaRouted = false
+			}},
+			{name: "persisted aliases of the same source schema", configure: func(tm *TableMappingManager) {
+				tm.DBReplaceMap[2].SourceName = "B"
+				tm.DBReplaceMap[2].SchemaRouted = true
+			}},
+			{name: "legacy target name cannot prove the same source", wantErr: true, configure: func(tm *TableMappingManager) {
+				tm.DBReplaceMap[1].SourceName = ""
+			}},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				tm := NewTableMappingManager()
+				tm.DBReplaceMap[2] = &DBReplace{
+					Name: "X", SourceName: "x", DbID: -2,
+					TableMap: map[UpstreamID]*TableReplace{22: {Name: "u", TableID: -22}},
+				}
+				tm.recordDatabaseEvent(2, 30, false)
+				tm.recordTableEvent(2, 22, 40, false)
+				tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{
+					1: {Name: "x", SourceName: "b", DbID: 1, SchemaRouted: true,
+						TableMap: map[UpstreamID]*TableReplace{
+							11: {Name: "dummy_table", TableID: 1001, TargetDBName: "x", TargetDBID: 1},
+						}},
+				})
+				if testCase.configure != nil {
+					testCase.configure(tm)
+				}
+				err := tm.ValidateUniqueTargetNames(context.Background(), createMockInfoSchemaWithDBs(map[string]int64{"x": 1}))
+				if testCase.wantErr {
+					require.ErrorContains(t, err, "same restore target database x")
+					// Validation must fail before existing-ID reuse or allocation.
+					require.Equal(t, int64(-2), tm.DBReplaceMap[2].DbID)
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+
+		t.Run("missing or replaced baseline target is not a live owner", func(t *testing.T) {
+			tm := NewTableMappingManager()
+			tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+				1: {Name: "x", SourceName: "b", DbID: 1, SchemaRouted: true},
+				2: {Name: "x", SourceName: "x", DbID: -2},
+			}
+			tm.recordDatabaseEvent(2, 30, false)
+			for _, dbs := range []map[string]int64{{}, {"x": 2}} {
+				require.NoError(t, tm.ValidateUniqueTargetNames(context.Background(), createMockInfoSchemaWithDBs(dbs)))
+			}
+		})
+	})
+
 	t.Run("validate committed endpoint target names", func(t *testing.T) {
 		put := func(t *testing.T, tm *TableMappingManager, dbID, tableID int64, ts uint64) {
 			t.Helper()

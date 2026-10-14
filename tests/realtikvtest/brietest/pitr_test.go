@@ -769,6 +769,58 @@ func TestPiTRRestoreWithRename(t *testing.T) {
 		}
 	})
 
+	t.Run("independent log-only schema target collision", func(t *testing.T) {
+		kit := NewLogBackupKit(t)
+		taskName := "test-pitr-schema-target-collision"
+		drop := func() {
+			for _, name := range []string{"rn_collision_source", "rn_collision_target"} {
+				kit.tk.MustExec("DROP DATABASE IF EXISTS " + name)
+			}
+		}
+		drop()
+		t.Cleanup(drop)
+		kit.tk.MustExec("CREATE DATABASE rn_collision_source CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+		kit.tk.MustExec("CREATE TABLE rn_collision_source.t(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_collision_source.t VALUES (1)")
+		kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+		kit.RunFullBackup(func(bc *task.BackupConfig) {})
+		kit.tk.MustExec("INSERT INTO rn_collision_source.t VALUES (2)")
+		firstTS := kit.TSO()
+		// This is a new upstream schema, not the downstream container that the
+		// first task will create. Both source schemas survive at the endpoint.
+		kit.tk.MustExec("CREATE DATABASE rn_collision_target CHARACTER SET latin1 COLLATE latin1_bin")
+		kit.tk.MustExec("CREATE TABLE rn_collision_target.u(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_collision_target.u VALUES (3)")
+		secondTS := kit.TSO()
+		kit.forceFlushAndWait(taskName)
+		kit.StopTaskIfExists(taskName)
+		drop()
+		configure := func(rc *task.RestoreConfig) {
+			rc.Rename = []string{"rn_collision_source:rn_collision_target"}
+			kit.SetFilter(&rc.Config, "rn_collision_source.*", "rn_collision_target.*")
+		}
+		// Complete the snapshot-backed task before starting a separate log-only
+		// task, so this does not rely on an unsupported map-only baseline.
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			configure(rc)
+			rc.RestoreTS = firstTS
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_collision_target.t ORDER BY id").Check(testkit.Rows("1", "2"))
+		kit.WithChecker(func(err error) {
+			require.ErrorContains(t, err, "same restore target database rn_collision_target")
+		}, func() {
+			kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+				configure(rc)
+				rc.FullBackupStorage = ""
+				rc.StartTS, rc.RestoreTS = firstTS, secondTS
+			})
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_collision_target.t ORDER BY id").Check(testkit.Rows("1", "2"))
+		kit.tk.MustQuery("SELECT table_name FROM information_schema.tables WHERE table_schema='rn_collision_target'").Check(testkit.Rows("t"))
+		kit.tk.MustQuery("SELECT default_character_set_name, default_collation_name FROM information_schema.schemata WHERE schema_name='rn_collision_target'").Check(testkit.Rows("utf8mb4 utf8mb4_bin"))
+		kit.tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_pitr_id_map WHERE restored_ts = ?", secondTS).Check(testkit.Rows("0"))
+	})
+
 	t.Run("independent log-only tasks", func(t *testing.T) {
 		kit := NewLogBackupKit(t)
 		taskName := "test-pitr-rename-split"

@@ -941,11 +941,55 @@ func (tm *TableMappingManager) BindUnresolvedTableRoutes(
 	return nil
 }
 
-// ValidateUniqueTargetNames rejects different surviving upstream tables with
-// one effective target name. Committed deletes remove historical locations;
-// unchanged baseline entries are live only if their downstream table exists.
-// Source-name equality never substitutes for a committed deletion.
+// validateUniqueTargetDatabaseNames checks independent schema owners, not
+// containers shared only by table routes. A committed Delete expires a source
+// schema; an unobserved baseline owner participates only while its saved target
+// schema still exists with the saved ID. Persisted aliases of the same source
+// schema share one owner, but an unknown source is never inferred from Name.
+func (tm *TableMappingManager) validateUniqueTargetDatabaseNames(infoSchema infoschema.InfoSchema) error {
+	type schemaOwner struct {
+		id         UpstreamID
+		sourceName string
+	}
+	owners := make(map[string]schemaOwner)
+	for dbID, dbReplace := range tm.DBReplaceMap {
+		if dbReplace.Name == "" || !dbReplace.RestoresDatabaseMetadata() || tm.IsSourceDatabaseDeleted(dbID) {
+			continue
+		}
+		if _, observed := tm.databaseEvents[dbID]; !observed {
+			if infoSchema == nil {
+				continue
+			}
+			dbInfo, exists := infoSchema.SchemaByName(ast.NewCIStr(dbReplace.Name))
+			if !exists || dbInfo.ID != dbReplace.DbID {
+				continue
+			}
+		}
+		targetName := strings.ToLower(dbReplace.Name)
+		sourceName := strings.ToLower(dbReplace.SourceName)
+		if previous, exists := owners[targetName]; exists {
+			if sourceName == "" || previous.sourceName == "" || sourceName != previous.sourceName {
+				return errors.Annotatef(berrors.ErrInvalidArgument,
+					"upstream database IDs %d (%q) and %d (%q) survive at the same restore target database %s",
+					previous.id, previous.sourceName, dbID, sourceName, targetName)
+			}
+			continue
+		}
+		owners[targetName] = schemaOwner{id: dbID, sourceName: sourceName}
+	}
+	return nil
+}
+
+// ValidateUniqueTargetNames rejects different surviving upstream objects with
+// one effective target name. Schema owners are checked before ID reuse, even
+// when their tables have distinct names or all use table-level overrides.
+// Committed deletes remove historical table locations; unchanged baseline
+// tables are live only if their downstream table exists. Source-name equality
+// never substitutes for a committed table deletion.
 func (tm *TableMappingManager) ValidateUniqueTargetNames(ctx context.Context, infoSchema infoschema.InfoSchema) error {
+	if err := tm.validateUniqueTargetDatabaseNames(infoSchema); err != nil {
+		return err
+	}
 	type targetKey struct {
 		db    string
 		table string
