@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -31,9 +32,11 @@ import (
 )
 
 func TestMergeTempIndexBasic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test injects the local-backend-only ingest/beforeBackendIngest failpoint")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode=''")
 
