@@ -127,6 +127,11 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tiflash_fine_grained_shuffle_batch_size":         {},
 	"tiflash_fine_grained_shuffle_stream_count":       {},
 	"tidb_hash_join_version":                          {},
+<<<<<<< 22bd7ca659
+=======
+	"tidb_enable_cache_prepare_stmt":                  {},
+	"tidb_dml_max_execution_time":                     {},
+>>>>>>> eba1074cf1
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
