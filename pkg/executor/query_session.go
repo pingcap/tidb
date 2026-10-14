@@ -84,8 +84,6 @@ func newImportQuerySession(
 	vars.SnapshotTS = q.ReadTS
 	vars.SnapshotInfoschema = is
 	vars.StmtCtx.InitFromPBFlagAndTz(q.PushDownFlags, vars.Location())
-	vars.MemQuotaQuery = memoryLimit
-	vars.MemTracker.SetBytesLimit(memoryLimit)
 	querySession := &importQuerySession{Context: sctx, schema: is}
 	querySession.PlanCtxExtended = plannersession.NewPlanCtxExtended(querySession)
 	return querySession, node, nil
@@ -102,7 +100,7 @@ func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVar
 	vars.CurrentDB = q.CurrentDB
 	vars.PartitionPruneMode.Store("static")
 	vars.InRestrictedSQL = true
-	vars.InternalSQLScanUserTable = true
+	vars.InternalSQLScanUserTable = false
 	vars.RequestSourceType = kv.InternalDistTask
 	return nil
 }
