@@ -98,9 +98,11 @@ type lookupTableTask struct {
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
-	// to do table request. Values are int offsets for ordinary lookup, or []int
-	// containing all index row offsets for ADMIN CHECK (checkIndexValue != nil).
+	// to do table request.
 	indexOrder *kv.HandleMap
+	// duplicatedIndexOrder stores all index row offsets for handles that have
+	// multiple index values. It is only used when checkIndexValue isn't nil.
+	duplicatedIndexOrder *kv.HandleMap
 
 	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
 	partitionTable table.PhysicalTable
@@ -1195,7 +1197,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 	}
 	handles := task.handles
 	canReorderHandles := true
-	if e.checkIndexValue != nil && len(handles) > task.indexOrder.Len() {
+	if e.checkIndexValue != nil && task.duplicatedIndexOrder.Len() > 0 {
 		// Deduplicate only the table request; keep every handle in the task
 		// so ADMIN CHECK can still compare all associated index rows.
 		slices.SortFunc(handles, func(i, j kv.Handle) int { return i.Compare(j) })
@@ -2031,6 +2033,7 @@ func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTabl
 
 func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
+	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
@@ -2040,20 +2043,29 @@ func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *ch
 	}
 
 	if w.checkIndexValue != nil {
-		// Save all index row offsets for each handle.
+		// Save the index order.
 		indexOrder = kv.NewHandleMap()
+		duplicatedIndexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			v, _ := indexOrder.Get(h)
-			offsets, _ := v.([]int)
-			indexOrder.Set(h, append(offsets, i))
+			if first, ok := indexOrder.Get(h); ok {
+				v, ok := duplicatedIndexOrder.Get(h)
+				offsets, _ := v.([]int)
+				if !ok {
+					offsets = append(offsets, first.(int))
+				}
+				duplicatedIndexOrder.Set(h, append(offsets, i))
+			} else {
+				indexOrder.Set(h, i)
+			}
 		}
 	}
 
 	task := &lookupTableTask{
-		id:         taskID,
-		handles:    handles,
-		indexOrder: indexOrder,
-		idxRows:    retChk,
+		id:                   taskID,
+		handles:              handles,
+		indexOrder:           indexOrder,
+		duplicatedIndexOrder: duplicatedIndexOrder,
+		idxRows:              retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -2321,7 +2333,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val any) bool {
-				idxRow := task.idxRows.GetRow(val.([]int)[0])
+				idxRow := task.idxRows.GetRow(val.(int))
 				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false
 			})
@@ -2338,7 +2350,11 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				return err
 			}
 			v, _ := task.indexOrder.Get(handle)
-			offsets := v.([]int)
+			offset, _ := v.(int)
+			offsets := []int{offset}
+			if v, ok := task.duplicatedIndexOrder.Get(handle); ok {
+				offsets = v.([]int)
+			}
 			task.indexOrder.Delete(handle)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
@@ -2417,6 +2433,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 		if task.indexOrder != nil {
 			memUsage += task.indexOrder.MemUsage()
+		}
+		if task.duplicatedIndexOrder != nil {
+			memUsage += task.duplicatedIndexOrder.MemUsage()
 		}
 		memUsage += task.idxRows.MemoryUsage()
 		task.memUsage = memUsage

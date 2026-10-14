@@ -61,12 +61,19 @@ func TestBuildTableTaskForAdminCheck(t *testing.T) {
 
 	task := worker.buildTableTask(1, []kv.Handle{handle1, handle1, handle2, handle1}, nil)
 	require.Equal(t, []kv.Handle{handle1, handle1, handle2, handle1}, task.handles)
-	offsets, ok := task.indexOrder.Get(handle1)
+	offset, ok := task.indexOrder.Get(handle1)
+	require.True(t, ok)
+	require.Equal(t, 0, offset)
+	offset, ok = task.indexOrder.Get(handle2)
+	require.True(t, ok)
+	require.Equal(t, 2, offset)
+	offsets, ok := task.duplicatedIndexOrder.Get(handle1)
 	require.True(t, ok)
 	require.Equal(t, []int{0, 1, 3}, offsets)
-	offsets, ok = task.indexOrder.Get(handle2)
-	require.True(t, ok)
-	require.Equal(t, []int{2}, offsets)
+
+	task = worker.buildTableTask(2, []kv.Handle{handle1, handle2}, nil)
+	require.Equal(t, []kv.Handle{handle1, handle2}, task.handles)
+	require.Zero(t, task.duplicatedIndexOrder.Len())
 }
 
 func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
