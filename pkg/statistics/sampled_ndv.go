@@ -17,6 +17,8 @@ package statistics
 import (
 	"math"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -34,6 +36,9 @@ type ndvCounts struct {
 }
 
 func newSampledFMSketch(pb *tipb.FMSketch, counts ndvCounts) *FMSketch {
+	// pb comes from a decoded RowSampleCollector. Unmarshal allocates a message
+	// for each sketch entry, so pb is never nil.
+	intest.Assert(pb != nil, "protobuf of a sampled NDV sketch is nil")
 	sketch := &FMSketch{
 		hashset: make(map[uint64]bool, len(pb.Hashset)+len(pb.MultiHashset)),
 		mask:    pb.Mask, maxSize: MaxSketchSize, ndvCounts: &counts,
@@ -45,6 +50,24 @@ func newSampledFMSketch(pb *tipb.FMSketch, counts ndvCounts) *FMSketch {
 		sketch.hashset[hash] = true
 	}
 	return sketch
+}
+
+// Sampled reports whether the NDV of s is estimated from sampled rows.
+func (s *FMSketch) Sampled() bool {
+	return s != nil && s.ndvCounts != nil
+}
+
+// NotNullRows returns the non-NULL rows that the ANALYZE of a sampled sketch
+// saw. A full-input sketch keeps no row counts, so it returns the sketch's
+// NDV, which is at most the non-NULL rows up to the estimation error.
+func (s *FMSketch) NotNullRows() int64 {
+	switch {
+	case s == nil:
+		return 0
+	case s.ndvCounts != nil:
+		return s.ndvCounts.rows - s.ndvCounts.nulls
+	}
+	return s.NDV()
 }
 
 func (s *FMSketch) sampledNDV() int64 {
@@ -75,4 +98,51 @@ func (s *FMSketch) sampledNDV() int64 {
 	// The NDV cannot exceed the non-NULL rows. The limit on d does not ensure
 	// this, because samples includes the NULL rows.
 	return min(int64(estimate), counts.rows-counts.nulls)
+}
+
+// Sampled FM sketch envelope:
+//
+//	+-----------+------------+-----------------------------+
+//	| marker: 0 | version: 1 | RowSampleCollector protobuf |
+//	+-----------+------------+-----------------------------+
+//	    1 byte      1 byte           variable length
+//
+// The zero marker is an invalid protobuf tag, so legacy decoders reject it.
+const (
+	sampledFMSketchMarker     byte = 0
+	sampledFMSketchVersion    byte = 1
+	sampledFMSketchHeaderSize      = 2
+)
+
+func (s *FMSketch) encodeSampled() ([]byte, error) {
+	counts := s.ndvCounts
+	collector := tipb.RowSampleCollector{
+		Count: counts.rows, NdvSampleCount: &counts.samples,
+		NullCounts: []int64{counts.nulls},
+		FmSketch:   []*tipb.FMSketch{FMSketchToProto(s)},
+	}
+	data, err := collector.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte{sampledFMSketchMarker, sampledFMSketchVersion}, data...), nil
+}
+
+func decodeSampledFMSketch(data []byte) (*FMSketch, error) {
+	if len(data) < sampledFMSketchHeaderSize || data[1] != sampledFMSketchVersion {
+		return nil, errors.New("unsupported sampled NDV sketch format")
+	}
+	var collector tipb.RowSampleCollector
+	if err := collector.Unmarshal(data[sampledFMSketchHeaderSize:]); err != nil {
+		return nil, err
+	}
+	// Protobuf decoding can succeed with missing fields. This envelope requires
+	// exactly one sketch and its sample and NULL counts.
+	if len(collector.FmSketch) != 1 || collector.NdvSampleCount == nil ||
+		len(collector.NullCounts) != 1 {
+		return nil, errors.New("invalid sampled NDV sketch payload")
+	}
+	return newSampledFMSketch(collector.FmSketch[0], ndvCounts{
+		rows: collector.Count, samples: *collector.NdvSampleCount, nulls: collector.NullCounts[0],
+	}), nil
 }

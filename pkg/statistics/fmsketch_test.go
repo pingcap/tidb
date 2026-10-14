@@ -146,7 +146,49 @@ func SubTestSampledNDV() func(*testing.T) {
 			require.Equal(t, int64(8), merged.NDV())
 			require.Equal(t, int64(20), merged.ndvCounts.nulls)
 			require.Equal(t, int64(80+30*4+24), merged.MemoryUsage())
+			data, err := EncodeFMSketch(merged)
+			require.NoError(t, err)
+			require.Error(t, new(tipb.FMSketch).Unmarshal(data))
+			restored, err := DecodeFMSketch(data)
+			require.NoError(t, err)
+			require.Equal(t, merged, restored)
+			// Use an unsupported format version to verify that decoding fails.
+			data[1] = sampledFMSketchVersion + 1
+			_, err = DecodeFMSketch(data)
+			require.Error(t, err)
 		}
+
+		t.Run("decode invalid payload", func(t *testing.T) {
+			zero := int64(0)
+			cases := []struct {
+				name      string
+				collector *tipb.RowSampleCollector
+			}{
+				{"header only", nil},
+				{"missing sketch", &tipb.RowSampleCollector{NdvSampleCount: &zero, NullCounts: []int64{0}}},
+				{"missing sample count", &tipb.RowSampleCollector{NullCounts: []int64{0}, FmSketch: []*tipb.FMSketch{{}}}},
+				{"missing NULL count", &tipb.RowSampleCollector{NdvSampleCount: &zero, FmSketch: []*tipb.FMSketch{{}}}},
+				{"extra sketches", &tipb.RowSampleCollector{NdvSampleCount: &zero, NullCounts: []int64{0}, FmSketch: []*tipb.FMSketch{{}, {}}}},
+				{"extra NULL counts", &tipb.RowSampleCollector{NdvSampleCount: &zero, NullCounts: []int64{0, 0}, FmSketch: []*tipb.FMSketch{{}}}},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					data := []byte{sampledFMSketchMarker, sampledFMSketchVersion}
+					if tc.collector != nil {
+						payload, err := tc.collector.Marshal()
+						require.NoError(t, err)
+						data = append(data, payload...)
+					}
+					var sketch *FMSketch
+					var err error
+					require.NotPanics(t, func() {
+						sketch, err = DecodeFMSketch(data)
+					})
+					require.EqualError(t, err, "invalid sampled NDV sketch payload")
+					require.Nil(t, sketch)
+				})
+			}
+		})
 
 		// ANALYZE merges the responses into sketches it allocated beforehand.
 		// A worker that got no response returns such a sketch unchanged.
@@ -175,9 +217,63 @@ func SubTestSampledNDV() func(*testing.T) {
 		require.Equal(t, int64(5), empty.ndvCounts.samples)
 		require.Equal(t, int64(8), empty.NDV())
 
+		// The global merge keeps the scale of each partition's singletons,
+		// sqrt(400/100) = 2 and sqrt(900/100) = 3. A value seen in two
+		// partitions or in full input counts once.
+		sampledAt := func(rows int64, singles, multis []uint64) *FMSketch {
+			return newSampledFMSketch(&tipb.FMSketch{Hashset: singles, MultiHashset: multis}, ndvCounts{rows: rows, samples: 100})
+		}
+		full := NewFMSketch(MaxSketchSize)
+		full.insertHashValue(1)
+		full.insertHashValue(5)
+		partitions := []*FMSketch{sampledAt(400, []uint64{1, 2}, []uint64{3}), sampledAt(900, []uint64{2, 4}, nil), full}
+		for _, order := range [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+			var merged PartitionNDVMerger
+			for _, i := range order {
+				merged.Merge(partitions[i].Copy())
+			}
+			require.True(t, merged.Sampled())
+			require.Equal(t, int64(4+3), merged.NDV())
+			require.NotNil(t, merged.sketch)
+			require.Nil(t, merged.sketch.hashset)
+			require.Nil(t, merged.sketch.ndvCounts)
+		}
+		var plain PartitionNDVMerger
+		plain.Merge(full.Copy())
+		plain.Merge(full.Copy())
+		require.False(t, plain.Sampled())
+		require.Equal(t, int64(2), plain.NDV())
+		// Leveling up drops hashes together with their scales.
+		small := sampledAt(400, []uint64{1, 2}, nil)
+		small.maxSize = 2
+		var leveled PartitionNDVMerger
+		leveled.Merge(small)
+		leveled.Merge(sampledAt(900, []uint64{4}, nil))
+		require.Equal(t, int64(2*(2+3)), leveled.NDV())
+		require.Equal(t, uint64(1), leveled.sketch.mask)
+		coarser := sampledAt(1600, []uint64{4, 8}, nil)
+		coarser.mask = 3
+		leveled.Merge(coarser)
+		require.Equal(t, uint64(3), leveled.sketch.mask)
+		require.Equal(t, int64(4*(1+4)), leveled.NDV())
+		// Missing sketches do not change the sole partition's sampled bounds.
+		var single PartitionNDVMerger
+		single.Merge(nil)
+		require.Zero(t, single.NDV())
+		require.False(t, single.Sampled())
+		single.Merge(newSampledFMSketch(&tipb.FMSketch{Hashset: []uint64{1}}, ndvCounts{rows: 10, samples: 1, nulls: 9}))
+		single.Merge(nil)
+		require.Equal(t, int64(1), single.NDV())
+		require.True(t, single.Sampled())
 		// Without sampled rows or non-NULL rows, NDV is zero.
-		for _, counts := range []ndvCounts{{rows: 200}, {rows: 10, samples: 2, nulls: 10}} {
-			require.Zero(t, newSampledFMSketch(&tipb.FMSketch{}, counts).NDV())
+		for _, counts := range []ndvCounts{{}, {rows: 200}, {rows: 10, samples: 2, nulls: 10}} {
+			sketch := newSampledFMSketch(&tipb.FMSketch{}, counts)
+			require.Zero(t, sketch.NDV())
+			data, err := EncodeFMSketch(sketch)
+			require.NoError(t, err)
+			restored, err := DecodeFMSketch(data)
+			require.NoError(t, err)
+			require.Equal(t, sketch, restored)
 		}
 
 		// Values the schema keeps unique need no estimate.
