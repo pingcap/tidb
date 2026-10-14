@@ -72,6 +72,7 @@ type UpdateExec struct {
 	stats *updateRuntimeStats
 
 	handles        []kv.Handle
+	rowKeys        []kv.Handle // handles plus the partition ID for nonclustered partitioned tables, see partitionRowKey
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
@@ -89,20 +90,11 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		e.updatedRowKeys = make(map[int]*kv.MemAwareHandleMap[bool])
 	}
 	e.handles = e.handles[:0]
+	e.rowKeys = e.rowKeys[:0]
 	e.tableUpdatable = e.tableUpdatable[:0]
 	e.changed = e.changed[:0]
 	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
-		// Partitioned tables can have duplicate _tidb_rowid between different partitions
-		// due to EXCHANGE PARTITION, if so, do not optimize skipping rows with multiple changes
-		skipMultipleChangesOnSameRow := true
-		tbl := e.tblID2table[content.TblID]
-		if _, ok := tbl.(table.PartitionedTable); ok {
-			if !tbl.Meta().HasClusteredIndex() {
-				skipMultipleChangesOnSameRow = false
-			}
-		}
-
 		if e.updatedRowKeys[content.Start] == nil {
 			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
@@ -124,10 +116,17 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 			updatable = false
 		}
 		e.tableUpdatable = append(e.tableUpdatable, updatable)
+		rowKey := handle
+		if updatable {
+			if rowKey, err = e.partitionRowKey(content, handle, row); err != nil {
+				return err
+			}
+		}
+		e.rowKeys = append(e.rowKeys, rowKey)
 
-		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
+		changed, ok := e.updatedRowKeys[content.Start].Get(rowKey)
 		if ok {
-			e.changed = append(e.changed, changed && skipMultipleChangesOnSameRow)
+			e.changed = append(e.changed, changed)
 			e.matches = append(e.matches, false)
 		} else {
 			e.changed = append(e.changed, false)
@@ -135,6 +134,20 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		}
 	}
 	return nil
+}
+
+// partitionRowKey adds the partition ID to the handle of a nonclustered partitioned table,
+// since _tidb_rowid is only unique within a partition after EXCHANGE PARTITION.
+func (e *UpdateExec) partitionRowKey(content physicalop.TblColPosInfo, handle kv.Handle, row []types.Datum) (kv.Handle, error) {
+	pt, ok := e.tblID2table[content.TblID].(table.PartitionedTable)
+	if !ok || pt.Meta().HasClusteredIndex() {
+		return handle, nil
+	}
+	p, err := pt.GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), row[content.Start:content.End])
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewPartitionHandle(p.GetPhysicalID(), handle), nil
 }
 
 func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
@@ -328,10 +341,11 @@ func (e *UpdateExec) exec(
 		}
 
 		if err == nil {
-			_, exist := e.updatedRowKeys[content.Start].Get(handle)
-			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
+			rowKey := e.rowKeys[i]
+			_, exist := e.updatedRowKeys[content.Start].Get(rowKey)
+			memDelta := e.updatedRowKeys[content.Start].Set(rowKey, changed)
 			if !exist {
-				memDelta += int64(handle.ExtraMemSize())
+				memDelta += int64(rowKey.ExtraMemSize())
 			}
 			totalMemDelta += memDelta
 			continue
