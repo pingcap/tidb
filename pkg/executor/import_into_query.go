@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -110,21 +111,54 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("stale reads in IMPORT INTO FROM SELECT")
 	}
 
-	seen := make(map[int64]bool)
-	for _, tableName := range nodeW.GetResolveContext().GetTableNames() {
-		tblInfo, dbInfo := tableName.TableInfo, tableName.DBInfo
-		if tblInfo.IsView() ||
-			tblInfo.TempTableType != model.TempTableNone ||
-			tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
-				"views, temporary or cached source tables in IMPORT INTO FROM SELECT")
-		}
-		if !seen[tblInfo.ID] {
-			seen[tblInfo.ID] = true
-			q.Databases[dbInfo.ID] = dbInfo
-			q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
-		}
+	if err := collectImportQueryTables(sctx, ret.InfoSchema, nodeW, q, make(map[int64]bool)); err != nil {
+		return nil, err
 	}
 	q.ReadTS, err = txnManager.GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
 	return q, nil
+}
+
+// collectImportQueryTables records the source tables of a resolved query,
+// including the tables behind its views, which the worker expands again.
+func collectImportQueryTables(
+	sctx sessionctx.Context, is infoschema.InfoSchema, nodeW *resolve.NodeW,
+	q *importer.QueryPlan, seen map[int64]bool,
+) error {
+	for _, tableName := range nodeW.GetResolveContext().GetTableNames() {
+		tblInfo, dbInfo := tableName.TableInfo, tableName.DBInfo
+		if tblInfo.TempTableType != model.TempTableNone {
+			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("temporary source tables in IMPORT INTO FROM SELECT")
+		}
+		if seen[tblInfo.ID] {
+			continue
+		}
+		seen[tblInfo.ID] = true
+		q.Databases[dbInfo.ID] = dbInfo
+		q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
+		if !tblInfo.IsView() {
+			continue
+		}
+		charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+		p := parser.New()
+		p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
+		viewNode, err := p.ParseOneStmt(tblInfo.View.SelectStmt, charset, collation)
+		if err != nil {
+			return err
+		}
+		viewNodeW := resolve.NewNodeW(viewNode)
+		if err := plannercore.Preprocess(
+			context.Background(), sctx, viewNodeW,
+			plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}),
+			plannercore.InImportInto,
+		); err != nil {
+			return err
+		}
+		if err := collectImportQueryTables(sctx, is, viewNodeW, q, seen); err != nil {
+			return err
+		}
+	}
+	return nil
 }

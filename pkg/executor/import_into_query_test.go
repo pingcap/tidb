@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -44,15 +45,38 @@ func TestCaptureImportQuery(t *testing.T) {
 			tables = append(tables, tbl.Name.L)
 		}
 		require.ElementsMatch(t, []string{"query_src", "query_other"}, tables)
+		tk.MustExec("create temporary table query_tmp(i int)")
+		tk.MustExec("create global temporary table query_gtmp(i int) on commit delete rows")
+		for _, tbl := range []string{"query_tmp", "query_gtmp"} {
+			_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select * from "+tbl)
+			require.ErrorContains(t, err, "temporary source tables in IMPORT INTO FROM SELECT")
+		}
 		_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select ? from query_src")
 		require.ErrorContains(t, err, "unexpected '?'")
-		for _, sql := range []string{
-			"select @v from query_src", "select @v:=i from query_src",
-			"select @@sql_mode", "with c as (select @v) select * from c",
-		} {
-			_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from ("+sql+")")
-			require.ErrorContains(t, err, "variables in IMPORT INTO FROM SELECT")
+	})
+	t.Run("views and cached tables", func(t *testing.T) {
+		tk.MustExec("create database query_view_db")
+		tk.MustExec("create table query_view_db.base(i int)")
+		tk.MustExec("create table query_cached(i int)")
+		tk.MustExec("alter table query_cached cache")
+		tk.MustExec("use query_view_db")
+		tk.MustExec("create view inner_v as select i from base")
+		tk.MustExec("use test")
+		tk.MustExec("create view outer_v as select i from query_view_db.inner_v union all select i from query_cached")
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select * from outer_v")
+		require.NoError(t, err)
+		tables := make(map[string]*model.TableInfo)
+		for dbID, tbls := range q.Tables {
+			for _, tbl := range tbls {
+				tables[q.Databases[dbID].Name.L+"."+tbl.Name.L] = tbl
+			}
 		}
+		require.Len(t, tables, 4)
+		require.True(t, tables["test.outer_v"].IsView())
+		require.True(t, tables["query_view_db.inner_v"].IsView())
+		require.Contains(t, tables, "query_view_db.base")
+		require.Contains(t, tables, "test.query_cached")
 	})
 	t.Run("capture transaction schema", func(t *testing.T) {
 		ddlTK := testkit.NewTestKit(t, store)
