@@ -266,8 +266,15 @@ func TestInitForReorgIndexesRequiresGlobalSort(t *testing.T) {
 	}
 	w := &worker{workCtx: context.Background(), ddlCtx: &ddlCtx{}}
 
-	// local sort is rejected on NextGen, regardless of SEM.
+	// Without the lightning/ingest env the backfill falls back to txn-merge,
+	// which does not sort locally, so the job is allowed even without cloud
+	// storage.
+	ingest.LitInitialized = false
 	vardef.CloudStorageURI.Store("")
+	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
+
+	// local sort is rejected on NextGen, regardless of SEM.
+	ingest.LitInitialized = true
 	err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
 	require.ErrorIs(t, err, dbterror.ErrNotSupportedYet)
 	require.ErrorContains(t, err, "add index or modify column with local sort")
@@ -277,7 +284,6 @@ func TestInitForReorgIndexesRequiresGlobalSort(t *testing.T) {
 	require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
 
 	// global sort is allowed
-	ingest.LitInitialized = true
 	vardef.CloudStorageURI.Store("s3://bucket")
 	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
 }
