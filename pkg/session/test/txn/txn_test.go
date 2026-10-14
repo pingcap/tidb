@@ -597,7 +597,7 @@ func TestPanicOnStmtRollbackKilledTxn(t *testing.T) {
 			require.Panics(t, func() {
 				_ = buf.Set(stagedKey, []byte(strings.Repeat("x", 1<<20)))
 			})
-			require.Equal(t, uint32(sqlkiller.QueryMemoryExceeded), vars.SQLKiller.GetKillSignal())
+			require.Equal(t, sqlkiller.QueryMemoryExceeded, vars.SQLKiller.GetKillSignal())
 			require.NotPanics(t, func() {
 				tk.Session().StmtRollback(context.Background(), false)
 			})
