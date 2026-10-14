@@ -84,6 +84,8 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	for _, name := range []string{
 		vardef.SQLModeVar, vardef.DivPrecisionIncrement,
 		vardef.CharacterSetConnection, vardef.CollationConnection,
+		vardef.GroupConcatMaxLen, vardef.DefaultWeekFormat,
+		vardef.BlockEncryptionMode, vardef.WindowingUseHighPrecision,
 		vardef.TiDBIsolationReadEngines, vardef.TiDBAllowMPPExecution, vardef.TiDBEnforceMPPExecution,
 		vardef.TiDBMaxTiFlashThreads,
 		vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy,
