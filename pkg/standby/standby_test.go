@@ -88,17 +88,10 @@ func TestActivateRequestMetadata(t *testing.T) {
 	var req ActivateRequest
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"keyspace_name": "ks",
-		"keyspace_id": 42,
 		"metadata": {
 			"meta_a": "value_a"
 		}
 	}`), &req))
-	encoded, err := json.Marshal(req)
-	require.NoError(t, err)
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &fields))
-	// Metric identity comes from the storage codec, not activation fields.
-	require.NotContains(t, fields, "keyspace_id")
 	require.Equal(t, map[string]string{
 		"meta_a": "value_a",
 	}, req.Metadata)

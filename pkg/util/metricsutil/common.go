@@ -178,8 +178,8 @@ func (g *keyspaceGatherer) Gather() ([]*dto.MetricFamily, error) {
 				return strings.Compare(pair.GetName(), name)
 			})
 			if !found {
-				// Collectors can share label slices across concurrent Gather calls.
-				metric.Label = slices.Insert(slices.Clone(metric.Label), index, &dto.LabelPair{Name: &labelName, Value: &keyspaceID})
+				// Limit capacity so insertion copies the collectors' shared label slice only once.
+				metric.Label = slices.Insert(slices.Clip(metric.Label), index, &dto.LabelPair{Name: &labelName, Value: &keyspaceID})
 			}
 		}
 	}
