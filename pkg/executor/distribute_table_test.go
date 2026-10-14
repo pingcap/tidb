@@ -25,11 +25,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -154,14 +157,13 @@ func TestDistributeTable(t *testing.T) {
 		starts := make([]string, 0)
 		ends := make([]string, 0)
 		slices.Sort(pids)
+		storeCodec := store.GetCodec()
 		for i, pid := range pids {
+			startKey, endKey := storeCodec.EncodeRegionRange(tablecodec.GenTablePrefix(pid), tablecodec.GenTablePrefix(pid+1))
 			if i == 0 || pid != pids[i-1]+1 {
-				startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-				endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 				starts = append(starts, url.QueryEscape(string(startKey)))
 				ends = append(ends, url.QueryEscape(string(endKey)))
 			} else {
-				endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 				ends[len(starts)-1] = url.QueryEscape(string(endKey))
 			}
 		}
@@ -224,6 +226,48 @@ func TestDistributeTable(t *testing.T) {
 		"[planner:1210]Incorrect arguments to rule must be leader-scatter, peer-scatter or learner-scatter")
 }
 
+func TestDistributeTableWithKeyspace(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("keyspace is not supported in classic mode")
+	}
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 2},
+		Name:     keyspace.System,
+	}
+	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(keyspaceMeta))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cli := &MockDistributePDCli{skip: 1}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+
+	table := "t1"
+	tk.MustExec("create table t1 (c1 int, c2 int)")
+
+	is := tk.Session().GetLatestInfoSchema()
+	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(table))
+	require.NoError(t, err)
+
+	// The key range sent to PD must be encoded with the store codec so that it
+	// carries the keyspace prefix, otherwise it can't match the region keys on
+	// the keyspace cluster.
+	storeCodec := store.GetCodec()
+	startKey, endKey := storeCodec.EncodeRegionRange(
+		tablecodec.GenTablePrefix(tbl.ID), tablecodec.GenTablePrefix(tbl.ID+1))
+	config := map[string]any{
+		"alias":     strings.Join([]string{"test", table, ""}, "."),
+		"engine":    "tikv",
+		"rule":      "leader-scatter",
+		"start-key": url.QueryEscape(string(startKey)),
+		"end-key":   url.QueryEscape(string(endKey)),
+	}
+	cli.On("GetSchedulerConfig", mock.Anything, schedulerName).Return(nil, nil)
+	cli.On("CreateSchedulerWithInput", mock.Anything, schedulerName, config).Return(nil)
+
+	tk.MustQuery("distribute table t1 rule='leader-scatter' engine='tikv'").Check(testkit.Rows("1"))
+}
+
 func TestShowTableDistributions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -240,8 +284,7 @@ func TestShowTableDistributions(t *testing.T) {
 		if partition != "" {
 			tblID = tbl.GetPartitionInfo().GetPartitionIDByName(partition)
 		}
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(tblID))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(tblID+1))
+		startKey, endKey := store.GetCodec().EncodeRegionRange(tablecodec.GenTablePrefix(tblID), tablecodec.GenTablePrefix(tblID+1))
 		keyRange := pdhttp.NewKeyRange(startKey, endKey)
 		return cli.On("GetRegionDistributionByKeyRange", mock.Anything, keyRange, "").
 			Return(distributions, nil)

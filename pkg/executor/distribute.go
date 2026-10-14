@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -196,15 +195,14 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 	}
 	slices.Sort(physicalIDs)
 
+	storeCodec := e.Ctx().GetStore().GetCodec()
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
 	for i, pid := range physicalIDs {
+		startKey, endKey := storeCodec.EncodeRegionRange(tablecodec.GenTablePrefix(pid), tablecodec.GenTablePrefix(pid+1))
 		if i == 0 || physicalIDs[i] != physicalIDs[i-1]+1 {
-			startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-			endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
-			r := pdhttp.NewKeyRange(startKey, endKey)
-			ranges = append(ranges, r)
+			ranges = append(ranges, pdhttp.NewKeyRange(startKey, endKey))
 		} else {
-			ranges[len(ranges)-1].EndKey = codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+			ranges[len(ranges)-1].EndKey = endKey
 		}
 	}
 	return ranges, nil
