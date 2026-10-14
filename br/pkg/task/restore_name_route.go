@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	"go.uber.org/zap"
 )
 
 type restoreNamePlan struct {
@@ -252,7 +254,15 @@ func buildRestoreNamePlan(
 			if dbID, ok := sources.tableDatabaseIDs[table.Info.ID]; ok {
 				sourceDB = databaseByID[dbID]
 			} else {
+				// The table history has no location for this ID, so fall back to the
+				// latest source schema name. A recreated schema can reuse an older
+				// schema's name, so make the resolution visible.
 				sourceDB = databaseByName[sourceObject.Schema.L]
+				log.Warn("resolving table database settings by source schema name",
+					zap.Int64("table-id", table.Info.ID),
+					zap.String("source-schema", sourceObject.Schema.O),
+					zap.String("source-table", sourceObject.Table.O),
+					zap.Bool("resolved", sourceDB != nil))
 			}
 		}
 		if sourceDB == nil {
@@ -335,7 +345,10 @@ func buildPiTRRestoreNameSources(
 	tracker *brutils.PiTRIdTracker,
 	dbs []*metautil.Database,
 	tables []*metautil.Table,
-	mappings ...*stream.TableMappingManager,
+	// mapping carries the scanned source schema metadata. A routed restore must
+	// pass it: without it a schema created in the log interval keeps the snapshot
+	// settings instead of its latest ones.
+	mapping *stream.TableMappingManager,
 ) *restoreNameSources {
 	sources := &restoreNameSources{
 		databaseInfos:    make(map[int64]*metautil.Database),
@@ -361,7 +374,7 @@ func buildPiTRRestoreNameSources(
 	// Production supplies scanned metadata, including schemas created after
 	// the snapshot. The table's immutable SST source cannot provide these
 	// latest source-schema settings after a cross-schema upstream rename.
-	for _, mapping := range mappings {
+	if mapping != nil {
 		for dbID, db := range mapping.DBReplaceMap {
 			if mapping.IsSourceDatabaseDeleted(dbID) {
 				sources.deletedDatabases[dbID] = true

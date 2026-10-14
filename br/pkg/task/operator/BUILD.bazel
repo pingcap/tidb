@@ -79,7 +79,7 @@ go_test(
     ],
     embed = [":operator"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/metautil",

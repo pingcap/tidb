@@ -254,6 +254,29 @@ func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, resto
 	}
 	defer se.Close()
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	if hasRestoreIDColumn {
+		// A checksum describes one task's mapping. Several independent tasks can
+		// restore to the same restored TS; merging their maps could silently pick
+		// the wrong table identity, so refuse instead. This mirrors the restore
+		// path's storage map owner selection.
+		owners, _, err := execCtx.ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+			nil,
+			"SELECT DISTINCT restore_id FROM mysql.tidb_pitr_id_map "+
+				"WHERE restored_ts = %? AND upstream_cluster_id = %? LIMIT 2;",
+			restoredTS, upstreamClusterID,
+		)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to find the PiTR ID map owner")
+		}
+		ownerIDs := make([]uint64, 0, len(owners))
+		for _, owner := range owners {
+			ownerIDs = append(ownerIDs, owner.GetUint64(0))
+		}
+		if err := ensureUniquePitrIDMapOwner(ownerIDs, restoredTS, upstreamClusterID); err != nil {
+			return nil, err
+		}
+	}
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
@@ -303,6 +326,25 @@ type request struct {
 	copReq    *checksum.Executor
 	tableName string
 	dbName    string
+}
+
+// ensureUniquePitrIDMapOwner refuses a restored TS whose ID map is owned by
+// several independent restore tasks. The callers then read segments of one
+// unambiguous owner; merging independent maps could silently pick the wrong
+// table identity. A missing owner (no rows) is not an error here: the callers
+// decide whether a map is required. Owners are compared as a set, so the
+// callers may pass either the raw or the DISTINCT restore IDs.
+func ensureUniquePitrIDMapOwner(owners []uint64, restoredTS, upstreamClusterID uint64) error {
+	uniqueOwners := make(map[uint64]struct{}, len(owners))
+	for _, owner := range owners {
+		uniqueOwners[owner] = struct{}{}
+	}
+	if len(uniqueOwners) > 1 {
+		return errors.Errorf(
+			"multiple PiTR ID maps exist at restored TS %d for upstream cluster %d; cannot choose a unique task owner",
+			restoredTS, upstreamClusterID)
+	}
+	return nil
 }
 
 func (c *checksumTableCtx) genRequests(ctx context.Context, bkup []*metautil.Table, curr []tableInDB) (reqs []request, err error) {

@@ -109,3 +109,27 @@ func TestChecksumPiTRStorageIDMap(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureUniquePitrIDMapOwner(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		owners  []uint64
+		wantErr string
+	}{
+		{name: "no owner is decided by the caller"},
+		{name: "single owner", owners: []uint64{101}},
+		{name: "repeated owner", owners: []uint64{101, 101}},
+		{name: "ambiguous owners", owners: []uint64{101, 102}, wantErr: "multiple PiTR ID maps"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := ensureUniquePitrIDMapOwner(testCase.owners, 50, 3)
+			if testCase.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, testCase.wantErr)
+			require.ErrorContains(t, err, "restored TS 50")
+			require.ErrorContains(t, err, "upstream cluster 3")
+		})
+	}
+}

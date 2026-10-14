@@ -95,7 +95,7 @@ func TestBuildRestoreNamePlanUsesPiTRLatestSourceName(t *testing.T) {
 		tracker := brutils.NewPiTRIdTracker()
 		tracker.TrackTableId(2, 10)
 		tracker.TrackTableId(3, 30)
-		sources := buildPiTRRestoreNameSources(history, tracker, dbs, tables)
+		sources := buildPiTRRestoreNameSources(history, tracker, dbs, tables, nil)
 		plan, err := buildRestoreNamePlan(router, dbs, tables, sources)
 		require.NoError(t, err)
 		require.Equal(t, "b", plan.tables[0].TargetDB.Name.O)
@@ -163,7 +163,7 @@ func TestBuildPiTRRestoreNameSourcesFallsBackToSnapshotDB(t *testing.T) {
 	tracker.TrackTableId(1, 10)
 
 	sources := buildPiTRRestoreNameSources(
-		history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable})
+		history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable}, nil)
 	require.Equal(t, nameroute.ObjectName{
 		Schema: ast.NewCIStr("snapshot_db"),
 		Table:  ast.NewCIStr("latest_table"),
@@ -177,7 +177,7 @@ func TestBuildPiTRRestoreNameSourcesFallsBackToSnapshotDB(t *testing.T) {
 		// participate in routing.
 		sources := buildPiTRRestoreNameSources(
 			stream.NewTableHistoryManager(), brutils.NewPiTRIdTracker(),
-			[]*metautil.Database{emptyDB}, nil)
+			[]*metautil.Database{emptyDB}, nil, nil)
 		require.Equal(t, ast.NewCIStr("empty_src"), sources.databases[7])
 
 		plan, err := buildRestoreNamePlan(router, []*metautil.Database{emptyDB}, nil, sources)
@@ -200,7 +200,7 @@ func TestBuildPiTRRestoreNameSourcesFallsBackToSnapshotDB(t *testing.T) {
 			Info: &model.TableInfo{ID: 10, Name: ast.NewCIStr("old")},
 		}
 		sources := buildPiTRRestoreNameSources(
-			history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable})
+			history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable}, nil)
 
 		// The table was renamed a.old -> a.new, so the only target to check is
 		// b.copy; the pre-rename a.old must not be checked as an identity target.
@@ -366,7 +366,7 @@ func TestApplyNameRoutesUsesSnapshotSourceNames(t *testing.T) {
 	}
 	history := stream.NewTableHistoryManager()
 	sources := buildPiTRRestoreNameSources(history, brutils.NewPiTRIdTracker(),
-		[]*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable})
+		[]*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable}, nil)
 
 	t.Run("log-only resolution drops the route", func(t *testing.T) {
 		mapping := newMapping()
@@ -440,7 +440,7 @@ func TestBuildRestoreNamePlanMatchesLogOnlyTable(t *testing.T) {
 	tracker := brutils.NewPiTRIdTracker()
 	tracker.TrackTableId(2, 20)
 
-	sources := buildPiTRRestoreNameSources(history, tracker, nil, nil)
+	sources := buildPiTRRestoreNameSources(history, tracker, nil, nil, nil)
 	plan, err := buildRestoreNamePlan(router, nil, nil, sources)
 	require.NoError(t, err)
 	require.Empty(t, plan.databases)
@@ -459,7 +459,7 @@ func TestBuildRestoreNamePlanChecksUnifiedPiTRTargets(t *testing.T) {
 	tracker.TrackTableId(1, 10)
 	tracker.TrackTableId(2, 20)
 
-	sources := buildPiTRRestoreNameSources(history, tracker, nil, nil)
+	sources := buildPiTRRestoreNameSources(history, tracker, nil, nil, nil)
 	_, err = buildRestoreNamePlan(router, nil, nil, sources)
 	require.ErrorContains(t, err, "conflict at target")
 }
