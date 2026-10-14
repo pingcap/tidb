@@ -57,6 +57,7 @@ type UpdateExec struct {
 	// The value is cached table row
 	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
 	multiUpdateOnSameTable map[int64]bool
+	isMultiTable           bool
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -72,7 +73,7 @@ type UpdateExec struct {
 	stats *updateRuntimeStats
 
 	handles        []kv.Handle
-	rowKeys        []kv.Handle // handles plus the partition ID for nonclustered partitioned tables, see partitionRowKey
+	rowKeys        []kv.Handle // handles plus the partition ID for nonclustered partitioned tables, or nil if not tracked; see partitionRowKey
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
@@ -123,6 +124,11 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 			}
 		}
 		e.rowKeys = append(e.rowKeys, rowKey)
+		if rowKey == nil {
+			e.changed = append(e.changed, false)
+			e.matches = append(e.matches, true)
+			continue
+		}
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(rowKey)
 		if ok {
@@ -138,10 +144,15 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 
 // partitionRowKey adds the partition ID to the handle of a nonclustered partitioned table,
 // since _tidb_rowid is only unique within a partition after EXCHANGE PARTITION.
+// A single-table UPDATE matches each row once, so it returns nil there to leave the row
+// untracked instead of locating its partition.
 func (e *UpdateExec) partitionRowKey(content physicalop.TblColPosInfo, handle kv.Handle, row []types.Datum) (kv.Handle, error) {
 	pt, ok := e.tblID2table[content.TblID].(table.PartitionedTable)
 	if !ok || pt.Meta().HasClusteredIndex() {
 		return handle, nil
+	}
+	if !e.isMultiTable {
+		return nil, nil
 	}
 	p, err := pt.GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), row[content.Start:content.End])
 	if err != nil {
@@ -341,13 +352,14 @@ func (e *UpdateExec) exec(
 		}
 
 		if err == nil {
-			rowKey := e.rowKeys[i]
-			_, exist := e.updatedRowKeys[content.Start].Get(rowKey)
-			memDelta := e.updatedRowKeys[content.Start].Set(rowKey, changed)
-			if !exist {
-				memDelta += int64(rowKey.ExtraMemSize())
+			if rowKey := e.rowKeys[i]; rowKey != nil {
+				_, exist := e.updatedRowKeys[content.Start].Get(rowKey)
+				memDelta := e.updatedRowKeys[content.Start].Set(rowKey, changed)
+				if !exist {
+					memDelta += int64(rowKey.ExtraMemSize())
+				}
+				totalMemDelta += memDelta
 			}
-			totalMemDelta += memDelta
 			continue
 		}
 
