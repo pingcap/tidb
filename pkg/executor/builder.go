@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
@@ -4008,12 +4009,22 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
+	// Read the server ID from the process server info rather than the session's
+	// Domain, which cross-keyspace sessions do not have.
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	serverID := serverInfo.ServerIDGetter()
+	failpoint.InjectCall("afterGetMPPServerID", serverID)
+
 	gather := &MPPGather{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: domain.GetDomain(b.sctx).ServerID()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},
