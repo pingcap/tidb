@@ -756,11 +756,16 @@ func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	}
 }
 
-func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
+func TestTiDBOptRangeLimitsWhenUpgrading(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
+	t.Run("max size", testTiDBOptRangeMaxSizeWhenUpgrading)
+	t.Run("max count", testTiDBOptRangeMaxCountWhenUpgrading)
+}
+
+func testTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -816,6 +821,43 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	row = chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, "0", row.GetString(0))
+}
+
+func testTiDBOptRangeMaxCountWhenUpgrading(t *testing.T) {
+	for _, tc := range []struct {
+		name, persisted, want string
+	}{{"missing", "", "1000"}, {"disabled", "0", "0"}, {"custom", "2000", "2000"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			se := session.CreateSessionAndSetID(t, store)
+			previousVersion := session.CurrentBootstrapVersion - 1
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.FinishBootstrap(previousVersion))
+			require.NoError(t, txn.Commit(context.Background()))
+			session.RevertVersionAndVariables(t, se, int(previousVersion))
+			if tc.persisted == "" {
+				session.MustExec(t, se, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxCount))
+			} else {
+				session.MustExec(t, se, fmt.Sprintf("set global tidb_opt_range_max_count=%s", tc.persisted))
+			}
+			session.MustExec(t, se, "commit")
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			dom.Close()
+
+			upgradedDomain, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer upgradedDomain.Close()
+			upgradedSession := session.CreateSessionAndSetID(t, store)
+			rows := session.MustExecToRecodeSet(t, upgradedSession, fmt.Sprintf("select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBOptRangeMaxCount))
+			chunk := rows.NewChunk(nil)
+			require.NoError(t, rows.Next(context.Background(), chunk))
+			require.Equal(t, 1, chunk.NumRows())
+			require.Equal(t, tc.want, chunk.GetRow(0).GetString(0))
+		})
+	}
 }
 
 func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {

@@ -139,6 +139,9 @@ const (
 	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
 
+	// TiDBDMLMaxExecutionTime is the maximum execution time for transactional DML statements and COMMIT, in milliseconds.
+	TiDBDMLMaxExecutionTime = "tidb_dml_max_execution_time"
+
 	// TiDBMLogPurgeBatchSize is used to split PURGE MATERIALIZED VIEW LOG into multiple delete batches.
 	TiDBMLogPurgeBatchSize = "tidb_mlog_purge_batch_size"
 	// TiDBMLogPurgeMinRate controls the minimum target delete rate for adaptive MLog purge throttling.
@@ -486,6 +489,9 @@ const (
 	// tidb_index_lookup_join_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBIndexLookupJoinConcurrency = "tidb_index_lookup_join_concurrency"
 
+	// TiDBEnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	TiDBEnableAdaptiveLimitScan = "tidb_enable_adaptive_limit_scan"
+
 	// TiDBIndexSerialScanConcurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
 	// Deprecated: Use tidb_executor_concurrency for sequential scans and tidb_analyze_distsql_scan_concurrency for ANALYZE.
@@ -566,7 +572,8 @@ const (
 	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
-	// TiDBPagingSizeBytes is the byte budget per coprocessor page.
+	// TiDBPagingSizeBytes is the global byte budget per coprocessor page.
+	// Updates apply when a statement initializes its DistSQL context, including in existing sessions.
 	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
 	// is non-burstable (has limited burst).
 	// 0 means disabled (no byte-budget paging).
@@ -697,6 +704,9 @@ const (
 
 	// TiDBEnableVectorizedExpression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
+
+	// TiDBEnableTiKVShortCircuitExpression controls whether to enable short-circuit expression evaluation in TiKV.
+	TiDBEnableTiKVShortCircuitExpression = "tidb_enable_tikv_short_circuit_expression"
 
 	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
@@ -1054,6 +1064,9 @@ const (
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
 	// limit for ranges.
 	TiDBOptRangeMaxSize = "tidb_opt_range_max_size"
+	// TiDBOptRangeMaxCount is the range-count threshold above which skyline pruning does not prefer an access path
+	// for having more equality/IN predicates. It does not limit range construction. 0 disables the threshold.
+	TiDBOptRangeMaxCount = "tidb_opt_range_max_count"
 
 	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
@@ -1518,6 +1531,7 @@ const (
 	DefHostname                         = "localhost"
 	DefIndexLookupConcurrency           = ConcurrencyUnset
 	DefIndexLookupJoinConcurrency       = ConcurrencyUnset
+	DefTiDBEnableAdaptiveLimitScan      = false
 	DefIndexSerialScanConcurrency       = 1
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000
@@ -1604,6 +1618,7 @@ const (
 	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
+	DefTiDBDMLMaxExecutionTime              = 0
 	DefMaxPreparedStmtCount                 = -1
 	DefWaitTimeout                          = 28800
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
@@ -1663,6 +1678,7 @@ const (
 	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
+	DefTiDBEnableTiKVShortCircuitExpression = false
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
 	DefTiDBOptJoinReorderThroughProj        = false
@@ -1820,22 +1836,24 @@ const (
 	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize                int32  = 10240
-	MinDDLReorgBatchSize                int32  = 32
-	MinExpensiveQueryTimeThreshold      uint64 = 10 // 10s
-	MinExpensiveTxnTimeThreshold        uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency           = DefBuildStatsConcurrency
-	DefTiDBSysProcScanConcurrency              = DefAnalyzeDistSQLScanConcurrency
-	DefTiDBRcWriteCheckTs                      = false
-	DefTiDBForeignKeyChecks                    = true
-	DefTiDBForeignKeyCheckInSharedLock         = false
-	DefTiDBOptAdvancedJoinHint                 = true
-	DefTiDBAnalyzePartitionConcurrency         = 2
-	DefTiDBOptRangeMaxSize                     = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                        = 2
-	DefTiDBServerMemoryLimitSessMinSize        = 128 << 20
-	DefTiDBServerMemoryLimitGCTrigger          = 0.7
-	DefTiDBEnableGOGCTuner                     = true
+	MaxDDLReorgBatchSize               int32  = 10240
+	MinDDLReorgBatchSize               int32  = 32
+	MinExpensiveQueryTimeThreshold     uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold       uint64 = 60 // 60s
+	DefTiDBAutoBuildStatsConcurrency          = DefBuildStatsConcurrency
+	DefTiDBSysProcScanConcurrency             = DefAnalyzeDistSQLScanConcurrency
+	DefTiDBRcWriteCheckTs                     = false
+	DefTiDBForeignKeyChecks                   = true
+	DefTiDBForeignKeyCheckInSharedLock        = false
+	DefTiDBOptAdvancedJoinHint                = true
+	DefTiDBAnalyzePartitionConcurrency        = 2
+	DefTiDBOptRangeMaxSize                    = 64 * int64(size.MB) // 64 MB
+	// DefTiDBOptRangeMaxCount is the default range-count threshold for equality/IN preference in skyline pruning.
+	DefTiDBOptRangeMaxCount             int64 = 1000
+	DefTiDBCostModelVer                       = 2
+	DefTiDBServerMemoryLimitSessMinSize       = 128 << 20
+	DefTiDBServerMemoryLimitGCTrigger         = 0.7
+	DefTiDBEnableGOGCTuner                    = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
 	DefTiDBGOGCMaxValue                               = 500
@@ -2091,6 +2109,7 @@ var (
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)
 	EnableResourceControlStrictMode = atomic.NewBool(true)
+	PagingSizeBytes                 = atomic.NewInt64(DefPagingSizeBytes)
 	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)

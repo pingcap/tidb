@@ -1228,6 +1228,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
+	EnableTiKVShortCircuitExpression bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -1294,6 +1297,9 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+	// DMLMaxExecutionTime is the timeout for transactional DML statements and COMMIT, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	DMLMaxExecutionTime uint64
 
 	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
 	// may examine. 0 means unlimited. Only applies to SELECT statements.
@@ -1469,6 +1475,9 @@ type SessionVars struct {
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
+	// EnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	EnableAdaptiveLimitScan bool
+
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
 
@@ -1582,6 +1591,8 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
+	// InNonTransactionalDML marks non-transactional DML execution and its internal statements.
+	InNonTransactionalDML bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -1691,6 +1702,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+	// RangeMaxCount is the range-count threshold for preferring more equality/IN predicates in skyline pruning.
+	// It does not limit range construction. 0 disables the threshold.
+	RangeMaxCount int64
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
@@ -1758,10 +1772,6 @@ type SessionVars struct {
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
-
-	// PagingSizeBytes is the byte budget per page.
-	// 0 means disabled.
-	PagingSizeBytes int
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
@@ -1898,6 +1908,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+	// TTLJobID attributes a user-table scan/delete transaction to a TTL job. Empty means
+	// no scan/delete attribution; TTL sessions restore it after draining the result.
+	TTLJobID string
 
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
 	MemArbitrator struct {
@@ -2424,6 +2437,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
@@ -2460,6 +2474,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                         kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
@@ -2490,7 +2505,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
-		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,
@@ -2509,6 +2523,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{

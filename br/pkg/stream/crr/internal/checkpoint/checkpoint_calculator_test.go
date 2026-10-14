@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
+func TestCheckpointCalculatorValidatesMetaScanStorage(t *testing.T) {
 	ctx := context.Background()
 	boundaries, err := testutil.BuildRegionLayout(
 		testutil.AddRoundRobinRegions(1, 1),
@@ -42,20 +42,27 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
 	require.NoError(t, err)
 
-	_, err = checkpoint.NewCalculator(
-		checkpoint.CalculatorDeps{
-			PD: h.PDSim,
-			Upstream: &recordingUpstreamStorage{
-				inner: h.Upstream,
-				uri:   "azure://bucket/prefix/",
-			},
-			Sync: checkpoint.NewExistenceSyncChecker(h.Downstream),
-		},
-		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
-		nil,
-	)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "StartAfter-capable upstream storage")
+	for _, scheme := range []string{"s3", "file", "gcs", "oss", "azure"} {
+		t.Run(scheme, func(t *testing.T) {
+			_, err := checkpoint.NewCalculator(
+				checkpoint.CalculatorDeps{
+					PD: h.PDSim,
+					Upstream: &recordingUpstreamStorage{
+						inner: h.Upstream,
+						uri:   scheme + "://bucket/prefix/",
+					},
+					Sync: checkpoint.NewExistenceSyncChecker(h.Downstream),
+				},
+				checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+				nil,
+			)
+			if scheme == "azure" {
+				require.ErrorContains(t, err, "StartAfter-capable upstream storage")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestCheckpointCalculatorRequiresObjectSyncChecker(t *testing.T) {

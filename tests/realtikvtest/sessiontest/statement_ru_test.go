@@ -72,7 +72,7 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observedConnectionID uint64,
 		calibrationState string,
 		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
-		writeStatement, operatorNum, writeKeys, writeBytes float64,
+		writeStatement, operatorNum, writeKeys, writeBytes, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return

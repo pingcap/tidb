@@ -347,6 +347,13 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
+// PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG" plan.
+type PurgeMaterializedViewLog struct {
+	physicalop.SimpleSchemaProducer
+
+	Statement *ast.PurgeMaterializedViewLogStmt
+}
+
 // PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.

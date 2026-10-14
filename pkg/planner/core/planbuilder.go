@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -80,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
@@ -647,6 +649,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
+	case *ast.PurgeMaterializedViewLogStmt:
+		return b.buildPurgeMaterializedViewLog(ctx, x)
+	case *ast.CancelMaterializedViewJobStmt:
+		return b.buildSimple(ctx, x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
@@ -3718,6 +3724,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("show table distributions")
 		}
+	case ast.ShowStorageClassTransitions:
+		if !config.GetGlobalConfig().EnableStorageClass {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("SHOW STORAGE_CLASS TRANSITIONS is disabled; set enable-storage-class = true in the TiDB configuration")
+		}
 	case ast.ShowReplicaStatus:
 		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("SHOW {REPLICA | SLAVE} STATUS")
 	}
@@ -3783,6 +3793,18 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		np = sort
 	}
 	return np, nil
+}
+
+func (b *PlanBuilder) buildPurgeMaterializedViewLog(_ context.Context, stmt *ast.PurgeMaterializedViewLogStmt) (base.Plan, error) {
+	dbName := stmt.Table.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	return &PurgeMaterializedViewLog{Statement: stmt}, nil
 }
 
 func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.Plan, error) {
@@ -4346,7 +4368,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physic
 	return affectedValuesCols, nil
 }
 
-func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalop.Insert, mockTablePlan *logicalop.LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
+func (b *PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalop.Insert, mockTablePlan *logicalop.LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
 	if col.Hidden {
 		return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 	}
@@ -4814,18 +4836,26 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
 		}
-		// a nextgen cluster might be shared by multiple tenants, and they might
-		// share the same AWS role to access import-into source data bucket, this
-		// external ID can be used to restrict the access only to the current tenant.
-		// when SEM enabled, we need set it.
+		// A NextGen cluster might be shared by multiple tenants that use the
+		// same AWS role. The external ID restricts access to the intended tenant.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+			isStarter := deploymode.IsStarter()
+			// TODO: Unify Starter external ID handling with other NextGen deployment modes.
+			if isStarter {
+				if err := checkStarterS3Path(u); err != nil {
+					return nil, err
+				}
+			}
 			if err := checkNextGenS3PathWithSem(u); err != nil {
 				return nil, err
 			}
-			values := u.Query()
-			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
-			u.RawQuery = values.Encode()
-			ld.Path = u.String()
+			// Non-Starter deployments derive the external ID from the keyspace.
+			if !isStarter {
+				values := u.Query()
+				values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
+				u.RawQuery = values.Encode()
+				ld.Path = u.String()
+			}
 		}
 	}
 
@@ -5233,24 +5263,13 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 	if err != nil {
 		return d, err
 	}
-	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType)
-	if err != nil {
-		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
-			return d, err
-		}
-		valStr, err1 := value.ToString()
-		if err1 != nil {
-			return d, err
-		}
-		return d, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
-	}
-	return d, nil
+	return regionsplit.ConvertValueToColumnType(value, col, b.ctx.GetSessionVars().StmtCtx.TypeCtx())
 }
 
 func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
-	handleColInfos := buildHandleColumnInfos(tblInfo)
+	handleColInfos := regionsplit.GetHandleColumnInfos(tblInfo)
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
@@ -5294,26 +5313,6 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Pla
 	}
 	p.Num = int(node.SplitOpt.Num)
 	return p, nil
-}
-
-func buildHandleColumnInfos(tblInfo *model.TableInfo) []*model.ColumnInfo {
-	switch {
-	case tblInfo.PKIsHandle:
-		if col := tblInfo.GetPkColInfo(); col != nil {
-			return []*model.ColumnInfo{col}
-		}
-	case tblInfo.IsCommonHandle:
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		pkCols := make([]*model.ColumnInfo, 0, len(pkIdx.Columns))
-		cols := tblInfo.Columns
-		for _, idxCol := range pkIdx.Columns {
-			pkCols = append(pkCols, cols[idxCol.Offset])
-		}
-		return pkCols
-	default:
-		return []*model.ColumnInfo{model.NewExtraHandleColInfo()}
-	}
-	return nil
 }
 
 const (
@@ -5407,19 +5406,57 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName,
 					v.Table.Name.L, "", authErr)
 
+				newDBName := getLowerDB(spec.NewTable.Schema, b.ctx.GetSessionVars())
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, newDBName,
 					spec.NewTable.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, newDBName,
 					spec.NewTable.Name.L, "", authErr)
+
+				if spec.Tp == ast.AlterTableExchangePartition {
+					// EXCHANGE PARTITION swaps the data of a partition of the partitioned
+					// table with the whole non-partitioned table, mutating BOTH tables. To
+					// match MySQL, ALTER, INSERT, CREATE and DROP are required on both tables.
+					// The shared path above already covers ALTER+DROP on the partitioned
+					// table and CREATE+INSERT on the non-partitioned table; add the remaining
+					// INSERT+CREATE on the partitioned table and ALTER+DROP on the
+					// non-partitioned table. (RENAME TABLE must not require these extras.)
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
+						v.Table.Name.L, "", authErr)
+
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, dbName,
+						v.Table.Name.L, "", authErr)
+
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, newDBName,
+						spec.NewTable.Name.L, "", authErr)
+
+					if b.ctx.GetSessionVars().User != nil {
+						authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+							b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
+					}
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, newDBName,
+						spec.NewTable.Name.L, "", authErr)
+				}
 			} else if spec.Tp == ast.AlterTableDropPartition || spec.Tp == ast.AlterTableTruncatePartition {
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
@@ -5623,33 +5660,28 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 	case *ast.RenameTableStmt:
-		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.TableToTables[0].OldTable.Name.L)
+		user := b.ctx.GetSessionVars().User
+		for _, tableToTable := range v.TableToTables {
+			var alterErr, dropErr, createErr, insertErr error
+			if user != nil {
+				alterErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername,
+					user.AuthHostname, tableToTable.OldTable.Name.L)
+				dropErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", user.AuthUsername,
+					user.AuthHostname, tableToTable.OldTable.Name.L)
+				createErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", user.AuthUsername,
+					user.AuthHostname, tableToTable.NewTable.Name.L)
+				insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername,
+					user.AuthHostname, tableToTable.NewTable.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, tableToTable.OldTable.Schema.L,
+				tableToTable.OldTable.Name.L, "", alterErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, tableToTable.OldTable.Schema.L,
+				tableToTable.OldTable.Name.L, "", dropErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, tableToTable.NewTable.Schema.L,
+				tableToTable.NewTable.Name.L, "", createErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tableToTable.NewTable.Schema.L,
+				tableToTable.NewTable.Name.L, "", insertErr)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.TableToTables[0].OldTable.Schema.L,
-			v.TableToTables[0].OldTable.Name.L, "", authErr)
-
-		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.TableToTables[0].OldTable.Name.L)
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.TableToTables[0].OldTable.Schema.L,
-			v.TableToTables[0].OldTable.Name.L, "", authErr)
-
-		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.TableToTables[0].NewTable.Name.L)
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.TableToTables[0].NewTable.Schema.L,
-			v.TableToTables[0].NewTable.Name.L, "", authErr)
-
-		if b.ctx.GetSessionVars().User != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
-				b.ctx.GetSessionVars().User.AuthHostname, v.TableToTables[0].NewTable.Name.L)
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.TableToTables[0].NewTable.Schema.L,
-			v.TableToTables[0].NewTable.Name.L, "", authErr)
 	case *ast.RecoverTableStmt:
 		if v.Table == nil {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -6606,12 +6638,32 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
-// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
-// name is used as the S3 external ID.
+// checkStarterS3Path requires every normalized external ID alias to have a
+// non-empty effective value. The caller preserves the original path.
+func checkStarterS3Path(u *url.URL) error {
+	values := u.Query()
+	hasExternalID := false
+	for k, vs := range values {
+		if objstore.NormalizeQueryParameterKey(k) != s3like.S3ExternalID {
+			continue
+		}
+		hasExternalID = len(vs) > 0 && vs[0] != ""
+		if !hasExternalID {
+			break
+		}
+	}
+	if !hasExternalID {
+		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, "external ID is required for Starter deployments")
+	}
+	return nil
+}
+
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication. For
+// non-Starter deployments, only allow the keyspace name as the external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	expectedExternalID := config.GetGlobalKeyspaceName()
+	isStarter := deploymode.IsStarter()
 	hasAccessKey := false
 	hasSecretAccessKey := false
 	hasRoleARN := false
@@ -6619,9 +6671,11 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
 		case s3like.S3ExternalID:
-			for _, v := range vs {
-				if v != expectedExternalID {
-					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+			if !isStarter {
+				for _, v := range vs {
+					if v != expectedExternalID {
+						return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+					}
 				}
 			}
 		case s3like.S3AccessKey:

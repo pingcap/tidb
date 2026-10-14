@@ -624,6 +624,9 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		stmt.recordStatementRURootEOF()
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 1000)
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordAnalyzeScanBytes(plan.ID(), 9)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddTiKVCoprocessorResponseBytes(29)
+		ctx.GetSessionVars().RUV2Metrics = metrics
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopStats(
 			plan.ID(),
 			kv.TiKV,
@@ -635,6 +638,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 
 		requirePublication(t, statementRUSimpleSelectFixture{stmt: stmt, owner: stmt.statementRUOwner}, ruv2.StmtUnits{
 			ScanBytes: 1009,
+			NetBytes:  29,
 		})
 	})
 

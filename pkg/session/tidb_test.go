@@ -288,6 +288,9 @@ func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
 }
 
 func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) {
+	originalBudget := vardef.PagingSizeBytes.Load()
+	t.Cleanup(func() { vardef.PagingSizeBytes.Store(originalBudget) })
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
@@ -302,7 +305,7 @@ func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) 
 	MustExec(t, se, "create resource group rg_paging_unlimited ru_per_sec=1000 burstable=unlimited")
 
 	const pagingSizeBytes = 4 * 1024 * 1024
-	se.sessionVars.PagingSizeBytes = pagingSizeBytes
+	MustExec(t, se, "set global tidb_paging_size_bytes = 4194304")
 
 	check := func(resourceGroupName string, rcEnabled bool, expected int) {
 		vardef.EnableResourceControl.Store(rcEnabled)
@@ -317,6 +320,82 @@ func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) 
 	check("rg_paging_capped", true, pagingSizeBytes)
 	check("rg_paging_unlimited", true, 0)
 	check("rg_paging_capped", false, 0)
+}
+
+func TestDistSQLCtxPagingSizeBytesGlobalUpdate(t *testing.T) {
+	originalBudget := vardef.PagingSizeBytes.Load()
+	t.Cleanup(func() { vardef.PagingSizeBytes.Store(originalBudget) })
+
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	writer, err := createSession(store)
+	require.NoError(t, err)
+	defer writer.Close()
+	oldBudget, err := writer.GetGlobalSysVar(vardef.TiDBPagingSizeBytes)
+	require.NoError(t, err)
+	oldRC, err := writer.GetGlobalSysVar(vardef.TiDBEnableResourceControl)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, writer.SetGlobalSysVar(context.Background(), vardef.TiDBPagingSizeBytes, oldBudget))
+		require.NoError(t, writer.SetGlobalSysVar(context.Background(), vardef.TiDBEnableResourceControl, oldRC))
+	}()
+	MustExec(t, writer, "set global tidb_enable_resource_control = on")
+	MustExec(t, writer, "set global tidb_paging_size_bytes = 0")
+	MustExec(t, writer, "create resource group rg_paging_global ru_per_sec=1000 burstable=off")
+
+	reader, err := createSession(store)
+	require.NoError(t, err)
+	defer reader.Close()
+	MustExec(t, reader, "set resource group rg_paging_global")
+	MustExec(t, reader, "begin")
+	MustExec(t, reader, "select 1")
+	previous := reader.GetDistSQLCtx()
+	require.Zero(t, previous.PagingSizeBytes)
+
+	for _, tc := range []struct {
+		value string
+		bytes int
+	}{
+		{"4194304", 4 * 1024 * 1024},
+		{"1048576", 1024 * 1024},
+		{"8388608", 8 * 1024 * 1024},
+		{"default", 0},
+		{"4194304", 4 * 1024 * 1024},
+		{"0", 0},
+	} {
+		previousBudget := previous.PagingSizeBytes
+		MustExec(t, writer, "set global tidb_paging_size_bytes = "+tc.value)
+		// Updating another session must not change an initialized context.
+		require.Same(t, previous, reader.GetDistSQLCtx())
+		require.Equal(t, previousBudget, reader.GetDistSQLCtx().PagingSizeBytes)
+
+		MustExec(t, reader, "select 1")
+		current := reader.GetDistSQLCtx()
+		require.NotSame(t, previous, current)
+		require.Equal(t, tc.bytes, current.PagingSizeBytes)
+		require.True(t, reader.sessionVars.InTxn())
+		previous = current
+	}
+	MustExec(t, reader, "rollback")
+
+	MustExec(t, writer, "set global tidb_paging_size_bytes = 4194304")
+	newReader, err := createSession(store)
+	require.NoError(t, err)
+	defer newReader.Close()
+	MustExec(t, newReader, "set resource group rg_paging_global")
+	rs := MustExecToRecodeSet(t, newReader, "select @@global.tidb_paging_size_bytes, @@tidb_paging_size_bytes")
+	rows, err := ResultSetToStringSlice(context.Background(), newReader, rs)
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"4194304", "4194304"}}, rows)
+	require.Equal(t, 4*1024*1024, newReader.GetDistSQLCtx().PagingSizeBytes)
+
+	// Cache rebuilds must restore the persisted budget, as on startup or a peer update.
+	vardef.PagingSizeBytes.Store(0)
+	dom.NotifyUpdateSysVarCache(true)
+	MustExec(t, reader, "select 1")
+	require.Equal(t, 4*1024*1024, reader.GetDistSQLCtx().PagingSizeBytes)
 }
 
 func TestScalarSubqueryRegistryTxnReplay(t *testing.T) {

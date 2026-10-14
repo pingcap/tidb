@@ -95,4 +95,10 @@ func TestMVAlterEventConstructors(t *testing.T) {
 	require.Equal(t, model.ActionAlterMaterializedViewLogPurge, alterMLogPurge.GetType())
 	require.Same(t, mlogTbl, alterMLogPurge.GetAlterMaterializedViewLogPurgeInfo())
 	require.Same(t, oldMLogTbl, alterMLogPurge.inner.OldTableInfo)
+
+	cutover := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl)
+	require.Equal(t, model.ActionMViewRefreshOutOfPlaceCutover, cutover.GetType())
+	newTableInfo, oldTableInfo := cutover.GetMViewRefreshOutOfPlaceCutoverInfo()
+	require.Same(t, mvTbl, newTableInfo)
+	require.Same(t, oldMVTbl, oldTableInfo)
 }

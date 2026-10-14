@@ -83,11 +83,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1387,6 +1389,22 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 		return nil
 	}
 	loadCloudStorageURI(w, job)
+	// On a NextGen cluster, global sort is the product design for add index /
+	// modify column. Local sort is only tolerated when SEM is disabled, which
+	// exists to make testing easier rather than as a supported production path.
+	// So, like IMPORT INTO, reject add index / modify column with local sort
+	// when SEM is enabled.
+	//
+	// job.ReorgMeta.IsFastReorg is required here even though fast reorg is
+	// always enabled on NextGen: for jobs involving system-related DBs,
+	// initJobReorgMetaFromVariables explicitly disables fast reorg and dist
+	// reorg because they cannot use the distributed task framework. Such jobs
+	// only happen during upgrade (e.g. ADD INDEX on mysql.stats_history) and
+	// fall back to txn backfill, which doesn't sort at all, so they must not be
+	// rejected here.
+	if kerneltype.IsNextGen() && sem.IsEnabled() && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("add index or modify column with local sort")
+	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
 		return err
@@ -1907,7 +1925,14 @@ func doReorgWorkForCreateIndex(
 				zap.String("table", tbl.Meta().Name.O))
 			return true, ver, nil
 		}
-		return runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, false)
+		if done && err == nil {
+			// This path has no metadata transition of its own, so persist the RU
+			// staged by the backfill once the reorg is done. The merge process
+			// below accounts it after its own table-state transition instead.
+			accountPendingReorgRU(jobCtx, job, nil)
+		}
+		return done, ver, err
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
@@ -1971,9 +1996,8 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
-		// TODO: Account the RU staged by the temporary-index merge. It is currently
-		// discarded when this job step ends.
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		accountPendingReorgRU(jobCtx, job, err)
 		return true, ver, errors.Trace(err)
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", allIndexInfos[0].BackfillState)
@@ -3032,6 +3056,7 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 			taskCtx.addedCount++
 		}
 
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillData", 3000)
@@ -3486,15 +3511,29 @@ func (w *worker) recordDistTaskRU(jobID int64, task *proto.Task) error {
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Trace(err)
 	}
+	if rc := w.getReorgCtx(jobID); rc != nil {
+		rc.setRU(distTaskRU(taskMeta))
+	}
+	return nil
+}
+
+// distTaskRU converts the workload of a finished backfill DXF task into RU v2.
+// A task is either the ingest backfill or the temp-index merge, so it is
+// accounted with the weight of the write path it actually used.
+func distTaskRU(taskMeta *BackfillTaskMeta) float64 {
+	if taskMeta.Summary == nil {
+		return 0
+	}
+	weights := currentDDLRUWeights()
+	if taskMeta.MergeTempIndex {
+		// The temp-index merge writes the merged index through transactions
+		// instead of ingest, so it is charged on committed transaction bytes.
+		return float64(taskMeta.Summary.MergeTempIndexTxnKVSize) * weights.TxnKVBytes
+	}
 	// TODO: Include scan bytes in this estimate. For partial indexes, the index
 	// KV size can be much smaller than the scanned bytes. For now, only index KV
 	// size is considered because normal and multi-valued indexes are more common.
-	if taskMeta.Summary != nil {
-		if rc := w.getReorgCtx(jobID); rc != nil {
-			rc.setRU(float64(taskMeta.Summary.IndexKVSize) * currentDDLRUWeights().IngestKVBytes)
-		}
-	}
-	return nil
+	return float64(taskMeta.Summary.IndexKVSize) * weights.IngestKVBytes
 }
 
 func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {
@@ -4025,6 +4064,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 			}
 			taskCtx.addedCount++
 		}
+		taskCtx.writtenBytes = txn.Size()
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "cleanUpIndexBackfillDataInTxn", 3000)

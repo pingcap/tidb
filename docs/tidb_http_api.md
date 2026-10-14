@@ -26,6 +26,8 @@
     curl http://{TiDBIP}:10080/metrics
     ```
 
+    In Starter deployment mode, every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Starter obtains the ID from the initialized storage codec; metric registration does not query PD for the ID. Its value is an empty string until storage initialization provides an ID, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Starter metrics sent to Pushgateway include the same label, although pushes before storage initialization use an empty value. Classic, Premium, and Premium Reserved retain their existing metric labels. Standalone BR is outside this Starter-specific change: it retains its existing constant labels, and its Go/process and other collectors are not automatically given `keyspace_id`.
+
 3. Get the metadata of all regions
 
     ```shell
@@ -768,6 +770,18 @@ timezone.*
 
      `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. `columnar_store_type` is this TiDB's `cse.columnar-store-type` (`tiflash`, `columnar`, or `both`). `reloaded` reports whether this request synced schema first. If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
 
+## Standby activation
+
+`POST /tidb-pool/activate` activates a TiDB process running in standby mode. Send the request to its status port. The response waits until the server is ready to accept connections.
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/tidb-pool/activate" \
+  -H 'Content-Type: application/json' \
+  -d '{"keyspace_name":"ks"}'
+```
+
+`keyspace_name` is required. Starter obtains the metric `keyspace_id` from the initialized storage codec, so the activation request does not need to supply it. Activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` are also supported.
+
 ## Test-only APIs (enableTestAPI failpoint)
 
 These APIs are only registered when the `enableTestAPI` failpoint is enabled.
@@ -798,7 +812,45 @@ curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?ha
 curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]"
 ```
 
-## APIs unique to TiDB-X
+## APIs unique to TiDB X
+
+### Get global system variables
+
+`GET /variables/global` returns global system variables for operator inspection. It is available only in NextGen (TiDB X), on the status port of both SYSTEM-keyspace and tenant-keyspace TiDB instances. It reports the current keyspace of the TiDB process handling the request, not an aggregation across keyspaces.
+
+Method: `GET` only. Parameters: none.
+
+```shell
+curl http://{TiDBIP}:10080/variables/global
+```
+
+The response is a JSON object mapping variable names to string values. Example response excerpt:
+
+```json
+{
+ "autocommit": "ON",
+ "max_connections": "0",
+ "tidb_cloud_storage_uri": "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx",
+ "tidb_exp_embed_openai_api_key": "******",
+ "validate_password.length": "8"
+}
+```
+
+Variable scope and no-op selection follow `SHOW GLOBAL VARIABLES`, including read-only and instance-scoped variables, but excluding session-only variables and disabled no-op variables. This operator-facing API does not apply Security Enhanced Mode (SEM v1 or v2) visibility filtering: variables hidden by SEM are included, with sensitive values masked as described below.
+
+Values are read through the existing global-variable getters. For every included variable marked `SysVar.IsSensitive`, a non-empty value is replaced with the literal `******`; an empty value remains an empty string. This includes:
+
+- Embedding API keys: `tidb_exp_embed_jina_ai_api_key`, `tidb_exp_embed_openai_api_key`, `tidb_exp_embed_cohere_api_key`, `tidb_exp_embed_huggingface_api_key`, `tidb_exp_embed_nvidia_nim_api_key`, and `tidb_exp_embed_gemini_api_key`.
+- LDAP bind passwords: `authentication_ldap_sasl_bind_root_pwd` and `authentication_ldap_simple_bind_root_pwd`.
+- The entire non-empty values of `tidb_config`, `tidb_trace_event`, `init_connect`, `init_slave` (when no-op variables are enabled), and `validate_password.dictionary`.
+
+`tidb_cloud_storage_uri` uses its existing getter's `ast.RedactURL` behavior instead of whole-value masking: an empty URI remains empty, while configured URIs retain the bucket, path, and non-secret options. Recognized sensitive query parameters are replaced with `xxxxxx`: `access-key`, `secret-access-key`, and `session-token` for S3/KS3/OSS; `account-key`, `encryption-key`, `sas-token`, and `endpoint` for Azure/Azblob. The entire Azure endpoint is masked because its URL can contain a SAS token used directly by the storage client. This follows the existing SQL getter's redaction rules, not a general-purpose sanitizer for arbitrary URL content.
+
+There is no option to return raw sensitive values, and `tidb_redact_log` does not affect this masking. Ordinary password-policy settings, such as `validate_password.length`, remain visible. Sensitivity is opt-in metadata: authors of any variable containing secrets, whether built-in or extension-registered, must set `SysVar.IsSensitive`; unannotated variables are not guaranteed to be masked.
+
+The request context has a 10-second timeout, but this is not a hard bound on response time: the GC-variable getters read `mysql.tidb` through `GetTiDBTableValue`, which currently uses `context.TODO()` and does not inherit the request deadline or client-disconnect cancellation. When all five `mysql.tidb`-backed GC variables are visible, each request performs five restricted SQL reads of `mysql.tidb`, or six when GC concurrency is not automatic, in addition to remote I/O from other getters such as `tidb_external_ts`. These reads may require TiKV/PD round trips; the response is not cached, so repeated scrapes repeat this work.
+
+Responses include `Cache-Control: no-store`. If reading a variable fails, the API returns HTTP 500 with a generic error instead of a partial result. The server log records the underlying error and, for a getter failure, the variable name. The endpoint inherits the status port's trusted access controls and does not authenticate SQL users; restrict status-port access to trusted operators.
 
 ### Run ADMIN CHECK for an index
 ```shell
@@ -812,11 +864,11 @@ curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{i
 }
 ```
 
-## APIs unique to TiDB-X SYSTEM keyspace
+## APIs unique to TiDB X SYSTEM keyspace
 
-These APIs are registered only on TiDB instances running in the TiDB-X SYSTEM keyspace. All examples in this section assume `{TiDBIP}:10080` belongs to a TiDB process in that SYSTEM keyspace.
+These APIs are registered only on TiDB instances running in the TiDB X SYSTEM keyspace. All examples in this section assume `{TiDBIP}:10080` belongs to a TiDB process in that SYSTEM keyspace.
 
-The `/dxf/...` APIs are for DXF (Distributed eXecution Framework) operator observability and emergency runtime tuning. In TiDB-X, DXF runs as a shared SYSTEM-keyspace service for resource-intensive work such as IMPORT INTO and distributed add index, so some APIs are called on a SYSTEM-keyspace TiDB process but target a user keyspace parameter.
+The `/dxf/...` APIs are for DXF (Distributed eXecution Framework) operator observability and emergency runtime tuning. In TiDB X, DXF runs as a shared SYSTEM-keyspace service for resource-intensive work such as IMPORT INTO and distributed add index, so some APIs are called on a SYSTEM-keyspace TiDB process but target a user keyspace parameter.
 
 ### List DXF nodes
 
@@ -833,7 +885,7 @@ Parameters: none.
 Response fields:
 
 - `host`: The TiDB execution ID in `IP:PORT` form.
-- `role`: The node's configured TiDB service scope. `dxf_service` is the normal value for TiDB-X DXF nodes; `background`, an empty string, or another configured scope can also appear.
+- `role`: The node's configured TiDB service scope. `dxf_service` is the normal value for TiDB X DXF nodes; `background`, an empty string, or another configured scope can also appear.
 - `cpu_count`: The number of CPU slots available to DXF on the node.
 
 Example response:
