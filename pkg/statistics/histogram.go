@@ -1105,6 +1105,16 @@ func (hg *Histogram) OutOfRangeShape(lDatum, rDatum *types.Datum, histNDV int64)
 		HistNDV:  histNDV,
 	}
 
+	// A range whose upper bound is NULL or MinNotNull holds only NULL values,
+	// e.g. the [NULL, MinNotNull) range that cross estimation builds for the rows
+	// before an `IS NOT NULL` range. NULLs are counted separately and are never
+	// outside the histogram's range. Return before the scalar conversion, which
+	// maps NULL to 0 and MinNotNull to -MaxFloat64 and so inverts the range.
+	if rDatum.IsNull() || rDatum.Kind() == types.KindMinNotNull {
+		shape.Impossible = true
+		return shape
+	}
+
 	// Calculate how much of the statistics share a common prefix.
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
