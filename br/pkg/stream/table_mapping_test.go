@@ -672,6 +672,58 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[100].TableID)
 	})
 
+	t.Run("schema route recreated source uses live owner settings", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		oldInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("b"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}
+		liveInfo := &model.DBInfo{ID: 2, Name: ast.NewCIStr("b"), Charset: "latin1", Collate: "latin1_bin"}
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {Name: "x", SourceName: "b", DbID: 900, SchemaRouted: true, SourceDBInfo: oldInfo},
+			2: {Name: "X", SourceName: "B", DbID: 900, SchemaRouted: true, SourceDBInfo: liveInfo},
+		}
+		tm.recordDatabaseEvent(1, 10, true)
+		tm.recordDatabaseEvent(2, 20, false)
+		targets, err := tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.Equal(t, int64(900), targets[0].ID)
+		require.Same(t, liveInfo, targets[0].SourceDBInfo)
+		require.Same(t, oldInfo, tm.DBReplaceMap[1].SourceDBInfo)
+		require.Len(t, tm.DBReplaceMap, 2)
+
+		// Historical aliases still participate in downstream ID validation.
+		tm.DBReplaceMap[1].DbID = 901
+		_, err = tm.TableRouteTargetDatabases()
+		require.ErrorContains(t, err, "conflicting downstream IDs")
+		tm.DBReplaceMap[1].DbID = 900
+
+		// Unknown live settings cannot be repaired with obsolete settings.
+		tm.DBReplaceMap[2].SourceDBInfo = nil
+		targets, err = tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Nil(t, targets[0].SourceDBInfo)
+		tm.DBReplaceMap[2].SourceDBInfo = liveInfo
+
+		// Without a committed deletion, both owners must remain compatible.
+		delete(tm.databaseEvents, 1)
+		_, err = tm.TableRouteTargetDatabases()
+		require.ErrorContains(t, err, "incompatible charset, collation, or placement policy")
+		tm.recordDatabaseEvent(1, 10, true)
+
+		// A deleted unrelated source or an unknown identity is not a predecessor.
+		for _, sourceName := range []string{"other", ""} {
+			tm.DBReplaceMap[1].SourceName = sourceName
+			_, err = tm.TableRouteTargetDatabases()
+			require.ErrorContains(t, err, "incompatible charset, collation, or placement policy")
+		}
+		tm.DBReplaceMap[1].SourceName = "b"
+
+		// A deleted schema with no live successor keeps its existing behavior.
+		delete(tm.DBReplaceMap, 2)
+		targets, err = tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Same(t, oldInfo, targets[0].SourceDBInfo)
+	})
+
 	t.Run("historical aliases use the latest parent settings", func(t *testing.T) {
 		tm := NewTableMappingManager()
 		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
