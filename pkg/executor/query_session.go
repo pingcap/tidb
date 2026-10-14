@@ -69,11 +69,13 @@ func newImportQuerySession(
 	if err != nil {
 		return nil, nil, err
 	}
-	node, err := parseImportQuery(sctx, sql)
+	importStmt, node, err := parseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := ResetContextOfStmt(sctx, node); err != nil {
+	// Reset with the IMPORT INTO statement, so the SELECT is evaluated under the
+	// same statement flags as classic IMPORT INTO.
+	if err := ResetContextOfStmt(sctx, importStmt); err != nil {
 		return nil, nil, err
 	}
 	if err := sessiontxn.GetTxnManager(sctx).EnterNewTxn(
@@ -83,7 +85,6 @@ func newImportQuerySession(
 	}
 	vars.SnapshotTS = q.ReadTS
 	vars.SnapshotInfoschema = is
-	vars.StmtCtx.InitFromPBFlagAndTz(q.PushDownFlags, vars.Location())
 	querySession := &importQuerySession{Context: sctx, schema: is}
 	querySession.PlanCtxExtended = plannersession.NewPlanCtxExtended(querySession)
 	return querySession, node, nil
