@@ -26,13 +26,61 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	brutils "github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBuildRestoreNamePlanUsesPiTRLatestSourceName(t *testing.T) {
+
+	t.Run("a dropped empty schema does not conflict with its replacement", func(t *testing.T) {
+		router, err := nameroute.Parse([]string{"c.u:y.copy"})
+		require.NoError(t, err)
+		a := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("a"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}}
+		oldB := &metautil.Database{Info: &model.DBInfo{ID: 2, Name: ast.NewCIStr("b"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}}
+		c := &metautil.Database{Info: &model.DBInfo{ID: 3, Name: ast.NewCIStr("c"), Charset: "utf8mb4", Collate: "utf8mb4_bin"}}
+		table := &metautil.Table{DB: a.Info, Info: &model.TableInfo{ID: 10, Name: ast.NewCIStr("t")}}
+		other := &metautil.Table{DB: c.Info, Info: &model.TableInfo{ID: 30, Name: ast.NewCIStr("u")}}
+		dbs, tables := []*metautil.Database{a, oldB, c}, []*metautil.Table{table, other}
+		history := stream.NewTableHistoryManager()
+		history.RecordDBIdToName(4, "b", (1<<60)+30)
+		history.AddTableHistory(10, "t", 4, (1<<60)+40)
+		tracker := brutils.NewPiTRIdTracker()
+		tracker.TrackTableId(4, 10)
+		tracker.TrackTableId(3, 30)
+		mapping := stream.NewTableMappingManager()
+		mapping.DBReplaceMap[4] = &stream.DBReplace{SourceDBInfo: &model.DBInfo{ID: 4, Name: ast.NewCIStr("b"), Charset: "latin1", Collate: "latin1_bin"}}
+		deleteSchema := func(dbID int64, ts uint64) {
+			entry := &kv.Entry{
+				Key:   brutils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(dbID), ts),
+				Value: codec.EncodeUvarint([]byte{byte(stream.WriteTypeDelete)}, ts-1),
+			}
+			require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(entry, consts.WriteCF, ts, history))
+		}
+		deleteSchema(2, (1<<60)+20)
+		sources := buildPiTRRestoreNameSources(history, tracker, dbs, tables, mapping)
+		plan, err := buildRestoreNamePlan(router, dbs, tables, sources)
+		require.NoError(t, err)
+		require.Equal(t, int64(4), plan.tables[0].TargetDB.ID)
+		require.Equal(t, "latin1", plan.tables[0].TargetDB.Charset)
+		require.Equal(t, "latin1_bin", plan.tables[0].TargetDB.Collate)
+		require.Equal(t, "utf8mb4", oldB.Info.Charset)
+		for _, dbPlan := range plan.databases {
+			require.NotEqual(t, int64(2), dbPlan.Source.Info.ID)
+		}
+		// An expired original parent is also unnecessary once its table is
+		// created directly in the latest destination. A live empty a is kept.
+		deleteSchema(1, (1<<60)+50)
+		sources = buildPiTRRestoreNameSources(history, tracker, dbs, tables, mapping)
+		plan, err = buildRestoreNamePlan(router, dbs, tables, sources)
+		require.NoError(t, err)
+		require.Len(t, plan.databases, 2)
+	})
 	t.Run("an unrelated route preserves the latest source database settings", func(t *testing.T) {
 		router, err := nameroute.Parse([]string{"c.u:y.copy"})
 		require.NoError(t, err)

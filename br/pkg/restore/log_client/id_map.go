@@ -51,6 +51,34 @@ func pitrIDMapsPrefix(clusterID, upstreamClusterID, restoredTS uint64) string {
 	return fmt.Sprintf("pitr_id_maps/v2/cluster-%d/upstream-%d/restored-%d/", clusterID, upstreamClusterID, restoredTS)
 }
 
+// FindUniquePitrIDMapFile selects a v2 storage map for one upstream/restore
+// boundary. It returns an empty path when no map exists and rejects multiple
+// owners; callers decide independently whether legacy files are acceptable.
+func FindUniquePitrIDMapFile(
+	ctx context.Context,
+	storage storeapi.Storage,
+	clusterID, upstreamClusterID, restoredTS uint64,
+) (string, error) {
+	prefix := pitrIDMapsPrefix(clusterID, upstreamClusterID, restoredTS)
+	var metaFileName string
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(path string, _ int64) error {
+		var owner uint64
+		if n, err := fmt.Sscanf(path, prefix+"restore-%d.meta", &owner); err != nil || n != 1 ||
+			path != PitrIDMapsFilenameForTask(clusterID, upstreamClusterID, restoredTS, owner) {
+			return errors.Errorf("invalid PiTR ID map owner filename %q", path)
+		}
+		if metaFileName != "" {
+			return errors.Errorf("multiple PiTR ID maps exist at restored TS %d for upstream cluster %d; cannot choose a unique task owner", restoredTS, upstreamClusterID)
+		}
+		metaFileName = path
+		return nil
+	})
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return metaFileName, nil
+}
+
 func (rc *LogClient) pitrIDMapTableExists() bool {
 	return rc.dom.InfoSchema().TableExists(ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
 }
@@ -226,20 +254,7 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 		if legacyExists {
 			return nil, errors.Errorf("legacy PiTR ID map at restored TS %d has no task owner or upstream identity; cannot safely choose a predecessor", restoredTS)
 		}
-		prefix := pitrIDMapsPrefix(clusterID, rc.upstreamClusterID, restoredTS)
-		metaFileName = ""
-		err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(path string, _ int64) error {
-			var owner uint64
-			if n, err := fmt.Sscanf(path, prefix+"restore-%d.meta", &owner); err != nil || n != 1 ||
-				path != PitrIDMapsFilenameForTask(clusterID, rc.upstreamClusterID, restoredTS, owner) {
-				return errors.Errorf("invalid PiTR ID map owner filename %q", path)
-			}
-			if metaFileName != "" {
-				return errors.Errorf("multiple PiTR ID maps exist at restored TS %d for upstream cluster %d; cannot choose a predecessor task", restoredTS, rc.upstreamClusterID)
-			}
-			metaFileName = path
-			return nil
-		})
+		metaFileName, err = FindUniquePitrIDMapFile(ctx, storage, clusterID, rc.upstreamClusterID, restoredTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

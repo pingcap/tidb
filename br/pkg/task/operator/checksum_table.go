@@ -193,13 +193,22 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 	}
 }
 
-func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, clusterID uint64) ([]*backup.PitrDBMap, error) {
+func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, upstreamClusterID uint64) ([]*backup.PitrDBMap, error) {
 	if len(c.cfg.Storage) > 0 {
 		_, stg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
 		if err != nil {
 			return nil, errors.Annotate(err, "failed to create storage")
 		}
-		metaFileName := logclient.PitrIDMapsFilename(clusterID, restoredTS)
+		downstreamClusterID := c.mgr.GetPDClient().GetClusterID(ctx)
+		metaFileName, err := logclient.FindUniquePitrIDMapFile(ctx, stg, downstreamClusterID, upstreamClusterID, restoredTS)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to select pitr id map file")
+		}
+		if metaFileName == "" {
+			// Read-only checksum may use an old map, but never prefer a stale
+			// ownerless file over a v2 candidate or bypass an owner ambiguity.
+			metaFileName = logclient.PitrIDMapsFilename(downstreamClusterID, restoredTS)
+		}
 		log.Info("get pitr id map from the external storage", zap.String("file name", metaFileName))
 		metaData, err := stg.ReadFile(ctx, metaFileName)
 		if err != nil {
@@ -249,7 +258,7 @@ func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, resto
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
 		getPitrIDMapSQL,
-		restoredTS, clusterID,
+		restoredTS, upstreamClusterID,
 	)
 	if errSQL != nil {
 		return nil, errors.Annotate(err, "failed to get pitr id map from mysql.tidb_pitr_id_map")
@@ -349,16 +358,23 @@ func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*back
 	c.checksumTS = checksumTS
 	router := make(map[string]map[string]map[int64]int64)
 	for _, dbidmap := range idmaps {
-		tableRouter, exists := router[dbidmap.Name]
-		if !exists {
-			tableRouter = make(map[string]map[int64]int64)
-			router[dbidmap.Name] = tableRouter
-		}
 		for _, tableidmap := range dbidmap.Tables {
-			down2upmap, exists := tableRouter[tableidmap.Name]
+			// A table route can use a different schema from its source parent.
+			// Match the effective target using infoschema's normalized names.
+			dbName := ast.NewCIStr(dbidmap.Name).L
+			if tableidmap.DownstreamDbName != "" {
+				dbName = ast.NewCIStr(tableidmap.DownstreamDbName).L
+			}
+			tableRouter, exists := router[dbName]
+			if !exists {
+				tableRouter = make(map[string]map[int64]int64)
+				router[dbName] = tableRouter
+			}
+			tableName := ast.NewCIStr(tableidmap.Name).L
+			down2upmap, exists := tableRouter[tableName]
 			if !exists {
 				down2upmap = make(map[int64]int64)
-				tableRouter[tableidmap.Name] = down2upmap
+				tableRouter[tableName] = down2upmap
 			}
 			down2upmap[tableidmap.IdMap.DownstreamId] = tableidmap.IdMap.UpstreamId
 			for _, phyidmap := range tableidmap.Partitions {
@@ -375,7 +391,7 @@ func (c *checksumTableCtx) genRequestsWithIDMap(curr []tableInDB, idmaps []*back
 		if !exists {
 			return nil, errors.Errorf("no db map found by db name: %s", t.dbName)
 		}
-		idRouter, exists := tableRouter[t.info.Name.O]
+		idRouter, exists := tableRouter[t.info.Name.L]
 		if !exists {
 			return nil, errors.Errorf("no table map found by table name: %s", t.info.Name.O)
 		}

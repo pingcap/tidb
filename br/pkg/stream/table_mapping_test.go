@@ -672,6 +672,38 @@ func TestMergeBaseDBReplace(t *testing.T) {
 		require.Equal(t, int64(900), tm.DBReplaceMap[2].TableMap[100].TableID)
 	})
 
+	t.Run("historical aliases use the latest parent settings", func(t *testing.T) {
+		tm := NewTableMappingManager()
+		tm.DBReplaceMap = map[UpstreamID]*DBReplace{
+			1: {
+				Name: "a", DbID: 101,
+				SourceDBInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("a"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+				TableMap:     map[UpstreamID]*TableReplace{11: {Name: "copy", TableID: 111, TargetDBName: "x", TargetDBID: 900}},
+			},
+			2: {
+				Name: "b", DbID: 102,
+				SourceDBInfo: &model.DBInfo{ID: 2, Name: ast.NewCIStr("b"), Charset: "latin1", Collate: "latin1_bin"},
+				TableMap:     map[UpstreamID]*TableReplace{11: {Name: "copy", TableID: 111, TargetDBName: "x", TargetDBID: 900}},
+			},
+		}
+		tm.latestTableSources = map[UpstreamID]sourceTableLocation{11: {dbID: 2, name: "t", ts: 10}}
+		tm.recordTableEvent(1, 11, 10, true)
+		tm.recordTableEvent(2, 11, 10, false)
+		tm.recordDatabaseEvent(1, 20, true)
+		targets, err := tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.Equal(t, "latin1", targets[0].SourceDBInfo.Charset)
+		require.Equal(t, int64(2), targets[0].SourceDBInfo.ID)
+		require.Len(t, tm.DBReplaceMap[1].TableMap, 1)
+		// A missing latest DBInfo cannot be repaired with the historical
+		// parent's different settings; B3 must still reject target creation.
+		tm.DBReplaceMap[2].SourceDBInfo = nil
+		targets, err = tm.TableRouteTargetDatabases()
+		require.NoError(t, err)
+		require.Nil(t, targets[0].SourceDBInfo)
+	})
+
 	t.Run("carry source metadata into a table-route target database", func(t *testing.T) {
 		tm := NewTableMappingManager()
 		tm.DBReplaceMap = map[UpstreamID]*DBReplace{

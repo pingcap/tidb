@@ -44,6 +44,7 @@ type restoreNamePlan struct {
 // resolve a stable target for each upstream object ID.
 type restoreNameSources struct {
 	databaseInfos    map[int64]*metautil.Database
+	deletedDatabases map[int64]bool
 	tableDatabaseIDs map[int64]int64
 	databases        map[int64]ast.CIStr
 	tables           map[int64]nameroute.ObjectName
@@ -273,6 +274,12 @@ func buildRestoreNamePlan(
 	// one for a schema-level route so the schema itself is restored even when all
 	// of its tables are overridden to other target schemas.
 	for _, db := range dbs {
+		if sources != nil && sources.deletedDatabases[db.Info.ID] {
+			// Table plans above already create containers needed for snapshot
+			// data. An expired independent schema must not compete with a
+			// later schema ID reusing its name and different settings.
+			continue
+		}
 		sourceSchema := db.Info.Name
 		if sources != nil {
 			if routedSource, ok := sources.databases[db.Info.ID]; ok {
@@ -332,6 +339,7 @@ func buildPiTRRestoreNameSources(
 ) *restoreNameSources {
 	sources := &restoreNameSources{
 		databaseInfos:    make(map[int64]*metautil.Database),
+		deletedDatabases: make(map[int64]bool),
 		tableDatabaseIDs: make(map[int64]int64),
 		databases:        make(map[int64]ast.CIStr),
 		tables:           make(map[int64]nameroute.ObjectName),
@@ -355,6 +363,9 @@ func buildPiTRRestoreNameSources(
 	// latest source-schema settings after a cross-schema upstream rename.
 	for _, mapping := range mappings {
 		for dbID, db := range mapping.DBReplaceMap {
+			if mapping.IsSourceDatabaseDeleted(dbID) {
+				sources.deletedDatabases[dbID] = true
+			}
 			if db.SourceDBInfo != nil {
 				sources.databaseInfos[dbID] = &metautil.Database{Info: db.SourceDBInfo}
 			}

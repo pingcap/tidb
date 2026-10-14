@@ -831,6 +831,13 @@ func (tm *TableMappingManager) recordDatabaseEvent(dbID UpstreamID, ts uint64, d
 	}
 }
 
+// IsSourceDatabaseDeleted reports a committed Delete at the end of the scanned
+// interval. Snapshot containers may still be needed for historical table data,
+// but an expired schema must not contribute an independent creation plan.
+func (tm *TableMappingManager) IsSourceDatabaseDeleted(dbID UpstreamID) bool {
+	return tm.databaseEvents[dbID].deleted
+}
+
 func (tm *TableMappingManager) recordTableEvent(dbID, tableID UpstreamID, ts uint64, deleted bool) {
 	if tm.tableEvents == nil {
 		tm.tableEvents = make(map[tableLocationKey]metadataEvent)
@@ -1340,7 +1347,7 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 				return nil, err
 			}
 		}
-		for _, tableReplace := range dbReplace.TableMap {
+		for tableID, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut || tableReplace.TargetDBName == "" {
 				continue
 			}
@@ -1348,8 +1355,18 @@ func (tm *TableMappingManager) TableRouteTargetDatabases() ([]TargetDatabase, er
 				ast.NewCIStr(tableReplace.TargetDBName).L == ast.NewCIStr(dbReplace.Name).L {
 				continue
 			}
+			sourceDBInfo := dbReplace.SourceDBInfo
+			if latest, ok := tm.latestTableSources[tableID]; ok {
+				// Every historical alias rewrites to this table's stable target.
+				// Only its latest parent owns the target creation settings. If
+				// those settings are unavailable, never borrow an older parent's.
+				sourceDBInfo = nil
+				if sourceDB := tm.DBReplaceMap[latest.dbID]; sourceDB != nil {
+					sourceDBInfo = sourceDB.SourceDBInfo
+				}
+			}
 			if err := mergeTarget(ast.NewCIStr(tableReplace.TargetDBName).L, tableReplace.TargetDBName,
-				tableReplace.TargetDBID, dbReplace.SourceDBInfo); err != nil {
+				tableReplace.TargetDBID, sourceDBInfo); err != nil {
 				return nil, err
 			}
 		}

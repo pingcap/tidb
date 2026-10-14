@@ -606,6 +606,74 @@ func TestPiTRRestoreWithRename(t *testing.T) {
 		kit.tk.MustQuery("SELECT schema_name FROM information_schema.schemata WHERE schema_name='rn_before'").Check(testkit.Rows("rn_before"))
 	})
 
+	t.Run("recreated destination with an unrelated route", func(t *testing.T) {
+		kit := NewLogBackupKit(t)
+		taskName := "test-pitr-recreated-schema-move"
+		drop := func() {
+			for _, name := range []string{"rn_recreate_before", "rn_recreate_after", "rn_recreate_other", "rn_recreate_copy"} {
+				kit.tk.MustExec("DROP DATABASE IF EXISTS " + name)
+			}
+		}
+		drop()
+		t.Cleanup(drop)
+		kit.tk.MustExec("CREATE DATABASE rn_recreate_before CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+		kit.tk.MustExec("CREATE DATABASE rn_recreate_after CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+		kit.tk.MustExec("CREATE DATABASE rn_recreate_other CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+		kit.tk.MustExec("CREATE TABLE rn_recreate_before.t(id INT PRIMARY KEY)")
+		kit.tk.MustExec("CREATE TABLE rn_recreate_other.u(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_recreate_before.t VALUES (1)")
+		kit.tk.MustExec("INSERT INTO rn_recreate_other.u VALUES (1)")
+		kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+		kit.RunFullBackup(func(bc *task.BackupConfig) {})
+		kit.tk.MustExec("DROP DATABASE rn_recreate_after")
+		kit.tk.MustExec("CREATE DATABASE rn_recreate_after CHARACTER SET latin1 COLLATE latin1_bin")
+		kit.tk.MustExec("RENAME TABLE rn_recreate_before.t TO rn_recreate_after.t")
+		kit.tk.MustExec("INSERT INTO rn_recreate_after.t VALUES (2)")
+		kit.tk.MustExec("DROP DATABASE rn_recreate_before")
+		kit.forceFlushAndWait(taskName)
+		kit.StopTaskIfExists(taskName)
+		drop()
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			rc.Rename = []string{"rn_recreate_other.u:rn_recreate_copy.copy"}
+			kit.SetFilter(&rc.Config, "rn_recreate_before.*", "rn_recreate_after.*", "rn_recreate_other.*")
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_recreate_after.t ORDER BY id").Check(testkit.Rows("1", "2"))
+		kit.tk.MustQuery("SELECT * FROM rn_recreate_copy.copy").Check(testkit.Rows("1"))
+		kit.tk.MustQuery("SELECT default_character_set_name, default_collation_name FROM information_schema.schemata WHERE schema_name='rn_recreate_after'").Check(testkit.Rows("latin1 latin1_bin"))
+		kit.tk.MustQuery("SELECT schema_name FROM information_schema.schemata WHERE schema_name='rn_recreate_before'").Check(testkit.Rows())
+	})
+
+	t.Run("routed move drops its historical parent", func(t *testing.T) {
+		kit := NewLogBackupKit(t)
+		taskName := "test-pitr-routed-historical-settings"
+		drop := func() {
+			for _, name := range []string{"rn_alias_before", "rn_alias_after", "rn_alias_target"} {
+				kit.tk.MustExec("DROP DATABASE IF EXISTS " + name)
+			}
+		}
+		drop()
+		t.Cleanup(drop)
+		kit.tk.MustExec("CREATE DATABASE rn_alias_before CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+		kit.tk.MustExec("CREATE TABLE rn_alias_before.t(id INT PRIMARY KEY)")
+		kit.tk.MustExec("INSERT INTO rn_alias_before.t VALUES (1)")
+		kit.RunLogStart(taskName, func(sc *task.StreamConfig) {})
+		kit.RunFullBackup(func(bc *task.BackupConfig) {})
+		kit.tk.MustExec("CREATE DATABASE rn_alias_after CHARACTER SET latin1 COLLATE latin1_bin")
+		kit.tk.MustExec("RENAME TABLE rn_alias_before.t TO rn_alias_after.t")
+		kit.tk.MustExec("INSERT INTO rn_alias_after.t VALUES (2)")
+		kit.tk.MustExec("DROP DATABASE rn_alias_before")
+		kit.forceFlushAndWait(taskName)
+		kit.StopTaskIfExists(taskName)
+		drop()
+		kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+			rc.Rename = []string{"rn_alias_after.t:rn_alias_target.copy"}
+			kit.SetFilter(&rc.Config, "rn_alias_before.*", "rn_alias_after.*")
+		})
+		kit.tk.MustQuery("SELECT * FROM rn_alias_target.copy ORDER BY id").Check(testkit.Rows("1", "2"))
+		kit.tk.MustQuery("SELECT default_character_set_name, default_collation_name FROM information_schema.schemata WHERE schema_name='rn_alias_target'").Check(testkit.Rows("latin1 latin1_bin"))
+		kit.tk.MustQuery("SELECT schema_name FROM information_schema.schemata WHERE schema_name='rn_alias_before'").Check(testkit.Rows())
+	})
+
 	t.Run("independent log-only tasks", func(t *testing.T) {
 		kit := NewLogBackupKit(t)
 		taskName := "test-pitr-rename-split"

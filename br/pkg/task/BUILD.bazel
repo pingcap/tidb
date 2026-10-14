@@ -164,6 +164,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/metaservice",
         "//pkg/objstore",
