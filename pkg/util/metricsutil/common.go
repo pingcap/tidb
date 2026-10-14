@@ -26,11 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
->>>>>>> 852e1f10291 (metrics: add keyspace_id to all exported metrics for starter (#71942))
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
@@ -85,19 +81,8 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
-<<<<<<< HEAD
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithInitMetricsOption(false))
-=======
-	pdClientOptions := []opt.ClientOption{
-		opt.WithCustomTimeoutOption(10 * time.Second),
-		opt.WithInitMetricsOption(false),
-	}
-	if diagnosticmode.Enabled() {
-		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
-	}
-	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt, pdClientOptions...)
->>>>>>> 852e1f10291 (metrics: add keyspace_id to all exported metrics for starter (#71942))
+		opt.WithCustomTimeoutOption(10*time.Second), opt.WithInitMetricsOption(false))
 	if err != nil {
 		return err
 	}

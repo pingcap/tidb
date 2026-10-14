@@ -8,11 +8,7 @@ go_library(
     deps = [
         "//br/pkg/task",
         "//pkg/config",
-<<<<<<< HEAD
-=======
         "//pkg/config/deploymode",
-        "//pkg/config/diagnosticmode",
->>>>>>> 852e1f10291 (metrics: add keyspace_id to all exported metrics for starter (#71942))
         "//pkg/config/kerneltype",
         "//pkg/domain/metrics",
         "//pkg/executor/metrics",
@@ -54,12 +50,6 @@ go_test(
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/metrics/common",
-<<<<<<< HEAD
-=======
-        "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
-        "//pkg/testkit",
-        "//pkg/util/dbterror/plannererrors",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/pdpb",
         "@com_github_prometheus_client_golang//prometheus",
@@ -67,7 +57,6 @@ go_test(
         "@com_github_prometheus_client_golang//prometheus/promhttp",
         "@com_github_prometheus_client_golang//prometheus/push",
         "@com_github_prometheus_common//expfmt",
->>>>>>> 852e1f10291 (metrics: add keyspace_id to all exported metrics for starter (#71942))
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
     ],
