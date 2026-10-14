@@ -259,8 +259,29 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
+// QueryPlan records source metadata and session settings after tenant privilege checks.
+// The worker optimizes the task statement against this captured source schema.
+type QueryPlan struct {
+	// ReadTS is the submitting SELECT snapshot, reused by every worker attempt.
+	ReadTS    uint64
+	CurrentDB string
+	Timestamp int64
+	Keyspace  string
+	Databases map[int64]*model.DBInfo
+	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
+	// Persist table definitions grouped by database ID explicitly.
+	Tables map[int64][]*model.TableInfo
+	// SessionVars is an explicit subset of SELECT settings inherited from the submitter.
+	// Extend the subset when another setting must be preserved on the worker.
+	// TiDB worker memory limits are configured separately.
+	SessionVars   map[string]string
+	PushDownFlags uint64
+}
+
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
+	// Query is present only for distributed IMPORT FROM SELECT.
+	Query  *QueryPlan `json:",omitempty"`
 	DBName string
 	DBID   int64
 	// TableInfo is the table info we used during import, we might change it
@@ -793,9 +814,6 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
-		if p.DataSourceType == DataSourceTypeQuery {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
-		}
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -1268,7 +1286,25 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 }
 
 // InitDataStore initializes the data store.
-func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+func (e *LoadDataController) InitDataStore(ctx context.Context) (err error) {
+	if e.IsGlobalSort() {
+		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
+		if err3 != nil {
+			return err3
+		}
+		e.globalSortStore = store
+		defer func() {
+			if err != nil {
+				store.Close()
+				e.globalSortStore = nil
+			}
+		}()
+	}
+
+	if e.Path == "" {
+		return nil
+	}
+
 	u, err2 := objstore.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
@@ -1286,13 +1322,6 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	}
 	e.dataStore = s
 
-	if e.IsGlobalSort() {
-		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
-		if err3 != nil {
-			return err3
-		}
-		e.globalSortStore = store
-	}
 	return nil
 }
 
