@@ -700,11 +700,6 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.False(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
-
-	ema := newRUEMA(0)
-	ema.Observe(1_048_576, time.Now())
-	worker := &copIteratorWorker{req: req, ema: ema}
-	require.Zero(t, worker.predictedReadBytesForTask(tasks[0]))
 }
 
 func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
@@ -742,7 +737,7 @@ func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 
 	ema := newRUEMA(req.Paging.PagingSizeBytes)
 	worker := &copIteratorWorker{req: req, ema: ema}
-	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytesForTask(tasks[0]))
+	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytes())
 
 	// Row-count paging with a tiny limit downgrades independently; the byte
 	// budget on the request is untouched by that downgrade.
@@ -761,7 +756,24 @@ func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
 	require.Equal(t, 18, cap(tasks[0].respChan))
 	worker = &copIteratorWorker{req: req, ema: newRUEMA(req.Paging.PagingSizeBytes)}
-	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytesForTask(tasks[0]))
+	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytes())
+
+	// Without a byte budget, row-count paging alone must not send a pre-charge
+	// hint, even after the EMA has observed a page.
+	rowCountReq := &kv.Request{}
+	rowCountReq.Paging.Enable = true
+	rowCountReq.Paging.MinPagingSize = paging.MinPagingSize
+	tasks, err = buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{
+		req:   rowCountReq,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.True(t, tasks[0].paging)
+	ema = newRUEMA(rowCountReq.Paging.PagingSizeBytes)
+	ema.Observe(1_048_576, time.Now())
+	worker = &copIteratorWorker{req: rowCountReq, ema: ema}
+	require.Zero(t, worker.predictedReadBytes())
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {

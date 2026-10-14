@@ -1667,10 +1667,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}
 }
 
-func (worker *copIteratorWorker) predictedReadBytesForTask(task *copTask) uint64 {
-	// Byte-budget paging is independent from row-count paging, so a request-level
-	// byte budget must still carry the pre-charge hint when task.paging is false.
-	if !task.paging && worker.req.Paging.PagingSizeBytes == 0 {
+func (worker *copIteratorWorker) predictedReadBytes() uint64 {
+	// The byte budget is the only switch for pre-charge. Row-count paging alone
+	// must not send a hint, so tidb_paging_size_bytes = 0 disables pre-charge.
+	// With a byte budget, the hint is sent even when row-count paging is off.
+	if worker.req.Paging.PagingSizeBytes == 0 {
 		return 0
 	}
 	return worker.ema.Predict()
@@ -1726,7 +1727,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.predictedReadBytesForTask(task)
+	req.PredictedReadBytes = worker.predictedReadBytes()
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
