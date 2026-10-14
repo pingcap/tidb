@@ -131,6 +131,15 @@ func (c *s3Client) CheckPutAndDeleteObject(ctx context.Context) (err error) {
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
 	}
+	if encryptionContext := c.options.GetSseKmsEncryptionContext(); encryptionContext != "" {
+		input.SSEKMSEncryptionContext = aws.String(encryptionContext)
+		// A context-bearing request must also carry the configured KMS settings.
+		// Keep the legacy probe behavior when no context is configured.
+		input.ServerSideEncryption = types.ServerSideEncryption(c.options.GetSse())
+		if keyID := c.options.GetSseKmsKeyId(); keyID != "" {
+			input.SSEKMSKeyId = aws.String(keyID)
+		}
+	}
 	var optFns []func(*s3.Options)
 	if c.s3Compatible {
 		optFns = []func(*s3.Options){withContentMD5}
@@ -190,6 +199,9 @@ func (c *s3Client) buildPutObjectInput(options *backuppb.S3, file string, data [
 	}
 	if options.SseKmsKeyId != "" {
 		input.SSEKMSKeyId = aws.String(options.SseKmsKeyId)
+	}
+	if encryptionContext := options.GetSseKmsEncryptionContext(); encryptionContext != "" {
+		input.SSEKMSEncryptionContext = aws.String(encryptionContext)
 	}
 	if options.StorageClass != "" {
 		input.StorageClass = types.StorageClass(options.StorageClass)
@@ -341,6 +353,13 @@ func (c *s3Client) CopyObject(ctx context.Context, params *s3like.CopyInput) err
 		CopySource: aws.String(path.Join(params.FromLoc.Bucket, fromKey)),
 		Key:        aws.String(toKey),
 	}
+	if encryptionContext := c.options.GetSseKmsEncryptionContext(); encryptionContext != "" {
+		copyInput.SSEKMSEncryptionContext = aws.String(encryptionContext)
+		copyInput.ServerSideEncryption = types.ServerSideEncryption(c.options.GetSse())
+		if keyID := c.options.GetSseKmsKeyId(); keyID != "" {
+			copyInput.SSEKMSKeyId = aws.String(keyID)
+		}
+	}
 
 	// We must use the client of the target region.
 	_, err := c.svc.CopyObject(ctx, copyInput)
@@ -361,6 +380,9 @@ func (c *s3Client) MultipartWriter(ctx context.Context, name string) (objectio.W
 	}
 	if c.options.SseKmsKeyId != "" {
 		input.SSEKMSKeyId = aws.String(c.options.SseKmsKeyId)
+	}
+	if encryptionContext := c.options.GetSseKmsEncryptionContext(); encryptionContext != "" {
+		input.SSEKMSEncryptionContext = aws.String(encryptionContext)
 	}
 	if c.options.StorageClass != "" {
 		input.StorageClass = types.StorageClass(c.options.StorageClass)
@@ -389,9 +411,12 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 		}
 	})
 	return &multipartUploader{
-		uploader:     up,
-		BucketPrefix: c.BucketPrefix,
-		key:          c.ObjectKey(name),
+		uploader:                up,
+		BucketPrefix:            c.BucketPrefix,
+		key:                     c.ObjectKey(name),
+		sse:                     c.options.GetSse(),
+		sseKmsKeyID:             c.options.GetSseKmsKeyId(),
+		sseKmsEncryptionContext: c.options.GetSseKmsEncryptionContext(),
 	}
 }
 
@@ -462,7 +487,10 @@ func (u *multipartWriter) Close(ctx context.Context) error {
 type multipartUploader struct {
 	uploader *manager.Uploader
 	storeapi.BucketPrefix
-	key string
+	key                     string
+	sse                     string
+	sseKmsKeyID             string
+	sseKmsEncryptionContext string
 }
 
 func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
@@ -470,6 +498,13 @@ func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
 		Bucket: aws.String(u.Bucket),
 		Key:    aws.String(u.key),
 		Body:   rd,
+	}
+	if u.sseKmsEncryptionContext != "" {
+		upParams.SSEKMSEncryptionContext = aws.String(u.sseKmsEncryptionContext)
+		upParams.ServerSideEncryption = types.ServerSideEncryption(u.sse)
+		if u.sseKmsKeyID != "" {
+			upParams.SSEKMSKeyId = aws.String(u.sseKmsKeyID)
+		}
 	}
 	_, err := u.uploader.Upload(ctx, upParams)
 	if err != nil && strings.Contains(err.Error(), "MaxUploadParts") {

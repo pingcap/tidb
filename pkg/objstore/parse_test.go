@@ -15,10 +15,13 @@
 package objstore
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -26,6 +29,61 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
+
+func TestS3SSEKMSContextURL(t *testing.T) {
+	const contextJSON = `{"kk":"¾","tenant":"租户😀","value":"a+b / = & ?"}`
+	const normalized = `{"kk":"¾","tenant":"租户😀","value":"a+b / = \u0026 ?"}`
+	encoded := base64.StdEncoding.EncodeToString([]byte(normalized))
+	require.Contains(t, encoded, "+")
+	// ParseRawURL preserves literal plus signs for existing storage parameters.
+	query := strings.ReplaceAll(url.QueryEscape(contextJSON), "+", "%20")
+	for _, key := range []string{"sse-kms-context", "SSE_KMS_CONTEXT"} {
+		t.Run(key, func(t *testing.T) {
+			options := &BackendOptions{}
+			require.NoError(t, json.Unmarshal([]byte(`{"sse-kms-context":"{\"tenant\":\"from-options\"}"}`), &options.S3))
+			backend, err := ParseBackend("s3://bucket/prefix?"+key+"="+query, options)
+			require.NoError(t, err)
+			require.Equal(t, encoded, backend.GetS3().GetSseKmsEncryptionContext())
+			require.Empty(t, backend.GetS3().Sse)
+			require.Empty(t, backend.GetS3().SseKmsKeyId)
+
+			// Parsing a URL overrides options for this backend, without mutating them.
+			fromOptions, err := ParseBackend("s3://bucket/prefix", options)
+			require.NoError(t, err)
+			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(`{"tenant":"from-options"}`)), fromOptions.GetS3().GetSseKmsEncryptionContext())
+			unset, err := ParseBackend("s3://bucket/prefix?"+key+"=", options)
+			require.NoError(t, err)
+			require.Empty(t, unset.GetS3().GetSseKmsEncryptionContext())
+
+			parsedURL, err := url.Parse("s3://bucket/prefix?" + key + "=" + query)
+			require.NoError(t, err)
+			fromURL, err := ParseBackendFromURL(parsedURL, options)
+			require.NoError(t, err)
+			require.Equal(t, encoded, fromURL.GetS3().GetSseKmsEncryptionContext())
+
+			// The same encoded value survives snapshot RPC and log-task persistence.
+			request := &backuppb.BackupRequest{StorageBackend: backend}
+			data, err := request.Marshal()
+			require.NoError(t, err)
+			var restoredRequest backuppb.BackupRequest
+			require.NoError(t, restoredRequest.Unmarshal(data))
+			require.Equal(t, encoded, restoredRequest.GetStorageBackend().GetS3().GetSseKmsEncryptionContext())
+			task := &backuppb.StreamBackupTaskInfo{Storage: backend}
+			data, err = task.Marshal()
+			require.NoError(t, err)
+			var restoredTask backuppb.StreamBackupTaskInfo
+			require.NoError(t, restoredTask.Unmarshal(data))
+			require.Equal(t, encoded, restoredTask.GetStorage().GetS3().GetSseKmsEncryptionContext())
+		})
+	}
+
+	for _, input := range []string{`{"tenant":null}`, `{"tenant":"private-context","tenant":"other"}`, encoded} {
+		_, err := ParseBackend("s3://bucket/prefix?sse-kms-context="+url.QueryEscape(input), nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "sse-kms-context")
+		require.NotContains(t, err.Error(), "private-context")
+	}
+}
 
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
