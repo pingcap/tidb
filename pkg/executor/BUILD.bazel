@@ -320,6 +320,7 @@ go_test(
     name = "executor_test",
     timeout = "moderate",
     srcs = [
+        "adapter_internal_test.go",
         "adapter_test.go",
         "analyze_test.go",
         "analyze_utils_test.go",
@@ -367,6 +368,7 @@ go_test(
         "resource_tag_test.go",
         "revoke_test.go",
         "sample_test.go",
+        "select_internal_test.go",
         "select_into_test.go",
         "select_test.go",
         "set_test.go",
