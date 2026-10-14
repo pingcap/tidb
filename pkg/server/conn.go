@@ -2762,13 +2762,16 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.user = newUser
 	cc.dbname = newDBName
 	err := cc.openSession()
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	restoreOldSession := func() {
+		newResourceGroup := cc.currentResourceGroupName()
 		if newCtx := cc.getCtx(); newCtx != nil && newCtx != oldCtx {
 			if err := newCtx.Close(); err != nil {
 				logutil.Logger(ctx).Debug("close new context failed", zap.Error(err))
 			}
 		}
 		cc.SetCtx(oldCtx)
+		cc.moveResourceGroupCounter(newResourceGroup)
 		cc.user = oldUser
 		cc.dbname = oldDBName
 		cc.authPlugin = oldAuthPlugin
@@ -2805,7 +2808,6 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 		}
 	}
-	cc.moveResourceGroupCounter(oldResourceGroup)
 	return cc.handleCommonConnectionReset(ctx)
 }
 

@@ -391,12 +391,15 @@ func TestChangeUserAndResetSessionResourceGroupCounter(t *testing.T) {
 
 	metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Inc()
 
+	requireCounter := func(rgTest, defaultGroup float64) {
+		require.Equal(t, rgTest, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+		require.Equal(t, defaultGroup, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	}
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create resource group rg_test RU_PER_SEC = 1000;")
 	tk.MustExec("set resource group rg_test")
-
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
+	requireCounter(1, 0)
 
 	tidbdrv := NewTiDBDriver(store)
 	cfg := serverutil.NewTestConfig()
@@ -420,23 +423,41 @@ func TestChangeUserAndResetSessionResourceGroupCounter(t *testing.T) {
 	}
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
 
-	userData := append([]byte("root"), 0x0, 0x0)
-	userData = append(userData, []byte("test")...)
-	userData = append(userData, 0x0)
-	err = cc.dispatch(context.Background(), append([]byte{mysql.ComChangeUser}, userData...))
-	require.NoError(t, err)
+	changeUser := func(user, db string) error {
+		data := append([]byte(user), 0x0, 0x0)
+		data = append(data, []byte(db)...)
+		data = append(data, 0x0)
+		return cc.dispatch(context.Background(), append([]byte{mysql.ComChangeUser}, data...))
+	}
 
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	require.NoError(t, changeUser("root", "test"))
+	requireCounter(0, 1)
 
 	_, err = cc.ctx.Session.Execute(context.Background(), "set resource group rg_test")
 	require.NoError(t, err)
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	requireCounter(1, 0)
 	err = cc.dispatch(context.Background(), []byte{mysql.ComResetConnection})
 	require.NoError(t, err)
-	require.Equal(t, 0.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues("rg_test")))
-	require.Equal(t, 1.0, promtestutils.ToFloat64(metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName)))
+	requireCounter(0, 1)
+
+	// Change to a user bound to a resource group, where authentication itself moves the counter.
+	tk.MustExec("create user u_rg resource group rg_test")
+	require.NoError(t, changeUser("u_rg", ""))
+	requireCounter(1, 0)
+	require.NoError(t, changeUser("u_rg", ""))
+	requireCounter(1, 0)
+
+	// Authentication succeeds and binds the group, then useDB fails and the old session is restored.
+	require.Error(t, changeUser("u_rg", "no_such_db"))
+	require.Equal(t, "u_rg", cc.user)
+	requireCounter(1, 0)
+
+	require.Error(t, changeUser("no_such_user", ""))
+	require.Equal(t, "u_rg", cc.user)
+	requireCounter(1, 0)
+
+	require.NoError(t, changeUser("root", ""))
+	requireCounter(0, 1)
 }
 
 func TestMalformHandshakeHeader(t *testing.T) {
