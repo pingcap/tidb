@@ -33,11 +33,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
 
-func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
+func parseStmt(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
 	p := parser.New()
 	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	node, err := p.ParseOneStmt(sql, charset, collation)
+	return p.ParseOneStmt(sql, charset, collation)
+}
+
+func parseImportQuery(sctx sessionctx.Context, sql string) (ast.StmtNode, error) {
+	node, err := parseStmt(sctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -96,41 +100,39 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
 	q.PushDownFlags = vars.StmtCtx.PushDownFlags()
 	txnManager := sessiontxn.GetTxnManager(sctx)
-	nodeW := resolve.NewNodeW(node)
-	ret := &plannercore.PreprocessorReturn{
-		InfoSchema: txnManager.GetTxnInfoSchema(),
-	}
-	if err := plannercore.Preprocess(
-		context.Background(), sctx, nodeW,
-		plannercore.WithPreprocessorReturn(ret),
-		plannercore.InImportInto,
-	); err != nil {
-		return nil, err
-	}
-	if ret.IsStaleness {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("stale reads in IMPORT INTO FROM SELECT")
-	}
-
-	if err := collectImportQueryTables(sctx, ret.InfoSchema, nodeW, q, make(map[int64]bool)); err != nil {
+	if err := collectImportQueryTables(
+		sctx, txnManager.GetTxnInfoSchema(),
+		node, q, make(map[int64]bool)); err != nil {
 		return nil, err
 	}
 	q.ReadTS, err = txnManager.GetStmtReadTS()
-	if err != nil {
-		return nil, err
-	}
-	return q, nil
+	return q, err
 }
 
 // collectImportQueryTables records the source tables of a resolved query,
 // including the tables behind its views, which the worker expands again.
 func collectImportQueryTables(
-	sctx sessionctx.Context, is infoschema.InfoSchema, nodeW *resolve.NodeW,
+	sctx sessionctx.Context, is infoschema.InfoSchema, node ast.StmtNode,
 	q *importer.QueryPlan, seen map[int64]bool,
 ) error {
+	nodeW := resolve.NewNodeW(node)
+	ret := &plannercore.PreprocessorReturn{InfoSchema: is}
+	if err := plannercore.Preprocess(
+		context.Background(), sctx, nodeW,
+		plannercore.WithPreprocessorReturn(ret),
+		plannercore.InImportInto,
+	); err != nil {
+		return err
+	}
+	if ret.IsStaleness {
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("stale reads in IMPORT INTO FROM SELECT")
+	}
+
 	for _, tableName := range nodeW.GetResolveContext().GetTableNames() {
 		tblInfo, dbInfo := tableName.TableInfo, tableName.DBInfo
 		if tblInfo.TempTableType != model.TempTableNone {
-			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("temporary source tables in IMPORT INTO FROM SELECT")
+			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+				"temporary source tables in IMPORT INTO FROM SELECT")
 		}
 		if seen[tblInfo.ID] {
 			continue
@@ -138,26 +140,16 @@ func collectImportQueryTables(
 		seen[tblInfo.ID] = true
 		q.Databases[dbInfo.ID] = dbInfo
 		q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
-		if !tblInfo.IsView() {
-			continue
-		}
-		charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-		p := parser.New()
-		p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
-		viewNode, err := p.ParseOneStmt(tblInfo.View.SelectStmt, charset, collation)
-		if err != nil {
-			return err
-		}
-		viewNodeW := resolve.NewNodeW(viewNode)
-		if err := plannercore.Preprocess(
-			context.Background(), sctx, viewNodeW,
-			plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}),
-			plannercore.InImportInto,
-		); err != nil {
-			return err
-		}
-		if err := collectImportQueryTables(sctx, is, viewNodeW, q, seen); err != nil {
-			return err
+
+		// Parse view recursively
+		if tblInfo.IsView() {
+			viewNode, err := parseStmt(sctx, tblInfo.View.SelectStmt)
+			if err != nil {
+				return err
+			}
+			if err := collectImportQueryTables(sctx, is, viewNode, q, seen); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

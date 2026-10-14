@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCaptureImportQuery(t *testing.T) {
+func TestGenerateImportQueryPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
