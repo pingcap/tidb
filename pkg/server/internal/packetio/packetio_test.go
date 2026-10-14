@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package internal
+package packetio
 
 import (
 	"bufio"
@@ -95,7 +95,7 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-		pkt := NewPacketIO(brc)
+		pkt := New(brc)
 		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
 		require.Equal(t, uint8(1), pkt.sequence)
@@ -117,7 +117,7 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read multiple packets
 		brc = util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-		pkt = NewPacketIO(brc)
+		pkt = New(brc)
 		readBytes, err = pkt.ReadPacket()
 		require.NoError(t, err)
 		require.Equal(t, uint8(2), pkt.sequence)
@@ -135,7 +135,7 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-		pkt := NewPacketIO(brc)
+		pkt := New(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-		pkt := NewPacketIO(brc)
+		pkt := New(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestPacketIORead(t *testing.T) {
 		require.NoError(t, err)
 		// Test read one packet
 		brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-		pkt := NewPacketIO(brc)
+		pkt := New(brc)
 		pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
 		readBytes, err := pkt.ReadPacket()
 		require.NoError(t, err)
@@ -446,7 +446,7 @@ func TestSubHeaderWithWrongSequenceNumber(t *testing.T) {
 	require.NoError(t, err)
 	// Test read one packet
 	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt := NewPacketIO(brc)
+	pkt := New(brc)
 	pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
 	readBytes, err := pkt.ReadPacket()
 	require.NoError(t, err)
