@@ -41,7 +41,7 @@ func TestPBAggregationGroupByColumnIdentity(t *testing.T) {
 	data := infoschema.NewData()
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	isBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	require.NoError(t, isBuilder.InitWithDBInfos(nil, nil, nil, nil, 0))
+	require.NoError(t, isBuilder.InitWithDBInfos(nil, nil, nil, 0))
 	is := isBuilder.Build(math.MaxUint64)
 	table, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.ClusterTableTiDBStatementsStats))
 	require.NoError(t, err)
