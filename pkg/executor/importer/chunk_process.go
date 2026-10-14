@@ -578,11 +578,10 @@ type QueryChunk struct {
 	RowIDOffset int64
 }
 
-// RunImportQuery executes the supplied task statement and streams owned chunks to
-// output. The caller owns the channel and session; the function closes its executor
-// before returning. Registration by executor avoids a package import cycle.
-// TODO: Separate IMPORT task submission, status APIs and TaskMeta from the DXF
-// worker package, so workers can call executor directly without this registration.
+// RunImportQuery executes the supplied task statement and send chunks to output.
+// Registration by executor avoids a package import cycle.
+// TODO(joechenrh): Separate IMPORT task submission, status APIs and TaskMeta from
+// the DXF worker package, so workers can call executor directly without this.
 var RunImportQuery func(context.Context, sessionctx.Context, *QueryPlan, string, int64, chan<- QueryChunk) error
 
 func newQueryChunkProcessor(

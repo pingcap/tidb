@@ -54,7 +54,6 @@ func (c *importQuerySession) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 
 func (c *importQuerySession) GetPlanCtx() base.PlanContext { return c }
 
-// newImportQuerySession prepares and wraps the caller-owned session for one query attempt.
 func newImportQuerySession(
 	ctx context.Context, sctx sessionctx.Context,
 	q *importer.QueryPlan, sql string, memoryLimit int64,
@@ -66,7 +65,7 @@ func newImportQuerySession(
 	if err := initImportQuerySessionVars(q, vars, memoryLimit); err != nil {
 		return nil, nil, err
 	}
-	is, err := buildImportQueryInfoSchema(q, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
+	is, err := buildQueryInfoSchema(q, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -85,13 +84,13 @@ func newImportQuerySession(
 	vars.SnapshotTS = q.ReadTS
 	vars.SnapshotInfoschema = is
 	vars.StmtCtx.InitFromPBFlagAndTz(q.PushDownFlags, vars.Location())
+	vars.MemQuotaQuery = memoryLimit
+	vars.MemTracker.SetBytesLimit(memoryLimit)
 	querySession := &importQuerySession{Context: sctx, schema: is}
 	querySession.PlanCtxExtended = plannersession.NewPlanCtxExtended(querySession)
 	return querySession, node, nil
 }
 
-// initImportQuerySessionVars applies the captured settings to the worker session's existing
-// variables, keeping the memory budget determined by the worker's resources.
 func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVars, memoryLimit int64) error {
 	for _, name := range slices.Sorted(maps.Keys(q.SessionVars)) {
 		if err := vars.SetSystemVar(name, q.SessionVars[name]); err != nil {
@@ -102,21 +101,19 @@ func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVar
 	vars.MemTracker.SetBytesLimit(memoryLimit)
 	vars.CurrentDB = q.CurrentDB
 	vars.PartitionPruneMode.Store("static")
-	vars.InRestrictedSQL, vars.InternalSQLScanUserTable = true, false
+	vars.InRestrictedSQL = true
+	vars.InternalSQLScanUserTable = true
 	vars.RequestSourceType = kv.InternalDistTask
 	return nil
 }
 
-// buildImportQueryInfoSchema builds the captured source schema using the worker's auto-ID
-// requirement and placement policies. Table definitions are cloned for each attempt.
-func buildImportQueryInfoSchema(q *importer.QueryPlan, parent infoschema.InfoSchema) (infoschema.InfoSchema, error) {
+func buildQueryInfoSchema(q *importer.QueryPlan, parent infoschema.InfoSchema) (infoschema.InfoSchema, error) {
 	dbs := make([]*model.DBInfo, 0, len(q.Databases))
 	for _, db := range q.Databases {
 		dbInfo := db.Clone()
 		for _, tbl := range q.Tables[db.ID] {
 			tableInfo := tbl.Clone()
 			tableInfo.DBID = db.ID
-			// The worker has no table cache and reads TiKV at ReadTS directly.
 			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
 			dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, tableInfo)
 		}

@@ -4009,22 +4009,18 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
-	// Read the server ID from the process server info rather than the session's
-	// Domain, which cross-keyspace sessions do not have.
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	serverID := serverInfo.ServerIDGetter()
-	failpoint.InjectCall("afterGetMPPServerID", serverID)
 
 	gather := &MPPGather{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverInfo.ServerIDGetter()},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},

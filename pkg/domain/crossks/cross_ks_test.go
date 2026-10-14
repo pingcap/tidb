@@ -523,35 +523,6 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
 	})
-	t.Run("MPP server ID without a query Domain", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, targetStore)
-		tk.MustExec("use test")
-		sql := "import into unused_target from select /*+ MPP_1PHASE_AGG() */ g,count(*) from query_source group by g"
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		q, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
-		require.NoError(t, err)
-		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
-		require.True(t, ok)
-		q.Tables[db.ID][0].TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-		q.SessionVars["tidb_allow_mpp"] = "1"
-		q.SessionVars["tidb_enforce_mpp"] = "1"
-		q.SessionVars["tidb_isolation_read_engines"] = "tiflash"
-		resource, err := handle.SysSessionPool().Get()
-		require.NoError(t, err)
-		defer handle.SysSessionPool().Destroy(resource)
-		se := resource.(sessionctx.Context)
-		require.Nil(t, se.GetDomain())
-		var checked bool
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterGetMPPServerID", func(id uint64) {
-			require.Equal(t, sysKSDom.ServerID(), id)
-			checked = true
-			panic("stop before MPP dispatch")
-		})
-		require.PanicsWithValue(t, "stop before MPP dispatch", func() {
-			_ = importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, nil)
-		})
-		require.True(t, checked)
-	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {

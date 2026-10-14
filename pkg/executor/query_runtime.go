@@ -34,12 +34,12 @@ func runImportQuery(
 	q *importer.QueryPlan, sql string, memoryLimit int64,
 	output chan<- importer.QueryChunk,
 ) (err error) {
-	workerSession, node, err := newImportQuerySession(ctx, sctx, q, sql, memoryLimit)
+	querySession, node, err := newImportQuerySession(ctx, sctx, q, sql, memoryLimit)
 	if err != nil {
 		return err
 	}
 
-	e, err := buildImportQueryExecutor(ctx, workerSession, node, memoryLimit)
+	e, err := buildImportQueryExecutor(ctx, querySession, node, memoryLimit)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func runImportQuery(
 	}
 
 	fields := e.RetFieldTypes()
-	maxChunkSize := workerSession.GetSessionVars().MaxChunkSize
+	maxChunkSize := querySession.GetSessionVars().MaxChunkSize
 	var rowID int64
 	for {
 		chk := chunk.New(fields, 32, maxChunkSize)
@@ -73,15 +73,14 @@ func runImportQuery(
 }
 
 func buildImportQueryExecutor(
-	ctx context.Context, workerSession *importQuerySession, node ast.StmtNode, memoryLimit int64,
+	ctx context.Context, querySession *importQuerySession, node ast.StmtNode, memoryLimit int64,
 ) (exec.Executor, error) {
-	stmt, err := (&Compiler{Ctx: workerSession}).Compile(ctx, node)
+	stmt, err := (&Compiler{Ctx: querySession}).Compile(ctx, node)
 	if err != nil {
 		return nil, err
 	}
-	// A SET_VAR(tidb_mem_quota_query) hint is applied during compilation; keep
-	// the worker's budget, as nothing kills an over-budget worker session.
-	vars := workerSession.GetSessionVars()
+	// Memory limit should be applied after compilation.
+	vars := querySession.GetSessionVars()
 	vars.MemQuotaQuery = memoryLimit
 	vars.MemTracker.SetBytesLimit(memoryLimit)
 	p, ok := stmt.Plan.(base.PhysicalPlan)
@@ -89,15 +88,12 @@ func buildImportQueryExecutor(
 		return nil, errors.New("import query did not produce a physical SELECT plan")
 	}
 	failpoint.InjectCall("afterImportQueryOptimize", p)
-	b := newExecutorBuilder(ctx, workerSession, workerSession.schema, nil)
+	b := newExecutorBuilder(ctx, querySession, querySession.schema, nil)
 	b.forDataReaderBuilder = true
-	b.dataReaderTS = workerSession.GetSessionVars().SnapshotTS
+	b.dataReaderTS = querySession.GetSessionVars().SnapshotTS
 	e := b.build(p)
 	if b.err != nil {
 		return nil, b.err
-	}
-	if e == nil {
-		return nil, errors.New("import query built no executor")
 	}
 	return e, nil
 }
