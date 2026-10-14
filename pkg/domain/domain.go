@@ -825,6 +825,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
+
 	do.isSyncer.SetMinJobIDRefresher(do.minJobIDRefresher)
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
@@ -1660,7 +1661,7 @@ func (do *Domain) LoadBindingLoop() error {
 				return
 			case <-ticker.C:
 				if err := do.BindingHandle().LoadFromStorageToCache(false, false); err != nil {
-					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
 				}
 			}
 		}
@@ -1693,7 +1694,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false, false)
 				if err != nil {
-					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
