@@ -326,8 +326,9 @@ func (w *backfillWorker) String() string {
 	return fmt.Sprintf("backfill-worker %d, tp %s", w.GetCtx().id, w.backfiller.String())
 }
 
-// Close retires this worker by canceling only workCtx. The shared resultCtx
-// must outlive Close so in-flight results can still reach the collector.
+// Close retires this worker by canceling only workCtx. During downscaling, the
+// executor keeps resultCtx active so in-flight results can reach the collector.
+// Forced executor shutdown cancels resultCtx before Close to unblock result sends.
 func (w *backfillWorker) Close() {
 	if w.cancel != nil {
 		w.cancel()
