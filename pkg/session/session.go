@@ -1423,7 +1423,13 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
-	sysVar, err := domain.GetDomain(s).GetGlobalVar(name)
+	dom := domain.GetDomain(s)
+	if dom == nil {
+		// A cross-keyspace session has no Domain to cache or read the global
+		// variables of the target keyspace, so it sees the default values.
+		return sv.Value, nil
+	}
+	sysVar, err := dom.GetGlobalVar(name)
 	if err != nil {
 		// The sysvar exists, but there is no cache entry yet.
 		// This might be because the sysvar was only recently registered.

@@ -490,7 +490,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		tk.MustExec("insert into query_source(g,v) values (1,10),(1,20),(2,30)")
 		tk.MustExec("set tidb_isolation_read_engines='tikv'")
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-		sql := "import into unused_target from select /*+ STREAM_AGG() */ g,count(*) from query_source use index(idx_g) where v >= 10 group by g"
+		sql := "import into unused_target from select /*+ STREAM_AGG() SET_VAR(tidb_mem_quota_query=1073741824) */ g,count(*) from query_source use index(idx_g) where v >= 10 group by g"
 		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
 		captured, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
 		require.NoError(t, err)
