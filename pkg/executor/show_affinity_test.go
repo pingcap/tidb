@@ -269,8 +269,20 @@ func TestShowAffinityColumns(t *testing.T) {
 	for _, def := range partitioned.Partition.Definitions {
 		partitionIDs = append(partitionIDs, ddl.GetPartitionAffinityGroupID(store.GetCodec(), partitioned.ID, def.ID))
 	}
-	mockCli.On("GetAffinityGroups", mock.Anything, partitionIDs).Return(map[string]*pdhttp.AffinityGroupState{}, nil).Once()
-	require.Len(t, tk.MustQuery("show affinity like 't2'").Rows(), 2)
+	mockCli.On("GetAffinityGroups", mock.Anything, partitionIDs).Return(map[string]*pdhttp.AffinityGroupState{
+		partitionIDs[0]: {
+			AffinityGroup: pdhttp.AffinityGroup{ID: partitionIDs[0], LeaderStoreID: 1, VoterStoreIDs: []uint64{1, 2, 3}},
+			Phase:         "stable", RegionCount: 10, AffinityRegionCount: 9,
+		},
+		partitionIDs[1]: {
+			AffinityGroup: pdhttp.AffinityGroup{ID: partitionIDs[1], LeaderStoreID: 4, VoterStoreIDs: []uint64{4, 5, 6}},
+			Phase:         "preparing", RegionCount: 20, AffinityRegionCount: 7,
+		},
+	}, nil).Once()
+	tk.MustQuery("show affinity like 't2'").Sort().Check(testkit.Rows(
+		"test t2 p0 1 1,2,3 Stable 10 9",
+		"test t2 p1 4 4,5,6 Preparing 20 7",
+	))
 	// No matching tables must not issue a PD request (including a full scan).
 	require.Empty(t, tk.MustQuery("show affinity like 'missing'").Rows())
 	mockCli.AssertExpectations(t)

@@ -102,6 +102,48 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 		require.Equal(t, "_tidb_t_123", tableGroupID)
 		require.Equal(t, "_tidb_pt_123_p456", partitionGroupID)
 	}
+
+	// Check the ID and encoded range together using real codecs for two keyspaces.
+	for _, targetCodec := range []tikv.Codec{codec, otherCodec} {
+		wrongCodec := codec
+		if targetCodec.GetKeyspaceID() == codec.GetKeyspaceID() {
+			wrongCodec = otherCodec
+		}
+		for _, tbl := range []*model.TableInfo{
+			{ID: tableID, Affinity: &model.TableAffinityInfo{Level: ast.TableAffinityLevelTable}},
+			{
+				ID:       tableID,
+				Affinity: &model.TableAffinityInfo{Level: ast.TableAffinityLevelPartition},
+				Partition: &model.PartitionInfo{
+					Enable:      true,
+					Definitions: []model.PartitionDefinition{{ID: partitionID}},
+				},
+			},
+		} {
+			prefix := "_tidb_"
+			if kerneltype.IsNextGen() {
+				prefix = fmt.Sprintf("_tidb_ks%d_", targetCodec.GetKeyspaceID())
+			}
+			expectedID := prefix + "t_123"
+			physicalID := tableID
+			if tbl.Partition != nil {
+				expectedID = prefix + "pt_123_p456"
+				physicalID = partitionID
+			}
+			groups, err := ddl.BuildAffinityGroupDefinitionsForTest(targetCodec, tbl, nil)
+			require.NoError(t, err)
+			require.Len(t, groups, 1)
+			require.Contains(t, groups, expectedID)
+			require.Len(t, groups[expectedID], 1)
+			keyRange := groups[expectedID][0]
+			start, end, err := targetCodec.DecodeRegionRange(keyRange.StartKey, keyRange.EndKey)
+			require.NoError(t, err)
+			require.Equal(t, tablecodec.EncodeTablePrefix(physicalID), kv.Key(start))
+			require.Equal(t, tablecodec.EncodeTablePrefix(physicalID+1), kv.Key(end))
+			_, _, err = wrongCodec.DecodeRegionRange(keyRange.StartKey, keyRange.EndKey)
+			require.Error(t, err, "the range must not belong to the other keyspace")
+		}
+	}
 }
 
 func TestAffinityBuildGroupDefinitionsPartition(t *testing.T) {
