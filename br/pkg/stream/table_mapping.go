@@ -889,7 +889,10 @@ func (tm *TableMappingManager) BindUnresolvedTableRoutes(
 			// prove source identity; never infer it from a persisted target.
 			if sourceDB == nil || sourceDB.SourceName == "" || sourceName == "" {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
-					"cannot resolve source identity for upstream database ID %d and table ID %d (observed table name %q) with restore rename rules; the baseline must preserve source_name or the interval must contain DBInfo", sourceDBID, tableID, sourceName)
+					"cannot resolve source identity for upstream database ID %d and table ID %d "+
+						"(observed table name %q) with restore rename rules; "+
+						"the baseline must preserve source_name or the interval must contain DBInfo",
+					sourceDBID, tableID, sourceName)
 			}
 			targetDB, targetTable, matched := route(sourceDB.SourceName, sourceName)
 			if !matched {
