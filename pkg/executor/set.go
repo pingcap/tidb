@@ -124,13 +124,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
-	// A nil privilege manager means the session is an internal one, for
-	// example the session pool used by the TTL job manager. Such sessions are
-	// trusted, so there is no privilege to verify for them.
-	pm := privilege.GetPrivilegeManager(e.Ctx())
-
 	if sysVar.RequireDynamicPrivileges != nil {
 		semEnabled := sem.IsEnabled()
+		pm := privilege.GetPrivilegeManager(e.Ctx())
 		privs := sysVar.RequireDynamicPrivileges(v.IsGlobal, semEnabled)
 		if pm != nil {
 			for _, priv := range privs {
@@ -147,6 +143,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 
 	// Check read-only system variables in SEM mode.
 	if semv2.IsEnabled() && semv2.IsReadOnlyVariable(v.Name) {
+		// Internal sessions (for example the sessions of the TTL job manager)
+		// have no privilege manager bound. They must not be blocked here, and
+		// the missing manager must not be dereferenced.
+		pm := privilege.GetPrivilegeManager(e.Ctx())
 		if pm != nil && !pm.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
 			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
 		}

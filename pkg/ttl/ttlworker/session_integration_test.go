@@ -541,7 +541,15 @@ func TestTTLJobRUAttribution(t *testing.T) {
 }
 
 func TestWithSessionUnderSEMv2(t *testing.T) {
-	semv2.EnableReadOnlyVariablesForTest(t, vardef.TiDBEnable1PC, vardef.TiDBEnableAsyncCommit)
+	require.NoError(t, semv2.EnableBy(&semv2.Config{
+		Version:     "1.0",
+		TiDBVersion: "v0.0.0",
+		RestrictedVariables: []semv2.VariableRestriction{
+			{Name: vardef.TiDBEnable1PC, Readonly: true},
+			{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
+		},
+	}))
+	t.Cleanup(semv2.Disable)
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)

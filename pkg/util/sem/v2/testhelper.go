@@ -16,7 +16,6 @@ package sem
 
 import (
 	"strings"
-	"testing"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
@@ -72,22 +71,4 @@ func RemoveRestrictedPrivilegesForTest(privilege string) {
 	}
 
 	delete(globalSem.Load().restrictedPrivileges, strings.ToUpper(privilege))
-}
-
-// EnableReadOnlyVariablesForTest enables SEM v2 in tests with the given
-// variables marked as read-only, and registers a cleanup that disables SEM v2.
-func EnableReadOnlyVariablesForTest(t *testing.T, varNames ...string) {
-	t.Helper()
-	restrictedVariables := make([]VariableRestriction, 0, len(varNames))
-	for _, name := range varNames {
-		restrictedVariables = append(restrictedVariables, VariableRestriction{Name: name, Readonly: true})
-	}
-	if err := EnableBy(&Config{
-		Version:             "1.0",
-		TiDBVersion:         "v0.0.0",
-		RestrictedVariables: restrictedVariables,
-	}); err != nil {
-		t.Fatalf("failed to enable SEM v2: %v", err)
-	}
-	t.Cleanup(Disable)
 }
