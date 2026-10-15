@@ -1196,19 +1196,13 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	handles := task.handles
-	canReorderHandles := true
 	if e.checkIndexValue != nil && task.duplicatedIndexOrder.Len() > 0 {
-		// Deduplicate only the table request; keep every handle in the task
-		// so ADMIN CHECK can still compare all associated index rows.
-		slices.SortFunc(handles, func(i, j kv.Handle) int { return i.Compare(j) })
-		uniqueHandles := make([]kv.Handle, 0, len(handles))
-		for i, h := range handles {
-			if i == 0 || !h.Equal(handles[i-1]) {
-				uniqueHandles = append(uniqueHandles, h)
-			}
-		}
-		handles = uniqueHandles
-		canReorderHandles = false
+		// Deduplicate only the table request; keep all handles for ADMIN CHECK.
+		handles = make([]kv.Handle, 0, task.indexOrder.Len())
+		task.indexOrder.Range(func(h kv.Handle, _ any) bool {
+			handles = append(handles, h)
+			return true
+		})
 	}
 	tableReaderExec := &TableReaderExecutor{
 		BaseExecutorV2:             e.BuildNewBaseExecutorV2(e.stmtRuntimeStatsColl, e.Schema(), e.getTableRootPlanID()),
@@ -1222,11 +1216,11 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		columns:                    e.columns,
 		corColInFilter:             e.corColInTblSide,
 		plans:                      e.tblPlans,
-		netDataSize:                e.avgRowSize * float64(len(handles)),
+		netDataSize:                e.avgRowSize * float64(len(task.handles)),
 		byItems:                    e.byItems,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, canReorderHandles)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
 		if ctx.Err() != context.Canceled {
 			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
