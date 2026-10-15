@@ -14,9 +14,10 @@ thread. A completed KV operation can still wait for response processing on
 that thread. Record both boundaries and join the client and server by a
 stream nonce and BatchCommands request ID, with SQL trace ID on the client.
 
-The user explicitly limits the current stage to independent instrumentation
-branches and validation. Image building, IDC deployment, workload execution,
-and report publication require the user's next-stage instruction.
+The user has authorized publishing the independent diagnostic branches and
+triggering EE ChatOps to build all diagnostic images. Keep the original PRs
+unchanged and report the completed images. IDC deployment, workload execution,
+and report publication follow after image preparation.
 
 ## Progress
 
@@ -29,7 +30,7 @@ and report publication require the user's next-stage instruction.
 - [x] Build the NextGen TiDB Linux binary with the instrumented client-go.
 - [x] Finish CSE compilation, formatting and scoped validation; record the legacy dependency warning below.
 - [x] Save the diagnostic branches and record check results.
-- [ ] After the user's next instruction, build and sync immutable diagnostic images.
+- [ ] Publish remotely fetchable diagnostic dependencies and build immutable images through EE ChatOps.
 - [ ] Validate IDC access and run shared 5, KV 4 + Raft 1, KV 5 + Raft 1.
 - [ ] Analyze same-request traces and publish the Chinese report at https://pingcap.feishu.cn/wiki/MGSjwKITJi90dEkb3XVc2lI8neg.
 
@@ -76,10 +77,10 @@ record the actual thread instead of assuming that all wake delays are CQ waits.
 - Decision: observe completion-ready in C-core before both queue publication and cached-event publication.
   Rationale: timing only the Rust handler cannot measure CQ wait accurately.
   Date/Author: 2026-10-15, Codex.
-- Decision: use a temporary combined source build with local sibling dependencies.
-  Rationale: the user explicitly wants a deployable diagnostic version, without
-  new PRs, published dependency forks, or a formal release process. Keep the
-  original PRs untouched. Each source repository remains on its own new branch.
+- Decision: pin remotely fetchable diagnostic dependencies for the EE ChatOps build.
+  Rationale: the user has advanced to image building. The standard builder checks
+  out one repository, so local sibling paths must become fixed Git revisions.
+  Publish only independent test branches, with no new PR or formal release process.
   Date/Author: 2026-10-15, Codex.
 
 ## Outcomes & Retrospective
@@ -148,8 +149,8 @@ From the grpc-rs worktree initialize pinned C-core dependencies, then run:
 
 From client-go use Go 1.25.14 or newer and run scoped diagnostic/batch tests
 with the race detector. From TiDB run targeted traceevent tests and the
-NextGen Linux server build. A sibling-source module override is intentional
-for this temporary image; no formal Ready or release claim is made.
+NextGen Linux server build. The client-go module override pins the diagnostic
+fork for this temporary image; no formal Ready or release claim is made.
 
 From CSE run make format and make clippy. Run Cargo invocations serially;
 keep build parallelism small on shared hosts. Keep full output in the

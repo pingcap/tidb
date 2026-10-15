@@ -2,8 +2,8 @@ module github.com/pingcap/tidb
 
 go 1.25.14
 
-// Temporary diagnostic build; client-go is bundled beside the TiDB sources.
-replace github.com/tikv/client-go/v2 => ../client-go
+// Temporary diagnostic build with per-request BatchCommands trace events.
+replace github.com/tikv/client-go/v2 => github.com/hujiatao0/client-go/v2 v2.0.8-0.20261015051521-59f7293d7dd3
 
 require (
 	cloud.google.com/go/kms v1.21.0
