@@ -1065,6 +1065,16 @@ a	e
 1	1
 11	11
 ADMIN CHECK TABLE t;
+TRUNCATE TABLE t;
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+UPDATE t, (SELECT 1 b, 100 x UNION ALL SELECT 1, 200) d SET t.e = t.a + d.x WHERE t.b = d.b;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+a	e - a IN (100, 200)
+1	1
+11	1
+ADMIN CHECK TABLE t;
 DROP TABLE t;
 CREATE TABLE t (a INT, b INT, e INT, KEY ke (e, a))
 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
