@@ -119,9 +119,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		e.tableUpdatable = append(e.tableUpdatable, updatable)
 		rowKey := handle
 		if updatable {
-			if rowKey, err = e.partitionRowKey(content, handle, row); err != nil {
-				return err
-			}
+			rowKey = e.partitionRowKey(content, handle, row)
 		}
 		e.rowKeys = append(e.rowKeys, rowKey)
 		if rowKey == nil {
@@ -146,19 +144,22 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 // since _tidb_rowid is only unique within a partition after EXCHANGE PARTITION.
 // A single-table UPDATE matches each row once, so it returns nil there to leave the row
 // untracked instead of locating its partition.
-func (e *UpdateExec) partitionRowKey(content physicalop.TblColPosInfo, handle kv.Handle, row []types.Datum) (kv.Handle, error) {
+func (e *UpdateExec) partitionRowKey(content physicalop.TblColPosInfo, handle kv.Handle, row []types.Datum) kv.Handle {
 	pt, ok := e.tblID2table[content.TblID].(table.PartitionedTable)
 	if !ok || pt.Meta().HasClusteredIndex() {
-		return handle, nil
+		return handle
 	}
 	if !e.isMultiTable {
-		return nil, nil
+		return nil
 	}
-	p, err := pt.GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), row[content.Start:content.End])
+	// Aliases of a table share this table object, which has only one alias's PARTITION () set,
+	// so locate the row without it.
+	p, err := pt.GetPartitionedTable().GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), row[content.Start:content.End])
 	if err != nil {
-		return nil, err
+		// Keep the plain handle, updateRecord reports the error where UPDATE IGNORE handles it.
+		return handle
 	}
-	return kv.NewPartitionHandle(p.GetPhysicalID(), handle), nil
+	return kv.NewPartitionHandle(p.GetPhysicalID(), handle)
 }
 
 func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
