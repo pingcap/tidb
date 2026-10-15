@@ -96,6 +96,7 @@ func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVar
 			return err
 		}
 	}
+	vars.SQLMode = q.SQLMode
 	vars.CurrentDB = q.CurrentDB
 	if q.ResourceGroupName != "" {
 		vars.SetResourceGroupName(q.ResourceGroupName)

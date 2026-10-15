@@ -578,11 +578,12 @@ type QueryChunk struct {
 	RowIDOffset int64
 }
 
-// RunImportQuery executes the supplied task statement and send chunks to output.
+// RunImportQuery runs the SELECT of the IMPORT INTO statement stmt at q.ReadTS
+// within memQuota bytes, and sends the result chunks to output.
 // Registration by executor avoids a package import cycle.
 // TODO(joechenrh): Separate IMPORT task submission, status APIs and TaskMeta from
 // the DXF worker package, so workers can call executor directly without this.
-var RunImportQuery func(context.Context, sessionctx.Context, *QueryPlan, string, int64, chan<- QueryChunk) error
+var RunImportQuery func(ctx context.Context, sctx sessionctx.Context, q *QueryPlan, stmt string, memQuota int64, output chan<- QueryChunk) error
 
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,
