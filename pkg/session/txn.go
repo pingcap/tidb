@@ -57,6 +57,10 @@ type LazyTxn struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	writeSLI      sli.TxnWriteThroughputSLI
+	// The statement-buffer owner sets this only while Cleanup synchronously
+	// reports its memory footprint. Cleanup must reconcile accounting without
+	// another cancellation or quota action interrupting the rollback.
+	inStmtBufCleanup bool
 
 	enterFairLockingOnValid bool
 
@@ -153,7 +157,12 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	}
 	buf := txn.Transaction.GetMemBuffer()
 	if !txn.IsPipelined() {
-		buf.Cleanup(txn.stagingHandle)
+		func() {
+			previous := txn.inStmtBufCleanup
+			txn.inStmtBufCleanup = true
+			defer func() { txn.inStmtBufCleanup = previous }()
+			buf.Cleanup(txn.stagingHandle)
+		}()
 	}
 	txn.initCnt = buf.Len()
 
