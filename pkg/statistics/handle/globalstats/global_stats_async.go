@@ -87,16 +87,16 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	// ioWorker meet error, it will close this channel to notify cpuWorker.
 	ioWorkerExitWhenErrChan chan struct{}
 	// cpuWorker exit, it will close this channel to notify ioWorker.
-	cpuWorkerExitChan         chan struct{}
-	globalTableInfo           *model.TableInfo
-	histIDs                   []int64
-	globalStatsNDV            []int64
-	partitionIDs              []int64
-	partitionNum              int
-	skipMissingPartitionStats bool
+	cpuWorkerExitChan chan struct{}
+	globalTableInfo   *model.TableInfo
+	histIDs           []int64
+	globalStatsNDV    []int64
+	partitionIDs      []int64
 	// hasV1Stats[i] is set when some partition's stats for histIDs[i]
 	// were built by analyze version 1.
-	hasV1Stats []bool
+	hasV1Stats                []bool
+	partitionNum              int
+	skipMissingPartitionStats bool
 }
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
