@@ -40,9 +40,12 @@ type diagnosticSink struct {
 	closed  bool
 	dropped atomic.Uint64
 	skipped atomic.Uint64
+	active  atomic.Bool
+	control string
 }
 
 var diagnosticEnabled atomic.Bool
+var diagnosticRecorder atomic.Pointer[diagnosticSink]
 
 const diagnosticCategories = StmtLifecycle | TxnLifecycle | Txn2PC | KvRequest
 
@@ -51,27 +54,33 @@ func initDiagnosticRecorderFromEnv() {
 	if path == "" {
 		return
 	}
-	sink, err := newDiagnosticSink(path, 65536)
+	sink, err := newDiagnosticSink(path, 65536, os.Getenv("TIDB_CQ_TRACE_CONTROL"))
 	if err != nil {
 		panic(err)
 	}
-	SetSink(sink)
-	// The diagnostic sink captures every selected event directly. Avoid the
-	// legacy recorder's per-session retention and synchronous log dump path.
-	recorderEnabled.Store(false)
-	loggingEnabled.Store(false)
-	diagnosticEnabled.Store(true)
+	// Tap selected events independently of the existing sink and tracing policy.
+	diagnosticRecorder.Store(sink)
+	diagnosticEnabled.Store(sink.active.Load())
 }
 
-func newDiagnosticSink(path string, capacity int) (*diagnosticSink, error) {
+func newDiagnosticSink(path string, capacity int, control string) (*diagnosticSink, error) {
 	// A fresh file prevents mixing different process lifetimes and clock origins.
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return nil, err
 	}
-	sink := &diagnosticSink{queue: make(chan Event, capacity), stop: make(chan struct{}), done: make(chan struct{})}
+	sink := &diagnosticSink{queue: make(chan Event, capacity), stop: make(chan struct{}), done: make(chan struct{}), control: control}
+	sink.active.Store(sink.captureRequested())
 	go sink.write(file, time.Now())
 	return sink, nil
+}
+
+func (sink *diagnosticSink) captureRequested() bool {
+	if sink.control == "" {
+		return true
+	}
+	value, err := os.ReadFile(sink.control)
+	return err == nil && strings.TrimSpace(string(value)) == "on"
 }
 
 func diagnosticEvent(name string) bool {
@@ -88,7 +97,7 @@ func diagnosticEvent(name string) bool {
 // Record freezes scalar metadata only. Mutable protobuf objects must never be
 // dereferenced later on the writer goroutine. Closing cannot race a queue send.
 func (sink *diagnosticSink) Record(_ context.Context, event Event) {
-	if !diagnosticEvent(event.Name) {
+	if !sink.active.Load() || !diagnosticEvent(event.Name) {
 		return
 	}
 	fields := make([]zap.Field, 0, len(event.Fields))
@@ -143,7 +152,7 @@ func (sink *diagnosticSink) write(file *os.File, start time.Time) {
 		}
 	}
 	must(jsonWriter.Encode(map[string]any{"event": "trace_header", "schema": 1,
-		"pid": os.Getpid(), "unix_ns": start.UnixNano(), "clock": "process_monotonic_ns"}))
+		"pid": os.Getpid(), "unix_ns": start.UnixNano(), "clock": "process_monotonic_ns", "active": sink.active.Load()}))
 	encoder := zapcore.NewJSONEncoder(zapcore.EncoderConfig{MessageKey: "event", EncodeDuration: zapcore.NanosDurationEncoder})
 	emit := func(event Event) {
 		fields := append(event.Fields, zap.String("trace_id", hex.EncodeToString(event.TraceID)),
@@ -155,17 +164,29 @@ func (sink *diagnosticSink) write(file *os.File, start time.Time) {
 		must(err)
 	}
 	flush := func() {
-		must(jsonWriter.Encode(map[string]any{"event": "trace_stats", "dropped": sink.dropped.Load(), "skipped_fields": sink.skipped.Load()}))
+		must(jsonWriter.Encode(map[string]any{"event": "trace_stats", "dropped": sink.dropped.Load(), "skipped_fields": sink.skipped.Load(),
+			"active": sink.active.Load(), "unix_ns": time.Now().UnixNano()}))
 		must(writer.Flush())
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	controlTicker := time.NewTicker(100 * time.Millisecond)
+	defer controlTicker.Stop()
 	for {
 		select {
 		case event := <-sink.queue:
 			emit(event)
 		case <-ticker.C:
 			flush()
+		case <-controlTicker.C:
+			active := sink.captureRequested()
+			if sink.active.Swap(active) != active {
+				if diagnosticRecorder.Load() == sink {
+					diagnosticEnabled.Store(active)
+				}
+				must(jsonWriter.Encode(map[string]any{"event": "trace_control", "active": active, "unix_ns": time.Now().UnixNano()}))
+				flush()
+			}
 		case <-sink.stop:
 			for {
 				select {
