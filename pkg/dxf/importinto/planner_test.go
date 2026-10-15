@@ -237,7 +237,8 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 	}
 	p := &LogicalPlan{
 		Plan: importer.Plan{
-			DBName: "db",
+			CloudStorageURI: "noop://sort",
+			DBName:          "db",
 			TableInfo: &model.TableInfo{
 				Name:  ast.NewCIStr("tb"),
 				State: model.StatePublic,
@@ -346,7 +347,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
 		ThreadCnt: 16,
-	}, &LogicalPlan{}, nil)
+	}, &LogicalPlan{Plan: importer.Plan{CloudStorageURI: "noop://sort"}}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)

@@ -22,9 +22,12 @@ import (
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -108,6 +111,16 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11"))
 
 	// test import from select
+	if kerneltype.IsNextGen() {
+		previousURI := vardef.CloudStorageURI.Load()
+		vardef.CloudStorageURI.Store(realtikvtest.GetNextGenObjStoreURI("precheck-import-query"))
+		s.T().Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
+		// The Query source route is only reachable from materialized view
+		// maintenance; simulate that precondition to exercise it here.
+		vars := s.tk.Session().GetSessionVars()
+		vars.InMViewMaintenance = true
+		s.T().Cleanup(func() { vars.InMViewMaintenance = false })
+	}
 	err = s.tk.ExecToErr("import into dst from select * from t")
 	log.Error("error", zap.Error(err))
 	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
