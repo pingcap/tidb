@@ -1980,7 +1980,15 @@ func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
 
 func TestSetVariableWithoutPrivilegeManager(t *testing.T) {
 	t.Run("sem v2 read-only variable", func(t *testing.T) {
-		semv2.EnableReadOnlyVariablesForTest(t, vardef.TiDBEnable1PC, vardef.TiDBEnableAsyncCommit)
+		require.NoError(t, semv2.EnableBy(&semv2.Config{
+			Version:     "1.0",
+			TiDBVersion: "v0.0.0",
+			RestrictedVariables: []semv2.VariableRestriction{
+				{Name: vardef.TiDBEnable1PC, Readonly: true},
+				{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
+			},
+		}))
+		t.Cleanup(semv2.Disable)
 
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
