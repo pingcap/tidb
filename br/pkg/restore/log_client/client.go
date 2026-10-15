@@ -2465,30 +2465,25 @@ func (rc *LogClient) ValidateTableRouteTargetDatabases(
 	return rc.ensureTableRouteTargetDatabases(ctx, manager, false)
 }
 
-// ValidateTargetTableExistence rejects a log-only (or resumed) PiTR whose
-// target table name already exists in the downstream cluster with a table ID
-// that this restore does not own. A table created by a previous run of the same
-// restore is owned by this restore and may be dropped and replaced by the log
-// replay of the current interval, so a name match on one of the IDs the merged
-// mapping assigns to that name is allowed. Any other existing table is an
-// unrelated object that would silently collide.
+// ValidateTargetTableExistence rejects target tables owned by unrelated objects.
+// Snapshot restore and previous PiTR runs establish ownership by downstream IDs.
+// Their current names can differ from the scanned final names until log replay
+// applies upstream RENAMEs, including moves between historical schema locations.
 func (rc *LogClient) ValidateTargetTableExistence(
 	ctx context.Context,
 	manager *stream.TableMappingManager,
 ) error {
 	infoSchema := rc.dom.InfoSchema()
 
-	type targetKey struct {
-		db    string
-		table string
+	type tableIdentity struct {
+		dbID    int64
+		tableID int64
 	}
-	keyOf := func(db, table string) targetKey {
-		return targetKey{db: strings.ToLower(db), table: strings.ToLower(table)}
-	}
-	// ownedIDs holds the downstream table IDs this restore maps to each effective
-	// target name. A table created by a previous run of this restore is owned by
-	// this restore even when the current interval replaces it with a new ID.
-	ownedIDs := make(map[targetKey]map[int64]struct{})
+	// Ownership is independent of the final name, but is scoped to mapped
+	// schema locations. An ID mapped only in another schema cannot authorize
+	// overwriting a table at an unrelated location. Temporary IDs prove no
+	// ownership until the table has actually been restored.
+	ownedIDs := make(map[tableIdentity]struct{})
 	for _, dbReplace := range manager.DBReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
@@ -2497,11 +2492,10 @@ func (rc *LogClient) ValidateTargetTableExistence(
 			if tableReplace.FilteredOut {
 				continue
 			}
-			key := keyOf(tableReplace.EffectiveDBName(dbReplace), tableReplace.Name)
-			if ownedIDs[key] == nil {
-				ownedIDs[key] = make(map[int64]struct{})
+			dbID := tableReplace.EffectiveDBID(dbReplace)
+			if dbID > 0 && tableReplace.TableID > 0 {
+				ownedIDs[tableIdentity{dbID: dbID, tableID: tableReplace.TableID}] = struct{}{}
 			}
-			ownedIDs[key][tableReplace.TableID] = struct{}{}
 		}
 	}
 
@@ -2514,7 +2508,8 @@ func (rc *LogClient) ValidateTargetTableExistence(
 				continue
 			}
 			dbName := tableReplace.EffectiveDBName(dbReplace)
-			if _, ok := infoSchema.SchemaByName(ast.NewCIStr(dbName)); !ok {
+			dbInfo, ok := infoSchema.SchemaByName(ast.NewCIStr(dbName))
+			if !ok {
 				continue
 			}
 			tbl, err := infoSchema.TableByName(ctx, ast.NewCIStr(dbName), ast.NewCIStr(tableReplace.Name))
@@ -2524,13 +2519,8 @@ func (rc *LogClient) ValidateTargetTableExistence(
 				}
 				return errors.Trace(err)
 			}
-			if tbl.Meta().ID == tableReplace.TableID {
+			if _, owned := ownedIDs[tableIdentity{dbID: dbInfo.ID, tableID: tbl.Meta().ID}]; owned {
 				continue
-			}
-			if ids, ok := ownedIDs[keyOf(dbName, tableReplace.Name)]; ok {
-				if _, owned := ids[tbl.Meta().ID]; owned {
-					continue
-				}
 			}
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"target table %s.%s already exists with table ID %d, but this restore maps it to table ID %d",

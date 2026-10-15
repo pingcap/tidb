@@ -1668,7 +1668,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 					Name:         "t",
 					TableID:      existing.Meta().ID + 1,
 					TargetDBName: "existing_db",
-					TargetDBID:   210,
+					TargetDBID:   existing.Meta().DBID,
 				},
 			},
 		}
@@ -1707,8 +1707,8 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 			Name: "existing_db",
 			DbID: 110,
 			TableMap: map[stream.UpstreamID]*stream.TableReplace{
-				20: {Name: "t", TableID: existing.Meta().ID, TargetDBName: "existing_db", TargetDBID: 210},
-				21: {Name: "t", TableID: -13, TargetDBName: "existing_db", TargetDBID: 210},
+				20: {Name: "t", TableID: existing.Meta().ID, TargetDBName: "existing_db", TargetDBID: existing.Meta().DBID},
+				21: {Name: "t", TableID: -13, TargetDBName: "existing_db", TargetDBID: existing.Meta().DBID},
 			},
 		}
 		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
@@ -1717,6 +1717,88 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		delete(manager.DBReplaceMap[10].TableMap, 20)
 		require.ErrorContains(t, client.ValidateTargetTableExistence(ctx, manager), "already exists with table ID")
 	})
+
+	for _, tc := range []struct {
+		name           string
+		crossSchema    bool
+		omitOldOwner   bool
+		filterOwner    bool
+		expectConflict bool
+	}{
+		{name: "allow owned snapshot tables before name reuse is replayed"},
+		{name: "allow historical ownership before cross schema rename is replayed", crossSchema: true},
+		{name: "reject ownership in another schema without a historical location", crossSchema: true, omitOldOwner: true, expectConflict: true},
+		{name: "reject ownership from a filtered table", filterOwner: true, expectConflict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := utiltest.CreateRestoreSchemaSuite(t)
+			tk := testkit.NewTestKit(t, s.Mock.Storage)
+			tk.MustExec("create database rename_src")
+			tk.MustExec("create database rename_dst")
+			tk.MustExec("create table rename_src.a (id int)")
+			secondDB := "rename_src"
+			if tc.crossSchema {
+				secondDB = "rename_dst"
+			}
+			tk.MustExec("create table " + secondDB + ".b (id int)")
+			g := gluetidb.New()
+			se, err := g.CreateSession(s.Mock.Storage)
+			require.NoError(t, err)
+			client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+			infoSchema := s.Mock.Domain.InfoSchema()
+			first, err := infoSchema.TableByName(ctx, ast.NewCIStr("rename_src"), ast.NewCIStr("a"))
+			require.NoError(t, err)
+			second, err := infoSchema.TableByName(ctx, ast.NewCIStr(secondDB), ast.NewCIStr("b"))
+			require.NoError(t, err)
+
+			// Snapshot ownership uses the original locations. The scan already
+			// carries the final names for a -> c, b -> a, before replay starts.
+			base := map[stream.UpstreamID]*stream.DBReplace{
+				10: {Name: "rename_src", DbID: first.Meta().DBID, TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					20: {Name: "a", TableID: first.Meta().ID},
+				}},
+			}
+			manager := stream.NewTableMappingManager()
+			manager.DBReplaceMap[10] = &stream.DBReplace{
+				Name: "rename_src", DbID: -10,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					20: {Name: "c", TableID: -20},
+					21: {Name: "a", TableID: -21},
+				},
+			}
+			if tc.crossSchema {
+				base[11] = &stream.DBReplace{
+					Name: "rename_dst", DbID: second.Meta().DBID,
+					TableMap: map[stream.UpstreamID]*stream.TableReplace{
+						21: {Name: "b", TableID: second.Meta().ID},
+					},
+				}
+				// Cross-schema RENAME leaves historical locations in both buckets.
+				manager.DBReplaceMap[11] = &stream.DBReplace{
+					Name: "rename_dst", DbID: -11,
+					TableMap: map[stream.UpstreamID]*stream.TableReplace{
+						20: {Name: "c", TableID: -20},
+						21: {Name: "a", TableID: -21},
+					},
+				}
+			} else {
+				base[10].TableMap[21] = &stream.TableReplace{Name: "b", TableID: second.Meta().ID}
+			}
+			manager.MergeBaseDBReplace(base)
+			if tc.omitOldOwner {
+				delete(manager.DBReplaceMap[10].TableMap, 20)
+			}
+			if tc.filterOwner {
+				manager.DBReplaceMap[10].TableMap[20].FilteredOut = true
+			}
+			err = client.ValidateTargetTableExistence(ctx, manager)
+			if tc.expectConflict {
+				require.ErrorContains(t, err, "already exists with table ID")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func downstreamID(upstreamID int64) int64 {
