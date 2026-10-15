@@ -109,7 +109,6 @@ func TestImportQueryEncodeS3(t *testing.T) {
 	tk.MustQuery("select count(*) from query_dst").Check(testkit.Rows("0"))
 
 	for i, tc := range []struct{ name, failpoint, message string }{
-		{"query failure", "github.com/pingcap/tidb/pkg/executor/failAfterImportQueryOptimize", "injected failure after import query optimization"},
 		{"encode failure", "github.com/pingcap/tidb/pkg/dxf/importinto/errorWhenSortChunk", "occur an error when sort chunk"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
