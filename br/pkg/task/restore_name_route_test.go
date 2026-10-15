@@ -37,7 +37,6 @@ import (
 )
 
 func TestBuildRestoreNamePlanUsesPiTRLatestSourceName(t *testing.T) {
-
 	t.Run("a dropped empty schema does not conflict with its replacement", func(t *testing.T) {
 		router, err := nameroute.Parse([]string{"c.u:y.copy"})
 		require.NoError(t, err)
@@ -58,7 +57,7 @@ func TestBuildRestoreNamePlanUsesPiTRLatestSourceName(t *testing.T) {
 		deleteSchema := func(dbID int64, ts uint64) {
 			entry := &kv.Entry{
 				Key:   brutils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(dbID), ts),
-				Value: codec.EncodeUvarint([]byte{byte(stream.WriteTypeDelete)}, ts-1),
+				Value: codec.EncodeUvarint([]byte{stream.WriteTypeDelete}, ts-1),
 			}
 			require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(entry, consts.WriteCF, ts, history))
 		}

@@ -38,7 +38,6 @@ type checksumPDClient struct {
 func (checksumPDClient) GetClusterID(context.Context) uint64 { return 123 }
 
 func TestChecksumPiTRStorageIDMap(t *testing.T) {
-
 	t.Run("checksum uses a table route's effective database", func(t *testing.T) {
 		c := &checksumTableCtx{}
 		table := &model.TableInfo{
