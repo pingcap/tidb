@@ -2400,6 +2400,7 @@ type baseIndexWorker struct {
 
 type addIndexTxnWorker struct {
 	baseIndexWorker
+	physicalID int64
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -2438,6 +2439,7 @@ func newAddIndexTxnWorker(
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	return &addIndexTxnWorker{
+		physicalID: t.GetPhysicalID(),
 		baseIndexWorker: baseIndexWorker{
 			backfillCtx: bfCtx,
 			indexes:     allIndexes,
@@ -2618,6 +2620,13 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if idxInfo.Global {
+		// Equal compares partition IDs only when both handles are PartitionHandles.
+		// The same inner handle in another partition is a different row.
+		if _, ok := handle.(kv.PartitionHandle); !ok {
+			handle = kv.NewPartitionHandle(w.physicalID, handle)
+		}
 	}
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {
