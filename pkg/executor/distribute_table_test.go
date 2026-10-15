@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -249,12 +250,15 @@ func TestDistributeTableWithKeyspace(t *testing.T) {
 	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(table))
 	require.NoError(t, err)
 
-	// The key range sent to PD must be encoded with the store codec so that it
-	// carries the keyspace prefix, otherwise it can't match the region keys on
-	// the keyspace cluster.
-	storeCodec := store.GetCodec()
-	startKey, endKey := storeCodec.EncodeRegionRange(
-		tablecodec.GenTablePrefix(tbl.ID), tablecodec.GenTablePrefix(tbl.ID+1))
+	// The key range sent to PD must carry the keyspace prefix ('x' + 3-byte
+	// keyspace ID) before the memcomparable encoding, otherwise it can't match
+	// the region keys on the keyspace cluster. Build the expected keys by hand
+	// instead of via the store codec so the test doesn't trust the code under test.
+	encodeRegionKey := func(key []byte) []byte {
+		return codec.EncodeBytes(nil, append([]byte{'x', 0, 0, 2}, key...))
+	}
+	startKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID))
+	endKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID + 1))
 	config := map[string]any{
 		"alias":     strings.Join([]string{"test", table, ""}, "."),
 		"engine":    "tikv",
@@ -266,6 +270,14 @@ func TestDistributeTableWithKeyspace(t *testing.T) {
 	cli.On("CreateSchedulerWithInput", mock.Anything, schedulerName, config).Return(nil)
 
 	tk.MustQuery("distribute table t1 rule='leader-scatter' engine='tikv'").Check(testkit.Rows("1"))
+
+	// SHOW TABLE DISTRIBUTIONS must query PD with the same keyspace-prefixed range.
+	distributions := &pdhttp.RegionDistributions{
+		RegionDistributions: []*pdhttp.RegionDistribution{{StoreID: 1, EngineType: "tikv", RegionLeaderCount: 1, RegionPeerCount: 3}},
+	}
+	cli.On("GetRegionDistributionByKeyRange", mock.Anything, pdhttp.NewKeyRange(startKey, endKey), "").
+		Return(distributions, nil)
+	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 0 0 0 0 0 0 0 0 0"))
 }
 
 func TestShowTableDistributions(t *testing.T) {
