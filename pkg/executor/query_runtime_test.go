@@ -121,8 +121,10 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		})
 	}
 	t.Run("submitted table definitions", func(t *testing.T) {
+		tk.MustExec("create resource group rg1 ru_per_sec=1000")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		sql := "import into unused_target from select /*+ STREAM_AGG() */ count(*) from query_src"
+		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
 		q, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
 		require.NoError(t, err)
 		data, err := json.Marshal(q)
@@ -132,6 +134,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.NotZero(t, q.SchemaVersion)
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 			require.Equal(t, q.SchemaVersion, p.SCtx().GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion())
+			require.Equal(t, "rg1", p.SCtx().GetSessionVars().StmtCtx.ResourceGroupName)
 		})
 		tk.Session().RollbackTxn(context.Background())
 		tk.MustExec("insert into query_src values (9,90,9)")

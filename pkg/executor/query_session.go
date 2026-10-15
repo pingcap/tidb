@@ -97,6 +97,9 @@ func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVar
 		}
 	}
 	vars.CurrentDB = q.CurrentDB
+	if q.ResourceGroupName != "" {
+		vars.SetResourceGroupName(q.ResourceGroupName)
+	}
 	// Without a statistics provider, this worker uses static partition pruning.
 	vars.PartitionPruneMode.Store("static")
 	// The submitter runs in MV maintenance, which may read MVs whose initial
