@@ -45,6 +45,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	tk.MustExec("set tidb_isolation_read_engines='tikv'")
 	tk.MustExec("set tidb_mem_quota_query=16777216")
 	tk.MustExec("set div_precision_increment=8")
+	tk.MustExec("set group_concat_max_len=7")
 	cases := []struct{ sqlMode, sql string }{
 		{"", "select i from (select i from query_src where i>0) c"},
 		{"", `select hex(_binary'\0\\a'), _latin1'a', 'a''b'`},
@@ -59,6 +60,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		{"", "select /*+ HASH_JOIN(a,b) */ a.i from query_src a join query_src b on a.i=b.i"},
 		{"", "select a.i from query_src_v a join query_cached b on a.i=b.i"},
 		{"", "select i/7, v/3 from query_src"},
+		{"", "select group_concat(i order by i) from query_src"},
 	}
 	for _, c := range cases {
 		sql := c.sql
