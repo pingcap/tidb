@@ -891,3 +891,30 @@ UPDATE t3 LEFT JOIN t ON t3.a = t.a SET t3.x = 1, t.e = 1;
 SELECT * FROM t;
 SELECT * FROM t3 ORDER BY a;
 DROP TABLE t, t2, t3;
+# UPDATE IGNORE turns a row with no partition for its value into a warning, and the joined table is still updated
+DROP TABLE IF EXISTS tp, tx, ts;
+CREATE TABLE tp (a INT, b INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20));
+CREATE TABLE tx (a INT, b INT);
+INSERT INTO tx VALUES (25, 0);
+ALTER TABLE tp EXCHANGE PARTITION p0 WITH TABLE tx WITHOUT VALIDATION;
+CREATE TABLE ts (b INT, x INT);
+INSERT INTO ts VALUES (0, 0);
+--enable_info
+UPDATE IGNORE tp PARTITION (p0) JOIN ts ON tp.b = ts.b SET tp.b = tp.b + 1, ts.x = 1;
+--disable_info
+SHOW WARNINGS;
+SELECT * FROM tp;
+SELECT * FROM ts;
+-- error 1526
+UPDATE tp PARTITION (p0) JOIN ts ON tp.b = ts.b SET tp.b = tp.b + 1, ts.x = 2;
+DROP TABLE tp, tx, ts;
+# Aliases with different PARTITION () sets locate their own rows
+CREATE TABLE t (a INT, b INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 0), (11, 0);
+BEGIN OPTIMISTIC;
+--enable_info
+UPDATE t PARTITION (p0) x, t PARTITION (p1) y SET x.b = x.b, y.b = 1;
+--disable_info
+COMMIT;
+SELECT * FROM t ORDER BY a;
+DROP TABLE t;
