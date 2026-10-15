@@ -831,7 +831,11 @@ func testTiDBOptRangeMaxCountWhenUpgrading(t *testing.T) {
 			store, dom := session.CreateStoreAndBootstrap(t)
 			defer func() { require.NoError(t, store.Close()) }()
 			se := session.CreateSessionAndSetID(t, store)
-			previousVersion := session.CurrentBootstrapVersion - 1
+			// Simulate a cluster created before tidb_opt_range_max_count was
+			// introduced by upgradeToVer318. Pin the version instead of deriving it
+			// from CurrentBootstrapVersion, so a new bootstrap migration no longer
+			// has to re-initialize the variable for this case to keep passing.
+			previousVersion := int64(317)
 			txn, err := store.Begin()
 			require.NoError(t, err)
 			m := meta.NewMutator(txn)
