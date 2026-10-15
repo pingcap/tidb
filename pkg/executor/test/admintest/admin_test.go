@@ -1620,11 +1620,15 @@ func TestAdminCheckTableFailed(t *testing.T) {
 }
 
 // errorLocateRowCount is the number of rows in the table used by the error
-// locate tests. With CheckTableFastBucketSize = 8, about 250 rows are left to
-// check after the first round of bucketing, which is more than the lookup
-// threshold (100 rows), so fast admin check needs 2 rounds of bucketing to
-// locate a corrupted row.
+// locate tests. With errorLocateBucketSize, about 250 rows are left to check
+// after the first round of bucketing, which is more than the lookup threshold
+// (100 rows) of fast admin check, so it needs 2 rounds of bucketing to locate a
+// corrupted row. requireLocated checks this to keep covering the multi-round
+// path.
 const errorLocateRowCount = 2000
+
+// errorLocateBucketSize is used as CheckTableFastBucketSize in the error locate tests.
+const errorLocateBucketSize = 8
 
 // errorLocateTable is a table admin_test(c1, c2) with errorLocateRowCount rows
 // and an operator of the index on c2 to corrupt it directly.
@@ -1636,7 +1640,10 @@ type errorLocateTable struct {
 	ctx    table.MutateContext
 	index  table.Index
 	handle func(row int) kv.Handle
+	seed   int64
 	rand   *rand.Rand
+	// rounds is the number of rounds of bucketing in the last fast admin check.
+	rounds atomic.Int64
 }
 
 // newErrorLocateTable creates the table, c1 is an int primary key (int handle)
@@ -1646,7 +1653,7 @@ func newErrorLocateTable(t *testing.T, commonHandle bool) *errorLocateTable {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	oldBucketSize := executor.CheckTableFastBucketSize.Load()
-	executor.CheckTableFastBucketSize.Store(8)
+	executor.CheckTableFastBucketSize.Store(errorLocateBucketSize)
 	t.Cleanup(func() {
 		executor.CheckTableFastBucketSize.Store(oldBucketSize)
 	})
@@ -1672,8 +1679,12 @@ func newErrorLocateTable(t *testing.T, commonHandle bool) *errorLocateTable {
 		dom:   dom,
 		tk:    tk,
 		ctx:   sctx.GetTableCtx(),
+		seed:  seed,
 		rand:  rand.New(rand.NewSource(seed)),
 	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/fastCheckTableByGroup", func(times int) {
+		e.rounds.Store(int64(times))
+	})
 	e.handle = func(row int) kv.Handle {
 		return kv.IntHandle(row)
 	}
@@ -1738,31 +1749,36 @@ func (e *errorLocateTable) modifyIndex(row, oldValue, newValue int) {
 
 var errorLocateHandleRegexp = regexp.MustCompile(`handle:\s(\d+)`)
 
-// requireLocated checks that admin check table reports the corrupted row.
-func (e *errorLocateTable) requireLocated(row, i int) {
+// requireLocated checks that admin check table reports the corrupted row, and
+// fast admin check locates it by at least 2 rounds of bucketing.
+func (e *errorLocateTable) requireLocated(row, iteration int) {
 	e.t.Helper()
+	e.rounds.Store(0)
 	err := e.tk.ExecToErr("admin check table admin_test")
 	require.Error(e.t, err)
 	match := errorLocateHandleRegexp.FindStringSubmatch(err.Error())
 	require.Greater(e.t, len(match), 0, err.Error())
 	handle, err := strconv.Atoi(match[1])
 	require.NoError(e.t, err)
-	require.Equalf(e.t, row, handle, "i :%d", i)
+	require.Equalf(e.t, row, handle, "iteration %d, seed %d", iteration, e.seed)
+	require.GreaterOrEqualf(e.t, e.rounds.Load(), int64(2),
+		"fast admin check should locate the row by multiple rounds of bucketing, adjust errorLocateRowCount, iteration %d, seed %d", iteration, e.seed)
 }
 
-// sameValue and nextValue give the index value of a row, the table has c2 = c1.
-func sameValue(row int) int { return row }
+// rowValue is the index value of a row, the table has c2 = c1.
+func rowValue(row int) int { return row }
 
-func nextValue(row int) int { return row + 1 }
+// corruptValue is a wrong index value of a row.
+func corruptValue(row int) int { return row + 1 }
 
 // testAdminCheckTableErrorLocate corrupts the index of a random row for several
 // times and checks that admin check table locates the corrupted row each time.
 // The index is repaired after each check, the next check also fails if it is
 // not fully repaired, so the table is only checked to be consistent at the end.
-func testAdminCheckTableErrorLocate(t *testing.T, commonHandle bool, corrupt func(e *errorLocateTable, i int)) {
+func testAdminCheckTableErrorLocate(t *testing.T, commonHandle bool, corrupt func(e *errorLocateTable, iteration int)) {
 	e := newErrorLocateTable(t, commonHandle)
-	for i := range 10 {
-		corrupt(e, i)
+	for iteration := range 10 {
+		corrupt(e, iteration)
 	}
 	e.tk.MustExec("admin check table admin_test")
 	e.tk.MustExec("set @@tidb_enable_fast_table_check = 0")
@@ -1770,41 +1786,40 @@ func testAdminCheckTableErrorLocate(t *testing.T, commonHandle bool, corrupt fun
 }
 
 // errorLocateMissingIndex deletes the index record of an existing row.
-func errorLocateMissingIndex(e *errorLocateTable, i int) {
+func errorLocateMissingIndex(e *errorLocateTable, iteration int) {
 	row := e.rand.Intn(errorLocateRowCount) + 1
-	e.deleteIndex([]int{row}, sameValue)
-	e.requireLocated(row, i)
+	e.deleteIndex([]int{row}, rowValue)
+	e.requireLocated(row, iteration)
 	e.tk.MustQuery("admin recover index admin_test c2")
 }
 
 // errorLocateExtraIndex adds an index record with a wrong value to an existing row.
-func errorLocateExtraIndex(e *errorLocateTable, i int) {
+func errorLocateExtraIndex(e *errorLocateTable, iteration int) {
 	row := e.rand.Intn(errorLocateRowCount) + 1
-	e.createIndex([]int{row}, nextValue)
-	e.requireLocated(row, i)
-	e.deleteIndex([]int{row}, nextValue)
+	e.createIndex([]int{row}, corruptValue)
+	e.requireLocated(row, iteration)
+	e.deleteIndex([]int{row}, corruptValue)
 }
 
 // errorLocateDanglingIndex adds an index record pointing to a row that doesn't exist.
-func errorLocateDanglingIndex(e *errorLocateTable, i int) {
+func errorLocateDanglingIndex(e *errorLocateTable, iteration int) {
 	row := e.rand.Intn(errorLocateRowCount) + errorLocateRowCount + 1
-	e.createIndex([]int{row}, nextValue)
-	e.requireLocated(row, i)
-	e.deleteIndex([]int{row}, nextValue)
+	e.createIndex([]int{row}, corruptValue)
+	e.requireLocated(row, iteration)
+	e.deleteIndex([]int{row}, corruptValue)
 }
 
 // errorLocateModifiedIndex changes the index value of an existing row.
-func errorLocateModifiedIndex(e *errorLocateTable, i int) {
+func errorLocateModifiedIndex(e *errorLocateTable, iteration int) {
 	row := e.rand.Intn(errorLocateRowCount) + 1
-	e.modifyIndex(row, row, row+1)
-	e.requireLocated(row, i)
-	e.modifyIndex(row, row+1, row)
+	e.modifyIndex(row, rowValue(row), corruptValue(row))
+	e.requireLocated(row, iteration)
+	e.modifyIndex(row, corruptValue(row), rowValue(row))
 }
 
-// The error locate cases are split into separate tests so that they can run in
-// different bazel shards.
-
-func TestAdminCheckTableErrorLocate(t *testing.T) {
+// TestAdminCheckTableEmptyIndexOrTable checks that admin check table fails
+// when the index or the table is empty, it doesn't check the located row.
+func TestAdminCheckTableEmptyIndexOrTable(t *testing.T) {
 	e := newErrorLocateTable(t, false)
 	rows := make([]int, 0, errorLocateRowCount)
 	for i := 1; i <= errorLocateRowCount; i++ {
@@ -1812,15 +1827,18 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// No index record.
-	e.deleteIndex(rows, sameValue)
+	e.deleteIndex(rows, rowValue)
 	require.Error(t, e.tk.ExecToErr("admin check table admin_test"))
 
 	// No table record.
 	e.tk.MustExec("truncate admin_test")
 	e.reloadIndex()
-	e.createIndex(rows[:100], sameValue)
+	e.createIndex(rows[:100], rowValue)
 	require.Error(t, e.tk.ExecToErr("admin check table admin_test"))
 }
+
+// The error locate cases are split into separate tests so that they can run in
+// different bazel shards.
 
 func TestAdminCheckTableErrorLocateMissingIndex(t *testing.T) {
 	testAdminCheckTableErrorLocate(t, false, errorLocateMissingIndex)
