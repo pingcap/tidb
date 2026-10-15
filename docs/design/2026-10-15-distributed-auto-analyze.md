@@ -14,29 +14,21 @@
     * [Current Implementation](#current-implementation)
     * [Run Auto Analyze Statements on DXF](#run-auto-analyze-statements-on-dxf)
         * [Workflow](#workflow)
-        * [Explicitly Opt-in](#explicitly-opt-in)
+        * [The Switch](#the-switch)
         * [Dispatch on the Stats Owner](#dispatch-on-the-stats-owner)
         * [Task, Scheduler, and Executor](#task-scheduler-and-executor)
-        * [Concurrency Control](#concurrency-control)
-        * [Resource Control](#resource-control)
+        * [Concurrency and Slots](#concurrency-and-slots)
         * [Timeout and Cancellation](#timeout-and-cancellation)
     * [Run on a DXF Service Node](#run-on-a-dxf-service-node)
         * [Load the Analyzed Table on Demand](#load-the-analyzed-table-on-demand)
         * [Stats Handle Without a Domain](#stats-handle-without-a-domain)
         * [Settings of the User Keyspace](#settings-of-the-user-keyspace)
-    * [Compatibility and Rollout](#compatibility-and-rollout)
+    * [Rolling Upgrade](#rolling-upgrade)
 * [Test Design](#test-design)
-    * [Functional Tests](#functional-tests)
-    * [Scenario Tests](#scenario-tests)
-    * [Compatibility Tests](#compatibility-tests)
-    * [Benchmark Tests](#benchmark-tests)
 * [Impacts & Risks](#impacts--risks)
-    * [Impacts](#impacts)
-    * [Risks](#risks)
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
 * [Future Possibility](#future-possibility)
-* [FAQ](#faq)
 
 ## Introduction
 
@@ -58,13 +50,9 @@ On the next-gen kernel, the same change moves auto-analyze off the TiDB nodes of
 
 ### Current Implementation
 
-Before diving into the new design, let's take a look at how auto-analyze runs today.
-
 The stats owner maintains a [priority queue](./2024-09-06-maintain-priority-queue-in-memory.md) of analysis jobs. Its [worker](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/statistics/handle/autoanalyze/refresher/worker.go#L95-L109) runs up to `tidb_auto_analyze_concurrency` jobs at the same time, and each job builds one or more `ANALYZE` statements for its table. Every statement eventually goes through [`exec.AutoAnalyze`](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/statistics/handle/autoanalyze/exec/exec.go#L58-L87), which executes it in a session of the stats handle on the stats owner.
 
-So the essence of this feature is to deliver the `ANALYZE` statement to another TiDB node, let that node execute it, and wait for the result. The priority queue, the job types, and the statements stay the same.
-
-The most straightforward approach is for the stats owner to write the statements into a system table, such as `mysql.analyze_jobs`, and for the other nodes to poll it. However, TiDB already has a mature framework to distribute and execute tasks: [DXF](./2023-04-11-dist-task.md). To minimize the risk and reuse a proven solution, this document uses DXF to distribute and execute the statements.
+This design changes only where the statement runs: the stats owner delivers it to another node, which executes it and reports the result. The priority queue, the job types, and the statements stay the same. **We use [DXF](./2023-04-11-dist-task.md) to deliver and run the statements**, because it already places work on the nodes by their free slots, moves the work of a lost node to another node, cancels running work, and, on the next-gen kernel, runs on the service nodes.
 
 ### Run Auto Analyze Statements on DXF
 
@@ -85,7 +73,7 @@ The [workflow](https://editor.plantuml.com/uml/RLFBJiCm4BpdArQzGANo0psW5hMLa2f0A
 
 On the classic kernel, the flow is the same without step 2, and in step 5 the statement runs on a TiDB node of the same cluster with that node's domain.
 
-#### Explicitly Opt-in
+#### The Switch
 
 We add a new `GLOBAL` variable, `tidb_auto_analyze_dist_mode`:
 
@@ -124,8 +112,8 @@ The keyspace of the task is the keyspace of the stats owner's store, so the disp
 The dispatcher then:
 
 1. Tracks itself as an auto-analyze process of the stats owner, and shows the statement as its running query. This is what keeps the existing controls working, as described in [Timeout and Cancellation](#timeout-and-cancellation).
-2. On the next-gen kernel, runs `FLUSH STATS_DELTA db.tbl CLUSTER` on the stats owner. A service node cannot reach the TiDB nodes of a user keyspace, so the stats owner flushes their deltas before submitting the task. A failed flush fails the dispatch, and the queue retries the table later.
-3. Submits the task with the slots the statement needs, as described in [Resource Control](#resource-control), and waits until the task is done.
+2. On the next-gen kernel, runs `FLUSH STATS_DELTA db.tbl CLUSTER` on the stats owner. `ANALYZE` flushes the deltas of the table on every TiDB node before it reads the row count, otherwise an old delta can be applied later and count the same rows twice. A service node cannot reach the TiDB nodes of a user keyspace, so the stats owner flushes their deltas before submitting the task. A failed flush fails the dispatch, and the queue retries the table later.
+3. Submits the task with the slots the statement needs, as described in [Concurrency and Slots](#concurrency-and-slots), and waits until the task is done.
 4. After the task succeeds, loads the new statistics of the table and its partitions into the stats owner's cache. **The priority queue relies on this:** it removes a finished job from the running jobs on the assumption that the cache already holds the new statistics. Otherwise, it could see the old modify count and analyze the table again.
 
 If DXF is not ready on the node, or the statement cannot be described by a task meta, the dispatcher runs the statement locally.
@@ -141,15 +129,11 @@ A statement analyzes one table and is already the smallest unit of work, so a ta
 
 We use a task type dedicated to auto-analyze, `AutoAnalyze`, rather than a generic task that runs any SQL statement. The parts that a generic SQL task would need, loading a user table on a service node and running a statement without a domain, live in the info schema and the session layer, as described in [Run on a DXF Service Node](#run-on-a-dxf-service-node), so a future SQL task can reuse them without going through this task type.
 
-#### Concurrency Control
+#### Concurrency and Slots
 
-We keep using `tidb_auto_analyze_concurrency` as the concurrency control of auto-analyze for the whole cluster. **The worker on the stats owner holds its slot while the dispatcher waits for the task**, so the variable still limits how many statements run at the same time, wherever they run.
+`tidb_auto_analyze_concurrency` still limits auto-analyze for the whole cluster. **The worker on the stats owner holds its slot while the dispatcher waits for the task**, so the variable limits how many statements run at the same time, wherever they run.
 
-A reasonable default for this variable once statements run on many nodes needs to be determined by testing. It should be higher than it is today.
-
-#### Resource Control
-
-A DXF task must stay within the resources it gets from the framework, which are counted in [slots](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/dxf/framework/doc.go#L42-L61). An `ANALYZE` statement, on the other hand, decides its parallelism by three variables. For an internal `ANALYZE`, TiDB takes two of them from global variables instead of the session ones of the same purpose, see [`ExecStmt.Exec`](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/executor/adapter.go#L730-L759):
+On the node, a DXF task must stay within the resources it gets from the framework, which are counted in [slots](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/dxf/framework/doc.go#L42-L61). An `ANALYZE` statement, on the other hand, decides its parallelism by three variables. For an internal `ANALYZE`, TiDB takes two of them from global variables instead of the session ones of the same purpose, see [`ExecStmt.Exec`](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/executor/adapter.go#L730-L759):
 
 | Variable | Controls |
 | --- | --- |
@@ -217,54 +201,28 @@ Many global variables are mirrored in process-level variables, which hold the va
 - With historical statistics enabled, the statement dumps them itself, because there is no historical-stats worker of the user keyspace on the node.
 - The cache of approximate row counts from PD is keyed by keyspace as well, because tables of two keyspaces can share IDs and names.
 
-### Compatibility and Rollout
+### Rolling Upgrade
 
-`ANALYZE` keeps running during a rolling upgrade. An old TiDB node does not know the `AutoAnalyze` task type or the new variable, so **set `tidb_auto_analyze_dist_mode` to `DXF` only after every node is upgraded**. The variable is `OFF` in both new and upgraded clusters, so an upgrade never turns the feature on.
+`tidb_auto_analyze_dist_mode` is `OFF` in both new and upgraded clusters, so an upgrade never turns the feature on. An old stats owner does not know the variable and keeps running every statement locally.
 
-| Stats owner | DXF node | Behavior |
-| --- | --- | --- |
-| Old | Any | The stats owner never submits an `AutoAnalyze` task. |
-| New, mode `OFF` | Any | The stats owner runs every statement locally, as before. |
-| New, mode `DXF` | Old | The node cannot run the task. Do not enable the mode before the upgrade completes. |
-
-The task type takes a new value in the DXF task tables, and the task meta is JSON, so a later version can add fields to it.
+**Set the variable to `DXF` only after every node is upgraded**, including the DXF service nodes on the next-gen kernel. If it is set earlier, a task that reaches an old node fails: an old DXF owner [fails a task of an unknown type](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/dxf/framework/scheduler/scheduler_manager.go#L277-L282), and an old task executor [fails its subtask](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/dxf/framework/taskexecutor/manager.go#L341-L347). The statement does not run, no statistics are written, and the priority queue analyzes the table again later.
 
 ## Test Design
 
-### Functional Tests
+The tests cover what can go wrong when the statement leaves the stats owner:
 
-- **Dispatch:** a statement runs as a task, is recorded as an auto-analyze job, and its statistics are in the stats owner's cache when the dispatcher returns.
-- **Cancellation:** killing the dispatcher cancels the task and stops the statement on the node that runs it, and the waiting process holds no transaction start timestamp.
-- **Resource control:** the slots follow the effective settings, including a scan concurrency of `0`, and the statement reads no setting above its slots, while a pooled session keeps its own settings afterwards.
-- **On-demand tables:** a listed table is found by name, table ID, and partition ID; unlisted tables stay invisible; a listed table stays as it was loaded until it is released; whatever maintains the cache never sees it; concurrent listing and releasing pass the race detector.
-- **Service node:** with a `SYSTEM` domain and a user keyspace runtime, `ANALYZE` writes statistics into the user keyspace only and matches the result of the same statement in the user keyspace, for plain, partitioned, cached, and changed tables, with historical statistics, and with the sample rate taken from the statistics of the user keyspace.
-
-### Scenario Tests
-
-- **Classic:** a cluster with three TiDB nodes analyzes batches of tables, including partitioned tables, through DXF.
-- **Next-gen:** a cluster with one service node and two TiDB nodes in a user keyspace analyzes batches of tables on the service node, including partitioned tables with global statistics and a table after a schema change.
-- **Cancellation:** with a low `tidb_max_auto_analyze_time`, tasks are cancelled both while they wait for slots and while their statements run. The statements stop, the job of a running statement is marked failed, and the tables are analyzed again later.
-- **Settings:** a user keyspace with a large build concurrency or an adaptive scan concurrency gets tasks within the CPU count of the service node.
-
-### Compatibility Tests
-
-- **Mode `OFF`:** the existing auto-analyze, analyze executor, and planner tests pass unchanged.
-- **Upgrade:** an upgraded cluster starts with the mode `OFF`.
-
-### Benchmark Tests
-
-Compare the duration of auto-analyze for a cluster with many tables, with the mode `OFF` and `DXF`, across values of `tidb_auto_analyze_concurrency` and numbers of DXF nodes. Record the fixed overhead per statement, the CPU and memory of the stats owner and the DXF nodes, and the effect on foreground queries.
+- **Result:** a dispatched statement is recorded as an auto-analyze job, and its statistics are in the stats owner's cache when the dispatcher returns, so the priority queue does not queue the table again.
+- **Cancellation:** a kill and `tidb_max_auto_analyze_time` cancel the task both while it waits for slots and while its statement runs, including the merge of global statistics. The job of a running statement is marked failed, the table is analyzed again later, and the waiting process holds no transaction start timestamp.
+- **Slots:** the slots follow the effective settings, including a scan concurrency of `0`. The statement reads no setting above its slots, and a pooled session keeps its own settings afterwards.
+- **On-demand tables:** a listed table is found by name, table ID, and partition ID, and unlisted tables stay invisible. A listed table keeps the version it was loaded with until it is released, and the schema syncer and the builder never see it. Concurrent listing and releasing pass the race detector.
+- **Service node:** `ANALYZE` of a user keyspace on a service node writes statistics only into that keyspace, and gives the same result as the same statement in the keyspace: for plain, partitioned, and cached tables, after a schema change, and with historical statistics. It uses the settings of the user keyspace, not those of `SYSTEM`.
+- **Rolling upgrade:** with the mode set to `DXF` before an old node is upgraded, the task fails and the table is analyzed again later.
+- **Throughput:** the duration of auto-analyze for many tables with the mode `OFF` and `DXF`, across values of `tidb_auto_analyze_concurrency` and numbers of DXF nodes, and the fixed overhead per statement. The result is used to choose the default of `tidb_auto_analyze_concurrency`.
 
 ## Impacts & Risks
 
-### Impacts
-
-- Auto-analyze no longer runs only on the stats owner, so its throughput grows with the DXF nodes. On the next-gen kernel, it moves off the TiDB nodes of the user keyspace.
-- Each statement pays the fixed overhead of a DXF task, a few seconds, which matters most for small tables.
+- Each statement pays the fixed overhead of scheduling a DXF task, which matters most for small tables.
 - The stats owner still holds a worker slot and one session for each running statement while it waits.
-
-### Risks
-
 - At most 16 DXF tasks run at the same time by default, and this limit is shared with other task types, such as `ADD INDEX` and `IMPORT INTO`, and on the next-gen kernel with every user keyspace.
 - Every statement adds a row to the DXF task history. Subtask history is removed after 14 days, but task history is kept.
 - If the stats owner crashes while a task runs, the task runs to the end without anyone waiting for it, and the new stats owner may analyze the same table again in the meantime.
@@ -291,23 +249,4 @@ Compare the duration of auto-analyze for a cluster with many tables, with the mo
 
 ## Future Possibility
 
-- Other background SQL tasks can run on the DXF service nodes with the same building blocks: listing the tables they need in the info schema of the runtime, and running in a session without a domain.
-- Manual `ANALYZE` could be distributed in the same way.
-
-## FAQ
-
-- How does the task know its keyspace, since auto-analyze statements are created by an internal process?
-
-  The stats owner runs in the user keyspace, so the dispatcher takes the keyspace from the stats owner's store.
-
-- Does `tidb_max_auto_analyze_time` still work?
-
-  Yes. The dispatcher is an auto-analyze process of the stats owner, so the limit kills it, and it cancels the task. The time spent waiting for slots counts as well.
-
-- Why does the stats owner still flush the stats deltas?
-
-  Before analyzing, `ANALYZE` flushes the deltas of the table on every TiDB node, so that they are not applied again after the statement reads the row count. A service node cannot reach the TiDB nodes of a user keyspace, so the stats owner does it before submitting the task.
-
-- What changes when `tidb_auto_analyze_dist_mode` is `OFF`?
-
-  Nothing. The stats owner runs every statement locally, and the info schema and the sessions of a normal TiDB node behave as before.
+Manual `ANALYZE` could be distributed in the same way.
