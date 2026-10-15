@@ -562,6 +562,49 @@ func TestNewScanSessionRestoresStateAndDiscardsPartialSetup(t *testing.T) {
 	})
 }
 
+func TestValidateTTLKeyBinding(t *testing.T) {
+	info := newMockTTLTbl(t, "t1").TableInfo.Clone()
+	info.IsCommonHandle = true
+	for i, name := range []string{"a", "b"} {
+		info.Columns = append(info.Columns, &model.ColumnInfo{
+			ID: int64(i + 2), Name: ast.NewCIStr(name), Offset: i + 1,
+			FieldType: *types.NewFieldType(mysql.TypeLonglong), State: model.StatePublic,
+		})
+	}
+	info.Indices = []*model.IndexInfo{{Name: ast.NewCIStr("PRIMARY"), Primary: true, State: model.StatePublic,
+		Columns: []*model.IndexColumn{{Name: ast.NewCIStr("a"), Offset: 1}, {Name: ast.NewCIStr("b"), Offset: 2}},
+	}}
+	tbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), info, ast.NewCIStr(""))
+	require.NoError(t, err)
+	for name, change := range map[string]func(*model.TableInfo){
+		"count": func(next *model.TableInfo) { next.Indices[0].Columns = next.Indices[0].Columns[:1] },
+		"order": func(next *model.TableInfo) {
+			next.Indices[0].Columns[0], next.Indices[0].Columns[1] = next.Indices[0].Columns[1], next.Indices[0].Columns[0]
+		},
+		"id":        func(next *model.TableInfo) { next.Columns[1].ID++ },
+		"name":      func(next *model.TableInfo) { next.Columns[1].Name = ast.NewCIStr("old_a") },
+		"unsigned":  func(next *model.TableInfo) { next.Columns[1].AddFlag(mysql.UnsignedFlag) },
+		"type":      func(next *model.TableInfo) { next.Columns[1].SetType(mysql.TypeLong) },
+		"collation": func(next *model.TableInfo) { next.Columns[1].SetCollate("utf8mb4_bin") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			next := info.Clone()
+			change(next)
+			s := newMockSession(t, tbl)
+			s.sessionInfoSchema = newMockInfoSchema(next)
+			require.ErrorContains(t, validateTTLWork(context.Background(), s, tbl, time.Now()), "key column")
+		})
+	}
+	s := newMockSession(t, tbl)
+	s.sessionInfoSchema = newMockInfoSchema(info.Clone())
+	require.NoError(t, validateTTLWork(context.Background(), s, tbl, time.Now()))
+}
+
+// NewTableSessionForTest exposes the production delete-session validation path.
+func NewTableSessionForTest(se session.Session, tbl *cache.PhysicalTable, expire time.Time) *ttlTableSession {
+	return newTableSession(se, tbl, expire)
+}
+
 func TestValidateTTLWork(t *testing.T) {
 	ctx := context.TODO()
 	tbl := newMockTTLTbl(t, "t1")
