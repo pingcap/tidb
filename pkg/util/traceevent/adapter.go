@@ -54,6 +54,10 @@ func handleClientGoIsCategoryEnabled(category trace.Category) bool {
 // 1. Whether to enable immediate logging based on the Trace.keep flag
 // 2. Which TiKV trace categories to enable based on TiDB's enabled categories
 func handleTraceControlExtractor(ctx context.Context) trace.TraceControlFlags {
+	if diagnosticEnabled.Load() {
+		// The bounded diagnostic recorder replaces TiKV's legacy trace logging.
+		return 0
+	}
 	flags := trace.TraceControlFlags(0)
 
 	// Map TiDB categories to TiKV categories regardless of whether a Trace sink is present.

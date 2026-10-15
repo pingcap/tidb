@@ -138,6 +138,9 @@ var (
 	statusCompressionLevel     = "Compression_level"
 )
 
+// Additional SQL timing is opt-in for the diagnostic image.
+var diagnosticSQLTiming = os.Getenv("TIDB_CQ_TRACE_FILE") != ""
+
 var (
 	// ConnectionInMemCounterForTest is a variable to count live connection object
 	ConnectionInMemCounterForTest = atomic.Int64{}
@@ -1502,7 +1505,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			pprof.SetGoroutineLabels(ctx)
 		}
 	}
+	tokenStarted := time.Now()
 	token := cc.server.getToken()
+	tokenWait := time.Since(tokenStarted)
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
 		if ctx := cc.getCtx(); ctx != nil {
@@ -1517,6 +1522,21 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 
 	vars := cc.ctx.GetSessionVars()
+	if diagnosticSQLTiming && cmd == mysql.ComQuery && traceevent.IsEnabled(traceevent.StmtLifecycle) {
+		previousTraceID := vars.PrevTraceID
+		defer func() {
+			// Successful single-statement commands share their statement's trace
+			// ID. Include parsing, token admission and the final MySQL flush.
+			if bytes.Equal(previousTraceID, vars.PrevTraceID) {
+				return
+			}
+			traceCtx := traceevent.ContextWithTraceID(ctx, vars.PrevTraceID)
+			traceevent.TraceEvent(traceCtx, traceevent.StmtLifecycle, "sql.command.finish",
+				zap.Uint64("conn_id", cc.connectionID), zap.String("stmt_type", vars.StmtCtx.StmtType),
+				zap.Bool("multi_stmt", vars.InMultiStmts), zap.Duration("elapsed_ns", time.Since(t)),
+				zap.Duration("token_wait_ns", tokenWait))
+		}()
+	}
 	// reset killed for each request
 	vars.SQLKiller.Reset()
 	vars.SQLCPUUsages.ResetCPUTimes()
@@ -1642,6 +1662,16 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, 
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
+	if diagnosticSQLTiming && traceevent.IsEnabled(traceevent.StmtLifecycle) {
+		if session := cc.getCtx(); session != nil && len(session.GetSessionVars().PrevTraceID) != 0 {
+			traceCtx := traceevent.ContextWithTraceID(ctx, session.GetSessionVars().PrevTraceID)
+			started := time.Now()
+			defer func() {
+				traceevent.TraceEvent(traceCtx, traceevent.StmtLifecycle, "sql.response.flush",
+					zap.Uint64("conn_id", cc.connectionID), zap.Duration("elapsed_ns", time.Since(started)))
+			}()
+		}
+	}
 	var (
 		stmtDetail = stmtExecDetailsFromContext(ctx)
 		startTime  = beginWriteSQLRespDuration(stmtDetail)

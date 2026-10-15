@@ -106,6 +106,7 @@ func init() {
 
 	// Register TiDB's trace event handlers with client-go
 	RegisterWithClientGo()
+	initDiagnosticRecorderFromEnv()
 }
 
 // Enable enables trace events for the specified categories.
@@ -116,6 +117,9 @@ var Enable = tracing.Enable
 func IsEnabled(category tracing.TraceCategory) bool {
 	if kerneltype.IsClassic() && !intest.InTest {
 		return false
+	}
+	if diagnosticEnabled.Load() {
+		return category&diagnosticCategories != 0
 	}
 	fr := GetFlightRecorder()
 	if fr == nil {

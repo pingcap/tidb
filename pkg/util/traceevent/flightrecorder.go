@@ -344,6 +344,9 @@ func checkTruthTable(bits uint64, table []uint64) bool {
 
 // CheckFlightRecorderDumpTrigger checks if the flight recorder should dump based on the trigger configuration.
 func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, check func(*DumpTriggerConfig) bool) {
+	if diagnosticEnabled.Load() {
+		return
+	}
 	flightRecorder := globalHTTPFlightRecorder.Load()
 	if flightRecorder == nil {
 		return
