@@ -217,6 +217,16 @@ func PrepareForCrossKSTestWithNewCollation(
 			Dom:   dom,
 		}
 	}
+	// Bootstrapping a user keyspace resets the global mock server info registry
+	// (see MockGlobalServerInfoManagerEntry.Close), which drops the entry of the
+	// SYSTEM domain registered when it started. Only the SYSTEM domain runs the
+	// DXF task executor in tests (user keyspace domains skip DXF, see
+	// Domain.InitDistTaskLoop), so re-register it; otherwise distributed tasks
+	// such as global-sort ADD INDEX cannot find a live executor and never
+	// generate subtasks.
+	if len(userKSs) > 0 {
+		res[keyspace.System].Dom.InitInfo4Test()
+	}
 	return res
 }
 
@@ -361,6 +371,14 @@ func GetNextGenObjStoreURI(path string) string {
 // at the NextGen test object store so that DDL requiring global sort (such as
 // ADD INDEX / MODIFY COLUMN) can run on the NextGen kernel. It is a no-op on the
 // Classic kernel and clears the variable again when the test finishes.
+//
+// The setting takes effect through the process-global vardef.CloudStorageURI
+// (see handle.GetCloudStorageURI), while the value stored in
+// `mysql.global_variables` is per keyspace. A domain co-hosted in the same
+// process whose stored value differs therefore overwrites the process-global
+// value when its sysvar cache is refreshed. Tests that bootstrap several
+// keyspace domains at once must use SetupNextGenGlobalSortForAllKeyspaces
+// instead.
 func SetupNextGenGlobalSort(t *testing.T, tk *testkit.TestKit) {
 	t.Helper()
 	if !kerneltype.IsNextGen() {
@@ -370,6 +388,20 @@ func SetupNextGenGlobalSort(t *testing.T, tk *testkit.TestKit) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_cloud_storage_uri = ''")
 	})
+}
+
+// SetupNextGenGlobalSortForAllKeyspaces calls SetupNextGenGlobalSort for every
+// keyspace runtime in runtimes, so that all co-hosted keyspace domains store the
+// same URI and none of them resets the process-global value on sysvar cache
+// refresh.
+func SetupNextGenGlobalSortForAllKeyspaces(t *testing.T, runtimes map[string]*KSRuntime) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	for _, rt := range runtimes {
+		SetupNextGenGlobalSort(t, testkit.NewTestKit(t, rt.Store))
+	}
 }
 
 func getNextGenObjStoreURIWithArgs(path string, args string) string {
