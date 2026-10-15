@@ -882,7 +882,7 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
-	tk.MustExec("insert into t values (0, '[0,1,2]')")
+	tk.MustExec("insert into t values (0, '[0,2,4]')")
 	tk.MustExec("insert into t values (1, '[1,2,3]')")
 	tk.MustExec("insert into t values (2, '[2,3,4]')")
 	tk.MustExec("insert into t values (3, '[3,4,5]')")
@@ -922,13 +922,35 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	require.True(t, checkedRequest.Load())
 
 	idxInfo := tblInfo.Indices[0]
-	tk.Session().GetSessionVars().IndexLookupSize = 3
-	tk.Session().GetSessionVars().MaxChunkSize = 3
+	tk.Session().GetSessionVars().IndexLookupSize = 100
+	tk.Session().GetSessionVars().MaxChunkSize = 100
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
 	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
 	require.NoError(t, err)
+
+	// Check corrupt entries both between valid entries and after the last one
+	// for the same handle. Keep all entries in one lookup batch.
+	for _, value := range []int64{1, 5} {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(value), kv.IntHandle(0), nil)
+		require.NoError(t, err)
+		require.NoError(t, txn.Commit(context.Background()))
+		err = tk.ExecToErr("admin check table t")
+		require.Error(t, err)
+		require.True(t, consistency.ErrAdminCheckInconsistentWithColInfo.Equal(err))
+
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, indexOpr.Delete(ctx, txn, types.MakeDatums(value), kv.IntHandle(0)))
+		require.NoError(t, txn.Commit(context.Background()))
+		tk.MustExec("admin check table t")
+	}
+
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
 
 	txn, err := store.Begin()
 	require.NoError(t, err)

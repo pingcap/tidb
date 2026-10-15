@@ -102,6 +102,7 @@ type lookupTableTask struct {
 	indexOrder *kv.HandleMap
 	// duplicatedIndexOrder map likes indexOrder. But it's used when checkIndexValue isn't nil and
 	// the same handle of index has multiple values.
+	// Values are []int containing all offsets, including the first occurrence.
 	duplicatedIndexOrder *kv.HandleMap
 
 	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
@@ -2032,8 +2033,13 @@ func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *ch
 		indexOrder = kv.NewHandleMap()
 		duplicatedIndexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			if _, ok := indexOrder.Get(h); ok {
-				duplicatedIndexOrder.Set(h, i)
+			if first, ok := indexOrder.Get(h); ok {
+				v, ok := duplicatedIndexOrder.Get(h)
+				offsets, _ := v.([]int)
+				if !ok {
+					offsets = append(offsets, first.(int))
+				}
+				duplicatedIndexOrder.Set(h, append(offsets, i))
 			} else {
 				indexOrder.Set(h, i)
 			}
@@ -2340,43 +2346,46 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			if err != nil {
 				return err
 			}
-			v, ok := task.indexOrder.Get(handle)
-			if !ok {
-				v, _ = task.duplicatedIndexOrder.Get(handle)
-			}
+			v, _ := task.indexOrder.Get(handle)
 			offset, _ := v.(int)
+			offsets := []int{offset}
+			if v, ok := task.duplicatedIndexOrder.Get(handle); ok {
+				offsets = v.([]int)
+			}
 			task.indexOrder.Delete(handle)
-			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			tc := w.idxLookup.ectx.GetEvalCtx().TypeCtx()
-			for i := range vals {
-				col := w.idxTblCols[i]
-				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
-				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
-				if err != nil {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxVal,
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
-				}
-				if cmpRes != 0 {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxRow.GetDatum(i, w.idxColTps[i]),
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
+			for _, offset := range offsets {
+				idxRow := task.idxRows.GetRow(offset)
+				for i := range vals {
+					col := w.idxTblCols[i]
+					idxVal := idxRow.GetDatum(i, w.idxColTps[i])
+					tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+					cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
+					if err != nil {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxVal,
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
+					if cmpRes != 0 {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxRow.GetDatum(i, w.idxColTps[i]),
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
 				}
 			}
 		}
