@@ -1371,6 +1371,26 @@ func TestGlobalStatsMergeMixedV1V2(t *testing.T) {
 				"test t global b 0 0 10 10 1 1 0",
 				"test t global b 0 1 16 1 1 115 0",
 				"test t global b 0 2 20 1 115 119 0"))
+			// p1's values all fit in its TopN, so they reach the global
+			// TopN, not the global histogram. b = 1 has two entries:
+			// p0's TopN value uses the version 1 value encoding, p1's the
+			// key encoding.
+			tk.MustQuery("show stats_topn where table_name = 't' and partition_name = 'global' and column_name = 'b'").Sort().Check(testkit.Rows(
+				"test t global b 0 1 10",
+				"test t global b 0 1 13",
+				"test t global b 0 2 5",
+				"test t global b 0 308 1",
+				"test t global b 0 309 1",
+				"test t global b 0 310 1",
+				"test t global b 0 311 1",
+				"test t global b 0 312 1",
+				"test t global b 0 313 1",
+				"test t global b 0 314 1",
+				"test t global b 0 315 1",
+				"test t global b 0 316 1",
+				"test t global b 0 317 1",
+				"test t global b 0 318 1",
+				"test t global b 0 319 1"))
 		})
 	}
 }
