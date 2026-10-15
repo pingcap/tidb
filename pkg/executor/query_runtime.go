@@ -34,7 +34,7 @@ func runImportQuery(
 	q *importer.QueryPlan, sql string, memoryLimit int64,
 	output chan<- importer.QueryChunk,
 ) (err error) {
-	querySession, node, err := newImportQuerySession(ctx, sctx, q, sql, memoryLimit)
+	querySession, node, err := newImportQuerySession(ctx, sctx, q, sql)
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,8 @@ func buildImportQueryExecutor(
 	if err != nil {
 		return nil, err
 	}
-	// Memory limit should be applied after compilation.
+	// Apply the worker budget after compilation, which may apply a
+	// SET_VAR(tidb_mem_quota_query) hint.
 	vars := querySession.GetSessionVars()
 	vars.MemQuotaQuery = memoryLimit
 	vars.MemTracker.SetBytesLimit(memoryLimit)

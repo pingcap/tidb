@@ -56,13 +56,13 @@ func (c *importQuerySession) GetPlanCtx() base.PlanContext { return c }
 
 func newImportQuerySession(
 	ctx context.Context, sctx sessionctx.Context,
-	q *importer.QueryPlan, sql string, memoryLimit int64,
+	q *importer.QueryPlan, sql string,
 ) (*importQuerySession, ast.StmtNode, error) {
 	if sctx.GetStore().GetKeyspace() != q.Keyspace {
 		return nil, nil, errors.New("import query runtime keyspace mismatch")
 	}
 	vars := sctx.GetSessionVars()
-	if err := initImportQuerySessionVars(q, vars, memoryLimit); err != nil {
+	if err := initImportQuerySessionVars(q, vars); err != nil {
 		return nil, nil, err
 	}
 	is, err := buildQueryInfoSchema(q, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
@@ -90,16 +90,18 @@ func newImportQuerySession(
 	return querySession, node, nil
 }
 
-func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVars, memoryLimit int64) error {
+func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVars) error {
 	for _, name := range slices.Sorted(maps.Keys(q.SessionVars)) {
 		if err := vars.SetSystemVar(name, q.SessionVars[name]); err != nil {
 			return err
 		}
 	}
-	vars.MemQuotaQuery = memoryLimit
-	vars.MemTracker.SetBytesLimit(memoryLimit)
 	vars.CurrentDB = q.CurrentDB
+	// Without a statistics provider, this worker uses static partition pruning.
 	vars.PartitionPruneMode.Store("static")
+	// The submitter runs in MV maintenance, which may read MVs whose initial
+	// build is not ready yet.
+	vars.InMViewMaintenance = true
 	vars.InRestrictedSQL = true
 	vars.InternalSQLScanUserTable = false
 	vars.RequestSourceType = kv.InternalDistTask

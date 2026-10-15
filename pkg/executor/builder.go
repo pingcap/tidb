@@ -4002,6 +4002,19 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 	return e, nil
 }
 
+func getMPPServerID(sctx sessionctx.Context) (uint64, error) {
+	if dom := domain.GetDomain(sctx); dom != nil {
+		return dom.ServerID(), nil
+	}
+	// Cross-keyspace sessions have no Domain. The process server info getter is
+	// registered from the hosting Domain's ServerID method.
+	info, err := infosync.GetServerInfo()
+	if err != nil {
+		return 0, err
+	}
+	return info.ServerIDGetter(), nil
+}
+
 func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec.Executor {
 	startTs, err := b.getSnapshotTS()
 	if err != nil {
@@ -4009,7 +4022,7 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
-	serverInfo, err := infosync.GetServerInfo()
+	serverID, err := getMPPServerID(b.sctx)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4020,7 +4033,7 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverInfo.ServerIDGetter()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},
