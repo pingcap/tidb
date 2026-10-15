@@ -99,8 +99,8 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 		require.Len(t, maxGroupID, 60)
 		require.Regexp(t, `^[-A-Za-z0-9_]{1,64}$`, maxGroupID)
 	} else {
-		require.Equal(t, ddl.GetTableAffinityGroupID(nil, tableID), tableGroupID)
-		require.Equal(t, ddl.GetPartitionAffinityGroupID(nil, tableID, partitionID), partitionGroupID)
+		require.Equal(t, "_tidb_t_123", tableGroupID)
+		require.Equal(t, "_tidb_pt_123_p456", partitionGroupID)
 	}
 }
 
