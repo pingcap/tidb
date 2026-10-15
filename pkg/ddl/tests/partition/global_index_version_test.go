@@ -16,9 +16,11 @@ package partition
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -268,6 +270,60 @@ func TestGlobalIndexVersionConstants(t *testing.T) {
 	require.Equal(t, uint8(0), model.GlobalIndexVersionLegacy)
 	require.Equal(t, uint8(1), model.GlobalIndexVersionV1)
 	require.Equal(t, uint8(2), model.GlobalIndexVersionV2)
+}
+
+func TestGlobalUniqueIndexAfterValidatedExchange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("transactional backfill settings are read-only in NextGen")
+	}
+	for _, testCase := range []struct {
+		name      string
+		fastReorg string
+	}{
+		{name: "txn", fastReorg: "0"},
+		{name: "txn-merge", fastReorg: "1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("USE test")
+			tk.MustExec("SET @@tidb_enable_exchange_partition = 1")
+			settings := tk.MustQuery("SELECT @@GLOBAL.tidb_enable_dist_task, @@GLOBAL.tidb_ddl_enable_fast_reorg").Rows()[0]
+			t.Cleanup(func() {
+				tk.MustExec("SET GLOBAL tidb_enable_dist_task = " + settings[0].(string))
+				tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = " + settings[1].(string))
+			})
+			tk.MustExec("SET GLOBAL tidb_enable_dist_task = 0")
+			// Mockstore has no ingest environment, so fast reorg falls back to txn-merge.
+			tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = " + testCase.fastReorg)
+			tk.MustExec(`CREATE TABLE t (
+				a INT,
+				b INT,
+				c VARCHAR(20) NOT NULL,
+				PRIMARY KEY (a, b) NONCLUSTERED
+			) PARTITION BY RANGE (a) (
+				PARTITION p0 VALUES LESS THAN (10),
+				PARTITION p1 VALUES LESS THAN MAXVALUE
+			)`)
+			tk.MustExec("INSERT INTO t VALUES (1, 1, 'x')")
+			tk.MustExec("CREATE TABLE tx LIKE t")
+			tk.MustExec("ALTER TABLE tx REMOVE PARTITIONING")
+			tk.MustExec("INSERT INTO tx VALUES (11, 1, 'x')")
+			// Both rows satisfy their partition rules but have the same internal row ID.
+			tk.MustExec("ALTER TABLE t EXCHANGE PARTITION p1 WITH TABLE tx WITH VALIDATION")
+			tk.MustQuery("SELECT a, b, c, _tidb_rowid FROM t ORDER BY a").Check(testkit.Rows("1 1 x 1", "11 1 x 1"))
+			tk.MustGetErrCode("ALTER TABLE t ADD UNIQUE KEY uk(c) GLOBAL", 1062)
+			reorgType, _, _ := strings.Cut(tk.MustQuery("ADMIN SHOW DDL JOBS 1").Rows()[0][12].(string), ",")
+			require.Equal(t, testCase.name, reorgType)
+			tk.MustQuery("SELECT COUNT(*) FROM t").Check(testkit.Rows("2"))
+			tk.MustExec("ADMIN CHECK TABLE t")
+
+			tk.MustExec("DELETE FROM t WHERE a = 11")
+			tk.MustExec("ALTER TABLE t ADD UNIQUE KEY uk(c) GLOBAL")
+			tk.MustQuery("SELECT a, b, c FROM t USE INDEX(uk)").Check(testkit.Rows("1 1 x"))
+			tk.MustExec("ADMIN CHECK TABLE t")
+		})
+	}
 }
 
 // TestGlobalIndexTruncateAndDropPartition verifies that TRUNCATE PARTITION and

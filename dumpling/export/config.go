@@ -296,9 +296,17 @@ func DefaultConfig() *Config {
 	}
 }
 
-// String returns dumpling's config in json format
+// redacted returns a shallow copy of conf with storage credentials masked.
+func (conf *Config) redacted() *Config {
+	c := *conf
+	c.OutputDirPath = objstore.RedactURL(c.OutputDirPath)
+	c.BackendOptions = c.BackendOptions.Redacted()
+	return &c
+}
+
+// String returns dumpling's config in json format with credentials redacted.
 func (conf *Config) String() string {
-	cfg, err := json.Marshal(conf)
+	cfg, err := json.Marshal(conf.redacted())
 	if err != nil && conf.Logger != nil {
 		conf.Logger.Error("fail to marshal config to json", zap.Error(err))
 	}
