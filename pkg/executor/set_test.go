@@ -36,12 +36,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -1988,4 +1990,26 @@ func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
 	require.Equal(t, "background", vardef.ServiceScope.Load())
 	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
 	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+}
+
+func TestSetSEMv2RestrictedVariableWithoutPrivilegeManager(t *testing.T) {
+	require.NoError(t, semv2.EnableBy(&semv2.Config{
+		Version:     "1.0",
+		TiDBVersion: "v0.0.0",
+		RestrictedVariables: []semv2.VariableRestriction{
+			{Name: vardef.TiDBEnable1PC, Readonly: true},
+			{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
+		},
+	}))
+	t.Cleanup(semv2.Disable)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Internal sessions, such as the sessions used by the TTL job manager, have
+	// no privilege manager bound. Setting a variable which is read-only under SEM
+	// must not panic for them, otherwise those internal workers cannot work.
+	privilege.BindPrivilegeManager(tk.Session(), nil)
+	tk.MustExec("set tidb_enable_1pc=ON")
+	tk.MustExec("set tidb_enable_async_commit=ON")
 }
