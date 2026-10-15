@@ -585,8 +585,18 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec(updateExecID)
 		})
 	})
+	var afterRunSubtaskRuns atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(_ taskexecutor.TaskExecutor, _ *error, ctx context.Context) {
+			// The read-index subtask cannot finish its first run before the
+			// scheduled-away cancel above, so the first run is the one that must
+			// observe the cancelled context. The cancelled subtask is then
+			// retried, and on global sort further steps (merge-sort,
+			// write-and-ingest) run as well; those later runs have a live context,
+			// so only assert on the first run.
+			if afterRunSubtaskRuns.Add(1) != 1 {
+				return
+			}
 			require.Error(t, ctx.Err())
 			require.Equal(t, context.Canceled, context.Cause(ctx))
 		},
