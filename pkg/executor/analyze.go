@@ -412,6 +412,12 @@ TASKLOOP:
 		for i := sentTasks; i < len(tasks); i++ {
 			finishJobWithLog(statsHandle, tasks[i].job, err)
 		}
+		// The result handler returns early on a kill signal or a panic, so it may
+		// leave results it never read. waitFinish has closed resultsCh by now.
+		for result := range resultsCh {
+			finishJobWithLog(statsHandle, result.Job, err)
+			result.DestroyAndPutToPool()
+		}
 		return err
 	}
 
