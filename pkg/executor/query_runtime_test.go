@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,8 +165,11 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.NoError(t, err)
 		defer se.Close()
 		output := make(chan importer.QueryChunk, 1)
-		err = importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, output)
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		err = importer.RunImportQuery(ctx, se, q, sql, 1<<20, output)
 		require.NoError(t, err)
+		_, details, _ := execdetails.GetExecDetailsFromContext(ctx)
+		require.Positive(t, details.UnpackedBytesReceivedKVTotal)
 		close(output)
 		var rows []int64
 		for result := range output {

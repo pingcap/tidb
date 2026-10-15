@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -398,10 +399,21 @@ func (s *importStepExecutor) readQuery(
 
 	defer pool.Destroy(resource)
 	se := resource.(sessionctx.Context)
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
+	defer s.recordQueryReadBytes(ctx)
 	// Limit the SELECT to a quarter of the subtask memory to leave room for encoding and sort writers.
 	return importer.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.Query, s.taskMeta.Stmt,
 		s.GetResource().Mem.Capacity()/4, selected)
+}
+
+// recordQueryReadBytes meters the bytes that TiKV and TiFlash returned to the
+// query, like the cluster read bytes of ADD INDEX.
+func (s *importStepExecutor) recordQueryReadBytes(ctx context.Context) {
+	_, details, _ := execdetails.GetExecDetailsFromContext(ctx)
+	if n := details.UnpackedBytesReceivedKVTotal + details.UnpackedBytesReceivedMPPTotal; n > 0 {
+		s.GetMeterRecorder().IncClusterReadBytes(uint64(n))
+	}
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
