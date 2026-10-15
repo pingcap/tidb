@@ -456,44 +456,6 @@ func (t *Tracker) consume(bs int64, enforce bool) {
 		if tracker.IsRootTrackerOfSess {
 			sessionRootTracker = tracker
 		}
-<<<<<<< HEAD
-=======
-		if m := tracker.MemArbitrator; m != nil {
-			if m.state.Load() != memArbitratorStateDown {
-				if intest.InTest {
-					if mockConsumeAfterStateCheckInject != nil {
-						mockConsumeAfterStateCheckInject(m)
-					}
-				}
-				if bs > 0 {
-					if m.useBigBudget() {
-						if m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() && enforce {
-							m.growBigBudget()
-						}
-					} else { // fast path for small budget
-						if m.addSmallBudget(bs) > m.budget.smallLimit && enforce {
-							m.intoBigBudget()
-						} else {
-							b := m.smallBudget()
-							if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
-								b.setLastUsedTimeSec(t)
-							}
-							if enforce && b.Used.Load() > b.approxCapacity() && b.PullFromUpstream() != nil {
-								m.intoBigBudget()
-							}
-						}
-					}
-				} else if m.useBigBudget() { // delta <= 0 && use big budget
-					m.addBigBudgetUsed(bs)
-				} else { // delta <= 0 && use small budget
-					m.addSmallBudget(bs)
-				}
-				if m.state.Load() == memArbitratorStateDown {
-					m.cleanSmallBudget()
-				}
-			}
-		}
->>>>>>> 95af22e17d1 (session, memory: prevent cancellation from interrupting statement cleanup (#71967))
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
 		limits := tracker.bytesLimit.Load()
