@@ -572,6 +572,10 @@ func checkTooBigFieldLengthAndTryAutoConvert(ctx *metabuild.Context, tp *types.F
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
+	// Reject geometry columns before their options, since a default value can't be converted to geometry yet.
+	if colDef.Tp.GetType() == mysql.TypeGeometry {
+		return nil, nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
+	}
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
@@ -680,7 +684,7 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionSRID:
-				// A geometry column is rejected by checkColumnAttributes.
+				// A geometry column was rejected at the start of columnDefToCol.
 				if col.GetType() != mysql.TypeGeometry {
 					return nil, nil, dbterror.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column")
 				}

@@ -405,6 +405,9 @@ func TestGeometryColumnNotSupported(t *testing.T) {
 	}
 	tk.MustGetErrMsg("create table t (g point not null srid 4326)", "[ddl:1235]This version of TiDB doesn't yet support 'geometry columns'")
 	tk.MustGetErrCode("create table t (g geometry as (null) stored srid 0)", errno.ErrNotSupportedYet)
+	for _, def := range []string{"1", "'abc'", "x'00'", "(1)"} {
+		tk.MustGetErrCode("create table t (g point default "+def+")", errno.ErrNotSupportedYet)
+	}
 	tk.MustGetErrMsg("create table t (a int srid 4326)", "[ddl:1221]Incorrect usage of SRID and non-geometry column")
 	tk.MustGetErrCode("create table t (a varchar(10) not null srid 0)", errno.ErrWrongUsage)
 	tk.MustGetErrMsg("create table t (g point not null srid 4326, spatial key sk (g))", "[ddl:8200]SPATIAL index is not supported")
