@@ -2038,6 +2038,9 @@ func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *ch
 				indexOrder.Set(h, i)
 			}
 		}
+		// The Region range splitter requires non-overlapping ranges, so deduplicate
+		// handles produced by multi-valued index entries before table lookup.
+		// Build the offset maps first to preserve positions in the original index rows.
 		if duplicatedIndexOrder.Len() > 0 {
 			handles = make([]kv.Handle, 0, indexOrder.Len())
 			indexOrder.Range(func(h kv.Handle, _ any) bool {
