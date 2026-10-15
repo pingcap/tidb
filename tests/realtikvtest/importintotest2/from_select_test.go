@@ -102,8 +102,6 @@ func (s *mockGCSSuite) TestImportFromSelectColumnList() {
 	s.tk.MustExec("create table dst(id int auto_increment primary key, a varchar(64), b int default 10, c int)")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
 	if kerneltype.IsNextGen() {
-		// Sort used to be rejected on an import worker; it now runs like any
-		// other TiDB-side operator.
 		s.tk.MustExec(`import into dst(c, a) FROM select * from src order by id`)
 		s.tk.MustQuery("select c,a,b from dst order by c").Check(testkit.Rows("4 aaaaaa 10", "5 bbbbbb 10", "6 cccccc 10", "7 dddddd 10"))
 		s.tk.MustQuery("select count(distinct id),min(id)>0 from dst").Check(testkit.Rows("4 1"))
@@ -116,8 +114,6 @@ func (s *mockGCSSuite) TestImportFromSelectColumnList() {
 	s.tk.MustExec("create table src2(id int, a varchar(64))")
 	s.tk.MustExec("insert into src2 values(4, 'four'), (5, 'five')")
 	if kerneltype.IsNextGen() {
-		// HashJoin used to be rejected on an import worker; it now runs like
-		// any other TiDB-side operator.
 		s.tk.MustExec(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id`)
 		s.tk.MustQuery("select c,a,b from dst order by c").Check(testkit.Rows("4 four 10", "5 five 10"))
 	} else {

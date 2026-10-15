@@ -503,8 +503,9 @@ func TestImportFromSelectRequiresMaterializedViewMaintenance(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table src (a int)")
 	tk.MustExec("create table dst (a int)")
+	previousURI := vardef.CloudStorageURI.Load()
 	vardef.CloudStorageURI.Store("s3://query-not-internal")
-	t.Cleanup(func() { vardef.CloudStorageURI.Store("") })
+	t.Cleanup(func() { vardef.CloudStorageURI.Store(previousURI) })
 
 	// A plain user session must not reach the Query source route.
 	require.False(t, tk.Session().GetSessionVars().InMViewMaintenance)
@@ -552,7 +553,7 @@ func TestImportQueryRouting(t *testing.T) {
 		}
 	}
 	if kerneltype.IsNextGen() {
-		// The target-table precheck fails after the read TS barrier is set; it must not leak.
+		// Submitting sets no GC barrier; only the task keeper sets one for a submitted task.
 		gcStates := store.(kv.StorageWithPD).GetPDClient().GetGCStatesClient(uint32(store.GetCodec().GetKeyspaceID()))
 		state, err := gcStates.GetGCState(context.Background(), pdgc.ExcludeGCBarriers(false))
 		require.NoError(t, err)
@@ -560,13 +561,12 @@ func TestImportQueryRouting(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, barriers)
 	}
-	t.Run("allow plan shapes that used to be rejected", func(t *testing.T) {
+	t.Run("plan shapes run like other TiDB operators", func(t *testing.T) {
 		vardef.EnableDistTask.Store(true)
 		tk.MustExec("delete from query_route_dst")
 		if kerneltype.IsNextGen() {
 			vardef.CloudStorageURI.Store("s3://query-sort")
-			// These queries now run like any other TiDB-side operator, so they
-			// reach the same target-table precheck as everything else.
+			// These queries reach the same target-table precheck as any other.
 			tk.MustExec("insert into query_route_dst values (1)")
 		}
 		for _, sql := range []string{
