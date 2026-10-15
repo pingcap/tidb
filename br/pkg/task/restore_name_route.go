@@ -449,6 +449,37 @@ func formatRouteObject(object nameroute.ObjectName) string {
 	return brutils.EncloseName(object.Schema.O)
 }
 
+// pitrTargetTablesForExistenceCheck collects log tables for the snapshot
+// preflight, before restoring tables or persisting snapshot checkpoints.
+func pitrTargetTablesForExistenceCheck(cfg *RestoreConfig, sources *restoreNameSources) ([]*metautil.Table, error) {
+	if !cfg.hasNameRouting() {
+		// Non-routed restores do not build restoreNameSources. Preserve the
+		// source-name tracker check so tables created only in the log interval
+		// fail before snapshot checkpoints or log metadata are written.
+		if cfg.PiTRTableTracker == nil {
+			return nil, errors.Annotate(berrors.ErrInvalidArgument,
+				"PiTR table tracker is missing for target existence precheck")
+		}
+		var targets []*metautil.Table
+		for dbName, tables := range cfg.PiTRTableTracker.GetDBNameToTableName() {
+			for tableName := range tables {
+				targets = append(targets, &metautil.Table{
+					DB:   &model.DBInfo{Name: ast.NewCIStr(dbName)},
+					Info: &model.TableInfo{Name: ast.NewCIStr(tableName)},
+				})
+			}
+		}
+		return targets, nil
+	}
+	// Only routed restores need the latest name per table ID: the tracker's
+	// historical aliases must not be checked as unchanged identity targets.
+	router, err := cfg.getNameRouter()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return routeLatestSourceTables(router, sources), nil
+}
+
 // routeLatestSourceTables routes the latest source name of every selected
 // table into its effective target. It is used by the PiTR target existence
 // precheck: using the name-only tracker (which also contains pre-rename

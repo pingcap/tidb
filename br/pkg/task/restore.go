@@ -2961,14 +2961,11 @@ func checkOptionalClusterRequirements(
 			return errors.Trace(err)
 		}
 		if isPitr {
-			router, err := cfg.getNameRouter()
+			logTargets, err := pitrTargetTablesForExistenceCheck(cfg.RestoreConfig, nameSources)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// Use the latest source name per table ID. The tracker's name-only set
-			// also contains pre-rename snapshot names, and checking those as
-			// identity targets would falsely reject a legal restore.
-			if err := checkTableExistence(ctx, mgr, routeLatestSourceTables(router, nameSources)); err != nil {
+			if err := checkTableExistence(ctx, mgr, logTargets); err != nil {
 				return errors.Trace(err)
 			}
 		}

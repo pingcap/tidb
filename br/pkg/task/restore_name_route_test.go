@@ -627,6 +627,59 @@ func TestRawRestoreRejectsInheritedRenameFlag(t *testing.T) {
 	require.ErrorContains(t, err, "not supported by raw or transactional KV restore")
 }
 
+func TestPiTRTargetTablesForExistenceCheck(t *testing.T) {
+	t.Run("missing tracker cannot silently skip identity checks", func(t *testing.T) {
+		_, err := pitrTargetTablesForExistenceCheck(&RestoreConfig{}, nil)
+		require.ErrorContains(t, err, "PiTR table tracker is missing")
+	})
+	t.Run("empty selection has no log targets", func(t *testing.T) {
+		cfg := &RestoreConfig{}
+		cfg.PiTRTableTracker = brutils.NewPiTRIdTracker()
+		targets, err := pitrTargetTablesForExistenceCheck(cfg, nil)
+		require.NoError(t, err)
+		require.Empty(t, targets)
+	})
+	t.Run("identity tables created after the snapshot are checked", func(t *testing.T) {
+		cfg := &RestoreConfig{}
+		cfg.PiTRTableTracker = brutils.NewPiTRIdTracker()
+		cfg.PiTRTableTracker.TrackTableName("source", "table3")
+		// Without --rename, runSnapshotRestore does not build nameSources.
+		// table3 has no snapshot metadata, but must fail the same preflight as
+		// snapshot tables when its name already exists downstream.
+		targets, err := pitrTargetTablesForExistenceCheck(cfg, nil)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
+		require.Equal(t, "source", targets[0].DB.Name.O)
+		require.Equal(t, "table3", targets[0].Info.Name.O)
+	})
+
+	for _, testCase := range []struct {
+		name       string
+		rules      []string
+		targetDB   string
+		targetName string
+	}{
+		{name: "route latest name without checking a historical alias", rules: []string{"source.latest:target.copy"}, targetDB: "target", targetName: "copy"},
+		{name: "an unrelated route retains identity targets", rules: []string{"other.t:target.copy"}, targetDB: "source", targetName: "latest"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := &RestoreConfig{}
+			cfg.Rename = testCase.rules
+			cfg.PiTRTableTracker = brutils.NewPiTRIdTracker()
+			cfg.PiTRTableTracker.TrackTableName("source", "old")
+			cfg.PiTRTableTracker.TrackTableName("source", "latest")
+			sources := &restoreNameSources{tables: map[int64]nameroute.ObjectName{
+				10: {Schema: ast.NewCIStr("source"), Table: ast.NewCIStr("latest")},
+			}}
+			targets, err := pitrTargetTablesForExistenceCheck(cfg, sources)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+			require.Equal(t, testCase.targetDB, targets[0].DB.Name.O)
+			require.Equal(t, testCase.targetName, targets[0].Info.Name.O)
+		})
+	}
+}
+
 func TestShouldCheckRestoreTargetExistence(t *testing.T) {
 	require.True(t, shouldCheckRestoreTargetExistence(true, false, false, false))
 	require.True(t, shouldCheckRestoreTargetExistence(false, false, false, true))
