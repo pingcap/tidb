@@ -100,8 +100,8 @@ type lookupTableTask struct {
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
 	indexOrder *kv.HandleMap
-	// duplicatedIndexOrder stores all index row offsets for handles that have
-	// multiple index values. It is only used when checkIndexValue isn't nil.
+	// duplicatedIndexOrder map likes indexOrder. But it's used when checkIndexValue isn't nil and
+	// the same handle of index has multiple values.
 	duplicatedIndexOrder *kv.HandleMap
 
 	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
