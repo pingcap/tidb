@@ -1992,24 +1992,42 @@ func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
 	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }
 
-func TestSetSEMv2RestrictedVariableWithoutPrivilegeManager(t *testing.T) {
-	require.NoError(t, semv2.EnableBy(&semv2.Config{
-		Version:     "1.0",
-		TiDBVersion: "v0.0.0",
-		RestrictedVariables: []semv2.VariableRestriction{
-			{Name: vardef.TiDBEnable1PC, Readonly: true},
-			{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
-		},
-	}))
-	t.Cleanup(semv2.Disable)
+func TestSetVariableWithoutPrivilegeManager(t *testing.T) {
+	t.Run("sem v2 read-only variable", func(t *testing.T) {
+		semv2.EnableReadOnlyVariablesForTest(t, vardef.TiDBEnable1PC, vardef.TiDBEnableAsyncCommit)
 
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
 
-	// Internal sessions, such as the sessions used by the TTL job manager, have
-	// no privilege manager bound. Setting a variable which is read-only under SEM
-	// must not panic for them, otherwise those internal workers cannot work.
-	privilege.BindPrivilegeManager(tk.Session(), nil)
-	tk.MustExec("set tidb_enable_1pc=ON")
-	tk.MustExec("set tidb_enable_async_commit=ON")
+		// Internal sessions, such as the sessions used by the TTL job manager, have
+		// no privilege manager bound. Setting a variable which is read-only under SEM
+		// must not panic for them, otherwise those internal workers cannot work.
+		privilege.BindPrivilegeManager(tk.Session(), nil)
+		tk.MustExec("set tidb_enable_1pc=ON")
+		tk.MustExec("set tidb_enable_async_commit=ON")
+	})
+
+	t.Run("variable requiring dynamic privileges", func(t *testing.T) {
+		sysVarName := "executor_test_dynamic_privileges"
+		variable.RegisterSysVar(&variable.SysVar{
+			Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
+			Name:     sysVarName,
+			Value:    "1",
+			MinValue: 0,
+			MaxValue: 100,
+			Type:     vardef.TypeInt,
+			RequireDynamicPrivileges: func(_ bool, _ bool) []string {
+				return []string{"TEST_DYNAMIC_PRIVILEGE"}
+			},
+		})
+		t.Cleanup(func() { variable.UnregisterSysVar(sysVarName) })
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+
+		// Same as above: the nil privilege manager must be skipped instead of
+		// dereferenced when the variable requires dynamic privileges.
+		privilege.BindPrivilegeManager(tk.Session(), nil)
+		tk.MustExec("set @@" + sysVarName + "=2")
+	})
 }
