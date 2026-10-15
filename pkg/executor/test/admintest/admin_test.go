@@ -1619,314 +1619,239 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func TestAdminCheckTableErrorLocate(t *testing.T) {
-	store, domain := testkit.CreateMockStoreAndDomain(t)
+// errorLocateRowCount is the number of rows in the table used by the error
+// locate tests. With CheckTableFastBucketSize = 8, about 250 rows are left to
+// check after the first round of bucketing, which is more than the lookup
+// threshold (100 rows), so fast admin check needs 2 rounds of bucketing to
+// locate a corrupted row.
+const errorLocateRowCount = 2000
 
-	executor.CheckTableFastBucketSize.Store(8)
-
-	seed := time.Now().UnixNano()
-	rand := rand.New(rand.NewSource(seed))
-	logutil.BgLogger().Info("random generator", zap.Int64("seed", seed))
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 int, c2 int, primary key(c1), key(c2))")
-	tk.MustExec("set cte_max_recursion_depth=10000;")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
-
-	sctx := mock.NewContext()
-	ctx := sctx.GetTableCtx()
-
-	// Make some corrupted index. Build the index information.
-	getIndex := func() table.Index {
-		sctx.Store = store
-		is := domain.InfoSchema()
-		dbName := ast.NewCIStr("test")
-		tblName := ast.NewCIStr("admin_test")
-		tbl, err := is.TableByName(context.Background(), dbName, tblName)
-		require.NoError(t, err)
-		tblInfo := tbl.Meta()
-		idxInfo := tblInfo.Indices[0]
-		indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-		require.NoError(t, err)
-		return indexOpr
-	}
-
-	indexOpr := getIndex()
-
-	pattern := "handle:\\s(\\d+)"
-	r := regexp.MustCompile(pattern)
-
-	// No index record
-	for i := range 10001 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(i), kv.IntHandle(i))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-	}
-	err := tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-
-	// Reset table.
-	tk.MustExec("truncate admin_test")
-	indexOpr = getIndex()
-	// No table record
-	for i := range 100 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i), kv.IntHandle(i), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-	}
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-
-	tk.MustExec("truncate admin_test")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
-	indexOpr = getIndex()
-	// Delete an index record randomly.
-	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), kv.IntHandle(randomRow))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
-		tk.MustQuery("admin recover index admin_test c2")
-		tk.MustExec("set @@tidb_enable_fast_table_check = 0")
-		tk.MustExec("admin check table admin_test")
-		tk.MustExec("set @@tidb_enable_fast_table_check = 1")
-	}
-
-	// Add an index record randomly on exists row.
-	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		tk.MustExec("admin check table admin_test")
-	}
-
-	// Add an index record randomly on not exists row.
-	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 10000
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		tk.MustExec("admin check table admin_test")
-	}
-
-	// Modify an index record randomly.
-	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), kv.IntHandle(randomRow))
-		require.NoError(t, err)
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
-
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow))
-		require.NoError(t, err)
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow), kv.IntHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		tk.MustExec("admin check table admin_test")
-	}
+// errorLocateTable is a table admin_test(c1, c2) with errorLocateRowCount rows
+// and an operator of the index on c2 to corrupt it directly.
+type errorLocateTable struct {
+	t      *testing.T
+	store  kv.Storage
+	dom    *domain.Domain
+	tk     *testkit.TestKit
+	ctx    table.MutateContext
+	index  table.Index
+	handle func(row int) kv.Handle
+	rand   *rand.Rand
 }
 
-func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
-	store, domain := testkit.CreateMockStoreAndDomain(t)
+// newErrorLocateTable creates the table, c1 is an int primary key (int handle)
+// or a mediumint clustered primary key (common handle).
+func newErrorLocateTable(t *testing.T, commonHandle bool) *errorLocateTable {
+	t.Helper()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
+	oldBucketSize := executor.CheckTableFastBucketSize.Load()
 	executor.CheckTableFastBucketSize.Store(8)
+	t.Cleanup(func() {
+		executor.CheckTableFastBucketSize.Store(oldBucketSize)
+	})
 
 	seed := time.Now().UnixNano()
-	rand := rand.New(rand.NewSource(seed))
 	logutil.BgLogger().Info("random generator", zap.Int64("seed", seed))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 mediumint, c2 int, primary key(c1) clustered, key(c2))")
-	tk.MustExec("set cte_max_recursion_depth=10000;")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+	if commonHandle {
+		tk.MustExec("create table admin_test (c1 mediumint, c2 int, primary key(c1) clustered, key(c2))")
+	} else {
+		tk.MustExec("create table admin_test (c1 int, c2 int, primary key(c1), key(c2))")
+	}
+	tk.MustExec(fmt.Sprintf("set cte_max_recursion_depth=%d", errorLocateRowCount))
 
-	// Make some corrupted index. Build the index information.
 	sctx := mock.NewContext()
 	sctx.Store = store
-	ctx := sctx.GetTableCtx()
-	is := domain.InfoSchema()
-	dbName := ast.NewCIStr("test")
-	tblName := ast.NewCIStr("admin_test")
-	tbl, err := is.TableByName(context.Background(), dbName, tblName)
-	require.NoError(t, err)
+	e := &errorLocateTable{
+		t:     t,
+		store: store,
+		dom:   dom,
+		tk:    tk,
+		ctx:   sctx.GetTableCtx(),
+		rand:  rand.New(rand.NewSource(seed)),
+	}
+	e.handle = func(row int) kv.Handle {
+		return kv.IntHandle(row)
+	}
+	if commonHandle {
+		e.handle = func(row int) kv.Handle {
+			h, err := codec.EncodeKey(e.ctx.GetExprCtx().GetEvalCtx().Location(), nil, types.MakeDatums(row)...)
+			require.NoError(t, err)
+			ch, err := kv.NewCommonHandle(h)
+			require.NoError(t, err)
+			return ch
+		}
+	}
+	e.reloadIndex()
+	tk.MustExec(fmt.Sprintf("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a < %d) select * from cte", errorLocateRowCount))
+	return e
+}
+
+// reloadIndex builds the index operator again, it must be called after the
+// table ID is changed, e.g. by truncate table.
+func (e *errorLocateTable) reloadIndex() {
+	e.t.Helper()
+	tbl, err := e.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("admin_test"))
+	require.NoError(e.t, err)
 	tblInfo := tbl.Meta()
-	idxInfo := tblInfo.Indices[0]
-	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-	require.NoError(t, err)
+	e.index, err = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
+	require.NoError(e.t, err)
+}
 
-	pattern := "handle:\\s(\\d+)"
-	r := regexp.MustCompile(pattern)
-
-	getCommonHandle := func(randomRow int) *kv.CommonHandle {
-		h, err := codec.EncodeKey(ctx.GetExprCtx().GetEvalCtx().Location(), nil, types.MakeDatums(randomRow)...)
-		require.NoError(t, err)
-		ch, err := kv.NewCommonHandle(h)
-		require.NoError(t, err)
-		return ch
+// deleteIndex deletes the index record (value, handle of row) in one transaction.
+func (e *errorLocateTable) deleteIndex(rows []int, value func(row int) int) {
+	e.t.Helper()
+	txn, err := e.store.Begin()
+	require.NoError(e.t, err)
+	for _, row := range rows {
+		require.NoError(e.t, e.index.Delete(e.ctx, txn, types.MakeDatums(value(row)), e.handle(row)))
 	}
+	require.NoError(e.t, txn.Commit(context.Background()))
+}
 
-	// Delete an index record randomly.
+// createIndex adds the index record (value, handle of row) in one transaction.
+func (e *errorLocateTable) createIndex(rows []int, value func(row int) int) {
+	e.t.Helper()
+	txn, err := e.store.Begin()
+	require.NoError(e.t, err)
+	for _, row := range rows {
+		_, err = e.index.Create(e.ctx, txn, types.MakeDatums(value(row)), e.handle(row), nil)
+		require.NoError(e.t, err)
+	}
+	require.NoError(e.t, txn.Commit(context.Background()))
+}
+
+// modifyIndex changes the index value of row from oldValue to newValue in one transaction.
+func (e *errorLocateTable) modifyIndex(row, oldValue, newValue int) {
+	e.t.Helper()
+	txn, err := e.store.Begin()
+	require.NoError(e.t, err)
+	require.NoError(e.t, e.index.Delete(e.ctx, txn, types.MakeDatums(oldValue), e.handle(row)))
+	_, err = e.index.Create(e.ctx, txn, types.MakeDatums(newValue), e.handle(row), nil)
+	require.NoError(e.t, err)
+	require.NoError(e.t, txn.Commit(context.Background()))
+}
+
+var errorLocateHandleRegexp = regexp.MustCompile(`handle:\s(\d+)`)
+
+// requireLocated checks that admin check table reports the corrupted row.
+func (e *errorLocateTable) requireLocated(row, i int) {
+	e.t.Helper()
+	err := e.tk.ExecToErr("admin check table admin_test")
+	require.Error(e.t, err)
+	match := errorLocateHandleRegexp.FindStringSubmatch(err.Error())
+	require.Greater(e.t, len(match), 0, err.Error())
+	handle, err := strconv.Atoi(match[1])
+	require.NoError(e.t, err)
+	require.Equalf(e.t, row, handle, "i :%d", i)
+}
+
+// sameValue and nextValue give the index value of a row, the table has c2 = c1.
+func sameValue(row int) int { return row }
+
+func nextValue(row int) int { return row + 1 }
+
+// testAdminCheckTableErrorLocate corrupts the index of a random row for several
+// times and checks that admin check table locates the corrupted row each time.
+// The index is repaired after each check, the next check also fails if it is
+// not fully repaired, so the table is only checked to be consistent at the end.
+func testAdminCheckTableErrorLocate(t *testing.T, commonHandle bool, corrupt func(e *errorLocateTable, i int)) {
+	e := newErrorLocateTable(t, commonHandle)
 	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
-		tk.MustQuery("admin recover index admin_test c2")
-		tk.MustExec("set @@tidb_enable_fast_table_check = 0")
-		tk.MustExec("admin check table admin_test")
-		tk.MustExec("set @@tidb_enable_fast_table_check = 1")
+		corrupt(e, i)
+	}
+	e.tk.MustExec("admin check table admin_test")
+	e.tk.MustExec("set @@tidb_enable_fast_table_check = 0")
+	e.tk.MustExec("admin check table admin_test")
+}
+
+// errorLocateMissingIndex deletes the index record of an existing row.
+func errorLocateMissingIndex(e *errorLocateTable, i int) {
+	row := e.rand.Intn(errorLocateRowCount) + 1
+	e.deleteIndex([]int{row}, sameValue)
+	e.requireLocated(row, i)
+	e.tk.MustQuery("admin recover index admin_test c2")
+}
+
+// errorLocateExtraIndex adds an index record with a wrong value to an existing row.
+func errorLocateExtraIndex(e *errorLocateTable, i int) {
+	row := e.rand.Intn(errorLocateRowCount) + 1
+	e.createIndex([]int{row}, nextValue)
+	e.requireLocated(row, i)
+	e.deleteIndex([]int{row}, nextValue)
+}
+
+// errorLocateDanglingIndex adds an index record pointing to a row that doesn't exist.
+func errorLocateDanglingIndex(e *errorLocateTable, i int) {
+	row := e.rand.Intn(errorLocateRowCount) + errorLocateRowCount + 1
+	e.createIndex([]int{row}, nextValue)
+	e.requireLocated(row, i)
+	e.deleteIndex([]int{row}, nextValue)
+}
+
+// errorLocateModifiedIndex changes the index value of an existing row.
+func errorLocateModifiedIndex(e *errorLocateTable, i int) {
+	row := e.rand.Intn(errorLocateRowCount) + 1
+	e.modifyIndex(row, row, row+1)
+	e.requireLocated(row, i)
+	e.modifyIndex(row, row+1, row)
+}
+
+// The error locate cases are split into separate tests so that they can run in
+// different bazel shards.
+
+func TestAdminCheckTableErrorLocate(t *testing.T) {
+	e := newErrorLocateTable(t, false)
+	rows := make([]int, 0, errorLocateRowCount)
+	for i := 1; i <= errorLocateRowCount; i++ {
+		rows = append(rows, i)
 	}
 
-	// Add an index record randomly on exists row.
-	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		tk.MustExec("admin check table admin_test")
-	}
+	// No index record.
+	e.deleteIndex(rows, sameValue)
+	require.Error(t, e.tk.ExecToErr("admin check table admin_test"))
 
-	// Add an index record randomly on not exists row.
-	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 10000
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		tk.MustExec("admin check table admin_test")
-	}
+	// No table record.
+	e.tk.MustExec("truncate admin_test")
+	e.reloadIndex()
+	e.createIndex(rows[:100], sameValue)
+	require.Error(t, e.tk.ExecToErr("admin check table admin_test"))
+}
 
-	// Modify an index record randomly.
-	for i := range 10 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow))
-		require.NoError(t, err)
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
-		err = tk.ExecToErr("admin check table admin_test")
-		require.Error(t, err)
-		match := r.FindStringSubmatch(err.Error())
-		require.Greater(t, len(match), 0)
-		handle, err := strconv.Atoi(match[1])
-		require.NoError(t, err)
-		require.Equalf(t, randomRow, handle, "i :%d", i)
+func TestAdminCheckTableErrorLocateMissingIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, false, errorLocateMissingIndex)
+}
 
-		txn, err = store.Begin()
-		require.NoError(t, err)
-		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow))
-		require.NoError(t, err)
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		tk.MustExec("admin check table admin_test")
-	}
+func TestAdminCheckTableErrorLocateExtraIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, false, errorLocateExtraIndex)
+}
+
+func TestAdminCheckTableErrorLocateDanglingIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, false, errorLocateDanglingIndex)
+}
+
+func TestAdminCheckTableErrorLocateModifiedIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, false, errorLocateModifiedIndex)
+}
+
+func TestAdminCheckTableErrorLocateMissingIndexForClusterIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, true, errorLocateMissingIndex)
+}
+
+func TestAdminCheckTableErrorLocateExtraIndexForClusterIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, true, errorLocateExtraIndex)
+}
+
+func TestAdminCheckTableErrorLocateDanglingIndexForClusterIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, true, errorLocateDanglingIndex)
+}
+
+func TestAdminCheckTableErrorLocateModifiedIndexForClusterIndex(t *testing.T) {
+	testAdminCheckTableErrorLocate(t, true, errorLocateModifiedIndex)
 }
 
 func TestAdminCleanUpGlobalIndex(t *testing.T) {
