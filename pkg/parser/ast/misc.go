@@ -4115,6 +4115,10 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
+// RestoreWithQB renders a LEADING operand list. isTop and qbOnTable are
+// retained only to keep this exported method's signature stable across the
+// parser module boundary; neither parameter currently affects the rendered
+// output.
 func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName model.CIStr, needParen bool, isTop bool, qbOnTable bool) error {
 	if lt == nil || len(lt.Items) == 0 {
 		return nil
@@ -4132,15 +4136,13 @@ func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName model.CIStr,
 
 		switch t := item.(type) {
 		case *HintTable:
-			if i == 0 && currentQBName.L != "" && !qbOnTable {
+			if i == 0 && currentQBName.L != "" {
 				ctx.WriteKeyWord("@")
 				ctx.WriteName(currentQBName.String())
 				ctx.WritePlain(" ")
-				t.Restore(ctx)
-				currentQBName = model.CIStr{}
-			} else {
-				t.Restore(ctx)
 			}
+			t.Restore(ctx)
+			currentQBName = model.CIStr{}
 		case *LeadingList:
 			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
 				return err

@@ -19,15 +19,108 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResolveVisibleHintTableStrict(t *testing.T) {
+	ctx := mock.NewContext()
+	aliases := []h.SelectBlockAlias{
+		{},
+		{},
+		{SelectOffset: 2, VisibleOffset: 1, DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("dt")},
+		{SelectOffset: 3, VisibleOffset: 2, DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("d2")},
+	}
+	direct := []ast.HintTable{
+		{},
+		{},
+		{DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("dt")},
+		{DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("d2")},
+	}
+	ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
+	ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&direct)
+
+	resolved, ok := ResolveVisibleHintTableStrict(ctx, 3, 1)
+	require.True(t, ok)
+	require.Equal(t, "dt", resolved.TableName.L)
+
+	_, ok = ResolveVisibleHintTableStrict(ctx, 3, 4)
+	require.False(t, ok)
+
+	raw, ok := LookupDirectSelectBlockAlias(ctx, 3)
+	require.True(t, ok)
+	require.Equal(t, "d2", raw.TableName.L)
+
+	aliases[2].VisibleOffset = 0
+	ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
+	resolved, ok = ResolveVisibleHintTableStrict(ctx, 2, 0)
+	require.True(t, ok)
+	require.Equal(t, "dt", resolved.TableName.L)
+
+	// A visibility chain that points at a missing intermediate query block is
+	// not resolvable. Callers must fail closed instead of using the last alias
+	// they happened to encounter.
+	aliases[2] = h.SelectBlockAlias{
+		SelectOffset: 2, VisibleOffset: 3,
+		DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("d2"),
+	}
+	ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
+	_, ok = ResolveVisibleHintTableStrict(ctx, 2, 1)
+	require.False(t, ok)
+}
+
+// TestResolveSelectBlockAliasCycleTermination locks in the termination
+// guarantee for malformed visibility chains. The cur >= startOffset break in
+// ResolveSelectBlockAlias only compares against the fixed starting offset, so
+// a cycle strictly below it (5->3->4->3->4...) can only terminate via the
+// visited guard. Every entry on the cycle carries a non-empty alias, so the
+// TableName check cannot terminate the walk either; removing the guard would
+// hang the optimizer instead of resolving the chain as not found.
+func TestResolveSelectBlockAliasCycleTermination(t *testing.T) {
+	cyclic := []h.SelectBlockAlias{
+		{},
+		{},
+		{},
+		{SelectOffset: 3, VisibleOffset: 4, DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("c3")},
+		{SelectOffset: 4, VisibleOffset: 3, DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("c4")},
+		{SelectOffset: 5, VisibleOffset: 3, DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("c5")},
+	}
+
+	type resolveResult struct {
+		resolved h.SelectBlockAlias
+		ok       bool
+	}
+	done := make(chan resolveResult, 1)
+	go func() {
+		resolved, ok := h.ResolveSelectBlockAlias(cyclic, 5, 1)
+		done <- resolveResult{resolved, ok}
+	}()
+	select {
+	case got := <-done:
+		require.False(t, got.ok)
+		require.Equal(t, h.SelectBlockAlias{}, got.resolved)
+	case <-time.After(10 * time.Second):
+		t.Fatal("ResolveSelectBlockAlias did not terminate on a cyclic visibility chain below startOffset")
+	}
+
+	// The same malformed chain must fail closed through the planner-facing wrapper.
+	ctx := mock.NewContext()
+	aliases := cyclic
+	direct := make([]ast.HintTable, len(cyclic))
+	ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
+	ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&direct)
+	_, ok := ResolveVisibleHintTableStrict(ctx, 5, 1)
+	require.False(t, ok)
+}
 
 // TestNullRejectBuiltinRegistrySnapshot guards against silent builtin registry
 // drift. When this hash breaks, the builtin set has changed — review whether

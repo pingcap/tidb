@@ -480,11 +480,12 @@ var planBuilderPool = sync.Pool{
 }
 
 type logicalPlanBuildCtx struct {
-	stmtCtxState             stmtctx.LogicalPlanBuildState
-	plannerSelectBlockAsName *[]ast.HintTable
-	mapScalarSubQ            []any
-	mapHashCode2UniqueID     map[string]int
-	rewritePhaseInfo         variable.RewritePhaseInfo
+	stmtCtxState                stmtctx.LogicalPlanBuildState
+	plannerSelectBlockAsName    *[]ast.HintTable
+	plannerSelectBlockAliasInfo *[]hint.SelectBlockAlias
+	mapScalarSubQ               []any
+	mapHashCode2UniqueID        map[string]int
+	rewritePhaseInfo            variable.RewritePhaseInfo
 	// planID and planColumnID are the per-statement id allocators. buildLogicalPlan
 	// resets both to 0 at the start of every round, so each round re-allocates from
 	// scratch. We snapshot them here so that after picking the cost winner we can
@@ -568,8 +569,9 @@ func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx
 	// be rolled back as ordinary planner metadata. Revisit this choice if build
 	// behavior ever starts differing between rounds.
 	return logicalPlanBuildCtx{
-		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
-		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
+		stmtCtxState:                sessVars.StmtCtx.SaveLogicalPlanBuildState(),
+		plannerSelectBlockAsName:    sessVars.PlannerSelectBlockAsName.Load(),
+		plannerSelectBlockAliasInfo: sessVars.PlannerSelectBlockAliasInfo.Load(),
 		// buildLogicalPlan sets MapScalarSubQ = nil at the start of every round, so
 		// each round appends into its own fresh backing array and no two rounds share
 		// storage. Restoring the slice header therefore re-selects the winning round's
@@ -588,6 +590,7 @@ func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx
 func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
 	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
 	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
+	sessVars.PlannerSelectBlockAliasInfo.Store(logicalPlanCtx.plannerSelectBlockAliasInfo)
 	sessVars.MapScalarSubQ = logicalPlanCtx.mapScalarSubQ
 	sessVars.MapHashCode2UniqueID4ExtendedCol = maps.Clone(logicalPlanCtx.mapHashCode2UniqueID)
 	sessVars.RewritePhaseInfo = logicalPlanCtx.rewritePhaseInfo

@@ -135,6 +135,49 @@ Maintenance rules:
 - Extend `TestLogicalPlanBuildRoundStateResetAndRestore` when adding new
   round-local planner state.
 
+### 3.2 LEADING Identities Must Round Trip
+
+Generated and user-supplied `LEADING` hints share one join-operand identity
+model. A derived table is named by the alias visible from the join group's
+owning query block, not by an alias or base table visible only inside the
+derived query. Keep these invariants when changing join reorder or hint code:
+
+- Freeze the owning query-block offset when a reorder group is formed and use
+  it for both hint generation and matching; projections and selections must
+  not silently change that ownership.
+- Resolve aliases through `PlannerSelectBlockAliasInfo`. Any nested
+  `PlanBuilder` that temporarily replaces planner select-block state must save
+  and restore both the block-name and alias-info values.
+- Match the complete operand list through the shared join-order matcher. A
+  name must identify exactly one remaining operand; ambiguous matches fail
+  closed instead of selecting the first candidate.
+- Preserve the same left-to-right operand order in generated structured
+  `LeadingList` data and replay. Do not maintain a separate generation-only
+  identity or ordering path.
+- A generated `LEADING` hint carries its operand list twice: `Tables` holds
+  value copies and `HintData` (`*ast.LeadingList`) holds the same
+  `*ast.HintTable` pointers. The two views are built together and are not
+  synchronized afterwards — downstream code may mutate either in place — so
+  never edit one view expecting the other to follow; rebuild both together
+  instead.
+
+`PlanBuilder.Init` installs fresh select-block state and returns what was
+there before, so nested builders can restore it. Call sites that discard the
+returned state are safe only when no enclosing build is still in progress:
+builds launched ahead of the statement's optimize (the non-prepared plan
+cache's `GeneratePlanCacheStmtWithAST`) and one-shot helpers
+(`BuildLogicalPlanForTest`) are overwritten by the same statement's later
+optimize rounds, whose fence (`saveLogicalPlanBuildCtx` /
+`restoreLogicalPlanBuildCtx`) snapshots both select-block values and
+re-selects the winning round's values at the end. A nested build that runs
+*while* the enclosing build is in progress — routine calls during expression
+evaluation, nested plan building in `pkg/executor/pkdb_procedure*.go` — must
+save and restore the returned state.
+
+Round-trip tests should generate `EXPLAIN FORMAT='hint'`, apply the restored
+hint with both join-reorder implementations, and compare the resulting join
+order. Include nested derived tables and duplicate concrete table names.
+
 ## 4. Plan Cache Invariants (Prepared / Non-Prepared / Instance)
 
 The plan cache is a correctness boundary. The common failure mode is treating it

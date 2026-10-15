@@ -580,6 +580,49 @@ func (hint *HintedTable) Match(other *HintedTable) bool {
 			hint.DBName.L == "*" || other.DBName.L == "*") // for cross-db bindings, e.g. *.t
 }
 
+// SelectBlockAlias records the visibility information of a derived-table alias.
+// For a derived SELECT whose QueryBlockOffset is SelectOffset, its alias is
+// visible in the enclosing query block VisibleOffset.
+type SelectBlockAlias struct {
+	SelectOffset  int
+	VisibleOffset int
+	DBName        pmodel.CIStr
+	TableName     pmodel.CIStr
+}
+
+// ResolveSelectBlockAlias walks the visibility chain from startOffset outward
+// until it finds an alias visible in targetOffset.
+//
+// A well-formed visibility chain strictly decreases (each block's VisibleOffset
+// is its enclosing block, which has a smaller offset), so the walk terminates.
+// visited guards against malformed chains where VisibleOffset values are
+// non-monotonic: the cur >= startOffset break below only compares against the
+// fixed starting offset, so a cycle strictly below it (e.g. 5->3->4->3->4...)
+// would otherwise never terminate. A malformed chain resolves as not found
+// instead of hanging the optimizer.
+func ResolveSelectBlockAlias(aliases []SelectBlockAlias, startOffset, targetOffset int) (SelectBlockAlias, bool) {
+	cur := startOffset
+	visited := make(map[int]struct{}, 4)
+	for cur > 0 && cur < len(aliases) {
+		if _, seen := visited[cur]; seen {
+			break
+		}
+		visited[cur] = struct{}{}
+		entry := aliases[cur]
+		if entry.TableName.L == "" {
+			return SelectBlockAlias{}, false
+		}
+		if entry.VisibleOffset == targetOffset {
+			return entry, true
+		}
+		cur = entry.VisibleOffset
+		if cur <= 0 || cur >= startOffset {
+			break
+		}
+	}
+	return SelectBlockAlias{}, false
+}
+
 // HintedIndex indicates which index this hint should take effect on.
 type HintedIndex struct {
 	DBName         pmodel.CIStr   // the database name
@@ -931,7 +974,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				// get LeadingList
 				if hint.HintData != nil {
 					if list, ok := hint.HintData.(*ast.LeadingList); ok {
-						leadingList = list
+						leadingList = normalizeLeadingListQBNames(list, hintProcessor, currentLevel)
 					}
 				}
 			}
@@ -1038,6 +1081,38 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		return nil
 	}
 	return hintTableInfos
+}
+
+// normalizeLeadingListQBNames canonicalizes table-level QBNames inside a
+// LEADING list to their sel_N form. TypeSelect is unconditional on purpose:
+// only offsets > 0 are rewritten, and in any statement type — including
+// UPDATE/DELETE — every query block with offset > 0 is a subquery, i.e. a
+// select block (nested DML is not allowed); the top-level DML block is
+// offset 0 and is skipped by the guard below. The statement-level
+// upd_N/del_N naming is handled separately via topNodeType in ParseHintsSet.
+func normalizeLeadingListQBNames(list *ast.LeadingList, p *QBHintHandler, currentOffset int) *ast.LeadingList {
+	if list == nil {
+		return nil
+	}
+	normalized := &ast.LeadingList{Items: make([]any, 0, len(list.Items))}
+	for _, item := range list.Items {
+		switch x := item.(type) {
+		case *ast.HintTable:
+			table := *x
+			if table.QBName.L != "" {
+				offset := p.GetHintOffset(table.QBName, currentOffset)
+				if offset > 0 {
+					table.QBName, _ = GenerateQBName(TypeSelect, offset)
+				}
+			}
+			normalized.Items = append(normalized.Items, &table)
+		case *ast.LeadingList:
+			normalized.Items = append(normalized.Items, normalizeLeadingListQBNames(x, p, currentOffset))
+		default:
+			normalized.Items = append(normalized.Items, item)
+		}
+	}
+	return normalized
 }
 
 func restore2TableHint(hintTables ...HintedTable) string {

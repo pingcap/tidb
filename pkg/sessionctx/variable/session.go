@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -1329,6 +1330,10 @@ type SessionVars struct {
 	mppExchangeCompressionMode kv.ExchangeCompressionMode
 
 	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
+
+	// PlannerSelectBlockAliasInfo records the visibility chain for derived-table
+	// aliases, indexed by QueryBlockOffset.
+	PlannerSelectBlockAliasInfo atomic.Pointer[[]hint.SelectBlockAlias]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	LockWaitTimeout int64

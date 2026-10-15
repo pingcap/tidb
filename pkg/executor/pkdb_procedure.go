@@ -1115,9 +1115,15 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	vars := e.Ctx().GetSessionVars()
 	// Routine statements may recursively optimize stored function calls with the
 	// same session context. Keep the current statement's QB-name bookkeeping from
-	// being replaced by the nested optimization.
+	// being replaced by the nested optimization. The block-name and alias-info
+	// values are a pair (see planner/MAINTAINER_GUIDE.md 3.2): restoring only one
+	// leaves the two disagreeing after the nested optimization.
 	originPlannerSelectBlockAsName := vars.PlannerSelectBlockAsName.Load()
-	defer vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+	originPlannerSelectBlockAliasInfo := vars.PlannerSelectBlockAliasInfo.Load()
+	defer func() {
+		vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+		vars.PlannerSelectBlockAliasInfo.Store(originPlannerSelectBlockAliasInfo)
+	}()
 	// Scalar subquery plans are also stored on SessionVars for EXPLAIN rendering.
 	// Nested stored routine calls optimized during expression evaluation may replace
 	// this slice on the same session, so preserve the caller's view and keep a copy
@@ -1308,8 +1314,14 @@ func (e *ProcedureExec) executeExplainRoutineStmt(ctx context.Context, stmtNode 
 	}
 
 	vars := e.Ctx().GetSessionVars()
+	// Same paired save/restore as above: nested routine optimization replaces
+	// both select-block values together, so they must be restored together too.
 	originPlannerSelectBlockAsName := vars.PlannerSelectBlockAsName.Load()
-	defer vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+	originPlannerSelectBlockAliasInfo := vars.PlannerSelectBlockAliasInfo.Load()
+	defer func() {
+		vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+		vars.PlannerSelectBlockAliasInfo.Store(originPlannerSelectBlockAliasInfo)
+	}()
 
 	callStmt, _ := e.Statement.(*ast.CallStmt)
 	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, traceStmt)

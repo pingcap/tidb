@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -50,6 +49,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 // The derived output columns are tracked in colExprMap and substituted back into
 // join predicates before the join graph is built.
 func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
+	ownerQueryBlockOffset := p.QueryBlockOffset()
 	joinMethodHintInfo := make(map[int]*joinorder.JoinMethodHint)
 	var (
 		group              []base.LogicalPlan
@@ -103,11 +103,13 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	join, isJoin := p.(*logicalop.LogicalJoin)
+	var currentLeadingHint *h.PlanHints
 	if isJoin && join.PreferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
 		// We need to return the hint information to warn
 		joinOrderHintInfo = append(joinOrderHintInfo, join.HintInfo)
+		currentLeadingHint = join.HintInfo
 	}
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
@@ -154,7 +156,9 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
 	// For example: `select .. from t1 join t2 join (select .. from t3 join t4) t5 where ..;` If there are some join method hints related to `t5`, we can't split `t5` into `t3` and `t4`.
 	// So we don't need to split the left child part. The right child part is the same.
-	if join.JoinType != logicalop.RightOuterJoin && !leftHasHint {
+	leftShouldPreserve := currentLeadingHint != nil &&
+		joinorder.IsDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint, ownerQueryBlockOffset)
+	if join.JoinType != logicalop.RightOuterJoin && !leftHasHint && !leftShouldPreserve {
 		lhsJoinGroupResult := extractJoinGroupImpl(join.Children()[0])
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin, lhsColExprMap := lhsJoinGroupResult.group, lhsJoinGroupResult.eqEdges, lhsJoinGroupResult.otherConds, lhsJoinGroupResult.joinTypes, lhsJoinGroupResult.joinOrderHintInfo, lhsJoinGroupResult.joinMethodHintInfo, lhsJoinGroupResult.hasOuterJoin, lhsJoinGroupResult.colExprMap
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
@@ -181,7 +185,9 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// You can see the comments in the upside part which we try to split the left child part. It's the same here.
-	if join.JoinType != logicalop.LeftOuterJoin && !rightHasHint {
+	rightShouldPreserve := currentLeadingHint != nil &&
+		joinorder.IsDerivedTableInLeadingHint(join.Children()[1], currentLeadingHint, ownerQueryBlockOffset)
+	if join.JoinType != logicalop.LeftOuterJoin && !rightHasHint && !rightShouldPreserve {
 		rhsJoinGroupResult := extractJoinGroupImpl(join.Children()[1])
 		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin, rhsColExprMap := rhsJoinGroupResult.group, rhsJoinGroupResult.eqEdges, rhsJoinGroupResult.otherConds, rhsJoinGroupResult.joinTypes, rhsJoinGroupResult.joinOrderHintInfo, rhsJoinGroupResult.joinMethodHintInfo, rhsJoinGroupResult.hasOuterJoin, rhsJoinGroupResult.colExprMap
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
@@ -254,11 +260,12 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 		hasOuterJoin:      hasOuterJoin,
 		joinOrderHintInfo: joinOrderHintInfo,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
-			eqEdges:            eqEdges,
-			otherConds:         otherConds,
-			joinTypes:          joinTypes,
-			nullExtendedCols:   nullExtendedSchema,
-			joinMethodHintInfo: joinMethodHintInfo,
+			ownerQueryBlockOffset: ownerQueryBlockOffset,
+			eqEdges:               eqEdges,
+			otherConds:            otherConds,
+			joinTypes:             joinTypes,
+			nullExtendedCols:      nullExtendedSchema,
+			joinMethodHintInfo:    joinMethodHintInfo,
 		},
 		colExprMap: colExprMap,
 	}
@@ -356,6 +363,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 						ctx.GetSessionVars().StmtCtx.SetHintWarning(
 							"leading hint is inapplicable, check if the leading hint table is valid")
 					} else {
+						joinorder.MarkLeadingHintMatched(leadingHintInfo)
 						curJoinGroup = leftJoinGroup
 					}
 				} else {
@@ -378,7 +386,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			if err != nil {
 				return fallbackOnErr(err)
 			}
-			p, err = restoreSchemaIfChanged(p, originalSchema, result.colExprMap)
+			p, err = restoreSchemaIfChanged(p, originalSchema, result.colExprMap, result.ownerQueryBlockOffset)
 			if err != nil {
 				return fallbackOnErr(err)
 			}
@@ -409,6 +417,7 @@ func restoreSchemaIfChanged(
 	p base.LogicalPlan,
 	originalSchema *expression.Schema,
 	colExprMap map[int64]expression.Expression,
+	ownerQueryBlockOffset int,
 ) (base.LogicalPlan, error) {
 	if p == nil || originalSchema == nil {
 		return p, nil
@@ -443,7 +452,7 @@ func restoreSchemaIfChanged(
 	}
 	proj := logicalop.LogicalProjection{
 		Exprs: exprs,
-	}.Init(p.SCtx(), p.QueryBlockOffset())
+	}.Init(p.SCtx(), ownerQueryBlockOffset)
 	// Clone the schema here, because the schema may be changed by column pruning rules.
 	proj.SetSchema(originalSchema.Clone())
 	proj.SetChildren(p)
@@ -479,9 +488,10 @@ func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
 type basicJoinGroupInfo struct {
-	eqEdges    []*expression.ScalarFunction
-	otherConds []expression.Expression
-	joinTypes  []*joinTypeWithExtMsg
+	ownerQueryBlockOffset int
+	eqEdges               []*expression.ScalarFunction
+	otherConds            []expression.Expression
+	joinTypes             []*joinTypeWithExtMsg
 	// nullExtendedCols records columns that may become NULL due to outer joins
 	// in this join group.
 	nullExtendedCols *expression.Schema
@@ -526,50 +536,18 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	var leadingJoinGroup []base.LogicalPlan
 	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
-	var queryBlockNames []ast.HintTable
-	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-		queryBlockNames = *p
-	}
 	for _, hintTbl := range hintInfo.LeadingJoinOrder {
-		match := false
-		for i, joinGroup := range leftJoinGroup {
-			tableAlias := util.ExtractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
-			if tableAlias == nil {
-				continue
-			}
-			if (hintTbl.DBName.L == tableAlias.DBName.L || hintTbl.DBName.L == "*") && hintTbl.TblName.L == tableAlias.TblName.L && hintTbl.SelectOffset == tableAlias.SelectOffset {
-				match = true
-				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
-				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)
-				break
-			}
+		astHint := &ast.HintTable{DBName: hintTbl.DBName, TableName: hintTbl.TblName}
+		if hintTbl.SelectOffset > 1 {
+			astHint.QBName, _ = h.GenerateQBName(h.TypeSelect, hintTbl.SelectOffset)
 		}
-		if match {
-			continue
-		}
-
-		// consider query block alias: select /*+ leading(t1, t2) */ * from (select ...) t1, t2 ...
-		groupIdx := -1
-		for i, joinGroup := range leftJoinGroup {
-			blockOffset := joinGroup.QueryBlockOffset()
-			if blockOffset > 1 && blockOffset < len(queryBlockNames) {
-				blockName := queryBlockNames[blockOffset]
-				if hintTbl.DBName.L == blockName.DBName.L && hintTbl.TblName.L == blockName.TableName.L {
-					// this can happen when multiple join groups are from the same block, for example:
-					//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
-					// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
-					// TODO: currently we skip this case for simplification, we can support it in the future.
-					if groupIdx != -1 {
-						groupIdx = -1
-						break
-					}
-					groupIdx = i
-				}
-			}
-		}
-		if groupIdx != -1 {
-			leadingJoinGroup = append(leadingJoinGroup, leftJoinGroup[groupIdx])
-			leftJoinGroup = append(leftJoinGroup[:groupIdx], leftJoinGroup[groupIdx+1:]...)
+		matched, remaining, ok := joinorder.FindAndRemovePlanByAstHint(
+			s.ctx, leftJoinGroup, astHint, s.ownerQueryBlockOffset,
+			func(plan base.LogicalPlan) base.LogicalPlan { return plan },
+		)
+		if ok {
+			leadingJoinGroup = append(leadingJoinGroup, matched)
+			leftJoinGroup = remaining
 		}
 	}
 	if len(leadingJoinGroup) != len(hintInfo.LeadingJoinOrder) || leadingJoinGroup == nil {
@@ -803,7 +781,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base
 	if len(s.otherConds) > 0 {
 		additionSelection := logicalop.LogicalSelection{
 			Conditions: s.otherConds,
-		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].QueryBlockOffset())
+		}.Init(cartesianJoinGroup[0].SCtx(), s.ownerQueryBlockOffset)
 		additionSelection.SetChildren(cartesianJoinGroup[0])
 		cartesianJoinGroup[0] = additionSelection
 	}
@@ -811,14 +789,10 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.LogicalPlan) *logicalop.LogicalJoin {
-	offset := lChild.QueryBlockOffset()
-	if offset != rChild.QueryBlockOffset() {
-		offset = -1
-	}
 	join := logicalop.LogicalJoin{
 		JoinType:  logicalop.InnerJoin,
 		Reordered: true,
-	}.Init(s.ctx, offset)
+	}.Init(s.ctx, s.ownerQueryBlockOffset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	joinorder.SetNewJoinWithHint(join, s.joinMethodHintInfo)

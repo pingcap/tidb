@@ -313,32 +313,103 @@ func DeriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 // ExtractTableAlias returns table alias of the base.LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the base.LogicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
+// Columns with empty table names are ignored when determining the alias.
 func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
-	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
-		firstName := p.OutputNames()[0]
-		for _, name := range p.OutputNames() {
-			if name.TblName.L != firstName.TblName.L ||
-				(name.DBName.L != "" && firstName.DBName.L != "" &&
-					name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+	names := p.OutputNames()
+	if len(names) == 0 {
+		return nil
+	}
+	var firstName *types.FieldName
+	for _, name := range names {
+		if name.TblName.L != "" {
+			firstName = name
+			break
+		}
+	}
+	if firstName == nil {
+		return nil
+	}
+	for _, name := range names {
+		if name.TblName.L == "" {
+			// A valid aliasable column should always carry both DBName/TblName together.
+			// If only DBName exists, treat it as conflicting name metadata.
+			if name.DBName.L != "" {
 				return nil
 			}
+			continue
 		}
-		qbOffset := p.QueryBlockOffset()
-		var blockAsNames []ast.HintTable
-		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-			blockAsNames = *p
+		if name.TblName.L != firstName.TblName.L ||
+			(name.DBName.L != "" && firstName.DBName.L != "" &&
+				name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+			return nil
 		}
-		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
-			qbOffset = parentOffset
-		}
-		dbName := firstName.DBName
-		if dbName.L == "" {
-			dbName = pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
-		}
-		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}
-	return nil
+	qbOffset := p.QueryBlockOffset()
+	var blockAsNames []ast.HintTable
+	if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+		blockAsNames = *p
+	}
+	// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+	if qbOffset != parentOffset &&
+		blockAsNames != nil &&
+		qbOffset >= 0 &&
+		qbOffset < len(blockAsNames) &&
+		blockAsNames[qbOffset].TableName.L != "" {
+		qbOffset = parentOffset
+	}
+	dbName := firstName.DBName
+	if dbName.L == "" {
+		dbName = pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+	}
+	return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
+}
+
+// ResolveVisibleHintTableStrict resolves the derived-table alias visible for
+// startOffset in targetOffset. It fails unless the recorded chain reaches the
+// target query block.
+func ResolveVisibleHintTableStrict(sctx base.PlanContext, startOffset, targetOffset int) (*ast.HintTable, bool) {
+	if sctx == nil || startOffset <= 0 || targetOffset < 0 {
+		return nil, false
+	}
+	if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+		if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, startOffset, targetOffset); ok {
+			return &ast.HintTable{DBName: resolved.DBName, TableName: resolved.TableName}, true
+		}
+	}
+	return nil, false
+}
+
+// LookupDirectSelectBlockAlias returns the alias recorded directly for offset.
+// It does not prove visibility in an outer query block.
+func LookupDirectSelectBlockAlias(sctx base.PlanContext, offset int) (*ast.HintTable, bool) {
+	if sctx == nil || offset <= 0 {
+		return nil, false
+	}
+	var queryBlockNames []ast.HintTable
+	if names := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
+		queryBlockNames = *names
+	}
+	if offset >= len(queryBlockNames) {
+		return nil, false
+	}
+	hintTable := queryBlockNames[offset]
+	if hintTable.TableName.L == "" {
+		return nil, false
+	}
+	copied := hintTable
+	return &copied, true
+}
+
+// ExtractJoinHintTableAlias resolves aliases for join-method hints. LEADING
+// generation and replay use ResolveJoinOperandHintIdentity directly.
+func ExtractJoinHintTableAlias(p base.LogicalPlan, targetOffset int) *h.HintedTable {
+	if table, ok := ResolveJoinOperandHintIdentity(p, targetOffset); ok {
+		return table
+	}
+	if JoinOperandHasDerivedAliasCandidate(p, targetOffset) {
+		return nil
+	}
+	return ExtractTableAlias(p, p.QueryBlockOffset())
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext

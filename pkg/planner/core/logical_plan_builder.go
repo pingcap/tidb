@@ -507,41 +507,32 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		}
 
 		if x.AsName.L != "" {
-			if x.Lateral {
-				// LATERAL derived tables: clone output names to avoid mutating shared
-				// structs across correlated re-executions, and clear DBName so that
-				// error messages show "alias.col" not "db.alias.col".
-				clonedNames := make([]*types.FieldName, len(p.OutputNames()))
-				for i, name := range p.OutputNames() {
-					if name.Hidden {
-						clonedNames[i] = name
-						continue
-					}
-					dbName := pmodel.NewCIStr("")
-					if isTableName {
-						dbName = name.DBName
-					}
-					clonedNames[i] = &types.FieldName{
-						DBName:            dbName,
-						OrigTblName:       name.OrigTblName,
-						OrigColName:       name.OrigColName,
-						TblName:           x.AsName,
-						ColName:           name.ColName,
-						NotExplicitUsable: name.NotExplicitUsable,
-						Redundant:         name.Redundant,
-						Hidden:            name.Hidden,
-					}
+			// Clone before modifying: CTE consumers and correlated re-executions can
+			// share output-name objects.
+			clonedNames := make([]*types.FieldName, len(p.OutputNames()))
+			for i, name := range p.OutputNames() {
+				if name.Hidden {
+					clonedNames[i] = name
+					continue
 				}
-				p.SetOutputNames(clonedNames)
-			} else {
-				// Non-LATERAL: preserve original behavior — update TblName in place.
-				for _, name := range p.OutputNames() {
-					if name.Hidden {
-						continue
-					}
-					name.TblName = x.AsName
+				dbName := name.DBName
+				if !isTableName && x.Lateral {
+					// Only LATERAL derived tables clear DBName so that error
+					// messages show "alias.col" not "db.alias.col".
+					dbName = pmodel.NewCIStr("")
+				}
+				clonedNames[i] = &types.FieldName{
+					DBName:            dbName,
+					OrigTblName:       name.OrigTblName,
+					OrigColName:       name.OrigColName,
+					TblName:           x.AsName,
+					ColName:           name.ColName,
+					NotExplicitUsable: name.NotExplicitUsable,
+					Redundant:         name.Redundant,
+					Hidden:            name.Hidden,
 				}
 			}
+			p.SetOutputNames(clonedNames)
 		}
 		// Apply column alias list from AS dt(c1, c2, ...) syntax.
 		// Only valid for derived tables (not table names); parser enforces this.
@@ -572,14 +563,24 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		if p := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 			plannerSelectBlockAsName = *p
 		}
-		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			dbName := p.OutputNames()[0].DBName
-			if x.Lateral {
-				// LATERAL derived tables clear DBName on output names, so use CurrentDB
-				// for hint generation (e.g. leading()) which needs the qualified form.
-				dbName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		// Both select-block slices are sized MaxSelectStmtOffset()+1, so a
+		// well-formed query block offset is always in bounds; guard anyway,
+		// mirroring LookupDirectSelectBlockAlias, so a malformed offset skips
+		// alias recording instead of panicking the planner.
+		if qbOffset := p.QueryBlockOffset(); len(plannerSelectBlockAsName) > 0 && !isTableName &&
+			qbOffset >= 0 && qbOffset < len(plannerSelectBlockAsName) {
+			aliasName := p.OutputNames()[0].TblName
+			dbName := pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+			plannerSelectBlockAsName[qbOffset] = ast.HintTable{DBName: dbName, TableName: aliasName}
+			if aliasInfo := b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil &&
+				qbOffset < len(*aliasInfo) {
+				(*aliasInfo)[qbOffset] = h.SelectBlockAlias{
+					SelectOffset:  qbOffset,
+					VisibleOffset: b.getSelectOffset(),
+					DBName:        dbName,
+					TableName:     aliasName,
+				}
 			}
-			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: dbName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -5918,16 +5919,18 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 
 	originHintProcessor := b.hintProcessor
 	originHintState := b.hintState
-	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
+	savedSelectBlockState := savePlannerSelectBlockState(b.ctx)
 	b.hintProcessor = hintProcessor
 	b.hintState = hintState
 	newPlannerSelectBlockAsName := make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
 	b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&newPlannerSelectBlockAsName)
+	newPlannerSelectBlockAliasInfo := make([]h.SelectBlockAlias, hintProcessor.MaxSelectStmtOffset()+1)
+	b.ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&newPlannerSelectBlockAliasInfo)
 	defer func() {
 		b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState))
 		b.hintProcessor = originHintProcessor
 		b.hintState = originHintState
-		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
+		restorePlannerSelectBlockState(b.ctx, savedSelectBlockState)
 	}()
 	var nodeW *resolve.NodeW
 	if b.resolveCtx == nil {

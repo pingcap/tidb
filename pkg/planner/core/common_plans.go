@@ -1107,8 +1107,33 @@ func (e *Explain) RenderResult() error {
 		}
 	case types.ExplainFormatHint:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
-		hints := GenHintsFromFlatPlan(flat)
-		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
+		hints := GenHintsFromFlatPlanForExplain(flat)
+		originalHints := hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)
+		hasOriginalLeading := false
+		for _, originalHint := range originalHints {
+			if originalHint.HintName.L == hint.HintLeading {
+				hasOriginalLeading = true
+				break
+			}
+		}
+		if hasOriginalLeading {
+			// TODO(#70238): Reconcile LEADING hints by query-block identity.
+			// Blast radius of this temporary measure: ANY original LEADING —
+			// even one scoped to an unrelated query block — suppresses ALL
+			// generated LEADING hints, across every query block, not just the
+			// block owning that original hint. Scoping the filter requires
+			// resolving each original hint's QB (originalHints come from the
+			// raw AST here, where QBName is often implicit), which is the
+			// actual #70238 work.
+			filtered := hints[:0]
+			for _, generatedHint := range hints {
+				if generatedHint.HintName.L != hint.HintLeading {
+					filtered = append(filtered, generatedHint)
+				}
+			}
+			hints = filtered
+		}
+		hints = append(hints, originalHints...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
