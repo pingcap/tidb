@@ -26,6 +26,8 @@
     curl http://{TiDBIP}:10080/metrics
     ```
 
+    In Starter deployment mode, every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Starter obtains the ID from the initialized storage codec; metric registration does not query PD for the ID. Its value is an empty string until storage initialization provides an ID, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Starter metrics sent to Pushgateway include the same label, although pushes before storage initialization use an empty value. Classic, Premium, and Premium Reserved retain their existing metric labels. Standalone BR is outside this Starter-specific change: it retains its existing constant labels, and its Go/process and other collectors are not automatically given `keyspace_id`.
+
 3. Get the metadata of all regions
 
     ```shell
@@ -767,6 +769,18 @@ timezone.*
      ```
 
      `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. `columnar_store_type` is this TiDB's `cse.columnar-store-type` (`tiflash`, `columnar`, or `both`). `reloaded` reports whether this request synced schema first. If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
+
+## Standby activation
+
+`POST /tidb-pool/activate` activates a TiDB process running in standby mode. Send the request to its status port. The response waits until the server is ready to accept connections.
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/tidb-pool/activate" \
+  -H 'Content-Type: application/json' \
+  -d '{"keyspace_name":"ks"}'
+```
+
+`keyspace_name` is required. Starter obtains the metric `keyspace_id` from the initialized storage codec, so the activation request does not need to supply it. Activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` are also supported.
 
 ## Test-only APIs (enableTestAPI failpoint)
 

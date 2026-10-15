@@ -95,6 +95,7 @@ go_test(
         "//pkg/objstore/recording",
         "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",
+        "//pkg/parser/ast",
         "//pkg/util/intest",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//:azblob",
         "@com_github_azure_azure_sdk_for_go_sdk_storage_azblob//bloberror",
