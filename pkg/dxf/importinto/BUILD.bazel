@@ -83,6 +83,7 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disttask",
+        "//pkg/util/execdetails",
         "//pkg/util/gcutil",
         "//pkg/util/logutil",
         "//pkg/util/promutil",
