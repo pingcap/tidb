@@ -741,7 +741,7 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 			columns = chunk.Chunk.Columns
 			if filepath.Dir(chunk.FileMeta.Path) != ci.cfg.Mydumper.SourceDir {
 				message := fmt.Sprintf("chunk checkpoints path is not equal to config"+
-					"checkpoint is %s, config source dir is %s", chunk.FileMeta.Path, ci.cfg.Mydumper.SourceDir)
+					"checkpoint is %s, config source dir is %s", chunk.FileMeta.Path, objstore.RedactURL(ci.cfg.Mydumper.SourceDir))
 				msgs = append(msgs, message)
 			}
 		}

@@ -153,6 +153,7 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
   - Example: when implementing a well-known algorithm, naming SHOULD be clear enough to make the approach recognizable; if naming alone may not make intent obvious, add a brief comment.
 - Keep changes focused; avoid unrelated refactors, renames, or moves in the same PR.
 - Keep error handling actionable and contextual; avoid silently swallowing errors.
+- Code MUST NOT put credentials or secrets into logs, error messages, or metrics labels. This includes storage URLs (`access-key`, `secret-access-key`, `session-token`, userinfo, SAS tokens), passwords, and configs that embed them. Use `objstore.RedactURL` for storage URLs and `objstore.BackendOptions.Redacted()` for backend options instead of printing them as-is, and do not wrap a `url.Parse` error with the raw URL, because `url.Error` embeds it. When a change adds or modifies a log line or error that takes a URL, a config struct, or a user-supplied string, check it for secrets and add a regression test that asserts the secret is absent.
 - For new source files (for example `*.go`), include the standard TiDB license header (copyright + Apache 2.0) by copying from a nearby file and updating year if needed.
 - Comments SHOULD explain non-obvious intent, constraints, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs, and SHOULD NOT restate what the code already makes clear.
 - Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.

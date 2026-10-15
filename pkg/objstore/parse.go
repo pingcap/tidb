@@ -36,6 +36,65 @@ type BackendOptions struct {
 	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
 }
 
+// Redacted returns a copy of the options with the credentials masked, so that
+// the options can be logged. The receiver is not modified.
+func (o BackendOptions) Redacted() BackendOptions {
+	o.S3.AccessKey = maskIfSet(o.S3.AccessKey)
+	o.S3.SecretAccessKey = maskIfSet(o.S3.SecretAccessKey)
+	o.S3.SessionToken = maskIfSet(o.S3.SessionToken)
+	o.Azblob.AccountKey = maskIfSet(o.Azblob.AccountKey)
+	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
+	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)
+	// A SAS token or userinfo may be written into the endpoint.
+	o.S3.Endpoint = RedactURL(o.S3.Endpoint)
+	o.GCS.Endpoint = RedactURL(o.GCS.Endpoint)
+	o.Azblob.Endpoint = RedactURL(o.Azblob.Endpoint)
+	return o
+}
+
+// maskIfSet masks a credential, leaving an unset one empty so that the
+// redacted output does not suggest that it is configured.
+func maskIfSet(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return ast.RedactedValue
+}
+
+// InvalidURLPlaceholder replaces a storage URL that cannot be parsed, because
+// such a URL cannot be reliably masked.
+const InvalidURLPlaceholder = "(invalid storage URL)"
+
+// RedactURL masks the credentials in a storage URL so that it can be put into
+// logs and error messages. An unparseable URL is replaced by
+// InvalidURLPlaceholder, the userinfo is removed, and the query of a URL with an
+// unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
+// are secret there. A value with neither "://" nor "?" is a local path and is
+// returned unchanged. Unlike ast.RedactURL, an unparseable URL is never
+// returned as-is.
+func RedactURL(rawURL string) string {
+	// A plain local path has nothing to mask, and parsing it would escape or
+	// reject characters such as spaces and '%'.
+	if !strings.Contains(rawURL, "://") && !strings.Contains(rawURL, "?") {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return InvalidURLPlaceholder
+	}
+	// ast.RedactURL only masks query parameters, so drop the userinfo first.
+	if u.User != nil {
+		u.User = nil
+		rawURL = u.String()
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "oss", "azure", "azblob":
+		return ast.RedactURL(rawURL)
+	}
+	u.RawQuery = ""
+	return u.String()
+}
+
 // ParseRawURL parse raw url to url object.
 func ParseRawURL(rawURL string) (*url.URL, error) {
 	// https://github.com/pingcap/br/issues/603
@@ -44,7 +103,8 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.ReplaceAll(rawURL, "+", "%2B")
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, errors.Trace(err)
+		// Both url.Error and its inner reason may carry the whole URL or fragments of it.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "parse storage URL failed: invalid format")
 	}
 	return u, nil
 }
@@ -96,7 +156,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "s3", "ks3", "oss":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", ast.RedactURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
@@ -118,7 +178,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "gs", "gcs":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", ast.RedactURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
@@ -134,7 +194,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "azure", "azblob":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", ast.RedactURL(rawURL))
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
