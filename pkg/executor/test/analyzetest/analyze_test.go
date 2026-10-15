@@ -913,6 +913,13 @@ func TestKillAnalyzeBeforeResultIsConsumed(t *testing.T) {
 
 	fp := "github.com/pingcap/tidb/pkg/executor/handleResultsErrorSingleThreadPanic"
 	testfailpoint.Enable(t, fp, "pause")
+	sent := make(chan struct{}, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeResultSent", func() {
+		select {
+		case sent <- struct{}{}:
+		default:
+		}
+	})
 	tkAnalyze := testkit.NewTestKit(t, store)
 	tkAnalyze.MustExec("use test")
 	done := make(chan error, 1)
@@ -920,15 +927,12 @@ func TestKillAnalyzeBeforeResultIsConsumed(t *testing.T) {
 		done <- tkAnalyze.ExecToErr("analyze table t_kill_unconsumed")
 	}()
 
-	const jobQuery = "select state, fail_reason from mysql.analyze_jobs where table_name = 't_kill_unconsumed'"
-	require.Eventually(t, func() bool {
-		rows := tk.MustQuery(jobQuery).Rows()
-		return len(rows) == 1 && rows[0][0] == statistics.AnalyzeRunning
-	}, 10*time.Second, 10*time.Millisecond)
-	// Let the worker finish the two-row scan and send its result while the
-	// handler is paused. The sleep only makes that order likely; the job must
-	// end as failed in either order.
-	time.Sleep(100 * time.Millisecond)
+	// Kill once the worker's result is buffered and the handler is still paused.
+	select {
+	case <-sent:
+	case <-time.After(10 * time.Second):
+		t.Fatal("analyze worker did not send its result")
+	}
 	tkAnalyze.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	testfailpoint.Disable(t, fp)
 
@@ -938,7 +942,8 @@ func TestKillAnalyzeBeforeResultIsConsumed(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("analyze does not stop after kill")
 	}
-	tk.MustQuery(jobQuery).Check(testkit.Rows(statistics.AnalyzeFailed + " " + exeerrors.ErrQueryInterrupted.Error()))
+	tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't_kill_unconsumed'").
+		Check(testkit.Rows(statistics.AnalyzeFailed + " " + exeerrors.ErrQueryInterrupted.Error()))
 }
 
 func TestAnalyzeJob(t *testing.T) {

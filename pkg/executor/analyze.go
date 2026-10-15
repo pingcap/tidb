@@ -879,6 +879,7 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
+		failpoint.InjectCall("analyzeResultSent")
 		return
 	case <-ctx.Done():
 	case <-e.errExitCh:
