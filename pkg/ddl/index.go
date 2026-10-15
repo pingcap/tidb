@@ -1404,8 +1404,7 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	// fall back to txn backfill, which doesn't sort at all, so they must not be
 	// rejected here.
 	if kerneltype.IsNextGen() && ingest.LitInitialized && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
-		return dbterror.ErrNotSupportedYet.GenWithStackByArgs(
-			"add index or modify column with local sort, please set tidb_cloud_storage_uri to enable global sort")
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("add index or modify column with local sort")
 	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {

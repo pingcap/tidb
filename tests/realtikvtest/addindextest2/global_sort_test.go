@@ -262,17 +262,15 @@ func TestAddIndexRequiresGlobalSort(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2);")
 
 	// NextGen is designed around global sort; local sort is no longer tolerated
-	// and must be rejected even when SEM is disabled.
+	// and must be rejected.
 	tk.MustExec("set global tidb_cloud_storage_uri = ''")
 	err := tk.ExecToErr("alter table t add index idx_a(a);")
 	require.ErrorIs(t, err, dbterror.ErrNotSupportedYet)
 	require.ErrorContains(t, err, "add index or modify column with local sort")
-	require.ErrorContains(t, err, "please set tidb_cloud_storage_uri to enable global sort")
 
 	err = tk.ExecToErr("alter table t modify column b varchar(50);")
 	require.ErrorIs(t, err, dbterror.ErrNotSupportedYet)
 	require.ErrorContains(t, err, "add index or modify column with local sort")
-	require.ErrorContains(t, err, "please set tidb_cloud_storage_uri to enable global sort")
 
 	// Global sort is still allowed: with a cloud storage URI configured,
 	// the DDL goes through the distributed global sort path.

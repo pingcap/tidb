@@ -273,12 +273,11 @@ func TestInitForReorgIndexesRequiresGlobalSort(t *testing.T) {
 	vardef.CloudStorageURI.Store("")
 	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
 
-	// local sort is rejected on NextGen, regardless of SEM.
+	// local sort is rejected on NextGen when the ingest environment is available.
 	ingest.LitInitialized = true
 	err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
 	require.ErrorIs(t, err, dbterror.ErrNotSupportedYet)
 	require.ErrorContains(t, err, "add index or modify column with local sort")
-	require.ErrorContains(t, err, "please set tidb_cloud_storage_uri to enable global sort")
 
 	// jobs without fast reorg don't sort locally, so they are still allowed
 	require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
