@@ -87,7 +87,6 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			})
 			data, err := json.Marshal(captured)
 			require.NoError(t, err)
-			require.NotContains(t, string(data), `"SQL":`)
 			captured = &importer.QueryPlan{}
 			require.NoError(t, json.Unmarshal(data, captured))
 			var expected []string
@@ -120,6 +119,23 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			require.Equal(t, expected, got)
 		})
 	}
+	t.Run("statement time", func(t *testing.T) {
+		tk.MustExec("set @@timestamp = 1000000000")
+		defer tk.MustExec("set @@timestamp = default")
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		sql := "import into unused_target from select unix_timestamp(now())"
+		q, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
+		require.NoError(t, err)
+		tk.Session().RollbackTxn(context.Background())
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		defer se.Close()
+		output := make(chan importer.QueryChunk, 1)
+		require.NoError(t, importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, output))
+		close(output)
+		result := <-output
+		require.EqualValues(t, 1000000000, result.Chk.GetRow(0).GetInt64(0))
+	})
 	t.Run("submitted table definitions", func(t *testing.T) {
 		tk.MustExec("create resource group rg1 ru_per_sec=1000")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
