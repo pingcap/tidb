@@ -817,3 +817,18 @@ set @a=1;
 execute stmt using @a, @a;
 json_object(?, ?)
 {"1": 1}
+select json_extract("0.0", "$");
+json_extract("0.0", "$")
+0.0
+select json_extract("[1E17]", "$");
+json_extract("[1E17]", "$")
+[1e17]
+select json_extract('[1E27]', '$');
+json_extract('[1E27]', '$')
+[1e27]
+select json_extract("{\"\\b\":\"\"}", "$");
+json_extract("{\"\\b\":\"\"}", "$")
+{"\b": ""}
+select json_extract("{\"\\f\":\"\"}", "$");
+json_extract("{\"\\f\":\"\"}", "$")
+{"\f": ""}
