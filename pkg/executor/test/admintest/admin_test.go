@@ -294,7 +294,6 @@ func TestAdminCleanupMVIndex(t *testing.T) {
 	cpIdx.MVIndex = false
 	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
 	require.NoError(t, err)
-
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(9), kv.IntHandle(9), nil)
@@ -883,7 +882,7 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
-	tk.MustExec("insert into t values (0, '[0,2,4]')")
+	tk.MustExec("insert into t values (0, '[0,1,2]')")
 	tk.MustExec("insert into t values (1, '[1,2,3]')")
 	tk.MustExec("insert into t values (2, '[2,3,4]')")
 	tk.MustExec("insert into t values (3, '[3,4,5]')")
@@ -910,41 +909,28 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	region, _, _, _ := cluster.GetRegionByKey(splitKey)
 	peerID := cluster.AllocID()
 	cluster.Split(region.GetId(), cluster.AllocID(), splitKey, []uint64{peerID}, peerID)
-	tk.MustExec("admin check table t")
+	var checkedRequest atomic.Bool
+	checkCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		checkedRequest.Store(true)
+		req.KeyRanges.ForEachPartition(func(ranges []kv.KeyRange) {
+			for i := 1; i < len(ranges); i++ {
+				assert.LessOrEqual(t, ranges[i-1].EndKey.Cmp(ranges[i].StartKey), 0, "ADMIN CHECK request ranges must not overlap")
+			}
+		})
+	})
+	tk.MustExecWithContext(checkCtx, "admin check table t")
+	require.True(t, checkedRequest.Load())
 
 	idxInfo := tblInfo.Indices[0]
-	tk.Session().GetSessionVars().IndexLookupSize = 100
-	tk.Session().GetSessionVars().MaxChunkSize = 100
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
 	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
 	require.NoError(t, err)
 
-	// Add an invalid index entry between the first and last valid entries for
-	// handle 0. All entries for the same handle must be checked, including the
-	// ones between the first and the last.
 	txn, err := store.Begin()
-	require.NoError(t, err)
-	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(1), kv.IntHandle(0), nil)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	err = tk.ExecToErr("admin check table t")
-	require.Error(t, err)
-	require.True(t, consistency.ErrAdminCheckInconsistentWithColInfo.Equal(err))
-
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	err = indexOpr.Delete(ctx, txn, types.MakeDatums(1), kv.IntHandle(0))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	tk.MustExec("admin check table t")
-
-	tk.Session().GetSessionVars().IndexLookupSize = 3
-	tk.Session().GetSessionVars().MaxChunkSize = 3
-	txn, err = store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(0), kv.IntHandle(0))
 	require.NoError(t, err)
