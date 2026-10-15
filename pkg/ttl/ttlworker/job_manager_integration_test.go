@@ -446,15 +446,7 @@ func TestTTLJobWithSEMv2(t *testing.T) {
 	// privilege manager. Enabling SEM v2 with read-only variables that the TTL
 	// worker sets during its session preparation used to make it panic, so the
 	// job manager never ran and expired rows were never cleaned up.
-	require.NoError(t, semv2.EnableBy(&semv2.Config{
-		Version:     "1.0",
-		TiDBVersion: "v0.0.0",
-		RestrictedVariables: []semv2.VariableRestriction{
-			{Name: vardef.TiDBEnable1PC, Readonly: true},
-			{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
-		},
-	}))
-	t.Cleanup(semv2.Disable)
+	semv2.EnableReadOnlyVariablesForTest(t, vardef.TiDBEnable1PC, vardef.TiDBEnableAsyncCommit)
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Minute)
 	defer cancel()
