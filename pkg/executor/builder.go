@@ -3611,7 +3611,7 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.RealtimeCount*5) < approxiCount {
+	if statsCountFarBehindPD(float64(statsTbl.RealtimeCount), approxiCount) {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		sampleRate = math.Min(1, 150000/approxiCount)
@@ -3625,6 +3625,13 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
 	sampleRate = math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
 	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
+}
+
+// statsCountFarBehindPD reports whether the stats_meta count is so far below the
+// PD approximate count that PD is more reliable, for example right after a
+// physical import (https://github.com/pingcap/tidb/issues/29216).
+func statsCountFarBehindPD(statsCount, pdCount float64) bool {
+	return statsCount*5 < pdCount
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
