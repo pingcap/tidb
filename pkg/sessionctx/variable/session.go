@@ -1137,7 +1137,8 @@ type SessionVars struct {
 	// same-order index join candidate.
 	EnableAlternativeLogicalPlans bool
 
-	// EnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
+	// EnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
+	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.
 	EnableLocalMatchAgainst bool
 	// EnableFTSLikeFallback enables the substring-based MATCH alternative round.
 	EnableFTSLikeFallback bool
