@@ -1,6 +1,7 @@
 # Distributed Auto Analyze
 
 - Author(s): [0xPoe](https://github.com/0xPoe)
+- Discussion PR: https://github.com/pingcap/tidb/pull/72039
 
 > [!WARNING]
 > LLM disclosure: AI wrote this document from my RFC and prototype. I will review the final text before this PR leaves draft.
