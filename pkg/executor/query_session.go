@@ -122,7 +122,7 @@ func buildQueryInfoSchema(q *importer.QueryPlan, parent infoschema.InfoSchema) (
 	}
 	b := infoschema.NewBuilder(parent.GetAutoIDRequirement(), 0, nil, infoschema.NewData(), false).
 		WithCrossKS(true)
-	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), nil, nil, 0); err != nil {
+	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), nil, nil, q.SchemaVersion); err != nil {
 		return nil, err
 	}
 	return b.Build(q.ReadTS), nil

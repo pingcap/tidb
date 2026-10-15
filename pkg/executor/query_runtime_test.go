@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -128,6 +129,10 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.NoError(t, err)
 		q = &importer.QueryPlan{}
 		require.NoError(t, json.Unmarshal(data, q))
+		require.NotZero(t, q.SchemaVersion)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+			require.Equal(t, q.SchemaVersion, p.SCtx().GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion())
+		})
 		tk.Session().RollbackTxn(context.Background())
 		tk.MustExec("insert into query_src values (9,90,9)")
 		tk.MustExec("rename table query_src to query_renamed")
