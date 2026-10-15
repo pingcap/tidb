@@ -444,6 +444,10 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bs int64) {
+	t.consume(bs, true)
+}
+
+func (t *Tracker) consume(bs int64, enforce bool) {
 	if bs == 0 {
 		return
 	}
@@ -452,6 +456,44 @@ func (t *Tracker) Consume(bs int64) {
 		if tracker.IsRootTrackerOfSess {
 			sessionRootTracker = tracker
 		}
+<<<<<<< HEAD
+=======
+		if m := tracker.MemArbitrator; m != nil {
+			if m.state.Load() != memArbitratorStateDown {
+				if intest.InTest {
+					if mockConsumeAfterStateCheckInject != nil {
+						mockConsumeAfterStateCheckInject(m)
+					}
+				}
+				if bs > 0 {
+					if m.useBigBudget() {
+						if m.addBigBudgetUsed(bs) > m.bigBudgetGrowThreshold() && enforce {
+							m.growBigBudget()
+						}
+					} else { // fast path for small budget
+						if m.addSmallBudget(bs) > m.budget.smallLimit && enforce {
+							m.intoBigBudget()
+						} else {
+							b := m.smallBudget()
+							if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
+								b.setLastUsedTimeSec(t)
+							}
+							if enforce && b.Used.Load() > b.approxCapacity() && b.PullFromUpstream() != nil {
+								m.intoBigBudget()
+							}
+						}
+					}
+				} else if m.useBigBudget() { // delta <= 0 && use big budget
+					m.addBigBudgetUsed(bs)
+				} else { // delta <= 0 && use small budget
+					m.addSmallBudget(bs)
+				}
+				if m.state.Load() == memArbitratorStateDown {
+					m.cleanSmallBudget()
+				}
+			}
+		}
+>>>>>>> 95af22e17d1 (session, memory: prevent cancellation from interrupting statement cleanup (#71967))
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
 		limits := tracker.bytesLimit.Load()
@@ -499,6 +541,10 @@ func (t *Tracker) Consume(bs int64) {
 				oldTracker = MemUsageTop1Tracker.Load()
 			}
 		}
+	}
+
+	if !enforce {
+		return
 	}
 
 	if bs > 0 && sessionRootTracker != nil {
@@ -791,6 +837,15 @@ func (t *Tracker) DetachFromGlobalTracker() {
 // ReplaceBytesUsed replace bytesConsume for the tracker
 func (t *Tracker) ReplaceBytesUsed(bytes int64) {
 	t.Consume(bytes - t.BytesConsumed())
+}
+
+// ReplaceBytesUsedForCleanup reconciles previously allocated memory during
+// teardown. It updates accounting without checking kill signals, running
+// quota actions, or reserving additional memory from the arbitrator. It must not
+// be used to admit new allocations; subsequent Consume calls enforce limits as
+// usual. Like ReplaceBytesUsed, concurrent replacements are not supported.
+func (t *Tracker) ReplaceBytesUsedForCleanup(bytes int64) {
+	t.consume(bytes-t.BytesConsumed(), false)
 }
 
 // Reset detach the tracker from the old parent and clear the old children. The label and byteLimit would not be reset.
