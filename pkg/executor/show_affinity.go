@@ -95,9 +95,12 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 		}
 	}
 
-	// Get affinity group states from PD
-	// TODO: update it after pd support batch get
-	allAffinityStates, err := affinity.GetAllGroupStates(ctx)
+	// Query only the groups belonging to tables that match the SHOW filters.
+	groupIDs := make([]string, 0, len(infos))
+	for _, info := range infos {
+		groupIDs = append(groupIDs, info.groupID)
+	}
+	allAffinityStates, err := affinity.GetGroupStates(ctx, groupIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
