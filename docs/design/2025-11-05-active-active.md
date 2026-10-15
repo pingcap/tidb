@@ -924,7 +924,7 @@ To guarantee Cross-Table Transaction Atomicity, it is mandatory that all tables 
 - Performance Limits: Due to the single-node centralized scheduling bottleneck, the maximum throughput for a single changefeed enabling this feature is wide table 100MiB/s and narrow table 30MiB/s, supporting a maximum of 10K tables.
 - Conflict Constraint: It is not supported to configure multiple changefeeds with this feature enabled to synchronize the same table into the same downstream cluster.
 - Feature Gaps: This initial design does not support Syncpoint or Redo log functionalities.
-  - Since we already guarantee cross table transaction atomacity, Redo log is not neccessary.
+  - Since we already guarantee cross table transaction atomacity, Redo log is not necessary.
   - SyncPoint is not possible to create an identical consistent view between two clusters in active-active setup.
 
 
