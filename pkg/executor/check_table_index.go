@@ -140,20 +140,32 @@ func (e *CheckTableExec) handlePanic(r any) {
 
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	if e.done || len(e.srcs) == 0 {
+	if e.done {
 		return nil
 	}
 	defer func() { e.done = true }()
 
 	idxNames := make([]string, 0, len(e.indexInfos))
-	for _, idx := range e.indexInfos {
+	for offset, idx := range e.indexInfos {
 		if idx.HasCondition() {
 			return errors.Trace(errCheckPartialIndexWithoutFastCheck)
+		}
+		if idx.IsTiKVFullTextIndex() {
+			// Its entries are analyzed terms, so neither an entry count nor
+			// an index lookup compares to the rows. Each row is instead
+			// checked to have an entry for every term it analyzes to.
+			if err := e.checkTableRecord(ctx, offset); err != nil {
+				return errors.Trace(err)
+			}
+			continue
 		}
 		if idx.MVIndex || idx.IsColumnarIndex() {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
+	}
+	if len(e.srcs) == 0 {
+		return nil
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.Ctx(), e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
@@ -233,12 +245,23 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 	if err != nil {
 		return err
 	}
+	check := func(physicalTable table.Table, idx table.Index) error {
+		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, physicalTable, idx); err != nil {
+			return errors.Trace(err)
+		}
+		if idxInfo.IsTiKVFullTextIndex() {
+			// No index lookup covers this index, so the index-to-record
+			// direction is checked here as well.
+			return errors.Trace(admin.CheckFullTextIndexAndRecord(ctx, e.Ctx(), txn, physicalTable, idx))
+		}
+		return nil
+	}
 	if e.table.Meta().GetPartitionInfo() == nil {
 		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
 		if err != nil {
 			return err
 		}
-		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
+		return check(e.table, idx)
 	}
 
 	info := e.table.Meta().GetPartitionInfo()
@@ -249,8 +272,8 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 		if err != nil {
 			return err
 		}
-		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
-			return errors.Trace(err)
+		if err := check(partition, idx); err != nil {
+			return err
 		}
 	}
 	return nil

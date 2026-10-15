@@ -76,6 +76,8 @@ const (
 	TpHashStateRuntimeStats
 	// TpWriteRuntimeStats is the type for processed DML work.
 	TpWriteRuntimeStats
+	// TpFullTextScanRuntimeStats is the tp for the posting reads of a FULLTEXT index built in TiKV.
+	TpFullTextScanRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.

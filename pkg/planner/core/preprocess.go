@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1232,7 +1233,10 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 	return isPrimary, nil
 }
 
-func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
+// checkIndexOptions validates the options of an index definition. isFullText
+// marks a FULLTEXT index built in TiKV, which the classic kernel keeps as a
+// FULLTEXT index rather than rewriting into a columnar one.
+func checkIndexOptions(isColumnar, isFullText bool, indexOptions *ast.IndexOption) error {
 	if isColumnar && indexOptions == nil {
 		return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")
 	}
@@ -1254,6 +1258,10 @@ func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
 		}
 		if indexOptions.Visibility == ast.IndexVisibilityInvisible {
 			return dbterror.ErrUnsupportedIndexType.FastGen("INVISIBLE can not be used in %s INDEX", indexOptions.Tp)
+		}
+	} else if isFullText {
+		if indexOptions.ParserName.L != "" && model.GetFullTextParserTypeBySQLName(indexOptions.ParserName.L) == model.FullTextParserTypeInvalid {
+			return dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", indexOptions.ParserName.O)
 		}
 	} else {
 		switch indexOptions.Tp {
@@ -1283,7 +1291,11 @@ func checkIndexSpecs(indexOptions *ast.IndexOption, partSpecs []*ast.IndexPartSp
 			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("COLUMNAR INDEX of INVERTED type must specify one column name")
 		}
 	case ast.IndexTypeFulltext:
-		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
+		// The columnar index of the next-gen kernel tokenizes one column. On
+		// the classic kernel the index is built in TiKV, where the last
+		// column is tokenized and the columns before it are key columns,
+		// which the DDL layer checks.
+		if kerneltype.IsNextGen() && (len(partSpecs) != 1 || partSpecs[0].Column == nil) {
 			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specify one column name")
 		}
 	}
@@ -1314,17 +1326,21 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		stmt.KeyType = ast.IndexKeyTypeColumnar
 		stmt.IndexOption.Tp = ast.IndexTypeVector
 	}
-	// Rewrite CREATE FULLTEXT INDEX into CREATE COLUMNAR INDEX
+	// Rewrite CREATE FULLTEXT INDEX into CREATE COLUMNAR INDEX on the next-gen
+	// kernel, where the columnar engine holds it. On the classic kernel it
+	// stays a FULLTEXT index, built in TiKV, and only the option is marked.
 	if stmt.KeyType == ast.IndexKeyTypeFulltext {
 		if stmt.IndexOption.Tp != ast.IndexTypeInvalid {
 			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for FULLTEXT INDEX", stmt.IndexOption.Tp)
 			return
 		}
-		stmt.KeyType = ast.IndexKeyTypeColumnar
+		if kerneltype.IsNextGen() {
+			stmt.KeyType = ast.IndexKeyTypeColumnar
+		}
 		stmt.IndexOption.Tp = ast.IndexTypeFulltext
 	}
 
-	p.err = checkIndexOptions(stmt.KeyType == ast.IndexKeyTypeColumnar, stmt.IndexOption)
+	p.err = checkIndexOptions(stmt.KeyType == ast.IndexKeyTypeColumnar, stmt.KeyType == ast.IndexKeyTypeFulltext, stmt.IndexOption)
 	if p.err != nil {
 		return
 	}
@@ -1346,11 +1362,13 @@ func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
 			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for FULLTEXT INDEX", stmt.Option.Tp)
 			return
 		}
-		stmt.Tp = ast.ConstraintColumnar
+		if kerneltype.IsNextGen() {
+			stmt.Tp = ast.ConstraintColumnar
+		}
 		stmt.Option.Tp = ast.IndexTypeFulltext
 	}
 
-	p.err = checkIndexOptions(stmt.Tp == ast.ConstraintColumnar, stmt.Option)
+	p.err = checkIndexOptions(stmt.Tp == ast.ConstraintColumnar, stmt.Tp == ast.ConstraintFulltext, stmt.Option)
 	if p.err != nil {
 		return
 	}

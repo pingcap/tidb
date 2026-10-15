@@ -865,6 +865,9 @@ const (
 	StmtSafeTSCacheKey
 	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
 	StmtExternalTSCacheKey
+	// StmtSelectivityByFilterCacheKey holds the selectivities estimated by evaluating a filter
+	// against a column's statistics, which planning one statement asks for many times.
+	StmtSelectivityByFilterCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.

@@ -41,9 +41,15 @@ func TestFTSRequiresStarterMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustContainErrMsg("create table fts_blocked(id int primary key, title text, fulltext key ft_title(title))", "FULLTEXT index is only supported in starter deployment mode")
 	tk.MustExec("create table fts_t(id int primary key, title text)")
-	tk.MustContainErrMsg("alter table fts_t add fulltext index ft_title(title)", "FULLTEXT index is only supported in starter deployment mode")
+	if kerneltype.IsNextGen() {
+		tk.MustContainErrMsg("create table fts_blocked(id int primary key, title text, fulltext key ft_title(title))", "FULLTEXT index is only supported in starter deployment mode")
+		tk.MustContainErrMsg("alter table fts_t add fulltext index ft_title(title)", "FULLTEXT index is only supported in starter deployment mode")
+	} else {
+		// The classic kernel builds the index in TiKV instead; only the
+		// columnar search function stays starter-only.
+		tk.MustExec("alter table fts_t add fulltext index ft_title(title)")
+	}
 	tk.MustContainErrMsg("explain select * from fts_t where fts_match_word('hello', title)", "FTS_MATCH_WORD() is only supported in starter deployment mode")
 }
 

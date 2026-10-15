@@ -95,6 +95,25 @@ func GetGlobalIndexV1Supported() bool {
 	return globalIndexV1Supported.Load()
 }
 
+// tikvFullTextSupported tracks whether every TiDB node in the cluster knows a
+// FULLTEXT index built in TiKV. It is set by the DDL version detection loop
+// and checked when such an index is created: a node without the feature reads
+// the index as an ordinary index over the column and would write column-value
+// keys under its ID.
+var tikvFullTextSupported atomic.Bool
+
+// SetTiKVFullTextSupported sets whether every node supports a FULLTEXT index
+// built in TiKV.
+func SetTiKVFullTextSupported(supported bool) {
+	tikvFullTextSupported.Store(supported)
+}
+
+// GetTiKVFullTextSupported returns whether every node supports a FULLTEXT
+// index built in TiKV.
+func GetTiKVFullTextSupported() bool {
+	return tikvFullTextSupported.Load()
+}
+
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
 func GenUniqueChangingIndexName(tblInfo *TableInfo, idxInfo *IndexInfo) string {
 	// Check whether the new index name is used.
@@ -204,6 +223,10 @@ const (
 	// FullTextParserTypeMultilingualV1 is a parser for multilingual texts
 	// The value matches with the supported tokenizer in Libclara.
 	FullTextParserTypeMultilingualV1 FullTextParserType = "MULTILINGUAL_V1"
+	// FullTextParserTypeNgramV1 provides better recall,
+	// but may have lower performance.
+	// The value matches with the supported tokenizer in Libclara.
+	FullTextParserTypeNgramV1 FullTextParserType = "NGRAM_V1"
 )
 
 // SQLName returns the SQL keyword name of the fulltext parser, which must not include
@@ -214,6 +237,8 @@ func (t FullTextParserType) SQLName() string {
 		return "STANDARD"
 	case FullTextParserTypeMultilingualV1:
 		return "MULTILINGUAL"
+	case FullTextParserTypeNgramV1:
+		return "NGRAM"
 	default:
 		return "INVALID"
 	}
@@ -226,6 +251,8 @@ func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
 		return FullTextParserTypeStandardV1
 	case "MULTILINGUAL":
 		return FullTextParserTypeMultilingualV1
+	case "NGRAM":
+		return FullTextParserTypeNgramV1
 	default:
 		return FullTextParserTypeInvalid
 	}
@@ -235,6 +262,34 @@ func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
 type FullTextIndexInfo struct {
 	ParserType FullTextParserType `json:"parser_type"`
 	// TODO: Add other options
+}
+
+// TiKVFullTextIndexInfo describes a FULLTEXT index materialised in TiKV as a
+// positional inverted index: one KV entry per distinct term per row, keyed by
+// the term and the row handle, whose value carries the term's positions in the
+// document. It exists only on the classic kernel; the next-gen kernel keeps
+// FULLTEXT indexes in the columnar engine, described by FullTextIndexInfo.
+// The two are never set together.
+//
+// The analyzer settings are a snapshot of the innodb_ft_* and ngram_token_size
+// variables taken when the index was created. Every write and every query
+// tokenizes with this snapshot rather than with the current variables, so the
+// entries in the index and the terms looked up in it always agree.
+type TiKVFullTextIndexInfo struct {
+	ParserType     FullTextParserType `json:"parser_type"`
+	MinTokenSize   int                `json:"min_token_size"`
+	MaxTokenSize   int                `json:"max_token_size"`
+	EnableStopword bool               `json:"enable_stopword"`
+	NgramTokenSize int                `json:"ngram_token_size,omitempty"`
+}
+
+// Clone clones TiKVFullTextIndexInfo.
+func (info *TiKVFullTextIndexInfo) Clone() *TiKVFullTextIndexInfo {
+	if info == nil {
+		return nil
+	}
+	ni := *info
+	return &ni
 }
 
 // ColumnarIndexType is the type of columnar index.
@@ -269,24 +324,25 @@ func (c ColumnarIndexType) SQLName() string {
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID                  int64              `json:"id"`
-	Name                ast.CIStr          `json:"idx_name"` // Index name.
-	Table               ast.CIStr          `json:"tbl_name"` // Table name.
-	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
-	State               SchemaState        `json:"state"`
-	BackfillState       BackfillState      `json:"backfill_state"`
-	Comment             string             `json:"comment"`                 // Comment
-	Tp                  ast.IndexType      `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
-	Unique              bool               `json:"is_unique"`               // Whether the index is unique.
-	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
-	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
-	Global              bool               `json:"is_global"`               // Whether the index is global.
-	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
-	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
-	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.
-	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
-	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
-	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
+	ID                  int64                  `json:"id"`
+	Name                ast.CIStr              `json:"idx_name"` // Index name.
+	Table               ast.CIStr              `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn         `json:"idx_cols"` // Index columns.
+	State               SchemaState            `json:"state"`
+	BackfillState       BackfillState          `json:"backfill_state"`
+	Comment             string                 `json:"comment"`                 // Comment
+	Tp                  ast.IndexType          `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Unique              bool                   `json:"is_unique"`               // Whether the index is unique.
+	Primary             bool                   `json:"is_primary"`              // Whether the index is primary key.
+	Invisible           bool                   `json:"is_invisible"`            // Whether the index is invisible.
+	Global              bool                   `json:"is_global"`               // Whether the index is global.
+	MVIndex             bool                   `json:"mv_index"`                // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo       `json:"vector_index"`            // VectorInfo is the vector index information.
+	InvertedInfo        *InvertedIndexInfo     `json:"inverted_index"`          // InvertedInfo is the inverted index information.
+	FullTextInfo        *FullTextIndexInfo     `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
+	TiKVFullText        *TiKVFullTextIndexInfo `json:"tikv_fulltext,omitempty"` // TiKVFullText is set on a FULLTEXT index materialised in TiKV.
+	ConditionExprString string                 `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn         `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
 	// Version of global index key format for non-clustered tables.
 	// Set to V1 when the handle can appear in the index key (non-unique indexes,
 	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
@@ -337,7 +393,28 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	if index.RegionSplitPolicy != nil {
 		ni.RegionSplitPolicy = index.RegionSplitPolicy.Clone()
 	}
+	ni.TiKVFullText = index.TiKVFullText.Clone()
 	return &ni
+}
+
+// IsTiKVFullTextIndex reports whether the index is a FULLTEXT index
+// materialised in TiKV. Such an index is an ordinary KV index to the storage
+// layer, but its keys hold analyzed terms rather than column values, so it can
+// neither be read by column-value ranges nor analyzed as a column index.
+func (index *IndexInfo) IsTiKVFullTextIndex() bool {
+	return index.TiKVFullText != nil
+}
+
+// TiKVFullTextColumn returns the column a FULLTEXT index materialised in TiKV
+// tokenizes, which is the last of its columns. The columns before it are
+// ordinary key columns: their values are encoded ahead of the term in every
+// entry, so the entries of one value of them, such as one tenant, form a
+// contiguous range a search can be confined to.
+func (index *IndexInfo) TiKVFullTextColumn() *IndexColumn {
+	if index.TiKVFullText == nil || len(index.Columns) == 0 {
+		return nil
+	}
+	return index.Columns[len(index.Columns)-1]
 }
 
 // IsChanging checks if the index is a new index added in modify column.
