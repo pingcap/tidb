@@ -527,3 +527,85 @@ func TestPanicOnRollbackKilledTxn(t *testing.T) {
 	mockTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 	tk.Session().Close()
 }
+
+func TestPanicOnStmtRollbackKilledTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, tc := range []struct {
+		name   string
+		signal uint32
+	}{
+		{name: "normal"},
+		{name: "interrupted", signal: sqlkiller.QueryInterrupted},
+		{name: "memory exceeded", signal: sqlkiller.QueryMemoryExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			t.Cleanup(func() {
+				tk.Session().GetSessionVars().SQLKiller.Reset()
+				tk.Session().Close()
+			})
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists t_stmt_rollback")
+			tk.MustExec("create table t_stmt_rollback(id int primary key, v mediumblob)")
+			tk.MustExec("begin pessimistic")
+			tk.MustExec("insert into t_stmt_rollback values(1, 'first statement')")
+			txn, err := tk.Session().Txn(true)
+			require.NoError(t, err)
+			buf := txn.GetMemBuffer()
+			vars := tk.Session().GetSessionVars()
+			require.NotNil(t, vars.MemDBFootprint)
+
+			// This value belongs to the current statement, while the SQL insert above
+			// has already been released into the transaction's previous statements.
+			stagedKey := kv.Key("stmt-rollback-value")
+			require.NoError(t, buf.Set(stagedKey, []byte("discard me")))
+			require.Equal(t, int64(txn.Mem()), vars.MemDBFootprint.BytesConsumed())
+
+			// Flags-only writes grow the ART node arena without notifying the memory
+			// tracker through the value arena. Cleanup must account for that positive
+			// delta even when a kill signal is pending.
+			for i := range 1024 {
+				key := kv.Key(fmt.Sprintf("stmt-rollback-flags-%04d-%s", i, strings.Repeat("x", 128)))
+				buf.UpdateFlags(key, kv.SetPresumeKeyNotExists)
+			}
+			require.Greater(t, int64(txn.Mem()), vars.MemDBFootprint.BytesConsumed())
+			if tc.signal != sqlkiller.UnspecifiedKillSignal {
+				vars.SQLKiller.SendKillSignal(tc.signal)
+			}
+			require.NotPanics(t, func() {
+				tk.Session().StmtRollback(context.Background(), false)
+			})
+			require.Equal(t, tc.signal, vars.SQLKiller.GetKillSignal())
+			require.Equal(t, int64(txn.Mem()), vars.MemDBFootprint.BytesConsumed())
+			_, err = buf.Get(context.Background(), stagedKey)
+			require.True(t, kv.IsErrNotFound(err), "%v", err)
+			require.True(t, txn.Valid())
+
+			// Reset only when starting the next command. Statement rollback must
+			// preserve the kill reason and keep tracking the surviving transaction.
+			vars.SQLKiller.Reset()
+			footprint := vars.MemDBFootprint.BytesConsumed()
+			tk.MustExec("insert into t_stmt_rollback values(2, repeat('x', 131072))")
+			require.Greater(t, vars.MemDBFootprint.BytesConsumed(), footprint)
+			require.Equal(t, int64(txn.Mem()), vars.MemDBFootprint.BytesConsumed())
+
+			// A later write must still enforce the quota; cleanup must not leave the
+			// memory hook disabled for the remainder of this explicit transaction.
+			limit := vars.MemTracker.GetBytesLimit()
+			vars.MemTracker.SetBytesLimit(vars.MemTracker.BytesConsumed() + 4096)
+			vars.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{Killer: &vars.SQLKiller})
+			require.Panics(t, func() {
+				_ = buf.Set(stagedKey, []byte(strings.Repeat("x", 1<<20)))
+			})
+			require.Equal(t, sqlkiller.QueryMemoryExceeded, vars.SQLKiller.GetKillSignal())
+			require.NotPanics(t, func() {
+				tk.Session().StmtRollback(context.Background(), false)
+			})
+			require.Equal(t, int64(txn.Mem()), vars.MemDBFootprint.BytesConsumed())
+			vars.MemTracker.SetBytesLimit(limit)
+			vars.SQLKiller.Reset()
+			tk.MustExec("commit")
+			tk.MustQuery("select id, length(v) from t_stmt_rollback order by id").Check(testkit.Rows("1 15", "2 131072"))
+		})
+	}
+}

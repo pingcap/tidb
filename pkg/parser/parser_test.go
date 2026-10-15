@@ -654,6 +654,18 @@ func TestRecommendIndex(t *testing.T) {
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
 		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1'"},
+		{"recommend index return result for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for ''", true, "RECOMMEND INDEX RETURN RESULT FOR ''"},
+		{"recommend index return result", false, ""},
+		{"recommend index return result with A = 1", false, ""},
+		{"recommend index return for 'select * from t'", false, ""},
+		{"recommend index return results for 'select * from t'", false, ""},
+		{"recommend index `return` `result` for 'select * from t'", false, ""},
+		{"recommend index return result for select * from t", false, ""},
+		{"select return, result from result", true, "SELECT `return`,`result` FROM `result`"},
 		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
@@ -662,6 +674,16 @@ func TestRecommendIndex(t *testing.T) {
 		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
 	}
 	RunTest(t, table, false, false)
+
+	p := parser.New()
+	for _, sql := range []string{
+		`recommend index run for 'select * from t where a=1'`,
+		`recommend index return result for 'select * from t where a=1'`,
+	} {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		require.True(t, ast.IsReadOnly(stmt, true), sql)
+	}
 }
 
 func TestAdminStmt(t *testing.T) {

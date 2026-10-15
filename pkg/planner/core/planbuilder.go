@@ -6529,7 +6529,7 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 	}
 
 	switch v.Action {
-	case "run":
+	case ast.RecommendIndexActionRun, ast.RecommendIndexActionReturn:
 		schema := newColumnsWithNames(7)
 		schema.Append(buildColumnWithName("", "database", mysql.TypeVarchar, 64))
 		schema.Append(buildColumnWithName("", "table", mysql.TypeVarchar, 64))
@@ -6540,11 +6540,11 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
 		schema.Append(buildColumnWithName("", "create_index_statement", mysql.TypeBlob, -1))
 		p.SetSchemaAndNames(schema.col2Schema(), schema.names)
-	case "set":
+	case ast.RecommendIndexActionSet:
 		if len(p.Options) == 0 {
 			return nil, fmt.Errorf("option is empty")
 		}
-	case "show":
+	case ast.RecommendIndexActionShow:
 		schema := newColumnsWithNames(3)
 		schema.Append(buildColumnWithName("", "option", mysql.TypeVarchar, 64))
 		schema.Append(buildColumnWithName("", "value", mysql.TypeVarchar, 64))
