@@ -1195,15 +1195,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 	if e.partitionTableMode && task.partitionTable != nil {
 		table = task.partitionTable
 	}
-	handles := task.handles
-	if e.checkIndexValue != nil && task.duplicatedIndexOrder.Len() > 0 {
-		// Deduplicate only the table request; keep all handles for ADMIN CHECK.
-		handles = make([]kv.Handle, 0, task.indexOrder.Len())
-		task.indexOrder.Range(func(h kv.Handle, _ any) bool {
-			handles = append(handles, h)
-			return true
-		})
-	}
 	tableReaderExec := &TableReaderExecutor{
 		BaseExecutorV2:             e.BuildNewBaseExecutorV2(e.stmtRuntimeStatsColl, e.Schema(), e.getTableRootPlanID()),
 		tableReaderExecutorContext: e.tableReaderExecutorContext,
@@ -1220,7 +1211,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		byItems:                    e.byItems,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
 	if err != nil {
 		if ctx.Err() != context.Canceled {
 			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
@@ -2046,6 +2037,13 @@ func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *ch
 			} else {
 				indexOrder.Set(h, i)
 			}
+		}
+		if duplicatedIndexOrder.Len() > 0 {
+			handles = make([]kv.Handle, 0, indexOrder.Len())
+			indexOrder.Range(func(h kv.Handle, _ any) bool {
+				handles = append(handles, h)
+				return true
+			})
 		}
 	}
 
