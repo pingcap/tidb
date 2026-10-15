@@ -74,7 +74,8 @@ type PacketIO struct {
 	compressedSequence   uint8
 }
 
-// New creates a new PacketIO with given net.Conn.
+// New creates a new PacketIO reading from the given *util.BufferedReadConn,
+// with the max allowed packet taken from the global config.
 func New(bufReadConn *util.BufferedReadConn) *PacketIO {
 	p := &PacketIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
 	p.SetBufferedReadConn(bufReadConn)
