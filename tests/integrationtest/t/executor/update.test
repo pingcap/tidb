@@ -837,6 +837,14 @@ UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a;
 --disable_info
 SELECT a, e FROM t ORDER BY a;
 ADMIN CHECK TABLE t;
+# A join with a derived table matches each row of t more than once too
+TRUNCATE TABLE t;
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t, (SELECT 1 b, 100 x UNION ALL SELECT 1, 200) d SET t.e = t.a + d.x WHERE t.b = d.b;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
 DROP TABLE t;
 CREATE TABLE t (a INT, b INT, e INT, KEY ke (e, a))
 PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
