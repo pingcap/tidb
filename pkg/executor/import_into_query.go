@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -83,7 +84,7 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	// settings applied by MV maintenance. TiDB-side concurrency follows the worker.
 	vars := sctx.GetSessionVars()
 	for _, name := range []string{
-		vardef.SQLModeVar, vardef.DivPrecisionIncrement,
+		vardef.Timestamp,
 		vardef.CharacterSetConnection, vardef.CollationConnection,
 		vardef.GroupConcatMaxLen, vardef.DefaultWeekFormat,
 		vardef.BlockEncryptionMode, vardef.WindowingUseHighPrecision,
@@ -100,6 +101,10 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 		}
 		q.SessionVars[name] = value
 	}
+	// The MV build session sets these fields without updating the session
+	// variables, so read the fields.
+	q.SQLMode = vars.SQLMode
+	q.SessionVars[vardef.DivPrecisionIncrement] = strconv.Itoa(vars.DivPrecisionIncrement)
 	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	if err := collectImportQueryTables(

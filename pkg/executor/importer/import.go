@@ -272,7 +272,10 @@ type QueryPlan struct {
 	// ResourceGroupName is the resource group of the submitting statement,
 	// which the worker's reads are charged to.
 	ResourceGroupName string
-	Databases         map[int64]*model.DBInfo
+	// SQLMode is carried apart from SessionVars because the MV build session
+	// sets it without updating the session variable.
+	SQLMode   mysql.SQLMode
+	Databases map[int64]*model.DBInfo
 	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
 	// Persist table definitions grouped by database ID explicitly.
 	Tables map[int64][]*model.TableInfo
