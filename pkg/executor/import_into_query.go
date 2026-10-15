@@ -106,6 +106,7 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 		node, q, make(map[int64]bool)); err != nil {
 		return nil, err
 	}
+	q.SchemaVersion = txnManager.GetTxnInfoSchema().SchemaMetaVersion()
 	q.ReadTS, err = txnManager.GetStmtReadTS()
 	return q, err
 }

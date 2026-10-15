@@ -102,6 +102,8 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		require.True(t, ok)
 		require.Len(t, q.Tables[db.ID], 1)
 		require.Len(t, q.Tables[db.ID][0].Columns, 1)
+		require.Equal(t, txnIS.SchemaMetaVersion(), q.SchemaVersion)
+		require.Less(t, q.SchemaVersion, queryTK.Session().GetLatestInfoSchema().SchemaMetaVersion())
 		_, locked := queryTK.Session().GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID)
 		require.False(t, locked)
 	})

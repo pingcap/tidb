@@ -262,11 +262,14 @@ type LoadDataReaderInfo struct {
 // QueryPlan records source metadata and session settings after tenant privilege checks.
 type QueryPlan struct {
 	// ReadTS is the submitting SELECT snapshot.
-	ReadTS    uint64
-	CurrentDB string
-	Timestamp int64
-	Keyspace  string
-	Databases map[int64]*model.DBInfo
+	ReadTS uint64
+	// SchemaVersion is the schema version at ReadTS, sent with the worker's
+	// coprocessor and MPP requests.
+	SchemaVersion int64
+	CurrentDB     string
+	Timestamp     int64
+	Keyspace      string
+	Databases     map[int64]*model.DBInfo
 	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
 	// Persist table definitions grouped by database ID explicitly.
 	Tables map[int64][]*model.TableInfo
