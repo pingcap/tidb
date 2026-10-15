@@ -1607,6 +1607,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	BitValueType                           "bit value types"
 	StringType                             "String types"
 	GeometryTypeName                       "Geometry type names"
+	GeometrySubtypeName                    "Geometry subtype names"
 	BlobType                               "Blob types"
 	TextType                               "Text types"
 	DateAndTimeType                        "Date and Time types"
@@ -10296,6 +10297,15 @@ CastType:
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
 	}
+|	GeometrySubtypeName
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetGeometryType($1.(types.GeometryType))
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
 
 Priority:
 	"LOW_PRIORITY"
@@ -14780,7 +14790,10 @@ GeometryTypeName:
 	{
 		$$ = types.GeomGeometry
 	}
-|	"POINT"
+|	GeometrySubtypeName
+
+GeometrySubtypeName:
+	"POINT"
 	{
 		$$ = types.GeomPoint
 	}

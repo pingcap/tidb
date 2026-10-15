@@ -5613,6 +5613,13 @@ func TestGeometryType(t *testing.T) {
 		{"alter table t add spatial index ai (g), add spatial key (g)", true, "ALTER TABLE `t` ADD SPATIAL `ai`(`g`), ADD SPATIAL(`g`)"},
 		{"create spatial index si on t (g)", true, "CREATE SPATIAL INDEX `si` ON `t` (`g`)"},
 		{"create table t (g point not null spatial)", false, ""},
+
+		// Spatial casts take the eight subtype spellings, not GEOMETRY, and no SRID.
+		{"select cast(g as point), cast(g as LineString), convert(g, polygon), cast(g as multipoint), cast(g as multilinestring), cast(g as multipolygon), cast(g as geometrycollection), cast(g as geomcollection) from t", true, "SELECT CAST(`g` AS POINT),CAST(`g` AS LINESTRING),CONVERT(`g`, POLYGON),CAST(`g` AS MULTIPOINT),CAST(`g` AS MULTILINESTRING),CAST(`g` AS MULTIPOLYGON),CAST(`g` AS GEOMCOLLECTION),CAST(`g` AS GEOMCOLLECTION) FROM `t`"},
+		{"select cast(0x00000000010100000000000000000000000000000000000000 as point)", true, "SELECT CAST(x'00000000010100000000000000000000000000000000000000' AS POINT)"},
+		{"select cast(g as point array) from t", true, "SELECT CAST(`g` AS POINT ARRAY) FROM `t`"},
+		{"select cast(g as geometry) from t", false, ""},
+		{"select cast(g as point srid 4326) from t", false, ""},
 	}
 	RunTest(t, table, false, false)
 
