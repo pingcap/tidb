@@ -34,13 +34,16 @@ import (
 
 type trackOpenMemStorage struct {
 	*storage.MemStorage
-	opened atomic.Int32
+	opened      atomic.Int32
+	totalOpened atomic.Int32
 }
 
-func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storage.ReaderOption) (storage.ExternalFileReader, error) {
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string, opt *storage.ReaderOption) (storage.ExternalFileReader, error) {
 	s.opened.Inc()
-	r, err := s.MemStorage.Open(ctx, path, nil)
+	s.totalOpened.Inc()
+	r, err := s.MemStorage.Open(ctx, path, opt)
 	if err != nil {
+		s.opened.Dec()
 		return nil, err
 	}
 	return &trackOpenFileReader{r, s}, nil
