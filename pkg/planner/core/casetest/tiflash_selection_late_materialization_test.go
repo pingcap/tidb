@@ -84,3 +84,29 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	require.Contains(t, plan, "gt(plus(test.t1.a, test.t1.b)")
 	require.NotContains(t, plan, "pushed down filter")
 }
+
+func TestTiFlashLateMaterializationHintCost(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("analyze table t")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("set tidb_allow_tiflash_cop = on")
+	tk.MustExec("set tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set tidb_opt_enable_late_materialization = on")
+
+	// The hint forces a filter on a small table into the scan, and its cost
+	// must participate in CBO for both coprocessor and MPP plans.
+	for _, mpp := range []string{"off", "on"} {
+		tk.MustExec("set tidb_allow_mpp = " + mpp)
+		tk.MustExec("set tidb_enforce_mpp = " + mpp)
+		rows := tk.MustQuery("explain format = 'cost_trace' select /*+ tiflash_lm_filter(t, a) */ * from t where a > 1 and b > 1").Rows()
+		plan := strings.Join(testdata.ConvertRowsToStrings(rows), "\n")
+		require.Contains(t, plan, "lm_col_scan(")
+		require.Contains(t, plan, "lm_rest_col_scan(")
+		require.Contains(t, plan, "pushed down filter:gt(test.t.a, 1)")
+		require.Contains(t, plan, "Selection")
+	}
+}
