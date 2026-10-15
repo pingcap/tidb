@@ -2484,3 +2484,79 @@ func TestGlobalIndexWithSelectLock(t *testing.T) {
 		tk1.MustExec("update t set b = 2 where b = 6")
 	}
 }
+
+func TestSelectLockOnPartitionTableSelfJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// lockedRows returns, for each value of a, whether another transaction finds the row locked.
+	lockedRows := func(vals ...int) []bool {
+		locked := make([]bool, 0, len(vals))
+		for _, v := range vals {
+			tk2.MustExec("begin pessimistic")
+			err := tk2.ExecToErr(fmt.Sprintf("select * from t where a = %d for update nowait", v))
+			tk2.MustExec("rollback")
+			if err != nil {
+				require.ErrorContains(t, err, "3572")
+			}
+			locked = append(locked, err != nil)
+		}
+		return locked
+	}
+	checkLocked := func(query string, vals ...int) {
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(query)
+		expected := make([]bool, len(vals))
+		for i := range expected {
+			expected[i] = true
+		}
+		require.Equal(t, expected, lockedRows(vals...), query)
+		tk.MustExec("rollback")
+	}
+
+	partitionings := []string{
+		"",
+		"partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+		"partition by hash (a) partitions 2",
+	}
+	keys := []string{
+		"a int, b int, key ka (a), key kb (b)",
+		"a int, b int, primary key (a) nonclustered, key kb (b)",
+		"a int, b int, primary key (a) clustered, key kb (b)",
+	}
+	for _, mode := range []string{"dynamic", "static"} {
+		tk.MustExec("set @@tidb_partition_prune_mode = '" + mode + "'")
+		for _, partitioning := range partitionings {
+			for _, key := range keys {
+				tk.MustExec("drop table if exists t")
+				tk.MustExec(fmt.Sprintf("create table t (%s) %s", key, partitioning))
+				// 1 and 12 are in different partitions for both RANGE and HASH.
+				tk.MustExec("insert into t values (1, 100), (12, 100)")
+				checkLocked("select * from t t1 join t t2 on t1.b = t2.b where t1.a = 1 and t2.a = 12 for update", 1, 12)
+				checkLocked("select * from t where a in (select a from t where b = 100) and b = 100 for update", 1, 12)
+				checkLocked("select * from t where exists (select 1 from t t2 where t2.a = t.a) for update", 1, 12)
+				if strings.HasPrefix(partitioning, "partition by range") {
+					checkLocked("select * from t partition (p0) t1 join t partition (p1) t2 on t1.b = t2.b where t1.a = 1 and t2.a = 12 for update", 1, 12)
+				}
+			}
+		}
+	}
+
+	// After EXCHANGE PARTITION, p1 has a row with the same _tidb_rowid as t1's row in p0,
+	// and only the selected rows may be locked.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("drop table if exists t, tx")
+	tk.MustExec("create table t (a int, b int, key ka (a), key kb (b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("create table tx (a int, b int, key ka (a), key kb (b))")
+	tk.MustExec("insert into t values (1, 100)")
+	tk.MustExec("insert into tx values (13, 200), (12, 100)")
+	tk.MustExec("alter table t exchange partition p1 with table tx")
+	tk.MustQuery("select a, _tidb_rowid from t order by a").Check(testkit.Rows("1 1", "12 2", "13 1"))
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t t1 join t t2 on t1.b = t2.b where t1.a = 1 and t2.a = 12 for update")
+	require.Equal(t, []bool{true, true, false}, lockedRows(1, 12, 13))
+	tk.MustExec("rollback")
+}
