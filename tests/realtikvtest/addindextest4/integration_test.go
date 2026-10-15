@@ -45,9 +45,11 @@ func init() {
 }
 
 func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test relies on the beforeAddIndexScan failpoint, which is only used by the local-ingest backfill path")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test;")
 	if kerneltype.IsClassic() {
 		tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg=on;")
