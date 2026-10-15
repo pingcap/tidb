@@ -592,6 +592,11 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	}
 	sessVars.CurrentDB = currentDB
 	sessVars.InMViewMaintenance = true
+	// The build statement resets its resource group from the session variable.
+	originalResourceGroup := sessVars.ResourceGroupName
+	if job.ReorgMeta.ResourceGroupName != "" {
+		sessVars.SetResourceGroupName(job.ReorgMeta.ResourceGroupName)
+	}
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
@@ -617,6 +622,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restore(sessCtx)
 		sessVars.InMViewMaintenance = originalMaintenance
 		sessVars.CurrentDB = originalDB
+		sessVars.SetResourceGroupName(originalResourceGroup)
 	}, nil
 }
 

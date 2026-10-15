@@ -34,8 +34,10 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 	t.Run("source tables", func(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
 		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
+		require.Equal(t, "rg1", q.ResourceGroupName)
 		require.Len(t, q.Databases, 1)
 		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
 		require.True(t, ok)

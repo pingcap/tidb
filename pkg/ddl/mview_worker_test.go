@@ -54,6 +54,25 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	require.Equal(t, "before", sessVars.CurrentDB)
 }
 
+func TestInitCreateMaterializedViewBuildSessionAppliesJobResourceGroup(t *testing.T) {
+	sessCtx := mock.NewContext()
+	sessVars := sessCtx.GetSessionVars()
+	sessVars.SetResourceGroupName("default")
+	job := &model.Job{
+		ReorgMeta: &model.DDLReorgMeta{
+			Location:          &model.TimeZoneLocation{Name: "UTC"},
+			ResourceGroupName: "rg1",
+		},
+	}
+
+	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, nil, "test")
+	require.NoError(t, err)
+	require.Equal(t, "rg1", sessVars.ResourceGroupName)
+
+	restore()
+	require.Equal(t, "default", sessVars.ResourceGroupName)
+}
+
 func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {
 	sel, err := parseSelectFromSQL("select a as k, count(1) from t group by k")
 	require.NoError(t, err)

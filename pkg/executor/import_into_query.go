@@ -70,12 +70,13 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	}
 
 	q := &importer.QueryPlan{
-		CurrentDB:   sctx.GetSessionVars().CurrentDB,
-		Timestamp:   time.Now().Unix(),
-		Keyspace:    sctx.GetStore().GetKeyspace(),
-		SessionVars: make(map[string]string),
-		Databases:   make(map[int64]*model.DBInfo),
-		Tables:      make(map[int64][]*model.TableInfo),
+		CurrentDB:         sctx.GetSessionVars().CurrentDB,
+		ResourceGroupName: sctx.GetSessionVars().StmtCtx.ResourceGroupName,
+		Timestamp:         time.Now().Unix(),
+		Keyspace:          sctx.GetStore().GetKeyspace(),
+		SessionVars:       make(map[string]string),
+		Databases:         make(map[int64]*model.DBInfo),
+		Tables:            make(map[int64][]*model.TableInfo),
 	}
 
 	// Keep the settings that affect the query result, and the engine and TiFlash
