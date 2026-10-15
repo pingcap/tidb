@@ -819,9 +819,6 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
-		if p.DataSourceType == DataSourceTypeQuery {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
-		}
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -1294,7 +1291,25 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 }
 
 // InitDataStore initializes the data store.
-func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+func (e *LoadDataController) InitDataStore(ctx context.Context) (err error) {
+	if e.IsGlobalSort() {
+		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
+		if err3 != nil {
+			return err3
+		}
+		e.globalSortStore = store
+		defer func() {
+			if err != nil {
+				store.Close()
+				e.globalSortStore = nil
+			}
+		}()
+	}
+
+	if e.Path == "" {
+		return nil
+	}
+
 	u, err2 := objstore.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
@@ -1312,13 +1327,6 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	}
 	e.dataStore = s
 
-	if e.IsGlobalSort() {
-		store, err3 := GetSortStore(ctx, e.Plan.CloudStorageURI)
-		if err3 != nil {
-			return err3
-		}
-		e.globalSortStore = store
-	}
 	return nil
 }
 
