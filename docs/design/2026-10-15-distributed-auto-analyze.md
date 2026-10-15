@@ -23,9 +23,15 @@
         * [Load the Analyzed Table on Demand](#load-the-analyzed-table-on-demand)
         * [Stats Handle Without a Domain](#stats-handle-without-a-domain)
         * [Settings of the User Keyspace](#settings-of-the-user-keyspace)
-    * [Rolling Upgrade](#rolling-upgrade)
+    * [Compatibility and Rollout](#compatibility-and-rollout)
 * [Test Design](#test-design)
+    * [Functional Tests](#functional-tests)
+    * [Scenario Tests](#scenario-tests)
+    * [Compatibility Tests](#compatibility-tests)
+    * [Benchmark Tests](#benchmark-tests)
 * [Impacts & Risks](#impacts--risks)
+    * [Impacts](#impacts)
+    * [Risks](#risks)
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
 * [Future Possibility](#future-possibility)
@@ -147,7 +153,9 @@ The task executor then keeps the statement within the slots it gets. For the dur
 
 #### Timeout and Cancellation
 
-Auto-analyze already has its controls: `tidb_max_auto_analyze_time`, the auto-analyze time window, `KILL`, and the shutdown of the stats owner. They all work by killing the auto-analyze processes of the stats owner. Since the dispatcher tracks itself as such a process and shows the statement as its running query, **every one of these controls kills the dispatcher, and the dispatcher cancels the task**:
+Auto-analyze already has its controls: `tidb_max_auto_analyze_time`, the auto-analyze time window, `KILL`, and the shutdown of the stats owner. They all work by killing the auto-analyze processes of the stats owner. Since the dispatcher tracks itself as such a process and shows the statement as its running query, **every one of these controls kills the dispatcher, and the dispatcher cancels the task**. The [cancellation flow](https://editor.plantuml.com/uml/ZLDDYzj03BtxLuYSMl26zhg7ig6xXML3IqcW7mI2R2kR8MED6SbDqbzVpJY9D-qUUh5byVJqdYJVYMBKllL5PszNkmvPOR9GL86mPuehVjCuwL3hBSMt4q21BobVDAXOeH1Cxhz_0aNPsQFob27B55rp9XGTgEurn8nvE7rSmsQVP_CVFnzMRCgKMcBDu8MsMXIvCzny6FXlOT5NhLD0XfanpHZzyJTbBICq1xVm3Gsu2H5qUq9CfzD_K4_EUsgWEiBJutnUWhgcMhTuMAFnht5ei5RNKhdYp6GXx1qtOL-2iSksLukvy25qGBye7a6e3jn0p-eyc0ed42qL6seAWByzVKIkoOyoYPi2lLuI84RZOMz-91lQH28G7rICBPF0pUXeUIwphdMcDeCbS83BW24Y5-HjbQd7YtJFYVAyfvTpfm5x8HoaNcFFyPKbcuJIGI5iXcPzzKfbMlQmYmpgOgX9v59p5cXL2PdTZiqM6heIq4i0nmQcJgmCTSLsmVKE0ljZvbbydSCkxJk-Rd8vwZEQqFt_UFFEE2X1i0CuGvCmoNjp_0pltvtkGbQC6wNXC9CUG8KsY1PtHfD-pJy) is as follows:
+
+![](https://img.plantuml.biz/plantuml/png/ZLDDYzj03BtxLuYSMl26zhg7ig6xXML3IqcW7mI2R2kR8MED6SbDqbzVpJY9D-qUUh5byVJqdYJVYMBKllL5PszNkmvPOR9GL86mPuehVjCuwL3hBSMt4q21BobVDAXOeH1Cxhz_0aNPsQFob27B55rp9XGTgEurn8nvE7rSmsQVP_CVFnzMRCgKMcBDu8MsMXIvCzny6FXlOT5NhLD0XfanpHZzyJTbBICq1xVm3Gsu2H5qUq9CfzD_K4_EUsgWEiBJutnUWhgcMhTuMAFnht5ei5RNKhdYp6GXx1qtOL-2iSksLukvy25qGBye7a6e3jn0p-eyc0ed42qL6seAWByzVKIkoOyoYPi2lLuI84RZOMz-91lQH28G7rICBPF0pUXeUIwphdMcDeCbS83BW24Y5-HjbQd7YtJFYVAyfvTpfm5x8HoaNcFFyPKbcuJIGI5iXcPzzKfbMlQmYmpgOgX9v59p5cXL2PdTZiqM6heIq4i0nmQcJgmCTSLsmVKE0ljZvbbydSCkxJk-Rd8vwZEQqFt_UFFEE2X1i0CuGvCmoNjp_0pltvtkGbQC6wNXC9CUG8KsY1PtHfD-pJy)
 
 1. The dispatcher sees the kill and cancels the task, and retries every second until the cancellation is recorded.
 2. DXF cancels the context of the subtask on the node that runs it.
@@ -160,7 +168,11 @@ If a node that runs a subtask crashes, DXF moves the subtask to another node and
 
 ### Run on a DXF Service Node
 
-On the next-gen kernel, a service node belongs to the `SYSTEM` keyspace and serves the tasks of every user keyspace. It runs the statement of a user keyspace through a cross-keyspace runtime, which has a store, a session pool, and an info schema of that keyspace. Two parts of a normal TiDB node are missing there:
+On the next-gen kernel, a service node belongs to the `SYSTEM` keyspace and serves the tasks of every user keyspace. It runs the statement of a user keyspace through a cross-keyspace runtime, which has a store, a session pool, and an info schema of that keyspace. The [nodes and keyspaces](https://editor.plantuml.com/uml/NLFVQzim47xtNt5aBniaML_689JGh4dfGqUXTjd6N8PiNs8H-MHqSh9iz7_lIKxSj2z1kVj-t7sIhzWhvxl69BpLr2gd6YXjqrf2yga_60I7fLUqCNW68LiXOmjVBiwAJj4s5BzU9Cb0Wj4ZeuCj7hXL9OxWVmAH3gDCBx_5OquVPGpFOFU4xjC85CDzE0xGUr-Bo43W20b_1L4fhmh5GL0L1daCGKoproMFSvd15ih0JZaTsv6w54xo_6RCz5UQhRw_6_HLU_dp1hpYhVo8IkyVJW8w4maeMNUdIuo3zYhm6YcC5fst2rBcy0zxGVoBfTHSJdljQr3GPr4hgen4KtJQU5XR1o8GUzY8K9pWDcBUEpnqv7M3ODSWiK5tdlyi9qPcRGbQQyqODAqjS5bZeuu4GHnOJFfD6SGZwXY95AjZDTeVZSJ_EOGPhmmcJczgFvdtjpM3cxl7z1RIR96bVvQhksoHqtGwXMifPwk74wcIgm-S82waj2iQxQDjo2ZfwuDqlxVWP0BG4XPtHSGT6mFm5CKCVbYtbGHpYl0-0avE_KdN2ZgyYY2AgZfQ1zUmFwFtcZRXFR7QOUmIxizUsibw-lk3m-gfQwT30fUbDTRDf3o_LaJMoujHPNtvETRdoHLI5Rx05m) involved are as follows:
+
+![](https://img.plantuml.biz/plantuml/png/NLFVQzim47xtNt5aBniaML_689JGh4dfGqUXTjd6N8PiNs8H-MHqSh9iz7_lIKxSj2z1kVj-t7sIhzWhvxl69BpLr2gd6YXjqrf2yga_60I7fLUqCNW68LiXOmjVBiwAJj4s5BzU9Cb0Wj4ZeuCj7hXL9OxWVmAH3gDCBx_5OquVPGpFOFU4xjC85CDzE0xGUr-Bo43W20b_1L4fhmh5GL0L1daCGKoproMFSvd15ih0JZaTsv6w54xo_6RCz5UQhRw_6_HLU_dp1hpYhVo8IkyVJW8w4maeMNUdIuo3zYhm6YcC5fst2rBcy0zxGVoBfTHSJdljQr3GPr4hgen4KtJQU5XR1o8GUzY8K9pWDcBUEpnqv7M3ODSWiK5tdlyi9qPcRGbQQyqODAqjS5bZeuu4GHnOJFfD6SGZwXY95AjZDTeVZSJ_EOGPhmmcJczgFvdtjpM3cxl7z1RIR96bVvQhksoHqtGwXMifPwk74wcIgm-S82waj2iQxQDjo2ZfwuDqlxVWP0BG4XPtHSGT6mFm5CKCVbYtbGHpYl0-0avE_KdN2ZgyYY2AgZfQ1zUmFwFtcZRXFR7QOUmIxizUsibw-lk3m-gfQwT30fUbDTRDf3o_LaJMoujHPNtvETRdoHLI5Rx05m)
+
+Two parts of a normal TiDB node are missing on the service node:
 
 1. The info schema of the runtime [loads only the system tables](https://github.com/pingcap/tidb/blob/ab37692e9ebef44a736cd7243deef6020067b743/pkg/infoschema/issyncer/loader.go#L422-L431) of the user keyspace. Loading every user table of every keyspace that a node serves would be slow and would take too much memory, and a task should not see the tables it does not need.
 2. A session of the runtime has no domain, so it has no stats handle, no sysvar cache, and no historical-stats worker.
@@ -201,7 +213,7 @@ Many global variables are mirrored in process-level variables, which hold the va
 - With historical statistics enabled, the statement dumps them itself, because there is no historical-stats worker of the user keyspace on the node.
 - The cache of approximate row counts from PD is keyed by keyspace as well, because tables of two keyspaces can share IDs and names.
 
-### Rolling Upgrade
+### Compatibility and Rollout
 
 `tidb_auto_analyze_dist_mode` is `OFF` in both new and upgraded clusters, so an upgrade never turns the feature on. An old stats owner does not know the variable and keeps running every statement locally.
 
@@ -209,20 +221,40 @@ Many global variables are mirrored in process-level variables, which hold the va
 
 ## Test Design
 
-The tests cover what can go wrong when the statement leaves the stats owner:
+### Functional Tests
 
-- **Result:** a dispatched statement is recorded as an auto-analyze job, and its statistics are in the stats owner's cache when the dispatcher returns, so the priority queue does not queue the table again.
-- **Cancellation:** a kill and `tidb_max_auto_analyze_time` cancel the task both while it waits for slots and while its statement runs, including the merge of global statistics. The job of a running statement is marked failed, the table is analyzed again later, and the waiting process holds no transaction start timestamp.
+- **Dispatch:** a statement runs as a task, is recorded as an auto-analyze job, and its statistics are in the stats owner's cache when the dispatcher returns, so the priority queue does not queue the table again.
+- **Cancellation:** killing the dispatcher cancels the task and stops the statement on the node that runs it, including the merge of global statistics, and the waiting process holds no transaction start timestamp.
 - **Slots:** the slots follow the effective settings, including a scan concurrency of `0`. The statement reads no setting above its slots, and a pooled session keeps its own settings afterwards.
 - **On-demand tables:** a listed table is found by name, table ID, and partition ID, and unlisted tables stay invisible. A listed table keeps the version it was loaded with until it is released, and the schema syncer and the builder never see it. Concurrent listing and releasing pass the race detector.
-- **Service node:** `ANALYZE` of a user keyspace on a service node writes statistics only into that keyspace, and gives the same result as the same statement in the keyspace: for plain, partitioned, and cached tables, after a schema change, and with historical statistics. It uses the settings of the user keyspace, not those of `SYSTEM`.
-- **Rolling upgrade:** with the mode set to `DXF` before an old node is upgraded, the task fails and the table is analyzed again later.
-- **Throughput:** the duration of auto-analyze for many tables with the mode `OFF` and `DXF`, across values of `tidb_auto_analyze_concurrency` and numbers of DXF nodes, and the fixed overhead per statement. The result is used to choose the default of `tidb_auto_analyze_concurrency`.
+- **Service node:** with a `SYSTEM` domain and a user keyspace runtime, `ANALYZE` writes statistics only into the user keyspace, and gives the same result as the same statement in the user keyspace: for plain, partitioned, and cached tables, after a schema change, with historical statistics, and with the sample rate taken from the statistics of the user keyspace.
+
+### Scenario Tests
+
+- **Classic:** a cluster with three TiDB nodes analyzes batches of tables, including partitioned tables, through DXF.
+- **Next-gen:** a cluster with one service node and two TiDB nodes in a user keyspace analyzes batches of tables on the service node, including partitioned tables with global statistics and a table after a schema change.
+- **Cancellation:** with a low `tidb_max_auto_analyze_time`, tasks are cancelled both while they wait for slots and while their statements run. The statements stop, the job of a running statement is marked failed, and the tables are analyzed again later.
+- **Settings:** a user keyspace with a large build concurrency or an adaptive scan concurrency gets tasks within the CPU count of the service node.
+
+### Compatibility Tests
+
+- **Mode `OFF`:** the stats owner runs every statement locally. On a normal TiDB node, `GetLatestWithOnDemandTables` returns the same info schema as `GetLatest`, and `domain.GetStatsHandle` returns the handle of the domain, so the existing auto-analyze, analyze executor, and planner tests pass unchanged.
+- **Upgrade:** an upgraded cluster starts with the mode `OFF`. With the mode set to `DXF` before an old node is upgraded, the task fails, no statistics are written, and the table is analyzed again later.
+
+### Benchmark Tests
+
+Compare the duration of auto-analyze for a cluster with many tables, with the mode `OFF` and `DXF`, across values of `tidb_auto_analyze_concurrency` and numbers of DXF nodes. Record the fixed overhead per statement, the CPU and memory of the stats owner and the DXF nodes, and the effect on foreground queries. The result is used to choose the default of `tidb_auto_analyze_concurrency`.
 
 ## Impacts & Risks
 
+### Impacts
+
+- Auto-analyze no longer runs only on the stats owner, so its throughput grows with the DXF nodes. On the next-gen kernel, it moves off the TiDB nodes of the user keyspace.
 - Each statement pays the fixed overhead of scheduling a DXF task, which matters most for small tables.
 - The stats owner still holds a worker slot and one session for each running statement while it waits.
+
+### Risks
+
 - At most 16 DXF tasks run at the same time by default, and this limit is shared with other task types, such as `ADD INDEX` and `IMPORT INTO`, and on the next-gen kernel with every user keyspace.
 - Every statement adds a row to the DXF task history. Subtask history is removed after 14 days, but task history is kept.
 - If the stats owner crashes while a task runs, the task runs to the end without anyone waiting for it, and the new stats owner may analyze the same table again in the meantime.
