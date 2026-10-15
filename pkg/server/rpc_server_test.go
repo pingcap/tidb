@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,9 +45,28 @@ func TestCreateSessionClosesSessionOnExtensionSetupError(t *testing.T) {
 	require.NoError(t, extension.RegisterFactory("failing", func() ([]extension.Option, error) {
 		return nil, errors.New("forced extension setup failure")
 	}))
+
+	// Assert the cleanup directly: a session registers a fresh StatementStats
+	// in the global aggregator when it is created and finishes it in Close,
+	// which is the only observable side effect of closing a session this
+	// fresh. Snapshot the registered set around the failing call and require
+	// the session created by that call is finished, so removing the se.Close()
+	// from the error path fails this test.
+	registeredBefore := stmtstats.RegisteredStatementStatsForTest()
 	_, err := s.createSession()
 	require.Error(t, err)
 	require.ErrorContains(t, err, "forced extension setup failure")
+	var created []*stmtstats.StatementStats
+	for stats := range stmtstats.RegisteredStatementStatsForTest() {
+		if _, ok := registeredBefore[stats]; !ok {
+			created = append(created, stats)
+		}
+	}
+	require.NotEmpty(t, created, "the failing createSession call must have created a session")
+	for _, stats := range created {
+		require.True(t, stats.Finished(),
+			"createSession must close the session it created before returning the error")
+	}
 
 	// Once the registry is set up again, createSession returns a live session
 	// for the caller to close, as the coprocessor handlers do.
