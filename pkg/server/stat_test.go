@@ -67,6 +67,11 @@ func TestUptime(t *testing.T) {
 }
 
 func TestInitStatsSessionBlockGC(t *testing.T) {
+	// Stats initialization and internal session tracking need a positive lease,
+	// even if a previous test disabled stats through testkit.
+	session.SetStatsLease(3 * time.Second)
+	defer session.DisableStats4Test()
+
 	origConfig := config.GetGlobalConfig()
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
