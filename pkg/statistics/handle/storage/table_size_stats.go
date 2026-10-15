@@ -19,7 +19,6 @@ package storage
 import (
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -29,18 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-<<<<<<< HEAD:pkg/statistics/handle/cache/stats_table_row_cache.go
-// TableRowStatsCache is the cache of table row count.
-var TableRowStatsCache = &StatsTableRowCache{
-	tableRows: make(map[int64]uint64),
-	colLength: make(map[tableHistID]uint64),
-}
-
-// tableStatsCacheExpiry is the expiry time for table stats cache.
-var tableStatsCacheExpiry = 3 * time.Second
-
-=======
->>>>>>> 65ac2fad582 (executor, statistics: skip stats_histograms read for TABLE_ROWS-only INFORMATION_SCHEMA queries (#69955)):pkg/statistics/handle/storage/table_size_stats.go
 type tableHistID struct {
 	tableID int64
 	histID  int64
