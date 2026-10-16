@@ -383,7 +383,9 @@ func TestResourceGroupRunaway(t *testing.T) {
 	err = tk.QueryToErr("select /*+ resource_group(rg2) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	tk.MustGetErrCode("select /*+ resource_group(rg2) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
-	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
+	// The rg1 COOLDOWN/DRYRUN queries may also exceed 100ms on loaded CI and leave
+	// their own records until GC, so only check rg2's records here.
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries where resource_group_name = 'rg2'", nil,
 		testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t identify",
 			"rg2 select /*+ resource_group(rg2) */ * from t watch"), maxWaitDuration, tryInterval)
 	// Watch records are flushed asynchronously; under loaded CI the watch row may not be
