@@ -61,6 +61,7 @@ go_test(
     deps = [
         "//pkg/domain/sqlsvrapi",
         "//pkg/domain/sqlsvrapi/mock",
+        "//pkg/dxf/framework/dxfutil",
         "//pkg/dxf/framework/mock",
         "//pkg/dxf/framework/mock/execute",
         "//pkg/dxf/framework/proto",
@@ -82,5 +83,7 @@ go_test(
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

@@ -50,7 +50,6 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 ## Related guidance
 
 - Bug-fix regression policy lives in `AGENTS.md` -> `Quick Decision Matrix` (`Bug fix`).
-- Test placement, naming, `shard_count`, and package-specific testdata rules live in `.agents/skills/tidb-test-guidelines`.
 - Include exact test commands in PR description under `Tests` when preparing a PR update.
 
 ## Integration tests (`/tests/integrationtest`)

@@ -265,6 +265,157 @@ func TestAssertionWhenPessimisticLockLost(t *testing.T) {
 	require.NotContains(t, err.Error(), "assertion")
 }
 
+func TestPessimisticLockLockView(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	testTk := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	testTk.MustExec("use test")
+	tk1.MustExec("create table ordinary_lock_view (id int primary key, v int)")
+	tk1.MustExec("insert into ordinary_lock_view values (1, 10)")
+
+	conn2 := tk2.MustQuery("select connection_id()").Rows()[0][0].(string)
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from ordinary_lock_view where id=1 for update")
+
+	selectDoneCh := make(chan error, 1)
+	selectDone := false
+	t.Cleanup(func() {
+		_, _ = tk1.Exec("rollback")
+		if !selectDone {
+			select {
+			case <-selectDoneCh:
+			case <-time.After(time.Second):
+			}
+		}
+	})
+
+	tk2.MustExec("begin pessimistic")
+	conn2TxnID := tk2.Session().TxnInfo().StartTS
+	go func() {
+		_, err := tk2.Exec("select * from ordinary_lock_view where id=1 for update")
+		if err == nil {
+			_, err = tk2.Exec("commit")
+		}
+		selectDoneCh <- err
+	}()
+
+	var (
+		selectErr            error
+		selectFinishedEarly  bool
+		waitingTxnAndSession [][]any
+	)
+	require.Eventually(t, func() bool {
+		select {
+		case selectErr = <-selectDoneCh:
+			selectDone = true
+			selectFinishedEarly = true
+			return true
+		default:
+		}
+
+		waitingTxnAndSession = testTk.MustQuery(fmt.Sprintf(
+			"select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.trx_id = %d and trx.session_id = %s",
+			conn2TxnID, conn2,
+		)).Rows()
+		return len(waitingTxnAndSession) > 0
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Falsef(t, selectFinishedEarly, "select for update should be blocked before DATA_LOCK_WAITS row is observed, err: %v", selectErr)
+	require.Len(t, waitingTxnAndSession, 1)
+	waitingTxnID := waitingTxnAndSession[0][0].(string)
+	sessionID := waitingTxnAndSession[0][1].(string)
+	require.Equal(t, waitingTxnID, fmt.Sprintf("%d", conn2TxnID))
+	require.Equal(t, sessionID, conn2)
+
+	tk1.MustExec("commit")
+	selectErr = <-selectDoneCh
+	selectDone = true
+	require.NoError(t, selectErr)
+}
+
+func TestPessimisticLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/dataLockWaitsSkipResolvingLocks", "return(true)")
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	testTk := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	testTk.MustExec("use test")
+	tk1.MustExec("create table ordinary_lock_view (id int primary key, v int)")
+	tk1.MustExec("insert into ordinary_lock_view values (1, 10)")
+
+	conn2 := tk2.MustQuery("select connection_id()").Rows()[0][0].(string)
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from ordinary_lock_view where id=1 for update")
+
+	selectDoneCh := make(chan error, 1)
+	selectDone := false
+	t.Cleanup(func() {
+		_, _ = tk1.Exec("rollback")
+		if !selectDone {
+			select {
+			case <-selectDoneCh:
+			case <-time.After(time.Second):
+			}
+		}
+	})
+
+	tk2.MustExec("begin pessimistic")
+	conn2TxnID := tk2.Session().TxnInfo().StartTS
+	go func() {
+		_, err := tk2.Exec("select * from ordinary_lock_view where id=1 for update")
+		if err == nil {
+			_, err = tk2.Exec("commit")
+		}
+		selectDoneCh <- err
+	}()
+
+	var (
+		selectErr            error
+		selectFinishedEarly  bool
+		waitingTxnAndSession [][]any
+	)
+	require.Eventually(t, func() bool {
+		select {
+		case selectErr = <-selectDoneCh:
+			selectDone = true
+			selectFinishedEarly = true
+			return true
+		default:
+		}
+
+		waitingTxnAndSession = testTk.MustQuery(fmt.Sprintf(
+			"select TRX_ID, SESSION_ID from INFORMATION_SCHEMA.DATA_LOCK_WAITS as l left join INFORMATION_SCHEMA.TIDB_TRX as trx on l.trx_id = trx.id where l.trx_id = %d and trx.session_id = %s",
+			conn2TxnID, conn2,
+		)).Rows()
+		return len(waitingTxnAndSession) > 0
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Falsef(t, selectFinishedEarly, "select for update should be blocked before DATA_LOCK_WAITS row is observed, err: %v", selectErr)
+	require.Len(t, waitingTxnAndSession, 1)
+	waitingTxnID := waitingTxnAndSession[0][0].(string)
+	sessionID := waitingTxnAndSession[0][1].(string)
+	require.Equal(t, waitingTxnID, fmt.Sprintf("%d", conn2TxnID))
+	require.Equal(t, sessionID, conn2)
+
+	tk1.MustExec("commit")
+	selectErr = <-selectDoneCh
+	selectDone = true
+	require.NoError(t, selectErr)
+}
+
 func TestSelectLockForPartitionTable(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)

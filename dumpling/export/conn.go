@@ -30,6 +30,17 @@ func newBaseConn(conn *sql.Conn, shouldRetry bool, rebuildConnFn func(*sql.Conn,
 
 // QuerySQL defines query statement, and connect to real DB.
 func (conn *BaseConn) QuerySQL(tctx *tcontext.Context, handleOneRow func(*sql.Rows) error, reset func(), query string, args ...any) error {
+	return conn.queryRows(tctx, func(rows *sql.Rows) error {
+		for rows.Next() {
+			if err := handleOneRow(rows); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, reset, query, args...)
+}
+
+func (conn *BaseConn) queryRows(tctx *tcontext.Context, handleRows func(*sql.Rows) error, reset func(), query string, args ...any) error {
 	retryTime := 0
 	err := utils.WithRetry(tctx, func() (err error) {
 		retryTime++
@@ -39,12 +50,19 @@ func (conn *BaseConn) QuerySQL(tctx *tcontext.Context, handleOneRow func(*sql.Ro
 				return
 			}
 		}
-		err = simpleQueryWithArgs(tctx, conn.DBConn, handleOneRow, query, args...)
+		rows, err := conn.DBConn.QueryContext(tctx, query, args...)
+		if err == nil {
+			defer rows.Close()
+			err = handleRows(rows)
+			if err == nil {
+				err = rows.Err()
+			}
+		}
 		if err != nil {
 			tctx.L().Info("cannot execute query", zap.Int("retryTime", retryTime), zap.String("sql", query),
 				zap.Any("args", args), zap.Error(err))
 			reset()
-			return err
+			return errors.Annotatef(err, "sql: %s, args: %v", query, args)
 		}
 		return nil
 	}, conn.backOffer)
@@ -54,33 +72,14 @@ func (conn *BaseConn) QuerySQL(tctx *tcontext.Context, handleOneRow func(*sql.Ro
 
 // QuerySQLWithColumns defines query statement, and connect to real DB and get results for special column names
 func (conn *BaseConn) QuerySQLWithColumns(tctx *tcontext.Context, columns []string, query string, args ...any) ([][]string, error) {
-	retryTime := 0
 	var results [][]string
-	err := utils.WithRetry(tctx, func() (err error) {
-		retryTime++
-		if retryTime > 1 && conn.rebuildConnFn != nil {
-			conn.DBConn, err = conn.rebuildConnFn(conn.DBConn, false)
-			if err != nil {
-				tctx.L().Warn("rebuild connection failed", zap.Error(err))
-				return
-			}
-		}
-		rows, err := conn.DBConn.QueryContext(tctx, query, args...)
-		if err != nil {
-			tctx.L().Info("cannot execute query", zap.Int("retryTime", retryTime), zap.String("sql", query),
-				zap.Any("args", args), zap.Error(err))
-			return errors.Annotatef(err, "sql: %s", query)
-		}
+	err := conn.queryRows(tctx, func(rows *sql.Rows) error {
+		var err error
 		results, err = GetSpecifiedColumnValuesAndClose(rows, columns...)
-		if err != nil {
-			tctx.L().Info("cannot execute query", zap.Int("retryTime", retryTime), zap.String("sql", query),
-				zap.Any("args", args), zap.Error(err))
-			results = nil
-			return errors.Annotatef(err, "sql: %s", query)
-		}
 		return err
-	}, conn.backOffer)
-	conn.backOffer.Reset()
+	}, func() {
+		results = nil
+	}, query, args...)
 	return results, err
 }
 

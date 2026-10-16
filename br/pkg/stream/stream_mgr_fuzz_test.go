@@ -30,7 +30,8 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 		if !isASCIIAlphanumeric(extraTag) ||
 			extraTag == backupmetas.NameMinBeginTsInDefaultCfTag ||
 			extraTag == backupmetas.NameMinTSTag ||
-			extraTag == backupmetas.NameMaxTSTag {
+			extraTag == backupmetas.NameMaxTSTag ||
+			extraTag == backupmetas.NameFlagsTag {
 			extraTag = 'x'
 		}
 
@@ -57,6 +58,53 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 			MinTS:                 minTs,
 			MaxTS:                 maxTs,
 		}, taggedParsed)
+		require.True(t, taggedParsed.HasDDLFiles())
+		require.False(t, taggedParsed.IsEmpty())
+
+		taggedNoDDLFileName := fmt.Sprintf(
+			"%016X%016X-d%016Xu%016Xl%016Xp%016X",
+			flushTs, storeID, minBeginTsInDefaultCf, maxTs, minTs, uint64(1),
+		)
+		taggedNoDDLParsed, err := backupmetas.ParseName(taggedNoDDLFileName)
+		require.NoError(t, err)
+		require.Equal(t, backupmetas.ParsedName{
+			FlushTS:               flushTs,
+			StoreID:               storeID,
+			MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
+			MinTS:                 minTs,
+			MaxTS:                 maxTs,
+			Flags:                 1,
+			HasFlags:              true,
+		}, taggedNoDDLParsed)
+		require.False(t, taggedNoDDLParsed.HasDDLFiles())
+		require.False(t, taggedNoDDLParsed.IsEmpty())
+
+		taggedEmptyFileName := fmt.Sprintf(
+			"%016X%016X-d%016Xu%016Xl%016Xp%016X",
+			flushTs, storeID, minBeginTsInDefaultCf, maxTs, minTs, uint64(3),
+		)
+		taggedEmptyParsed, err := backupmetas.ParseName(taggedEmptyFileName)
+		require.NoError(t, err)
+		require.Equal(t, backupmetas.ParsedName{
+			FlushTS:               flushTs,
+			StoreID:               storeID,
+			MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
+			MinTS:                 minTs,
+			MaxTS:                 maxTs,
+			Flags:                 3,
+			HasFlags:              true,
+		}, taggedEmptyParsed)
+		require.False(t, taggedEmptyParsed.HasDDLFiles())
+		require.True(t, taggedEmptyParsed.IsEmpty())
+
+		taggedDefaultDDLFileName := fmt.Sprintf(
+			"%016X%016X-d%016Xu%016Xl%016Xp%016X",
+			flushTs, storeID, minBeginTsInDefaultCf, maxTs, minTs, uint64(0),
+		)
+		taggedDefaultDDLParsed, err := backupmetas.ParseName(taggedDefaultDDLFileName)
+		require.NoError(t, err)
+		require.True(t, taggedDefaultDDLParsed.HasDDLFiles())
+		require.False(t, taggedDefaultDDLParsed.IsEmpty())
 
 		tagValues := map[byte]uint64{
 			backupmetas.NameMinBeginTsInDefaultCfTag: minBeginTsInDefaultCf,

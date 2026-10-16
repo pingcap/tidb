@@ -4,6 +4,7 @@ go_library(
     name = "sem",
     srcs = [
         "config.go",
+        "restricted_hint.go",
         "sem.go",
         "sql_rule.go",
         "testhelper.go",
@@ -28,6 +29,7 @@ go_test(
     timeout = "short",
     srcs = [
         "config_test.go",
+        "restricted_test.go",
         "sem_test.go",
         "sql_rule_test.go",
     ],

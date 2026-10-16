@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -1178,6 +1179,23 @@ func cleanAccessPathForMVIndexHint(ds *logicalop.DataSource) {
 	if len(validMVIndexPath) > 0 {
 		ds.PossibleAccessPaths = validMVIndexPath
 	}
+}
+
+func cleanAccessPathForFTS(ds *logicalop.DataSource) error {
+	if ds.FtsPushDown == nil {
+		return nil
+	}
+	validPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
+	for _, p := range ds.PossibleAccessPaths {
+		if p.StoreType == kv.TiFlash {
+			validPaths = append(validPaths, p)
+		}
+	}
+	if len(validPaths) == 0 {
+		return plannererrors.ErrInternal.GenWithStack("Full text search can be only executed in a columnar storage (TiFlash), but it is not available. Possible reasons: TiFlash is not deployed; columnar replica is not set on this table; columnar replica is not available due to SQL hint /*+ read_from_storage */ or tidb_isolation_read_engines variable.")
+	}
+	ds.PossibleAccessPaths = validPaths
+	return nil
 }
 
 // indexMergeContainSpecificIndex checks whether the index merge path contains at least one index in the `indexSet`

@@ -14,6 +14,8 @@
 
 package crossks
 
+import "github.com/pingcap/tidb/pkg/ddl/serverstate"
+
 // Get returns the session manager for the specified keyspace and whether it exists.
 func (m *Manager) Get(ks string) (*SessionManager, bool) {
 	return m.get(ks)
@@ -27,4 +29,14 @@ func (m *Manager) CloseKS(targetKS string) {
 		entry.sessMgr.close()
 		delete(m.runtimes, targetKS)
 	}
+}
+
+// ServerStateSyncer returns the target server-state syncer in tests.
+func (m *SessionManager) ServerStateSyncer() serverstate.Syncer {
+	return m.serverStateSyncer
+}
+
+// ServerInfoID returns the virtual server ID in tests.
+func (m *SessionManager) ServerInfoID() string {
+	return m.svrInfoSyncer.GetLocalServerInfo().ID
 }

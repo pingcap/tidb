@@ -864,7 +864,7 @@ func TestInitStatsLite(t *testing.T) {
 	checkAllEvicted(t, statsTbl0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), is))
 	statsTbl1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, statsTbl1)
 	require.Equal(t, int(statistics.Version2), statsTbl1.StatsVer)
@@ -955,7 +955,7 @@ func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
 	require.Equal(t, statsTbl.GetCol(colBID).Histogram.Len(), 1)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(ctx, tblInfo.ID))
+	require.NoError(t, h.InitStatsLite(ctx, dom.InfoSchema(), tblInfo.ID))
 
 	statsTblLite := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, statsTblLite.ColAndIdxExistenceMap.Has(colBID, false))
@@ -1173,7 +1173,7 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 	checkAllEvicted(t, tblStats0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check stats are evicted
 	tblStats1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1273,7 +1273,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 	checkAllEvicted(t, globalStats0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check global stats are evicted
 	globalStats1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1374,7 +1374,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 		checkAllEvicted(t, partStats)
 	}
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 	// After InitStatsLite, check partition stats are evicted
 	for _, pid := range partitionIDs {
 		partStats := h.GetPhysicalTableStats(pid, tblInfo)

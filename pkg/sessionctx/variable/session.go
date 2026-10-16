@@ -261,34 +261,6 @@ type TxnCtxNoNeedToRestore struct {
 	CurrentStmtPessimisticLockCache map[string][]byte
 }
 
-// RUV2Weights returns the active TiDB-side RU v2 weights for the current
-// session. The weights come from the global config, but the conversion is kept
-// in the session layer so lower-level utility packages remain config-free.
-func (s *SessionVars) RUV2Weights() execdetails.RUV2Weights {
-	if cfg := config.GetGlobalConfig(); cfg != nil {
-		return ruv2WeightsFromConfig(cfg.RUV2)
-	}
-	return ruv2WeightsFromConfig(config.DefaultRUV2Config())
-}
-
-func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
-	return execdetails.RUV2Weights{
-		RUScale:                 cfg.RUScale,
-		ResultChunkCells:        cfg.ResultChunkCells,
-		ExecutorL1:              cfg.ExecutorL1,
-		ExecutorL2:              cfg.ExecutorL2,
-		ExecutorL3:              cfg.ExecutorL3,
-		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
-		PlanCnt:                 cfg.PlanCnt,
-		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
-		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
-		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
-		WriteKeys:               cfg.WriteKeys,
-		SessionParserTotal:      cfg.SessionParserTotal,
-		TxnCnt:                  cfg.TxnCnt,
-	}
-}
-
 // SavepointRecord indicates a transaction's savepoint record.
 type SavepointRecord struct {
 	// name is the name of the savepoint
@@ -811,11 +783,29 @@ type SessionVars struct {
 	MemQuota
 	BatchSize
 	PipelinedDMLConfig
+	// QueryCopStoreLimit limits TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	QueryCopStoreLimit int
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
-	DMLBatchSize        int
-	RetryLimit          int64
-	DisableTxnAutoRetry bool
+	DMLBatchSize int
+	// MViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
+	MViewMaintainIsolationReadEngines string
+	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
+	MViewMaintainImportThreads int
+	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
+	MViewMaintainImportDiskQuota string
+	// MLogPurgeBatchSize indicates the maximum number of MLog rows deleted by one purge batch.
+	MLogPurgeBatchSize int
+	// MLogPurgeMinRate indicates the minimum target delete rate for adaptive MLog purge throttling.
+	MLogPurgeMinRate int
+	// MLogPurgeRateBudgetRatio indicates the fraction of the scheduling window that purge may spend deleting.
+	MLogPurgeRateBudgetRatio float64
+	// MLogPurgeDeleteTiFlashThreads controls TiFlash threads used by MLog purge DELETE statements.
+	// Zero means that the current tidb_max_tiflash_threads value is inherited.
+	MLogPurgeDeleteTiFlashThreads int64
+	RetryLimit                    int64
+	DisableTxnAutoRetry           bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -944,8 +934,6 @@ type SessionVars struct {
 	StmtCtx *stmtctx.StatementContext
 	// RUV2Metrics stores statement-level RU v2 metrics for current statement.
 	RUV2Metrics *execdetails.RUV2Metrics
-	// RUV2PendingSessionParserTotal stores session parser count before statement context reset.
-	RUV2PendingSessionParserTotal atomic.Int64
 
 	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
 	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
@@ -1240,6 +1228,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
+	EnableTiKVShortCircuitExpression bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -1306,6 +1297,9 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+	// DMLMaxExecutionTime is the timeout for transactional DML statements and COMMIT, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	DMLMaxExecutionTime uint64
 
 	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
 	// may examine. 0 means unlimited. Only applies to SELECT statements.
@@ -1481,6 +1475,9 @@ type SessionVars struct {
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
+	// EnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	EnableAdaptiveLimitScan bool
+
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
 
@@ -1498,6 +1495,12 @@ type SessionVars struct {
 
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
+
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
+	// EnableMView indicates whether to enable materialized view DDL.
+	EnableMView bool
 
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
@@ -1588,6 +1591,8 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
+	// InNonTransactionalDML marks non-transactional DML execution and its internal statements.
+	InNonTransactionalDML bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -1681,6 +1686,8 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
+	// InMViewMaintenance indicates the session is executing internal MV build/refresh statements.
+	InMViewMaintenance bool
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -1695,6 +1702,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+	// RangeMaxCount is the range-count threshold for preferring more equality/IN predicates in skyline pruning.
+	// It does not limit range construction. 0 disables the threshold.
+	RangeMaxCount int64
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
@@ -1705,8 +1715,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
-	AnalyzePartitionMergeConcurrency int
 
 	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	EnableAsyncMergeGlobalStats bool
@@ -1750,6 +1758,9 @@ type SessionVars struct {
 	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
+
+	// AnalyzeStoreBatchSize is the child-task limit for Analyze store batches. 0 disables Analyze store batching.
+	AnalyzeStoreBatchSize int
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
@@ -1882,6 +1893,10 @@ type SessionVars struct {
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
 
+	// EnableSharedLockUpgrade indicates whether shared locks may be upgraded to exclusive locks during
+	// pessimistic locking.
+	EnableSharedLockUpgrade bool
+
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
 
@@ -1893,6 +1908,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+	// TTLJobID attributes a user-table scan/delete transaction to a TTL job. Empty means
+	// no scan/delete attribution; TTL sessions restore it after draining the result.
+	TTLJobID string
 
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
 	MemArbitrator struct {
@@ -2419,6 +2437,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
@@ -2455,10 +2474,14 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                         kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
+		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
+		EnableMView:                      vardef.DefTiDBMViewEnable,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2496,10 +2519,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
+	vars.QueryCopStoreLimit = vardef.DefTiDBQueryCopStoreLimit
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,
@@ -2516,9 +2542,17 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ExecutorConcurrency:               vardef.DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      vardef.DefTiDBMemQuotaQuery,
-		MemQuotaApplyCache: vardef.DefTiDBMemQuotaApplyCache,
+		MemQuotaQuery:         vardef.DefTiDBMemQuotaQuery,
+		MViewMaintainMemQuota: vardef.DefTiDBMViewMaintainMemQuota,
+		MemQuotaApplyCache:    vardef.DefTiDBMemQuotaApplyCache,
 	}
+	vars.MViewMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
+	vars.MViewMaintainImportThreads = vardef.DefTiDBMViewMaintainImportThreads
+	vars.MViewMaintainImportDiskQuota = vardef.DefTiDBMViewMaintainImportDiskQuota
+	vars.MLogPurgeBatchSize = vardef.DefTiDBMLogPurgeBatchSize
+	vars.MLogPurgeMinRate = vardef.DefTiDBMLogPurgeMinRate
+	vars.MLogPurgeRateBudgetRatio = vardef.DefTiDBMLogPurgeRateBudgetRatio
+	vars.MLogPurgeDeleteTiFlashThreads = vardef.DefTiDBMLogPurgeDeleteTiFlashThreads
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: vardef.DefIndexJoinBatchSize,
 		IndexLookupSize:    vardef.DefIndexLookupSize,
@@ -3496,6 +3530,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
+	// MViewMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
+	MViewMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }

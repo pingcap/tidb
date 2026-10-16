@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
@@ -517,7 +518,17 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		totalMemUsage += b.helpers[i].rawDataLen + (b.helpers[i].totalRowNum+b.helpers[i].totalRowNum)*serialization.Uint64Len + b.helpers[i].validRowNum*serialization.IntLen
 	}
 
-	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
+	tracer := hashJoinCtx.hashTableContext.memoryTracker
+	if memory.UsingGlobalMemArbitration() {
+		// The tracker is charged before the backing slices are materialized
+		// below. Temporarily offset the global arbitrator's accounting during
+		// this allocation window so it is not classified as out of control
+		// before the physical allocation is fully materialized.
+		reversal := tracer.AddReversal(totalMemUsage)
+		defer reversal.Release()
+	}
+
+	tracer.Consume(totalMemUsage)
 
 	for partIdx, seg := range segs {
 		seg.rawData = make([]byte, 0, b.helpers[partIdx].rawDataLen)

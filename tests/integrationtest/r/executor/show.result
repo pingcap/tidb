@@ -654,6 +654,7 @@ default_func
 degrees
 div
 elt
+embed_text
 encode
 eq
 exp

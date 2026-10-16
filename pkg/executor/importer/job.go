@@ -137,6 +137,11 @@ func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
+// IsCancelled returns whether the job has been cancelled.
+func (j *JobInfo) IsCancelled() bool {
+	return j.Status == jogStatusCancelled
+}
+
 // IsSuccess returns whether the job is successful.
 func (j *JobInfo) IsSuccess() bool {
 	return j.Status == JobStatusFinished
@@ -487,11 +492,32 @@ func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user stri
 // CancelJob cancels import into job. Only a running/paused job can be canceled.
 // check privileges using get before calling this method.
 func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
+	return cancelJobInState(ctx, conn, jobID, jobStatusPending, JobStatusRunning)
+}
+
+// CancelPendingJob cancels a job in pending state.
+func CancelPendingJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
+	return cancelJobInState(ctx, conn, jobID, jobStatusPending)
+}
+
+func cancelJobInState(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, states ...string) (err error) {
+	var markerSB strings.Builder
+	for i := range states {
+		if i > 0 {
+			markerSB.WriteString(",")
+		}
+		markerSB.WriteString("%?")
+	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	sql := `UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), status = %?, error_message = 'cancelled by user'
-			WHERE id = %? AND status IN (%?, %?);`
-	args := []any{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
+	sql := fmt.Sprintf(`UPDATE mysql.tidb_import_jobs
+			SET update_time = CURRENT_TIMESTAMP(6), status = %%?, error_message = 'cancelled by user'
+			WHERE id = %%? AND status IN (%s);`, markerSB.String())
+	args := make([]any, 0, len(states)+2)
+	args = append(args, jogStatusCancelled)
+	args = append(args, jobID)
+	for _, s := range states {
+		args = append(args, s)
+	}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
 	return err
 }

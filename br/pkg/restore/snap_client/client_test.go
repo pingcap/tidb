@@ -368,6 +368,10 @@ func (fakeImportCli FakeImporterClient) CheckMultiIngestSupport(ctx context.Cont
 	return nil
 }
 
+func (fakeImportCli FakeImporterClient) IsBatchDownloadLatestMVCCSupported(ctx context.Context, stores []uint64) (bool, error) {
+	return true, nil
+}
+
 func TestSetSpeedLimit(t *testing.T) {
 	mockStores := []*metapb.Store{
 		{Id: 1},
@@ -440,7 +444,7 @@ func TestSetSpeedLimitCloseCallbackIdempotent(t *testing.T) {
 	createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, pdClient, workerPool, 42)
 
 	opt := snapclient.NewSnapFileImporterOptions(
-		nil, nil, FakeImporterClient{}, nil, snapclient.RewriteModeLegacy, mockStores, 1, 0, nil, nil)
+		nil, nil, FakeImporterClient{}, nil, snapclient.RewriteModeLegacy, mockStores, 1, 0, false, nil, nil)
 	importer, err := snapclient.NewSnapFileImporter(ctx, 0, snapclient.TiDBFull, opt)
 	require.NoError(t, err)
 	require.NoError(t, createCallBack(importer))

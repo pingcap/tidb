@@ -9,6 +9,7 @@ go_library(
         "distsql.go",
         "domain.go",
         "executor.go",
+        "external_workload.go",
         "gc_worker.go",
         "globalsort.go",
         "import.go",
