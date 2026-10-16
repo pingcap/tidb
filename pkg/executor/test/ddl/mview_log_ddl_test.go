@@ -1252,6 +1252,84 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
 }
 
+func TestCreateMaterializedViewLogRefreshLockLifetime(t *testing.T) {
+	for _, rollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rollback=%t", rollback), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_mlog_lock (a int not null, b int not null)")
+			tk.MustExec("create materialized view log on t_mlog_lock (a, b)")
+			tk.MustExec("create materialized view mv_mlog_lock (a, s, cnt) as select a, sum(b), count(1) from t_mlog_lock group by a")
+			mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_mlog_lock"))
+			require.NoError(t, err)
+			lockName := fmt.Sprintf("mv_refresh_%d_%d", mv.Meta().DBID, mv.Meta().ID)
+			paused := make(chan struct{})
+			resume := make(chan struct{})
+			var signalled atomic.Bool
+			release := func() {
+				select {
+				case <-resume:
+				default:
+					close(resume)
+				}
+			}
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(job *metamodel.Job, _ int64) {
+				if job.Type == metamodel.ActionCreateMaterializedViewLog && job.TableName == "$mlog$mv_mlog_lock" && signalled.CompareAndSwap(false, true) {
+					close(paused)
+					<-resume
+				}
+			})
+			const failurePoint = "github.com/pingcap/tidb/pkg/ddl/mockInsertMLogPurgeTableNotExists"
+			if rollback {
+				require.NoError(t, failpoint.Enable(failurePoint, "return(true)"))
+				defer func() { require.NoError(t, failpoint.Disable(failurePoint)) }()
+			}
+			ddlDone := make(chan error, 1)
+			go func() { ddlDone <- tk.ExecToErr("create materialized view log on mv_mlog_lock (a, s, cnt)") }()
+			finished := false
+			defer func() {
+				release()
+				if !finished {
+					select {
+					case <-ddlDone:
+					case <-time.After(15 * time.Second):
+						t.Error("timeout cleaning up CREATE MLog")
+					}
+				}
+			}()
+			select {
+			case <-paused:
+			case <-time.After(15 * time.Second):
+				t.Fatal("timeout waiting for CREATE MLog schema sync")
+			}
+			tkLock := testkit.NewTestKit(t, store)
+			tkLock.MustExec("use test")
+			err = tkLock.ExecToErr("refresh materialized view mv_mlog_lock fast")
+			require.ErrorContains(t, err, "another refresh or materialized view log creation is running", "the job must hold the refresh lock after its metadata transaction commits")
+			release()
+			select {
+			case err = <-ddlDone:
+				finished = true
+			case <-time.After(15 * time.Second):
+				t.Fatal("timeout waiting for CREATE MLog completion")
+			}
+			if rollback {
+				require.ErrorContains(t, err, "tidb_mlog_purge_info")
+				require.NoError(t, failpoint.Disable(failurePoint))
+				tk.MustQuery("show tables like '$mlog$mv_mlog_lock'").Check(testkit.Rows())
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, tkLock.Session().GetAdvisoryLock(lockName, 1), "the worker must release the lock before reuse")
+			require.True(t, tkLock.Session().ReleaseAdvisoryLock(lockName))
+			if rollback {
+				tk.MustExec("create materialized view log on mv_mlog_lock (a, s, cnt)")
+			}
+		})
+	}
+}
+
 func TestMaterializedViewLogOnReadyMaterializedView(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

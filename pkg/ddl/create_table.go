@@ -47,6 +47,7 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -305,6 +307,25 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 	if baseTblInfo.MaterializedViewBase != nil && baseTblInfo.MaterializedViewBase.MLogID != 0 {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(job.SchemaName), Name: mlogTableInfo.Name})
+	}
+
+	if baseTblInfo.MaterializedView != nil {
+		// TODO: Remove this DDL-side advisory lock once internal refresh sessions
+		// participate in MDL for MV writes through transaction completion. MDL will
+		// then prevent CREATE MLog from completing while a refresh can still write
+		// using metadata without the new MLog.
+		lockName := mviewutil.RefreshAdvisoryLockName(job.SchemaID, baseTableID)
+		if err := w.sess.GetAdvisoryLock(lockName, 1); err != nil {
+			if storeerr.ErrLockWaitTimeout.Equal(err) {
+				// Do not retry this job while retaining its DDL scheduling claim:
+				// an OOP refresh holds the lock while waiting for its cutover DDL.
+				job.State = model.JobStateCancelled
+				return ver, errors.Errorf("cannot create materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O)
+			}
+			return ver, errors.Trace(err)
+		}
+		// The scheduler releases this job's advisory locks after commit, schema
+		// synchronization, and any rollback/retry, before returning the worker.
 	}
 
 	mlogTableInfo.State = model.StateNone
