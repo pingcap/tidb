@@ -103,6 +103,21 @@ func TestSystemVars(t *testing.T) {
 // TestSessionStatesReadTimestamps checks both the restored timestamp and whether
 // it applies to one read or remains active across subsequent reads.
 func TestSessionStatesReadTimestamps(t *testing.T) {
+	t.Run("destination DST gap", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		src := testkit.NewTestKit(t, store)
+		src.MustExec("set time_zone='+08:00'")
+		src.MustExec("set tx_read_ts='2024-03-10 02:30:00'")
+		state := src.MustQuery("show session_states").Rows()[0][0].(string)
+		wantTS := src.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS()
+		require.NotZero(t, wantTS)
+		dst := testkit.NewTestKit(t, store)
+		// 02:30 is valid in the source timezone, but falls inside this zone's
+		// DST gap. SET SESSION_STATES starts with this statement timezone.
+		dst.MustExec("set time_zone='America/New_York'")
+		dst.MustExec("set session_states " + strconv.Quote(state))
+		require.Equal(t, wantTS, dst.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
+	})
 	store := testkit.CreateMockStore(t)
 	writer := testkit.NewTestKit(t, store)
 	writer.MustExec("insert into mysql.tidb values ('tikv_gc_safe_point', '20160102-15:04:05 -0700', '') on duplicate key update variable_value='20160102-15:04:05 -0700'")

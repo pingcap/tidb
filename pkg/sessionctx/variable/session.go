@@ -3086,6 +3086,12 @@ func getSnapshotTSState(s *SessionVars) (string, bool, error) {
 	if s.SnapshotTS == 0 {
 		return "", false, nil
 	}
+	// Preserve the client's spelling when it still denotes the effective timestamp.
+	if value, ok := s.systems[vardef.TiDBSnapshot]; ok {
+		if ts, err := parseTSFromNumberOrTime(s, value); err == nil && ts == s.SnapshotTS {
+			return value, true, nil
+		}
+	}
 	return strconv.FormatUint(s.SnapshotTS, 10), true, nil
 }
 

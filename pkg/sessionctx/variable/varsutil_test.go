@@ -704,6 +704,16 @@ func TestHelperFuncs(t *testing.T) {
 }
 
 func TestSessionStatesSystemVar(t *testing.T) {
+	t.Run("snapshot readback", func(t *testing.T) {
+		vars := NewSessionVars(nil)
+		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "+08:00"))
+		const snapshot = "2020-01-02 03:04:05.123456"
+		require.NoError(t, vars.SetSystemVar(vardef.TiDBSnapshot, snapshot))
+		value, keep, err := vars.GetSessionStatesSystemVar(vardef.TiDBSnapshot)
+		require.NoError(t, err)
+		require.True(t, keep)
+		require.Equal(t, snapshot, value)
+	})
 	t.Run("ambiguous read timestamp", func(t *testing.T) {
 		vars := NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "+00:00"))
@@ -715,27 +725,18 @@ func TestSessionStatesSystemVar(t *testing.T) {
 	})
 	t.Run("read timestamps", func(t *testing.T) {
 		for _, tt := range []struct {
-			name    string
-			sets    [][2]string
-			consume bool
+			name string
+			sets [][2]string
 		}{
-			{"snapshot timezone changed", [][2]string{{vardef.TiDBSnapshot, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}, false},
-			{"numeric snapshot", [][2]string{{vardef.TiDBSnapshot, "420000000000000123"}}, false},
-			{"read timestamp timezone changed", [][2]string{{vardef.TiDBTxnReadTS, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}, false},
-			{"snapshot replaces read timestamp", [][2]string{{vardef.TiDBTxnReadTS, "2020-01-02 03:04:05"}, {vardef.TiDBSnapshot, "2020-01-03 03:04:05"}}, false},
-			{"read timestamp replaces snapshot", [][2]string{{vardef.TiDBSnapshot, "2020-01-02 03:04:05"}, {vardef.TiDBTxnReadTS, "2020-01-03 03:04:05"}}, false},
-			{"consumed read timestamp", [][2]string{{vardef.TiDBTxnReadTS, "2020-01-02 03:04:05"}}, true},
-			{"cleared snapshot", [][2]string{{vardef.TiDBSnapshot, "2020-01-02 03:04:05"}, {vardef.TiDBSnapshot, ""}}, false},
+			{"snapshot timezone changed", [][2]string{{vardef.TiDBSnapshot, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}},
+			{"numeric snapshot", [][2]string{{vardef.TiDBSnapshot, "420000000000000123"}}},
+			{"read timestamp timezone changed", [][2]string{{vardef.TiDBTxnReadTS, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}},
 		} {
 			t.Run(tt.name, func(t *testing.T) {
 				source := NewSessionVars(nil)
 				require.NoError(t, source.SetSystemVar(vardef.TimeZone, "+08:00"))
 				for _, setting := range tt.sets {
 					require.NoError(t, source.SetSystemVar(setting[0], setting[1]))
-				}
-				if tt.consume {
-					source.TxnReadTS.UseTxnReadTS()
-					source.CleanupTxnReadTSIfUsed()
 				}
 				states := make(map[string]string)
 				for _, name := range []string{vardef.TimeZone, vardef.TiDBSnapshot, vardef.TiDBTxnReadTS} {
