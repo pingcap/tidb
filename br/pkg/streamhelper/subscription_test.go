@@ -318,13 +318,18 @@ func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	c := createFakeCluster(t, 4, true)
 	c.splitAndScatter(manyRegions(0, 1500)...)
 	installSubscribeSupport(c)
+	// Prepare checkpoints before starting the idle timer. This can take longer
+	// than the timeout under race detection and coverage instrumentation.
+	c.advanceCheckpoints()
 
 	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
 	defer sub.Drop()
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
-	c.advanceCheckpoints()
 	c.flushAll()
+	req.Eventually(func() bool {
+		return len(sub.Events()) == cap(sub.Events())
+	}, 3*time.Second, 10*time.Millisecond)
 
 	req.Eventually(func() bool {
 		err := sub.PendingErrors()
