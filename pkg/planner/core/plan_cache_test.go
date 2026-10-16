@@ -1216,6 +1216,10 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
+	for _, fn := range []string{"date_format", "str_to_date", "time_format", "from_unixtime"} {
+		err := tk.ExecToErr(fmt.Sprintf("select * from t where a = %s()", fn))
+		require.EqualError(t, err, fmt.Sprintf("[expression:1582]Incorrect parameter count in the call to native function '%s'", fn))
+	}
 	ctx := tk.Session().(sessionctx.Context)
 
 	s := parser.New()
