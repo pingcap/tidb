@@ -738,6 +738,20 @@ func TestTimeValidationWithTimezone(t *testing.T) {
 }
 
 func TestOrderByDependency(t *testing.T) {
+	for _, pair := range []struct{ charset, collation string }{
+		{vardef.CharacterSetConnection, vardef.CollationConnection},
+		{vardef.CharsetDatabase, vardef.CollationDatabase},
+		{vardef.CharacterSetServer, vardef.CollationServer},
+	} {
+		t.Run(pair.charset, func(t *testing.T) {
+			vars := map[string]string{pair.charset: "utf8mb4", pair.collation: "utf8mb4_general_ci"}
+			// Repeat to exercise different map iteration orders.
+			for range 100 {
+				names := variable.OrderByDependency(vars)
+				require.Less(t, slices.Index(names, pair.charset), slices.Index(names, pair.collation))
+			}
+		})
+	}
 	// Some other exceptions:
 	// - tidb_snapshot and tidb_read_staleness can not be set at the same time. It doesn't affect dependency.
 	vars := map[string]string{

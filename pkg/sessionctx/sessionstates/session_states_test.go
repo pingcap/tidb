@@ -194,6 +194,27 @@ func testSystemVars(t *testing.T, semVer string) {
 			expectedValue:   "1",
 		},
 		{
+			// Restore the charset before the non-default collation it would reset.
+			stmts:           []string{"set character_set_connection=utf8mb4", "set collation_connection=utf8mb4_general_ci"},
+			inSessionStates: true,
+			varName:         vardef.CollationConnection,
+			expectedValue:   "utf8mb4_general_ci",
+		},
+		{
+			// Restore the charset before the non-default collation it would reset.
+			stmts:           []string{"set character_set_database=utf8mb4", "set collation_database=utf8mb4_general_ci"},
+			inSessionStates: true,
+			varName:         vardef.CollationDatabase,
+			expectedValue:   "utf8mb4_general_ci",
+		},
+		{
+			// Restore the charset before the non-default collation it would reset.
+			stmts:           []string{"set character_set_server=utf8mb4", "set collation_server=utf8mb4_general_ci"},
+			inSessionStates: true,
+			varName:         vardef.CollationServer,
+			expectedValue:   "utf8mb4_general_ci",
+		},
+		{
 			// tx_read_only depends on tidb_enable_noop_functions.
 			stmts: []string{
 				"set @@global.tidb_enable_noop_functions=0",
