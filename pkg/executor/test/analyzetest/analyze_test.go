@@ -859,6 +859,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t add index idx(b)")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -874,11 +875,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			tk.MustExec("delete from mysql.analyze_jobs")
 			mockAnalyzeStatus := getMockKillAutoAnalyzeFailpoint(status)
 			require.NotEmpty(t, mockAnalyzeStatus)
-			mockAnalyzeStatusTerm := "return"
-			if status == "pending" {
-				mockAnalyzeStatusTerm = `sleep("100ms")`
-			}
-			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, mockAnalyzeStatusTerm))
+			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
 			defer func() {
 				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
 			}()
