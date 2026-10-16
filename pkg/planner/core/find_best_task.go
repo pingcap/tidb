@@ -917,10 +917,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		lhsFullMatch := isFullIndexMatch(lhs)
 		rhsFullMatch := isFullIndexMatch(rhs)
 		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount, preferRange)
-		if pseudoResult > 0 && totalSum >= 0 {
+		// Predicate counts alone cannot justify pruning an index on different columns.
+		// The winner must also strictly dominate the other path's access conditions.
+		if pseudoResult > 0 && comparable1 && accessResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
 		}
-		if pseudoResult < 0 && totalSum <= 0 {
+		if pseudoResult < 0 && comparable1 && accessResult < 0 && totalSum <= 0 {
 			return pseudoResult, rhsPseudo
 		}
 	}
