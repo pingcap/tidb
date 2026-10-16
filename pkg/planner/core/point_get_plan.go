@@ -1468,34 +1468,50 @@ func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.Physical
 	return util.NewIntHandleCols(handleCol)
 }
 
-// TODO: Remove this, by enabling all types of partitioning
-// and update/add tests
-func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *ast.CIStr {
-	pi := tbl.GetPartitionInfo()
-	if pi == nil {
-		return nil
-	}
-	if pi.Type != ast.PartitionTypeHash && pi.Type != ast.PartitionTypeKey {
-		return nil
-	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(context.Background(), tbl.ID)
-	if !ok {
-		return nil
-	}
-	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(base.PartitionTable).PartitionExpr()
-	if pi.Type == ast.PartitionTypeKey {
-		// used to judge whether the key partition contains only one field
-		if len(pi.Columns) != 1 {
-			return nil
+// canUsePartitionBatchPointGet requires enough raw key values to locate a local partition.
+func canUsePartitionBatchPointGet(ctx base.PlanContext, tbl *model.TableInfo, index *model.IndexInfo) bool {
+	if index != nil {
+		for _, idxCol := range index.Columns {
+			col := tbl.Columns[idxCol.Offset]
+			if col.FieldType.EvalType() == types.ETString && !collate.IsBinCollation(col.GetCollate()) {
+				// TODO: Preserve typed original values separately from collation sort keys,
+				// both when building CBO ranges and rebuilding cached ranges. Sort keys
+				// cannot be used as row values for partition routing or encoded again.
+				return false
+			}
 		}
-		return &pi.Columns[0]
+		if index.Global {
+			return true
+		}
 	}
-	expr := partitionExpr.OrigExpr
-	col, ok := expr.(*ast.ColumnNameExpr)
+	tblObj, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).TableByID(context.Background(), tbl.ID)
 	if !ok {
-		return nil
+		return false
 	}
-	return &col.Name.Name
+	pTbl, ok := tblObj.(table.PartitionedTable)
+	if !ok {
+		return false
+	}
+	for _, id := range pTbl.GetPartitionColumnIDs() {
+		covered := false
+		if index == nil {
+			// A hidden rowid never determines a partition. Its caller must supply
+			// an explicitly selected single partition instead.
+			if !tbl.PKIsHandle {
+				return true
+			}
+			covered = tbl.GetPkColInfo().ID == id
+		} else {
+			for _, idxCol := range index.Columns {
+				if tbl.Columns[idxCol.Offset].ID == id {
+					covered = true
+					break
+				}
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
 }

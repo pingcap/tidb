@@ -736,14 +736,19 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+	return decodeRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk, rd, 0)
+}
+
+func decodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
+	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder, physicalID int64) error {
 	if rowcodec.IsNewFormat(rowVal) {
 		return rd.DecodeToChunk(rowVal, 0, handle, chk)
 	}
-	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
+	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk, physicalID)
 }
 
 func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
-	rowVal []byte, chk *chunk.Chunk) error {
+	rowVal []byte, chk *chunk.Chunk, physicalID int64) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
 	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
@@ -761,6 +766,10 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	}
 	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
 	for i, col := range schema.Columns {
+		if col.ID == model.ExtraPhysTblID && physicalID != 0 {
+			chk.AppendInt64(i, physicalID)
+			continue
+		}
 		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
 			chk.AppendNull(i)

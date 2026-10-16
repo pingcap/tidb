@@ -175,3 +175,63 @@ select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and 
 col1	col2	col3
 1	a	1
 drop table tkey;
+create table t_partition_dirty(k int, p int, v int,
+primary key(k,p) clustered, unique key uk(k) global)
+partition by range(p) (partition p0 values less than(10),
+partition p1 values less than(20), partition p2 values less than(maxvalue));
+insert into t_partition_dirty values(1,1,10),(10,11,20);
+set tidb_partition_prune_mode='dynamic';
+set tidb_opt_fix_control='44262:ON';
+begin;
+insert into t_partition_dirty values(20,21,30);
+update t_partition_dirty set v=11 where k=1;
+explain format='plan_tree' select * from t_partition_dirty use index(primary)
+where (k=1 and p=1) or (k=10 and p=11) or (k=20 and p=21);
+id	task	access object	operator info
+Projection	root		executor__batch_point_get.t_partition_dirty.k, executor__batch_point_get.t_partition_dirty.p, executor__batch_point_get.t_partition_dirty.v
+└─Batch_Point_Get	root	table:t_partition_dirty, partition:p0,p1,p2, clustered index:PRIMARY(k, p)	keep order:false, desc:false
+select * from t_partition_dirty use index(primary)
+where (k=1 and p=1) or (k=10 and p=11) or (k=20 and p=21);
+k	p	v
+1	1	11
+10	11	20
+20	21	30
+explain format='plan_tree' select * from t_partition_dirty use index(uk)
+where (k=1 or k=10 or k=20) and v=11;
+id	task	access object	operator info
+Projection	root		executor__batch_point_get.t_partition_dirty.k, executor__batch_point_get.t_partition_dirty.p, executor__batch_point_get.t_partition_dirty.v
+└─Selection	root		eq(executor__batch_point_get.t_partition_dirty.v, 11)
+  └─Batch_Point_Get	root	table:t_partition_dirty, index:uk(k)	keep order:false, desc:false
+select * from t_partition_dirty use index(uk)
+where (k=1 or k=10 or k=20) and v=11;
+k	p	v
+1	1	11
+savepoint before_move;
+delete from t_partition_dirty where k=10;
+update t_partition_dirty set p=11 where k=1;
+select * from t_partition_dirty use index(primary)
+where (k=1 and p=1) or (k=1 and p=11) or (k=10 and p=11) or (k=20 and p=21);
+k	p	v
+1	11	11
+20	21	30
+select * from t_partition_dirty use index(uk) where k=1 or k=10 or k=20;
+k	p	v
+1	11	11
+20	21	30
+select * from t_partition_dirty partition(p0) use index(uk) where k=1 or k=20;
+k	p	v
+select * from t_partition_dirty partition(p1) use index(uk) where k=1 or k=20;
+k	p	v
+1	11	11
+rollback to savepoint before_move;
+select * from t_partition_dirty use index(uk) where k=1 or k=10 or k=20;
+k	p	v
+1	1	11
+10	11	20
+20	21	30
+rollback;
+select * from t_partition_dirty use index(uk) where k=1 or k=10 or k=20;
+k	p	v
+1	1	10
+10	11	20
+drop table t_partition_dirty;

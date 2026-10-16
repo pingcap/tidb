@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -156,15 +157,15 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 			tk.MustExec("CREATE TABLE t " + tblDef + " " + part.partSQL + " " + comment)
 			tk.MustExec("insert into t select * from tNorm " + comment)
 			// Don't require global stats for using dynamic prune mode
-			tk.MustExec(`set tidb_opt_fix_control='44262:ON' ` + comment)
+			tk.MustExec(`set tidb_opt_fix_control='44262:ON,44830:ON' ` + comment)
 
 			// Possible variations:
 			// - static/dynamic tidb_partition_prune_mode
 
 			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest, isCaseSensitive)
 			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest, isCaseSensitive)
-			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet, isCaseSensitive)
-			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil, isCaseSensitive)
+			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && (!useStringPK || collate.IsBinCollation(tk.MustQuery("show full columns from t").Rows()[0][2].(string))), isCaseSensitive)
+			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil && (!useStringPK || collate.IsBinCollation(tk.MustQuery("show full columns from t").Rows()[0][2].(string))), isCaseSensitive)
 
 			tk.MustExec("drop table t")
 		}
@@ -172,17 +173,17 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 	}
 }
 
-/* TODO:
-- KEY partitioning on multiple columns NOT SUPPORTED!
+/* TODO: Extend the randomized full-cover tests with these partitioning cases:
+- KEY partitioning on multiple columns
 (LIST needs its own tailored test, due to each value needs to be
 defined).
 - LIST partitioning on a single column
-- LIST partitioning on an expression (one or more columns) NOT SUPPORTED?
+- LIST partitioning on an expression (one or more columns)
 - LIST COLUMNS partitioning on a single column, varchar
-- LIST COLUMNS partitioning on multiple columns NOT SUPPORTED!
-- RANGE partitioning on other expressions or multiple columns NOT SUPPORTED?
+- LIST COLUMNS partitioning on multiple columns
+- RANGE partitioning on other expressions or multiple columns
 - RANGE COLUMNS partitioning on a single column, datetime
-- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
+- RANGE COLUMNS partitioning on multiple columns
 */
 
 func TestPartitionVarcharFullCover(t *testing.T) {
@@ -217,11 +218,11 @@ func TestPartitionVarcharFullCover(t *testing.T) {
 	partitionSQL := []partSQL{
 		{
 			"partition by range columns (a) (partition p0 values less than ('k'), partition p1 values less than ('x'))",
-			false,
+			true,
 		},
 		{
 			"partition by key (a) partitions 7",
-			false,
+			true,
 		},
 	}
 	testPartitionFullCover(t, tableDefSQL, partitionSQL, true)
@@ -264,7 +265,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 		},
 		{
 			"partition by range (floor(a*0.5)*2) (partition p0 values less than (1000000), partition p1 values less than (" + strconv.Itoa(maxRange) + "))",
-			false,
+			true,
 		},
 		{
 			"partition by hash (a) partitions 7",
@@ -272,12 +273,11 @@ func TestPartitionIntFullCover(t *testing.T) {
 		},
 		{
 			"partition by hash (floor(a*0.5)) partitions 3",
-			// This is not yet enabled, and blocked by canConvertPointGet
-			false,
+			true,
 		},
 		{
 			"partition by key (a) partitions 7",
-			false,
+			true,
 		},
 	}
 	testPartitionFullCover(t, tableDefSQL, partitionSQL, false)
@@ -413,7 +413,7 @@ func getRandCols(seededRand *rand.Rand) ([]string, bool) {
 
 func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[any]string, filler, currTest string, canUseBatchPointGet, isCaseSensitive bool) {
 	// Test prepared statements
-	cols, hasSpaceCol := getRandCols(seededRand)
+	cols, _ := getRandCols(seededRand)
 	queries := []struct {
 		sql               string
 		usesBatchPointGet bool
@@ -421,20 +421,16 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		{
 			"select " + strings.Join(cols, ",") + " from t where a IN (?,?,?)",
 			true,
-			// Cannot convert to [Batch]Point get, due to dynamic pruning
 		},
 		{
 			"select " + strings.Join(cols, ",") + " from t where a = ? or a = ? or a = ?",
-			// See canConvertPointGet, just needs to be enabled :)
-			false,
+			true,
 		},
 		{
 			// This uses an 'AccessCondition' for testing more
 			// code paths
 			"select " + strings.Join(cols, ",") + " from t where a IN (?,?,?) and b is not null",
-			// Currently not enabled, since not only an IN (in tryWhereIn2BatchPointGet)
-			// or have multiple values which does not yet enabled through canConvertPointGet.
-			false,
+			true,
 		},
 	}
 	for i, q := range queries {
@@ -455,8 +451,7 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		res := tk.MustQuery(fmt.Sprintf("explain for connection %d "+comment, tkProcess.ID))
 		if q.usesBatchPointGet &&
 			len(pointGetExplain) > 0 &&
-			canUseBatchPointGet &&
-			!hasSpaceCol {
+			canUseBatchPointGet {
 			res.MultiCheckContain(
 				append([]string{"Batch_Point_Get"}, pointGetExplain...))
 		} else {
@@ -468,13 +463,13 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		if !tk.Session().GetSessionVars().FoundInPlanCache {
 			warn := tk.MustQuery("show warnings " + comment)
-			// previous plan removed at least one of the duplicate
-			// argument.
+			// Duplicate values or partition pruning can shorten a cached key list.
+			// The CBO path also validates rebuilt point ranges before reuse.
 			require.Equal(t, "Warning", warn.Rows()[0][0])
 			require.Equal(t, "1105", warn.Rows()[0][1])
 			// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff
 			// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, IndexValue length diff
-			warn.MultiCheckContain([]string{"skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, ", " length diff"})
+			warn.CheckContain("skip plan-cache: plan rebuild failed, rebuild to get an unsafe range")
 		}
 		tk.MustExec(`deallocate prepare stmt`)
 	}
@@ -516,7 +511,7 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, 
 	usePlanCache := len(pointGetExplain) == 0
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 	// TODO: Fix columns
-	cols, hasSpaceCol := getRandCols(seededRand)
+	cols, _ := getRandCols(seededRand)
 	sql := `select ` + strings.Join(cols, ",") + ` from t where `
 	queries := []struct {
 		sql               string
@@ -531,17 +526,14 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, 
 
 		{
 			sql + " a = %s or a = %s or a = %s",
-			// See canConvertPointGet, just needs to be enabled :)
-			false,
+			true,
 			true,
 		},
 		{
 			// This uses an 'AccessCondition' for testing more
 			// code paths
 			sql + " a IN (%s,%s,%s) and b is not null",
-			// Currently not enabled, since not only an IN (in tryWhereIn2BatchPointGet)
-			// or have multiple values which does not yet enabled through canConvertPointGet.
-			false,
+			true,
 			//
 			false,
 		},
@@ -562,7 +554,7 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, 
 			tk.MustQuery("show warnings " + comment).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 		}
 		res := tk.MustQuery(fmt.Sprintf("explain %s", query))
-		if len(pointGetExplain) > 0 && canUseBatchPointGet && q.usesBatchPointGet && !hasSpaceCol {
+		if len(pointGetExplain) > 0 && canUseBatchPointGet && q.usesBatchPointGet {
 			res.MultiCheckContain(
 				append([]string{"Batch_Point_Get"}, pointGetExplain...))
 		} else {
@@ -588,4 +580,51 @@ func randString(r *rand.Rand, minv, maxv int) string {
 		}
 	}
 	return string(buf)
+}
+
+func TestPartitionBatchPointGetDirtyPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_fix_control='44830:ON'")
+	tk.MustExec("create table t_dirty_cache(k int, p int, v int, primary key(k,p) clustered, unique key uk(k) global) partition by range(p) (partition p0 values less than(10), partition p1 values less than(20), partition p2 values less than(maxvalue))")
+	tk.MustExec("insert into t_dirty_cache values(1,1,10),(10,11,20)")
+	tk.MustExec("prepare global_stmt from 'select * from t_dirty_cache use index(uk) where k=? or k=? or k=?'")
+	tk.MustExec("prepare local_stmt from 'select * from t_dirty_cache use index(primary) where (k=? and p=?) or (k=? and p=?) or (k=? and p=?)'")
+	tk.MustExec("set @a=1,@b=10,@c=20,@p=1,@q=11,@r=21")
+	check := func(cached bool, rows ...string) {
+		for _, query := range []string{"execute global_stmt using @a,@b,@c", "execute local_stmt using @a,@p,@b,@q,@c,@r"} {
+			tk.MustQuery(query).Sort().Check(testkit.Rows(rows...))
+			require.Equal(t, cached, tk.Session().GetSessionVars().FoundInPlanCache)
+			info := tk.Session().ShowProcess()
+			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{info}})
+			tk.MustQuery(fmt.Sprintf("explain for connection %d", info.ID)).CheckContain("Batch_Point_Get")
+		}
+	}
+	tk.MustExec("begin")
+	check(false, "1 1 10", "10 11 20")
+	check(true, "1 1 10", "10 11 20")
+	tk.MustExec("insert into t_dirty_cache values(20,21,30)")
+	// Clean-to-dirty changes the cache key. Later writes keep that dirty key.
+	check(false, "1 1 10", "10 11 20", "20 21 30")
+	check(true, "1 1 10", "10 11 20", "20 21 30")
+	tk.MustExec("update t_dirty_cache set p=11,v=99 where k=1")
+	tk.MustExec("set @p=11")
+	check(true, "1 11 99", "10 11 20", "20 21 30")
+	tk.MustExec("delete from t_dirty_cache where k=10")
+	check(true, "1 11 99", "20 21 30")
+	tk.MustExec("rollback")
+	tk.MustExec("set @p=1")
+	check(false, "1 1 10", "10 11 20")
+	check(true, "1 1 10", "10 11 20")
+
+	tk.MustExec("create table t_rowid_cache(a int) partition by list(a) (partition p0 values in(0,1), partition p1 values in(2,3))")
+	tk.MustExec("insert into t_rowid_cache values(0),(0),(1),(1),(2),(2),(3),(3)")
+	tk.MustExec("prepare rowid_stmt from 'select _tidb_rowid,a from t_rowid_cache partition(p1) where _tidb_rowid=? or _tidb_rowid=?'")
+	tk.MustExec("set @a=5,@b=7")
+	tk.MustQuery("execute rowid_stmt using @a,@b").Sort().Check(testkit.Rows("5 2", "7 3"))
+	tk.MustExec("set @a=6,@b=8")
+	tk.MustQuery("execute rowid_stmt using @a,@b").Sort().Check(testkit.Rows("6 2", "8 3"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+
 }

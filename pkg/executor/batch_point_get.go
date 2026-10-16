@@ -65,12 +65,15 @@ type BatchPointGetExec struct {
 	lock           bool
 	waitTime       int64
 	inited         uint32
-	values         [][]byte
-	index          int
-	rowDecoder     *rowcodec.ChunkDecoder
-	keepOrder      bool
-	desc           bool
-	batchGetter    kv.BatchGetter
+	// rowPhysIDs is compacted with values, unlike the IDs used to build requests.
+	rowPhysIDs      []int64
+	needsPhysicalID bool
+	values          [][]byte
+	index           int
+	rowDecoder      *rowcodec.ChunkDecoder
+	keepOrder       bool
+	desc            bool
+	batchGetter     kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -97,6 +100,8 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
+	e.values = nil
+	e.rowPhysIDs = nil
 	sessVars := e.Ctx().GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	txn, err := e.Ctx().Txn(false)
@@ -209,6 +214,8 @@ func (e *BatchPointGetExec) Close() error {
 	}
 	e.inited = 0
 	e.index = 0
+	e.values = nil
+	e.rowPhysIDs = nil
 	return nil
 }
 
@@ -233,7 +240,11 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
+		var physicalID int64
+		if e.needsPhysicalID {
+			physicalID = e.rowPhysIDs[e.index]
+		}
+		err := decodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder, physicalID)
 		if err != nil {
 			return err
 		}
@@ -254,6 +265,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string]kv.ValueEntry
 	var indexKeys []kv.Key
+	// Keep the actual index key paired with each found handle, even if earlier
+	// requested keys were absent. RR still locks all requested index keys.
+	var rowIndexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
 	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
@@ -358,6 +372,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 			}
 			e.handles = append(e.handles, handle)
+			rowIndexKeys = append(rowIndexKeys, key)
 			if rc {
 				indexKeys = append(indexKeys, key)
 			}
@@ -413,6 +428,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 	keys := make([]kv.Key, 0, len(e.handles))
 	newHandles := make([]kv.Handle, 0, len(e.handles))
+	matchedIndexKeys := rowIndexKeys[:0]
 	for i, handle := range e.handles {
 		tID := e.tblInfo.ID
 		if e.singlePartID != 0 {
@@ -428,8 +444,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys = append(keys, key)
 		newHandles = append(newHandles, handle)
+		if len(rowIndexKeys) > 0 {
+			matchedIndexKeys = append(matchedIndexKeys, rowIndexKeys[i])
+		}
 	}
 	e.handles = newHandles
+	rowIndexKeys = matchedIndexKeys
 
 	var values map[string]kv.ValueEntry
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
@@ -453,6 +473,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
 	e.values = make([][]byte, 0, len(values))
+	if e.needsPhysicalID {
+		e.rowPhysIDs = make([]int64, 0, len(values))
+	}
 	for i, key := range keys {
 		val := values[string(key)]
 		if val.IsValueEmpty() {
@@ -463,7 +486,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 						return key
 					},
 					IndexEncode: func(_ *consistency.RecordData) kv.Key {
-						return indexKeys[i]
+						return rowIndexKeys[i]
 					},
 					Tbl:             e.tblInfo,
 					Idx:             e.idxInfo,
@@ -479,14 +502,17 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			continue
 		}
 		e.values = append(e.values, val.Value)
+		if e.needsPhysicalID {
+			e.rowPhysIDs = append(e.rowPhysIDs, tablecodec.DecodeTableID(key))
+		}
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
 			// when e.handles is set in builder directly, index should be primary key and the plan is CommonHandleRead
 			// with clustered index enabled, indexKeys is empty in this situation
 			// lock primary key for clustered index table is redundant
-			if len(indexKeys) != 0 {
-				existKeys = append(existKeys, indexKeys[i])
+			if len(rowIndexKeys) != 0 {
+				existKeys = append(existKeys, rowIndexKeys[i])
 			}
 		}
 	}

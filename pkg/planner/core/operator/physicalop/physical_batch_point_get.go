@@ -779,7 +779,7 @@ func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr)
 }
 
 // Map each index value to Partition ID
-func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
+func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) ([]int, error) {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 	intest.Assert(ok)
@@ -795,16 +795,16 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 		}
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
-		if err != nil {
-			// TODO: return errors others than No Matching Partition.
-			// Skip on any error, like:
-			// No matching partition, overflow etc.
+		if table.ErrNoPartitionForGivenValue.Equal(err) {
 			idxs = append(idxs, -1)
 			continue
 		}
+		if err != nil {
+			return nil, err
+		}
 		idxs = append(idxs, pIdx)
 	}
-	return idxs
+	return idxs, nil
 }
 
 // PrunePartitionsAndValues will check which partition to use
@@ -833,7 +833,10 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		clear(p.IndexValues[len(filteredVals):])
 		p.IndexValues = filteredVals
 		if pi != nil {
-			partIdxs := p.getPartitionIdxs(sctx)
+			partIdxs, err := p.getPartitionIdxs(sctx)
+			if err != nil {
+				return nil, false, err
+			}
 			partitionsFound := 0
 			for i, idx := range partIdxs {
 				if idx < 0 ||
@@ -877,7 +880,8 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			dedup.Set(handle, true)
 			handles = append(handles, handle)
 		}
-		if pi != nil {
+		if pi != nil && !(p.SinglePartition && !p.TblInfo.PKIsHandle) {
+			// A rowid in a known partition needs no partition-expression evaluation.
 			is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 			tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 			intest.Assert(ok)
@@ -960,7 +964,10 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		clear(p.IndexValues[len(filteredValues):])
 		p.IndexValues = filteredValues
 		if pi != nil {
-			partIdxs := p.getPartitionIdxs(sctx)
+			partIdxs, err := p.getPartitionIdxs(sctx)
+			if err != nil {
+				return nil, false, err
+			}
 			filteredHandles := handles[:0]
 			filteredValues = p.IndexValues[:0]
 			partitionsFound := 0

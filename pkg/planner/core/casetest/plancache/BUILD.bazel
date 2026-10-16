@@ -17,7 +17,7 @@ go_test(
         "//pkg/planner/core:plan_clone_utils.go",
     ],
     flaky = True,
-    shard_count = 49,
+    shard_count = 50,
     deps = [
         "//pkg/expression",
         "//pkg/infoschema",
@@ -45,6 +45,7 @@ go_test(
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util/benchdaily",
+        "//pkg/util/collate",
         "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

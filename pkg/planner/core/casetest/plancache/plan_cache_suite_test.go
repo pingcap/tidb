@@ -1959,6 +1959,33 @@ func TestInstancePlanCacheAcrossSession(t *testing.T) {
 	tk2.MustExecWithContext(ctx, `set @a=4`)
 	tk2.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
 	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk1.MustExec("create table t_instance_partition(k int, p int, v int, primary key(k,p) clustered, unique key uk(k) global) partition by range(p) (partition p0 values less than(10), partition p1 values less than(maxvalue))")
+	tk1.MustExec("insert into t_instance_partition values(1,1,10),(10,11,20)")
+	for _, tk := range []*testkit.TestKit{tk1, tk2} {
+		tk.MustExecWithContext(ctx, "set tidb_opt_fix_control='44830:ON'")
+		tk.MustExecWithContext(ctx, "prepare part_st from 'select * from t_instance_partition use index(uk) where k=? or k=?'")
+		tk.MustExecWithContext(ctx, "set @a=1,@b=10")
+		tk.MustExecWithContext(ctx, "begin")
+	}
+	tk1.MustExecWithContext(ctx, "update t_instance_partition set v=11 where k=1")
+	tk2.MustExecWithContext(ctx, "update t_instance_partition set v=22 where k=10")
+	tk1.MustQueryWithContext(ctx, "execute part_st using @a,@b").Sort().Check(testkit.Rows("1 1 11", "10 11 20"))
+	require.False(t, tk1.Session().GetSessionVars().FoundInPlanCache)
+	info := tk1.Session().ShowProcess()
+	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{info}})
+	tk1.MustQuery(fmt.Sprintf("explain for connection %d", info.ID)).CheckContain("Batch_Point_Get")
+	// The shared dirty plan reads each session's own buffer.
+	tk2.MustQueryWithContext(ctx, "execute part_st using @a,@b").Sort().Check(testkit.Rows("1 1 10", "10 11 22"))
+	tk2.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk1.MustExecWithContext(ctx, "update t_instance_partition set p=11 where k=1")
+	tk1.MustQueryWithContext(ctx, "execute part_st using @a,@b").Sort().Check(testkit.Rows("1 11 11", "10 11 20"))
+	tk1.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk2.MustQueryWithContext(ctx, "execute part_st using @a,@b").Sort().Check(testkit.Rows("1 1 10", "10 11 22"))
+	tk2.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk1.MustExecWithContext(ctx, "rollback")
+	tk2.MustExecWithContext(ctx, "rollback")
+
 }
 
 func runPreparedPlanCacheForUpdateInTxn(t *testing.T, tk *testkit.TestKit) {
