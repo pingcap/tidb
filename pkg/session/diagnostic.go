@@ -121,10 +121,6 @@ func createDiagnosticSessions(store kv.Storage, dom *domain.Domain) ([]*session,
 				s.Close()
 			}
 		}
-		// The binding maintenance worker normally owns this cleanup.
-		if h := dom.BindingHandle(); h != nil {
-			h.Close()
-		}
 		domap.Delete(store)
 	})
 	for i := range sessions {

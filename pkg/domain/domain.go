@@ -1641,8 +1641,9 @@ func (do *Domain) LoadBindingHandle() error {
 	return do.BindingHandle().LoadFromStorageToCache(true, false)
 }
 
-// LoadBindingLoop loads bindings and periodically refreshes the cache without
-// starting ownership, GC, or usage persistence. The caller owns handle cleanup.
+// LoadBindingLoop loads bindings and periodically refreshes the cache. It only
+// starts the LoadFromStorageToCache path; unlike InitBindingHandle, it does not
+// start binding ownership, GC, or usage persistence.
 func (do *Domain) LoadBindingLoop() error {
 	if err := do.LoadBindingHandle(); err != nil {
 		return err
@@ -1658,6 +1659,7 @@ func (do *Domain) LoadBindingLoop() error {
 		for {
 			select {
 			case <-do.exit:
+				do.BindingHandle().Close()
 				return
 			case <-ticker.C:
 				if err := do.BindingHandle().LoadFromStorageToCache(false, false); err != nil {
