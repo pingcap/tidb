@@ -2175,9 +2175,7 @@ func (do *Domain) loadStatsWorker() {
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 
-	// Inherit Domain cancellation even if Close runs before this worker starts.
-	ctx, cancelFunc := context.WithCancel(do.ctx)
-	defer cancelFunc()
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
