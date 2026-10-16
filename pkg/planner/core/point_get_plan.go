@@ -1471,15 +1471,6 @@ func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.Physical
 // canUsePartitionBatchPointGet requires enough raw key values to locate a local partition.
 func canUsePartitionBatchPointGet(ctx base.PlanContext, tbl *model.TableInfo, index *model.IndexInfo) bool {
 	if index != nil {
-		for _, idxCol := range index.Columns {
-			col := tbl.Columns[idxCol.Offset]
-			if col.FieldType.EvalType() == types.ETString && !collate.IsBinCollation(col.GetCollate()) {
-				// TODO: Preserve typed original values separately from collation sort keys,
-				// both when building CBO ranges and rebuilding cached ranges. Sort keys
-				// cannot be used as row values for partition routing or encoded again.
-				return false
-			}
-		}
 		if index.Global {
 			return true
 		}

@@ -154,3 +154,31 @@ rollback;
 --sorted_result
 select * from t_partition_dirty use index(uk) where k=1 or k=10 or k=20;
 drop table t_partition_dirty;
+
+# Partition CBO keys retain typed strings until routing and KV encoding.
+create table t_partition_coll(a varchar(20), p int, v int,
+  primary key(a,p) clustered, unique key uk(a) global)
+collate=utf8mb4_unicode_ci partition by range(p)
+  (partition p0 values less than(10), partition p1 values less than(maxvalue));
+insert into t_partition_coll values('Alpha',1,1),('Zulu',11,2);
+begin;
+update t_partition_coll set p=11,v=3 where a='Alpha';
+explain format='plan_tree' select * from t_partition_coll use index(primary)
+  where (a='alpha ' and p=11) or (a='Zulu' and p=11);
+--sorted_result
+select * from t_partition_coll use index(primary)
+  where (a='alpha ' and p=11) or (a='Zulu' and p=11);
+explain format='plan_tree' select * from t_partition_coll use index(uk)
+  where (a='Alpha' or a='alpha ' or a='Zulu') and v>0;
+--sorted_result
+select * from t_partition_coll use index(uk)
+  where (a='Alpha' or a='alpha ' or a='Zulu') and v>0;
+rollback;
+drop table t_partition_coll;
+create table t_partition_coll(a varchar(20) primary key clustered, v int)
+  charset=gbk collate=gbk_bin partition by key(a) partitions 3;
+insert into t_partition_coll values('中',1),('国',2);
+explain format='plan_tree' select * from t_partition_coll where (a='中' or a='国') and v>0;
+--sorted_result
+select * from t_partition_coll where (a='中' or a='国') and v>0;
+drop table t_partition_coll;

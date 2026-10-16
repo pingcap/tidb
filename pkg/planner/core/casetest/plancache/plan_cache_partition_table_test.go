@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,8 +163,8 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 
 			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest, isCaseSensitive)
 			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest, isCaseSensitive)
-			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && (!useStringPK || collate.IsBinCollation(tk.MustQuery("show full columns from t").Rows()[0][2].(string))), isCaseSensitive)
-			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil && (!useStringPK || collate.IsBinCollation(tk.MustQuery("show full columns from t").Rows()[0][2].(string))), isCaseSensitive)
+			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet, isCaseSensitive)
+			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil, isCaseSensitive)
 
 			tk.MustExec("drop table t")
 		}

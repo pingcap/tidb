@@ -180,6 +180,69 @@ func TestPartitionBatchPointGetDirtyTxn(t *testing.T) {
 	}
 }
 
+func TestPartitionBatchPointGetCollation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, clustered := range []string{"clustered", "nonclustered"} {
+		for _, charset := range []struct{ charset, collation, first, second, equivalent, boundary string }{
+			{"utf8mb4", "utf8mb4_unicode_ci", "Alpha", "Zulu", "alpha ", "m"},
+			{"gbk", "gbk_bin", "中", "国", "中", "国"},
+		} {
+			for _, partition := range []string{
+				fmt.Sprintf("range columns(a) (partition p0 values less than('%s'), partition p1 values less than(maxvalue))", charset.boundary),
+				fmt.Sprintf("list columns(a) (partition p0 values in('%s'), partition p1 values in('%s'))", charset.first, charset.second),
+				"key(a) partitions 3",
+			} {
+				t.Run(clustered+"/"+charset.collation+"/"+partition, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+					tk.MustExec("set tidb_opt_fix_control='44830:ON'")
+					tk.MustExec("drop table if exists t_coll")
+					tk.MustExec(fmt.Sprintf("create table t_coll(a varchar(20), v int, primary key(a) %s) charset=%s collate=%s partition by %s", clustered, charset.charset, charset.collation, partition))
+					tk.MustExec(fmt.Sprintf("insert into t_coll values('%s',1),('%s',2)", charset.first, charset.second))
+					query := fmt.Sprintf("select * from t_coll where (a='%s' or a='%s' or a='%s') and v>0", charset.first, charset.equivalent, charset.second)
+					tk.MustHavePlan(query, "Batch_Point_Get")
+					expected := testkit.Rows(charset.first+" 1", charset.second+" 2")
+					tk.MustQuery(query).Sort().Check(expected)
+					tk.MustExec("prepare coll from 'select * from t_coll where (a=? or a=?) and v>0'")
+					tk.MustExec(fmt.Sprintf("set @a='%s', @b='%s'", charset.equivalent, charset.second))
+					tk.MustQuery("execute coll using @a,@b").Sort().Check(expected)
+					tk.MustQuery("execute coll using @a,@b").Sort().Check(expected)
+					tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+					tk.MustExec("begin")
+					tk.MustExec(fmt.Sprintf("delete from t_coll where a='%s'", charset.first))
+					tk.MustExec(fmt.Sprintf("update t_coll set v=3 where a='%s'", charset.second))
+					tk.MustHavePlan(query, "Batch_Point_Get")
+					tk.MustQuery(query).Check(testkit.Rows(charset.second + " 3"))
+					tk.MustQuery("execute coll using @a,@b").Check(testkit.Rows(charset.second + " 3"))
+					// Move the remaining row to the deleted key, including LIST/KEY routing.
+					tk.MustExec(fmt.Sprintf("update t_coll set a='%s' where a='%s'", charset.first, charset.second))
+					tk.MustQuery(query).Check(testkit.Rows(charset.first + " 3"))
+					tk.MustExec(fmt.Sprintf("update t_coll set a='%s' where a='%s'", charset.second, charset.first))
+					tk.MustExec(fmt.Sprintf("insert into t_coll values('%s',4)", charset.first))
+					tk.MustExec(fmt.Sprintf("set @a='%s', @b='%s'", charset.second, charset.equivalent))
+					tk.MustQuery("execute coll using @a,@b").Sort().Check(testkit.Rows(charset.first+" 4", charset.second+" 3"))
+					tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+					tk.MustExec("rollback")
+					tk.MustQuery(query).Sort().Check(expected)
+					tk.MustExec("drop table t_coll")
+				})
+			}
+		}
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_coll")
+	tk.MustExec("create table t_coll(a varchar(20), p int, v int, primary key(a,p) clustered, unique key uk(a) global) collate=utf8mb4_unicode_ci partition by range(p) (partition p0 values less than(10), partition p1 values less than(maxvalue))")
+	tk.MustExec("insert into t_coll values('Alpha',1,1),('Zulu',11,2)")
+	tk.MustExec("begin")
+	tk.MustExec("update t_coll set p=11,v=3 where a='Alpha'")
+	query := "select * from t_coll use index(uk) where (a='alpha ' or a='Zulu') and v>0"
+	tk.MustHavePlan(query, "Batch_Point_Get")
+	tk.MustQuery(query).Sort().Check(testkit.Rows("Alpha 11 3", "Zulu 11 2"))
+	tk.MustExec("rollback")
+}
+
 func TestPartitionBatchPointGetRouting(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -207,11 +270,7 @@ func TestPartitionBatchPointGetRouting(t *testing.T) {
 			" partition by range columns(a) (partition p0 values less than('m'), partition p1 values less than(maxvalue))")
 		tk.MustExec("insert into t_route values('a',1),('z',2)")
 		query := "select * from t_route where (a='a' or a='z') and b>0"
-		if collation == "utf8mb4_bin" {
-			tk.MustHavePlan(query, "Batch_Point_Get")
-		} else {
-			tk.MustNotHavePlan(query, "Batch_Point_Get")
-		}
+		tk.MustHavePlan(query, "Batch_Point_Get")
 		tk.MustQuery(query).Sort().Check(testkit.Rows("a 1", "z 2"))
 		tk.MustExec("drop table t_route")
 	}

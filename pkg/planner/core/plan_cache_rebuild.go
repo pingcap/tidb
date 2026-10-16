@@ -333,7 +333,12 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *physicalop.BatchPointGetPl
 			return errors.New("rebuild to get an unsupported partition point key")
 		}
 		if x.IndexInfo != nil {
-			ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.GetCtx().GetRangerCtx(), x.AccessConditions, x.IdxCols, x.IdxColLens, 0)
+			buildRanges := ranger.DetachCondAndBuildRangeForIndex
+			if x.TblInfo.GetPartitionInfo() != nil {
+				// Match the typed original IndexValues used when the CBO plan is built.
+				buildRanges = ranger.DetachCondAndBuildRangeForPartition
+			}
+			ranges, err := buildRanges(x.GetCtx().GetRangerCtx(), x.AccessConditions, x.IdxCols, x.IdxColLens, 0)
 			if err != nil {
 				return err
 			}
