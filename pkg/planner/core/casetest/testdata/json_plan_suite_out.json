@@ -101,7 +101,7 @@
         "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
         "JSONPlan": [
           {
-            "id": "MergeJoin_10",
+            "id": "MergeJoin_11",
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
@@ -111,17 +111,17 @@
             "diskInfo": "0 Bytes",
             "subOperators": [
               {
-                "id": "IndexReader_36(Build)",
+                "id": "IndexReader_37(Build)",
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
                 "executeInfo": "time:108.1µs, loops:1, cop_task: {num: 1, max: 78.6µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 500ns, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:61.7µs}}",
-                "operatorInfo": "index:IndexFullScan_35",
+                "operatorInfo": "index:IndexFullScan_36",
                 "memoryInfo": "182 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
-                    "id": "IndexFullScan_35",
+                    "id": "IndexFullScan_36",
                     "estRows": "9990.00",
                     "actRows": "0",
                     "taskType": "cop[tikv]",
@@ -134,17 +134,17 @@
                 ]
               },
               {
-                "id": "IndexReader_34(Probe)",
+                "id": "IndexReader_35(Probe)",
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
                 "executeInfo": "time:25.5µs, loops:1, cop_task: {num: 1, max: 20.5µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 2.04µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:17.5µs}}",
-                "operatorInfo": "index:IndexFullScan_33",
+                "operatorInfo": "index:IndexFullScan_34",
                 "memoryInfo": "181 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
-                    "id": "IndexFullScan_33",
+                    "id": "IndexFullScan_34",
                     "estRows": "9990.00",
                     "actRows": "0",
                     "taskType": "cop[tikv]",
