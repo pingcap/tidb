@@ -42,6 +42,7 @@ func (o BackendOptions) Redacted() BackendOptions {
 	o.S3.AccessKey = maskIfSet(o.S3.AccessKey)
 	o.S3.SecretAccessKey = maskIfSet(o.S3.SecretAccessKey)
 	o.S3.SessionToken = maskIfSet(o.S3.SessionToken)
+	o.S3.SseKmsContext = maskIfSet(o.S3.SseKmsContext)
 	o.Azblob.AccountKey = maskIfSet(o.Azblob.AccountKey)
 	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
 	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)

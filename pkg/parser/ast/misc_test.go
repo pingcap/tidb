@@ -395,6 +395,8 @@ func TestRedactURL(t *testing.T) {
 		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123"},
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
+		{args{"s3://bucket/file?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "s3://bucket/file?sse-kms-context=xxxxxx"},
+		{args{"s3://bucket/file?SSE_KMS_CONTEXT=first&SSE_KMS_CONTEXT=second"}, "s3://bucket/file?SSE_KMS_CONTEXT=xxxxxx"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
 		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},

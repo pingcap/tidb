@@ -4246,6 +4246,7 @@ func RedactURL(str string) string {
 			"access-key":        {},
 			"secret-access-key": {},
 			"session-token":     {},
+			"sse-kms-context":   {},
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{

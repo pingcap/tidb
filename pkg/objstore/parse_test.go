@@ -660,6 +660,7 @@ func TestBackendOptionsRedacted(t *testing.T) {
 	opts.S3.AccessKey = "AKID"
 	opts.S3.SecretAccessKey = "SKEY"
 	opts.S3.SessionToken = "TOKEN"
+	opts.S3.SseKmsContext = `{"tenant":"context-value"}`
 	opts.S3.Region = "us-east-1"
 	opts.Azblob.AccountKey = "AZKEY"
 	opts.Azblob.SASToken = "SAS"
@@ -672,6 +673,8 @@ func TestBackendOptionsRedacted(t *testing.T) {
 	require.Equal(t, ast.RedactedValue, redacted.S3.AccessKey)
 	require.Equal(t, ast.RedactedValue, redacted.S3.SecretAccessKey)
 	require.Equal(t, ast.RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SseKmsContext)
+	require.Equal(t, `{"tenant":"context-value"}`, opts.S3.SseKmsContext)
 	require.Equal(t, ast.RedactedValue, redacted.Azblob.AccountKey)
 	require.Equal(t, ast.RedactedValue, redacted.Azblob.SASToken)
 	require.Equal(t, ast.RedactedValue, redacted.Azblob.EncryptionKey)
@@ -691,6 +694,7 @@ func TestRedactURL(t *testing.T) {
 		{"/local/path", "/local/path"},
 		{"/data/my files/100%off", "/data/my files/100%off"},
 		{"s3://bucket/prefix", "s3://bucket/prefix"},
+		{"s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "s3://bucket/prefix?sse-kms-context=xxxxxx"},
 		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
 		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
 		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},

@@ -367,6 +367,8 @@ require (
 replace (
 	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
+	// TODO: use the upstream version after https://github.com/pingcap/kvproto/pull/1552 merges.
+	github.com/pingcap/kvproto => github.com/RidRisR/kvproto v0.0.0-20261014215912-21b303f4388d
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
