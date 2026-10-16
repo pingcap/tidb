@@ -296,11 +296,22 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 		}
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10)  */ SLEEP(0)").Check(testkit.Rows("0"))
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt)  */ SLEEP(0)").Check(testkit.Rows("0"))
-		require.Len(t, testKit.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt) unknow(t1,t2) */ SLEEP(0)").Check(testkit.Rows("0"))
-		require.Len(t, testKit.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+		// Check hint parsing without imposing a deadline on compilation or execution.
+		// HasMaxExecutionTime distinguishes an explicit zero from a discarded hint.
+		for _, tt := range []struct {
+			hints        string
+			warningCount int
+		}{
+			{"MAX_EXECUTION_TIME(0)", 0},
+			{"MAX_EXECUTION_TIME(0), dtc(name=tt)", 1},
+			{"MAX_EXECUTION_TIME(0), dtc(name=tt) unknow(t1,t2)", 2},
+		} {
+			testKit.MustQuery("SELECT /*+ " + tt.hints + " */ SLEEP(0)").Check(testkit.Rows("0"))
+			stmtCtx := testKit.Session().GetSessionVars().StmtCtx
+			require.True(t, stmtCtx.HasMaxExecutionTime, tt.hints)
+			require.Zero(t, stmtCtx.MaxExecutionTime, tt.hints)
+			require.Len(t, stmtCtx.GetWarnings(), tt.warningCount, tt.hints)
+		}
 	})
 }
 
