@@ -4,8 +4,6 @@ This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`, 
 
 Reference: `PLANS.md` at the repository root; this plan must be maintained according to it.
 
-Handoff state (2026-10-12): `one-engine-corpus-handoff.md` -- where the work stopped, the remaining divergences by class, the measurement commands and the differential-probe recipe.
-
 
 ## Purpose / Big Picture
 
