@@ -46,6 +46,7 @@ func (c *ilikeFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	}
 	bf.tp.SetFlen(1)
 	sig := &builtinIlikeSig{baseBuiltinFunc: bf}
+	sig.SetCharsetAndCollation(bf.CharsetAndCollation())
 	sig.setPbCode(tipb.ScalarFuncSig_IlikeSig)
 	return sig, nil
 }
@@ -55,6 +56,12 @@ type builtinIlikeSig struct {
 	// pattern is not serialized with builtinIlikeSig, treat them as a cache to accelerate
 	// the evaluation of builtinIlikeSig.
 	patternCache builtinFuncCache[collate.WildcardPattern]
+}
+
+func (b *builtinIlikeSig) SetCharsetAndCollation(chs, coll string) {
+	b.collationInfo.SetCharsetAndCollation(chs, coll)
+	// ILIKE lowercases both operands before matching with the binary counterpart of its collation.
+	b.ctor = collate.GetCollatorWithCollate(b.useNewCollate, collate.ConvertAndGetBinCollation(coll))
 }
 
 func (b *builtinIlikeSig) Clone() builtinFunc {
@@ -96,7 +103,7 @@ func (b *builtinIlikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 	var pattern collate.WildcardPattern
 	if b.args[1].ConstLevel() >= ConstOnlyInContext && b.args[2].ConstLevel() >= ConstOnlyInContext {
 		pattern, err = b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
-			ret := collate.ConvertAndGetBinCollator(b.collation).Pattern()
+			ret := b.collator().Pattern()
 			ret.Compile(patternStr, byte(escape))
 			return ret, nil
 		})
@@ -106,7 +113,7 @@ func (b *builtinIlikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 			return 0, true, err
 		}
 	} else {
-		pattern = collate.ConvertAndGetBinCollator(b.collation).Pattern()
+		pattern = b.collator().Pattern()
 		pattern.Compile(patternStr, byte(escape))
 	}
 	return boolToInt64(pattern.DoMatch(valStr)), false, nil
