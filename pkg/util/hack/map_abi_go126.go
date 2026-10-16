@@ -318,9 +318,12 @@ type MemAwareMap[K comparable, V any] struct {
 	Bytes          uint64
 }
 
-// MockSeedForTest sets the seed of the map internals inside MemAwareMap.
-func (m *MemAwareMap[K, V]) MockSeedForTest(seed uint64) (oriSeed uint64) {
-	return m.unwrap().MockSeedForTest(seed)
+const mockSeedForTest = 4992862800126241206
+
+// MockSeedForTest sets a deterministic map seed for tests.
+// The map must be empty before calling this function.
+func (m *MemAwareMap[K, V]) MockSeedForTest() {
+	m.unwrap().MockSeedForTest(mockSeedForTest)
 }
 
 // MockSeedForTest sets the seed of the map internals.
