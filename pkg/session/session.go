@@ -204,6 +204,13 @@ type session struct {
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan base.Plan
 
+	// globalVarsPool provides the sessions that read the global variables of
+	// the keyspace for a cross-keyspace session, which has no Domain.
+	globalVarsPool util.SessionPool
+	// readingGlobalVars is set on such a reading session, so that its own
+	// global variable lookups use the defaults instead of reading again.
+	readingGlobalVars bool
+
 	// dom is *domain.Domain, use `any` to avoid import cycle.
 	// cross keyspace session doesn't have domain set.
 	dom any
@@ -1374,6 +1381,49 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 	}
 }
 
+// SetGlobalVarsPool sets the sessions that read the global variables of the
+// keyspace when this session has no Domain.
+func (s *session) SetGlobalVarsPool(pool util.SessionPool) {
+	s.globalVarsPool = pool
+}
+
+// getKeyspaceGlobalVar reads a global variable from the table of the session's
+// keyspace, for a session without a Domain. A failed read returns an error
+// instead of the default value.
+func (s *session) getKeyspaceGlobalVar(sv *variable.SysVar) (string, error) {
+	if s.readingGlobalVars {
+		return sv.Value, nil
+	}
+	if s.globalVarsPool == nil {
+		return "", errors.Errorf("cannot read global variable %s without a domain", sv.Name)
+	}
+	resource, err := s.globalVarsPool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	reader, ok := resource.(*session)
+	if !ok {
+		s.globalVarsPool.Put(resource)
+		return "", errors.Errorf("unexpected session type %T", resource)
+	}
+	reader.readingGlobalVars = true
+	defer func() {
+		reader.readingGlobalVars = false
+		s.globalVarsPool.Put(resource)
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
+	rows, fields, err := reader.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, mysql.GlobalVariablesTable, sv.Name)
+	if err != nil {
+		return "", err
+	}
+	if len(rows) == 0 {
+		return sv.Value, nil
+	}
+	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	return d.ToString()
+}
+
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
@@ -1423,14 +1473,13 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
-	dom := domain.GetDomain(s)
-	if dom == nil {
-		// A cross-keyspace session has no Domain to cache or read the global
-		// variables of the target keyspace, so it sees the default values.
-		return sv.Value, nil
-	}
-	sysVar, err := dom.GetGlobalVar(name)
-	if err != nil {
+	var sysVar string
+	var err error
+	if dom := domain.GetDomain(s); dom == nil {
+		if sysVar, err = s.getKeyspaceGlobalVar(sv); err != nil {
+			return "", err
+		}
+	} else if sysVar, err = dom.GetGlobalVar(name); err != nil {
 		// The sysvar exists, but there is no cache entry yet.
 		// This might be because the sysvar was only recently registered.
 		// In which case it is safe to return the default, but we can also

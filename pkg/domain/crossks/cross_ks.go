@@ -223,11 +223,17 @@ func (*Manager) createSessionManager(
 
 	coordinator := newSchemaCoordinator()
 	isValidator := isvalidator.New(vardef.GetSchemaLease())
-	sessPool := util.NewSessionPool(
+	var sessPool util.DestroyableSessionPool
+	sessPool = util.NewSessionPool(
 		crossKSSessPoolSize, ksSessFactoryGetter(ks, isValidator),
 		func(r pools.Resource) {
 			_, ok := r.(sessionctx.Context)
 			intest.Assert(ok)
+			// Without a Domain, the session reads the global variables of the
+			// keyspace through other sessions of this pool.
+			if se, ok := r.(interface{ SetGlobalVarsPool(util.SessionPool) }); ok {
+				se.SetGlobalVarsPool(sessPool)
+			}
 			coordinator.StoreInternalSession(r)
 		},
 		func(r pools.Resource) {
