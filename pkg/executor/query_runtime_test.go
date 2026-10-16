@@ -124,11 +124,11 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	t.Run("statement time", func(t *testing.T) {
 		tk.MustExec("set @@timestamp = 1000000000")
 		defer tk.MustExec("set @@timestamp = default")
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		tk.MustExec("begin")
 		sql := "import into unused_target from select unix_timestamp(now())"
 		q, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
 		require.NoError(t, err)
-		tk.Session().RollbackTxn(context.Background())
+		tk.MustExec("rollback")
 		se, err := session.CreateSession4Test(store)
 		require.NoError(t, err)
 		defer se.Close()
@@ -137,6 +137,9 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		close(output)
 		result := <-output
 		require.EqualValues(t, 1000000000, result.Chk.GetRow(0).GetInt64(0))
+		// The submitter's transaction does not carry over to the worker.
+		require.False(t, se.GetSessionVars().InTxn())
+		require.True(t, se.GetSessionVars().IsAutocommit())
 	})
 	t.Run("submitted table definitions", func(t *testing.T) {
 		tk.MustExec("create resource group rg1 ru_per_sec=1000")
