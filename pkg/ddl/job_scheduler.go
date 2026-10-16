@@ -481,6 +481,9 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 				logutil.DDLLogger().Error("panic in deliveryJob", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			failpoint.InjectCall("afterDeliveryJob", jobW)
+			// Job-scoped advisory locks must outlive individual steps and schema
+			// synchronization, but must not leak into the next job on this worker.
+			wk.sess.ReleaseAllAdvisoryLocks()
 			// Because there is a gap between `allIDs()` and `checkRunnable()`,
 			// we append unfinished job to pending atomically to prevent `getJob()`
 			// choosing another runnable job that involves the same schema object.
