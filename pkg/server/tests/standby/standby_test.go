@@ -64,6 +64,12 @@ func (c *mockStandbyController) OnConnActive() {
 	c.connActiveCounter.Add(1)
 }
 
+func (c *mockStandbyController) PrepareForActivation(svr server.StandbyReadyServer) error {
+	err := svr.InitTiDBListener()
+	c.EndStandby(err)
+	return err
+}
+
 func (c *mockStandbyController) OnServerCreated(svr *server.Server) {
 }
 
@@ -91,6 +97,7 @@ func TestStandby(t *testing.T) {
 		svr.SetDomain(dom)
 		svr.StandbyController = standbyController
 		close(serverCreated)
+		require.NoError(t, standbyController.PrepareForActivation(svr))
 		err = svr.Run(nil)
 		require.NoError(t, err)
 	}()

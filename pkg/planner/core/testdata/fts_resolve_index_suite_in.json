@@ -1,0 +1,32 @@
+[
+  {
+    "Name": "TestTiFlashFTSMatchWordPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title)"
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title) and id > 1"
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10"
+      },
+      {
+        "SQL": "select id, fts_match_word('hello', title) as score from fts_t where fts_match_word('hello', title) order by score desc limit 10"
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc, id limit 10"
+      },
+      {
+        "SQL": "select fts_match_word('hello', title) from fts_t where fts_match_word('hello', title)"
+      },
+      {
+        "SQL": "select fts_match_word('hello', title), id from fts_t where fts_match_word('hello', title) order by fts_match_word('hello', title) desc limit 10"
+      },
+      {
+        "SQL": "select * from fts_t where fts_match_word('hello', title)",
+        "RedactLog": true
+      }
+    ]
+  }
+]

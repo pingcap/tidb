@@ -258,6 +258,38 @@ func TestRUWindowAggregatorResetCurrentWindowDropsUntilBoundary(t *testing.T) {
 		require.Equal(t, uint64(180), rec.Items[0].TimestampSec)
 		require.InDelta(t, 9.0, rec.Items[0].TotalRu, 1e-9)
 	})
+
+	t.Run("backpressure drop keeps still-open window", func(t *testing.T) {
+		agg := newRUWindowAggregator()
+		closedKey := stmtstats.RUKey{
+			User:       "u-closed",
+			SQLDigest:  stmtstats.BinaryDigest("sql-closed"),
+			PlanDigest: stmtstats.BinaryDigest("plan-closed"),
+		}
+		openKey := stmtstats.RUKey{
+			User:       "u-open",
+			SQLDigest:  stmtstats.BinaryDigest("sql-open"),
+			PlanDigest: stmtstats.BinaryDigest("plan-open"),
+		}
+
+		agg.addBatchToBucket(1, stmtstats.RUIncrementMap{
+			closedKey: {TotalRU: 1, ExecCount: 1, ExecDuration: 1},
+		})
+		for _, ts := range []uint64{61, 76, 91} {
+			agg.addBatchToBucket(ts, stmtstats.RUIncrementMap{
+				openKey: {TotalRU: 2, ExecCount: 1, ExecDuration: 1},
+			})
+		}
+
+		agg.dropReportData(97)
+
+		records := agg.takeReportRecords(120, 60, []byte("ks"))
+		require.Nil(t, findRURecordByDigest(records, "u-closed", "sql-closed", "plan-closed"))
+		openRecord := findRURecord(t, records, "u-open", "sql-open", "plan-open")
+		require.Len(t, openRecord.Items, 1)
+		require.Equal(t, uint64(60), openRecord.Items[0].TimestampSec)
+		require.InDelta(t, 6.0, openRecord.Items[0].TotalRu, 1e-9)
+	})
 }
 
 // Test gap 3: Concurrent pressure test for ruWindowAggregator.

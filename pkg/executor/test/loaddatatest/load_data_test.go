@@ -25,13 +25,19 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/resourcemanager"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -345,26 +351,40 @@ func TestLoadDataEscape(t *testing.T) {
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
 func TestLoadDataSpecifiedColumns(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)"
 	ctx := tk.Session().(sessionctx.Context)
-	// test
-	tests := []testCase{
-		{[]byte("7\ta string\n"), []string{"1|7|a string|0"}, trivialMsg},
-		{[]byte("8\tstr \\t\n"), []string{"2|8|str \t|0"}, trivialMsg},
-		{[]byte("9\tstr \\n\n"), []string{"3|9|str \n|0"}, trivialMsg},
-		{[]byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, trivialMsg},
-		{[]byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, trivialMsg},
-		{[]byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, trivialMsg},
-		{[]byte("\\N\ta string\n"), []string{"7|<nil>|a string|0"}, trivialMsg},
+
+	var reader io.ReadCloser = mydump.NewStringReader("7\ta string\n" +
+		"8\tstr \\t\n" +
+		"9\tstr \\n\n" +
+		"10\tboth \\t\\n\n" +
+		"11\tstr \\\\\n" +
+		"12\t\\r\\t\\n\\0\\Z\\b\n" +
+		"\\N\ta string\n")
+	var readerBuilder = executor.LoadDataReaderBuilder{
+		Build: func(_ string) (
+			r io.ReadCloser, err error,
+		) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
 	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	tk.MustExec(loadSQL)
+	require.Equal(t, "Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", tk.Session().LastMessage())
+	tk.MustQuery("select * from load_data_test order by id;").Check(testkit.RowsWithSep("|",
+		"1|7|a string|0",
+		"2|8|str \t|0",
+		"3|9|str \n|0",
+		"4|10|both \t\n|0",
+		"5|11|str \\|0",
+		"6|12|"+string([]byte{'\r', '\t', '\n', 0, 26, '\b'})+"|0",
+		"7|<nil>|a string|0",
+	))
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {
@@ -410,8 +430,8 @@ FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`
 }
 
 func TestLoadDataReplace(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
 	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
@@ -478,18 +498,55 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 }
 
 func TestLoadDataFromServerFile(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
+	tk.MustExec("use test; drop table if exists load_data_test")
 	tk.MustExec("create table load_data_test (a int)")
 	err := tk.ExecToErr("load data infile 'remote.csv' into table load_data_test")
 	require.ErrorContains(t, err, "[executor:8154]Don't support load data from tidb-server's disk.")
 }
 
+var loadDataStore kv.Storage
+var loadDataLowPriorityClient checkKVPrioClient
+
+func prepareLoadDataStore() func() {
+	gctuner.GlobalMemoryLimitTuner.Stop()
+	store, err := mockstore.NewMockStore(mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+		loadDataLowPriorityClient.Client = c
+		return &loadDataLowPriorityClient
+	}))
+	if err != nil {
+		panic(err)
+	}
+
+	vardef.SetSchemaLease(500 * time.Millisecond)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		_ = store.Close()
+		panic(err)
+	}
+	dom.SetStatsUpdating(true)
+	sm := testkit.MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	loadDataStore = store
+
+	return func() {
+		loadDataStore = nil
+		dom.Close()
+		if err := store.Close(); err != nil {
+			panic(err)
+		}
+		resourcemanager.InstanceResourceManager.Reset()
+	}
+}
+
 func TestFix56408(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
+	require.NotNil(t, loadDataStore)
+	tk := testkit.NewTestKit(t, loadDataStore)
+	tk.MustExec("USE test; DROP TABLE IF EXISTS a;")
 	tk.MustExec("create table a(id int,name varchar(20),addr varchar(100),primary key (id) nonclustered);")
 	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS terminated by '|';"
 	ctx := tk.Session().(sessionctx.Context)
@@ -567,16 +624,13 @@ func (c *checkKVPrioClient) SendRequest(ctx context.Context, addr string, req *t
 }
 
 func TestLoadDataLowPrioritySetsKVLowPriority(t *testing.T) {
-	cli := &checkKVPrioClient{}
-	store := testkit.CreateMockStore(t, mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}))
+	require.NotNil(t, loadDataStore)
+	cli := &loadDataLowPriorityClient
 
 	// Use a context marker so the priority checker only applies to requests issued by this test execution.
 	ctx := context.WithValue(context.Background(), cli, 42)
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, loadDataStore)
 	sctx := tk.Session().(sessionctx.Context)
 
 	tk.MustExec("use test")

@@ -116,13 +116,16 @@ func (p *PhysicalTopN) MemoryUsage() (sum int64) {
 	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice +
 		int64(cap(p.ByItems))*size.SizeOfPointer +
 		size.SizeOfUint64*2 + // Offset, Count
-		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfPointer + // PrefixCol
 		size.SizeOfInt // PrefixLen
 	for _, byItem := range p.ByItems {
 		sum += byItem.MemoryUsage()
 	}
 	for _, item := range p.PartitionBy {
 		sum += item.MemoryUsage()
+	}
+	if p.PrefixCol != nil {
+		sum += p.PrefixCol.MemoryUsage()
 	}
 	return
 }

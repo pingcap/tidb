@@ -56,6 +56,22 @@ func TestResetContextOfStmtKeepsTrackerKiller(t *testing.T) {
 	require.Same(t, &vars.SQLKiller, vars.DiskTracker.Killer)
 }
 
+func TestResetContextOfStmtTiKVShortCircuitExpression(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
+	vars := ctx.GetSessionVars()
+
+	vars.EnableTiKVShortCircuitExpression = false
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = true
+	require.NoError(t, executor.ResetContextOfStmt(ctx, &ast.SelectStmt{}))
+	require.False(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+
+	vars.EnableTiKVShortCircuitExpression = true
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = false
+	require.NoError(t, executor.ResetContextOfStmt(ctx, &ast.SelectStmt{}))
+	require.True(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+}
+
 func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
 	insertStmt := &ast.InsertStmt{}
 	importStmt := &ast.ImportIntoStmt{}

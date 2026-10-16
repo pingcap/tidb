@@ -101,9 +101,9 @@ func NewStorage(
 	}
 }
 
-// MarkStrongConsistency implements the Storage interface.
-func (*Storage) MarkStrongConsistency() {
-	// See https://aws.amazon.com/cn/s3/consistency/
+// Features implements FeatureProvider.
+func (*Storage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency | storeapi.FeatureSupportsStartAfter
 }
 
 // GetOptions gets the external storage operations for the S3.
@@ -667,6 +667,9 @@ type presignableClient interface {
 
 // PresignFile implements storeapi.Storage interface.
 func (rs *Storage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	if expire <= 0 {
+		return "", errors.New("presign expiration must be positive")
+	}
 	if pc, ok := rs.s3Cli.(presignableClient); ok {
 		return pc.PresignObject(ctx, fileName, expire)
 	}

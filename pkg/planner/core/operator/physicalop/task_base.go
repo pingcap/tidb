@@ -468,7 +468,7 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 	}
 
 	sum = size.SizeOfInterface*(2+int64(cap(t.IdxMergePartPlans)+cap(t.RootTaskConds))) + size.SizeOfBool*3 + size.SizeOfUint64 +
-		size.SizeOfPointer*(3+int64(cap(t.CommonHandleCols)+cap(t.TblCols))) + size.SizeOfSlice*4 + t.PhysPlanPartInfo.MemoryUsage()
+		size.SizeOfPointer*(4+int64(cap(t.CommonHandleCols)+cap(t.TblCols))) + size.SizeOfSlice*4 + t.PhysPlanPartInfo.MemoryUsage()
 	if t.IndexPlan != nil {
 		sum += t.IndexPlan.MemoryUsage()
 	}
@@ -493,6 +493,9 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 	}
 	for _, expr := range t.RootTaskConds {
 		sum += expr.MemoryUsage()
+	}
+	if t.PartialOrderMatchResult != nil {
+		sum += t.PartialOrderMatchResult.MemoryUsage()
 	}
 	return
 }

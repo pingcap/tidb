@@ -119,7 +119,23 @@ func TestSplitScatter(t *testing.T) {
 		}
 	}
 
-	_, err := mockClient.SplitKeysAndScatter(ctx, splitKeys)
+	noScatterPDClient := NewMockPDClientForSplit()
+	noScatterPDClient.SetRegions(keys)
+	noScatterClient := &pdClient{
+		client:           noScatterPDClient,
+		splitConcurrency: 20,
+		splitBatchKeyCnt: 100,
+	}
+	noScatterSplitKeys := make([][]byte, 0, len(splitKeys))
+	for _, key := range splitKeys {
+		noScatterSplitKeys = append(noScatterSplitKeys, append([]byte(nil), key...))
+	}
+	_, err := noScatterClient.SplitKeys(ctx, noScatterSplitKeys)
+	require.NoError(t, err)
+	require.Positive(t, noScatterPDClient.splitRegions.count)
+	require.Zero(t, noScatterPDClient.scatterRegions.regionCount)
+
+	_, err = mockClient.SplitKeysAndScatter(ctx, splitKeys)
 	require.NoError(t, err)
 
 	// check split ranges

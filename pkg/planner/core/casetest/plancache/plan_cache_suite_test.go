@@ -100,6 +100,99 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestJSONExtractPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_json_extract_plan_cache (id int primary key, doc varchar(255))")
+	tk.MustExec(`insert into t_json_extract_plan_cache values (1, '{"a": 1, "b": 2}')`)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec(`prepare stmt from 'select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, ?)) = ?'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a', @val = '1'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b', @val = '2'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec(`set @path = '$.missing', @val = '1'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.a')) = '1'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.b')) = '2'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache where json_unquote(json_extract(doc, '$.missing')) = '1'`).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("create table t_json_extract_plan_cache_json (id int primary key, doc json)")
+	tk.MustExec(`insert into t_json_extract_plan_cache_json values (1, '{"a": 1}')`)
+	tk.MustQuery(`select id from t_json_extract_plan_cache_json where json_extract(doc, '$.a') is not null`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_plan_cache_json where json_extract(doc, '$.a') is not null`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestJSONExtractPlanCacheWithExpressionIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_json_extract_expr_idx (
+		id int primary key,
+		doc varchar(255),
+		key idx_a ((cast(json_unquote(json_extract(doc, '$.a')) as char(20))))
+	)`)
+	tk.MustExec(`insert into t_json_extract_expr_idx values
+		(1, '{"a": "match", "b": "no"}'),
+		(2, '{"a": "no", "b": "match"}')`)
+
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec(`prepare stmt from 'select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, ?)) as char(20)) = ?'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a', @val = 'match'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b', @val = 'match'`)
+	tk.MustQuery("execute stmt using @path, @val").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.a')) as char(20)) = 'match'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.a')) as char(20)) = 'match'`).Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(`select id from t_json_extract_expr_idx where cast(json_unquote(json_extract(doc, '$.b')) as char(20)) = 'match'`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`create table t_json_extract_expr_idx_group (
+		id int primary key,
+		doc varchar(255),
+		key idx_a ((cast(json_unquote(json_extract(doc, '$.a')) as char(20))))
+	)`)
+	tk.MustExec(`insert into t_json_extract_expr_idx_group values
+		(1, '{"a": "one", "b": "same"}'),
+		(2, '{"a": "two", "b": "same"}')`)
+	tk.MustExec(`prepare stmt_group from 'select count(*) from t_json_extract_expr_idx_group group by cast(json_unquote(json_extract(doc, ?)) as char(20)) order by 1'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a'`)
+	tk.MustQuery("execute stmt_group using @path").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b'`)
+	tk.MustQuery("execute stmt_group using @path").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`prepare stmt_agg from 'select max(cast(json_unquote(json_extract(doc, ?)) as char(20))) from t_json_extract_expr_idx_group'`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec(`set @path = '$.a'`)
+	tk.MustQuery("execute stmt_agg using @path").Check(testkit.Rows("two"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`set @path = '$.b'`)
+	tk.MustQuery("execute stmt_agg using @path").Check(testkit.Rows("same"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1212,6 +1305,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where j is null",                                                  // json
 		"select * from t where j is not null",                                              // json
 		"select * from t where j < 1",                                                      // json
+		"select * from t where json_extract(j, '$.a') is not null",                         // json
 		"select * from t where a > 1 and j < 1",
 		"select * from t where e is null",     // enum
 		"select * from t where e is not null", // enum
@@ -1236,6 +1330,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some unsupported Node",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -2146,4 +2241,331 @@ func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
 
 	tk.MustExec(`drop binding for select * from t where b=1`)
+}
+
+func TestCoalescePlanCacheUpdate(t *testing.T) {
+	t.Run("Precision", testNonPreparedCoalescePrecision)
+	t.Run("Scope", testNonPreparedCoalesceScope)
+	for _, instance := range []bool{false, true} {
+		for _, prepared := range []bool{false, true} {
+			t.Run(fmt.Sprintf("instance=%v/prepared=%v", instance, prepared), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+				tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+				tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				// Exercise mixed numeric assignments on a partitioned table.
+				tk.MustExec(`CREATE TABLE coalesce_update (
+  id bigint unsigned NOT NULL,
+  tenant_id bigint unsigned NOT NULL,
+  state tinyint unsigned NOT NULL DEFAULT 0,
+  reason smallint DEFAULT 0,
+  source tinyint unsigned DEFAULT 0,
+  amount decimal(36,18) DEFAULT 0,
+  updated_at bigint unsigned NOT NULL DEFAULT 0,
+  revision bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (id, tenant_id),
+  KEY tenant_state (tenant_id, state)
+) PARTITION BY HASH(tenant_id) PARTITIONS 8`)
+				tk.MustExec("insert into coalesce_update (id,tenant_id,state,reason,source,amount,updated_at,revision) values (1001,101,1,2,3,4,100,10)")
+				sql := `UPDATE coalesce_update SET state=COALESCE(?,state),
+     reason=COALESCE(?,reason), source=COALESCE(?,source),
+     amount=COALESCE(?,amount), updated_at=COALESCE(?,updated_at),
+     revision=GREATEST(?,revision) WHERE id=? AND tenant_id=? AND revision<=?`
+				if prepared {
+					tk.MustExec("prepare upd from '" + sql + "'")
+				}
+				rows := []struct {
+					values []string
+					want   string
+				}{
+					{[]string{"7", "0", "0", "1", "1000", "11", "1001", "101", "11"}, "7 0 0 1.000000000000000000 1000 11"},
+					{[]string{"8", "2", "3", "2.5", "2000", "12", "1001", "101", "12"}, "8 2 3 2.500000000000000000 2000 12"},
+					{[]string{"NULL", "NULL", "NULL", "NULL", "NULL", "13", "1001", "101", "13"}, "8 2 3 2.500000000000000000 2000 13"},
+					{[]string{"9", "9", "9", "9", "999", "12", "1001", "101", "12"}, "8 2 3 2.500000000000000000 2000 13"},
+					{[]string{"9", "9", "9", "9", "999", "14", "1001", "999", "14"}, "8 2 3 2.500000000000000000 2000 13"},
+					{[]string{"8", "2", "3", "0.123456789012345678", "2000", "14", "1001", "101", "14"}, "8 2 3 0.123456789012345678 2000 14"},
+					{[]string{"8", "2", "3", "0.123456789012345679", "2000", "15", "1001", "101", "15"}, "8 2 3 0.123456789012345679 2000 15"},
+					{[]string{"8", "2", "3", "0.1", "2000", "16", "1001", "101", "16"}, "8 2 3 0.100000000000000000 2000 16"},
+				}
+				hits := 0
+				tk.MustExec("begin pessimistic")
+				for _, r := range rows {
+					query := sql
+					if prepared {
+						var names []string
+						for i, v := range r.values {
+							n := fmt.Sprintf("@p%d", i)
+							names = append(names, n)
+							tk.MustExec("set " + n + "=" + v)
+						}
+						query = "execute upd using " + strings.Join(names, ",")
+					} else {
+						for _, v := range r.values {
+							query = strings.Replace(query, "?", v, 1)
+						}
+					}
+					for range 2 {
+						tk.MustExec(query)
+						if tk.Session().GetSessionVars().FoundInPlanCache {
+							hits++
+						}
+						tk.MustQuery("select state,reason,source,amount,updated_at,revision from coalesce_update").Check(testkit.Rows(r.want))
+					}
+				}
+				if prepared {
+					require.Zero(t, hits)
+				} else {
+					require.Positive(t, hits)
+				}
+				tk.MustExec("rollback")
+				tk.MustQuery("select state,revision from coalesce_update").Check(testkit.Rows("1 10"))
+			})
+		}
+	}
+}
+
+func testNonPreparedCoalescePrecision(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+			tk.MustExec("create table coalesce_precision (id int primary key, d decimal(20,8))")
+			tk.MustExec("insert into coalesce_precision values(1,0)")
+			// The numeric target column determines the stored scale. Parameter precision
+			// changes must still select a separate cached plan.
+			for _, tc := range []struct {
+				v, want string
+				hit     bool
+			}{
+				{"1.23456789", "1.23456789", false},
+				{"2.34567891", "2.34567891", true},
+				{"3.14159", "3.14159000", false},
+				{"4.14159", "4.14159000", true},
+				{"1.2", "1.20000000", false},
+				{"2.3", "2.30000000", true},
+				{"123.4", "123.40000000", false},
+				{"1.23456789", "1.23456789", true},
+			} {
+				tk.MustExec("update coalesce_precision set d=coalesce(" + tc.v + ",d) where id=1")
+				require.Equal(t, tc.hit, tk.Session().GetSessionVars().FoundInPlanCache, tc.v)
+				tk.MustQuery("select d from coalesce_precision").Check(testkit.Rows(tc.want))
+			}
+			// The same precision isolation must apply when another session shares a plan.
+			if instance {
+				other := testkit.NewTestKit(t, store)
+				other.MustExec("use test")
+				other.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+				other.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				other.MustExec("update coalesce_precision set d=coalesce(5.14159,d) where id=1")
+				require.True(t, other.Session().GetSessionVars().FoundInPlanCache)
+				other.MustQuery("select d from coalesce_precision").Check(testkit.Rows("5.14159000"))
+			}
+			// Wider integer literal text must not fragment the cache.
+			tk.MustExec("update coalesce_precision set d=coalesce(1,d) where id=1")
+			tk.MustExec("update coalesce_precision set d=coalesce(12345,d) where id=1")
+			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			tk.MustQuery("select d from coalesce_precision").Check(testkit.Rows("12345.00000000"))
+			// Only COALESCE arguments require exact DECIMAL precision. Other SET
+			// and WHERE parameters retain the existing compatibility rules.
+			tk.MustExec("create table coalesce_other_params(id int primary key, d decimal(20,8), v decimal(20,8))")
+			tk.MustExec("insert into coalesce_other_params values(1,0,0)")
+			fresh := testkit.NewTestKit(t, store)
+			fresh.MustExec("use test")
+			fresh.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+			fresh.MustExec("create table coalesce_other_params_ref like coalesce_other_params")
+			fresh.MustExec("insert into coalesce_other_params_ref values(1,0,0)")
+			for _, tc := range []struct {
+				coalesceArg, value, bound string
+				hit                       bool
+			}{
+				{"1", "1.23456789", "1000.00", false},
+				{"2", "2.34567891", "2000.00", true},
+				{"3", "3.14159", "2000.00", true}, // Other SET parameter changes scale.
+				{"4", "4.14159", "2000.00", true},
+				{"5", "4.14159", "2000.0", true}, // WHERE parameter changes scale.
+				{"6", "5.14159", "3000.0", true},
+				{"7", "6.12345678", "2000.00", true},           // Reuse the original signature.
+				{"1.23456789", "1.23456789", "1000.00", false}, // New DECIMAL COALESCE argument.
+				{"2.34567891", "3.14159", "1000.0", true},      // Only outside parameters shrink.
+				{"3.14159", "3.14159", "1000.0", false},        // COALESCE scale shrinks.
+				{"4.14159", "4.14159", "1000.0", true},
+				{"5.12345678", "5.14159", "1000.0", true}, // Reuse the wider COALESCE signature.
+			} {
+				query := " set d=coalesce(" + tc.coalesceArg + ",d),v=" + tc.value + " where id=1 and v<" + tc.bound
+				tk.MustExec("update coalesce_other_params" + query)
+				require.Equal(t, tc.hit, tk.Session().GetSessionVars().FoundInPlanCache, query)
+				gotWarnings := tk.MustQuery("show warnings").Rows()
+				fresh.MustExec("update coalesce_other_params_ref" + query)
+				require.Equal(t, fresh.MustQuery("show warnings").Rows(), gotWarnings, query)
+				tk.MustQuery("select d,v from coalesce_other_params").Check(fresh.MustQuery("select d,v from coalesce_other_params_ref").Rows())
+			}
+		})
+	}
+}
+
+func testNonPreparedCoalesceScope(t *testing.T) {
+	t.Run("CrossColumnTypes", testNonPreparedCoalesceCrossColumnTypes)
+	t.Run("Nested", testNonPreparedCoalesceNested)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+	tk.MustExec("create table coalesce_scope(id int primary key, d decimal(12,2), s varchar(100))")
+	tk.MustExec("insert into coalesce_scope values(1,1,'x')")
+	for _, sql := range []string{
+		"select coalesce(1,d) from coalesce_scope",
+		"update coalesce_scope set s=coalesce(3.14159,0.1) where id=1",
+		"update coalesce_scope set s=coalesce(1.2,d) where id=1",
+		"update coalesce_scope set s=coalesce('abc',s) where id=1",
+		"update coalesce_scope set s=concat(coalesce(1,d),'x') where id=1",
+		"update coalesce_scope set d=2 where id=coalesce(1,id)",
+		"update coalesce_scope set d=coalesce(null,d) where id=1",
+		"update coalesce_scope set d=coalesce(1,coalesce(2,s)) where id=1",
+		"update coalesce_scope set d=coalesce(1,coalesce(null,d)) where id=1",
+		"update coalesce_scope set d=coalesce(1,coalesce(2,d)+1) where id=1",
+		"update coalesce_scope set d=coalesce(coalesce(1,d),s) where id=1",
+		"update coalesce_scope set d=coalesce(1,d) where id=coalesce(1,coalesce(2,id))",
+	} {
+		for range 2 {
+			tk.MustExec(sql)
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache, sql)
+		}
+	}
+	// A different target column must keep the cache-disabled conversion semantics,
+	// even when the first parameter has a smaller scale than the fallback column.
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+	tk.MustExec("update coalesce_scope set s=coalesce(1.2,d) where id=1")
+	want := tk.MustQuery("select s from coalesce_scope").Rows()
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	for range 2 {
+		tk.MustExec("update coalesce_scope set s=coalesce(1.2,d) where id=1")
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		tk.MustQuery("select s from coalesce_scope").Check(want)
+	}
+	tk.MustExec("prepare st from 'update coalesce_scope set d=coalesce(?,d) where id=1'")
+	tk.MustExec("set @p=3")
+	for range 2 {
+		tk.MustExec("execute st using @p")
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	}
+	// Existing functions retain their previous eligibility.
+	tk.MustExec("update coalesce_scope set d=greatest(4,d) where id=1")
+	tk.MustExec("update coalesce_scope set d=greatest(5,d) where id=1")
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+}
+
+func testNonPreparedCoalesceCrossColumnTypes(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, target, fallback string
+			cacheable              bool
+		}{
+			{"decimal", "decimal(20,8)", "decimal(20,8)", true},
+			{"integer", "bigint", "bigint", true},
+			{"unsigned", "bigint unsigned", "bigint unsigned", true},
+			{"precision", "decimal(20,8)", "decimal(19,8)", false},
+			{"scale", "decimal(20,8)", "decimal(20,7)", false},
+			{"signedness", "bigint unsigned", "bigint", false},
+			{"integer_width", "bigint", "int", false},
+			{"nullability", "bigint not null", "bigint", false},
+			{"string", "varchar(50)", "decimal(20,8)", false},
+		} {
+			t.Run(fmt.Sprintf("instance=%v/%s", instance, tc.name), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				cached, fresh := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+				cached.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+				for i, tk := range []*testkit.TestKit{cached, fresh} {
+					tk.MustExec("use test")
+					tk.MustExec(fmt.Sprintf("set tidb_enable_non_prepared_plan_cache=%v", i == 0))
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				}
+				cached.MustExec("create table cached_cross(id int primary key, dst " + tc.target + ", src " + tc.fallback + ")")
+				fresh.MustExec("create table fresh_cross like cached_cross")
+				cached.MustExec("insert into cached_cross values(1,0,7)")
+				fresh.MustExec("insert into fresh_cross values(1,0,7)")
+				// Include rounding into integer targets, precision changes, and
+				// NULL fallback. Compare evaluation warnings as well as rows.
+				for _, shape := range []string{"coalesce(%s,x.src)", "coalesce(%s,coalesce(0,x.src))"} {
+					for _, literal := range []string{"1.23456789", "2.34567891", "3.14159", "1", "NULL"} {
+						for run := range 2 {
+							results := make([][][]any, 2)
+							warnings := make([][][]any, 2)
+							for i, tk := range []*testkit.TestKit{cached, fresh} {
+								table := "cached_cross"
+								if i == 1 {
+									table = "fresh_cross"
+								}
+								tk.MustExec("update " + table + " as x set x.dst=" + fmt.Sprintf(shape, literal) + " where x.id=1")
+								if i == 0 && run == 1 {
+									require.Equal(t, tc.cacheable && literal != "NULL", tk.Session().GetSessionVars().FoundInPlanCache, literal)
+								}
+								warnings[i] = tk.MustQuery("show warnings").Rows()
+								results[i] = tk.MustQuery("select dst,src from " + table).Rows()
+							}
+							require.Equal(t, results[1], results[0], literal)
+							require.Equal(t, warnings[1], warnings[0], literal)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func testNonPreparedCoalesceNested(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		for _, columnType := range []string{"decimal(20,8)", "decimal(36,18)", "bigint", "bigint unsigned"} {
+			t.Run(fmt.Sprintf("instance=%v/%s", instance, columnType), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				cached, fresh := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+				cached.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%v", instance))
+				for i, tk := range []*testkit.TestKit{cached, fresh} {
+					tk.MustExec("use test")
+					tk.MustExec(fmt.Sprintf("set tidb_enable_non_prepared_plan_cache=%v", i == 0))
+					tk.MustExec("set tidb_enable_non_prepared_plan_cache_for_dml=1")
+				}
+				cached.MustExec("create table nested_cached(id int primary key, a " + columnType + ", b " + columnType + ", c " + columnType + ", v decimal(20,8))")
+				fresh.MustExec("create table nested_fresh like nested_cached")
+				cached.MustExec("insert into nested_cached values(1,0,null,7,0)")
+				fresh.MustExec("insert into nested_fresh values(1,0,null,7,0)")
+				for _, shape := range []string{
+					"coalesce(%s,coalesce(%s,b))",
+					"coalesce(coalesce(%s,b),coalesce(%s,c))",
+					"coalesce(%s,coalesce(%s,coalesce(0,b)))",
+				} {
+					for _, tc := range []struct {
+						outer, inner, outside string
+						hit                   bool
+					}{
+						{"1.23456789", "2.34567891", "1.23456789", false},
+						{"2.34567891", "3.45678912", "2.34567", true}, // Outside precision shrinks.
+						{"3.45678912", "4.14159", "3.34567", false},   // Inner precision shrinks.
+						{"4.56789123", "5.14159", "4.34567", true},
+						{"5.14159", "6.14159", "5.34567", false}, // Outer precision shrinks.
+						{"6.14159", "7.14159", "6.34567", true},
+						{"7.12345678", "8.12345678", "7.34567", true}, // Revisit both wide precisions.
+						{"1", "2", "1.34567", false},
+						{"12345", "23456", "2.34567", true}, // Integer widths retain compatibility.
+						{"1.123456789012345678", "2.123456789012345678", "1.34567", false},
+						{"2.123456789012345678", "3.123456789012345678", "2.34567", true},
+					} {
+						query := " set v=" + tc.outside + ",a=" + fmt.Sprintf(shape, tc.outer, tc.inner) + " where id=1"
+						cached.MustExec("update nested_cached" + query)
+						require.Equal(t, tc.hit, cached.Session().GetSessionVars().FoundInPlanCache, query)
+						warnings := cached.MustQuery("show warnings").Rows()
+						fresh.MustExec("update nested_fresh" + query)
+						require.Equal(t, fresh.MustQuery("show warnings").Rows(), warnings, query)
+						cached.MustQuery("select a,b,c,v from nested_cached").Check(fresh.MustQuery("select a,b,c,v from nested_fresh").Rows())
+					}
+				}
+			})
+		}
+	}
 }

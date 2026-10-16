@@ -158,6 +158,34 @@ func TestSelectIntoOutfileFromTable(t *testing.T) {
 	require.Equal(t, uint64(4), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 }
 
+func TestSelectIntoOutfileLinesStartingBy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v varchar(20))")
+	tk.MustExec("insert into t values (1, 'x'), (2, 'y'), (3, null)")
+	tk.MustExec("set tidb_init_chunk_size = 1")
+	for _, tt := range []struct {
+		name     string
+		query    string
+		options  string
+		expected string
+	}{
+		{"default", "select * from t order by id", `fields terminated by ','`, "1,x\n2,y\n3,\\N\n"},
+		{"empty prefix", "select * from t order by id", `fields terminated by ',' lines starting by ''`, "1,x\n2,y\n3,\\N\n"},
+		{"multiple rows", "select * from t order by id", `fields terminated by ',' lines starting by 'PREFIX'`, "PREFIX1,x\nPREFIX2,y\nPREFIX3,\\N\n"},
+		{"literal prefix", "select * from t order by id", `fields terminated by ',' enclosed by '"' escaped by '#' lines starting by '#,"' terminated by 'END'`, "#,\"\"1\",\"x\"END#,\"\"2\",\"y\"END#,\"\"3\",#NEND"},
+		{"null first field", "select v, id from t where id = 3", `fields terminated by ',' lines starting by 'PREFIX'`, "PREFIX\\N,3\n"},
+		{"empty result", "select * from t where id < 0", `lines starting by 'PREFIX'`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			outfile := filepath.Join(t.TempDir(), "out.txt")
+			tk.MustExec(fmt.Sprintf("%s into outfile %q %s", tt.query, outfile, tt.options))
+			cmpAndRm(tt.expected, outfile, t)
+		})
+	}
+}
+
 func TestSelectIntoOutfileConstant(t *testing.T) {
 	outfile := randomSelectFilePath("TestSelectIntoOutfileConstant")
 	store := testkit.CreateMockStore(t)

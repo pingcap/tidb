@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.opencensus.io/stats/view"
@@ -61,11 +62,21 @@ var (
 	mockPortAlloc = uberatomic.NewInt32(4000)
 )
 
+// CurrentPDAddr returns the PD address derived from the current -tikv-path value.
+// It parses flags on demand so callers don't depend on TestMain ordering.
+func CurrentPDAddr() string {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	return mustParsePDAddr(*TiKVPath)
+}
+
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
+	PDAddr = CurrentPDAddr()
 	vardef.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
@@ -103,9 +114,20 @@ func RunTestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
+func mustParsePDAddr(tikvPath string) string {
+	pdAddrs, _, _, err := tikvcfg.ParsePath(tikvPath)
+	if err != nil {
+		panic(err)
+	}
+	return strings.Join(pdAddrs, ",")
+}
+
 type realtikvStoreOption struct {
 	retainData bool
 	keyspace   string
+	// newCollationsEnabledOnFirstBootstrap is nil unless the test wants to
+	// bootstrap a keyspace with a specific persisted new-collation setting.
+	newCollationsEnabledOnFirstBootstrap *bool
 	// only used when keyspace is not SYSTEM, in that case, the SYSTEM store will
 	// be closed together with its domain, if we close it before domain of SYSTEM,
 	// some routine might report errors, and we don't want close twice as the storage
@@ -133,6 +155,14 @@ func WithRetainData() RealTiKVStoreOption {
 func WithKeyspaceName(name string) RealTiKVStoreOption {
 	return func(opt *realtikvStoreOption) {
 		opt.keyspace = name
+	}
+}
+
+// WithNewCollationsEnabledOnFirstBootstrap bootstraps a real TiKV test store
+// with the requested persisted new-collation setting.
+func WithNewCollationsEnabledOnFirstBootstrap(enabled bool) RealTiKVStoreOption {
+	return func(opt *realtikvStoreOption) {
+		opt.newCollationsEnabledOnFirstBootstrap = &enabled
 	}
 }
 
@@ -165,6 +195,16 @@ type KSRuntime struct {
 
 // PrepareForCrossKSTest prepares the environment for cross keyspace tests.
 func PrepareForCrossKSTest(t *testing.T, userKSs ...string) map[string]*KSRuntime {
+	return PrepareForCrossKSTestWithNewCollation(t, nil, userKSs...)
+}
+
+// PrepareForCrossKSTestWithNewCollation prepares cross-keyspace runtimes with
+// optional per-keyspace persisted new-collation settings.
+func PrepareForCrossKSTestWithNewCollation(
+	t *testing.T,
+	newCollationEnabled map[string]bool,
+	userKSs ...string,
+) map[string]*KSRuntime {
 	if !kerneltype.IsNextGen() {
 		t.Fail()
 	}
@@ -179,8 +219,18 @@ func PrepareForCrossKSTest(t *testing.T, userKSs ...string) map[string]*KSRuntim
 
 	ksList := append([]string{keyspace.System}, userKSs...)
 	for _, ks := range ksList {
-		store, dom := CreateMockStoreAndDomainAndSetup(t, WithKeyspaceName(ks),
-			WithKeepSystemStore(true), WithKeepSelfStore(true), WithAllocPort(true))
+		opts := []RealTiKVStoreOption{
+			WithKeyspaceName(ks),
+			WithKeepSystemStore(true),
+			WithKeepSelfStore(true),
+			WithAllocPort(true),
+		}
+		if newCollationEnabled != nil {
+			if enabled, ok := newCollationEnabled[ks]; ok {
+				opts = append(opts, WithNewCollationsEnabledOnFirstBootstrap(enabled))
+			}
+		}
+		store, dom := CreateMockStoreAndDomainAndSetup(t, opts...)
 		res[ks] = &KSRuntime{
 			Store: store,
 			Dom:   dom,
@@ -239,6 +289,9 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		conf.TxnLocalLatches.Enabled = false
 		conf.KeyspaceName = ks
 		conf.Store = config.StoreTypeTiKV
+		if option.newCollationsEnabledOnFirstBootstrap != nil {
+			conf.NewCollationsEnabledOnFirstBootstrap = *option.newCollationsEnabledOnFirstBootstrap
+		}
 		if option.allocPort {
 			conf.Port = uint(mockPortAlloc.Add(1))
 		}
@@ -270,6 +323,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 	tk.MustExec("use test")
 
 	if !option.retainData {
+		tk.MustExec("delete from mysql.tidb_import_jobs;")
 		tk.MustExec("delete from mysql.tidb_global_task;")
 		tk.MustExec("delete from mysql.tidb_background_subtask;")
 		tk.MustExec("delete from mysql.tidb_ddl_job;")
@@ -307,6 +361,8 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 func UpdateTiDBConfig() {
 	// need a real PD
 	config.UpdateGlobal(func(conf *config.Config) {
+		// Ignore -tikv-path here: it may be used in `init`,
+		// where flags are not parsed.
 		conf.Path = "127.0.0.1:2379"
 		if kerneltype.IsNextGen() {
 			conf.TiKVWorkerURL = "localhost:19000"

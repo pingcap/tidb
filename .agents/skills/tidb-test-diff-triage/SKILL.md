@@ -1,6 +1,6 @@
 ---
 name: tidb-test-diff-triage
-description: Triage unexpected TiDB test diffs that seem unrelated to the current PR. Use when plan/result/testdata changes appear after merge/rebase or only in specific local runs, especially to quickly rule in/out failpoint enablement issues.
+description: Investigate unexpected TiDB plan or test-result diffs unexplained by the change, including merge and environment effects.
 ---
 
 # TiDB Test Diff Triage

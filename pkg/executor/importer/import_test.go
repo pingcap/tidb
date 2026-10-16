@@ -28,14 +28,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
+	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -97,6 +103,26 @@ func TestInitDefaultOptions(t *testing.T) {
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
+}
+
+func TestPlanUseNewCollate(t *testing.T) {
+	plan := &Plan{}
+	require.True(t, plan.GetUseNewCollateOrDefault(true))
+	require.False(t, plan.GetUseNewCollateOrDefault(false))
+
+	plan.setUseNewCollate(false)
+	require.False(t, plan.GetUseNewCollateOrDefault(true))
+
+	data, err := json.Marshal(plan)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"use_new_collate":false`)
+
+	var decoded Plan
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.False(t, decoded.GetUseNewCollateOrDefault(true))
+
+	decoded.setUseNewCollate(true)
+	require.True(t, decoded.GetUseNewCollateOrDefault(false))
 }
 
 // for negative case see TestImportIntoOptionsNegativeCase
@@ -248,6 +274,124 @@ func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 	require.ErrorContains(t, err, onDupKeyOption)
 	require.ErrorContains(t, err, "local sort")
+}
+
+func TestInitOptionsFromQueryPositiveCase(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	p := parser.New()
+
+	// all allowed options for import from query: thread, disable_precheck, disk_quota
+	sql := "import into t from select * from t2 with " +
+		threadOption + "=4, " +
+		disablePrecheckOption + ", " +
+		diskQuotaOption + "='100gib'"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	plan := &Plan{DataSourceType: DataSourceTypeQuery}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql)
+	require.Equal(t, 4, plan.ThreadCnt, sql)
+	require.True(t, plan.DisablePrecheck, sql)
+	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
+
+	// disk_quota alone should work
+	sql = "import into t from select * from t2 with " + diskQuotaOption + "='50gib'"
+	stmt, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	plan = &Plan{DataSourceType: DataSourceTypeQuery}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql)
+	require.Equal(t, config.ByteSize(50<<30), plan.DiskQuota, sql)
+}
+
+func TestInitOptionsFromQueryNegativeCase(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	p := parser.New()
+
+	// options not allowed for import from query
+	disallowedOptions := []string{
+		characterSetOption + "='utf8'",
+		fieldsTerminatedByOption + "='aaa'",
+		fieldsEnclosedByOption + "='|'",
+		fieldsEscapedByOption + "='\\\\'",
+		fieldsDefinedNullByOption + "='N'",
+		linesTerminatedByOption + "='\\n'",
+		skipRowsOption + "=1",
+		splitFileOption,
+		checksumTableOption + "='optional'",
+		maxWriteSpeedOption + "='200mib'",
+		recordErrorsOption + "=123",
+		detachedOption,
+		disableTiKVImportModeOption,
+		maxEngineSizeOption + "='100gib'",
+		cloudStorageURIOption + "='s3://bucket/path'",
+	}
+	for _, opt := range disallowedOptions {
+		sql := "import into t from select * from t2 with " + opt
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		plan := &Plan{DataSourceType: DataSourceTypeQuery}
+		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+		require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption, sql)
+	}
+
+	// invalid disk_quota values for query source
+	invalidDiskQuotaCases := []string{
+		diskQuotaOption + "='aa'",
+		diskQuotaOption + "='220MiBxxx'",
+		diskQuotaOption + "=1",
+		diskQuotaOption + "=false",
+	}
+	for _, opt := range invalidDiskQuotaCases {
+		sql := "import into t from select * from t2 with " + opt
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		plan := &Plan{DataSourceType: DataSourceTypeQuery}
+		err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+		require.Error(t, err, sql)
+	}
+
+	// duplicate options
+	sql := "import into t from select * from t2 with " + diskQuotaOption + "='100gib', " + diskQuotaOption + "='200gib'"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err, sql)
+	plan := &Plan{DataSourceType: DataSourceTypeQuery}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.ErrorIs(t, err, exeerrors.ErrDuplicateOption, sql)
 }
 
 func TestAdjustOptions(t *testing.T) {
@@ -521,14 +665,86 @@ func TestImportPlanParquetLocation(t *testing.T) {
 	})
 }
 
+func TestEstimateFormatSizeExpansionRatio(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("row oriented format uses identity ratio", func(t *testing.T) {
+		ratio, err := estimateFormatSizeExpansionRatio(ctx, "data.csv", 1024, mydump.SourceTypeCSV, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1.0, ratio)
+	})
+
+	t.Run("parquet ratio is clamped to physical file size", func(t *testing.T) {
+		dir := t.TempDir()
+		const fileName = "tiny.parquet"
+		columns := []testutils.ParquetColumn{
+			{
+				Name:      "id",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.None,
+				Gen: func(numRows int) (any, []int16) {
+					data := make([]int64, numRows)
+					defLevels := make([]int16, numRows)
+					for i := range numRows {
+						data[i] = int64(i)
+						defLevels[i] = 1
+					}
+					return data, defLevels
+				},
+			},
+		}
+		require.NoError(t, testutils.WriteParquetFile(dir, fileName, columns, 1))
+
+		store, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		stat, err := os.Stat(filepath.Join(dir, fileName))
+		require.NoError(t, err)
+		rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, fileName, store)
+		require.NoError(t, err)
+		require.Less(t, rowSize*float64(rows), float64(stat.Size()))
+
+		ratio, err := estimateFormatSizeExpansionRatio(ctx, fileName, stat.Size(), mydump.SourceTypeParquet, store)
+		require.NoError(t, err)
+		require.Equal(t, 1.0, ratio)
+	})
+}
+
 func TestInitCompressedFiles(t *testing.T) {
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {
 		t.Skip("it cannot run as root")
 	}
-	tempDir := t.TempDir()
 	ctx := context.Background()
+
+	t.Run("real size is at least compressed file size", func(t *testing.T) {
+		tempDir := t.TempDir()
+		content := []byte("small file whose sampled compression ratio is below one")
+		fileName := filepath.Join(tempDir, "small.csv.gz")
+		require.NoError(t, os.WriteFile(fileName, content, 0o644))
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return(50)`)
+		c := LoadDataController{
+			Plan: &Plan{
+				Format:         DataFormatCSV,
+				InImportInto:   true,
+				Charset:        &defaultCharacterSet,
+				LineFieldsInfo: newDefaultLineFieldsInfo(),
+				FieldNullDef:   defaultFieldNullDef,
+				Parameters:     &ImportParameters{},
+			},
+			logger: zap.NewExample(),
+		}
+
+		c.Path = filepath.Join(tempDir, "*.gz")
+		require.NoError(t, c.InitDataFiles(ctx))
+		require.Len(t, c.dataFiles, 1)
+		require.Equal(t, int64(len(content)), c.dataFiles[0].FileSize)
+		require.Equal(t, c.dataFiles[0].FileSize, c.dataFiles[0].RealSize)
+		require.Equal(t, c.TotalFileSize, c.TotalRealSize)
+	})
+
+	tempDir := t.TempDir()
 
 	for i := range 2048 {
 		fileName := filepath.Join(tempDir, fmt.Sprintf("test_%d.csv.gz", i))

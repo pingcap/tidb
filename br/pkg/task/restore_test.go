@@ -19,6 +19,7 @@ import (
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -82,7 +83,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, nil, false))
+	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, nil, false, "ON"))
 
 	for i := range tables {
 		if i == 0 || i > 2 {
@@ -94,10 +95,39 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 
-	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, tiflashrec.New(), false))
+	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, tiflashrec.New(), false, "ON"))
 	for i := range tables {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
+}
+
+func TestPreCheckTableTiFlashReplicasNextGen(t *testing.T) {
+	tables := make([]*metautil.Table, 3)
+	for i := range tables {
+		tables[i] = &metautil.Table{
+			DB: &model.DBInfo{Name: ast.NewCIStr("test")},
+			Info: &model.TableInfo{
+				ID:   int64(i + 1),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i+1)),
+				TiFlashReplica: &model.TiFlashReplicaInfo{
+					Count: uint64(i + 1),
+				},
+			},
+		}
+	}
+	recorder := tiflashrec.New()
+	ctx := context.Background()
+	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, nil, tables, recorder, true, "OFF"))
+	for i := range tables {
+		require.Nil(t, tables[i].Info.TiFlashReplica)
+	}
+	require.Empty(t, recorder.GetItems())
+
+	// ON still strips on next-gen; the sysvar is diagnostic-only.
+	tables[0].Info.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1}
+	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, nil, tables, recorder, true, "ON"))
+	require.Nil(t, tables[0].Info.TiFlashReplica)
+	require.Empty(t, recorder.GetItems())
 }
 
 func TestPreCheckTableClusterIndex(t *testing.T) {
@@ -931,6 +961,29 @@ func TestHash(t *testing.T) {
 			name: "toggle_system_tables",
 			modifyFunc: func(cfg *task.RestoreConfig) {
 				cfg.WithSysTable = !cfg.WithSysTable
+			},
+			expectEqual: false,
+		},
+		{
+			name: "explicit_legacy_layout_keeps_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutLegacy
+			},
+			expectEqual: true,
+		},
+		{
+			name: "repo_v1_layout_changes_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutRepo
+				cfg.BackupID = repo.BackupID(0x1234)
+			},
+			expectEqual: false,
+		},
+		{
+			name: "repo_v1_backup_id_changes_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutRepo
+				cfg.BackupID = repo.BackupID(0x5678)
 			},
 			expectEqual: false,
 		},

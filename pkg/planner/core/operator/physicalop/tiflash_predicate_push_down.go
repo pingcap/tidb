@@ -201,6 +201,9 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 // @param: conds: the filter conditions
 // @param: ts: the PhysicalTableScan to be pushed down to
 func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expression, ts *PhysicalTableScan) {
+	if ts.hasFullTextIndexPushDown() {
+		return
+	}
 	// group the conditions by columns and sort them by selectivity
 	sortedConds := groupByColumnsSortBySelectivity(sctx, conds, ts)
 

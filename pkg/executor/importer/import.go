@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -191,6 +192,7 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		diskQuotaOption:       {},
 		threadOption:          {},
 		disablePrecheckOption: {},
 	}
@@ -335,6 +337,12 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// in the submitting keyspace. Import execution may happen in another keyspace,
+	// so key and expression encoding must use this captured value instead of the
+	// executor process default. Nil means old metadata and should fall back to the
+	// caller-provided default.
+	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
 // GetOnDupKeyMode returns the conflict handling mode.
@@ -347,6 +355,21 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 		return OnDupKeyModeError
 	}
 	return p.OnDupKey
+}
+
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for import metadata generated before the field existed.
+func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
+	if p.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *p.UseNewCollate
+}
+
+// setUseNewCollate stores the new-collation mode captured from the submitting
+// keyspace.
+func (p *Plan) setUseNewCollate(useNewCollate bool) {
+	p.UseNewCollate = &useNewCollate
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -553,6 +576,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
+	p.setUseNewCollate(collate.NewCollationEnabled())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -1245,17 +1269,11 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
+	u, _, err2 := e.parseDataSourcePath()
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
+		return err2
 	}
 
-	if objstore.IsLocal(u) {
-		u.Path = filepath.Dir(e.Path)
-	} else {
-		u.Path = ""
-	}
 	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
 	if err != nil {
 		return err
@@ -1268,6 +1286,111 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 			return err3
 		}
 		e.globalSortStore = store
+	}
+	return nil
+}
+
+// parseDataSourcePath parses e.Path and returns the URL of the storage holding
+// the data source, together with the file name or glob pattern to look for in
+// that storage.
+//
+// For local path, the returned URL points to the parent directory and the file
+// name is the base name, so that importing from server disk is confined to the
+// requested file or pattern. For remote storage, the file name is the object
+// path without the leading slash.
+func (e *LoadDataController) parseDataSourcePath() (*url.URL, string, error) {
+	u, err := objstore.ParseRawURL(e.Path)
+	if err != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err.Error())
+	}
+
+	var fileNameKey string
+	if objstore.IsLocal(u) {
+		u.Path = filepath.Dir(e.Path)
+		fileNameKey = filepath.Base(e.Path)
+	} else {
+		fileNameKey = strings.Trim(u.Path, "/")
+		u.Path = ""
+	}
+	return u, fileNameKey, nil
+}
+
+// checkDataSourceGlob checks that the file name or glob pattern of the data
+// source is well-formed.
+func checkDataSourceGlob(fileNameKey string) error {
+	// matching an empty name is enough to detect a malformed pattern.
+	if _, err := filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), ""); err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			"Glob pattern error: "+err.Error())
+	}
+	return nil
+}
+
+// CheckDataSourceAccess checks whether the data source can be accessed without
+// discovering all matching files. It is used before submitting a task whose
+// full file discovery runs asynchronously.
+//
+// It is only called by CheckRequirementsBeforeInitDataFiles, i.e. on the
+// NextGen async-prepare path, where the import uses global sort and the data
+// source is on cloud storage (import from server disk is rejected when SEM is
+// enabled). Credentials of such a data source normally grant access to the
+// whole directory rather than to individual files, so probing a single object
+// is a good enough access check: matching, empty-file validation and size
+// limits are still done by the asynchronous prepare.
+func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
+	u, fileNameKey, err := e.parseDataSourcePath()
+	if err != nil {
+		return err
+	}
+	// Check malformed glob patterns before probing the store.
+	if err = checkDataSourceGlob(fileNameKey); err != nil {
+		return err
+	}
+
+	sourceStore, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	defer sourceStore.Close()
+
+	idx := strings.IndexAny(fileNameKey, "*[")
+	if idx == -1 {
+		reader, err := sourceStore.Open(ctx, fileNameKey, nil)
+		if err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+				errors.GetErrStackMsg(err), "Please check the file location is correct")
+		}
+		terror.Log(reader.Close())
+		return nil
+	}
+
+	commonPrefix := ""
+	if !objstore.IsLocal(u) {
+		commonPrefix = fileNameKey[:idx]
+	}
+	// Keep the default page size: a page can contain entries that are not
+	// openable files, such as s3's empty directory items, and a smaller page
+	// size would make us issue one list request per skipped entry before
+	// finding one.
+	err = sourceStore.WalkDir(ctx, &storeapi.WalkOption{
+		ObjPrefix:  commonPrefix,
+		SkipSubDir: true,
+	}, func(remotePath string, _ int64) error {
+		reader, err := sourceStore.Open(ctx, remotePath, nil)
+		if err != nil {
+			return err
+		}
+		terror.Log(reader.Close())
+		// Stop after the first object. File matching and complete discovery are
+		// intentionally deferred to asynchronous prepare. The object opened here
+		// does not have to match the pattern: credentials of a cloud data source
+		// normally cover the whole directory, so any object in it is readable.
+		return io.EOF
+	})
+	if err != nil && errors.Cause(err) != io.EOF {
+		return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+			errors.GetErrStackMsg(err), "failed to access data source")
 	}
 	return nil
 }
@@ -1305,7 +1428,15 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storeapi
 	return s, nil
 }
 
-func estimateCompressionRatio(
+// estimateFormatSizeExpansionRatio estimates how much larger the decoded row
+// data can be than the source file's physical bytes because of the file format.
+//
+// Row-oriented formats use 1.0 because their file size is already a reasonable
+// proxy for decoded data size. Parquet needs a separate estimate: its columnar
+// layout and internal compression can make the physical file much smaller than
+// the row data TiDB will import. The returned ratio is always at least 1.0, so
+// size planning never treats decoded data as smaller than the source file.
+func estimateFormatSizeExpansionRatio(
 	ctx context.Context,
 	filePath string,
 	fileSize int64,
@@ -1324,13 +1455,23 @@ func estimateCompressionRatio(
 	if err != nil {
 		return 1.0, err
 	}
-	// No row in the file, use 2.0 as default compression ratio.
+	// If there is no row data to sample, keep the historical default estimate.
 	if rowSize == 0 || rows == 0 {
 		return 2.0, nil
 	}
 
-	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
-	return compressionRatio, nil
+	ratio := (rowSize * float64(rows)) / float64(fileSize)
+	// Small parquet files or inefficient internal compression can make the
+	// sampled decoded row size smaller than the physical file size. Keep size
+	// planning conservative by normalizing the format expansion to 1.0.
+	if ratio < 1.0 {
+		logutil.BgLogger().Info("estimated size expansion ratio is less than 1.0, normalized to 1.0",
+			zap.String("filePath", filePath), zap.Int64("rows", rows),
+			zap.Float64("rowSize", rowSize), zap.Int64("fileSize", fileSize),
+			zap.Float64("estimatedRatio", ratio))
+		ratio = 1.0
+	}
+	return ratio, nil
 }
 
 // maxSampledCompressedFiles indicates the max number of files we used to sample
@@ -1422,13 +1563,11 @@ func (r *compressionEstimator) estimate(
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
+	u, fileNameKey, err2 := e.parseDataSourcePath()
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
+		return err2
 	}
 
-	var fileNameKey string
 	if objstore.IsLocal(u) {
 		// LOAD DATA don't support server file.
 		if !e.InImportInto {
@@ -1452,16 +1591,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				err.Error())
 		}
-
-		fileNameKey = filepath.Base(e.Path)
-	} else {
-		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			"Glob pattern error: "+err2.Error())
+	if err2 = checkDataSourceGlob(fileNameKey); err2 != nil {
+		return err2
 	}
 
 	if err2 = e.InitDataStore(ctx); err2 != nil {
@@ -1471,9 +1604,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var (
 		sourceType mydump.SourceType
-		// sizeExpansionRatio is the estimated size expansion for parquet format.
-		// For non-parquet format, it's always 1.0.
-		sizeExpansionRatio = 1.0
+		// formatExpansionRatio adjusts file-size estimates for formats whose
+		// physical bytes are not a good proxy for decoded row data. It is
+		// currently greater than 1.0 only for parquet.
+		formatExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1494,7 +1628,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
-		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		formatExpansionRatio, err := estimateFormatSizeExpansionRatio(ctx, fileNameKey, size, sourceType, s)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1507,7 +1641,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 	} else {
 		var commonPrefix string
@@ -1550,7 +1684,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					formatExpansionRatio, err2 = estimateFormatSizeExpansionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
@@ -1563,8 +1697,12 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 					ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 				}
-				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
+				// Compression sampling can be below 1.0 for small files or
+				// inefficient compression. Keep RealSize at least the physical
+				// file size before applying the format expansion estimate.
+				compressionExpansionRatio := max(ce.estimate(ctx, fileMeta, s), 1.0)
+				fileMeta.RealSize = int64(compressionExpansionRatio * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1716,12 +1854,15 @@ func newLoadDataParser(
 	dataStore storeapi.Storage,
 	dataFileInfo LoadDataReaderInfo,
 ) (parser mydump.Parser, err error) {
-	reader, err2 := dataFileInfo.Opener(ctx)
-	if err2 != nil {
-		return nil, err2
+	var reader io.ReadSeekCloser
+	if format != DataFormatParquet {
+		reader, err = dataFileInfo.Opener(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && reader != nil {
 			if err3 := reader.Close(); err3 != nil && logger != nil {
 				logger.Warn("failed to close reader", zap.Error(err3))
 			}
@@ -1756,8 +1897,9 @@ func newLoadDataParser(
 		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
-			reader,
+			dataFileInfo.Opener,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.FileSize,
 			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:
@@ -1925,7 +2067,11 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
+	return createColAssignSimpleExprs(
+		e.ColumnAssignments,
+		ctx,
+		&e.colAssignMu,
+	)
 }
 
 func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) ingestctrl.BackendConfig {

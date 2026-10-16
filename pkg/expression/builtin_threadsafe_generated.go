@@ -2455,11 +2455,6 @@ func (s *builtinUnaryNotRealSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinUncompressSig) SafeToShareAcrossSession() bool {
-	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinUncompressedLengthSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }

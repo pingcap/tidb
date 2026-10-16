@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/objstore/ossstore"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -145,6 +146,12 @@ func isRetryableURLInnerError(err error) bool {
 
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
+
+	// A transient failure to fetch OSS credentials from the ECS metadata
+	// service is retryable even though it is not recognized below.
+	if ossstore.IsTransientNoCredentialsError(err) {
+		return true
+	}
 
 	switch err {
 	case nil, context.Canceled, io.EOF, sql.ErrNoRows:

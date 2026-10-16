@@ -124,6 +124,18 @@ func TestRewriteDBInfo(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, DBInfo.ID, sr.DbReplaceMap[dbID].DbID)
 	require.Equal(t, newId, sr.DbReplaceMap[dbID].DbID)
+
+	writeValue := RawWriteCFValue{
+		t:          WriteTypePut,
+		startTs:    1,
+		shortValue: value,
+		txnSource:  7,
+	}
+	result, err := sr.rewriteValue(writeValue.EncodeTo(), consts.WriteCF, sr.rewriteDBInfo)
+	require.Nil(t, err)
+	rewrittenWriteValue := new(RawWriteCFValue)
+	require.Nil(t, rewrittenWriteValue.ParseFrom(result.NewValue))
+	require.Equal(t, rewrittenWriteValue.txnSource, uint64(7)|kv.LightningPhysicalImportTxnSource)
 }
 
 func TestRewriteKeyForTable(t *testing.T) {
@@ -1070,7 +1082,7 @@ func TestDeleteRangeForMDDLJob2(t *testing.T) {
 		_, exist := mDDLJobALLNewTableKeySet[params.StartKey]
 		require.True(t, exist)
 	}
-	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),", qargs.Sql)
+	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?)", qargs.Sql)
 }
 
 func TestCompatibleAlert(t *testing.T) {

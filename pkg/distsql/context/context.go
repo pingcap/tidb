@@ -44,7 +44,6 @@ type DistSQLContext struct {
 	OriginalSQL            string
 	KVVars                 *tikvstore.Variables
 	KvExecCounter          *stmtstats.KvExecCounter
-	RUV2Metrics            *execdetails.RUV2Metrics
 	SessionMemTracker      *memory.Tracker
 
 	Location         *time.Location
@@ -63,6 +62,7 @@ type DistSQLContext struct {
 	TiFlashQuerySpillRatio               float64
 	TiFlashHashJoinVersion               string
 
+	QueryCopStoreLimiter          *kv.QueryCopStoreLimiter
 	DistSQLConcurrency            int
 	ReplicaReadType               kv.ReplicaReadType
 	WeakConsistency               bool
@@ -74,6 +74,7 @@ type DistSQLContext struct {
 	EnablePaging                  bool
 	MinPagingSize                 int
 	MaxPagingSize                 int
+	PagingSizeBytes               int
 	RequestSourceType             string
 	ExplicitRequestSourceType     string
 	StoreBatchSize                int

@@ -73,6 +73,43 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 }
 
+func TestSumIntDistinct(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency = 4")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency = 4")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned, g int)")
+	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 1), (2, 2, 1), (2, 2, 1), (3, 3, 2), (3, 3, 2), (null, null, 2)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("6 6"))
+	tk.MustQuery("select /*+ hash_agg() */ g, sum_int(distinct a), sum_int(distinct b) from t group by g order by g").Check(testkit.Rows(
+		"1 3 3",
+		"2 3 3",
+	))
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values (null, null, 1), (null, null, 1)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("<nil> <nil>"))
+}
+
+func TestSumIntMockCopPushDown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (null, null)")
+
+	sql := "select /*+ agg_to_cop(), hash_agg() */ sum_int(a), sum_int(b) from t"
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+	require.Contains(t, plan, "HashAgg")
+	require.Contains(t, plan, "cop[tikv]")
+	require.Contains(t, plan, "sum_int(test.t.a)")
+	require.Contains(t, plan, "sum_int(test.t.b)")
+	tk.MustQuery(sql).Check(testkit.Rows("3 3"))
+}
+
 func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -242,6 +279,10 @@ func TestAggInDisk(t *testing.T) {
 	tk.MustExec("insert into t values(0)")
 	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
 		testkit.Rows("4040100.0000"))
+	tk.MustQuery("select sum_int(tt.b) from ( select /*+ HASH_AGG() */ sum_int(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4060200"))
+	tk.MustQuery("select sum(tt.b), sum_int(tt.b) from ( select /*+ HASH_AGG() */ sum_int(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4060200 4060200"))
 	// Test no groupby and no data.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(c int, c1 int);")
