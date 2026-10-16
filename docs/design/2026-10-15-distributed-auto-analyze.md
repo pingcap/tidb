@@ -72,7 +72,7 @@ The [workflow](https://editor.plantuml.com/uml/RLFBJiCm4BpdArQzGANo0psW5hMLa2f0A
 2. On the next-gen kernel, the stats owner flushes the pending stats deltas of the table on the TiDB nodes of its keyspace.
 3. Instead of running the statement locally, the stats owner submits an `AutoAnalyze` task that carries the statement, the IDs of the table and its database, and the slots the statement needs.
 4. The DXF scheduler creates the only subtask of the task and places it on a node with enough free slots.
-5. The task executor runs the statement. On a service node, it first lists the table in the info schema of the user keyspace's runtime and builds a stats handle for that keyspace.
+5. The task executor runs the statement. On a service node, it first lists the table in the info schema of the user keyspace's runtime and builds a stats handle without a cache for that keyspace.
 6. The statement loads the current statistics of the table, analyzes it, and saves the new statistics into the user keyspace, as a local `ANALYZE` does.
 7. Once the subtask finishes, the task succeeds and the stats owner stops waiting.
 8. The stats owner loads the new statistics into its own cache, which a local `ANALYZE` would have done as its last step.
@@ -191,14 +191,20 @@ On a normal TiDB node, the list is never enabled and `GetLatestWithOnDemandTable
 
 #### Stats Handle Without a Domain
 
-`ANALYZE` takes the stats handle from the domain of its session in many places. We replace these lookups with `domain.GetStatsHandle(sctx)`, which returns the domain's handle as before, or, for a session without a domain, a handle bound to the session.
+A full stats handle keeps the statistics cache of a keyspace and runs its background workers. `ANALYZE` needs neither, so **`ANALYZE` depends only on a narrow interface, `AnalyzeStatsHandle`**, instead of the full handle. The interface covers what the statement reads and writes:
 
-On a service node, the task executor builds a stats handle of the user keyspace for each statement:
+- saving the results, the analyze jobs, the locked tables, the predicate columns, and the historical statistics, all through internal sessions of the keyspace;
+- merging the global statistics of a partitioned table;
+- the current statistics of a table, which decide the sample rate and whether old version 1 statistics must be rewritten.
 
-- The handle works on sessions taken from the runtime, and binds itself to each of them. It starts no background worker.
-- Its cache starts empty, and a statement takes a table that is not in the cache as one without statistics, so the executor first loads the current statistics of the table and its partitions. Otherwise, the statement would choose its sample rate from a pseudo row count.
-- The handle reads a dozen global variables every time it takes a session, and a session without a domain reads them from the table of its keyspace. The executor therefore keeps the values each statement reads first, so the statement works with one set of settings.
-- When the statement ends, the executor waits until no worker uses a session of the handle, then closes the handle and makes the sessions leave the runtime. A killed statement returns before its save workers do, so a session must not be closed while one of them is still in a transaction.
+The executor and the planner take this interface from `domain.GetAnalyzeStatsHandle(sctx)`. It returns the domain's handle as before, which implements the interface, or, for a session without a domain, the handle bound to the session. The storage, history, and global-statistics components of the stats handle likewise depend only on the few methods they call.
+
+On a service node, the task executor binds an `AnalyzeHandle` of the user keyspace to the statement session. It reuses these components on the sessions of the runtime, but has no cache and starts no background worker:
+
+- It reads the statistics of a table from the storage the first time the statement asks for them, and keeps them until the statement ends. The sample rate therefore comes from the row count in `mysql.stats_meta` of the user keyspace, as a cache would give.
+- Loading the new statistics into a cache does nothing: the stats owner does it after the task succeeds.
+- A session without a domain reads its global variables from the table of its keyspace, and every session the handle takes refreshes a dozen of them. The sessions of one statement therefore keep the values they read first.
+- When the statement ends, the executor waits until no worker uses a session, then makes the sessions leave the runtime. A killed statement returns before its save workers do, so a session must not be closed while one of them is still in a transaction.
 
 On the classic kernel, the executor uses the stats handle of its node's domain, as a local auto-analyze does.
 
@@ -238,7 +244,7 @@ Many global variables are mirrored in process-level variables, which hold the va
 
 ### Compatibility Tests
 
-- **Mode `OFF`:** the stats owner runs every statement locally. On a normal TiDB node, `GetLatestWithOnDemandTables` returns the same info schema as `GetLatest`, and `domain.GetStatsHandle` returns the handle of the domain, so the existing auto-analyze, analyze executor, and planner tests pass unchanged.
+- **Mode `OFF`:** the stats owner runs every statement locally. On a normal TiDB node, `GetLatestWithOnDemandTables` returns the same info schema as `GetLatest`, and `domain.GetAnalyzeStatsHandle` returns the handle of the domain, so the existing auto-analyze, analyze executor, and planner tests pass unchanged.
 - **Upgrade:** an upgraded cluster starts with the mode `OFF`. With the mode set to `DXF` before an old node is upgraded, the task fails, no statistics are written, and the table is analyzed again later.
 
 ### Benchmark Tests
@@ -267,6 +273,7 @@ Compare the duration of auto-analyze for a cluster with many tables, with the mo
 - **Poll a system table:** the stats owner writes the statements into `mysql.analyze_jobs` and the other nodes poll it. This needs its own scheduling, failover, and resource control, all of which DXF already has.
 - **A generic SQL task:** the [first prototype](https://github.com/pingcap/tidb/pull/60969) put any SQL statement into a task. A statement alone does not tell the framework which tables to load or how many slots it needs, so this design uses a task type dedicated to auto-analyze, and keeps the reusable parts in the info schema and the session layer.
 - **Load the info schema of the whole user keyspace:** it is slow and takes a lot of memory on a node that serves many keyspaces, and lets a task see tables it does not need. A [prototype](https://github.com/pingcap/tidb/pull/65618) that loads any table on demand has the same concerns, so this design loads only the tables a task lists.
+- **Build a full stats handle on the service node:** its cache starts empty, so every statement would first load the statistics of its table into a cache that it then discards, and the background workers and the lifecycle of the handle would have to be managed for each statement. The narrow interface keeps only what `ANALYZE` uses.
 - **Put the table into the session's temporary-table slot:** every task that runs SQL on a user table would have to do this by itself. Loading the listed tables in the info schema keeps the SQL layer unaware of it.
 - **Run several statements in one task:** this would work around the limit of 16 tasks, but a statement is already the smallest unit of work, and combining unrelated tables in one task makes failure handling and cancellation coarser.
 - **Pick the node in the scheduler:** spreading the tasks by their IDs bypasses the slot-aware placement of the framework and moves running subtasks when the nodes change. The framework places the subtask by its slots instead.
