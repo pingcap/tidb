@@ -3777,9 +3777,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        replace = "github.com/RidRisR/kvproto",
-        sum = "h1:GHIpG8zJN5AcpAK6C1CgJ3+66ENEq1gd6MKdDsZ12Vc=",
-        version = "v0.0.0-20261014215912-21b303f4388d",
+        sum = "h1:ymP9CnhW3cNZLg5cea2ZgqCSTG91FrQts2e6HnULBu8=",
+        version = "v0.0.0-20261016101550-f8ad079c8e98",
     )
     go_repository(
         name = "com_github_pingcap_log",

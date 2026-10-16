@@ -176,12 +176,6 @@ func TestClientEncryptionContextRequests(t *testing.T) {
 	}
 }
 
-type encryptionContextHTTPClient func(*http.Request) (*http.Response, error)
-
-func (f encryptionContextHTTPClient) Do(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
-
 func TestCopyObjectEncryptionContextHeader(t *testing.T) {
 	for _, encryptionContext := range []string{"", "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9"} {
 		t.Run(encryptionContext, func(t *testing.T) {
@@ -189,7 +183,7 @@ func TestCopyObjectEncryptionContextHeader(t *testing.T) {
 			client := s3.New(s3.Options{
 				Region:      "us-east-1",
 				Credentials: aws.AnonymousCredentials{},
-				HTTPClient: encryptionContextHTTPClient(func(req *http.Request) (*http.Response, error) {
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 					request = req
 					return &http.Response{
 						StatusCode: http.StatusOK,
@@ -197,7 +191,7 @@ func TestCopyObjectEncryptionContextHeader(t *testing.T) {
 						Body:       io.NopCloser(strings.NewReader(`<CopyObjectResult><ETag>etag</ETag></CopyObjectResult>`)),
 						Request:    req,
 					}, nil
-				}),
+				})},
 			})
 			cli := &s3Client{
 				svc:          client,
@@ -243,7 +237,7 @@ func TestMultipartUploaderEncryptionContext(t *testing.T) {
 				client := s3.New(s3.Options{
 					Region:      "us-east-1",
 					Credentials: aws.AnonymousCredentials{},
-					HTTPClient: encryptionContextHTTPClient(func(req *http.Request) (*http.Response, error) {
+					HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 						requests <- req
 						if req.Body != nil {
 							if _, err := io.Copy(io.Discard, req.Body); err != nil {
@@ -262,7 +256,7 @@ func TestMultipartUploaderEncryptionContext(t *testing.T) {
 							Body:       io.NopCloser(strings.NewReader(body)),
 							Request:    req,
 						}, nil
-					}),
+					})},
 				})
 				cli := &s3Client{
 					svc:          client,
@@ -292,13 +286,10 @@ func TestMultipartUploaderEncryptionContext(t *testing.T) {
 					header := req.Header.Values("X-Amz-Server-Side-Encryption-Context")
 					if expected == "" {
 						require.Empty(t, header, operation)
-					} else {
-						require.Equal(t, []string{expected}, header, operation)
-					}
-					if expected == "" {
 						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
 						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
 					} else {
+						require.Equal(t, []string{expected}, header, operation)
 						require.Equal(t, "aws:kms", req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
 						require.Equal(t, "key-id", req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
 					}

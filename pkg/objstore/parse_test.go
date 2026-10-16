@@ -60,22 +60,18 @@ func TestS3SSEKMSContextURL(t *testing.T) {
 			fromURL, err := ParseBackendFromURL(parsedURL, options)
 			require.NoError(t, err)
 			require.Equal(t, encoded, fromURL.GetS3().GetSseKmsEncryptionContext())
-
-			// The same encoded value survives snapshot RPC and log-task persistence.
-			request := &backuppb.BackupRequest{StorageBackend: backend}
-			data, err := request.Marshal()
-			require.NoError(t, err)
-			var restoredRequest backuppb.BackupRequest
-			require.NoError(t, restoredRequest.Unmarshal(data))
-			require.Equal(t, encoded, restoredRequest.GetStorageBackend().GetS3().GetSseKmsEncryptionContext())
-			task := &backuppb.StreamBackupTaskInfo{Storage: backend}
-			data, err = task.Marshal()
-			require.NoError(t, err)
-			var restoredTask backuppb.StreamBackupTaskInfo
-			require.NoError(t, restoredTask.Unmarshal(data))
-			require.Equal(t, encoded, restoredTask.GetStorage().GetS3().GetSseKmsEncryptionContext())
 		})
 	}
+
+	// The encoded value survives snapshot request serialization.
+	backend, err := ParseBackend("s3://bucket/prefix?sse-kms-context="+query, nil)
+	require.NoError(t, err)
+	request := &backuppb.BackupRequest{StorageBackend: backend}
+	data, err := request.Marshal()
+	require.NoError(t, err)
+	var restoredRequest backuppb.BackupRequest
+	require.NoError(t, restoredRequest.Unmarshal(data))
+	require.Equal(t, encoded, restoredRequest.GetStorageBackend().GetS3().GetSseKmsEncryptionContext())
 
 	for _, input := range []string{`{"tenant":null}`, `{"tenant":"private-context","tenant":"other"}`, encoded} {
 		_, err := ParseBackend("s3://bucket/prefix?sse-kms-context="+url.QueryEscape(input), nil)

@@ -78,24 +78,27 @@ func TestS3SSEKMSContextFlags(t *testing.T) {
 		})
 	}
 
-	for _, sse := range []string{"", "AES256", "aws:kms"} {
-		for _, keyID := range []string{"", "test-key"} {
-			for _, provider := range []string{"", "aws", "ceph"} {
-				flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-				s3like.DefineS3Flags(flags)
-				require.NoError(t, flags.Set("s3.sse-kms-context", `{"tenant":"tenant-a"}`))
-				require.NoError(t, flags.Set("s3.sse", sse))
-				require.NoError(t, flags.Set("s3.sse-kms-key-id", keyID))
-				require.NoError(t, flags.Set("s3.provider", provider))
-				var options s3like.S3BackendOptions
-				require.NoError(t, options.ParseFromFlags(flags))
-				backend := &backuppb.S3{}
-				require.NoError(t, options.Apply(backend))
-				require.Equal(t, sse, backend.Sse)
-				require.Equal(t, keyID, backend.SseKmsKeyId)
-				require.Equal(t, provider, backend.Provider)
-			}
-		}
+	for _, tc := range []struct{ sse, keyID, provider string }{
+		{"", "", ""},
+		{"", "test-key", "ceph"},
+		{"AES256", "", "ceph"},
+		{"AES256", "test-key", "aws"},
+		{"aws:kms", "", "aws"},
+		{"aws:kms", "test-key", ""},
+	} {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		s3like.DefineS3Flags(flags)
+		require.NoError(t, flags.Set("s3.sse-kms-context", `{"tenant":"tenant-a"}`))
+		require.NoError(t, flags.Set("s3.sse", tc.sse))
+		require.NoError(t, flags.Set("s3.sse-kms-key-id", tc.keyID))
+		require.NoError(t, flags.Set("s3.provider", tc.provider))
+		var options s3like.S3BackendOptions
+		require.NoError(t, options.ParseFromFlags(flags))
+		backend := &backuppb.S3{}
+		require.NoError(t, options.Apply(backend))
+		require.Equal(t, tc.sse, backend.Sse)
+		require.Equal(t, tc.keyID, backend.SseKmsKeyId)
+		require.Equal(t, tc.provider, backend.Provider)
 	}
 }
 

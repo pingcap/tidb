@@ -249,10 +249,8 @@ func encodeSSEKMSContext(raw string) (string, error) {
 		values[key] = value
 	}
 	// json.Valid has already checked the closing delimiter and trailing input.
-	normalized, err := json.Marshal(values)
-	if err != nil {
-		return "", invalid
-	}
+	// A map of strings contains no unsupported JSON values.
+	normalized, _ := json.Marshal(values)
 	return base64.StdEncoding.EncodeToString(normalized), nil
 }
 
