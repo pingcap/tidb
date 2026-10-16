@@ -4227,12 +4227,15 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 const RedactedValue = "xxxxxx"
 
 // RedactURL redacts sensitive query parameters and removes fragments in supported storage URLs.
-// If the URL is not valid, it returns the original string.
+// Plain local paths are unchanged; an invalid URL is replaced by a placeholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
+	if !strings.Contains(str, "://") && !strings.Contains(str, "?") {
+		return str
+	}
 	u, err := url.Parse(str)
 	if err != nil {
-		return str
+		return "(invalid storage URL)"
 	}
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
