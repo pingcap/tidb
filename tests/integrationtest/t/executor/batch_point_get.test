@@ -182,3 +182,32 @@ explain format='plan_tree' select * from t_partition_coll where (a='中' or a='�
 --sorted_result
 select * from t_partition_coll where (a='中' or a='国') and v>0;
 drop table t_partition_coll;
+
+# Logical index ordering differs from partition-prefix ordering.
+create table t_partition_order(k int, p int, v int,
+  primary key(k,p) nonclustered, unique key uk(k) global)
+partition by range(p) (partition p0 values less than(10),
+  partition p1 values less than(20), partition p2 values less than(maxvalue));
+insert into t_partition_order values(1,21,1),(11,11,2),(21,1,3);
+explain format='plan_tree' select * from t_partition_order use index(primary)
+  where (k=99 and p=11) or (k=1 and p=21) or (k=11 and p=11) or (k=21 and p=1)
+  order by k desc,p desc;
+select * from t_partition_order use index(primary)
+  where (k=99 and p=11) or (k=1 and p=21) or (k=11 and p=11) or (k=21 and p=1)
+  order by k desc,p desc;
+begin;
+delete from t_partition_order where k=11;
+update t_partition_order set p=1,v=4 where k=1;
+insert into t_partition_order values(31,21,5);
+explain format='plan_tree' select * from t_partition_order use index(primary)
+  where ((k=1 and p=21) or (k=1 and p=1) or (k=11 and p=11) or (k=21 and p=1) or (k=31 and p=21)) and v>=4
+  order by k desc,p desc limit 2;
+select * from t_partition_order use index(primary)
+  where ((k=1 and p=21) or (k=1 and p=1) or (k=11 and p=11) or (k=21 and p=1) or (k=31 and p=21)) and v>=4
+  order by k desc,p desc limit 2;
+explain format='plan_tree' select * from t_partition_order use index(uk)
+  where (k=1 or k=11 or k=21 or k=31 or k=99) and v>=4 order by k desc limit 2;
+select * from t_partition_order use index(uk)
+  where (k=1 or k=11 or k=21 or k=31 or k=99) and v>=4 order by k desc limit 2;
+rollback;
+drop table t_partition_order;

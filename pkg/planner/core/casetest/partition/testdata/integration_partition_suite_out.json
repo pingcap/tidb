@@ -1880,8 +1880,7 @@
       {
         "SQL": "select * from thash1 where a in (1,2) and b = 1 order by a",
         "DynamicPlan": [
-          "IndexReader root partition:p1 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:false"
@@ -1894,8 +1893,7 @@
       {
         "SQL": "select * from thash1 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "IndexReader root partition:p1 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:true"
@@ -1923,8 +1921,7 @@
       {
         "SQL": "select * from thash1 where a = 1 and b in (1,2) order by b",
         "DynamicPlan": [
-          "IndexReader root partition:p0,p1 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:thash1, partition:p0,p1, index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Sort root  test.thash1.b",
@@ -1940,8 +1937,7 @@
       {
         "SQL": "select * from thash1 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "IndexReader root partition:p0,p1 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:thash1, partition:p0,p1, index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Sort root  test.thash1.b:desc",
@@ -1970,8 +1966,7 @@
       {
         "SQL": "select * from trange1 where a in (1,2) and b = 1 order by a",
         "DynamicPlan": [
-          "IndexReader root partition:p0 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:trange1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:trange1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:false"
@@ -1984,8 +1979,7 @@
       {
         "SQL": "select * from trange1 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "IndexReader root partition:p0 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:trange1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:trange1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:true"
@@ -2013,8 +2007,7 @@
       {
         "SQL": "select * from trange1 where a = 1 and b in (1,2) order by b",
         "DynamicPlan": [
-          "IndexReader root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:trange1, partition:p0,p1, index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Sort root  test.trange1.b",
@@ -2030,8 +2023,7 @@
       {
         "SQL": "select * from trange1 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "IndexReader root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:trange1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:trange1, partition:p0,p1, index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Sort root  test.trange1.b:desc",
@@ -2060,8 +2052,7 @@
       {
         "SQL": "select * from tlist1 where a in (1,2) and b = 1 order by a",
         "DynamicPlan": [
-          "IndexReader root partition:p0 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:tlist1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:tlist1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:false"
@@ -2074,8 +2065,7 @@
       {
         "SQL": "select * from tlist1 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "IndexReader root partition:p0 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:tlist1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:tlist1, partition:p0, index:PRIMARY(a, b) keep order:true, desc:true"
@@ -2103,8 +2093,7 @@
       {
         "SQL": "select * from tlist1 where a = 1 and b in (1,2) order by b",
         "DynamicPlan": [
-          "IndexReader root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:tlist1, partition:p0,p1, index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Sort root  test.tlist1.b",
@@ -2120,8 +2109,7 @@
       {
         "SQL": "select * from tlist1 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "IndexReader root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:tlist1, index:PRIMARY(a, b) range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:tlist1, partition:p0,p1, index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Sort root  test.tlist1.b:desc",
@@ -2150,8 +2138,7 @@
       {
         "SQL": "select * from thash2 where a in (1,2) and b = 1 order by a",
         "DynamicPlan": [
-          "TableReader root partition:p1 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"
@@ -2164,8 +2151,7 @@
       {
         "SQL": "select * from thash2 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "TableReader root partition:p1 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:true"
@@ -2193,8 +2179,7 @@
       {
         "SQL": "select * from thash2 where a = 1 and b in (1,2) order by b",
         "DynamicPlan": [
-          "TableReader root partition:p0,p1 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:thash2, partition:p0,p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Sort root  test.thash2.b",
@@ -2210,8 +2195,7 @@
       {
         "SQL": "select * from thash2 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "TableReader root partition:p0,p1 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:thash2 range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:thash2, partition:p0,p1, clustered index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Sort root  test.thash2.b:desc",
@@ -2240,8 +2224,7 @@
       {
         "SQL": "select * from trange2 where a in (1,2) and b = 1 order by a",
         "DynamicPlan": [
-          "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange2 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:trange2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:trange2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:false"
@@ -2254,8 +2237,7 @@
       {
         "SQL": "select * from trange2 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange2 range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:trange2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:trange2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:true"
@@ -2283,8 +2265,7 @@
       {
         "SQL": "select * from trange2 where a = 1 and b in (1,2) order by b",
         "DynamicPlan": [
-          "TableReader root partition:all data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:trange2, partition:p0,p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Sort root  test.trange2.b",
@@ -2300,8 +2281,7 @@
       {
         "SQL": "select * from trange2 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "TableReader root partition:all data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange2 range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:trange2, partition:p0,p1, clustered index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Sort root  test.trange2.b:desc",
@@ -2330,8 +2310,7 @@
       {
         "SQL": "select * from tlist2 where a in (1,2) and b = 1 order by a",
         "DynamicPlan": [
-          "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist2 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:tlist2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:tlist2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:false"
@@ -2344,8 +2323,7 @@
       {
         "SQL": "select * from tlist2 where a in (1,2) and b = 1 order by a desc",
         "DynamicPlan": [
-          "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist2 range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:tlist2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:tlist2, partition:p0, clustered index:PRIMARY(a, b) keep order:true, desc:true"
@@ -2373,8 +2351,7 @@
       {
         "SQL": "select * from tlist2 where a = 1 and b in (1,2) order by b",
         "DynamicPlan": [
-          "TableReader root partition:all data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:tlist2, partition:p0,p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Sort root  test.tlist2.b",
@@ -2390,8 +2367,7 @@
       {
         "SQL": "select * from tlist2 where a = 1 and b in (1,2) order by b desc",
         "DynamicPlan": [
-          "TableReader root partition:all data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist2 range:[1 1,1 1], [1 2,1 2], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:tlist2, partition:p0,p1, clustered index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Sort root  test.tlist2.b:desc",
@@ -2435,8 +2411,7 @@
       {
         "SQL": "select * from thash3 where a in (1,3) and 1 = 1 order by a",
         "DynamicPlan": [
-          "TableReader root partition:p1 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:thash3 range:[1,1], [3,3], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:false"
@@ -2449,8 +2424,7 @@
       {
         "SQL": "select * from thash3 where a in (1,3) and 1 = 1 order by a desc",
         "DynamicPlan": [
-          "TableReader root partition:p1 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:thash3 range:[1,1], [3,3], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:true"
@@ -2526,8 +2500,7 @@
       {
         "SQL": "select * from trange3 where a in (1,3) and 1 = 1 order by a",
         "DynamicPlan": [
-          "TableReader root partition:all data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange3 range:[1,1], [3,3], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:trange3, partition:p0,p1 handle:[1 3], keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Sort root  test.trange3.a",
@@ -2543,8 +2516,7 @@
       {
         "SQL": "select * from trange3 where a in (1,3) and 1 = 1 order by a desc",
         "DynamicPlan": [
-          "TableReader root partition:all data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange3 range:[1,1], [3,3], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:trange3, partition:p0,p1 handle:[1 3], keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Sort root  test.trange3.a:desc",
@@ -2623,8 +2595,7 @@
       {
         "SQL": "select * from tlist3 where a in (1,2) and 1 = 1 order by a",
         "DynamicPlan": [
-          "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:true, stats:pseudo"
+          "Batch_Point_Get root table:tlist3, partition:p0 handle:[1 2], keep order:true, desc:false"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:tlist3, partition:p0 handle:[1 2], keep order:true, desc:false"
@@ -2637,8 +2608,7 @@
       {
         "SQL": "select * from tlist3 where a in (1,2) and 1 = 1 order by a desc",
         "DynamicPlan": [
-          "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:true, desc, stats:pseudo"
+          "Batch_Point_Get root table:tlist3, partition:p0 handle:[1 2], keep order:true, desc:true"
         ],
         "StaticPlan": [
           "Batch_Point_Get root table:tlist3, partition:p0 handle:[1 2], keep order:true, desc:true"

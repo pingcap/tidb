@@ -277,3 +277,50 @@ a	v
 中	1
 国	2
 drop table t_partition_coll;
+create table t_partition_order(k int, p int, v int,
+primary key(k,p) nonclustered, unique key uk(k) global)
+partition by range(p) (partition p0 values less than(10),
+partition p1 values less than(20), partition p2 values less than(maxvalue));
+insert into t_partition_order values(1,21,1),(11,11,2),(21,1,3);
+explain format='plan_tree' select * from t_partition_order use index(primary)
+where (k=99 and p=11) or (k=1 and p=21) or (k=11 and p=11) or (k=21 and p=1)
+order by k desc,p desc;
+id	task	access object	operator info
+Batch_Point_Get	root	table:t_partition_order, partition:p0,p1,p2, index:PRIMARY(k, p)	keep order:true, desc:true
+select * from t_partition_order use index(primary)
+where (k=99 and p=11) or (k=1 and p=21) or (k=11 and p=11) or (k=21 and p=1)
+order by k desc,p desc;
+k	p	v
+21	1	3
+11	11	2
+1	21	1
+begin;
+delete from t_partition_order where k=11;
+update t_partition_order set p=1,v=4 where k=1;
+insert into t_partition_order values(31,21,5);
+explain format='plan_tree' select * from t_partition_order use index(primary)
+where ((k=1 and p=21) or (k=1 and p=1) or (k=11 and p=11) or (k=21 and p=1) or (k=31 and p=21)) and v>=4
+order by k desc,p desc limit 2;
+id	task	access object	operator info
+Limit	root		offset:0, count:2
+└─Selection	root		ge(executor__batch_point_get.t_partition_order.v, 4)
+  └─Batch_Point_Get	root	table:t_partition_order, partition:p0,p1,p2, index:PRIMARY(k, p)	keep order:true, desc:true
+select * from t_partition_order use index(primary)
+where ((k=1 and p=21) or (k=1 and p=1) or (k=11 and p=11) or (k=21 and p=1) or (k=31 and p=21)) and v>=4
+order by k desc,p desc limit 2;
+k	p	v
+31	21	5
+1	1	4
+explain format='plan_tree' select * from t_partition_order use index(uk)
+where (k=1 or k=11 or k=21 or k=31 or k=99) and v>=4 order by k desc limit 2;
+id	task	access object	operator info
+Limit	root		offset:0, count:2
+└─Selection	root		ge(executor__batch_point_get.t_partition_order.v, 4)
+  └─Batch_Point_Get	root	table:t_partition_order, index:uk(k)	keep order:true, desc:true
+select * from t_partition_order use index(uk)
+where (k=1 or k=11 or k=21 or k=31 or k=99) and v>=4 order by k desc limit 2;
+k	p	v
+31	21	5
+1	1	4
+rollback;
+drop table t_partition_order;
