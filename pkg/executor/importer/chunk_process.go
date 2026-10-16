@@ -579,7 +579,9 @@ type QueryChunk struct {
 }
 
 // RunImportQuery runs the SELECT of the IMPORT INTO statement stmt at q.ReadTS
-// within memQuota bytes, and sends the result chunks to output.
+// within memQuota bytes, and sends the result chunks to output. sctx reads the
+// submitted schema afterwards, so the caller must destroy it instead of putting
+// it back to its pool.
 // Registration by executor avoids a package import cycle.
 // TODO(joechenrh): Separate IMPORT task submission, status APIs and TaskMeta from
 // the DXF worker package, so workers can call executor directly without this.
