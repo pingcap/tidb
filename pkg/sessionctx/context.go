@@ -79,10 +79,13 @@ type InstancePlanCache interface {
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	planctx.Common
+	// CheckCanMigrateStates returns an error if the session has states that
+	// cannot be moved to another session.
+	CheckCanMigrateStates() error
 	// EncodeStates encodes session states into a JSON.
-	EncodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error
+	EncodeStates(context.Context, *sessionstates.SessionStates) error
 	// DecodeStates decodes a map into session states.
-	DecodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error
+	DecodeStates(context.Context, *sessionstates.SessionStates) error
 	tablelock.TableLockContext
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)

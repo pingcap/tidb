@@ -3280,22 +3280,6 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	return
 }
 
-// DecodeStatementStates restores the session states that affect the result of
-// a statement, for running the statement in another session.
-func (s *SessionVars) DecodeStatementStates(sessionStates *sessionstates.SessionStates) {
-	for name, userVar := range sessionStates.UserVars {
-		s.SetUserVarVal(name, *userVar.Clone())
-	}
-	for name, userVarType := range sessionStates.UserVarTypes {
-		s.SetUserVarType(name, userVarType.Clone())
-	}
-	s.CurrentDB = sessionStates.CurrentDB
-	s.LastFoundRows = sessionStates.LastFoundRows
-	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	s.StmtCtx.PrevAffectedRows = sessionStates.LastAffectedRows
-	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
-}
-
 // SetResourceGroupName changes the resource group name and inc/dec the metrics accordingly.
 func (s *SessionVars) SetResourceGroupName(groupName string) {
 	if s.ResourceGroupName != groupName {

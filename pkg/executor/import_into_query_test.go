@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -33,19 +32,6 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table query_src(i bigint)")
-	t.Run("settings set by the MV build session", func(t *testing.T) {
-		vars := tk.Session().GetSessionVars()
-		originalMode, originalDiv := vars.SQLMode, vars.DivPrecisionIncrement
-		defer func() { vars.SQLMode, vars.DivPrecisionIncrement = originalMode, originalDiv }()
-		vars.SQLMode = mysql.ModePadCharToFullLength
-		vars.DivPrecisionIncrement = 9
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select i from query_src")
-		require.NoError(t, err)
-		require.Equal(t, "PAD_CHAR_TO_FULL_LENGTH", q.SessionStates.SystemVars[vardef.SQLModeVar])
-		require.Equal(t, "9", q.SessionStates.SystemVars[vardef.DivPrecisionIncrement])
-		require.NotEmpty(t, q.SessionStates.SystemVars[vardef.Timestamp])
-	})
 	t.Run("session variables", func(t *testing.T) {
 		tk.MustExec("set cte_max_recursion_depth = 5")
 		tk.MustExec("set tidb_mem_quota_query = 1048576")
@@ -56,10 +42,8 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select i from query_src")
 		require.NoError(t, err)
 		require.Equal(t, "5", q.SessionStates.SystemVars[vardef.CTEMaxRecursionDepth])
+		require.NotEmpty(t, q.SessionStates.SystemVars[vardef.Timestamp])
 		require.Contains(t, q.SessionStates.UserVars, "v")
-		for _, name := range []string{vardef.TiDBMemQuotaQuery, vardef.AutoCommit, vardef.TiDBSnapshot} {
-			require.NotContains(t, q.SessionStates.SystemVars, name)
-		}
 	})
 	t.Run("source tables", func(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")

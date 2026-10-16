@@ -5724,13 +5724,7 @@ func (s *session) SetMemoryFootprintChangeHook() {
 }
 
 func (s *session) EncodeStates(ctx context.Context,
-	sessionStates *sessionstates.SessionStates, opts ...sessionstates.Option) error {
-	o := sessionstates.NewOptions(opts...)
-	if !o.ForStatement {
-		if err := s.checkCanMigrateStates(); err != nil {
-			return err
-		}
-	}
+	sessionStates *sessionstates.SessionStates) error {
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
@@ -5752,8 +5746,6 @@ func (s *session) EncodeStates(ctx context.Context,
 			continue
 		case sv.ReadOnly:
 			// Skip read-only variables here. We encode them into SessionStates manually.
-			continue
-		case o.SkipSystemVar != nil && o.SkipSystemVar(sv.Name):
 			continue
 		}
 		// Get all session variables because the default values may change between versions.
@@ -5784,9 +5776,6 @@ func (s *session) EncodeStates(ctx context.Context,
 		}
 	}
 
-	if o.ForStatement {
-		return nil
-	}
 	// Encode prepared statements and sql bindings.
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.EncodeSessionStates(ctx, s, sessionStates); err != nil {
@@ -5796,9 +5785,8 @@ func (s *session) EncodeStates(ctx context.Context,
 	return nil
 }
 
-// checkCanMigrateStates returns an error if the session has states that cannot
-// be moved to another session.
-func (s *session) checkCanMigrateStates() error {
+// CheckCanMigrateStates implements sessionctx.Context.
+func (s *session) CheckCanMigrateStates() error {
 	// Transaction status is hard to encode, so we do not support it.
 	s.txn.mu.Lock()
 	valid := s.txn.Valid()
@@ -5830,18 +5818,7 @@ func (s *session) checkCanMigrateStates() error {
 }
 
 func (s *session) DecodeStates(ctx context.Context,
-	sessionStates *sessionstates.SessionStates, opts ...sessionstates.Option) error {
-	if sessionstates.NewOptions(opts...).ForStatement {
-		for _, name := range variable.OrderByDependency(sessionStates.SystemVars) {
-			if err := s.sessionVars.SetSystemVar(name, sessionStates.SystemVars[name]); err != nil {
-				return err
-			}
-		}
-		// The states come from a session that has already run the statement.
-		s.sessionVars.SetResourceGroupName(sessionStates.ResourceGroupName)
-		s.sessionVars.DecodeStatementStates(sessionStates)
-		return nil
-	}
+	sessionStates *sessionstates.SessionStates) error {
 	// Decode prepared statements and sql bindings.
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {

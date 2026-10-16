@@ -615,13 +615,18 @@ func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
 }
 
+// CheckCanMigrateStates implements the sessionapi.Session interface
+func (*Context) CheckCanMigrateStates() error {
+	return nil
+}
+
 // EncodeStates implements the sessionapi.Session interface
-func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error {
+func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 
 // DecodeStates implements the sessionapi.Session interface
-func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error {
+func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 

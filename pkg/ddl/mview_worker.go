@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,8 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -590,6 +594,11 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
 		sessVars.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
 	}
+	if err := syncBuildSessionVars(sessVars); err != nil {
+		restoreExecution()
+		restore(sessCtx)
+		return nil, errors.Trace(err)
+	}
 	sessVars.CurrentDB = currentDB
 	sessVars.InMViewMaintenance = true
 	// The build statement resets its resource group from the session variable.
@@ -620,10 +629,29 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	return func() {
 		restoreExecution()
 		restore(sessCtx)
+		if err := syncBuildSessionVars(sessVars); err != nil {
+			logutil.DDLLogger().Warn("create materialized view: restore session variables", zap.Error(err))
+		}
 		sessVars.InMViewMaintenance = originalMaintenance
 		sessVars.CurrentDB = originalDB
 		sessVars.SetResourceGroupName(originalResourceGroup)
 	}, nil
+}
+
+// syncBuildSessionVars sets the session variables of the fields that the build
+// session sets directly, so that readers of the variables, such as the session
+// states of the build statement, see the same values.
+func syncBuildSessionVars(vars *variable.SessionVars) error {
+	for _, v := range [...]struct{ name, value string }{
+		{vardef.SQLModeVar, mysql.FormatSQLMode(vars.SQLMode)},
+		{vardef.TimeZone, timeutil.ZoneName(vars.Location())},
+		{vardef.DivPrecisionIncrement, strconv.Itoa(vars.DivPrecisionIncrement)},
+	} {
+		if err := vars.SetSystemVar(v.name, v.value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *worker) setCreateMaterializedViewBuildReadTSInReorgCtx(jobID int64, readTS uint64) error {
