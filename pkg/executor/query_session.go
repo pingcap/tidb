@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 )
 
@@ -72,11 +73,42 @@ func newImportQuerySession(
 	return is, node, nil
 }
 
+// importQueryWorkerVars are decided by the worker instead of the submitter:
+// the snapshot and transaction it reads in, and its memory budget.
+var importQueryWorkerVars = map[string]struct{}{
+	vardef.TiDBSnapshot:             {},
+	vardef.TiDBReadStaleness:        {},
+	vardef.TiDBTxnReadTS:            {},
+	vardef.TiDBEnableExternalTSRead: {},
+	vardef.AutoCommit:               {},
+	vardef.TiDBTxnMode:              {},
+	vardef.TxnIsolation:             {},
+	vardef.TransactionIsolation:     {},
+	vardef.TxReadOnly:               {},
+	vardef.TransactionReadOnly:      {},
+	vardef.TiDBMemQuotaQuery:        {},
+}
+
 func initImportQuerySessionVars(ctx context.Context, sctx sessionctx.Context, q *importer.QueryPlan) error {
-	if err := sctx.DecodeStates(ctx, q.SessionStates, sessionstates.WithForStatement()); err != nil {
+	vars := sctx.GetSessionVars()
+	states := *q.SessionStates
+	states.SystemVars = make(map[string]string, len(q.SessionStates.SystemVars))
+	for name, value := range q.SessionStates.SystemVars {
+		if _, ok := importQueryWorkerVars[name]; ok {
+			continue
+		}
+		// Internal session variables cannot be set in a session.
+		if sv := variable.GetSysVar(name); sv != nil && sv.InternalSessionVariable {
+			continue
+		}
+		states.SystemVars[name] = value
+	}
+	// The status tells whether the submitter is in a transaction, which the
+	// worker's session is not.
+	states.Status = uint32(vars.Status())
+	if err := sctx.DecodeStates(ctx, &states); err != nil {
 		return err
 	}
-	vars := sctx.GetSessionVars()
 	// Without a statistics provider, this worker uses static partition pruning.
 	vars.PartitionPruneMode.Store("static")
 	// The submitter runs in MV maintenance, which may read MVs whose initial
