@@ -732,8 +732,12 @@ func TestOrderByDependency(t *testing.T) {
 		vardef.TiDBEnableLocalTxn:                      "1",
 		vardef.TiDBEnablePlanReplayerContinuousCapture: "1",
 		vardef.TiDBEnableHistoricalStats:               "1",
+		vardef.CollationConnection:                     "utf8mb4_general_ci",
+		vardef.CharacterSetConnection:                  "utf8mb4",
 	}
 	names := variable.OrderByDependency(vars)
+	// Setting a charset resets its collation.
+	require.Less(t, slices.Index(names, vardef.CharacterSetConnection), slices.Index(names, vardef.CollationConnection))
 	require.Greater(t, slices.Index(names, vardef.TxReadOnly), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.SQLAutoIsNull), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.TiDBEnforceMPPExecution), slices.Index(names, vardef.TiDBAllowMPPExecution))

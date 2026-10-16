@@ -42,20 +42,23 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select i from query_src")
 		require.NoError(t, err)
-		require.Equal(t, mysql.ModePadCharToFullLength, q.SQLMode)
-		require.Equal(t, "9", q.SessionVars[vardef.DivPrecisionIncrement])
-		require.NotEmpty(t, q.SessionVars[vardef.Timestamp])
+		require.Equal(t, "PAD_CHAR_TO_FULL_LENGTH", q.SessionStates.SystemVars[vardef.SQLModeVar])
+		require.Equal(t, "9", q.SessionStates.SystemVars[vardef.DivPrecisionIncrement])
+		require.NotEmpty(t, q.SessionStates.SystemVars[vardef.Timestamp])
 	})
 	t.Run("session variables", func(t *testing.T) {
 		tk.MustExec("set cte_max_recursion_depth = 5")
 		tk.MustExec("set tidb_mem_quota_query = 1048576")
+		tk.MustExec("set @v = 1")
 		defer tk.MustExec("set cte_max_recursion_depth = default, tidb_mem_quota_query = default")
-		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		tk.MustExec("begin")
+		defer tk.MustExec("rollback")
 		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select i from query_src")
 		require.NoError(t, err)
-		require.Equal(t, "5", q.SessionVars[vardef.CTEMaxRecursionDepth])
-		for _, name := range []string{vardef.TiDBMemQuotaQuery, vardef.AutoCommit, vardef.TiDBSnapshot, vardef.SQLModeVar} {
-			require.NotContains(t, q.SessionVars, name)
+		require.Equal(t, "5", q.SessionStates.SystemVars[vardef.CTEMaxRecursionDepth])
+		require.Contains(t, q.SessionStates.UserVars, "v")
+		for _, name := range []string{vardef.TiDBMemQuotaQuery, vardef.AutoCommit, vardef.TiDBSnapshot} {
+			require.NotContains(t, q.SessionStates.SystemVars, name)
 		}
 	})
 	t.Run("source tables", func(t *testing.T) {
@@ -64,7 +67,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
 		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
-		require.Equal(t, "rg1", q.ResourceGroupName)
+		require.Equal(t, "rg1", q.SessionStates.ResourceGroupName)
 		require.Len(t, q.Databases, 1)
 		db, ok := tk.Session().GetLatestInfoSchema().SchemaByName(ast.NewCIStr("test"))
 		require.True(t, ok)

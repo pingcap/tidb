@@ -16,7 +16,9 @@ package executor
 
 import (
 	"context"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -72,17 +76,12 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	}
 
 	q := &importer.QueryPlan{
-		CurrentDB:         sctx.GetSessionVars().CurrentDB,
-		ResourceGroupName: sctx.GetSessionVars().StmtCtx.ResourceGroupName,
-		Timestamp:         time.Now().Unix(),
-		Keyspace:          sctx.GetStore().GetKeyspace(),
-		SessionVars:       make(map[string]string),
-		Databases:         make(map[int64]*model.DBInfo),
-		Tables:            make(map[int64][]*model.TableInfo),
+		Timestamp: time.Now().Unix(),
+		Keyspace:  sctx.GetStore().GetKeyspace(),
+		Databases: make(map[int64]*model.DBInfo),
+		Tables:    make(map[int64][]*model.TableInfo),
 	}
-
-	vars := sctx.GetSessionVars()
-	if err := captureImportQuerySessionVars(vars, q); err != nil {
+	if q.SessionStates, err = encodeImportQueryStates(sctx); err != nil {
 		return nil, err
 	}
 	txnManager := sessiontxn.GetTxnManager(sctx)
@@ -112,38 +111,52 @@ var importQueryWorkerVars = map[string]struct{}{
 	vardef.TiDBMemQuotaQuery:        {},
 }
 
-// captureImportQuerySessionVars records the session variables the submitter has
-// set, the same way session states are encoded. Variables it has not set are
-// global ones, which the worker reads from the same keyspace.
-func captureImportQuerySessionVars(vars *variable.SessionVars, q *importer.QueryPlan) error {
-	for _, sv := range variable.GetSysVars() {
-		if sv.HasNoneScope() || !sv.HasSessionScope() || sv.ReadOnly || sv.InternalSessionVariable {
-			continue
-		}
-		if _, ok := importQueryWorkerVars[sv.Name]; ok {
-			continue
-		}
-		value, keep, err := vars.GetSessionStatesSystemVar(sv.Name)
-		if err != nil {
-			return err
-		}
-		if keep {
-			q.SessionVars[sv.Name] = value
-		}
+func skipImportQuerySysVar(name string) bool {
+	if _, ok := importQueryWorkerVars[name]; ok {
+		return true
 	}
+	// Internal session variables cannot be set on the worker's session.
+	sv := variable.GetSysVar(name)
+	return sv != nil && sv.InternalSessionVariable
+}
+
+// encodeImportQueryStates encodes the states of the submitting session that the
+// SELECT needs. Variables it has not set are global ones, which the worker
+// reads from the same keyspace.
+func encodeImportQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, error) {
+	states := &sessionstates.SessionStates{}
+	if err := sctx.EncodeStates(context.Background(), states,
+		sessionstates.WithForStatement(), sessionstates.WithSkipSystemVar(skipImportQuerySysVar)); err != nil {
+		return nil, err
+	}
+	vars := sctx.GetSessionVars()
 	// The MV build session sets these fields without updating the session
 	// variables, so read the fields.
-	q.SQLMode = vars.SQLMode
-	delete(q.SessionVars, vardef.SQLModeVar)
-	q.SessionVars[vardef.DivPrecisionIncrement] = strconv.Itoa(vars.DivPrecisionIncrement)
-	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
+	states.SystemVars[vardef.SQLModeVar] = sqlModeString(vars.SQLMode)
+	states.SystemVars[vardef.DivPrecisionIncrement] = strconv.Itoa(vars.DivPrecisionIncrement)
+	states.SystemVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
 	// Pin the statement time, which session states keep only when it is set.
 	timestamp, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.Timestamp)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	q.SessionVars[vardef.Timestamp] = timestamp
-	return nil
+	states.SystemVars[vardef.Timestamp] = timestamp
+	// The statement may use another resource group than the session by a hint.
+	states.ResourceGroupName = vars.StmtCtx.ResourceGroupName
+	return states, nil
+}
+
+// sqlModeString formats mode as the value of sql_mode. Every name in
+// mysql.Str2SQLMode has its own bit, so the value parses back to mode.
+func sqlModeString(mode mysql.SQLMode) string {
+	var names []string
+	for name, m := range mysql.Str2SQLMode {
+		if mode&m != 0 {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
 }
 
 // collectImportQueryTables records the source tables of a resolved query,

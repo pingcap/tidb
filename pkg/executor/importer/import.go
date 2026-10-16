@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -266,22 +267,15 @@ type QueryPlan struct {
 	// SchemaVersion is the schema version at ReadTS, sent with the worker's
 	// coprocessor and MPP requests.
 	SchemaVersion int64
-	CurrentDB     string
 	Timestamp     int64
 	Keyspace      string
-	// ResourceGroupName is the resource group of the submitting statement,
-	// which the worker's reads are charged to.
-	ResourceGroupName string
-	// SQLMode is carried apart from SessionVars because the MV build session
-	// sets it without updating the session variable.
-	SQLMode   mysql.SQLMode
-	Databases map[int64]*model.DBInfo
+	Databases     map[int64]*model.DBInfo
 	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
 	// Persist table definitions grouped by database ID explicitly.
 	Tables map[int64][]*model.TableInfo
-	// SessionVars is an explicit subset of SELECT settings inherited from the submitter,
-	// which is used by session on the worker.
-	SessionVars map[string]string
+	// SessionStates are the states of the submitting session that the SELECT
+	// runs with on the worker, such as its variables and current database.
+	SessionStates *sessionstates.SessionStates
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.

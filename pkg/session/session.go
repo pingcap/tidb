@@ -5724,35 +5724,13 @@ func (s *session) SetMemoryFootprintChangeHook() {
 }
 
 func (s *session) EncodeStates(ctx context.Context,
-	sessionStates *sessionstates.SessionStates) error {
-	// Transaction status is hard to encode, so we do not support it.
-	s.txn.mu.Lock()
-	valid := s.txn.Valid()
-	s.txn.mu.Unlock()
-	if valid {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has an active transaction")
-	}
-	// Data in local temporary tables is hard to encode, so we do not support it.
-	// Check temporary tables here to avoid circle dependency.
-	if s.sessionVars.LocalTemporaryTables != nil {
-		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
-		if localTempTables.Count() > 0 {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
+	sessionStates *sessionstates.SessionStates, opts ...sessionstates.Option) error {
+	o := sessionstates.NewOptions(opts...)
+	if !o.ForStatement {
+		if err := s.checkCanMigrateStates(); err != nil {
+			return err
 		}
 	}
-	// The advisory locks will be released when the session is closed.
-	if len(s.advisoryLocks) > 0 {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has advisory locks")
-	}
-	// The TableInfo stores session ID and server ID, so the session cannot be migrated.
-	if len(s.lockedTables) > 0 {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
-	}
-	// It's insecure to migrate sandBoxMode because users can fake it.
-	if s.InSandBoxMode() {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session is in sandbox mode")
-	}
-
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
@@ -5774,6 +5752,8 @@ func (s *session) EncodeStates(ctx context.Context,
 			continue
 		case sv.ReadOnly:
 			// Skip read-only variables here. We encode them into SessionStates manually.
+			continue
+		case o.SkipSystemVar != nil && o.SkipSystemVar(sv.Name):
 			continue
 		}
 		// Get all session variables because the default values may change between versions.
@@ -5804,6 +5784,9 @@ func (s *session) EncodeStates(ctx context.Context,
 		}
 	}
 
+	if o.ForStatement {
+		return nil
+	}
 	// Encode prepared statements and sql bindings.
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.EncodeSessionStates(ctx, s, sessionStates); err != nil {
@@ -5813,8 +5796,52 @@ func (s *session) EncodeStates(ctx context.Context,
 	return nil
 }
 
+// checkCanMigrateStates returns an error if the session has states that cannot
+// be moved to another session.
+func (s *session) checkCanMigrateStates() error {
+	// Transaction status is hard to encode, so we do not support it.
+	s.txn.mu.Lock()
+	valid := s.txn.Valid()
+	s.txn.mu.Unlock()
+	if valid {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has an active transaction")
+	}
+	// Data in local temporary tables is hard to encode, so we do not support it.
+	// Check temporary tables here to avoid circle dependency.
+	if s.sessionVars.LocalTemporaryTables != nil {
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
+		if localTempTables.Count() > 0 {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
+		}
+	}
+	// The advisory locks will be released when the session is closed.
+	if len(s.advisoryLocks) > 0 {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has advisory locks")
+	}
+	// The TableInfo stores session ID and server ID, so the session cannot be migrated.
+	if len(s.lockedTables) > 0 {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
+	}
+	// It's insecure to migrate sandBoxMode because users can fake it.
+	if s.InSandBoxMode() {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session is in sandbox mode")
+	}
+	return nil
+}
+
 func (s *session) DecodeStates(ctx context.Context,
-	sessionStates *sessionstates.SessionStates) error {
+	sessionStates *sessionstates.SessionStates, opts ...sessionstates.Option) error {
+	if sessionstates.NewOptions(opts...).ForStatement {
+		for _, name := range variable.OrderByDependency(sessionStates.SystemVars) {
+			if err := s.sessionVars.SetSystemVar(name, sessionStates.SystemVars[name]); err != nil {
+				return err
+			}
+		}
+		// The states come from a session that has already run the statement.
+		s.sessionVars.SetResourceGroupName(sessionStates.ResourceGroupName)
+		s.sessionVars.DecodeStatementStates(sessionStates)
+		return nil
+	}
 	// Decode prepared statements and sql bindings.
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {

@@ -57,6 +57,7 @@ go_library(
         "//pkg/planner/planctx",
         "//pkg/planner/util",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",

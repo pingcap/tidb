@@ -616,12 +616,12 @@ func (*Context) ReleaseAllAdvisoryLocks() int {
 }
 
 // EncodeStates implements the sessionapi.Session interface
-func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates) error {
+func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error {
 	return errors.Errorf("Not Supported")
 }
 
 // DecodeStates implements the sessionapi.Session interface
-func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates) error {
+func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error {
 	return errors.Errorf("Not Supported")
 }
 

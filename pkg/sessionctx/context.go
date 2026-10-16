@@ -80,9 +80,9 @@ type InstancePlanCache interface {
 type Context interface {
 	planctx.Common
 	// EncodeStates encodes session states into a JSON.
-	EncodeStates(context.Context, *sessionstates.SessionStates) error
+	EncodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error
 	// DecodeStates decodes a map into session states.
-	DecodeStates(context.Context, *sessionstates.SessionStates) error
+	DecodeStates(context.Context, *sessionstates.SessionStates, ...sessionstates.Option) error
 	tablelock.TableLockContext
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)

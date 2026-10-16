@@ -88,3 +88,37 @@ type SessionStates struct {
 	HypoIndexes         map[string]map[string]map[string]*model.IndexInfo `json:"hypo-indexes,omitempty"`
 	HypoTiFlashReplicas map[string]map[string]struct{}                    `json:"hypo-tiflash-replicas,omitempty"`
 }
+
+// Options changes how session states are encoded and decoded.
+type Options struct {
+	// ForStatement handles the states that a statement needs to run in
+	// another session, instead of migrating the whole session. Encoding allows
+	// an active transaction and skips the states kept by the server, such as
+	// prepared statements and bindings. Decoding restores only the states that
+	// affect the statement, and fails when a system variable cannot be set.
+	ForStatement bool
+	// SkipSystemVar excludes the system variables it returns true for.
+	SkipSystemVar func(name string) bool
+}
+
+// Option sets an option of encoding or decoding session states.
+type Option func(*Options)
+
+// WithForStatement sets Options.ForStatement.
+func WithForStatement() Option {
+	return func(o *Options) { o.ForStatement = true }
+}
+
+// WithSkipSystemVar sets Options.SkipSystemVar.
+func WithSkipSystemVar(skip func(name string) bool) Option {
+	return func(o *Options) { o.SkipSystemVar = skip }
+}
+
+// NewOptions applies opts to empty options.
+func NewOptions(opts ...Option) Options {
+	var o Options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
