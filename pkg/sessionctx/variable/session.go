@@ -1404,6 +1404,10 @@ type SessionVars struct {
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
 
+	// HashAggUniqueLimitThreshold controls when HashAgg can use unique-limit optimization.
+	// Set 0 to disable this optimization.
+	HashAggUniqueLimitThreshold int64
+
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition
 	TiDBEnableExchangePartition bool
 
@@ -2306,6 +2310,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
 		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
+		HashAggUniqueLimitThreshold:   DefTiDBHashAggUniqueLimitThreshold,
 		MaxAllowedPacket:              DefMaxAllowedPacket,
 		TiFlashFastScan:               DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt: true,
