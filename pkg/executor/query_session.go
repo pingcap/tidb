@@ -15,10 +15,7 @@
 package executor
 
 import (
-	"cmp"
 	"context"
-	"maps"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -27,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 )
 
@@ -46,7 +43,7 @@ func newImportQuerySession(
 		return nil, nil, errors.Errorf("import query cannot set the InfoCache of %T", sctx)
 	}
 	vars := sctx.GetSessionVars()
-	if err := initImportQuerySessionVars(q, vars); err != nil {
+	if err := initImportQuerySessionVars(ctx, sctx, q); err != nil {
 		return nil, nil, err
 	}
 	is, err := buildQueryInfoSchema(q, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
@@ -75,23 +72,11 @@ func newImportQuerySession(
 	return is, node, nil
 }
 
-func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVars) error {
-	names := slices.Sorted(maps.Keys(q.SessionVars))
-	// Depended variables, such as tidb_enable_noop_functions, go first. The rest
-	// stay sorted, so a charset is set before its collation, which it resets.
-	slices.SortStableFunc(names, func(a, b string) int {
-		return cmp.Compare(importQueryVarRank(a), importQueryVarRank(b))
-	})
-	for _, name := range names {
-		if err := vars.SetSystemVar(name, q.SessionVars[name]); err != nil {
-			return err
-		}
+func initImportQuerySessionVars(ctx context.Context, sctx sessionctx.Context, q *importer.QueryPlan) error {
+	if err := sctx.DecodeStates(ctx, q.SessionStates, sessionstates.WithForStatement()); err != nil {
+		return err
 	}
-	vars.SQLMode = q.SQLMode
-	vars.CurrentDB = q.CurrentDB
-	if q.ResourceGroupName != "" {
-		vars.SetResourceGroupName(q.ResourceGroupName)
-	}
+	vars := sctx.GetSessionVars()
 	// Without a statistics provider, this worker uses static partition pruning.
 	vars.PartitionPruneMode.Store("static")
 	// The submitter runs in MV maintenance, which may read MVs whose initial
@@ -101,13 +86,6 @@ func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVar
 	vars.InternalSQLScanUserTable = false
 	vars.RequestSourceType = kv.InternalDistTask
 	return nil
-}
-
-func importQueryVarRank(name string) int {
-	if sv := variable.GetSysVar(name); sv != nil && sv.Depended {
-		return 0
-	}
-	return 1
 }
 
 func buildQueryInfoSchema(q *importer.QueryPlan, parent infoschema.InfoSchema) (infoschema.InfoSchema, error) {
