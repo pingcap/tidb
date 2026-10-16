@@ -863,7 +863,7 @@ func (c *candidatePath) getCountAfterAccess4SkylinePruning() (float64, bool) {
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
-func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
+func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) (int, bool) {
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
@@ -916,7 +916,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		(lhs.eqOrInCount > 0 || rhs.eqOrInCount > 0) { // At least one index has equal/IN predicates
 		lhsFullMatch := isFullIndexMatch(lhs)
 		rhsFullMatch := isFullIndexMatch(rhs)
-		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount, preferRange)
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount)
 		// Predicate counts alone cannot justify pruning an index on different columns.
 		// The winner must also strictly dominate the other path's access conditions.
 		if pseudoResult > 0 && comparable1 && accessResult > 0 && totalSum >= 0 {
@@ -1004,7 +1004,7 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lh
 	return lhsPseudo, rhsPseudo
 }
 
-func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int, preferRange bool) int {
+func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int) int {
 	// TO-DO: Consider a separate set of rules for global indexes.
 	// If one index has statistics and the other does not, choose the index with statistics if it
 	// has the same or higher number of equal/IN predicates.
@@ -1014,18 +1014,16 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 	if !rhsPseudo && rhsEqOrInCount > 0 && eqOrInResult <= 0 {
 		return -1 // right wins
 	}
-	if preferRange {
-		// keep an index without statistics if that index has more equal/IN predicates, AND:
-		// 1) there are at least 2 equal/INs
-		// 2) OR - it's a full index match for all index predicates
-		if lhsPseudo && eqOrInResult > 0 &&
-			(lhsEqOrInCount > 1 || lhsFullMatch) {
-			return 1 // left wins
-		}
-		if rhsPseudo && eqOrInResult < 0 &&
-			(rhsEqOrInCount > 1 || rhsFullMatch) {
-			return -1 // right wins
-		}
+	// keep an index without statistics if that index has more equal/IN predicates, AND:
+	// 1) there are at least 2 equal/INs
+	// 2) OR - it's a full index match for all index predicates
+	if lhsPseudo && eqOrInResult > 0 &&
+		(lhsEqOrInCount > 1 || lhsFullMatch) {
+		return 1 // left wins
+	}
+	if rhsPseudo && eqOrInResult < 0 &&
+		(rhsEqOrInCount > 1 || rhsFullMatch) {
+		return -1 // right wins
 	}
 	return 0
 }
@@ -1858,7 +1856,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate, preferRange)
+			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate)
 			if missingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}

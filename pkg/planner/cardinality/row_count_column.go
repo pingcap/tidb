@@ -284,7 +284,24 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	)
 	totalCount = float64(0)
 	maxCount = float64(0)
+	colsIDs := make([]int64, len(idxCols))
+	for i, col := range idxCols {
+		colsIDs[i] = col.UniqueID
+	}
 	for _, indexRange := range indexRanges {
+		// Prefer exponential backoff over the columns with statistics. Assuming independence by multiplying
+		// the single column selectivities can badly underestimate an index whose columns each have a low NDV.
+		if len(indexRange.LowVal) > 1 {
+			sel, _, maxSel, ok, err := expBackoffEstimationByColIDs(sctx, coll, colsIDs, 0, len(idxCols), false, indexRange, idxCols)
+			if err != nil {
+				return 0, 0, errors.Trace(err)
+			}
+			if ok {
+				totalCount += sel * tableRowCount
+				maxCount += maxSel * tableRowCount
+				continue
+			}
+		}
 		selectivity := float64(1.0)
 		corrSelectivity := float64(1.0)
 		for i := range indexRange.LowVal {

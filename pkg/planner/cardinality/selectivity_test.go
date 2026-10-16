@@ -783,6 +783,10 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c > 5").CheckContain("idxab(a, b)")
 	// New index idxab should NOT win because idxca has the same number of equals and has statistics
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
+	// The missing-statistics rules do not depend on tidb_opt_prefer_range_scan.
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxab(a, b)")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
 }
 
 func TestIssue57948(t *testing.T) {
@@ -955,6 +959,55 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 	rowCnt2, _ := strconv.ParseFloat(rows2[0][1].(string), 64)
 	require.InDelta(t, trueRowCnt, rowCnt1, 0.1)
 	require.NotEqual(t, rowCnt1, rowCnt2)
+}
+
+func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
+	// An index without statistics, whose columns each have a low NDV, is estimated from column statistics.
+	// The columns are fully correlated, so assuming independence would underestimate badly. Exponential
+	// backoff must be used instead.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select mod(a,10), mod(a,10), mod(a,10) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	rows := testKit.MustQuery("explain format='brief' select * from t use index(idx_abc) where a = 1 and b = 1 and c = 1").Rows()
+	var estRows float64
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			var err error
+			estRows, err = strconv.ParseFloat(row[1].(string), 64)
+			require.NoError(t, err)
+		}
+	}
+	// Actual row count is 100. Independence would estimate 1000 * 0.1^3 = 1, while exponential
+	// backoff estimates 1000 * 0.1 * 0.1^(1/2) * 0.1^(1/4) ~= 17.8.
+	require.Greater(t, estRows, 10.0)
+}
+
+func TestIssue71999(t *testing.T) {
+	// An index without statistics must not prune an index with statistics via the prefer-range
+	// skyline rule unless its access columns cover the other index's access columns.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id int not null, a int not null, b int not null, c int not null, key idx_id(id))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=1")
+	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	// idx_abc has no statistics and its access columns (a, b, c) do not cover idx_id's (id),
+	// so it must not prune idx_id, which has statistics and is far more selective.
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
