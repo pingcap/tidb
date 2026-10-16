@@ -679,7 +679,11 @@ pub fn build(
     build_with_current_database(expr, field_type, None, fold)
 }
 
-fn build_with_current_database(
+/// [`build`] with Go's preprocessor in front: an unqualified sequence name
+/// inside `nextval()` takes the session's current database
+/// (`handleTableName` under `inSequenceFunction`), so the stored default
+/// prints `` nextval(`db`.`seq`) ``.
+pub fn build_with_current_database(
     expr: &Expr,
     field_type: &FieldType,
     current_database: Option<&str>,

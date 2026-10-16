@@ -1972,6 +1972,9 @@ fn physical_explain_operator(
                 1
             },
         ),
+        // Go `flat_plan.go`: the index subtree builds, the cloned table scan
+        // probes.
+        PhysicalPlan::LocalIndexLookUp(_) => Some(0),
         _ => None,
     };
     if let Some(build) = labels.filter(|_| children.len() == 2) {

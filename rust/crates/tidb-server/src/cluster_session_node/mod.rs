@@ -7821,6 +7821,13 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
+        // builds the prepared plan as its body). The DDL must take this
+        // node's cluster route; the session would apply it to its own
+        // in-process catalog, where no other statement can see it.
+        if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
+            return self.execute_write_parsed(&body_sql, &body);
+        }
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
         if let Some(transaction) = self.explicit.as_ref() {
@@ -8367,6 +8374,10 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        // See `execute_write_parsed`: a prepared DDL body takes the DDL route.
+        if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
+            return self.execute_parsed(&body_sql, &body);
+        }
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
         if let Some(transaction) = self.explicit.as_ref() {

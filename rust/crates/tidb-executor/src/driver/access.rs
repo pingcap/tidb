@@ -3084,6 +3084,8 @@ pub(crate) fn convert_pairs_to_column_domain_by<'a>(
 /// One `column = constant` equality from a `WHERE`, Go's `nameValuePair`.
 pub(crate) struct NameValuePair {
     column: String,
+    /// The table qualifier the column was written with (`t` in `t.a = 1`).
+    table: Option<String>,
     value: Datum,
     /// Go `nameValuePair.con`: the EXECUTE parameter the value came from,
     /// which a cached plan reads again on every execution.
@@ -3206,6 +3208,10 @@ pub(crate) fn point_equal_pairs(
             };
             pairs.push(NameValuePair {
                 column: name.clone(),
+                table: column
+                    .len()
+                    .checked_sub(2)
+                    .map(|position| column[position].clone()),
                 value,
                 marker,
             });
@@ -3467,6 +3473,23 @@ pub(crate) fn try_point_get(
     // survived: TiDB's own recording gives `Point_Get table:t, partition:p0`
     // for `select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1`,
     // and a `TableRangeScan` for both the bare form and `partition(p0,p1)`.
+    // Go `getNameValuePairs`: a column qualified by any name other than the
+    // table's alias (or its name when it has none) declines the fast plan,
+    // and the ordinary planner then reports the unknown column (1054).
+    if let Some(table_ref) = select.table_ref {
+        let visible = table_ref
+            .alias
+            .as_deref()
+            .or_else(|| table_ref.name.last().map(String::as_str))
+            .unwrap_or_default();
+        if pairs.iter().any(|pair| {
+            pair.table
+                .as_deref()
+                .is_some_and(|qualifier| !qualifier.eq_ignore_ascii_case(visible))
+        }) {
+            return Ok(None);
+        }
+    }
     let single_named_partition = select.named_partitions.len() == 1;
     if table.pk_handle_offset().is_none()
         && table.common_handle_offsets().is_empty()

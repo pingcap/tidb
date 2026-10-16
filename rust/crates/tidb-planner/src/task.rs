@@ -813,6 +813,10 @@ impl CopTask {
         allocator: &crate::plan_base::PlanIdAllocator,
         evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
+        // Go calls `FinishIndexPlan` first, for every branch: a double read
+        // converted right after a Limit attached to its open index half
+        // gives the table scan that Limit's estimate.
+        self.finish_index_plan();
         let origin = self
             .table_plan
             .as_deref()
@@ -2359,7 +2363,9 @@ mod tests {
             panic!("an IndexLookUpReader, got {:?}", converted.plan());
         };
         assert!(lookup.keep_order);
-        // The reader's stats are the TABLE side's.
+        // The reader's stats are the TABLE side's, which `FinishIndexPlan`
+        // (the first thing `convertToRootTaskImpl` does) has just set to the
+        // index plan's.
         assert!(
             (converted
                 .plan()
@@ -2367,7 +2373,7 @@ mod tests {
                 .stats_info()
                 .expect("stats")
                 .row_count()
-                - 3.0)
+                - 1.0)
                 .abs()
                 < f64::EPSILON
         );

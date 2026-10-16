@@ -2801,22 +2801,7 @@ impl Session {
         // a stale read there: a table read `AS OF`, or `tidb_read_staleness`.
         if let Stmt::Ddl(ddl) = &stmt {
             if let tidb_ast::DdlStmt::CreateView(create) = ddl.as_ref() {
-                let read_staleness = self
-                    .vars
-                    .get_system("tidb_read_staleness")
-                    .unwrap_or_default()
-                    .parse::<i64>()
-                    .unwrap_or(0);
-                if scan.has_as_of || read_staleness != 0 {
-                    let (schema, name) = match create.name.as_slice() {
-                        [schema, name] => (schema.as_str(), name.as_str()),
-                        [name] => (self.current_db.as_str(), name.as_str()),
-                        _ => ("", ""),
-                    };
-                    return Err(DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(
-                        format!("{}.{}", schema.to_lowercase(), name.to_lowercase()),
-                    )));
-                }
+                self.refuse_stale_view_body(create, scan.has_as_of)?;
             }
         }
         if scan.has_as_of && self.in_transaction() {

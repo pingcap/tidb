@@ -143,6 +143,10 @@ impl CreateTableBuild {
     }
 
     /// Builds the final metadata after the owning `DBInfo` has been loaded.
+    ///
+    /// The template's build already reported the statement's warnings when
+    /// the DDL was routed; Go builds the table once, so a rebuild under the
+    /// database's charset must not report them a second time.
     pub fn for_database(
         &self,
         charset: &str,
@@ -159,7 +163,7 @@ impl CreateTableBuild {
             charset,
             collate,
             clustered_index_def_mode(&self.context),
-            &self.context,
+            &self.context.with_isolated_warnings(),
         )
     }
 }

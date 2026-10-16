@@ -720,6 +720,14 @@ pub fn build_table_info_in_schema(
                 tidb_executor::DriverError::PartitionNoTemporary,
             ));
         }
+        // Go `checkPartitionType` ignores LINEAR and builds the plain
+        // HASH/KEY table, warning that it did so (8200).
+        if let Some(message) = tidb_executor::linear_partitioning_warning(create) {
+            context.append_warning_parts(
+                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                &message,
+            );
+        }
         let names = table
             .columns
             .iter_deref()
@@ -2826,30 +2834,37 @@ fn stage_column_default(
     preceding_names: &[String],
     preceding_types: &[FieldType],
 ) -> Refusal<StagedColumnDefault> {
-    let built = tidb_executor::column_default::build(expr, field_type, |expr| {
-        // go resolves a DEFAULT expression against the table's own columns
-        // (`getDefaultValue` runs the expression resolver over them), so an
-        // unknown name fails with ErrBadField (1054) 'expression'.
-        let resolver =
-            tidb_executor::generated_column::TableColumnResolver::with_like_default_escape(
-                preceding_names,
-                preceding_types,
-                context.session_zone(),
-                context.like_default_escape(),
-            );
-        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(
-            |error| match resolver.missing_name() {
-                Some(name) => tidb_executor::column_default::DefaultError::UnknownColumn(name),
-                None => tidb_executor::column_default::rewrite_error(error),
+    let built =
+        tidb_executor::column_default::build_with_current_database(
+            expr,
+            field_type,
+            context.current_database_name(),
+            |expr| {
+                // go resolves a DEFAULT expression against the table's own columns
+                // (`getDefaultValue` runs the expression resolver over them), so an
+                // unknown name fails with ErrBadField (1054) 'expression'.
+                let resolver =
+                    tidb_executor::generated_column::TableColumnResolver::with_like_default_escape(
+                        preceding_names,
+                        preceding_types,
+                        context.session_zone(),
+                        context.like_default_escape(),
+                    );
+                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver)
+                    .map_err(|error| match resolver.missing_name() {
+                        Some(name) => {
+                            tidb_executor::column_default::DefaultError::UnknownColumn(name)
+                        }
+                        None => tidb_executor::column_default::rewrite_error(error),
+                    })?;
+                tidb_expr::eval_expression_once(&rewritten, context).map_err(|_| {
+                    tidb_executor::column_default::DefaultError::Unsupported(
+                        "a DEFAULT this node cannot evaluate",
+                    )
+                })
             },
-        )?;
-        tidb_expr::eval_expression_once(&rewritten, context).map_err(|_| {
-            tidb_executor::column_default::DefaultError::Unsupported(
-                "a DEFAULT this node cannot evaluate",
-            )
-        })
-    })
-    .map_err(|error| default_admission_error(error.into_driver_error(name)))?;
+        )
+        .map_err(|error| default_admission_error(error.into_driver_error(name)))?;
 
     match built {
         tidb_executor::column_default::ColumnDefault::Computed(computed) => {

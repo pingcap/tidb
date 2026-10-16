@@ -14641,3 +14641,189 @@ fn index_lookup_pushdown_cuts_entries_before_the_root_filter() {
         [["B", "2"], ["b", "1"], ["A", "2"]]
     );
 }
+
+/// A cache hit rebinds the index-merge reader's TABLE side too: its recheck
+/// Selection carries the same parameter as the partial `a = ?`. Rebinding only
+/// the partials left `a = 1` in the recheck, which dropped every `a = 3` row
+/// the rebuilt partial found.
+#[test]
+fn cached_index_merge_rebinds_the_table_side_recheck() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1047)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE cim (id INT NOT NULL, a INT, b INT, c INT, \
+             PRIMARY KEY (id) CLUSTERED, KEY ia (a, c), KEY ib (b, c))",
+        )
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO cim VALUES (1,1,1,10), (2,1,2,20), (3,2,1,30), (4,2,2,40), \
+             (5,1,3,50), (6,3,1,60), (7,3,2,70), (8,1,1,5), (9,2,3,15), (10,3,3,25)",
+        )
+        .unwrap();
+    rows(
+        &mut session,
+        "PREPARE im FROM 'SELECT /*+ use_index_merge(cim) */ id FROM cim \
+         WHERE a = ? OR b = 1 ORDER BY id'",
+    );
+    for (value, expected) in [
+        (1, vec!["1", "2", "3", "5", "6", "8"]),
+        (3, vec!["1", "3", "6", "7", "8", "10"]),
+    ] {
+        rows(&mut session, &format!("SET @a = {value}"));
+        let got: Vec<String> = displayed(rows(&mut session, "EXECUTE im USING @a"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect();
+        assert_eq!(got, expected, "a = {value}");
+    }
+}
+
+/// Go `getNameValuePairs` declines the fast point plan when a column is
+/// qualified by anything but the table's visible name; the ordinary planner
+/// then reports the unknown column (1054). An alias hides the real name.
+#[test]
+fn point_get_fast_path_checks_the_column_qualifier() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1048)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE qpg (a CHAR(2) PRIMARY KEY, b CHAR(2))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO qpg VALUES ('aa', 'bb')")
+        .unwrap();
+    for sql in [
+        "SELECT a FROM qpg WHERE xxxxx.a = 'aa'",
+        "SELECT a FROM qpg tmp WHERE qpg.a = 'aa'",
+    ] {
+        assert_eq!(query_error(&mut session, sql).0, 1054, "{sql}");
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a FROM qpg tmp WHERE tmp.a = 'aa'"
+        )),
+        [["aa"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a FROM qpg WHERE qpg.a = 'aa'")),
+        [["aa"]]
+    );
+}
+
+/// Go plans `Point_Get ... partition:p0` for a unique key on a partitioned
+/// table and routes the key by the partition expression; UPDATE and DELETE
+/// reach the same row, and a key no partition holds answers empty.
+#[test]
+fn partitioned_unique_key_point_get_routes_by_partition() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1049)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE ppg (a INT, b INT, UNIQUE KEY (a)) PARTITION BY LIST (a) \
+             (PARTITION p0 VALUES IN (0,4), PARTITION p1 VALUES IN (1,3))",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO ppg VALUES (4, 40), (1, 10), (3, 30)")
+        .unwrap();
+    let plan = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT * FROM ppg WHERE a = 4",
+    ));
+    assert_eq!(plan.len(), 1, "{plan:?}");
+    assert!(
+        plan[0][0].starts_with("Point_Get") && plan[0][3].contains("partition:p0"),
+        "{plan:?}"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM ppg WHERE a = 4")),
+        [["4", "40"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM ppg WHERE a = 7")),
+        Vec::<Vec<String>>::new()
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT * FROM ppg PARTITION (p1) WHERE a = 4"
+        )),
+        Vec::<Vec<String>>::new()
+    );
+    session
+        .execute_write("UPDATE ppg SET b = 41 WHERE a = 4")
+        .unwrap();
+    session
+        .execute_write("DELETE FROM ppg WHERE a = 3")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM ppg ORDER BY a")),
+        [["1", "10"], ["4", "41"]]
+    );
+}
+
+/// Go's `ExecuteExec` runs a prepared DDL as the statement's body, so it must
+/// reach the cluster catalog like any DDL: the prepared `CREATE TABLE` was
+/// applied to the session's own copy and a later `DROP TABLE` found nothing.
+/// Also pinned here: the table-build warnings (`LINEAR KEY` is ignored, 8200),
+/// the schema-qualified sequence in a default, and the refusal of a stale-read
+/// view body (1356).
+#[test]
+fn prepared_ddl_and_create_table_build_warnings_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1050)).unwrap();
+    session.execute_write("USE test").unwrap();
+    rows(
+        &mut session,
+        "PREPARE pc FROM 'CREATE TABLE pdl (id BIGINT PRIMARY KEY) PARTITION BY RANGE (id) \
+         INTERVAL (100) FIRST PARTITION LESS THAN (100) LAST PARTITION LESS THAN (500)'",
+    );
+    rows(&mut session, "EXECUTE pc");
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW TABLES LIKE 'pdl'")),
+        [["pdl"]]
+    );
+    session.execute_write("DROP TABLE pdl").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW TABLES LIKE 'pdl'")),
+        Vec::<Vec<String>>::new()
+    );
+
+    session
+        .execute_write(
+            "CREATE TABLE lk (c1 INT, c2 CHAR(5), c3 DATE) PARTITION BY LINEAR KEY (c3) PARTITIONS 5",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Warning",
+            "8200",
+            "LINEAR KEY is not supported, using non-linear KEY instead"
+        ]]
+    );
+
+    session.execute_write("CREATE SEQUENCE sq").unwrap();
+    session
+        .execute_write("CREATE TABLE dseq (a INT DEFAULT (NEXTVAL(sq)))")
+        .unwrap();
+    let shown = displayed(rows(&mut session, "SHOW CREATE TABLE dseq"));
+    assert!(
+        shown[0][1].contains("DEFAULT (nextval(`test`.`sq`))"),
+        "{shown:?}"
+    );
+
+    session.execute_write("CREATE TABLE src (a INT)").unwrap();
+    let error = session
+        .execute_write(
+            "CREATE VIEW v_stale AS SELECT * FROM src \
+             AS OF TIMESTAMP DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 SECOND)",
+        )
+        .unwrap_err();
+    assert_eq!(error.code, 1356);
+}

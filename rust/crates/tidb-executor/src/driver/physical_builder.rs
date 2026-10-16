@@ -4028,18 +4028,72 @@ fn point_partition_id(
     let Some(routing) = &point.partition else {
         return Ok(Some(point.table_id));
     };
-    // An index point reads its entry first: a global entry names its row's
-    // partition, which the source checks against the PARTITION clause.
-    if point.index_id.is_some() {
-        return Ok(Some(point.table_id));
-    }
     let table = catalog
         .physical_kv_table_by_id(point.table_id)
         .ok_or_else(|| DriverError::unsupported("point partition logical table is absent"))?;
     let partition = table
         .partition()
         .ok_or_else(|| DriverError::unsupported("point partition metadata is absent"))?;
-    let route = if table.common_handle_offsets().is_empty() {
+    // A GLOBAL index entry names its row's partition, which the source checks
+    // against the PARTITION clause; a LOCAL unique index is routed by its key
+    // values, as Go's `PointGetPlan.PrunePartitions` does.
+    let local_index = match point.index_id {
+        Some(index_id) => {
+            let index = table
+                .plan_indexes()
+                .find(|index| index.id == index_id)
+                .ok_or_else(|| DriverError::unsupported("point partition index is absent"))?;
+            if index.global {
+                return Ok(Some(point.table_id));
+            }
+            Some(index.column_offsets.clone())
+        }
+        None => None,
+    };
+    let route = if let Some(offsets) = local_index {
+        let values = match &point.range_rebuild {
+            // Original values, not collation sort keys, are the partition
+            // expression's inputs.
+            Some(tidb_planner::physical_plan_cache::PointRangeRebuild::Index(rebuild)) => {
+                let result =
+                    tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition_in(
+                        &rebuild.access_conditions,
+                        &rebuild.index_columns,
+                        &rebuild.index_column_lengths,
+                        0,
+                        &tidb_planner::ranger::points::StatementRangerEvaluator(ctx),
+                        ctx.ranger_options(),
+                    )
+                    .map_err(|error| {
+                        DriverError::unsupported(format!("point partition range: {error:?}"))
+                    })?;
+                let [range] = result.ranges.as_slice() else {
+                    return Err(DriverError::unsupported(
+                        "partition point must rebuild one key",
+                    ));
+                };
+                point_range_values(range)?.to_vec()
+            }
+            _ => {
+                let [range] = point.ranges.as_slice() else {
+                    return Err(DriverError::unsupported(
+                        "partition point must retain one key",
+                    ));
+                };
+                point_range_values(range)?.to_vec()
+            }
+        };
+        if values.len() != offsets.len() {
+            return Err(DriverError::unsupported(
+                "partition point key width is invalid",
+            ));
+        }
+        let mut row = vec![tidb_datatype::Datum::Null; table.columns.len()];
+        for (&offset, value) in offsets.iter().zip(values) {
+            row[offset] = value;
+        }
+        table.row_partition_route(&row, ctx)
+    } else if table.common_handle_offsets().is_empty() {
         let handles = point_handles(&table, &point.ranges, ctx)?;
         if handles.len() != 1 {
             return Err(DriverError::unsupported(

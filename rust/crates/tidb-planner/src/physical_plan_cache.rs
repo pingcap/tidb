@@ -1112,6 +1112,20 @@ fn update_inner_scan_ranges(plan: &mut PhysicalPlan, ranges: &Ranges) -> bool {
     }
 }
 
+/// Binds the parameters of a subtree whose ranges Go never rebuilds -- the
+/// table side of a lookup or index-merge reader is `(Selection) +
+/// TableRowIDScan` -- without re-deriving any range.
+fn bind_subtree_expressions(
+    plan: &mut PhysicalPlan,
+    context: &CachedPlanRebuildContext<'_>,
+) -> Result<(), PlanCacheRebuildError> {
+    bind_plan_expressions(plan, context)?;
+    for child in plan.base_mut().children_mut() {
+        bind_subtree_expressions(child, context)?;
+    }
+    Ok(())
+}
+
 /// Recursively rebuilds every parameter-dependent range in one retained plan.
 /// Reader-owned pushed-down trees are walked explicitly because they are not
 /// ordinary `PhysicalPlan::children()` entries.
@@ -1145,6 +1159,15 @@ pub fn rebuild_ranges_for_cached_plan(
             }
             if let Some(index_plan) = reader.index_plan.as_deref_mut() {
                 rebuild_ranges_for_cached_plan(index_plan, context)?;
+            }
+            // Go reads a parameter's value at evaluation time; this port
+            // binds it into the expression, so the table side's Selection
+            // needs the new value as much as the index side's ranges do.
+            if let Some(table_plan) = reader.table_plan.as_deref_mut() {
+                bind_subtree_expressions(table_plan, context)?;
+            }
+            for table_plan in &mut reader.table_plans {
+                bind_plan_expressions(table_plan, context)?;
             }
         }
         PhysicalPlan::IndexJoin(join) => {
@@ -1189,6 +1212,11 @@ pub fn rebuild_ranges_for_cached_plan(
         PhysicalPlan::IndexMergeReader(reader) => {
             for partial_plan in &mut reader.partial_plans_raw {
                 rebuild_ranges_for_cached_plan(partial_plan, context)?;
+            }
+            // The final table plan's recheck Selection carries the same
+            // parameters as the partials (`a = ? or b = 1`).
+            if let Some(table_plan) = reader.table_plan.as_deref_mut() {
+                bind_subtree_expressions(table_plan, context)?;
             }
         }
         PhysicalPlan::Dml(dml) => {

@@ -123,6 +123,27 @@ impl Session {
             .map(|prepared| prepared.sql.as_str())
     }
 
+    /// The text of a prepared DDL statement named by a text-protocol
+    /// `EXECUTE name` with no `USING` values, parsed. Go's `ExecuteExec` runs
+    /// the prepared plan as the statement's body, so a node that owns DDL
+    /// routes this body itself instead of letting the session run it.
+    pub fn prepared_ddl_body(&self, stmt: &Stmt) -> Option<(String, Stmt)> {
+        let Stmt::Session(session) = stmt else {
+            return None;
+        };
+        let tidb_ast::SessionStmt::Execute { name, using } = session.as_ref() else {
+            return None;
+        };
+        if !using.is_empty() {
+            return None;
+        }
+        let prepared = self.prepared_statements.get(name)?;
+        if prepared.param_count != 0 || !matches!(prepared.statement, Stmt::Ddl(_)) {
+            return None;
+        }
+        Some((prepared.sql.clone(), prepared.statement.clone()))
+    }
+
     /// Go `PrepareExec.Next`: parses the statement text and stores it under
     /// `name`, replacing whatever that name held before.
     ///

@@ -3768,7 +3768,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         // keyspace and carries each row's partition ID, so a
                         // unique-key point read does not need static pruning
                         // to choose one physical table first.
-                        || source_index.global)
+                        || source_index.global
+                        // Go `find_best_task.go:2214`: a partitioned table
+                        // still converts, one range at a time (a batch
+                        // needs a hash/key column and static pruning). The
+                        // executor routes the key to its partition.
+                        || ranges.len() == 1)
                     && source_index.unique
                     && !declared_index_has_prefix
                     && declared_index_prefix_complete
@@ -3818,12 +3823,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             table_id: ds.physical_table_id,
                             // Go `PointGetPlan.PartitionNames`: a global index
                             // applies them to the partition its entry records.
-                            partition: (!ds.partition_names.is_empty()).then(|| {
-                                crate::physical::PointGetPartition {
+                            partition: (!ds.partition_names.is_empty()
+                                || (!ds.partition_definition_ids.is_empty()
+                                    && ds.physical_table_id == ds.table_id))
+                                .then(|| crate::physical::PointGetPartition {
                                     names: ds.partition_names.clone(),
                                     physical_table_id: None,
-                                }
-                            }),
+                                }),
                             index_id: Some(source_index.id),
                             access_cols: Some(if single_scan {
                                 index_cols.clone()

@@ -672,6 +672,9 @@ impl Session {
         let tidb_ast::DdlStmt::CreateView(create) = &**ddl else {
             return Ok(None);
         };
+        let mut scanned = stmt.clone();
+        let has_as_of = crate::binding::scan_statement_tables(&mut scanned).has_as_of;
+        self.refuse_stale_view_body(create, has_as_of)?;
         let create = create.clone();
         let current_db = self.current_db.clone();
         let ctx = self.statement_context(false);
@@ -680,6 +683,33 @@ impl Session {
             tidb_executor::resolve_view_definition(&create, catalog, &current_db, &ctx)
         })?;
         Ok(Some((database, name, or_replace, view)))
+    }
+
+    /// Go `DDLExec.executeCreateView` preprocesses the view's SELECT as a
+    /// statement of its own and refuses a stale read there (1356): a table
+    /// read `AS OF`, or `tidb_read_staleness`.
+    pub(crate) fn refuse_stale_view_body(
+        &self,
+        create: &tidb_ast::CreateViewStmt,
+        has_as_of: bool,
+    ) -> Result<(), DriverError> {
+        let read_staleness = self
+            .vars
+            .get_system("tidb_read_staleness")
+            .unwrap_or_default()
+            .parse::<i64>()
+            .unwrap_or(0);
+        if !has_as_of && read_staleness == 0 {
+            return Ok(());
+        }
+        let (schema, name) = match create.name.as_slice() {
+            [schema, name] => (schema.as_str(), name.as_str()),
+            [name] => (self.current_db.as_str(), name.as_str()),
+            _ => ("", ""),
+        };
+        Err(DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(
+            format!("{}.{}", schema.to_lowercase(), name.to_lowercase()),
+        )))
     }
 
     /// `tidb_cdc_write_source`, which Go copies into each DDL job
