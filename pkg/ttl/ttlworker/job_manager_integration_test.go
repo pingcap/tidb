@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
@@ -445,6 +446,112 @@ func TestTriggerTTLJob(t *testing.T) {
 	require.Empty(t, unexpectedJobSQL)
 }
 
+<<<<<<< HEAD
+=======
+func TestTTLJobWithSEMv2(t *testing.T) {
+	defer boostJobScheduleForTest(t)()
+
+	// The TTL job manager runs its statements on internal sessions which have no
+	// privilege manager. Enabling SEM v2 with read-only variables that the TTL
+	// worker sets during its session preparation used to make it panic, so the
+	// job manager never ran and expired rows were never cleaned up.
+	require.NoError(t, semv2.EnableBy(&semv2.Config{
+		Version:     "1.0",
+		TiDBVersion: "v0.0.0",
+		RestrictedVariables: []semv2.VariableRestriction{
+			{Name: vardef.TiDBEnable1PC, Readonly: true},
+			{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
+		},
+	}))
+	t.Cleanup(semv2.Disable)
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Minute)
+	defer cancel()
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY")
+	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+
+	timerStore := timertable.NewTableTimerStore(0, do.AdvancedSysSessionPool(), "mysql", "tidb_timers", nil)
+	defer timerStore.Close()
+	timerCli := timerapi.NewDefaultTimerClient(timerStore)
+
+	// make sure the table had run a job one time to make the test stable
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+
+	now := time.Now()
+	nowDateStr := now.Format("2006-01-02 15:04:05.999999")
+	expireDateStr := now.Add(-time.Hour * 25).Format("2006-01-02 15:04:05.999999")
+	tk.MustExec("insert into t values(1, ?)", expireDateStr)
+	tk.MustExec("insert into t values(2, ?)", nowDateStr)
+
+	cli := do.TTLJobManager().GetCommandCli()
+	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
+	require.NoError(t, err)
+	require.Len(t, res.TableResult, 1)
+	require.Empty(t, res.TableResult[0].ErrorMessage)
+
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2"))
+}
+
+func TestTriggerTTLJobWithIndexScan(t *testing.T) {
+	defer boostJobScheduleForTest(t)()
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Minute)
+	defer cancel()
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(id int primary key, t timestamp, index idx_t(t)) TTL=`t` + INTERVAL 1 DAY")
+	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+	require.Len(t, tbl.Meta().Indices, 1)
+	idx := tbl.Meta().Indices[0]
+
+	timerStore := timertable.NewTableTimerStore(0, do.AdvancedSysSessionPool(), "mysql", "tidb_timers", nil)
+	defer timerStore.Close()
+	timerCli := timerapi.NewDefaultTimerClient(timerStore)
+
+	// make sure the table had run a job one time to make the test stable
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+
+	now := time.Now()
+	nowDateStr := now.Format("2006-01-02 15:04:05.999999")
+	expire := now.Add(-time.Hour * 48)
+	expireDateStr := expire.Format("2006-01-02 15:04:05.999999")
+	tk.MustExec("insert into t values(1, ?)", expireDateStr)
+	tk.MustExec("insert into t values(2, ?)", nowDateStr)
+	tk.MustExec("insert into t values(3, ?)", expireDateStr)
+	tk.MustExec("insert into t values(4, ?)", nowDateStr)
+
+	cli := do.TTLJobManager().GetCommandCli()
+	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(res.TableResult))
+	tableResult := res.TableResult[0]
+	require.Equal(t, tblID, tableResult.TableID)
+	require.NotEmpty(t, tableResult.JobID)
+	require.Equal(t, "test", tableResult.DBName)
+	require.Equal(t, "t", tableResult.TableName)
+	require.Equal(t, "", tableResult.ErrorMessage)
+	require.Equal(t, "", tableResult.PartitionName)
+
+	tk.MustQuery("select scan_index_id from mysql.tidb_ttl_task where job_id = ?", tableResult.JobID).
+		Check(testkit.Rows(strconv.FormatInt(idx.ID, 10)))
+
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
+}
+
+>>>>>>> 4cee7f20849 (executor, ttl: fix nil pointer dereference when an internal session sets a SEM v2 read-only sysvar (#72012))
 func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 	defer boostJobScheduleForTest(t)()
 
