@@ -183,7 +183,7 @@ func TestDistributeTable(t *testing.T) {
 	// In keyspace mode, the alias is prefixed with the keyspace ID.
 	aliasPrefix := ""
 	if store.GetKeyspace() != "" {
-		aliasPrefix = fmt.Sprintf("%d.", store.GetCodec().GetKeyspaceID())
+		aliasPrefix = fmt.Sprintf("%d:", store.GetCodec().GetKeyspaceID())
 	}
 
 	config := map[string]any{
@@ -265,7 +265,7 @@ func TestDistributeTableWithKeyspace(t *testing.T) {
 	startKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID))
 	endKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID + 1))
 	config := map[string]any{
-		"alias":     "2." + strings.Join([]string{"test", table, ""}, "."),
+		"alias":     "2:" + strings.Join([]string{"test", table, ""}, "."),
 		"engine":    "tikv",
 		"rule":      "leader-scatter",
 		"start-key": url.QueryEscape(string(startKey)),
@@ -273,6 +273,8 @@ func TestDistributeTableWithKeyspace(t *testing.T) {
 	}
 	cli.On("GetSchedulerConfig", mock.Anything, schedulerName).Return(nil, nil)
 	cli.On("CreateSchedulerWithInput", mock.Anything, schedulerName, config).Return(nil)
+	// Older TiDB versions parse the alias as exactly three '.'-separated parts.
+	require.Len(t, strings.Split(config["alias"].(string), "."), 3)
 
 	tk.MustQuery("distribute table t1 rule='leader-scatter' engine='tikv'").Check(testkit.Rows("1"))
 
@@ -297,8 +299,8 @@ func TestDistributeTableWithKeyspace(t *testing.T) {
 		}
 	}
 	cli.jobs = []map[string]any{
-		newJob(1, "2.test.t1."),
-		newJob(2, "3.test.t1."),
+		newJob(1, "2:test.t1."),
+		newJob(2, "3:test.t1."),
 		newJob(3, "test.t2.partition(p0)"),
 	}
 	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
