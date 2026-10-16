@@ -1279,12 +1279,105 @@ func TestMaterializedViewLogOnReadyMaterializedView(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select NEXT_PURGE_UNIX_SECONDS is not null from mysql.tidb_mlog_purge_info where MLOG_ID=%d", mlogID)).Check(testkit.Rows("1"))
 	tk.MustExec("purge materialized view log on mv_mlog_ddl")
 
+	for _, stmt := range []string{"drop materialized view mv_mlog_ddl", "drop materialized view if exists mv_mlog_ddl"} {
+		require.ErrorContains(t, tk.ExecToErr(stmt), "DROP MATERIALIZED VIEW with materialized view log")
+	}
+	mvAfterDrop, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_mlog_ddl"))
+	require.NoError(t, err)
+	require.Equal(t, mv.Meta().ID, mvAfterDrop.Meta().ID)
+	require.Equal(t, mlogID, mvAfterDrop.Meta().MaterializedViewBase.MLogID)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID=%d", mlogID)).Check(testkit.Rows("1"))
+	tk.MustQuery("select * from mv_mlog_ddl").Check(testkit.Rows("1 10 1"))
+
 	tk.MustExec("drop materialized view log on mv_mlog_ddl")
 	mv, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_mlog_ddl"))
 	require.NoError(t, err)
 	require.True(t, mv.Meta().MaterializedViewBase == nil || mv.Meta().MaterializedViewBase.MLogID == 0)
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID=%d", mlogID)).Check(testkit.Rows("0"))
 	tk.MustQuery("select * from mv_mlog_ddl").Check(testkit.Rows("1 10 1"))
+	tk.MustExec("drop materialized view mv_mlog_ddl")
+	tk.MustQuery("show tables like 'mv_mlog_ddl'").Check(testkit.Rows())
+	tk.MustQuery("show tables like '$mlog$mv_mlog_ddl'").Check(testkit.Rows())
+	tk.MustExec("drop materialized view log on t_mv_mlog_ddl")
+	tk.MustExec("drop table t_mv_mlog_ddl")
+}
+
+func TestDropMaterializedViewRechecksOwnedLog(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_mv_mlog (a int)")
+	tk.MustExec("create materialized view log on t_drop_mv_mlog (a)")
+	tk.MustExec("create materialized view mv_drop_mlog (a, cnt) as select a, count(1) from t_drop_mv_mlog group by a")
+	mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_drop_mlog"))
+	require.NoError(t, err)
+	mvID := mv.Meta().ID
+
+	createStarted := make(chan struct{})
+	allowCreate := make(chan struct{})
+	releaseCreate := func() {
+		select {
+		case <-allowCreate:
+		default:
+			close(allowCreate)
+		}
+	}
+	t.Cleanup(releaseCreate)
+	var signalled atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *metamodel.Job) {
+		if job.Type != metamodel.ActionCreateMaterializedViewLog || job.TableName != "$mlog$mv_drop_mlog" {
+			return
+		}
+		if signalled.CompareAndSwap(false, true) {
+			close(createStarted)
+		}
+		<-allowCreate
+	})
+
+	tkCreate := testkit.NewTestKit(t, store)
+	tkCreate.MustExec("use test")
+	createErrCh := make(chan error, 1)
+	go func() { createErrCh <- tkCreate.ExecToErr("create materialized view log on mv_drop_mlog (a, cnt)") }()
+	select {
+	case <-createStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG worker")
+	}
+
+	// Enqueue DROP with a stale executor precheck, behind the blocked CREATE.
+	tkDrop := testkit.NewTestKit(t, store)
+	tkDrop.MustExec("use test")
+	dropErrCh := make(chan error, 1)
+	go func() { dropErrCh <- tkDrop.ExecToErr("drop materialized view mv_drop_mlog") }()
+	require.Eventually(t, func() bool {
+		return len(tk.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()) == 2
+	}, 10*time.Second, 10*time.Millisecond)
+	releaseCreate()
+	select {
+	case err := <-createErrCh:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG")
+	}
+	select {
+	case err := <-dropErrCh:
+		require.ErrorContains(t, err, "DROP MATERIALIZED VIEW with materialized view log")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for DROP MATERIALIZED VIEW")
+	}
+
+	mv, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_drop_mlog"))
+	require.NoError(t, err)
+	require.Equal(t, mvID, mv.Meta().ID)
+	require.NotNil(t, mv.Meta().MaterializedViewBase)
+	mlogID := mv.Meta().MaterializedViewBase.MLogID
+	mlog, ok := dom.InfoSchema().TableByID(context.Background(), mlogID)
+	require.True(t, ok)
+	require.NotNil(t, mlog.Meta().MaterializedViewLog)
+	require.Equal(t, mvID, mlog.Meta().MaterializedViewLog.BaseTableID)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID=%d", mlogID)).Check(testkit.Rows("1"))
+	tk.MustExec("drop materialized view log on mv_drop_mlog")
+	tk.MustExec("drop materialized view mv_drop_mlog")
 }
 
 func TestCreateMaterializedViewLogRejectShadowTable(t *testing.T) {

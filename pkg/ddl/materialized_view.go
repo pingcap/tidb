@@ -463,6 +463,9 @@ func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMater
 	if tbl.Meta().MaterializedView == nil {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
 	}
+	if err := checkBaseTableMaterializedViewDependencyConstraints(tbl.Meta(), "DROP MATERIALIZED VIEW"); err != nil {
+		return err
+	}
 
 	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
 	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, materializedViewObject, true)

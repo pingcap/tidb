@@ -114,6 +114,13 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 	switch tblInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		if job.Type == model.ActionDropMaterializedView {
+			// An owned MLog may have been created after the executor precheck.
+			if err = checkBaseTableMaterializedViewDependencyConstraints(tblInfo, "DROP MATERIALIZED VIEW"); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		if job.Type == model.ActionDropTable {
 			if err = checkTableMaterializedViewConstraints(nil, tblInfo, "DROP TABLE"); err != nil {
 				job.State = model.JobStateCancelled
