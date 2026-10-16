@@ -666,7 +666,12 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 
 func TestReadPoolTaskDetailsInDiagnostics(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
+	previousCollectExecutionInfo := originCfg.Instance.EnableCollectExecutionInfo.Load()
 	newCfg := *originCfg
+	newCfg.Instance.EnableCollectExecutionInfo.Store(true)
+	t.Cleanup(func() {
+		originCfg.Instance.EnableCollectExecutionInfo.Store(previousCollectExecutionInfo)
+	})
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()
