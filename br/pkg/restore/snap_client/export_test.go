@@ -36,11 +36,12 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile      = getSSTMetaFromFile
-	GetKeyRangeByMode       = getKeyRangeByMode
-	MapTableToFiles         = mapTableToFiles
-	GetFileRangeKey         = getFileRangeKey
-	GetSortedPhysicalTables = getSortedPhysicalTables
+	GetSSTMetaFromFile             = getSSTMetaFromFile
+	GetKeyRangeByMode              = getKeyRangeByMode
+	MapTableToFiles                = mapTableToFiles
+	GetFileRangeKey                = getFileRangeKey
+	GetSortedPhysicalTables        = getSortedPhysicalTables
+	BuildSystemTableReplaceColumns = buildSystemTableReplaceColumns
 )
 
 func TestMVSystemTablesAreUnrecoverable(t *testing.T) {
@@ -58,6 +59,10 @@ func TestMVSystemTablesAreUnrecoverable(t *testing.T) {
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 	return &SnapClient{databases: dbs}
+}
+
+func (rc *SnapClient) SetDatabases(dbs map[string]*metautil.Database) {
+	rc.databases = dbs
 }
 
 // Mock the call of setSpeedLimit function
