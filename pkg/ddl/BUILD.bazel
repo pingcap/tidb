@@ -86,6 +86,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/bdr",
         "//pkg/ddl/copr",
@@ -204,7 +205,6 @@ go_library(
         "//pkg/util/regionsplit",
         "//pkg/util/rowDecoder",
         "//pkg/util/rowcodec",
-        "//pkg/util/sem/compat",
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/slice",
@@ -344,6 +344,7 @@ go_test(
         "//pkg/autoid_service",
         "//pkg/config",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
