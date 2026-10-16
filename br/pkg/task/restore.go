@@ -2215,7 +2215,7 @@ func fallbackStatsTables(tables []*metautil.Table) []*metautil.Table {
 
 // filterRestoreFiles filters out dbs and tables.
 func filterRestoreFiles(
-	client *snapclient.SnapClient,
+	client restoreFileClient,
 	cfg *RestoreConfig,
 	loadStatsPhysical bool,
 ) (tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database, err error) {
@@ -2240,6 +2240,13 @@ func filterRestoreFiles(
 					continue
 				}
 			}
+			if table.Info.MaterializedView != nil ||
+				table.Info.MaterializedViewLog != nil {
+				continue
+			}
+			if table.Info.MaterializedViewBase != nil {
+				table.Info.MaterializedViewBase = nil
+			}
 
 			// Add table to tableMap using table ID as key
 			tableMap[table.Info.ID] = table
@@ -2251,6 +2258,10 @@ func filterRestoreFiles(
 		err = errors.Annotate(berrors.ErrRestoreInvalidBackup, "contains tables but no databases")
 	}
 	return
+}
+
+type restoreFileClient interface {
+	GetDatabases() []*metautil.Database
 }
 
 // getDBNameFromBackup gets database name from either snapshot or log backup history
