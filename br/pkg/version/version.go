@@ -28,6 +28,7 @@ import (
 
 var (
 	minTiKVVersion          = semver.New("3.1.0-beta.2")
+	minTiKVPiTRVersion      = semver.New("6.5.0")
 	incompatibleTiKVMajor3  = semver.New("3.1.0")
 	incompatibleTiKVMajor4  = semver.New("4.0.0-rc.1")
 	compatibleTiFlashMajor3 = semver.New("3.1.0")
@@ -36,8 +37,6 @@ var (
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
 
 	checkpointSupportError error = nil
-	// pitrSupportBatchKVFiles specifies whether TiKV-server supports batch PITR.
-	pitrSupportBatchKVFiles bool = false
 
 	// Once TableInfoVersion updated. BR need to check compatibility with
 	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
@@ -142,28 +141,16 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
 	}
 
-	// tikvVersion should at least 6.1.0
-	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor == 0) {
-		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use PiTR, please update tikv's version to at least v6.1.0(v6.2.0+ recommanded)",
-			s.Address, tikvVersion)
-	}
-	// If tikv version < 6.5, PITR do not support restoring batch kv files.
-	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
-		pitrSupportBatchKVFiles = false
-	} else {
-		pitrSupportBatchKVFiles = true
+	// TiKV must support batch ApplyKVFile requests for PiTR restore.
+	if tikvVersion.Compare(*minTiKVPiTRVersion) < 0 {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use PiTR, please update tikv's version to at least v%s",
+			s.Address, tikvVersion, minTiKVPiTRVersion)
 	}
 
 	// The versions of BR and TiKV should be the same when use BR 6.1.0
 	if BRVersion.Major == 6 && BRVersion.Minor == 1 {
 		if tikvVersion.Major != 6 || tikvVersion.Minor != 1 {
 			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch when use PiTR v6.1.0, please use the same version of BR",
-				s.Address, tikvVersion, build.ReleaseVersion)
-		}
-	} else {
-		// If BRVersion > v6.1.0, the version of TiKV should be at least v6.2.0
-		if tikvVersion.Major == 6 && tikvVersion.Minor <= 1 {
-			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch when use PiTR v6.2.0+, please use the tikv with version v6.2.0+",
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
 	}
@@ -344,10 +331,6 @@ func FetchVersion(ctx context.Context, db dbutil.QueryExecutor) (string, error) 
 
 func CheckCheckpointSupport() error {
 	return checkpointSupportError
-}
-
-func CheckPITRSupportBatchKVFiles() bool {
-	return pitrSupportBatchKVFiles
 }
 
 type ServerType int
