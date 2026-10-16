@@ -18,12 +18,14 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -171,7 +173,42 @@ func (e *DistributeTableExec) getAlias() string {
 		partitionStr += ")"
 	}
 	dbName := getSchemaName(e.is, e.tableInfo.DBID)
-	return strings.Join([]string{dbName, e.tableInfo.Name.String(), partitionStr}, ".")
+	alias := strings.Join([]string{dbName, e.tableInfo.Name.String(), partitionStr}, ".")
+	if keyspaceID, ok := distributionKeyspaceID(e.Ctx().GetStore()); ok {
+		alias = strconv.FormatUint(uint64(keyspaceID), 10) + "." + alias
+	}
+	return alias
+}
+
+// distributionKeyspaceID returns the keyspace ID of the store, or false if the
+// store isn't bound to a keyspace.
+// All keyspaces share the same PD balance-range scheduler, and PD rejects a new
+// job whose alias equals an uncompleted one, so in keyspace mode the job alias is
+// prefixed with the keyspace ID ({keyspace_id}.{db_name}.{table_name}.{partition_name})
+// to keep jobs of different keyspaces apart.
+func distributionKeyspaceID(store kv.Storage) (uint32, bool) {
+	if store.GetKeyspace() == "" {
+		return 0, false
+	}
+	return uint32(store.GetCodec().GetKeyspaceID()), true
+}
+
+// trimDistributionAliasKeyspace strips the keyspace ID prefix from the job alias
+// and reports whether the job belongs to the given keyspace. An alias is treated
+// as prefixed only when it has a numeric first part followed by exactly three
+// parts; any other alias was written without the prefix (by an older TiDB or
+// outside keyspace mode), so it's returned as is and treated as visible for
+// compatibility.
+func trimDistributionAliasKeyspace(alias string, keyspaceID uint32) (string, bool) {
+	parts := strings.SplitN(alias, ".", 2)
+	if len(parts) != 2 || strings.Count(parts[1], ".") != 2 {
+		return alias, true
+	}
+	id, err := strconv.ParseUint(parts[0], 10, 32)
+	if err != nil {
+		return alias, true
+	}
+	return parts[1], uint32(id) == keyspaceID
 }
 
 func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {

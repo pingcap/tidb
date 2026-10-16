@@ -180,9 +180,14 @@ func TestDistributeTable(t *testing.T) {
 	}
 	table := "t1"
 	partition := ""
+	// In keyspace mode, the alias is prefixed with the keyspace ID.
+	aliasPrefix := ""
+	if store.GetKeyspace() != "" {
+		aliasPrefix = fmt.Sprintf("%d.", store.GetCodec().GetKeyspaceID())
+	}
 
 	config := map[string]any{
-		"alias":  strings.Join([]string{database, table, partition}, "."),
+		"alias":  aliasPrefix + strings.Join([]string{database, table, partition}, "."),
 		"engine": "tikv",
 		"rule":   "leader-scatter",
 	}
@@ -199,7 +204,7 @@ func TestDistributeTable(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("distribute table %s rule='leader-scatter' engine='tikv'", table)).Check(testkit.Rows("1"))
 	// test for multi partitions
 	partition = "partition(p1,p2)"
-	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	config["alias"] = aliasPrefix + strings.Join([]string{database, table, partition}, ".")
 	mockCreateSchedulerWithInput(table, config, []string{"p1", "p2"})
 	tk.MustQuery(fmt.Sprintf("distribute table %s partition (p1,p2) rule='leader-scatter' engine='tikv'", table)).Check(testkit.Rows("2"))
 	// test for unordered partitions
@@ -207,13 +212,13 @@ func TestDistributeTable(t *testing.T) {
 
 	// test for timeout
 	partition = "partition(p0)"
-	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	config["alias"] = aliasPrefix + strings.Join([]string{database, table, partition}, ".")
 	config["timeout"] = "30m"
 	mockCreateSchedulerWithInput(table, config, []string{"p0"})
 	tk.MustQuery(fmt.Sprintf("distribute table %s partition(p0) rule='leader-scatter' engine='tikv' timeout='30m'", table)).Check(testkit.Rows("4"))
 
 	partition = "partition(p0,p2)"
-	config["alias"] = strings.Join([]string{database, table, partition}, ".")
+	config["alias"] = aliasPrefix + strings.Join([]string{database, table, partition}, ".")
 	config["timeout"] = "30m"
 	mockCreateSchedulerWithInput(table, config, []string{"p0", "p2"})
 	tk.MustQuery(fmt.Sprintf("distribute table %s partition(p0,p2) rule='leader-scatter' engine='tikv' timeout='30m'", table)).Check(testkit.Rows("5"))
@@ -260,7 +265,7 @@ func TestDistributeTableWithKeyspace(t *testing.T) {
 	startKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID))
 	endKey := encodeRegionKey(tablecodec.GenTablePrefix(tbl.ID + 1))
 	config := map[string]any{
-		"alias":     strings.Join([]string{"test", table, ""}, "."),
+		"alias":     "2." + strings.Join([]string{"test", table, ""}, "."),
 		"engine":    "tikv",
 		"rule":      "leader-scatter",
 		"start-key": url.QueryEscape(string(startKey)),
@@ -278,6 +283,29 @@ func TestDistributeTableWithKeyspace(t *testing.T) {
 	cli.On("GetRegionDistributionByKeyRange", mock.Anything, pdhttp.NewKeyRange(startKey, endKey), "").
 		Return(distributions, nil)
 	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 0 0 0 0 0 0 0 0 0"))
+
+	// SHOW DISTRIBUTION JOBS only shows the jobs of the current keyspace and the
+	// jobs whose alias has no keyspace ID prefix (written by an older TiDB).
+	newJob := func(id int, alias string) map[string]any {
+		return map[string]any{
+			"job-id":  float64(id),
+			"alias":   alias,
+			"engine":  "tikv",
+			"rule":    "leader-scatter",
+			"status":  "pending",
+			"timeout": 30 * time.Minute,
+		}
+	}
+	cli.jobs = []map[string]any{
+		newJob(1, "2.test.t1."),
+		newJob(2, "3.test.t1."),
+		newJob(3, "test.t2.partition(p0)"),
+	}
+	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
+		"1 test t1 <nil> tikv leader-scatter pending 30m0s <nil> <nil> <nil>",
+		"3 test t2 partition(p0) tikv leader-scatter pending 30m0s <nil> <nil> <nil>",
+	))
+	tk.MustQuery("show distribution job 2").Check(testkit.Rows())
 }
 
 func TestShowTableDistributions(t *testing.T) {
