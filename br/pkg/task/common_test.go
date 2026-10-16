@@ -57,6 +57,12 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://some/what",
 		},
 		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    `s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`,
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
 			inputName:     FlagStreamFullBackupStorage,
 			expectedName:  "full-backup-storage",
 			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",

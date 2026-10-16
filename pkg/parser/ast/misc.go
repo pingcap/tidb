@@ -4226,7 +4226,7 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 // RedactedValue replaces a secret in redacted output.
 const RedactedValue = "xxxxxx"
 
-// RedactURL redacts sensitive query parameters in supported storage URLs.
+// RedactURL redacts sensitive query parameters and removes fragments in supported storage URLs.
 // If the URL is not valid, it returns the original string.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
@@ -4260,6 +4260,9 @@ func RedactURL(str string) string {
 	}
 
 	if len(redactKeys) > 0 {
+		// An unescaped '#' in a secret query value starts a fragment.
+		u.Fragment = ""
+		u.RawFragment = ""
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key

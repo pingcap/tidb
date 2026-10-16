@@ -29,23 +29,30 @@ import (
 )
 
 func TestStorageConfigLogRedaction(t *testing.T) {
-	core, logs := observer.New(zap.InfoLevel)
-	ctx := logutil.WithLogger(context.Background(), zap.New(core))
-	contextJSON := `{"tenant":"context-value"}`
-	cfg := TestStorageConfig{
-		// A missing bucket stops the test before any storage request.
-		StorageURI: "s3:///?sse-kms-context=" + url.QueryEscape(contextJSON),
-		BackendOptions: objstore.BackendOptions{S3: s3like.S3BackendOptions{
-			SessionToken:  "session-token-value",
-			SseKmsContext: contextJSON,
-		}},
+	contextJSON := `{"tenant":"#context-value"}`
+	for _, storageURI := range []string{
+		"s3:///?sse-kms-context=" + url.QueryEscape(contextJSON),
+		"s3:///?sse-kms-context=" + contextJSON,
+	} {
+		t.Run(storageURI, func(t *testing.T) {
+			core, logs := observer.New(zap.InfoLevel)
+			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			cfg := TestStorageConfig{
+				// A missing bucket stops the test before any storage request.
+				StorageURI: storageURI,
+				BackendOptions: objstore.BackendOptions{S3: s3like.S3BackendOptions{
+					SessionToken:  "session-token-value",
+					SseKmsContext: contextJSON,
+				}},
+			}
+			require.Error(t, RunTestStorage(ctx, cfg))
+			entries := logs.FilterMessage("Starting external storage test").All()
+			require.Len(t, entries, 1)
+			logged, err := json.Marshal(entries[0].ContextMap())
+			require.NoError(t, err)
+			require.NotContains(t, string(logged), "context-value")
+			require.NotContains(t, string(logged), "session-token-value")
+			require.Equal(t, contextJSON, cfg.S3.SseKmsContext)
+		})
 	}
-	require.Error(t, RunTestStorage(ctx, cfg))
-	entries := logs.FilterMessage("Starting external storage test").All()
-	require.Len(t, entries, 1)
-	logged, err := json.Marshal(entries[0].ContextMap())
-	require.NoError(t, err)
-	require.NotContains(t, string(logged), "context-value")
-	require.NotContains(t, string(logged), "session-token-value")
-	require.Equal(t, contextJSON, cfg.S3.SseKmsContext)
 }

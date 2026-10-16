@@ -30,12 +30,61 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestClientDebugLogRedaction(t *testing.T) {
+	const encryptionContext = "eyJ0ZW5hbnQiOiJzZGstZGVidWctY29udGV4dC1tYXJrZXIifQ=="
+	const sessionToken = "sdk-debug-session-marker"
+	core, recorded := observer.New(zap.DebugLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	t.Cleanup(restore)
+
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		require.Equal(t, http.MethodPut, req.Method)
+		require.Equal(t, encryptionContext, req.Header.Get("X-Amz-Server-Side-Encryption-Context"))
+		require.Equal(t, sessionToken, req.Header.Get("X-Amz-Security-Token"))
+		header := make(http.Header)
+		// S3 also returns the encryption context in the response headers.
+		header.Set("X-Amz-Server-Side-Encryption-Context", encryptionContext)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    req,
+		}, nil
+	})}
+	storage, err := NewS3Storage(context.Background(), &backuppb.S3{
+		Bucket:                  "bucket",
+		Region:                  "us-east-1",
+		Provider:                "minio",
+		Endpoint:                "https://s3.example.com",
+		AccessKey:               "test-access-key",
+		SecretAccessKey:         "test-secret-key",
+		SessionToken:            sessionToken,
+		Sse:                     "aws:kms",
+		SseKmsKeyId:             "test-key",
+		SseKmsEncryptionContext: encryptionContext,
+	}, &storeapi.Options{HTTPClient: client})
+	require.NoError(t, err)
+	t.Cleanup(storage.Close)
+	require.NoError(t, storage.WriteFile(context.Background(), "object", []byte("data")))
+	require.Equal(t, 1, requests)
+	require.NotEmpty(t, recorded.All())
+	for _, entry := range recorded.All() {
+		require.NotContains(t, entry.Message, encryptionContext)
+		require.NotContains(t, entry.Message, sessionToken)
+	}
+}
 
 func TestClientEncryptionContextRequests(t *testing.T) {
 	for _, tc := range []struct {

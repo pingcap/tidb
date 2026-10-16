@@ -316,6 +316,10 @@ func TestBRIESecureText(t *testing.T) {
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
 		},
 		{
+			input:   `backup database * to 's3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}'`,
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?sse-kms-context=xxxxxx'\E$`,
+		},
+		{
 			// we need to use regexp to match to avoid the random ordering since a map was used.
 			// unfortunately Go's regexp doesn't support lookahead assertion, so the test case below
 			// has false positives.
@@ -396,6 +400,7 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
 		{args{"s3://bucket/file?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "s3://bucket/file?sse-kms-context=xxxxxx"},
+		{args{`s3://bucket/file?sse-kms-context={"tenant":"#context-value"}`}, "s3://bucket/file?sse-kms-context=xxxxxx"},
 		{args{"s3://bucket/file?SSE_KMS_CONTEXT=first&SSE_KMS_CONTEXT=second"}, "s3://bucket/file?SSE_KMS_CONTEXT=xxxxxx"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},

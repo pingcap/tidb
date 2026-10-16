@@ -78,7 +78,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	configOpts = append(configOpts,
 		config.WithRegion(region),
 		config.WithLogger(newLogger(logger)),
-		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse|aws.LogDeprecatedUsage),
+		// Raw HTTP logs include credentials and the SSE-KMS encryption context.
+		config.WithClientLogMode(aws.LogRetries|aws.LogDeprecatedUsage),
 		config.WithLogConfigurationWarnings(true),
 	)
 
@@ -139,7 +140,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 		o.Logger = newLogger(logger)
 		o.DisableLogOutputChecksumValidationSkipped = true
 		// These logs will be printed when log level is `DEBUG`.
-		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
+		o.ClientLogMode |= aws.LogRetries | aws.LogDeprecatedUsage
 	})
 	if gcsS3Compatible {
 		s3Opts = append(s3Opts, func(o *s3.Options) {

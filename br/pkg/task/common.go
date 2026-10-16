@@ -972,8 +972,10 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")
 		}
-		// hide all query here.
+		// Hide query parameters and fragments, which may contain unescaped secrets.
 		hiddenQuery.RawQuery = ""
+		hiddenQuery.Fragment = ""
+		hiddenQuery.RawFragment = ""
 		return zap.Stringer(f.Name, hiddenQuery)
 	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "s3.sse-kms-context":
 		return zap.String(f.Name, "<redacted>")

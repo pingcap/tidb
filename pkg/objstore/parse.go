@@ -68,7 +68,7 @@ const InvalidURLPlaceholder = "(invalid storage URL)"
 
 // RedactURL masks the credentials in a storage URL so that it can be put into
 // logs and error messages. An unparseable URL is replaced by
-// InvalidURLPlaceholder, the userinfo is removed, and the query of a URL with an
+// InvalidURLPlaceholder, userinfo and fragments are removed, and the query of a URL with an
 // unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
 // are secret there. A value with neither "://" nor "?" is a local path and is
 // returned unchanged. Unlike ast.RedactURL, an unparseable URL is never
@@ -83,11 +83,10 @@ func RedactURL(rawURL string) string {
 	if err != nil {
 		return InvalidURLPlaceholder
 	}
-	// ast.RedactURL only masks query parameters, so drop the userinfo first.
-	if u.User != nil {
-		u.User = nil
-		rawURL = u.String()
-	}
+	u.User = nil
+	u.Fragment = ""
+	u.RawFragment = ""
+	rawURL = u.String()
 	switch strings.ToLower(u.Scheme) {
 	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "oss", "azure", "azblob":
 		return ast.RedactURL(rawURL)
