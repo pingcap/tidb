@@ -1953,6 +1953,10 @@ github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUq
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
 github.com/huandu/xstrings v1.3.1 h1:4jgBlKK6tLKFvO8u5pmYjG91cqytmDCDvGh7ECVFfFs=
 github.com/huandu/xstrings v1.3.1/go.mod h1:y5/lhBue+AyNmUVz9RLU9xbLR0o4KIIExikq4ovT0aE=
+github.com/hujiatao0/client-go/v2 v2.0.8-0.20261015051521-59f7293d7dd3 h1:jtLkdT/dWx08nFhAZrGubHr0pjx4d4A26lGe6/rgITY=
+github.com/hujiatao0/client-go/v2 v2.0.8-0.20261015051521-59f7293d7dd3/go.mod h1:U0rq982i6UbAH1LUfc4t2BxZoAWvwW1JkEhGp+yEf3w=
+github.com/hujiatao0/client-go/v2 v2.0.8-0.20261015170520-0e03bede3a34 h1:iG0e5nFAKvV/9yDa9KH+Pv1a2/bjiHvR0xifcrpRWXk=
+github.com/hujiatao0/client-go/v2 v2.0.8-0.20261015170520-0e03bede3a34/go.mod h1:U0rq982i6UbAH1LUfc4t2BxZoAWvwW1JkEhGp+yEf3w=
 github.com/iancoleman/strcase v0.2.0/go.mod h1:iwCmte+B7n89clKwxIoIXy/HfoL7AsD47ZCWhYzw7ho=
 github.com/iancoleman/strcase v0.3.0/go.mod h1:iwCmte+B7n89clKwxIoIXy/HfoL7AsD47ZCWhYzw7ho=
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
