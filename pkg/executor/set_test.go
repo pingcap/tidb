@@ -32,11 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
->>>>>>> 4cee7f20849 (executor, ttl: fix nil pointer dereference when an internal session sets a SEM v2 read-only sysvar (#72012))
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
