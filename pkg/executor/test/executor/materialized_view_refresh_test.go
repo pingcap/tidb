@@ -3046,6 +3046,93 @@ func TestMaterializedViewRefreshCompleteInPlace(t *testing.T) {
 	)).Check(testkit.RowsWithSep("|", "success|complete in place manual|1|1|1|1"))
 }
 
+func TestMaterializedViewRefreshCompleteInPlaceRejectsMLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view log on mv (a, s, cnt)")
+	tk.MustExec("insert into t values (3, 30)")
+
+	err := tk.ExecToErr("refresh materialized view mv complete in place")
+	require.ErrorContains(t, err, "complete IN PLACE is not supported")
+	require.ErrorContains(t, err, "with a materialized view log")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceRejectsMLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view log on mv (a, s, cnt)")
+
+	err := tk.ExecToErr("refresh materialized view mv complete out of place")
+	require.ErrorContains(t, err, "complete OUT OF PLACE is not supported")
+	require.ErrorContains(t, err, "with a materialized view log")
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlaceWorkerRejectsConcurrentMLog(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_oop_mlog_race (a int not null, b int not null)")
+	tk.MustExec("insert into t_oop_mlog_race values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_oop_mlog_race (a, b)")
+	tk.MustExec("create materialized view mv_oop_mlog_race (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_oop_mlog_race group by a")
+	mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_oop_mlog_race"))
+	require.NoError(t, err)
+	mviewID := mv.Meta().ID
+	tk.MustExec("insert into t_oop_mlog_race values (3, 30)")
+
+	const pauseCreateShadowFailpoint = "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"
+	require.NoError(t, failpoint.Enable(pauseCreateShadowFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+		}
+	}()
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_oop_mlog_race complete out of place")
+	}()
+
+	require.Eventually(t, func() bool {
+		return len(tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Rows()) == 1
+	}, 30*time.Second, 100*time.Millisecond)
+	tk.MustExec("create materialized view log on mv_oop_mlog_race (a, s, cnt)")
+
+	require.NoError(t, failpoint.Disable(pauseCreateShadowFailpoint))
+	enabled = false
+	err = <-refreshDone
+	require.ErrorContains(t, err, "complete OUT OF PLACE is not supported")
+	require.ErrorContains(t, err, "materialized view log or dependent materialized view")
+	tk.MustQuery("show tables like '\\_\\_mv\\_shadow\\_%'").Check(testkit.Rows())
+	tk.MustQuery("select * from mv_oop_mlog_race order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
+	mv, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_oop_mlog_race"))
+	require.NoError(t, err)
+	require.Equal(t, mviewID, mv.Meta().ID)
+	mlog, ok := dom.InfoSchema().TableByID(context.Background(), mv.Meta().MaterializedViewBase.MLogID)
+	require.True(t, ok)
+	require.Equal(t, mviewID, mlog.Meta().MaterializedViewLog.BaseTableID)
+
+	tk.MustExec("drop materialized view log on mv_oop_mlog_race")
+	tk.MustExec("drop materialized view mv_oop_mlog_race")
+	tk.MustExec("drop materialized view log on t_oop_mlog_race")
+	tk.MustExec("drop table t_oop_mlog_race")
+}
+
 func TestMaterializedViewRefreshCompleteDeltaApplyImplementStmt(t *testing.T) {
 	testCases := []struct {
 		name     string

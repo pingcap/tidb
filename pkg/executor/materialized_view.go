@@ -4111,6 +4111,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
 		return err
 	}
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		if baseInfo := tblInfo.MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+			return errors.Errorf(
+				"refresh materialized view complete IN PLACE is not supported for materialized view %s.%s with a materialized view log",
+				schemaName.O,
+				tblInfo.Name.O,
+			)
+		}
+	}
 	reportRefreshFailed := tblInfo.MaterializedView != nil && tblInfo.MaterializedView.AlertRefreshFailed
 	mviewID = tblInfo.ID
 	refreshHistRunningInserted := false
@@ -4200,6 +4209,19 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		err = errors.Annotate(err, invariantErr.Error())
 	}()
+	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
+	}
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+			return errors.Errorf(
+				"refresh materialized view complete IN PLACE is not supported for materialized view %s.%s with a materialized view log",
+				schemaName.O,
+				tblInfo.Name.O,
+			)
+		}
+	}
 	failpoint.InjectCall("refreshMaterializedViewAfterAcquireAdvisoryLock")
 	failpoint.Inject("mockRefreshMaterializedViewErrorBeforeInsertHist", func(val failpoint.Value) {
 		if msg, ok := val.(string); ok {
@@ -4688,6 +4710,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 ) (buildReadTSO uint64, err error) {
 	if err := kctx.Err(); err != nil {
 		return 0, err
+	}
+	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
+	if !ok {
+		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
+	}
+	if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil &&
+		(baseInfo.MLogID != 0 || len(baseInfo.MViewIDs) != 0) {
+		return 0, errors.Errorf(
+			"refresh materialized view complete OUT OF PLACE is not supported for materialized view %s.%s with a materialized view log or dependent materialized view",
+			schemaName.O,
+			tblInfo.Name.O,
+		)
 	}
 	buildSctx, err := e.GetSysSession()
 	if err != nil {
