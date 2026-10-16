@@ -61,14 +61,20 @@ func (s *mockGCSSuite) TestNextGenExpiredConflictRowCleanup() {
 	)
 	ctx := s.ctx
 	baseSortURI := fmt.Sprintf("gs://%s?endpoint=%s", sortBucket, gcsEndpoint)
-	originalCloudStorageURI := vardef.CloudStorageURI.Load()
+	originalCloudStorageURIRows := s.tk.MustQuery(`select variable_value from mysql.global_variables
+		where variable_name = ?`, vardef.TiDBCloudStorageURI).Rows()
+	require.Len(t, originalCloudStorageURIRows, 1)
+	originalCloudStorageURI := originalCloudStorageURIRows[0][0]
 	t.Cleanup(func() {
-		vardef.CloudStorageURI.Store(originalCloudStorageURI)
+		s.tk.MustExec("set global tidb_cloud_storage_uri = ?", originalCloudStorageURI)
 	})
 
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
-	vardef.CloudStorageURI.Store(baseSortURI)
+	s.tk.MustExec("set global tidb_cloud_storage_uri = ?", baseSortURI)
+	s.tk.MustQuery(`select variable_value from mysql.global_variables
+		where variable_name = ?`, vardef.TiDBCloudStorageURI).
+		Check(testkit.Rows(baseSortURI))
 	rootedSortURI := handle.GetCloudStorageURI(ctx, s.store)
 	sortStore, err := importer.GetSortStore(ctx, rootedSortURI)
 	require.NoError(t, err)
@@ -652,6 +658,8 @@ func (s *mockGCSSuite) TestGlobalSortFunctionalIndexConflictAfterAddingVisibleCo
 		unique key uk_expr ((a + 1))
 	)`)
 	s.tk.MustExec("alter table t add column tail int")
+	// ADD UNIQUE KEY rebuilds the index, which requires global sort on NextGen.
+	realtikvtest.SetupNextGenGlobalSort(s.T(), s.tk)
 	s.tk.MustExec("alter table t add unique key uk_tail (tail)")
 
 	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'

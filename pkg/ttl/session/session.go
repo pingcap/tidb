@@ -74,6 +74,14 @@ type session struct {
 	avoidReuse func()
 }
 
+type jobContextKey struct{}
+
+// WithJobContext attributes user-table scans/deletes and their commits to a TTL job.
+// Use the original context for metadata operations and session setup.
+func WithJobContext(ctx context.Context, jobID string) context.Context {
+	return context.WithValue(ctx, jobContextKey{}, jobID)
+}
+
 // NewSession creates a new Session
 func NewSession(sctx sessionctx.Context, avoidReuse func()) Session {
 	intest.AssertNotNil(sctx)
@@ -111,6 +119,10 @@ func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
 
 // ExecuteSQL executes the sql
 func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	vars := s.GetSessionVars()
+	previousJobID := vars.TTLJobID
+	vars.TTLJobID, _ = ctx.Value(jobContextKey{}).(string)
+	defer func() { vars.TTLJobID = previousJobID }()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)
 	rs, err := s.sqlExec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -137,8 +149,11 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 		if !success {
 			// For now, the "ROLLBACK" can execute successfully even when the context has already been cancelled.
 			// Using another timeout context to avoid that this behavior will be changed in the future.
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
+			jobID, _ := ctx.Value(jobContextKey{}).(string)
+			rollbackCtx, cancel := context.WithTimeout(
+				WithJobContext(context.Background(), jobID), time.Second,
+			)
+			_, rollbackErr := s.ExecuteSQL(rollbackCtx, "ROLLBACK")
 			terror.Log(rollbackErr)
 			cancel()
 		}

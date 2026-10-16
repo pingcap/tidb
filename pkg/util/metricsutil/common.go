@@ -18,11 +18,16 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
@@ -42,7 +47,10 @@ import (
 	unimetrics "github.com/pingcap/tidb/pkg/store/mockstore/unistore/metrics"
 	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/diagclient"
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
@@ -71,18 +79,22 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 		metricscommon.SetConstLabels("keyspace_name", keyspaceName)
 	}
 
-	timeoutSec := 10 * time.Second
 	securityOpt := pd.SecurityOption{}
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
-	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithInitMetricsOption(false))
+	pdClientOptions := []opt.ClientOption{
+		opt.WithCustomTimeoutOption(10 * time.Second),
+		opt.WithInitMetricsOption(false),
+	}
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
+	}
+	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt, pdClientOptions...)
 	if err != nil {
 		return err
 	}
 	defer pdCli.Close()
-
 	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
 	if err != nil {
 		return err
@@ -121,7 +133,57 @@ func registerMetrics() error {
 		setConstLabels(labels)
 	}
 	initMetrics()
+	initMetricsGatherer()
 	return nil
+}
+
+// SetKeyspaceID labels Starter metrics after the server initializes its storage.
+func SetKeyspaceID(keyspaceID uint32) {
+	if gatherer := initMetricsGatherer(); gatherer != nil {
+		id := fmt.Sprint(keyspaceID)
+		gatherer.keyspaceID.Store(&id)
+	}
+}
+
+type keyspaceGatherer struct {
+	prometheus.Gatherer
+	keyspaceID atomic.Pointer[string]
+}
+
+func initMetricsGatherer() *keyspaceGatherer {
+	if !deploymode.IsStarter() {
+		return nil
+	}
+	if gatherer, ok := prometheus.DefaultGatherer.(*keyspaceGatherer); ok {
+		return gatherer
+	}
+	gatherer := &keyspaceGatherer{Gatherer: prometheus.DefaultGatherer}
+	prometheus.DefaultGatherer = gatherer
+	return gatherer
+}
+
+// Gather adds labels to early and third-party collectors for scraping and pushing.
+// The numeric ID matches the identity used by storage codecs, so Starter metrics
+// can be correlated with storage-side telemetry without resolving keyspace names.
+// keyspace_name remains available as descriptive context.
+func (g *keyspaceGatherer) Gather() ([]*dto.MetricFamily, error) {
+	labelName, keyspaceID := keyspaceIDLabel, ""
+	if id := g.keyspaceID.Load(); id != nil {
+		keyspaceID = *id
+	}
+	families, err := g.Gatherer.Gather()
+	for _, family := range families {
+		for _, metric := range family.Metric {
+			index, found := slices.BinarySearchFunc(metric.Label, labelName, func(pair *dto.LabelPair, name string) int {
+				return strings.Compare(pair.GetName(), name)
+			})
+			if !found {
+				// Limit capacity so insertion copies the collectors' shared label slice only once.
+				metric.Label = slices.Insert(slices.Clip(metric.Label), index, &dto.LabelPair{Name: &labelName, Value: &keyspaceID})
+			}
+		}
+	}
+	return families, err
 }
 
 func cloneConstLabels() map[string]string {

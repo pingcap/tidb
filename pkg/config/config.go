@@ -144,7 +144,6 @@ const (
 	maxOfMaxAllowedPacket = 1 << 30
 	// DefMaxAllowedPacket is the default value of max_allowed_packet.
 	DefMaxAllowedPacket = 64 << 20
-	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps
@@ -262,6 +261,9 @@ type Config struct {
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// EnableStorageClass permits storage-class DDL and exposes transition status queries.
+	// It defaults to false. Existing data and transition policies are unaffected when disabled.
+	EnableStorageClass bool `toml:"enable-storage-class" json:"enable-storage-class"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
@@ -402,7 +404,7 @@ const (
 	RUReportModeFull   = "full"
 )
 
-// RUV2Config configures legacy and statement RU v2 weights and reporting.
+// RUV2Config configures legacy, statement, and DDL RU v2 weights and reporting.
 // Legacy RU v2 defaults are experimentally fitted to remain aligned with RU v1.
 // Statement RU v2 reuses this config section while replacing the legacy model.
 type RUV2Config struct {
@@ -414,14 +416,18 @@ type RUV2Config struct {
 	// and non-negative; zero disables the corresponding charge. Their defaults
 	// are uncalibrated internal placeholders, not billing values.
 	ruv2.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
+
+	// DDLWeights convert DDL RU v2 byte units to RU.
+	DDLWeights ruv2.DDLWeights `toml:"ddl-weights" json:"ddl-weights"`
 }
 
-// DefaultRUV2Config returns the default legacy and statement RU v2 configuration.
+// DefaultRUV2Config returns the default legacy, statement, and DDL RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
 		ReportMode: RUReportModeResult,
 
 		StmtWeights: ruv2.DefaultWeights(),
+		DDLWeights:  ruv2.DefaultDDLWeights(),
 	}
 }
 
@@ -629,8 +635,11 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 
-	// Make tidb panic if write log operation hang in `Timeout` seconds
+	// Timeout is the maximum seconds allowed for a log write/sync operation.
 	Timeout int `toml:"timeout" json:"timeout"`
+	// TimeoutAction controls the action when log write/sync timeout occurs.
+	// Valid values: panic, discard.
+	TimeoutAction string `toml:"timeout-action" json:"timeout-action"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -1186,6 +1195,7 @@ var defaultConf = Config{
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		TimeoutAction:       zaplog.LogTimeoutActionPanic,
 	},
 	Instance: Instance{
 		TiDBGeneralLog:              false,
@@ -1295,6 +1305,7 @@ var defaultConf = Config{
 	HostedEmbedding:            HostedEmbedding{Enabled: false},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
+	EnableStorageClass:         false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
@@ -1729,6 +1740,9 @@ func (c *Config) Valid() error {
 	if err := c.RUV2.StmtWeights.Validate(); err != nil {
 		return fmt.Errorf("ru-v2.stmt-weights.%w", err)
 	}
+	if err := c.RUV2.DDLWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.ddl-weights.%w", err)
+	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
 		// if two options conflict, we will use the value of EnableErrorStack
@@ -1801,6 +1815,14 @@ func (c *Config) Valid() error {
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
+	}
+	switch strings.ToLower(c.Log.TimeoutAction) {
+	case "", zaplog.LogTimeoutActionPanic:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionPanic
+	case zaplog.LogTimeoutActionDiscard:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	default:
+		return fmt.Errorf("log.timeout-action should be one of [%s, %s]", zaplog.LogTimeoutActionPanic, zaplog.LogTimeoutActionDiscard)
 	}
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
@@ -1942,6 +1964,7 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.GeneralLogFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
 		func(config *zaplog.Config) { config.Timeout = l.Timeout },
+		func(config *zaplog.Config) { config.TimeoutAction = l.TimeoutAction },
 	)
 }
 

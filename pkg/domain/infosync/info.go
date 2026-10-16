@@ -396,14 +396,12 @@ func MustGetTiFlashProgressWithCircuitBreaker(ctx context.Context, tableID int64
 	defer cancel()
 
 	progress, err := MustGetTiFlashProgress(ctx, tableID, replicaCount, tiFlashStores, tikvStores)
-	if err != nil {
-		if ctx.Err() != nil {
-			return 1.0, true, nil
-		}
-		return 0, false, err
-	}
+	// Context has been timed out, return progress as 1.0 and indicate that the circuit breaker was triggered.
 	if ctx.Err() != nil {
 		return 1.0, true, nil
+	}
+	if err != nil {
+		return 0, false, err
 	}
 	return progress, false, nil
 }

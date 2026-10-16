@@ -322,7 +322,7 @@ func TestDXFAPI(t *testing.T) {
 				if spec.taskErr != nil {
 					require.NoError(t, tm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
 				} else {
-					require.NoError(t, tm.SucceedTask(ctx, id))
+					require.NoError(t, tm.SucceedTask(ctx, task))
 				}
 				task, err = tm.GetTaskByID(ctx, id)
 				require.NoError(t, err)

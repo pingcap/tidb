@@ -56,45 +56,48 @@ func countCollectedMetrics(collector prometheus.Collector) int {
 	return count
 }
 
-func TestRUV3MetricDefinitions(t *testing.T) {
+func TestRUV2MetricDefinitions(t *testing.T) {
 	require.Equal(t,
 		[]string{"ddl", "read", "write", "analyze", "other"},
 		[]string{LblSQLTypeDDL, LblSQLTypeRead, LblSQLTypeWrite, LblSQLTypeAnalyze, LblSQLTypeOther},
 	)
 	require.Equal(t, []string{"tikv", "tiflash"}, []string{LblEngineTiKV, LblEngineTiFlash})
 
-	InitRUV3Metrics()
-	RUV3Total.Add(1)
-	RUV3BySQLTypeDDL.Add(2)
-	RUV3ByEngineTiKV.Add(3)
-	RUV3BySQLType.WithLabelValues("select").Add(2)
-	AddRUV3Results(3, 4, 7, "select")
-	RUV3Unit.WithLabelValues("tikv", "hash_agg", LblRUV3UnitCPUWork).Add(5)
-	RUV3Statements.WithLabelValues("success", "incomplete").Inc()
+	InitRUV2Metrics()
+	RUV2Total.Add(1)
+	RUV2TTLTotal.Add(1)
+	RUV2BySQLTypeDDL.Add(2)
+	RUV2ByEngineTiKV.Add(3)
+	RUV2BySQLType.WithLabelValues("select").Add(2)
+	AddRUV2Results(3, 4, 5, 12, "select")
+	RUV2Unit.WithLabelValues("tikv", "hash_agg", LblRUV2UnitCPUWork).Add(5)
+	RUV2Statements.WithLabelValues("success", "incomplete").Inc()
 
 	registry := prometheus.NewRegistry()
-	require.NoError(t, registry.Register(RUV3Total))
-	require.NoError(t, registry.Register(RUV3BySQLType))
-	require.NoError(t, registry.Register(RUV3ByEngine))
-	require.NoError(t, registry.Register(RUV3Unit))
-	require.NoError(t, registry.Register(RUV3Statements))
+	require.NoError(t, registry.Register(RUV2Total))
+	require.NoError(t, registry.Register(RUV2TTLTotal))
+	require.NoError(t, registry.Register(RUV2BySQLType))
+	require.NoError(t, registry.Register(RUV2ByEngine))
+	require.NoError(t, registry.Register(RUV2Unit))
+	require.NoError(t, registry.Register(RUV2Statements))
 	families, err := registry.Gather()
 	require.NoError(t, err)
 
-	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
-	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeDDL)
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ru_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ttl_ru_total"))
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, LblSQLTypeDDL)
 	requireMetricFamilyHasLabel(
-		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, "select",
+		t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, "select",
 	)
 	requireMetricFamilyHasLabel(
-		t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, LblEngineTiKV,
+		t, families, "tidb_ruv2_ru_by_engine_total", LblEngine, LblEngineTiKV,
 	)
-	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, "tidb")
-	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_unit_total", LblEngine, "tikv")
-	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_unit_total", "opclass", "hash_agg")
-	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_unit_total", LblRUV3Unit, LblRUV3UnitCPUWork)
-	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_statements_total", "status", "success")
-	requireMetricFamilyHasLabel(t, families, "tidb_ruv3_statements_total", "reason", "incomplete")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_ru_by_engine_total", LblEngine, "tidb")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", LblEngine, "tikv")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", "opclass", "hash_agg")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", LblRUV2Unit, LblRUV2UnitCPUWork)
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "status", "success")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "reason", "incomplete")
 }
 
 func requireMetricFamilyHasLabel(t *testing.T, families []*dto.MetricFamily, familyName, labelName, labelValue string) {

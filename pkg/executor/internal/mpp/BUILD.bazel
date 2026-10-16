@@ -47,14 +47,23 @@ go_library(
 go_test(
     name = "mpp_test",
     timeout = "short",
-    srcs = ["local_mpp_coordinator_test.go"],
+    srcs = [
+        "local_mpp_coordinator_test.go",
+        "statement_ru_mpp_test.go",
+    ],
     embed = [":mpp"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 7,
     deps = [
         "//pkg/kv",
         "//pkg/planner/core/operator/physicalop",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/execdetails",
+        "//pkg/util/mock",
+        "@com_github_pingcap_kvproto//pkg/mpp",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )

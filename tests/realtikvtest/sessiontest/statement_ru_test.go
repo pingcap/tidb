@@ -72,7 +72,7 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observedConnectionID uint64,
 		calibrationState string,
 		cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
-		writeStatement, operatorNum, writeKeys, writeBytes float64,
+		writeStatement, operatorNum, writeKeys, writeBytes, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -156,10 +156,10 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			observation.writeBytes = 0
 			observation.Unlock()
 
-			totalBefore := testutil.ToFloat64(metrics.RUV3Total)
-			readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))
-			tidbBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb"))
-			tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
+			totalBefore := testutil.ToFloat64(metrics.RUV2Total)
+			readBefore := testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("select"))
+			tidbBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))
+			tikvBefore := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 			rs, err := tk.ExecWithContext(context.Background(), tc.query)
 			require.NoError(t, err)
 			require.NotNil(t, rs)
@@ -175,10 +175,10 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			observation.Lock()
 			require.Zero(t, observation.calibrationUnits)
 			observation.Unlock()
-			require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
-			require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select")))
-			require.Equal(t, tidbBefore, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb")))
-			require.Equal(t, tikvBefore, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV)))
+			require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV2Total))
+			require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("select")))
+			require.Equal(t, tidbBefore, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb")))
+			require.Equal(t, tikvBefore, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(metrics.LblEngineTiKV)))
 
 			require.NoError(t, rs.Close())
 			require.NoError(t, rs.Close())
@@ -212,11 +212,11 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			require.Zero(t, observation.writeBytes)
 			totalUnits := observation.cpuWork + observation.scanBytes + observation.netBytes + observation.frontendBytes +
 				observation.hashStateRows + observation.joinOutputRows + observation.operatorNum
-			require.InDelta(t, totalUnits, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
+			require.InDelta(t, totalUnits, testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
 			require.InDelta(t, totalUnits,
-				testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues("select"))-readBefore, 1e-9)
-			tidbRU := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues("tidb")) - tidbBefore
-			tikvRU := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV)) - tikvBefore
+				testutil.ToFloat64(metrics.RUV2BySQLType.WithLabelValues("select"))-readBefore, 1e-9)
+			tidbRU := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb")) - tidbBefore
+			tikvRU := testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(metrics.LblEngineTiKV)) - tikvBefore
 			require.Positive(t, tidbRU)
 			// TiKV also owns the pushed operators and their computation.
 			require.Greater(t, tikvRU, observation.scanBytes+observation.netBytes)
