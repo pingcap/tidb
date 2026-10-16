@@ -755,6 +755,11 @@ func TestOrderByDependency(t *testing.T) {
 	// Some other exceptions:
 	// - tidb_snapshot and tidb_read_staleness can not be set at the same time. It doesn't affect dependency.
 	vars := map[string]string{
+		vardef.TimeZone:                                "+08:00",
+		vardef.TiDBTxnReadTS:                           "2020-01-02 03:04:05",
+		vardef.TiDBSkipIsolationLevelCheck:             "1",
+		vardef.TxnIsolation:                            "SERIALIZABLE",
+		vardef.TransactionIsolation:                    "SERIALIZABLE",
 		"unknown":                                      "1",
 		vardef.TxReadOnly:                              "1",
 		vardef.SQLAutoIsNull:                           "1",
@@ -766,6 +771,9 @@ func TestOrderByDependency(t *testing.T) {
 		vardef.TiDBEnableHistoricalStats:               "1",
 	}
 	names := variable.OrderByDependency(vars)
+	require.Less(t, slices.Index(names, vardef.TimeZone), slices.Index(names, vardef.TiDBTxnReadTS))
+	require.Less(t, slices.Index(names, vardef.TiDBSkipIsolationLevelCheck), slices.Index(names, vardef.TxnIsolation))
+	require.Less(t, slices.Index(names, vardef.TiDBSkipIsolationLevelCheck), slices.Index(names, vardef.TransactionIsolation))
 	require.Greater(t, slices.Index(names, vardef.TxReadOnly), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.SQLAutoIsNull), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.TiDBEnforceMPPExecution), slices.Index(names, vardef.TiDBAllowMPPExecution))

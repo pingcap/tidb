@@ -242,7 +242,7 @@ var defaultSysVars = []*SysVar{
 		return "", false, nil
 	}},
 	/* TiDB specific variables */
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBTxnReadTS, Value: "", Hidden: true, GetStateValue: getTxnReadTSState, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return normalizedValue, nil
@@ -315,7 +315,7 @@ var defaultSysVars = []*SysVar{
 		vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(vardef.TiDBEnableTiFlashPipelineMode))
 		return normalizedValue, nil
 	}},
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBSnapshot, Value: "", skipInit: true, GetStateValue: getSnapshotTSState, SetSession: func(s *SessionVars, val string) error {
 		err := setSnapshotTS(s, val)
 		if err != nil {
 			return err
@@ -2115,6 +2115,7 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.TimeZone,
+		Depended:                true, // tx_read_ts is restored as a datetime in this timezone.
 		Value:                   "SYSTEM",
 		IsHintUpdatableVerified: true,
 		Validation: func(
@@ -2799,7 +2800,7 @@ var defaultSysVars = []*SysVar{
 			s.EnableFastAnalyze = TiDBOptOn(val)
 			return nil
 		}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(vardef.DefTiDBSkipIsolationLevelCheck), Type: vardef.TypeBool},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(vardef.DefTiDBSkipIsolationLevelCheck), Type: vardef.TypeBool, Depended: true},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableRateLimitAction, Value: BoolToOnOff(vardef.DefTiDBEnableRateLimitAction), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnabledRateLimitAction = TiDBOptOn(val)
 		return nil
