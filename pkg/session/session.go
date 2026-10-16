@@ -1381,6 +1381,13 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 	}
 }
 
+// SetInfoCache replaces the InfoCache the session reads its schema from. An
+// import query worker uses it to read at a submitted schema, and then the
+// session must not be reused.
+func (s *session) SetInfoCache(cache *infoschema.InfoCache) {
+	s.infoCache = cache
+}
+
 // SetGlobalVarsPool sets the sessions that read the global variables of the
 // keyspace when this session has no Domain.
 func (s *session) SetGlobalVarsPool(pool util.SessionPool) {

@@ -497,6 +497,27 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "7", value)
 	})
+	t.Run("expressions see the source schema", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, targetStore)
+		tk.MustExec("use test")
+		tk.MustExec("create table query_key_source(id bigint primary key)")
+		tk.MustExec("insert into query_key_source values (1)")
+		sql := "import into unused_target from select tidb_encode_record_key('test', 'query_key_source', id) from query_key_source"
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
+		captured, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
+		require.NoError(t, err)
+		expected := tk.MustQuery("select tidb_encode_record_key('test', 'query_key_source', id) from query_key_source").Rows()[0][0]
+		pool := handle.SysSessionPool()
+		resource, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Destroy(resource)
+		output := make(chan importer.QueryChunk, 1)
+		require.NoError(t, importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output))
+		close(output)
+		result := <-output
+		require.Equal(t, expected, result.Chk.GetRow(0).GetString(0))
+	})
 	t.Run("execute query in target keyspace", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, targetStore)
 		tk.MustExec("use test")

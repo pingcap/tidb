@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,12 +35,12 @@ func runImportQuery(
 	q *importer.QueryPlan, sql string, memoryLimit int64,
 	output chan<- importer.QueryChunk,
 ) (err error) {
-	querySession, node, err := newImportQuerySession(ctx, sctx, q, sql)
+	is, node, err := newImportQuerySession(ctx, sctx, q, sql)
 	if err != nil {
 		return err
 	}
 
-	e, err := buildImportQueryExecutor(ctx, querySession, node, memoryLimit)
+	e, err := buildImportQueryExecutor(ctx, sctx, is, node, memoryLimit)
 	if err != nil {
 		return err
 	}
@@ -53,7 +54,7 @@ func runImportQuery(
 	}
 
 	fields := e.RetFieldTypes()
-	maxChunkSize := querySession.GetSessionVars().MaxChunkSize
+	maxChunkSize := sctx.GetSessionVars().MaxChunkSize
 	var rowID int64
 	for {
 		chk := chunk.New(fields, 32, maxChunkSize)
@@ -73,15 +74,15 @@ func runImportQuery(
 }
 
 func buildImportQueryExecutor(
-	ctx context.Context, querySession *importQuerySession, node ast.StmtNode, memoryLimit int64,
+	ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, node ast.StmtNode, memoryLimit int64,
 ) (exec.Executor, error) {
-	stmt, err := (&Compiler{Ctx: querySession}).Compile(ctx, node)
+	stmt, err := (&Compiler{Ctx: sctx}).Compile(ctx, node)
 	if err != nil {
 		return nil, err
 	}
 	// Apply the worker budget after compilation, which may apply a
 	// SET_VAR(tidb_mem_quota_query) hint.
-	vars := querySession.GetSessionVars()
+	vars := sctx.GetSessionVars()
 	vars.MemQuotaQuery = memoryLimit
 	vars.MemTracker.SetBytesLimit(memoryLimit)
 	p, ok := stmt.Plan.(base.PhysicalPlan)
@@ -89,9 +90,9 @@ func buildImportQueryExecutor(
 		return nil, errors.New("import query did not produce a physical SELECT plan")
 	}
 	failpoint.InjectCall("afterImportQueryOptimize", p)
-	b := newExecutorBuilder(ctx, querySession, querySession.schema, nil)
+	b := newExecutorBuilder(ctx, sctx, is, nil)
 	b.forDataReaderBuilder = true
-	b.dataReaderTS = querySession.GetSessionVars().SnapshotTS
+	b.dataReaderTS = vars.SnapshotTS
 	e := b.build(p)
 	if b.err != nil {
 		return nil, b.err

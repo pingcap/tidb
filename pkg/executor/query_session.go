@@ -23,44 +23,27 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/plannersession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 )
 
-// The planner uses the submitted source schema for this query attempt.
-type importQuerySession struct {
-	sessionctx.Context
-	*plannersession.PlanCtxExtended
-	schema infoschema.InfoSchema
-}
-
-func (c *importQuerySession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
-	return c.schema
-}
-
-func (c *importQuerySession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
-	return c.schema
-}
-
-func (c *importQuerySession) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
-	return c.schema
-}
-
-func (c *importQuerySession) GetPlanCtx() base.PlanContext { return c }
-
+// newImportQuerySession prepares sctx to run the SELECT of an import query at
+// q.ReadTS. sctx gets an InfoCache that holds only the submitted source
+// schema, so it must not go back to its pool afterwards.
 func newImportQuerySession(
 	ctx context.Context, sctx sessionctx.Context,
 	q *importer.QueryPlan, sql string,
-) (*importQuerySession, ast.StmtNode, error) {
+) (infoschema.InfoSchema, ast.StmtNode, error) {
 	if sctx.GetStore().GetKeyspace() != q.Keyspace {
 		return nil, nil, errors.New("import query runtime keyspace mismatch")
+	}
+	setter, ok := sctx.(interface{ SetInfoCache(*infoschema.InfoCache) })
+	if !ok {
+		return nil, nil, errors.Errorf("import query cannot set the InfoCache of %T", sctx)
 	}
 	vars := sctx.GetSessionVars()
 	if err := initImportQuerySessionVars(q, vars); err != nil {
@@ -70,6 +53,9 @@ func newImportQuerySession(
 	if err != nil {
 		return nil, nil, err
 	}
+	cache := infoschema.NewCache(sctx.GetStore(), 1)
+	cache.Insert(is, q.ReadTS)
+	setter.SetInfoCache(cache)
 	importStmt, node, err := parseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, nil, err
@@ -86,9 +72,7 @@ func newImportQuerySession(
 	}
 	vars.SnapshotTS = q.ReadTS
 	vars.SnapshotInfoschema = is
-	querySession := &importQuerySession{Context: sctx, schema: is}
-	querySession.PlanCtxExtended = plannersession.NewPlanCtxExtended(querySession)
-	return querySession, node, nil
+	return is, node, nil
 }
 
 func initImportQuerySessionVars(q *importer.QueryPlan, vars *variable.SessionVars) error {
