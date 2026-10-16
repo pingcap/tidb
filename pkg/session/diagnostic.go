@@ -33,11 +33,14 @@ import (
 func bootstrapSessionImplDiagnostic(ctx context.Context, store kv.Storage) (_ *domain.Domain, err error) {
 	// step1: load metadata from an already bootstrapped store.
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
-	ver, err := domain.LoadDiagnosticMetadata(ctx, store)
-	if err != nil {
+	ver := getStoreBootstrapVersionWithCache(store)
+	logutil.BgLogger().Info("initialize diagnostic session without bootstrap or upgrade", zap.Int64("version", ver))
+	if err = InitTiDBSchemaCacheSize(store); err != nil {
 		return nil, err
 	}
-	logutil.BgLogger().Info("initialize diagnostic session without bootstrap or upgrade", zap.Int64("version", ver))
+	if err = InitMDLVariable(store); err != nil {
+		return nil, err
+	}
 
 	// step2: initialize the system time zone and collation mode.
 	if err = initGlobalVarFromSystemDB(ctx, store); err != nil {

@@ -16,13 +16,8 @@ package domain
 
 import (
 	"context"
-	"strconv"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 )
 
@@ -67,44 +62,4 @@ func (do *Domain) LoadStatsDiagnostic(ctx context.Context, concurrency int) erro
 		do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
 	}
 	return nil
-}
-
-// LoadDiagnosticMetadata reads the actual bootstrap version and applies startup
-// settings locally. Missing settings use defaults without writing them back to
-// storage.
-func LoadDiagnosticMetadata(ctx context.Context, store kv.Storage) (int64, error) {
-	var ver int64
-	var schemaCacheSize uint64
-	var enableMDL bool
-	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		reader := meta.NewReader(txn)
-		var err error
-		ver, err = reader.GetBootstrapVersion()
-		if err != nil {
-			return err
-		}
-		if ver == 0 {
-			return errors.New("diagnostic mode requires an already bootstrapped keyspace")
-		}
-		var missing bool
-		schemaCacheSize, missing, err = reader.GetSchemaCacheSize()
-		if err != nil {
-			return err
-		}
-		if missing {
-			schemaCacheSize = vardef.DefTiDBSchemaCacheSize
-		}
-		enableMDL, missing, err = reader.GetMetadataLock()
-		if missing {
-			enableMDL = true
-		}
-		return err
-	})
-	if err != nil {
-		return 0, err
-	}
-	vardef.SchemaCacheSize.Store(schemaCacheSize)
-	vardef.SchemaCacheSizeOriginText.Store(strconv.FormatUint(schemaCacheSize, 10))
-	vardef.SetEnableMDL(enableMDL)
-	return ver, nil
 }
