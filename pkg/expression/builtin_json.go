@@ -1519,8 +1519,15 @@ func (b *builtinJSONSPrettySig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonPrettyFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	return verifyJSONArgsType(ctx, c.funcName, true, args, 0)
+}
+
 func (c *jsonPrettyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 
