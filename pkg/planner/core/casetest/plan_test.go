@@ -364,6 +364,35 @@ func TestHandleEQAll(t *testing.T) {
 	tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ use_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
 }
 
+func TestCompareSubqueryScalarLeft(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_ex(c int)")
+	tk.MustExec("insert into t_ex values (1)")
+	for _, predicate := range []string{
+		"(not exists (select 1 from t_ex)) <= all (select c from t_ex)",
+		"(not exists (select 1 from t_ex)) < any (select c from t_ex)",
+		"(not exists (select 1 from t_ex)) = all (select c-1 from t_ex)",
+		"(not exists (select 1 from t_ex)) != any (select c from t_ex)",
+		"(not exists (select 1 from t_ex)) <= all (select c from t_ex where c=2)",
+		"(not exists (select 1 from t_ex where c=2)) <= all (select c from t_ex)",
+		"(not exists (select 1 from t_ex i where i.c=o.c)) <= all (select c from t_ex)",
+	} {
+		tk.MustQuery("select " + predicate + " from t_ex o").Check(testkit.Rows("1"))
+		tk.MustQuery("select * from t_ex o where " + predicate).Check(testkit.Rows("1"))
+	}
+	for _, predicate := range []string{
+		"(not exists (select 1 from t_ex)) > all (select c from t_ex)",
+		"(not exists (select 1 from t_ex)) < any (select c from t_ex where c=2)",
+	} {
+		tk.MustQuery("select " + predicate).Check(testkit.Rows("0"))
+		tk.MustQuery("select * from t_ex where " + predicate).Check(testkit.Rows())
+	}
+	tk.MustQuery("select (not exists (select 1 from t_ex)) <= all (select null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select * from t_ex where (not exists (select 1 from t_ex)) <= all (select null)").Check(testkit.Rows())
+}
+
 func TestOuterJoinElimination(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
