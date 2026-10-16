@@ -1347,6 +1347,81 @@ func TestCommitWaitGroup(t *testing.T) {
 	require.Less(t, time.Since(begin), time.Second)
 }
 
+func TestRejectCommandInShutdown(t *testing.T) {
+	var outBuffer bytes.Buffer
+	cc := &clientConn{
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		alloc:      arena.NewAllocator(512),
+		capability: mysql.ClientProtocol41,
+	}
+	ctx := context.Background()
+
+	// The commands that expect no response are not answered, to keep the protocol in sync.
+	for _, cmd := range []byte{mysql.ComQuit, mysql.ComStmtClose, mysql.ComStmtSendLongData} {
+		require.False(t, cc.rejectCommandInShutdown(ctx, []byte{cmd}))
+	}
+	require.False(t, cc.rejectCommandInShutdown(ctx, nil))
+	require.Zero(t, outBuffer.Len())
+
+	require.True(t, cc.rejectCommandInShutdown(ctx, append([]byte{mysql.ComQuery}, "insert into t values (1)"...)))
+	// 4 bytes packet header, then the ERR packet: 0xff, error code, '#', SQLSTATE, message.
+	data := outBuffer.Bytes()
+	require.Greater(t, len(data), 13)
+	require.Equal(t, byte(mysql.ErrHeader), data[4])
+	require.Equal(t, uint16(mysql.ErrServerShutdown), binary.LittleEndian.Uint16(data[5:7]))
+	require.Equal(t, "#08S01", string(data[7:13]))
+}
+
+func TestCommandAfterDrainClose(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.GracefulCloseConnectionsLingerMs = 1000
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	srv.enterShutdownMode()
+
+	newConn := func(inTxn bool) (*clientConn, *bytes.Buffer) {
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		var outBuffer bytes.Buffer
+		cc := &clientConn{
+			server:     srv,
+			pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+			alloc:      arena.NewAllocator(512),
+			capability: mysql.ClientProtocol41,
+		}
+		cc.SetCtx(&TiDBContext{Session: se})
+		cc.getCtx().GetSessionVars().SetInTxn(inTxn)
+		cc.setStatus(connStatusWaitShutdown)
+		return cc, &outBuffer
+	}
+	ctx := context.Background()
+	query := append([]byte{mysql.ComQuery}, "insert into t values (1)"...)
+
+	// An idle connection claimed by DrainClients rejects the command and closes.
+	cc, out := newConn(false)
+	var lingerUntil time.Time
+	require.False(t, cc.handleCommandAfterDrainClose(ctx, query, &lingerUntil))
+	require.Greater(t, out.Len(), 6)
+	require.Equal(t, uint16(mysql.ErrServerShutdown), binary.LittleEndian.Uint16(out.Bytes()[5:7]))
+
+	// After a command that expects no response, it keeps lingering to reject the next command.
+	cc, out = newConn(false)
+	require.True(t, cc.handleCommandAfterDrainClose(ctx, []byte{mysql.ComStmtClose, 1, 0, 0, 0}, &lingerUntil))
+	require.Zero(t, out.Len())
+	require.False(t, lingerUntil.IsZero())
+	require.Equal(t, connStatusDispatching, cc.getStatus())
+
+	// A connection in a transaction that KILL CONNECTION marked during shutdown closes without ER_SERVER_SHUTDOWN,
+	// as the transaction is rolled back.
+	cc, out = newConn(true)
+	lingerUntil = time.Time{}
+	require.False(t, cc.handleCommandAfterDrainClose(ctx, query, &lingerUntil))
+	require.Zero(t, out.Len())
+	require.True(t, lingerUntil.IsZero())
+}
+
 type snapshotCache interface {
 	SnapCacheHitCount() int
 }

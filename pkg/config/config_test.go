@@ -1130,7 +1130,12 @@ ingest-kv-bytes = 3
 			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
 		}
 	})
-	conf := new(Config)
+	conf := NewConfig()
+	require.Equal(t, 0, conf.GracefulCloseConnectionsLingerMs)
+	conf.GracefulCloseConnectionsLingerMs = -1
+	require.ErrorContains(t, conf.Valid(), "graceful-close-connections-linger-ms")
+
+	conf = new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
