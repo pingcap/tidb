@@ -14569,3 +14569,75 @@ fn merge_join_hint_does_not_merge_enum_or_set_keys() {
         );
     }
 }
+
+/// Go's pushed-down index lookup (`LocalIndexLookUp`) runs its build side --
+/// `Limit | Selection | IndexScan` -- on index entries, sorts the cut handle
+/// batch, and only then applies the root `IndexLookUp`'s embedded offset; a
+/// root `Selection` stays above all of it. The port took the root Selection
+/// into the source (filtering before the offset), lowered the build-side
+/// Selection as a table-side residual (so the entry stream was never cut),
+/// and let the direct chunk path run past the pushed count.
+#[test]
+fn index_lookup_pushdown_cuts_entries_before_the_root_filter() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1046)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE ilp1 (id INT PRIMARY KEY, a VARCHAR(32), b INT, c INT, INDEX i(a, b))",
+        )
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO ilp1 VALUES (1, '9a', 10, 100), (2, '8b', 20, 200), (3, '7c', 30, 300), \
+             (4, '6d', 40, 400), (5, '5e', 50, 500), (6, '4f', 60, 600), (7, '3g', 70, 700), \
+             (8, '2h', 80, 800), (9, '1i', 90, 900), (10, '0j', 100, 1000)",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM (SELECT /*+ index_lookup_pushdown(ilp1, i) */ * FROM ilp1 \
+             WHERE a > '1i' LIMIT 1, 6) tx WHERE tx.c != 500 LIMIT 4",
+        )),
+        [["3"], ["4"], ["6"], ["7"]]
+    );
+    session
+        .execute_write(
+            "CREATE TABLE ilp2 (a VARCHAR(32), b INT, c INT, d INT, e INT, \
+             PRIMARY KEY (a, b) CLUSTERED, INDEX i(c), UNIQUE INDEX u(e)) \
+             CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+        )
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO ilp2 VALUES ('a', 1, 9010, 100, 90), ('A', 2, 8020, 200, 80), \
+             ('a', 3, 7030, 300, 70), ('b', 1, 6040, 400, 60), ('B', 2, 5050, 500, 50), \
+             ('b', 3, 4060, 600, 40), ('c', 1, 3070, 700, 30), ('C', 2, 2080, 800, 20), \
+             ('c', 3, 1090, 900, 10)",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT /*+ index_lookup_pushdown(ilp2, i) */ * FROM ilp2 \
+             WHERE b < 3 AND a < 'c' LIMIT 3",
+        )),
+        [
+            ["A", "2", "8020", "200", "80"],
+            ["b", "1", "6040", "400", "60"],
+            ["B", "2", "5050", "500", "50"]
+        ]
+    );
+    // Pruned to the clustered key, the same read is a covering IndexReader:
+    // its cop `Limit` counts the entries that pass the cop Selection below
+    // it, in index order.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT /*+ index_lookup_pushdown(ilp2, i) */ a, b FROM ilp2 \
+             WHERE b < 3 AND a < 'c' LIMIT 3",
+        )),
+        [["B", "2"], ["b", "1"], ["A", "2"]]
+    );
+}

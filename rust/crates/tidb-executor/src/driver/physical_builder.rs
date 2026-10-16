@@ -1826,6 +1826,24 @@ fn lower_index_lookup_selections(
     source: &mut IndexRangeSourceExec,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    if let PhysicalPlan::LocalIndexLookUp(_) = plan {
+        // The build side is the index subtree TiKV runs before the local
+        // lookup: its Selection filters index ENTRIES, below any build-side
+        // `Limit` that cuts them (`Limit | Selection(a < 'c') | IndexFullScan`
+        // keeps the first three qualifying entries). Only the probe side and
+        // the operators above the junction filter looked-up rows.
+        let [build, probe] = plan.children() else {
+            return Err(DriverError::unsupported(
+                "a LocalIndexLookUp needs an index subtree and a table scan",
+            ));
+        };
+        let mut conditions = Vec::new();
+        index_lookup_conditions(build, &mut conditions);
+        let (conditions, _) = split_global_partition_filter(conditions);
+        let conditions = resolve_expressions(&conditions, source.schema())?;
+        source.set_index_conditions(conditions, ctx);
+        return lower_index_lookup_selections(probe, source, ctx);
+    }
     for child in plan.children() {
         lower_index_lookup_selections(child, source, ctx)?;
     }
@@ -2094,7 +2112,8 @@ fn build_index_reader(
     }
     if lookup_pushdown {
         // A LocalIndexLookUp's rewritten index subtree includes table
-        // predicates; those still need full rows from the lookup.
+        // predicates; those still need full rows from the lookup. Its build
+        // side's predicates are index conditions, as below.
         lower_index_lookup_selections(index_plan, &mut source, ctx)?;
     } else {
         let mut conditions = Vec::new();

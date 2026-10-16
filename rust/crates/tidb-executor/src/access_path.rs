@@ -1679,6 +1679,9 @@ pub struct IndexRangeSourceExec {
     prefix_limit: Option<IndexPrefixLimit>,
     /// Handles skipped before a limit embedded in an ordered IndexLookUp.
     lookup_offset: u64,
+    /// Whether `limit` is the root `IndexLookUp`'s embedded limit (Go
+    /// `PushedLimit`), which replaced the root `Limit` above the reader.
+    embedded_lookup_limit: bool,
     skipped_handles: u64,
     /// Go's `indexWorker.scannedKeys` net of the offset skip: how many
     /// handles have been extracted into batches. The PLAIN flavour's
@@ -2083,6 +2086,7 @@ impl IndexRangeSourceExec {
             limit: None,
             prefix_limit: None,
             lookup_offset: 0,
+            embedded_lookup_limit: false,
             skipped_handles: 0,
             limit_scanned_keys: 0,
             can_reorder_handles: true,
@@ -3868,7 +3872,18 @@ impl IndexRangeSourceExec {
             .iter()
             .filter_map(|source| *source)
             .collect::<Vec<_>>();
-        while req.num_rows() < cap && self.lookup_chunk_row < lookup.row_positions.len() {
+        // The pushed limit counts this path's rows like the row path's: a
+        // batch the storage side handed over whole may hold more rows than
+        // the statement still owes.
+        let limit_reached = |source: &Self| {
+            source
+                .limit
+                .is_some_and(|limit| source.produced.get() >= limit)
+        };
+        while req.num_rows() < cap
+            && self.lookup_chunk_row < lookup.row_positions.len()
+            && !limit_reached(self)
+        {
             let (batch_index, row_index) = lookup.row_positions[self.lookup_chunk_row];
             let row = lookup.batches[batch_index].get_row(row_index);
             debug_assert!(lookup.predicates_applied);
@@ -3898,7 +3913,7 @@ impl IndexRangeSourceExec {
             self.scanned.set(self.scanned.get() + 1);
             self.produced.set(self.produced.get() + 1);
         }
-        if self.lookup_chunk_row == lookup.row_positions.len() {
+        if self.lookup_chunk_row == lookup.row_positions.len() || limit_reached(self) {
             self.lookup_chunk = None;
             self.lookup_chunk_row = 0;
         }
@@ -4664,6 +4679,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         }
         self.lookup_offset = offset;
         self.limit = Some(count);
+        self.embedded_lookup_limit = true;
         true
     }
 
@@ -4689,6 +4705,16 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         ctx: &crate::StmtContext,
     ) -> bool {
         if filter.is_empty() {
+            return false;
+        }
+        // The embedded limit stands in for the root `Limit` Go folded into
+        // the reader, so any Selection offered after it stands ABOVE that
+        // limit: Go's root `Selection(c != 500)` over an `IndexLookUp ...
+        // limit embedded(offset:1, count:6)` filters the six rows the limit
+        // kept. Taking it would filter before the cut. (A cop `Limit` taken
+        // at scan build is different: the cop Selection offered after it
+        // sits below it, and the cap counts the rows that pass.)
+        if self.embedded_lookup_limit {
             return false;
         }
         // A covering source answers from index entries alone (Go's
