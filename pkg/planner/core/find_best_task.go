@@ -2018,9 +2018,14 @@ func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop 
 		strings.Join(names, ","), tableName, strings.Join(items, " "), prop.TaskTp)
 }
 
-func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
+func isPointGetConvertableSchema(ds *logicalop.DataSource, singlePoint bool) bool {
 	for _, col := range ds.Columns {
 		if col.Name.L == model.ExtraHandleName.L {
+			continue
+		}
+		// PointGet supplies the physical partition ID needed by UnionScan and
+		// SelectLock. This synthetic column has no public schema state.
+		if singlePoint && col.ID == model.ExtraPhysTblID {
 			continue
 		}
 
@@ -2205,7 +2210,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			return t, nil
 		}
 
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds)
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds, len(path.Ranges) == 1)
 		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 			canConvertPointGet = false
 		}
