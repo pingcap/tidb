@@ -22,11 +22,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
+	uatomic "go.uber.org/atomic"
 )
 
 type testStandbyController struct{}
@@ -50,7 +53,11 @@ func (*testStandbyController) Handler(*Server) (string, *http.ServeMux) {
 
 func (*testStandbyController) OnConnActive() {}
 
+func (*testStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
+
 func (*testStandbyController) OnServerCreated(*Server) {}
+
+func (*testStandbyController) OnServerShutdown(StandbyShutdownServer) {}
 
 func TestIssue46197(t *testing.T) {
 	ctx := context.Background()
@@ -84,7 +91,7 @@ func TestIssue46197(t *testing.T) {
 
 	// clientConn setup
 	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt := internal.NewPacketIO(brc)
+	pkt := packetio.New(brc)
 	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
 	cc := &clientConn{
 		server:     server,
@@ -120,7 +127,7 @@ func TestGetConAttrs(t *testing.T) {
 		server:     server,
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		attrs: map[string]string{
 			"_client_name": "tidb_test",
 		},
@@ -154,7 +161,7 @@ func TestGetConAttrs(t *testing.T) {
 			server:       server,
 			alloc:        arena.NewAllocator(1024),
 			chunkAlloc:   chunk.NewAllocator(),
-			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 			attrs: map[string]string{
 				tidbGatewayAttrsConnKey: gwConnID,
 			},
@@ -202,4 +209,94 @@ func TestSeverHealth(t *testing.T) {
 		// wait for server to be healthy
 	}
 	require.True(t, server.health.Load(), "server should be healthy")
+}
+
+func TestInitTiDBListenerIsIdempotent(t *testing.T) {
+	originalRunInGoTest := RunInGoTest
+	RunInGoTest = true
+	t.Cleanup(func() {
+		RunInGoTest = originalRunInGoTest
+	})
+
+	cfg := util.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	cfg.Socket = filepath.Join(t.TempDir(), "tidb.sock")
+	svr := NewTestServer(cfg)
+	t.Cleanup(svr.Close)
+
+	require.NoError(t, svr.initTiDBListener())
+	require.NotNil(t, svr.Listener())
+	require.NotNil(t, svr.Socket())
+	listenAddr := svr.Listener().Addr().String()
+
+	require.NoError(t, svr.initTiDBListener())
+	require.Equal(t, listenAddr, svr.Listener().Addr().String())
+	require.NotNil(t, svr.Socket())
+}
+
+func TestServerShutdownFlags(t *testing.T) {
+	svr := NewTestServer(util.NewTestConfig())
+	require.False(t, svr.GetForceShutdown())
+	require.False(t, svr.GetNeedRequestMgrFree())
+
+	svr.SetForceShutdown()
+	svr.SetNeedRequestMgrFree()
+	require.True(t, svr.GetForceShutdown())
+	require.True(t, svr.GetNeedRequestMgrFree())
+}
+
+type mockStandbyController struct {
+	serverHealth         bool
+	serverInShutdownMode bool
+	called               chan struct{}
+}
+
+func (c *mockStandbyController) WaitForActivate() {}
+
+func (c *mockStandbyController) EndStandby(error) {}
+
+func (c *mockStandbyController) Handler(_ *Server) (string, *http.ServeMux) {
+	return "", nil
+}
+
+func (c *mockStandbyController) OnConnActive() {}
+
+func (c *mockStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
+
+func (c *mockStandbyController) OnServerCreated(_ *Server) {}
+
+func (c *mockStandbyController) OnServerShutdown(svr StandbyShutdownServer) {
+	server := svr.(*Server)
+	c.serverHealth = server.Health()
+	c.serverInShutdownMode = server.inShutdownMode.Load()
+	close(c.called)
+}
+
+func TestStartShutdownMarksUnhealthyBeforeStarterCallback(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	svr := NewTestServer(util.NewTestConfig())
+	svr.health = uatomic.NewBool(true)
+	svr.inShutdownMode = uatomic.NewBool(false)
+	svr.StandbyController = &mockStandbyController{called: make(chan struct{})}
+
+	svr.startShutdown()
+
+	controller := svr.StandbyController.(*mockStandbyController)
+	require.False(t, controller.serverHealth)
+	require.True(t, controller.serverInShutdownMode)
+	select {
+	case <-controller.called:
+	default:
+		require.Fail(t, "starter shutdown callback was not called")
+	}
 }

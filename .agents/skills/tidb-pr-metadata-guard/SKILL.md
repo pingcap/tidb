@@ -1,6 +1,6 @@
 ---
 name: tidb-pr-metadata-guard
-description: Use when creating or editing TiDB pull requests so PR title scope, PR template fields, hidden HTML comments, and bot-parsed checklist sections stay intact. Trigger on tasks involving PR creation, PR body updates, issue linking from a PR, test checklist updates, or investigating labels like do-not-merge/needs-tests-checked.
+description: Create or edit TiDB PR metadata, or diagnose template-related bot labels; preserve required fields and hidden comments.
 ---
 
 # TiDB PR Metadata Guard

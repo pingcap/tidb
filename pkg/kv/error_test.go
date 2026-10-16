@@ -33,6 +33,7 @@ func TestError(t *testing.T) {
 		ErrNotImplemented,
 		ErrWriteConflict,
 		ErrWriteConflictInTiDB,
+		ErrSharedLockLost,
 	}
 
 	for _, err := range kvErrs {

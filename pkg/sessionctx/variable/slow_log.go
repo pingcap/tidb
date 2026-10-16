@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -144,10 +145,6 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
-	// SlowLogRequestUnitV2 is the RU v2 total for the statement.
-	SlowLogRequestUnitV2 = "Request_unit_v2"
-	// SlowLogRequestUnitV2Detail is the RU v2 detailed metrics for the statement.
-	SlowLogRequestUnitV2Detail = "Request_unit_v2_detail"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -303,7 +300,6 @@ type SlowQueryLogItems struct {
 	// resource information
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
-	RUV2Metrics       *execdetails.RUV2Metrics
 	MemMax            int64
 	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
@@ -428,6 +424,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
+	}
+	iaStats := execdetails.GetIARemoteReadSegmentStats(logItems.ExecDetail.ScanDetail)
+	if iaStats.Count > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentCountStr, strconv.FormatUint(iaStats.Count, 10))
+	}
+	if iaStats.Bytes > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentSizeStr, strconv.FormatUint(iaStats.Bytes, 10))
+	}
+	if iaStats.WaitTime > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentWaitTimeStr, strconv.FormatFloat(iaStats.WaitTime.Seconds(), 'f', -1, 64))
 	}
 
 	if len(s.CurrentDB) > 0 {
@@ -563,18 +569,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
 	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
-	var tiKVRU, tiFlashRU float64
-	if logItems.RUDetails != nil {
-		tiKVRU = logItems.RUDetails.TiKVRUV2()
-		tiFlashRU = logItems.RUDetails.TiflashRU()
-	}
-	total, formatted := execdetails.FormatRUV2Summary(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU)
-	if len(total) > 0 {
-		writeSlowLogItem(&buf, SlowLogRequestUnitV2, total)
-	}
-	if len(formatted) > 0 {
-		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, formatted)
-	}
 	if len(logItems.SessionConnectAttrs) > 0 {
 		// Encode into a temporary buffer first so that a (practically impossible)
 		// encoding error does not leave a partial line in the main buffer.
@@ -588,6 +582,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	}
+	for _, field := range config.GetGlobalConfig().GetKeyspaceObservabilitySlowLogFields() {
+		writeSlowLogItem(&buf, field.Name, field.Value)
 	}
 
 	if s.CurrentDBChanged {
@@ -852,8 +849,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
 			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 			if stmtDetailRaw != nil {
-				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
+				items.WriteSQLRespTotal = stmtDetailRaw.(*execdetails.StmtExecDetails).WriteSQLRespDuration
 			}
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {

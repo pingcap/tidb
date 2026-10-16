@@ -35,7 +35,7 @@ CREATE TABLE test.t (
 );
 EOF
 
-# Generate 200k rows. Total size is about 5MiB.
+# Generate 200k rows. Total CSV size is about 5MiB and encoded KV size is about 10MiB.
 set +x
 for i in {1..200000}; do
   echo "$i,$i,$i,$i" >>"$TEST_DIR/data/test.t.0.csv"
@@ -47,8 +47,12 @@ run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config.toml"
 end=$(date +%s)
 take=$((end - start))
 
-# The encoded kv size is 10MiB. Usually it should take more than 10s.
+# With store-write-bwlimit=512KiB and the write limiter's initial 20% burst,
+# importing about 10MiB of encoded KV data should still take much more than 10s.
+# Keep the threshold below the expected limited runtime to avoid boundary failures
+# from second-resolution timing and normal CI variance.
 if [ $take -lt 10 ]; then
   echo "Lightning runs too fast. The write limiter doesn't work."
+  echo "take=${take}s"
   exit 1
 fi

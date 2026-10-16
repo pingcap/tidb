@@ -34,8 +34,8 @@ func TestExampleApplication(t *testing.T) {
 			return newScheduler(ctx, task, param)
 		},
 	)
-	scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() scheduler.CleanUpRoutine {
-		return &postCleanupImpl{}
+	scheduler.RegisterCleanerFactory(proto.TaskTypeExample, func() scheduler.Cleaner {
+		return &postCleanImpl{}
 	})
 
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,

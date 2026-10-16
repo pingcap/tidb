@@ -110,6 +110,14 @@ func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*Regio
 	return region, nil
 }
 
+func (c *TestClient) SplitKeysAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	return c.SplitWaitAndScatter(ctx, nil, keys)
+}
+
+func (c *TestClient) SplitKeys(ctx context.Context, keys [][]byte) ([]*RegionInfo, error) {
+	return c.SplitWaitAndScatter(ctx, nil, keys)
+}
+
 func (c *TestClient) SplitWaitAndScatter(_ context.Context, _ *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -688,6 +696,14 @@ func (f *FakeSplitClient) ScanRegions(
 
 func (f *FakeSplitClient) WaitRegionsScattered(context.Context, []*RegionInfo) (int, error) {
 	return 0, nil
+}
+
+func (f *FakeSplitClient) SplitKeysAndScatter(context.Context, [][]byte) ([]*RegionInfo, error) {
+	return nil, nil
+}
+
+func (f *FakeSplitClient) SplitKeys(context.Context, [][]byte) ([]*RegionInfo, error) {
+	return nil, nil
 }
 
 func (*FakeSplitClient) GetCodecPDClient() *tikvclient.CodecPDClient {

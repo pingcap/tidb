@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -56,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -91,6 +91,15 @@ var (
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
+func newEncodingTable(e *LoadDataController) (table.Table, error) {
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
+	tbl, err := tables.TableFromMetaWithCollate(e.Table.UseNewCollate(), idAlloc, e.Table.Meta())
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+	}
+	return tbl, nil
+}
+
 // Chunk records the chunk information.
 type Chunk struct {
 	Path         string
@@ -108,6 +117,15 @@ type Chunk struct {
 // GetKey returns the chunk key used in logs and encode errors.
 func (c *Chunk) GetKey() string {
 	return c.Path + ":" + strconv.FormatInt(c.Offset, 10)
+}
+
+// GetSize get the original file size of this chunk.
+func (c *Chunk) GetSize() int64 {
+	if c.Type == mydump.SourceTypeParquet {
+		// for parquet, Offset/EndOffset means rows
+		return c.FileSize
+	}
+	return c.EndOffset - c.Offset
 }
 
 func (c *Chunk) toSourceFileMeta() mydump.SourceFileMeta {
@@ -189,10 +207,9 @@ func NewTableImporter(
 	id string,
 	kvStore tidbkv.Storage,
 ) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	tbl, err := newEncodingTable(e)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+		return nil, err
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
@@ -284,12 +301,16 @@ func (s *storeHelper) GetTiKVCodec() tikv.Codec {
 var _ ingestctrl.StoreHelper = (*storeHelper)(nil)
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, kvStore tidbkv.Storage) (*TableImporter, error) {
+func NewTableImporterForTest(
+	ctx context.Context,
+	e *LoadDataController,
+	id string,
+	kvStore tidbkv.Storage,
+) (*TableImporter, error) {
 	helper := &storeHelper{kvStore: kvStore}
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	tbl, err := newEncodingTable(e)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+		return nil, err
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
@@ -333,8 +354,8 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 }
 
 // EstimateParquetReaderMemory estimates parser memory for the parquet file path.
-func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string) (int64, error) {
-	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
+func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string, fileSize int64) (int64, error) {
+	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path, fileSize)
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
@@ -417,7 +438,8 @@ func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
 func (e *LoadDataController) calculateSubtaskCnt() int {
 	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
 	// and evenly distribute them to subtasks.
-	// we calculate subtask count first by round(TotalFileSize / maxEngineSize)
+	// we calculate subtask count first by round(TotalRealSize / maxEngineSize).
+	// TotalRealSize is the estimated uncompressed size (~= FileSize for uncompressed sources),
 
 	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
 	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
@@ -432,11 +454,12 @@ func (e *LoadDataController) calculateSubtaskCnt() int {
 	var (
 		subtaskCount  float64
 		maxEngineSize = int64(e.MaxEngineSize)
+		totalSize     = e.TotalRealSize
 	)
-	if e.TotalFileSize <= maxEngineSize {
+	if totalSize <= maxEngineSize {
 		subtaskCount = 1
 	} else {
-		subtaskCount = math.Round(float64(e.TotalFileSize) / float64(e.MaxEngineSize))
+		subtaskCount = math.Round(float64(totalSize) / float64(e.MaxEngineSize))
 	}
 
 	// for global sort task, since there is no overlap,
@@ -450,7 +473,9 @@ func (e *LoadDataController) calculateSubtaskCnt() int {
 func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
 	subtaskCount := e.calculateSubtaskCnt()
 	// we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
-	return int64(math.Ceil(float64(e.TotalFileSize) / float64(subtaskCount)))
+	// Use TotalRealSize so the resulting value is in the same units as the per-file sizes that
+	// AllocateEngineIDs walks (see MakeSourceFileRegion / makeParquetFileRegion).
+	return int64(math.Ceil(float64(e.TotalRealSize) / float64(subtaskCount)))
 }
 
 // SetExecuteNodeCnt sets the execute node count.
@@ -462,9 +487,10 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
 func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[int32][]Chunk, err error) {
-	task := log.BeginTask(e.logger, "populate chunks")
+	task := log.BeginTask(e.logger.With(zap.Int("executeNodesCnt", e.ExecuteNodesCnt),
+		zap.Int64("totalFileSize", e.TotalFileSize)), "populate chunks")
 	defer func() {
-		task.End(zap.ErrorLevel, err)
+		task.End(zap.ErrorLevel, err, zap.Int("subtaskCnt", len(chunksMap)))
 	}()
 
 	tableMeta := &mydump.MDTableMeta{
@@ -614,6 +640,21 @@ func (ti *TableImporter) Allocators() autoid.Allocators {
 	return ti.encTable.Allocators(nil)
 }
 
+// StartDiskQuotaCheck starts a background goroutine to check disk quota.
+// The returned function stops the checker and waits for it to finish.
+func (ti *TableImporter) StartDiskQuotaCheck(ctx context.Context) (stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.Go(func() error {
+		ti.CheckDiskQuota(egCtx)
+		return nil
+	})
+	return func() {
+		cancel()
+		_ = eg.Wait()
+	}
+}
+
 // CheckDiskQuota checks disk quota.
 func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	var locker sync.Locker
@@ -681,7 +722,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 					err = ingestctrl.ConvertToErrFoundConflictRecords(err, ti.encTable)
 				}
 				importErr = multierr.Append(importErr, err)
+				continue
 			}
+			failpoint.InjectCall("afterDiskQuotaImport")
 		}
 		if importErr != nil {
 			// discuss: should we return the error and cancel the import?
@@ -744,6 +787,8 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		mu       sync.Mutex
 		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 	)
+	stopDiskQuotaCheck := ti.StartDiskQuotaCheck(ctx)
+
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for range ti.ThreadCnt {
 		eg.Go(func() error {
@@ -757,7 +802,11 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 			return ProcessChunk(egCtx, &chunk, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
-	if err = eg.Wait(); err != nil {
+	err = eg.Wait()
+	// Stop disk quota checker before final engine close/import to avoid racing
+	// with FlushAllEngines/UnsafeImportAndReset.
+	stopDiskQuotaCheck()
+	if err != nil {
 		return 0, err
 	}
 
@@ -889,16 +938,10 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 		return err2
 	}
 
-	addrs := strings.Split(tidbCfg.Path, ",")
-	etcdCli, err := clientv3.New(clientv3.Config{
-		Endpoints:        addrs,
-		AutoSyncInterval: 30 * time.Second,
-		TLS:              tls.TLSConfig(),
-	})
+	etcdCli, err := newEtcdClientForAllocatorRebase(ctx, kvStore, tls, strings.Split(tidbCfg.Path, ","))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 	autoidCli := autoid.NewClientDiscover(etcdCli)
 	r := autoIDRequirement{store: kvStore, autoidCli: autoidCli}
 	err = common.RebaseTableAllocators(ctx, maxIDs, &r, plan.DBID, plan.DesiredTableInfo)
@@ -910,6 +953,28 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 }
 
 type remoteChecksumFunction func() (*ingestctrl.RemoteChecksum, error)
+
+func newEtcdClientForAllocatorRebase(
+	ctx context.Context,
+	kvStore tidbkv.Storage,
+	tls *common.TLS,
+	callerPDAddrs []string,
+) (*clientv3.Client, error) {
+	kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
+	if !ok {
+		return nil, errors.Errorf("TiKV store does not expose PD client")
+	}
+	return metaservice.NewEtcdClientFromPDClient(
+		ctx,
+		kvStoreWithPD.GetPDClient(),
+		kvStore.GetCodec().GetKeyspaceMeta(),
+		callerPDAddrs,
+		clientv3.Config{
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              tls.TLSConfig(),
+		},
+	)
+}
 
 // VerifyChecksum verify the checksum of the table.
 func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, logger *zap.Logger, getRemoteChecksumFn remoteChecksumFunction) error {

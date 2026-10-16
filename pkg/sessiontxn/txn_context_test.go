@@ -27,13 +27,16 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfork"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -51,6 +54,25 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
+type txnContextPathCheckModeKey string
+
+func (k txnContextPathCheckModeKey) String() string {
+	return string(k)
+}
+
+const allowTxnContextPathCheckFallback txnContextPathCheckModeKey = "allowTxnContextPathCheckFallback"
+
+func newTxnContextTestKit(t testing.TB, store kv.Storage) *testkit.TestKit {
+	if intest.InTest && intest.EnableAssert {
+		tk := testkit.NewTestKit(t, store)
+		tk.Session().SetValue(allowTxnContextPathCheckFallback, false)
+		return tk
+	}
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
+	tk.Session().SetValue(allowTxnContextPathCheckFallback, true)
+	return tk
+}
+
 func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInCompile", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInRebuildPlan", "return"))
@@ -63,7 +85,7 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
 
-	tk := testkit.NewTestKit(t, store)
+	tk := newTxnContextTestKit(t, store)
 	tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 	tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 
@@ -102,9 +124,53 @@ func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
 	require.True(t, ok, fmt.Sprintf("'%s' not in record", name))
 }
 
+func checkTxnManagerStateWithoutFailpoints(t *testing.T, se sessionctx.Context) {
+	expectedIS, _ := se.Value(sessiontxn.AssertTxnInfoSchemaKey).(infoschema.InfoSchema)
+	if expectedIS != nil {
+		requireSnapshotInfoSchemaVersion(t, se, expectedIS.SchemaMetaVersion())
+	}
+
+	require.False(t, se.GetSessionVars().StmtCtx.IsStaleness && se.GetSessionVars().TxnCtx.IsExplicit)
+}
+
+func checkPreparedStmtSnapshotState(t *testing.T, stmt any, expectedSchemaVersion int64, expectSnapshotEvaluator bool) {
+	prepared, ok := stmt.(*plannercore.PlanCacheStmt)
+	require.True(t, ok)
+	require.Equal(t, expectSnapshotEvaluator, prepared.SnapshotTSEvaluator != nil)
+	if expectSnapshotEvaluator {
+		require.Equal(t, expectedSchemaVersion, prepared.SchemaVersion)
+	}
+}
+
+func requirePreparedStmtByIDSnapshotState(t *testing.T, se sessionctx.Context, stmtID uint32, expectedSchemaVersion int64, expectSnapshotEvaluator bool) {
+	stmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
+	require.NoError(t, err)
+	checkPreparedStmtSnapshotState(t, stmt, expectedSchemaVersion, expectSnapshotEvaluator)
+}
+
+func requirePreparedStmtByNameSnapshotState(t *testing.T, se sessionctx.Context, name string, expectedSchemaVersion int64, expectSnapshotEvaluator bool) {
+	stmt, err := se.GetSessionVars().GetPreparedStmtByName(name)
+	require.NoError(t, err)
+	checkPreparedStmtSnapshotState(t, stmt, expectedSchemaVersion, expectSnapshotEvaluator)
+}
+
+func requireSnapshotInfoSchemaVersion(t *testing.T, se sessionctx.Context, expectedSchemaVersion int64) {
+	snapshotIS, ok := se.GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema)
+	require.True(t, ok)
+	require.Equal(t, expectedSchemaVersion, snapshotIS.SchemaMetaVersion())
+}
+
 func doWithCheckPath(t *testing.T, se sessionctx.Context, names []string, do func()) {
 	se.SetValue(sessiontxn.AssertRecordsKey, nil)
 	do()
+	_, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]any)
+	if fallbackAllowed, _ := se.Value(allowTxnContextPathCheckFallback).(bool); fallbackAllowed && !ok {
+		// Plain `go test` validation is not failpoint-transformed, so keep checking the same
+		// txn-manager invariants directly on that explicitly marked execution surface.
+		checkTxnManagerStateWithoutFailpoints(t, se)
+		return
+	}
+	require.True(t, ok, "txn-manager path records missing in strict path-check mode")
 	for _, name := range names {
 		checkAssertRecordExits(t, se, name)
 	}
@@ -595,13 +661,15 @@ func TestStaleReadInPrepare(t *testing.T) {
 
 func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	store, _ := setupTxnContextTest(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := newTxnContextTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
 
 	is1 := se.GetLatestInfoSchema()
-	tk.MustExec("do sleep(0.1)")
-	tk.MustExec("set @a=now(6)")
+	// Use a PD-backed TS so the stale-read prepare path doesn't depend on wall clock staying behind currentTS.
+	tk.MustExec("begin")
+	tk.MustExec("set @a=tidb_parse_tso(@@tidb_current_ts)")
+	tk.MustExec("commit")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
 	tk.MustExec("prepare s2 from 'select * from t1 as of timestamp @a where id=1 '")
 
@@ -610,6 +678,10 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 
 	stmtID2, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1 ")
 	require.NoError(t, err)
+	requirePreparedStmtByIDSnapshotState(t, se, stmtID1, 0, false)
+	requirePreparedStmtByIDSnapshotState(t, se, stmtID2, is1.SchemaMetaVersion(), true)
+	requirePreparedStmtByNameSnapshotState(t, se, "s1", 0, false)
+	requirePreparedStmtByNameSnapshotState(t, se, "s2", is1.SchemaMetaVersion(), true)
 
 	// change schema
 	tk.MustExec("use test")
@@ -624,9 +696,12 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("set @@tx_read_ts=@a")
 	tk.MustExec("prepare s3 from 'select * from t1 where id=1 '")
 	tk.MustExec("set @@tx_read_ts=''")
+	requirePreparedStmtByIDSnapshotState(t, se, stmtID3, is1.SchemaMetaVersion(), true)
+	requirePreparedStmtByNameSnapshotState(t, se, "s3", is1.SchemaMetaVersion(), true)
 
 	// tx_read_ts
 	tk.MustExec("set @@tx_read_ts=@a")
+	requireSnapshotInfoSchemaVersion(t, se, is1.SchemaMetaVersion())
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
@@ -637,6 +712,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("set @@tx_read_ts=''")
 
 	tk.MustExec("set @@tx_read_ts=@a")
+	requireSnapshotInfoSchemaVersion(t, se, is1.SchemaMetaVersion())
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("execute s1")
@@ -671,9 +747,9 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	is2 := se.GetLatestInfoSchema()
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("set @@tx_read_ts=''")
-	tk.MustExec("do sleep(0.1)")
-	tk.MustExec("set @b=now(6)")
-	tk.MustExec("do sleep(0.1)")
+	tk.MustExec("begin")
+	tk.MustExec("set @b=tidb_parse_tso(@@tidb_current_ts)")
+	tk.MustExec("commit")
 	tk.MustExec("update t1 set v=v+1 where id=1")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
 	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {

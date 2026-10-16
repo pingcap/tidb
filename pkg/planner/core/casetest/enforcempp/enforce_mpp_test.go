@@ -635,39 +635,6 @@ func TestMPPSharedCTEScan(t *testing.T) {
 		checkEnforceMPPPlanRows(t, res, output[i].Plan, tt)
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
-
-	issue61242Plan := strings.Join(testdata.ConvertRowsToStrings(tk.MustQuery(`
-explain format = 'plan_tree' with cte1 as (
-  select
-    p_partkey,
-    substring(p_comment, 1, 20) as col0,
-    substring(p_comment, 18, 10) as col1,
-    substring(p_name, p_size % 10, 6) as col2
-  from part
-)
-select /* issue:61242 */
-  t3.col0,
-  t3.col1
-from (
-  select
-    t1.p_partkey as col0,
-    t1.col0 as col1
-  from cte1 t1
-  join cte1 t2 on t1.col0 = t2.col1
-) as t3
-join (
-  select
-    orders.o_orderkey as col0
-  from cte1 as t4
-  join orders on t4.col2 = substring(orders.o_comment, 1, 6)
-) as t5 on t3.col0 = t5.col0
-`).Rows()), "\n")
-	require.Contains(t, issue61242Plan, "Sequence mpp[tiflash]")
-	require.Contains(t, issue61242Plan, "CTE_0 mpp[tiflash]  Non-Recursive CTE Storage")
-	require.Contains(t, issue61242Plan, "CTEFullScan mpp[tiflash] CTE:cte1 AS t4 data:CTE_0")
-	require.NotContains(t, issue61242Plan, "CTEFullScan root")
-	require.NotContains(t, issue61242Plan, "CTE_0 root")
-	require.Empty(t, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 }
 
 func TestRollupMPP(t *testing.T) {

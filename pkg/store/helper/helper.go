@@ -20,8 +20,11 @@ import (
 	"cmp"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -816,7 +820,7 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs, err := etcd.EtcdAddrs()
+	pdAddrs, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, err
 	}
@@ -897,9 +901,9 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 	return nil
 }
 
-// CollectTiFlashStatus query sync status of one table from TiFlash store.
-// `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
-func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+// CollectTiFlashStatusWithCtx queries sync status of one table from a TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
+func CollectTiFlashStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
 	// The new query schema is like: http://<host>/tiflash/sync-status/keyspace/<keyspaceID>/table/<tableID>.
 	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
 	// The query URL is like: http://<host>/sync-status/keyspace/<NullspaceID>/table/<tableID>
@@ -911,7 +915,11 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 		keyspaceID,
 		tableID,
 	)
-	resp, err := util.InternalHTTPClient().Get(statURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -928,6 +936,12 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// CollectTiFlashStatus queries sync status of one table from a TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
+func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+	return CollectTiFlashStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, regionReplica)
 }
 
 // SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
@@ -951,4 +965,134 @@ func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, 
 		logutil.BgLogger().Error("close body failed", zap.Error(err))
 	}
 	return nil
+}
+
+// ColumnarStatusResp is the response from the TiKV's status API
+type ColumnarStatusResp struct {
+	Ready            uint `json:"ready"`
+	VectorIndexReady uint `json:"vector-index-ready"`
+	FtsIndexReady    uint `json:"fts-index-ready"`
+	Total            uint `json:"total"`
+	// HasFtsIndexReady reports whether the JSON payload contains "fts-index-ready".
+	HasFtsIndexReady bool `json:"-"`
+}
+
+// StorageClassStatusResp is returned by TiKV's storage-class status endpoint.
+type StorageClassStatusResp struct {
+	Ready uint64 `json:"ready"`
+	Total uint64 `json:"total"`
+}
+
+// CollectStorageClassStatusWithCtx collects a physical table's status from one
+// TiKV store. The target remains SQL-facing IA or STANDARD on the wire. A ready
+// replica currently matches the target and has no pending or transiting record
+// in its local schema worker. Independent Raft/apply work is not tracked.
+// The counters are a point-in-time observation without a schema-version proof.
+func CollectStorageClassStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, target string) (StorageClassStatusResp, error) {
+	statURL := fmt.Sprintf("%s://%s/kvengine/storage_class_status?keyspace_id=%d&table_id=%d&target=%s",
+		util.InternalHTTPSchema(), statusAddress, keyspaceID, tableID, target)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	defer func() { terror.Log(resp.Body.Close()) }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return StorageClassStatusResp{}, errors.Errorf("TiKV storage class status API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	var wireStatus struct {
+		Ready *uint64 `json:"ready"`
+		Total *uint64 `json:"total"`
+	}
+	if err := json.Unmarshal(body, &wireStatus); err != nil {
+		return StorageClassStatusResp{}, errors.Trace(err)
+	}
+	if wireStatus.Ready == nil || wireStatus.Total == nil {
+		return StorageClassStatusResp{}, errors.New("TiKV storage class status response must contain ready and total")
+	}
+	if *wireStatus.Ready > *wireStatus.Total {
+		return StorageClassStatusResp{}, errors.Errorf(
+			"TiKV storage class status response has ready %d greater than total %d",
+			*wireStatus.Ready,
+			*wireStatus.Total,
+		)
+	}
+	return StorageClassStatusResp{
+		Ready: *wireStatus.Ready,
+		Total: *wireStatus.Total,
+	}, nil
+}
+
+// CollectColumnarStatusWithCtx collects the columnar status from the TiKV status API.
+func CollectColumnarStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+	statURL := fmt.Sprintf("%s://%s/kvengine/columnar_status?keyspace_id=%d&table_id=%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	if indexID != nil {
+		statURL += fmt.Sprintf("&index_id=%d", *indexID)
+	}
+	var columnarStatus ColumnarStatusResp
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return columnarStatus, errors.Errorf("TiKV columnar status API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	type columnarStatusPayload struct {
+		Ready            uint  `json:"ready"`
+		VectorIndexReady uint  `json:"vector-index-ready"`
+		FtsIndexReady    *uint `json:"fts-index-ready"`
+		Total            uint  `json:"total"`
+	}
+	var payload columnarStatusPayload
+	err = json.Unmarshal(body, &payload)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	columnarStatus.Ready = payload.Ready
+	columnarStatus.VectorIndexReady = payload.VectorIndexReady
+	columnarStatus.Total = payload.Total
+	if payload.FtsIndexReady != nil {
+		columnarStatus.HasFtsIndexReady = true
+		columnarStatus.FtsIndexReady = *payload.FtsIndexReady
+	}
+	if columnarStatus.Ready != columnarStatus.Total {
+		logutil.BgLogger().Info("columnar status not ready", zap.Uint("ready", columnarStatus.Ready), zap.Uint("total", columnarStatus.Total))
+	}
+
+	return columnarStatus, nil
+}
+
+// CollectColumnarStatus collects the columnar status from the TiKV status API.
+func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+	return CollectColumnarStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, indexID)
 }
