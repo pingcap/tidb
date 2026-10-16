@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -80,32 +81,10 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 		Tables:            make(map[int64][]*model.TableInfo),
 	}
 
-	// Keep the settings that affect the query result, and the engine and TiFlash
-	// settings applied by MV maintenance. TiDB-side concurrency follows the worker.
 	vars := sctx.GetSessionVars()
-	for _, name := range []string{
-		vardef.Timestamp,
-		vardef.CharacterSetConnection, vardef.CollationConnection,
-		vardef.GroupConcatMaxLen, vardef.DefaultWeekFormat,
-		vardef.BlockEncryptionMode, vardef.WindowingUseHighPrecision,
-		vardef.TiDBIsolationReadEngines, vardef.TiDBAllowMPPExecution, vardef.TiDBEnforceMPPExecution,
-		vardef.TiDBMaxTiFlashThreads,
-		vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy,
-		vardef.TiDBMaxBytesBeforeTiFlashExternalSort, vardef.TiFlashMemQuotaQueryPerNode,
-		vardef.TiFlashQuerySpillRatio,
-		vardef.TiFlashFineGrainedShuffleStreamCount, vardef.TiFlashFineGrainedShuffleBatchSize,
-	} {
-		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), name)
-		if err != nil {
-			return nil, err
-		}
-		q.SessionVars[name] = value
+	if err := captureImportQuerySessionVars(vars, q); err != nil {
+		return nil, err
 	}
-	// The MV build session sets these fields without updating the session
-	// variables, so read the fields.
-	q.SQLMode = vars.SQLMode
-	q.SessionVars[vardef.DivPrecisionIncrement] = strconv.Itoa(vars.DivPrecisionIncrement)
-	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	if err := collectImportQueryTables(
 		sctx, txnManager.GetTxnInfoSchema(),
@@ -115,6 +94,56 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	q.SchemaVersion = txnManager.GetTxnInfoSchema().SchemaMetaVersion()
 	q.ReadTS, err = txnManager.GetStmtReadTS()
 	return q, err
+}
+
+// importQueryWorkerVars are decided by the worker instead of the submitter:
+// the snapshot and transaction it reads in, and its memory budget.
+var importQueryWorkerVars = map[string]struct{}{
+	vardef.TiDBSnapshot:             {},
+	vardef.TiDBReadStaleness:        {},
+	vardef.TiDBTxnReadTS:            {},
+	vardef.TiDBEnableExternalTSRead: {},
+	vardef.AutoCommit:               {},
+	vardef.TiDBTxnMode:              {},
+	vardef.TxnIsolation:             {},
+	vardef.TransactionIsolation:     {},
+	vardef.TxReadOnly:               {},
+	vardef.TransactionReadOnly:      {},
+	vardef.TiDBMemQuotaQuery:        {},
+}
+
+// captureImportQuerySessionVars records the session variables the submitter has
+// set, the same way session states are encoded. Variables it has not set are
+// global ones, which the worker reads from the same keyspace.
+func captureImportQuerySessionVars(vars *variable.SessionVars, q *importer.QueryPlan) error {
+	for _, sv := range variable.GetSysVars() {
+		if sv.HasNoneScope() || !sv.HasSessionScope() || sv.ReadOnly || sv.InternalSessionVariable {
+			continue
+		}
+		if _, ok := importQueryWorkerVars[sv.Name]; ok {
+			continue
+		}
+		value, keep, err := vars.GetSessionStatesSystemVar(sv.Name)
+		if err != nil {
+			return err
+		}
+		if keep {
+			q.SessionVars[sv.Name] = value
+		}
+	}
+	// The MV build session sets these fields without updating the session
+	// variables, so read the fields.
+	q.SQLMode = vars.SQLMode
+	delete(q.SessionVars, vardef.SQLModeVar)
+	q.SessionVars[vardef.DivPrecisionIncrement] = strconv.Itoa(vars.DivPrecisionIncrement)
+	q.SessionVars[vardef.TimeZone] = timeutil.ZoneName(vars.Location())
+	// Pin the statement time, which session states keep only when it is set.
+	timestamp, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.Timestamp)
+	if err != nil {
+		return err
+	}
+	q.SessionVars[vardef.Timestamp] = timestamp
+	return nil
 }
 
 // collectImportQueryTables records the source tables of a resolved query,

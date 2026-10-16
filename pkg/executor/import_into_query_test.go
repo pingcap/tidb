@@ -46,6 +46,18 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		require.Equal(t, "9", q.SessionVars[vardef.DivPrecisionIncrement])
 		require.NotEmpty(t, q.SessionVars[vardef.Timestamp])
 	})
+	t.Run("session variables", func(t *testing.T) {
+		tk.MustExec("set cte_max_recursion_depth = 5")
+		tk.MustExec("set tidb_mem_quota_query = 1048576")
+		defer tk.MustExec("set cte_max_recursion_depth = default, tidb_mem_quota_query = default")
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select i from query_src")
+		require.NoError(t, err)
+		require.Equal(t, "5", q.SessionVars[vardef.CTEMaxRecursionDepth])
+		for _, name := range []string{vardef.TiDBMemQuotaQuery, vardef.AutoCommit, vardef.TiDBSnapshot, vardef.SQLModeVar} {
+			require.NotContains(t, q.SessionVars, name)
+		}
+	})
 	t.Run("source tables", func(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
