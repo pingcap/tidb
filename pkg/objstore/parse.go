@@ -71,8 +71,7 @@ const InvalidURLPlaceholder = "(invalid storage URL)"
 // InvalidURLPlaceholder, userinfo and fragments are removed, and the query of a URL with an
 // unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
 // are secret there. A value with neither "://" nor "?" is a local path and is
-// returned unchanged. Unlike ast.RedactURL, an unparseable URL is never
-// returned as-is.
+// returned unchanged.
 func RedactURL(rawURL string) string {
 	// A plain local path has nothing to mask, and parsing it would escape or
 	// reject characters such as spaces and '%'.
