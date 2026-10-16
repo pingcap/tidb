@@ -79,7 +79,11 @@ func TestRestrictedSQL(t *testing.T) {
 		t.Cleanup(func() {
 			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 		})
-		tk.MustContainErrMsg("ALTER RESOURCE GROUP rg RU_PER_SEC=500", "is not supported when security enhanced mode is enabled")
+		errMsg := "is not supported when security enhanced mode is enabled"
+		if kerneltype.IsNextGen() {
+			errMsg = "is not supported in TiDB X"
+		}
+		tk.MustContainErrMsg("ALTER RESOURCE GROUP rg RU_PER_SEC=500", errMsg)
 
 		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
 		tk.MustExec("ALTER RESOURCE GROUP rg RU_PER_SEC=500")
