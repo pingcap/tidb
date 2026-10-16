@@ -38,15 +38,20 @@ func TestIsTypeCompatible(t *testing.T) {
 		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
-		// different not null flag
-		src := types.NewFieldType(mysql.TypeInt24)
+		// src NOT NULL -> target nullable is compatible (e.g. bind_info.create_time)
+		src := types.NewFieldType(mysql.TypeTimestamp)
 		src.AddFlag(mysql.NotNullFlag)
-		target := types.NewFieldType(mysql.TypeInt24)
-		require.False(t, IsTypeCompatible(*src, *target))
+		target := types.NewFieldType(mysql.TypeTimestamp)
+		require.True(t, IsTypeCompatible(*src, *target))
 
+		// src nullable -> target NOT NULL is incompatible
 		src.DelFlag(mysql.NotNullFlag)
 		target.AddFlag(mysql.NotNullFlag)
 		require.False(t, IsTypeCompatible(*src, *target))
+
+		// both NOT NULL remains compatible
+		src.AddFlag(mysql.NotNullFlag)
+		require.True(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// different evaluation type
