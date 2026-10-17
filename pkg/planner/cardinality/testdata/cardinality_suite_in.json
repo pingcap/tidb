@@ -408,8 +408,10 @@
     "name": "TestIndexJoinInnerRowCountUpperBound",
     "cases": [
       "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+      "explain format = 'brief' select /*+ inl_join(t2) */ * from t t1 join t t2 where t2.a = 0 and t1.a = t2.b and t2.b < 1 and t1.b < 1",
       "set @@tidb_opt_fix_control = '44855:ON'",
-      "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b"
+      "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+      "explain format = 'brief' select /*+ inl_join(t2) */ * from t t1 join t t2 where t2.a = 0 and t1.a = t2.b and t2.b < 1 and t1.b < 1"
     ]
   },
   {

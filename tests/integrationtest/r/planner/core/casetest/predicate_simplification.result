@@ -197,7 +197,7 @@ LIMIT
 240;
 id	task	access object	operator info
 TopN	root		planner__core__casetest__predicate_simplification.dt.pk, offset:0, count:240
-└─IndexJoin	root		left outer join, inner:TableReader, left side:IndexReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk)
+└─IndexHashJoin	root		left outer join, inner:TableReader, left side:IndexReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk)
   ├─IndexReader(Build)	root		index:IndexRangeScan
   │ └─IndexRangeScan	cop[tikv]	table:it, index:f(a, pk)	range:("a" 1,"a" +inf], keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:Selection
