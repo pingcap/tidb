@@ -3339,6 +3339,7 @@ fn planner_optimized_query_with_allocators(
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
     let node = tidb_resolve::NodeW::new(query.clone());
     let plan = builder.build_query_node(&node, false)?;
+    ctx.set_block_as_names(builder.statement_block_as_names());
     optimize_built_logical(
         plan,
         builder.get_opt_flag(),
@@ -3483,6 +3484,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
             (plan, Vec::new(), build_flags)
         }
     };
+    ctx.set_block_as_names(builder.statement_block_as_names());
     // Go `buildUpdate`: "We cannot apply projection elimination when building
     // the subplan, because columns in orderedList cannot be resolved" -- the
     // assignments live outside the plan, so a rewrite that substitutes a

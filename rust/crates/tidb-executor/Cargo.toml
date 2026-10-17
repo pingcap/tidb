@@ -27,6 +27,7 @@ serde_yaml = { workspace = true }
 tikv-client = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
+tidb-hint = { path = "../tidb-hint" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }

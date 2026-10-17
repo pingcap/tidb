@@ -173,7 +173,19 @@ impl InsertStmt {
             out.push_str("IGNORE ");
         }
         out.push_str("INTO ");
-        push_name_path(out, &self.table);
+        // Go `InsertStmt.Restore` restores `Table` as a `TableName`, which
+        // takes the default database and honors `RestoreWithoutSchemaName`.
+        if self.table.len() == 1 {
+            if let Some(database) = context.default_db_for_table(&self.table[0], false) {
+                out.push_str(&back_quote(database));
+                out.push('.');
+            }
+        }
+        if self.table.len() > 1 && context.flags().has_without_schema_name() {
+            push_name_path(out, &self.table[self.table.len() - 1..]);
+        } else {
+            push_name_path(out, &self.table);
+        }
         restore_partition_clause(out, &self.partitions);
         if self.set_syntax {
             // `SET col=val, ...` — zip the typed assignment paths with the

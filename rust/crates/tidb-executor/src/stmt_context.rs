@@ -240,7 +240,7 @@ pub trait GlobalSysvarAccessor: Send + Sync {
 
 /// Plan-derived fields Go publishes on `sessmgr.ProcessInfo` when the
 /// ordinary executor is built.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProcessPlanInfo {
     /// Go `ProcessInfo.BriefBinaryPlan`.
     pub brief_binary_plan: String,
@@ -254,6 +254,9 @@ pub struct ProcessPlanInfo {
     /// Go `StmtCtx.GetPlanDigest` digest: the sha256 of [`Self::normalized_plan`]
     /// in lowercase hex, empty when there is no normalized plan.
     pub plan_digest: String,
+    /// Go `GenHintsFromFlatPlan` over the retained plan: the hints that
+    /// reproduce it, for the statement summary's `PLAN_HINT`.
+    pub plan_hints: Vec<tidb_ast::Hint>,
     /// Go executor `IsFastPlan` (one optional projection over PointGet/TableDual).
     pub is_fast_plan: bool,
     /// Go `StmtCtx.TableIDs`.
@@ -550,6 +553,11 @@ pub struct StmtContextData {
     /// Go `StmtCtx.ExplainFormat`: `plan_tree` renders columns without their
     /// unique ids ([`Columns::remove_column_numbers`]).
     explain_format: Option<crate::ExplainFormat>,
+    /// Go `ExtractTableHintsFromStmtNode(e.ExecStmt)` of an EXPLAIN's target,
+    /// which `EXPLAIN FORMAT='hint'` appends to the generated hints.
+    explain_table_hints: Vec<tidb_ast::Hint>,
+    /// Go `SessionVars.PlannerSelectBlockAsName`, set by the plan builder.
+    block_as_names: Arc<Mutex<Vec<(String, String)>>>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`StmtContext::enter_cop_eval`]).
     ///
@@ -2270,6 +2278,8 @@ impl StmtContext {
             message: Arc::default(),
             in_explain_stmt: false,
             explain_format: None,
+            explain_table_hints: Vec::new(),
+            block_as_names: Arc::default(),
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             used_stats_info: Arc::default(),
@@ -2513,6 +2523,37 @@ impl StmtContext {
     pub fn with_explain_format(mut self, format: crate::ExplainFormat) -> Self {
         self.explain_format = Some(format);
         self
+    }
+
+    /// Records the hints written in an EXPLAIN's target statement.
+    #[must_use]
+    pub fn with_explain_table_hints(mut self, hints: Vec<tidb_ast::Hint>) -> Self {
+        self.explain_table_hints = hints;
+        self
+    }
+
+    /// Records the statement's select-block aliases (Go
+    /// `PlannerSelectBlockAsName`).
+    pub fn set_block_as_names(&self, names: Vec<(String, String)>) {
+        *self
+            .block_as_names
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = names;
+    }
+
+    /// The statement's select-block aliases.
+    #[must_use]
+    pub fn block_as_names(&self) -> Vec<(String, String)> {
+        self.block_as_names
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The hints written in an EXPLAIN's target statement.
+    #[must_use]
+    pub fn explain_table_hints(&self) -> &[tidb_ast::Hint] {
+        &self.explain_table_hints
     }
 
     /// Which `ResetContextOfStmt` arm built this context.

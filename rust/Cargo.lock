@@ -3620,6 +3620,7 @@ dependencies = [
  "tidb-expr",
  "tidb-funcdep",
  "tidb-hack",
+ "tidb-hint",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",

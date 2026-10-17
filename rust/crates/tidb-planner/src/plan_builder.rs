@@ -4879,6 +4879,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         })
     }
 
+    /// Go `PlannerSelectBlockAsName`: the alias each select block of the
+    /// statement was given (empty for a block that is not a derived table),
+    /// indexed by query block offset. Go sizes it by the largest select
+    /// offset, so an offset beyond it is unknown rather than unnamed.
+    #[must_use]
+    pub fn statement_block_as_names(&self) -> Vec<(String, String)> {
+        let names = self.select_block_as_names.borrow();
+        (0..=self.next_qb_offset)
+            .map(|offset| (String::new(), names.get(&offset).cloned().unwrap_or_default()))
+            .collect()
+    }
+
     /// Go `buildSelect(ctx, sel)` (`logical_plan_builder.go:4254`), on the
     /// FROM / WHERE / SELECT / ORDER BY / LIMIT spine.
     ///

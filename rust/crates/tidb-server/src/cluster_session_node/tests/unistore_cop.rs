@@ -16999,6 +16999,96 @@ fn verbose_explain_records_path_pruning_and_heuristic_notes_like_go() {
     assert_eq!(point_get_ids, ["Selection_6", "Point_Get_5"]);
 }
 
+/// `EXPLAIN FORMAT='hint'` generates the hints that reproduce the plan
+/// (`GenHintsFromFlatPlan`) followed by the statement's own. Expected rows: Go
+/// 1.27 on this branch (`TestZZ` probes `HT1` and `HT2`).
+#[test]
+fn explain_format_hint_reproduces_the_plan_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1131)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE hint_t1 (a INT PRIMARY KEY, b INT, c INT, d INT, KEY ib (b), KEY ic (c), KEY ibc (b, c))",
+        "CREATE TABLE hint_t2 (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
+        "INSERT INTO hint_t1 VALUES (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5)",
+        "INSERT INTO hint_t2 VALUES (1,1,1),(2,2,2),(3,3,3)",
+        "ANALYZE TABLE hint_t1, hint_t2",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let hint = |session: &mut ClusterServerSession, sql: &str| -> String {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'hint' {sql}")))[0][0].clone()
+    };
+    assert_eq!(
+        hint(&mut session, "SELECT * FROM hint_t1 WHERE a > 2 ORDER BY a"),
+        "use_index(@`sel_1` `test`.`hint_t1`), order_index(@`sel_1` `test`.`hint_t1` `primary`)"
+    );
+    assert_eq!(
+        hint(&mut session, "SELECT b FROM hint_t1 WHERE b > 1"),
+        "use_index(@`sel_1` `test`.`hint_t1` `ib`), no_order_index(@`sel_1` `test`.`hint_t1` `ib`)"
+    );
+    assert_eq!(
+        hint(&mut session, "SELECT * FROM hint_t1 WHERE b = 1 OR c = 2"),
+        "use_index_merge(@`sel_1` `hint_t1` `ib`, `ic`)"
+    );
+    assert_eq!(
+        hint(
+            &mut session,
+            "SELECT /*+ max_execution_time(1000) use_index(hint_t1, ib) */ * FROM hint_t1 WHERE b > 1"
+        ),
+        "use_index(@`sel_1` `test`.`hint_t1` `ib`), no_order_index(@`sel_1` `test`.`hint_t1` `ib`), \
+         max_execution_time(1000), use_index(`hint_t1` `ib`)"
+    );
+    assert_eq!(
+        hint(&mut session, "UPDATE hint_t1 SET c = 1 WHERE b = 2"),
+        "use_index(@`upd_1` `test`.`hint_t1`), no_order_index(@`upd_1` `test`.`hint_t1` `primary`)"
+    );
+    // A point get is a complete plan that needs no hint.
+    assert_eq!(hint(&mut session, "SELECT * FROM hint_t1 WHERE a = 1"), "");
+}
+
+/// The statement summary records Go's `PLAN_HINT` (the hints reproducing the
+/// plan plus the statement's own of the kinds `getEncodedPlan` keeps) and the
+/// statement's binding text and digest, with the default database filled in.
+/// Expected values: Go 1.27 on this branch (`TestZZ` probe `SS4`).
+#[test]
+fn statement_summary_records_plan_hint_and_binding_text_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1132)).unwrap();
+    session.execute_write("CREATE DATABASE IF NOT EXISTS ss_hint").unwrap();
+    session.execute_write("USE ss_hint").unwrap();
+    for ddl in [
+        "CREATE TABLE st (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
+        "CREATE TABLE su (a INT, b INT, KEY ia (a))",
+        "INSERT INTO st VALUES (1,1,1),(2,2,2),(3,3,3)",
+        "ANALYZE TABLE st",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    rows(&mut session, "SELECT /*+ use_index(st, ib) max_execution_time(1000) */ * FROM st WHERE b > 1");
+    rows(&mut session, "INSERT INTO su SELECT a, b FROM st");
+    let summary = displayed(rows(
+        &mut session,
+        "SELECT binding_digest_text, plan_hint FROM information_schema.statements_summary \
+         WHERE schema_name = 'ss_hint' AND (digest_text LIKE 'select%' OR digest_text LIKE 'insert into `su` select%') \
+         ORDER BY digest_text",
+    ));
+    assert_eq!(
+        summary,
+        [
+            [
+                "insert into `ss_hint` . `su` select `a` , `b` from `ss_hint` . `st`",
+                "use_index(@`sel_1` `ss_hint`.`st` `ib`), no_order_index(@`sel_1` `ss_hint`.`st` `ib`)"
+            ],
+            [
+                "select * from `ss_hint` . `st` where `b` > ?",
+                "use_index(@`sel_1` `ss_hint`.`st` `ib`), no_order_index(@`sel_1` `ss_hint`.`st` `ib`), \
+                 max_execution_time(1000)"
+            ],
+        ]
+    );
+}
+
 /// `exhaustPhysicalPlans4LogicalApply` builds the embedded hash join before
 /// the Apply itself, so the Apply's id is one past the hash join's. Expected
 /// ids: Go 1.27 on this branch (`TestZZ` probe `AP1`).

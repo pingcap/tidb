@@ -101,7 +101,15 @@ impl Session {
                 crate::classify::StatementKind::Dml
             ))
             .with_in_explain_stmt(true)
-            .with_explain_format(format);
+            .with_explain_format(format)
+            .with_explain_table_hints({
+                // Go's query-block handler rewrites each SELECT's `TableHints`
+                // in place (qb_name and view hints leave it) before EXPLAIN
+                // reads them.
+                let mut handled = target.clone();
+                let _ = tidb_hint::QBHintHandler::build(&mut handled);
+                tidb_hint::extract_table_hints_from_stmt_node(&handled).0
+            });
         // Go `ResetContextOfStmt` unwraps the EXPLAIN (`s = explainStmt.Stmt`)
         // before the kind switch, so the statement inside decides
         // `InInsertStmt`/`InUpdateStmt`/`InDeleteStmt` -- which

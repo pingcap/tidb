@@ -34,6 +34,12 @@ pub(crate) struct StatementObservation {
     label: String,
     prepared: bool,
     routed: bool,
+    /// Go `StmtCtx.OriginalTableHints`: the table hints the statement wrote,
+    /// after the query-block handler took the view hints out.
+    original_table_hints: Vec<tidb_ast::Hint>,
+    /// Go `ExecStmt.GetBindingSQLAndDigest`.
+    binding_sql: String,
+    binding_digest: String,
     phases: Arc<Mutex<StatementPhases>>,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
 }
@@ -55,13 +61,16 @@ struct LazyStatement {
     binary_plan: String,
     encoded_plan: String,
     plan_digest: String,
+    plan_hint: String,
+    binding_sql: String,
+    binding_digest: String,
 }
 impl StmtExecLazyInfo for LazyStatement {
     fn original_sql(&self) -> String {
         self.sql.clone()
     }
     fn encoded_plan(&self) -> Result<(String, String), EncodedPlanError> {
-        Ok((self.encoded_plan.clone(), String::new()))
+        Ok((self.encoded_plan.clone(), self.plan_hint.clone()))
     }
     fn binary_plan(&self) -> String {
         self.binary_plan.clone()
@@ -70,7 +79,7 @@ impl StmtExecLazyInfo for LazyStatement {
         self.plan_digest.clone()
     }
     fn binding_sql_and_digest(&self) -> (String, String) {
-        (String::new(), String::new())
+        (self.binding_sql.clone(), self.binding_digest.clone())
     }
 }
 
@@ -233,6 +242,9 @@ impl Session {
             label: String::new(),
             prepared: false,
             routed: false,
+            original_table_hints: Vec::new(),
+            binding_sql: String::new(),
+            binding_digest: String::new(),
             kv_exec_counter: Default::default(),
             phases: Arc::new(Mutex::new(StatementPhases {
                 parse,
@@ -309,6 +321,18 @@ impl Session {
                     .execution_started = true;
             }
             observation.label = stmt.label().to_owned();
+            if tidb_stmtsummary::v2::stmtsummary::enabled() {
+                // Go reads these off the statement node when it records the
+                // summary, after the node has been consumed.
+                if !tidb_hint::extract_table_hints_from_stmt_node(stmt).0.is_empty() {
+                    let mut handled = stmt.clone();
+                    let _ = tidb_hint::QBHintHandler::build(&mut handled);
+                    observation.original_table_hints =
+                        tidb_hint::extract_table_hints_from_stmt_node(&handled).0;
+                }
+                (observation.binding_sql, observation.binding_digest) =
+                    crate::binding::normalize_with_db(stmt, &self.current_db);
+            }
             observation.prepared |= prepared;
             observation.routed = !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_));
             // Go `getSQLForProcessInfo`: the process list shows a sensitive
@@ -533,6 +557,30 @@ impl Session {
             cpu_usages: Default::default(),
             plan_cache_unqualified: String::new(),
             lazy_info: Arc::new(LazyStatement {
+                plan_hint: if observation.routed || internal {
+                    String::new()
+                } else {
+                    // Go `getEncodedPlan`: the hints reproducing the plan,
+                    // then the statement's own hints of these kinds.
+                    let mut hints = plan.plan_hints.clone();
+                    hints.extend(observation.original_table_hints.iter().filter(|hint| {
+                        matches!(
+                            hint.name.to_ascii_lowercase().as_str(),
+                            "memory_quota"
+                                | "use_toja"
+                                | "no_index_merge"
+                                | "max_execution_time"
+                                | "ignore_index"
+                                | "read_from_storage"
+                                | "merge"
+                                | "semi_join_rewrite"
+                                | "no_decorrelate"
+                        )
+                    }).cloned());
+                    tidb_hint::restore_optimizer_hints(&hints)
+                },
+                binding_sql: observation.binding_sql.clone(),
+                binding_digest: observation.binding_digest.clone(),
                 sql: summary_sql,
                 encoded_plan: if observation.routed {
                     String::new()

@@ -704,7 +704,7 @@ mod tests {
             ),
             (
                 "insert into t select * from t2",
-                "INSERT INTO `t` SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t2`",
+                "INSERT INTO `test`.`t` SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t2`",
             ),
         ];
         for (sql, expected) in cases {
@@ -745,11 +745,11 @@ mod tests {
     fn generate_binding_sql_handles_replace_and_valueless_inserts() {
         assert_eq!(
             generate_binding_sql(&parse("replace into t select * from t2"), "h", "test"),
-            "REPLACE INTO `t` SELECT /*+ h*/ * FROM `test`.`t2`"
+            "REPLACE INTO `test`.`t` SELECT /*+ h*/ * FROM `test`.`t2`"
         );
         assert_eq!(
             generate_binding_sql(&parse("insert into t values (1)"), "h", "test"),
-            "INSERT INTO `t` VALUES (1)"
+            "INSERT INTO `test`.`t` VALUES (1)"
         );
     }
 

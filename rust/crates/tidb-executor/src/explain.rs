@@ -3273,6 +3273,11 @@ pub fn process_plan_info_with_brief(
         summary_binary_plan: binary,
         normalized_plan,
         plan_digest,
+        plan_hints: tidb_planner::plan_hint::gen_hints_from_physical_plan(
+            physical,
+            &CatalogHints(catalog),
+            &statement_context.block_as_names(),
+        ),
         is_fast_plan: matches!(
             fast_candidate,
             PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)
@@ -3289,6 +3294,23 @@ pub fn process_plan_info_with_brief(
     info
 }
 
+/// The table facts Go's hint generation reads off a plan's `TableInfo`.
+struct CatalogHints<'a>(&'a Catalog);
+
+impl tidb_planner::plan_hint::HintCatalog for CatalogHints<'_> {
+    fn table_name(&self, table_id: i64) -> Option<String> {
+        self.0
+            .physical_kv_table_by_id(table_id)
+            .map(|table| table.name.clone())
+    }
+
+    fn has_clustered_primary_key(&self, table_id: i64) -> bool {
+        self.0.physical_kv_table_by_id(table_id).is_some_and(|table| {
+            table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty()
+        })
+    }
+}
+
 fn render_physical_plan(
     eval_ctx: &dyn tidb_expr::Columns,
     statement_context: &crate::StmtContext,
@@ -3303,12 +3325,18 @@ fn render_physical_plan(
         return Ok(explain_dot_rows(physical));
     }
     if matches!(format, ExplainFormat::Hint) {
-        // go `Explain.prepareHintInfo` over a statement whose plan carries
-        // no hints: the single `hint` column renders empty.
+        // Go `ExplainFormatHint`: the hints that reproduce the plan, then the
+        // hints the statement itself wrote.
+        let mut hints = tidb_planner::plan_hint::gen_hints_from_physical_plan(
+            physical,
+            &CatalogHints(catalog),
+            &statement_context.block_as_names(),
+        );
+        hints.extend(statement_context.explain_table_hints().iter().cloned());
         let varchar = FieldType::new(FieldTypeCode::VarString);
         return Ok((
             vec![("hint".to_owned(), varchar)],
-            vec![vec![text("")]],
+            vec![vec![text(&tidb_hint::restore_optimizer_hints(&hints))]],
         ));
     }
     let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
