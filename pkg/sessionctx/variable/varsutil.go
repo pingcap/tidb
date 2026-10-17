@@ -368,7 +368,10 @@ func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 		return tso, nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp)
+	// Session-state replay can change time_zone within the current statement.
+	// Validate and convert using the same session timezone.
+	typeCtx := s.StmtCtx.TypeCtx()
+	t, err := types.ParseTime(typeCtx.WithLocation(s.Location()), sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -383,7 +386,10 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp)
+	// Session-state replay can change time_zone within the current statement.
+	// Validate and convert using the same session timezone.
+	typeCtx := s.StmtCtx.TypeCtx()
+	t, err := types.ParseTime(typeCtx.WithLocation(s.Location()), sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return err
 	}
