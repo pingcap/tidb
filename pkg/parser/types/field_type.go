@@ -729,14 +729,14 @@ func HasCharset(ft *FieldType) bool {
 // for json
 type jsonFieldType struct {
 	Tp               byte
-	Flag             uint
+	Flag             uint `json:",omitempty"`
 	Flen             int
 	Decimal          int
 	Charset          string
 	Collate          string
-	Elems            []string
-	ElemsIsBinaryLit []bool
-	Array            bool
+	Elems            []string `json:",omitempty"`
+	ElemsIsBinaryLit []bool   `json:",omitempty"`
+	Array            bool     `json:",omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
