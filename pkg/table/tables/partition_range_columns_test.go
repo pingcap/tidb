@@ -118,7 +118,7 @@ func TestLocateRangeColumnsPartitionByDatums(t *testing.T) {
 	add := func(ddl string, vals [][]string) { cases = append(cases, rangeColumnsCase{ddl, vals}) }
 
 	// DATE, every bound and its neighbours.
-	var defs []string
+	defs := make([]string, 0, 100)
 	for i := range 100 {
 		defs = append(defs, fmt.Sprintf("partition p%d values less than ('%s')", i, rangeColumnsDay(i+1)))
 	}
@@ -218,7 +218,7 @@ func BenchmarkLocateRangeColumnsPartition(b *testing.B) {
 		{"date", "d date", rangeColumnsDay},
 		{"varchar_general_ci", "d varchar(20) collate utf8mb4_general_ci", func(i int) string { return fmt.Sprintf("k%05d", i) }},
 	} {
-		var defs []string
+		defs := make([]string, 0, 1000)
 		for i := range 1000 {
 			defs = append(defs, fmt.Sprintf("partition p%d values less than ('%s')", i, c.value(i+1)))
 		}
