@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -47,6 +49,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
@@ -112,6 +115,12 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
+		// Add the inline CHECK constraints to the table info before backfill.
+		// They were verified against the column default value at job submission
+		// time, see verifyInlineCheckConstraints.
+		if err := addInlineCheckConstraints(job, tblInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
 		// delete only -> write only
 		columnInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
@@ -246,6 +255,115 @@ func syncMLogColumnsAfterAddColumn(tblInfo *model.TableInfo) {
 func isMLogMetaColumnName(name string) bool {
 	return name == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
 		name == strings.ToLower(model.MaterializedViewLogOldNewColumnName)
+}
+
+
+// verifyInlineCheckConstraints verifies that the default value of the added column
+// satisfies each enforced inline CHECK constraint of an ADD COLUMN job. It runs at
+// job submission time (DDL API layer), before the job is created, using the user
+// session to evaluate the check expression; on violation it returns
+// ErrCheckConstraintIsViolated (3819) directly to the client. This must not run in
+// the DDL worker: after the None -> DeleteOnly transition, a cancelled job would be
+// finalized without rolling back the persisted DeleteOnly column (issue #71880).
+func verifyInlineCheckConstraints(
+	sctx sessionctx.Context,
+	schemaName, tableName string,
+	colInfo *model.ColumnInfo,
+	constraints []*model.ConstraintInfo,
+) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+
+	// ExprString uses RestoreNameBackQuotes (no RestoreNameLowercase),
+	// so identifiers preserve original case. Use Name.O to match.
+	colIdent := sqlescape.MustEscapeSQL("%n", colInfo.Name.O)
+
+	for _, c := range constraints {
+		if !c.Enforced {
+			continue
+		}
+
+		// colInfo is the authoritative column definition submitted with the job.
+		// Existing rows are backfilled with the column's origin default, so the
+		// CHECK must be verified against that exact value.
+		var defaultLiteral string
+		if colInfo.DefaultIsExpr {
+			defaultExpr, ok := colInfo.GetDefaultValue().(string)
+			if !ok || defaultExpr == "" {
+				return dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(c.Name.L)
+			}
+			defaultLiteral = defaultExpr
+		} else {
+			defaultValue := colInfo.GetOriginDefaultValue()
+			if defaultValue == nil {
+				if !mysql.HasNotNullFlag(colInfo.GetFlag()) {
+					// No origin default — existing rows get NULL. NULL passes every
+					// CHECK, skip check.
+					continue
+				}
+				// NOT NULL without an explicit default: the backfill materializes the
+				// type's zero value into existing rows, see generateOriginDefaultValue.
+				originDefault, err := generateOriginDefaultValue(colInfo, nil, true)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defaultValue = originDefault
+			}
+			defaultLiteral = sqlescape.MustEscapeSQL("%?", defaultValue)
+			ft := colInfo.FieldType
+			if field_types.IsTypeChar(ft.GetType()) || field_types.IsTypeBlob(ft.GetType()) {
+				// Bind the literal to the column's charset and collation: an untyped
+				// literal is evaluated under the session collation, which can differ
+				// from the column's (e.g. a case-insensitive VARCHAR compares 'A' = 'a'
+				// differently), so the verification would disagree with the real typed
+				// evaluation of existing rows.
+				defaultLiteral = "_" + ft.GetCharset() + " " + defaultLiteral +
+					" COLLATE " + sqlescape.MustEscapeSQL("%n", ft.GetCollate())
+			}
+		}
+
+		checkExpr := strings.ReplaceAll(c.ExprString, colIdent, "("+defaultLiteral+")")
+
+		var buf strings.Builder
+		sqlescape.MustFormatSQL(&buf, "select 1 from %n.%n where not (", schemaName, tableName)
+		buf.WriteString(checkExpr)
+		buf.WriteString(") limit 1")
+
+		ictx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ictx, nil, buf.String())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) > 0 {
+			return dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(c.Name.L)
+		}
+	}
+	return nil
+}
+
+// addInlineCheckConstraints adds the inline CHECK constraints of the ADD COLUMN job
+// to the table info, right before backfill (DeleteOnly -> WriteOnly). The enforced
+// constraints were verified at job submission time, see verifyInlineCheckConstraints.
+func addInlineCheckConstraints(job *model.Job, tblInfo *model.TableInfo) error {
+	args, err := model.GetTableColumnArgs(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(args.Constraints) == 0 {
+		return nil
+	}
+	namesMap := map[string]bool{}
+	for _, c := range tblInfo.Constraints {
+		namesMap[c.Name.L] = true
+	}
+	setNameForConstraintInfo(tblInfo.Name.L, namesMap, args.Constraints)
+	for _, c := range args.Constraints {
+		c.ID = allocateConstraintID(tblInfo)
+		c.State = model.StatePublic
+		tblInfo.Constraints = append(tblInfo.Constraints, c)
+	}
+	return nil
 }
 
 func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
