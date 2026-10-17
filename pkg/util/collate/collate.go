@@ -359,9 +359,20 @@ func IsBinCollation(collate string) bool {
 		collate == charset.CollationBin || collate == charset.CollationUTF8MB40900Bin
 }
 
+// noPadCollations lists the NO PAD collations TiDB implements: trailing spaces are significant in
+// comparisons and are kept in index keys (Key does not trim). Every other supported collation is
+// PAD SPACE. Collations registered at init time (registerICULocaleCollations) add themselves here.
+var noPadCollations = map[string]struct{}{
+	charset.CollationBin: {},
+	"utf8mb4_0900_ai_ci": {},
+	"utf8mb4_0900_bin":   {},
+	"utf8mb4_0900_as_cs": {},
+}
+
 // IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
 func IsPadSpaceCollation(collation string) bool {
-	return collation != charset.CollationBin && collation != "utf8mb4_0900_ai_ci" && collation != "utf8mb4_0900_bin"
+	_, noPad := noPadCollations[collation]
+	return !noPad
 }
 
 // CollationToProto converts collation from string to int32(used by protocol).
@@ -463,6 +474,11 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8mb4_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8mb4_0900_ai_ci"] = &unicode0900AICICollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_0900_ai_ci")] = &unicode0900AICICollator{}
+	newCollatorMap["utf8mb4_0900_as_cs"] = &unicode0900ASCSCollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_0900_as_cs")] = &unicode0900ASCSCollator{}
+	// as_cs is implemented in TiDB only (the TiKV/TiFlash coprocessor has no collator for it), so
+	// expressions using it must not be pushed down.
+	tidbOnlyCollationIDs[CollationName2ID("utf8mb4_0900_as_cs")] = struct{}{}
 	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
 	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCSCollator{}
@@ -475,4 +491,6 @@ func init() {
 	newCollatorIDMap[CollationName2ID(charset.CollationGB18030Bin)] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
 	newCollatorMap[charset.CollationGB18030ChineseCI] = &gb18030ChineseCICollator{}
 	newCollatorIDMap[CollationName2ID(charset.CollationGB18030ChineseCI)] = &gb18030ChineseCICollator{}
+
+	registerICULocaleCollations()
 }
