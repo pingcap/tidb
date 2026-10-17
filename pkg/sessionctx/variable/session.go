@@ -1387,6 +1387,14 @@ type SessionVars struct {
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
+	// StaleReadAboveSafeTSReplicaRead is the replica read type for stale reads whose read ts is above the min safe ts.
+	// It is only applied when replicaRead is the default `leader` and there is no replica read hint. See
+	// `tidb_stale_read_above_safe_ts_replica_read`.
+	StaleReadAboveSafeTSReplicaRead StaleReadReplicaReadPolicy
+	// StaleReadWithinSafeTSReplicaRead is the replica read type for stale reads whose read ts is within the min safe
+	// ts. It is only applied when replicaRead is the default `leader` and there is no replica read hint. See
+	// `tidb_stale_read_within_safe_ts_replica_read`.
+	StaleReadWithinSafeTSReplicaRead StaleReadReplicaReadPolicy
 	// ReplicaClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.
 	// this variable only take effect when `tidb_follower_read` = 'closest-adaptive'
 	ReplicaClosestReadThreshold int64
@@ -2689,11 +2697,58 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
+	replicaRead := s.replicaRead
+	// A stale read may override the default `leader` replica read according to whether its read ts is within the
+	// min safe ts of the TiKV stores. An explicitly configured non-leader `tidb_replica_read` always wins.
+	if replicaRead == kv.ReplicaReadLeader && s.StmtCtx.HasStaleReadReplicaRead {
+		replicaRead = kv.ReplicaReadType(s.StmtCtx.StaleReadReplicaRead)
+	}
 	// if closest-adaptive is unavailable, fallback to leader read
-	if s.replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
+	if replicaRead == kv.ReplicaReadClosestAdaptive && !IsAdaptiveReplicaReadEnabled() {
 		return kv.ReplicaReadLeader
 	}
-	return s.replicaRead
+	return replicaRead
+}
+
+// StaleReadReplicaReadPolicy is the replica read type to apply to a stale read in a particular condition.
+// A zero value means the policy is disabled.
+type StaleReadReplicaReadPolicy struct {
+	// Enabled is false when the corresponding variable is empty.
+	Enabled bool
+	// ReplicaRead is the replica read type to use when Enabled.
+	ReplicaRead kv.ReplicaReadType
+}
+
+// ParseReplicaReadType parses a `tidb_replica_read` style value. The bool is false for an unknown value.
+func ParseReplicaReadType(val string) (kv.ReplicaReadType, bool) {
+	switch {
+	case strings.EqualFold(val, "follower"):
+		return kv.ReplicaReadFollower, true
+	case strings.EqualFold(val, "leader-and-follower"):
+		return kv.ReplicaReadMixed, true
+	case strings.EqualFold(val, "leader"):
+		return kv.ReplicaReadLeader, true
+	case strings.EqualFold(val, "closest-replicas"):
+		return kv.ReplicaReadClosest, true
+	case strings.EqualFold(val, "closest-adaptive"):
+		return kv.ReplicaReadClosestAdaptive, true
+	case strings.EqualFold(val, "learner"):
+		return kv.ReplicaReadLearner, true
+	case strings.EqualFold(val, "prefer-leader"):
+		return kv.ReplicaReadPreferLeader, true
+	}
+	return kv.ReplicaReadLeader, false
+}
+
+func parseStaleReadReplicaReadPolicy(val string) StaleReadReplicaReadPolicy {
+	if len(val) == 0 {
+		return StaleReadReplicaReadPolicy{}
+	}
+	rt, ok := ParseReplicaReadType(val)
+	if !ok {
+		return StaleReadReplicaReadPolicy{}
+	}
+	return StaleReadReplicaReadPolicy{Enabled: true, ReplicaRead: rt}
 }
 
 // SetReplicaRead set SessionVars.replicaRead.
