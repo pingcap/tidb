@@ -102,7 +102,7 @@ pub use request_builder::{
 };
 pub use response_channel::{
     ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState,
-    ResponseChannelUnsupported, ResponseRuntimeStats, SelectResponseIter,
+    CopResponseSink, ResponseChannelUnsupported, ResponseRuntimeStats, SelectResponseIter,
 };
 pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};

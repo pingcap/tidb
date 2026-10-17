@@ -243,7 +243,8 @@ fn select_with_runtime_stats_keeps_plan_identity_on_the_live_iterator() {
                 callee_address: "tikv-1".to_owned(),
                 request_rpc_stats_present: false,
                 backoff_sleep_ns: vec![("regionMiss".to_owned(), 9)],
-            },
+            ..ResponseRuntimeStats::default()
+        },
         )
         .unwrap();
     source.finish().unwrap();

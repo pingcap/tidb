@@ -1437,6 +1437,7 @@ impl Session {
                     .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                     .with_statement_phase_observer(self.statement_phase_observer())
                     .with_kv_exec_counter(self.statement_kv_exec_counter())
+                .with_cop_response_sink(self.statement_cop_response_sink())
                     .with_keys_read(tidb_executor::KeysReadBudget::new(
                         Arc::clone(&self.statement_keys_read),
                         self.vars.max_keys_read(self.statement_in_select),
@@ -1559,6 +1560,7 @@ impl Session {
                 .with_process_plan_info_sink(Arc::clone(&self.process_plan_info))
                 .with_statement_phase_observer(self.statement_phase_observer())
                 .with_kv_exec_counter(self.statement_kv_exec_counter())
+                .with_cop_response_sink(self.statement_cop_response_sink())
                 .with_keys_read(tidb_executor::KeysReadBudget::new(
                     Arc::clone(&self.statement_keys_read),
                     self.vars.max_keys_read(self.statement_in_select),

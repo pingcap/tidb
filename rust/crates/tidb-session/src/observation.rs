@@ -42,6 +42,9 @@ pub(crate) struct StatementObservation {
     binding_digest: String,
     phases: Arc<Mutex<StatementPhases>>,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    /// Go `StmtCtx.ExecDetails`: what the statement's coprocessor responses
+    /// reported, read back when the summary is recorded.
+    cop_stats: Arc<tidb_exec::statement_cop_stats::StatementCopStats>,
 }
 
 #[derive(Default)]
@@ -156,6 +159,23 @@ impl Session {
             .unwrap_or_default()
     }
 
+    /// Go `tidb_enable_collect_execution_info`: the statement's consumer of
+    /// coprocessor response details, `None` while the instance switch is OFF
+    /// (Go's `copIteratorWorker.stats` is only created when it is ON).
+    pub(crate) fn statement_cop_response_sink(
+        &self,
+    ) -> Option<Arc<dyn tidb_executor::CopResponseSink>> {
+        let collect = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_COLLECT_EXECUTION_INFO)
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"));
+        if !collect {
+            return None;
+        }
+        let stats = Arc::clone(&self.statement_observation.as_ref()?.cop_stats);
+        Some(stats)
+    }
+
     pub(crate) fn statement_phase_observer(
         &self,
     ) -> Option<Arc<dyn Fn(tidb_executor::StatementPhase) + Send + Sync>> {
@@ -246,6 +266,7 @@ impl Session {
             binding_sql: String::new(),
             binding_digest: String::new(),
             kv_exec_counter: Default::default(),
+            cop_stats: Arc::default(),
             phases: Arc::new(Mutex::new(StatementPhases {
                 parse,
                 parse_before_start: parse,
@@ -531,8 +552,8 @@ impl Session {
             parse_latency: phases.parse,
             compile_latency: phases.compile,
             stmt_ctx: Arc::new(ctx),
-            cop_tasks: None,
-            exec_detail: Default::default(),
+            cop_tasks: observation.cop_stats.cop_tasks_summary(),
+            exec_detail: observation.cop_stats.exec_details(),
             mem_max: self.session_memory.session_tracker().max_consumed(),
             mem_arbitration: 0.0,
             disk_max: self.session_memory.session_disk_tracker().max_consumed(),

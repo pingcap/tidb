@@ -17089,6 +17089,55 @@ fn statement_summary_records_plan_hint_and_binding_text_like_go() {
     );
 }
 
+/// Go `selectResult.fetchResp` merges every coprocessor response's details
+/// into `StmtCtx.ExecDetails`, which the summary reads as `SUM_COP_TASK_NUM`
+/// and the key counts. Expected values: Go 1.27 on this branch (`TestZZ` probe
+/// `CS1`); point gets never reach the coprocessor.
+#[test]
+fn statement_summary_records_cop_task_details_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1133)).unwrap();
+    session.execute_write("CREATE DATABASE IF NOT EXISTS ss_cop").unwrap();
+    session.execute_write("USE ss_cop").unwrap();
+    for ddl in [
+        "CREATE TABLE ct (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
+        "CREATE TABLE cu (a INT, b INT, KEY ia (a))",
+        "INSERT INTO ct VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
+        "INSERT INTO cu VALUES (1,1),(2,2)",
+        "ANALYZE TABLE ct, cu",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    for query in [
+        "SELECT a FROM ct WHERE b > 1",
+        "SELECT * FROM ct JOIN cu ON ct.a = cu.a WHERE ct.b > 0",
+        "SELECT COUNT(*) FROM ct GROUP BY b",
+        "SELECT * FROM ct WHERE a = 1",
+        "SELECT * FROM ct",
+    ] {
+        rows(&mut session, query);
+    }
+    let summary = displayed(rows(
+        &mut session,
+        "SELECT digest_text, sum_cop_task_num, avg_total_keys, max_total_keys, \
+         avg_processed_keys, max_processed_keys FROM information_schema.statements_summary \
+         WHERE schema_name = 'ss_cop' AND digest_text LIKE 'select%' ORDER BY digest_text",
+    ));
+    assert_eq!(
+        summary,
+        [
+            ["select * from `ct`", "1", "0", "0", "5", "5"],
+            [
+                "select * from `ct` join `cu` on `ct` . `a` = `cu` . `a` where `ct` . `b` > ?",
+                "2", "0", "0", "7", "7"
+            ],
+            ["select * from `ct` where `a` = ?", "0", "0", "0", "0", "0"],
+            ["select `a` from `ct` where `b` > ?", "1", "0", "0", "4", "4"],
+            ["select count ( ? ) from `ct` group by `b`", "1", "0", "0", "5", "5"],
+        ]
+    );
+}
+
 /// `exhaustPhysicalPlans4LogicalApply` builds the embedded hash join before
 /// the Apply itself, so the Apply's id is one past the hash join's. Expected
 /// ids: Go 1.27 on this branch (`TestZZ` probe `AP1`).

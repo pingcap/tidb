@@ -23,10 +23,8 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-error = { path = "../tidb-error" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
-tokio.workspace = true
-
-[dev-dependencies]
 tikv-client.workspace = true
+tokio.workspace = true
 
 [[test]]
 name = "all"

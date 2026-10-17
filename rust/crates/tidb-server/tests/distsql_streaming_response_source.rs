@@ -137,7 +137,8 @@ fn recordset() -> DistSqlRecordSet {
                 callee_address: "tikv-1".to_owned(),
                 request_rpc_stats_present: false,
                 backoff_sleep_ns: vec![("RegionMiss".to_owned(), 7)],
-            },
+            ..ResponseRuntimeStats::default()
+        },
         )
         .unwrap();
     source.finish().unwrap();

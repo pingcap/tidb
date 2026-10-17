@@ -757,7 +757,8 @@ fn consumed_responses_only_record_present_runtime_samples_losslessly() {
                 callee_address: String::new(),
                 request_rpc_stats_present: false,
                 backoff_sleep_ns: vec![("Ignored".to_owned(), 20)],
-            },
+            ..ResponseRuntimeStats::default()
+        },
         )
         .unwrap();
     source
@@ -772,7 +773,8 @@ fn consumed_responses_only_record_present_runtime_samples_losslessly() {
                 callee_address: String::new(),
                 request_rpc_stats_present: true,
                 backoff_sleep_ns: vec![("RegionMiss".to_owned(), 10)],
-            },
+            ..ResponseRuntimeStats::default()
+        },
         )
         .unwrap();
     source
@@ -787,7 +789,8 @@ fn consumed_responses_only_record_present_runtime_samples_losslessly() {
                 callee_address: "callee".to_owned(),
                 request_rpc_stats_present: false,
                 backoff_sleep_ns: Vec::new(),
-            },
+            ..ResponseRuntimeStats::default()
+        },
         )
         .unwrap();
     source.finish().unwrap();

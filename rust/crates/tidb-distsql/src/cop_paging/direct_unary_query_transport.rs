@@ -1112,10 +1112,14 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> DirectUnaryQueryResp
                         "unexpected warning event",
                     ));
                 }
-                Some(ResponseChannelEvent::ResultWithRuntime { .. }) => {
-                    return self.fail(DirectUnaryTransportError::ResponseState(
-                        "unexpected runtime event",
-                    ));
+                Some(ResponseChannelEvent::ResultWithRuntime {
+                    result,
+                    runtime_stats,
+                }) => {
+                    return Ok(Some(QueryResultSubset {
+                        data: result,
+                        runtime: Some(runtime_stats),
+                    }));
                 }
                 None => {}
             }
@@ -1198,10 +1202,15 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> DirectUnaryQueryResp
                             "unexpected warning event",
                         ));
                     }
-                    Some(ResponseChannelEvent::ResultWithRuntime { .. }) => {
-                        return self.fail(DirectUnaryTransportError::ResponseState(
-                            "unexpected runtime event",
-                        ));
+                    Some(ResponseChannelEvent::ResultWithRuntime {
+                        result,
+                        runtime_stats,
+                    }) => {
+                        self.unordered_ready.push_back(logical_task_id);
+                        return Ok(Some(QueryResultSubset {
+                            data: result,
+                            runtime: Some(runtime_stats),
+                        }));
                     }
                     // The response channel may not have a decoded chunk yet
                     // even though the region request has completed. Keep the
@@ -1916,10 +1925,12 @@ impl<C: DirectUnaryClient + Clone, L: RegionRecoveryLoader> DirectUnaryQueryResp
                 }
             }
         }
-        let accepted = self.runtime.accept_response(
+        let runtime_sample = response.runtime_sample(&selected.attempt.address);
+        let accepted = self.runtime.accept_response_with_runtime(
             attempt_id,
             response,
             process_time_nanos,
+            Some(runtime_sample),
             (self.config.observation_time)(),
         )?;
         self.sync_only_chains.remove(&logical_task_id);

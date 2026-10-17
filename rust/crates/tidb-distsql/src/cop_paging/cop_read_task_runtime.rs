@@ -213,6 +213,34 @@ impl CopReadTaskResponse {
     pub fn process_time_nanos(&self) -> Option<i64> {
         super::coprocessor_response_process_time_nanos(&self.response)
     }
+
+    /// Go `copIteratorWorker.collectCopRuntimeStats`: the response's
+    /// `CopRuntimeStats`. `ExecDetailsV2` wins; a response with only the
+    /// deprecated `ExecDetails` contributes its time detail and the write
+    /// column family's scan counts.
+    #[must_use]
+    pub fn runtime_sample(&self, callee_address: &str) -> crate::ResponseRuntimeStats {
+        let mut scan = tikv_client::util::ScanDetail::default();
+        let mut time = tikv_client::util::TimeDetail::default();
+        if let Some(details) = &self.response.exec_details_v2 {
+            if details.time_detail.is_some() || details.time_detail_v2.is_some() {
+                time.merge_from_pb(details.time_detail_v2.as_ref(), details.time_detail.as_ref());
+            }
+            scan.merge_from_pb(details.scan_detail_v2.as_ref());
+        } else if let Some(details) = &self.response.exec_details {
+            time.merge_from_pb(None, details.time_detail.as_ref());
+            if let Some(write) = details.scan_detail.as_ref().and_then(|scan| scan.write) {
+                scan.processed_keys = write.processed;
+                scan.total_keys = write.total;
+            }
+        }
+        crate::ResponseRuntimeStats {
+            callee_address: callee_address.to_owned(),
+            scan_detail: Some(scan),
+            time_detail: time,
+            ..crate::ResponseRuntimeStats::default()
+        }
+    }
 }
 
 impl From<CoprocessorResponse> for CopReadTaskResponse {
@@ -707,6 +735,19 @@ impl CopReadTaskRuntime {
         process_time_nanos: Option<i64>,
         now: Duration,
     ) -> Result<CopReadAcceptedResponse, CopReadTaskError> {
+        self.accept_response_with_runtime(attempt_id, response, process_time_nanos, None, now)
+    }
+
+    /// [`Self::accept_response`] publishing `runtime`, the response's
+    /// `CopRuntimeStats` sample, beside its data.
+    pub fn accept_response_with_runtime(
+        &mut self,
+        attempt_id: u64,
+        response: impl Into<CopReadTaskResponse>,
+        process_time_nanos: Option<i64>,
+        runtime: Option<crate::ResponseRuntimeStats>,
+        now: Duration,
+    ) -> Result<CopReadAcceptedResponse, CopReadTaskError> {
         let (prepared, lookup, logical_task_index) = {
             let in_flight = self.require_in_flight(attempt_id)?;
             (
@@ -777,7 +818,7 @@ impl CopReadTaskRuntime {
         };
         let paging = self.tasks[logical_task_index]
             .paging
-            .accept_response(&response, now)?;
+            .accept_response_with_runtime(&response, runtime, now)?;
 
         self.in_flight.remove(&attempt_id);
         self.completed_attempts.insert(attempt_id);

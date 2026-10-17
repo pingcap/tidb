@@ -69,6 +69,7 @@ mod deadlock_recording;
 pub use deadlock_recording::configure_deadlock_history;
 pub mod distsql_recordset;
 pub mod exec_details;
+pub mod statement_cop_stats;
 pub mod explain;
 pub mod hint_updatable_vars;
 pub mod keydecoder;

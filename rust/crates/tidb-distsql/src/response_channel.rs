@@ -26,10 +26,12 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tikv_client::util::{ScanDetail, TimeDetail};
 use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
 
 use super::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
@@ -69,6 +71,29 @@ pub struct ResponseRuntimeStats {
     pub request_rpc_stats_present: bool,
     /// Backoff sleep samples owned by this response subset.
     pub backoff_sleep_ns: Vec<(String, u64)>,
+    /// Go `CopRuntimeStats.ScanDetail`: the response's `ScanDetailV2` (or the
+    /// legacy write-scan counts), `None` when TiKV sent no scan detail.
+    pub scan_detail: Option<ScanDetail>,
+    /// Go `CopRuntimeStats.TimeDetail`, merged from `TimeDetailV2` or the
+    /// legacy `TimeDetail`.
+    pub time_detail: TimeDetail,
+}
+
+/// The statement-wide consumer of every coprocessor response a select result
+/// reads: Go's `selectResult.fetchResp` merges each response's
+/// `CopRuntimeStats` into `StmtCtx.ExecDetails` (`MergeCopExecDetails`) and
+/// the statement's `RuntimeStatsColl`. The statement owns the implementation;
+/// the select iterator only reports what it consumed.
+pub trait CopResponseSink: Send + Sync + fmt::Debug {
+    /// One consumed response. `fetch_duration` is Go's `resp.Next` wait for
+    /// it; `execution_summaries` are the response's tipb summaries.
+    fn record_cop_response(
+        &self,
+        metadata: &SelectResultMetadata,
+        sample: &ResponseRuntimeStats,
+        fetch_duration: Duration,
+        execution_summaries: &[ExecutorExecutionSummary],
+    );
 }
 
 /// Lifecycle state of an owned response channel.
@@ -499,6 +524,8 @@ impl ResponseChannel<prost::bytes::Bytes> {
             runtime_stats: SelectResultRuntimeStats::default(),
             runtime_stats_binding: None,
             result_metadata: None,
+            cop_response_sink: None,
+            last_fetch: Duration::ZERO,
             closed: false,
         }
     }
@@ -524,6 +551,11 @@ pub struct SelectResponseIter {
     runtime_stats: SelectResultRuntimeStats,
     runtime_stats_binding: Option<RuntimeStatsBinding>,
     result_metadata: Option<SelectResultMetadata>,
+    /// The statement's consumer of per-response execution details.
+    cop_response_sink: Option<Arc<dyn CopResponseSink>>,
+    /// How long the last `source.next_event` took, which Go adds to
+    /// `ExecDetails.CopTime` for the response it produced.
+    last_fetch: Duration,
     closed: bool,
 }
 
@@ -780,6 +812,8 @@ impl SelectResponseIter {
             runtime_stats: SelectResultRuntimeStats::default(),
             runtime_stats_binding,
             result_metadata: Some(result_metadata),
+            cop_response_sink: None,
+            last_fetch: Duration::ZERO,
             closed: false,
         }
     }
@@ -855,7 +889,10 @@ impl SelectResponseIter {
                 }
             }
 
-            let event = match self.source.next_event(required_rows) {
+            let fetch_started = std::time::Instant::now();
+            let fetched = self.source.next_event(required_rows);
+            self.last_fetch = fetch_started.elapsed();
+            let event = match fetched {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => return Err(ResponseChannelError::Pending),
                 Err(error) => {
@@ -954,7 +991,10 @@ impl SelectResponseIter {
                 }
             }
 
-            let event = match self.source.next_event(required_rows) {
+            let fetch_started = std::time::Instant::now();
+            let fetched = self.source.next_event(required_rows);
+            self.last_fetch = fetch_started.elapsed();
+            let event = match fetched {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => {
                     return output
@@ -1087,6 +1127,14 @@ impl SelectResponseIter {
         self
     }
 
+    /// Binds the statement's consumer of per-response execution details
+    /// (Go's `StmtCtx.ExecDetails` and `RuntimeStatsColl`).
+    #[must_use]
+    pub fn with_cop_response_sink(mut self, sink: Option<Arc<dyn CopResponseSink>>) -> Self {
+        self.cop_response_sink = sink;
+        self
+    }
+
     /// Appends a response to the still-open owned source.
     ///
     /// This is the synchronous producer seam until the concrete blocking TiKV
@@ -1145,6 +1193,20 @@ impl SelectResponseIter {
                 warning.code.unwrap_or_default(),
                 warning.msg.clone().unwrap_or_default(),
             );
+        }
+        if let (Some(binding), Some(sample), Some(sink)) = (
+            &self.runtime_stats_binding,
+            response_runtime_stats,
+            &self.cop_response_sink,
+        ) {
+            if binding.collector_enabled {
+                sink.record_cop_response(
+                    &binding.metadata,
+                    sample,
+                    self.last_fetch,
+                    &response.execution_summaries,
+                );
+            }
         }
         if let (Some(binding), Some(sample)) = (&self.runtime_stats_binding, response_runtime_stats)
         {

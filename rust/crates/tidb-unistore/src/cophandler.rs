@@ -184,6 +184,7 @@ fn handle_cop_dag_request(
 /// (`closure_exec.go`): a TABLE-SCAN-ONLY DAG runs; anything above the scan
 /// refuses by name until its course lands.
 fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Response {
+    let started = std::time::Instant::now();
     validate_executor_list(&context.dag_req.executors);
     // Go validates every request range while clipping it against the region
     // (`extractKVRanges`, `cop_handler.go:675`); the whole-keyspace engine
@@ -265,7 +266,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
             topn.as_ref(),
             &mut scanned_rows,
         );
-        return with_scan_detail(response, scanned_rows);
+        return with_scan_detail(response, scanned_rows, started.elapsed());
     }
     if scan.tp() != tipb::ExecType::TypeTableScan {
         return other_error("index scans (closure_exec.go) are a later course of this port");
@@ -284,7 +285,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         topn.as_ref(),
         &mut scanned_rows,
     );
-    with_scan_detail(response, scanned_rows)
+    with_scan_detail(response, scanned_rows, started.elapsed())
 }
 
 /// Go `buildResp`: every DAG response carries `ExecDetailsV2` whose
@@ -294,8 +295,20 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
 fn with_scan_detail(
     mut response: coprocessor::Response,
     scanned_rows: u64,
+    elapsed: std::time::Duration,
 ) -> coprocessor::Response {
+    // Go's `genRespWithMPPExec` reports the request's wall time at
+    // millisecond resolution in both the legacy and the V2 detail.
+    let time_detail = tidb_proto::kvrpcpb::TimeDetail {
+        process_wall_time_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        ..tidb_proto::kvrpcpb::TimeDetail::default()
+    };
+    response.exec_details = Some(tidb_proto::kvrpcpb::ExecDetails {
+        time_detail: Some(time_detail),
+        ..tidb_proto::kvrpcpb::ExecDetails::default()
+    });
     response.exec_details_v2 = Some(tidb_proto::kvrpcpb::ExecDetailsV2 {
+        time_detail: Some(time_detail),
         scan_detail_v2: Some(tidb_proto::kvrpcpb::ScanDetailV2 {
             processed_versions: scanned_rows,
             ..tidb_proto::kvrpcpb::ScanDetailV2::default()

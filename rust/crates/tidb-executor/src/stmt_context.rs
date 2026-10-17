@@ -976,6 +976,10 @@ pub struct StmtContextData {
     statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     keys_read: KeysReadBudget,
+    /// Go `StmtCtx.ExecDetails`/`RuntimeStatsColl` as the consumer of every
+    /// coprocessor response this statement reads; `None` unless the
+    /// statement collects execution info.
+    cop_response_sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -1811,6 +1815,17 @@ context_configuration! {
         self
     }
 
+    /// Routes every coprocessor response this statement reads to `sink`
+    /// (Go `selectResult.fetchResp` merging `CopRuntimeStats`).
+    #[must_use]
+    pub fn with_cop_response_sink(
+        mut self,
+        sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
+    ) -> Self {
+        self.cop_response_sink = sink;
+        self
+    }
+
     /// Records `tidb_enable_ordered_result_mode`.
     #[must_use]
     pub fn with_enable_stable_result_mode(mut self, enabled: bool) -> Self {
@@ -2424,6 +2439,7 @@ impl StmtContext {
             statement_phase_observer: None,
             kv_exec_counter: Default::default(),
             keys_read: KeysReadBudget::default(),
+            cop_response_sink: None,
             allow_write_row_id: false,
             expr_pushdown_blacklist: std::sync::Arc::default(),
             disabled_logical_rules: std::sync::Arc::default(),
@@ -4141,6 +4157,12 @@ impl StmtContext {
     #[must_use]
     pub fn keys_read(&self) -> &KeysReadBudget {
         &self.keys_read
+    }
+
+    /// The statement's consumer of coprocessor response details.
+    #[must_use]
+    pub fn cop_response_sink(&self) -> Option<Arc<dyn tidb_distsql::CopResponseSink>> {
+        self.cop_response_sink.clone()
     }
 
     /// Go executor InitSnapshotWithSessCtx/newReplicaReadAdjuster for point readers.

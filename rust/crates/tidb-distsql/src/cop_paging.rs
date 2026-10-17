@@ -335,11 +335,27 @@ impl CopPagingState {
         response: &CoprocessorResponse,
         now: Duration,
     ) -> Result<CopPagingOutcome, CopPagingError> {
+        self.accept_response_with_runtime(response, None, now)
+    }
+
+    /// [`Self::accept_response`] publishing the response's `CopRuntimeStats`
+    /// sample beside its data, so the select consumer can merge it.
+    pub fn accept_response_with_runtime(
+        &mut self,
+        response: &CoprocessorResponse,
+        runtime: Option<crate::ResponseRuntimeStats>,
+        now: Duration,
+    ) -> Result<CopPagingOutcome, CopPagingError> {
         if self.complete {
             return Ok(self.completed_outcome());
         }
         self.preflight_accept_response()?;
-        self.responses.push_result(response.data.clone())?;
+        match runtime {
+            Some(runtime) => self
+                .responses
+                .push_result_with_runtime(response.data.clone(), runtime)?,
+            None => self.responses.push_result(response.data.clone())?,
+        }
         self.queued_responses += 1;
         let Some(page_range) = response.range.as_ref() else {
             self.ranges.reset(Vec::new());

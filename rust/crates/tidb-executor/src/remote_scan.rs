@@ -609,6 +609,10 @@ pub struct PushdownStatementContext {
     /// Go `DistSQLContext.MaxKeysRead`/`MaxKeysReadCounter`: the statement's
     /// `tidb_max_keys_read` budget and the counter `tidb_keys_examined` sums.
     pub keys_read: crate::KeysReadBudget,
+    /// Go `selectResult`'s `ctx.ExecDetails`/`RuntimeStatsColl`: where each
+    /// response's `CopRuntimeStats` goes; `None` when the statement does not
+    /// collect execution info.
+    pub cop_response_sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
 }
 
 impl Default for PushdownStatementContext {
@@ -642,6 +646,7 @@ impl Default for PushdownStatementContext {
             div_precision_increment: 4,
             staged_writes: Arc::default(),
             keys_read: crate::KeysReadBudget::default(),
+            cop_response_sink: None,
         }
     }
 }
@@ -677,6 +682,7 @@ impl PushdownStatementContext {
             div_precision_increment: ctx.div_precision_increment(),
             staged_writes: ctx.staged_writes_handle(),
             keys_read: ctx.keys_read().clone(),
+            cop_response_sink: ctx.cop_response_sink(),
         }
     }
 

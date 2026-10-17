@@ -532,6 +532,9 @@ where
         // from the statement's session variable when it differs from the
         // default; the lowering omits the field at the default value.
         context.div_precision_increment = request.statement.div_precision_increment;
+        // Go `ConstructDAGReq`: `RuntimeStatsColl != nil` asks the store for
+        // per-executor execution summaries.
+        context.collect_execution_summaries = request.statement.cop_response_sink.is_some();
         let mut dag = match aggregate.as_ref() {
             Some(LoweredAggregate::Global {
                 functions,
@@ -715,6 +718,7 @@ where
             cop_plan_ids,
             root_plan_id: request.statement.plan_id,
             keys_read: request.statement.keys_read.clone(),
+            cop_response_sink: request.statement.cop_response_sink.clone(),
         };
         let iter = scan_result(|| open_scan(&self.factory, plan))
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
@@ -792,6 +796,8 @@ struct RemoteScanPlan {
     root_plan_id: isize,
     /// The statement's `tidb_max_keys_read` budget and keys-examined counter.
     keys_read: tidb_executor::KeysReadBudget,
+    /// The statement's consumer of per-response execution details.
+    cop_response_sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
 }
 
 /// Go copIteratorWorker/liteCopIteratorWorker turns task panics into errors.
@@ -852,6 +858,7 @@ where
 
     let mut transport = factory.open_session_transport()?;
     let cancellation = plan.cancellation;
+    let cop_response_sink = plan.cop_response_sink.clone();
     // Go `SetFromSessionVars`, which EVERY read in `pkg/distsql` runs. The
     // zero-value builder this replaced sent `Concurrency: 0` and an EMPTY
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session
@@ -926,7 +933,9 @@ where
             true,
         )
         .map_err(|error| error.to_string())?;
-    Ok(result.into_select_iter(Vec::new()))
+    Ok(result
+        .into_select_iter(Vec::new())
+        .with_cop_response_sink(cop_response_sink))
 }
 
 /// The caller's end of one coprocessor scan.
