@@ -322,8 +322,9 @@ func StrToDateTime(ctx Context, str string, fsp int) (Time, error) {
 // StrToDuration converts str to Duration. It returns Duration in normal case,
 // and returns Time when str is in datetime format.
 // when isDuration is true, the d is returned, when it is false, the t is returned.
+// isNull remains true for invalid input even when the parse error is handled as a warning.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html.
-func StrToDuration(ctx Context, str string, fsp int) (d Duration, t Time, isDuration bool, err error) {
+func StrToDuration(ctx Context, str string, fsp int) (d Duration, t Time, isDuration bool, isNull bool, err error) {
 	str = strings.TrimSpace(str)
 	length := len(str)
 	if length > 0 && str[0] == '-' {
@@ -337,15 +338,15 @@ func StrToDuration(ctx Context, str string, fsp int) (d Duration, t Time, isDura
 	if length >= 12 {
 		t, err = StrToDateTime(ctx, str, fsp)
 		if err == nil {
-			return d, t, false, nil
+			return d, t, false, false, nil
 		}
 	}
 
-	d, _, err = ParseDuration(ctx, str, fsp)
+	d, isNull, err = ParseDuration(ctx, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = ctx.HandleTruncate(err)
 	}
-	return d, t, true, errors.Trace(err)
+	return d, t, true, isNull, errors.Trace(err)
 }
 
 // NumberToDuration converts number to Duration.

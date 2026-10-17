@@ -4789,3 +4789,17 @@ func enableNonStarterDeployModeForEmbeddingTest(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalMode))
 	})
 }
+
+func TestTimeDiffInvalidInput(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table timediff_invalid(c decimal, s varchar(32), d time)")
+	tk.MustExec("insert into timediff_invalid values (1, 'str25', '00:00:00')")
+	for _, vectorized := range []string{"0", "1"} {
+		tk.MustExec("set tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select timediff(0, (select 'str25' where c)) from timediff_invalid").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("select case when false then false else timediff(0, (select 'str25' where c)) end from timediff_invalid").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("select timediff(d, s), timediff(s, d), timediff('00:00:00', s), timediff(s, '00:00:00') from timediff_invalid").Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	}
+}
