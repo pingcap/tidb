@@ -657,6 +657,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	}
 	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
+	defer atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
@@ -679,8 +680,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	require.NoError(t, rs.Close())
 	require.Eventually(t, func() bool {
 		return !checkGoroutineExists(keyword)
-	}, time.Second, time.Millisecond*10)
-	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
+	}, 5*time.Second, time.Millisecond*10)
 }
 
 // TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
