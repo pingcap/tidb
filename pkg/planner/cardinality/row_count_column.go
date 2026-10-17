@@ -15,10 +15,14 @@
 package cardinality
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -68,7 +72,42 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 	return result, nil
 }
 
+// statsTimeZone returns the time zone a TIMESTAMP predicate value has to be in before it is
+// compared with the bucket bounds of hg.
+//
+// A histogram marked with statistics.HistogramFlagTimestampBoundsInUTC holds UTC bounds. Any
+// other histogram holds the wall clock of the session that ran ANALYZE, which is unknown, so the
+// predicate is used as written. See issue #52429.
+func statsTimeZone(sc *stmtctx.StatementContext, hg *statistics.Histogram) *time.Location {
+	if hg.TimestampBoundsInUTC() {
+		return time.UTC
+	}
+	return sc.TimeZone()
+}
+
+// toStatsTimeZone shifts a TIMESTAMP predicate value from the session time zone into statsLoc in
+// place. Everything else is left alone: DATE and DATETIME carry no time zone.
+func toStatsTimeZone(sc *stmtctx.StatementContext, statsLoc *time.Location, d *types.Datum) error {
+	if d.Kind() != types.KindMysqlTime {
+		return nil
+	}
+	t := d.GetMysqlTime()
+	if t.Type() != mysql.TypeTimestamp {
+		return nil
+	}
+	sessionLoc := sc.TimeZone()
+	if sessionLoc == statsLoc {
+		return nil
+	}
+	if err := t.ConvertTimeZone(sessionLoc, statsLoc); err != nil {
+		return sc.HandleError(err)
+	}
+	d.SetMysqlTime(t)
+	return nil
+}
+
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
+// A TIMESTAMP val must already be in statsTimeZone.
 func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate, err error) {
 	if val.IsNull() {
 		return statistics.DefaultRowEst(float64(c.NullCount)), nil
@@ -126,6 +165,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 // getColumnRowCount estimates the row count by a slice of Range.
 func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
 	sc := sctx.GetSessionVars().StmtCtx
+	statsLoc := statsTimeZone(sc, &c.Histogram)
 	var totalCount statistics.RowEstimate
 	for _, rg := range ranges {
 		highVal := *rg.HighVal[0].Clone()
@@ -136,16 +176,22 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		if lowVal.Kind() == types.KindString {
 			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
+		if err := toStatsTimeZone(sc, statsLoc, &lowVal); err != nil {
+			return statistics.DefaultRowEst(0), err
+		}
+		if err := toStatsTimeZone(sc, statsLoc, &highVal); err != nil {
+			return statistics.DefaultRowEst(0), err
+		}
 		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
 		if err != nil {
 			return statistics.DefaultRowEst(0), errors.Trace(err)
 		}
-		lowEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, lowVal)
+		lowEncoded, err := codec.EncodeKey(statsLoc, nil, lowVal)
 		err = sc.HandleError(err)
 		if err != nil {
 			return statistics.DefaultRowEst(0), err
 		}
-		highEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, highVal)
+		highEncoded, err := codec.EncodeKey(statsLoc, nil, highVal)
 		err = sc.HandleError(err)
 		if err != nil {
 			return statistics.DefaultRowEst(0), err

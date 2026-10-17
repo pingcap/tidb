@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -413,6 +414,15 @@ func buildAutoPreSplitHistogramValues(
 			continue
 		}
 		upper := *histogram.GetUpper(i)
+		if histogram.TimestampBoundsInUTC() && upper.Kind() == types.KindMysqlTime {
+			// newAutoPreSplitValue takes a value to be in the session time zone.
+			if t := upper.GetMysqlTime(); t.Type() == mysql.TypeTimestamp {
+				if err := t.ConvertTimeZone(time.UTC, sctx.GetSessionVars().Location()); err != nil {
+					return nil, err
+				}
+				upper.SetMysqlTime(t)
+			}
+		}
 		if types.IsString(colInfo.GetType()) {
 			// String Histogram bounds are stored as collation comparison bytes.
 			// GetUpper returns KindString, so restore bytes before index encoding.

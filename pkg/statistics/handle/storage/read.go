@@ -104,7 +104,7 @@ func histMetaFromStorage(
 	} else {
 		tp = &possibleColInfo.FieldType
 	}
-	sql := statsSelectPrefix(priority) + "distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?"
+	sql := statsSelectPrefix(priority) + "distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?"
 	rows, _, err := execRowsAtSnapshot(
 		ctx, sctx, snapshot, sql, item.TableID, item.ID, isIndex)
 	if err != nil {
@@ -115,6 +115,7 @@ func histMetaFromStorage(
 	}
 	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
 	hist.Correlation = rows[0].GetFloat64(5)
+	hist.Flag = rows[0].GetInt64(6)
 	return hist, rows[0].GetInt64(4), nil
 }
 
@@ -170,6 +171,7 @@ func ReadColumnDistributionStats(
 		nullCount:   column.NullCount,
 		totColSize:  histMeta.TotColSize,
 		correlation: histMeta.Correlation,
+		flag:        histMeta.Flag,
 		priority:    kv.PriorityNormal,
 		snapshot:    snapshot,
 	}
@@ -209,6 +211,7 @@ func HistogramFromStorageWithPriority(
 	nullCount int64,
 	totColSize int64,
 	corr float64,
+	flag int64,
 	priority int,
 ) (*statistics.Histogram, error) {
 	return histogramFromStorageWithParams(util.StatsCtx, sctx, histogramLoadParams{
@@ -221,6 +224,7 @@ func HistogramFromStorageWithPriority(
 		nullCount:   nullCount,
 		totColSize:  totColSize,
 		correlation: corr,
+		flag:        flag,
 		priority:    priority,
 	})
 }
@@ -235,6 +239,7 @@ type histogramLoadParams struct {
 	nullCount   int64
 	totColSize  int64
 	correlation float64
+	flag        int64
 	priority    int
 	snapshot    uint64
 }
@@ -259,6 +264,7 @@ func histogramFromStorageWithParams(
 		params.histID, params.ndv, params.nullCount, params.version,
 		tp, bucketSize, params.totColSize)
 	hg.Correlation = params.correlation
+	hg.Flag = params.flag
 	totalCount := int64(0)
 	for i := range bucketSize {
 		count := rows[i].GetInt64(0)
@@ -426,6 +432,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	statsVer := row.GetInt64(7)
+	flag := row.GetInt64(9)
 	idx := table.GetIdx(histID)
 
 	// All the objects in the table share the same stats version.
@@ -466,7 +473,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0, kv.PriorityNormal)
+			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0, flag, kv.PriorityNormal)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -517,6 +524,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	totColSize := row.GetInt64(6)
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(8)
+	flag := row.GetInt64(9)
 	col := table.GetCol(histID)
 
 	// All the objects in the table share the same stats version.
@@ -571,10 +579,11 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			col.Histogram.Correlation = correlation
+			col.Histogram.Flag = flag
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation, kv.PriorityNormal)
+			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation, flag, kv.PriorityNormal)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -652,7 +661,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		return nil, err
 	}
 
-	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %?", tableID)
+	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag from mysql.stats_histograms where table_id = %?", tableID)
 	if err != nil {
 		return nil, err
 	}
@@ -729,6 +738,7 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 	distinct := row[0].GetInt64(0)
 	histVer := row[0].GetUint64(1)
 	nullCount := row[0].GetInt64(2)
+	flag := row[0].GetInt64(5)
 	var totColSize int64
 	var corr float64
 	var tp types.FieldType
@@ -742,9 +752,9 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 			tp = colInfo.FieldType
 			break
 		}
-		return HistogramFromStorageWithPriority(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr, kv.PriorityNormal)
+		return HistogramFromStorageWithPriority(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr, flag, kv.PriorityNormal)
 	}
-	return HistogramFromStorageWithPriority(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0, kv.PriorityNormal)
+	return HistogramFromStorageWithPriority(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0, flag, kv.PriorityNormal)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
@@ -877,7 +887,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		topN *statistics.TopN
 	)
 	if fullLoad {
-		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
+		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, hg.Flag, kv.PriorityHigh)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -985,7 +995,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
+	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, hgMeta.Flag, kv.PriorityHigh)
 	if err != nil {
 		return errors.Trace(err)
 	}

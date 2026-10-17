@@ -42,6 +42,7 @@ func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn
 		TotColSize:        hist.TotColSize,
 		LastUpdateVersion: hist.LastUpdateVersion,
 		Correlation:       hist.Correlation,
+		Flag:              hist.Flag,
 		StatsVer:          statsVer,
 	}
 	if cmsketch != nil || topn != nil {
@@ -220,6 +221,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				return nil, err
 			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
+			hist.Flag = jsonCol.Flag
 			statsVer := int64(statistics.Version0)
 			if jsonCol.StatsVer != nil {
 				statsVer = *jsonCol.StatsVer
