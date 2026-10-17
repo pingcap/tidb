@@ -265,20 +265,15 @@ pub(super) fn expand_interval(
         }
         None => {
             let mode = super::table_partition::PartitionBuildMode::Create;
-            super::table_partition_range::fold_range_bound(
-                first,
-                "FIRST PARTITION",
-                unsigned,
-                ctx,
-                mode,
-            )?;
-            super::table_partition_range::fold_range_bound(
-                last,
-                "LAST PARTITION",
-                unsigned,
-                ctx,
-                mode,
-            )?;
+            // Go's generation takes a NULL end as it comes (its own 8200s
+            // report it); only a value the expansion would accept is folded
+            // as an ordinary RANGE bound here.
+            for (bound, name) in [(first, "FIRST PARTITION"), (last, "LAST PARTITION")] {
+                if matches!(eval(bound, ctx), Ok(Datum::Null)) {
+                    continue;
+                }
+                super::table_partition_range::fold_range_bound(bound, name, unsigned, ctx, mode)?;
+            }
         }
     }
     let mut definitions = Vec::new();

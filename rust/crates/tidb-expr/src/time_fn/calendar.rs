@@ -2030,6 +2030,16 @@ fn str_to_date_inner(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum,
             value.hour, value.minute, value.second
         )
     };
+    // `Time.Check` without `allowZeroInDate` -- a strict write's flags, not
+    // the SELECT's -- fails a zero month or day of a non-zero date, so
+    // `StrToDate` reports failure while `t` keeps the parsed time, and both
+    // signatures then name that time (`ErrWrongValue`).
+    if !cols.type_flags().ignore_zero_in_date_err()
+        && (value.month == 0 || value.day == 0)
+        && !(value.year == 0 && value.month == 0 && value.day == 0)
+    {
+        return Ok(Datum::Bytes(datetime.into_bytes()));
+    }
     // The signatures' own `NO_ZERO_DATE` rejection, as sentinels the wrapper
     // reports: empty bytes for the DATE signature (1411 naming the input),
     // the parsed time for the DATETIME one (1292 naming it).

@@ -415,6 +415,13 @@ pub trait TableSource {
             .filter(|table| !table.is_local_temporary)
     }
 
+    /// Go `PlanBuilder.renamingViewName`: the view a `CREATE OR REPLACE VIEW`
+    /// is redefining, which no view body may read while it is being rebuilt.
+    /// The default is no such statement.
+    fn renaming_view(&self) -> Option<(&str, &str)> {
+        None
+    }
+
     /// [`Self::find_view`] over the same detached schema.
     fn find_view_ignoring_local_temporary(
         &self,

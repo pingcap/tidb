@@ -189,11 +189,11 @@ pub fn resolve_view_definition(
         catalog.table_in(&database, &name),
         Some(crate::TableEntry::View(_))
     );
-    let mut hidden;
+    let mut renaming;
     let resolving = if create.or_replace && replacing_view {
-        hidden = catalog.clone();
-        hidden.drop_table_in(&database, &name);
-        &hidden
+        renaming = catalog.clone();
+        renaming.set_renaming_view(&database, &name);
+        &renaming
     } else {
         catalog
     };

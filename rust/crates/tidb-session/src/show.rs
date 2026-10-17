@@ -965,6 +965,21 @@ impl Session {
 
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
     /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
+    /// The schema `SHOW COLUMNS` / `DESCRIBE` default to: the `FROM db` clause,
+    /// else the current database -- `ErrNoDB` only for an unqualified table, as
+    /// a `db.tbl` path names its own schema and needs no current one.
+    fn show_columns_database(
+        &self,
+        explicit: Option<&str>,
+        table_path: &[String],
+    ) -> Result<String, DriverError> {
+        match (explicit, table_path) {
+            (Some(database), _) => Ok(database.to_owned()),
+            (None, [_, _]) => Ok(String::new()),
+            (None, _) => self.require_current_database().map(str::to_owned),
+        }
+    }
+
     fn show_columns(
         &mut self,
         database: &str,
@@ -2382,10 +2397,7 @@ impl Session {
                     }
                     Some(tidb_ast::ShowColumnsFilter::Where(expr)) => (None, Some(expr)),
                 };
-                let database = match &show.database {
-                    Some(name) => name.clone(),
-                    None => self.require_current_database()?.into(),
-                };
+                let database = self.show_columns_database(show.database.as_deref(), &show.table)?;
                 let output = self.show_columns(&database, &show.table, None, show.full)?;
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
@@ -2394,7 +2406,7 @@ impl Session {
             // COLUMNS statement; this parser keeps a node of its own, so
             // the same output is produced from it here.
             tidb_ast::AdminStmt::DescribeTable(describe) => {
-                let database = self.require_current_database()?.to_owned();
+                let database = self.show_columns_database(None, &describe.table)?;
                 let column = describe.column.as_ref().and_then(|path| path.last());
                 self.show_columns(
                     &database,

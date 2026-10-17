@@ -1731,6 +1731,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.building_view_stack.contains(&key) {
             return Err(PlanError::view_recursive(db_name, table_name));
         }
+        // "If the view is being renamed, we return the mysql compatible error
+        // message."
+        if self.source.renaming_view().is_some_and(|(renaming_db, renaming)| {
+            (
+                tidb_mysql::to_lowercase(renaming_db),
+                tidb_mysql::to_lowercase(renaming),
+            ) == key
+        }) {
+            return Err(PlanError::renaming_view_missing(format!(
+                "{db_name}.{table_name}"
+            )));
+        }
         self.building_view_stack.insert(key.clone());
         Ok(ViewBuildGuard { key })
     }
@@ -1833,6 +1845,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             match error.kind() {
                 PlanErrorKind::Internal
                 | PlanErrorKind::ViewRecursive
+                | PlanErrorKind::RenamingViewMissing(_)
                 | PlanErrorKind::FieldNotInGroupBy { .. }
                 | PlanErrorKind::FieldNotInAggregatedQuery { .. }
                 | PlanErrorKind::NotSupportedYet(_) => error,

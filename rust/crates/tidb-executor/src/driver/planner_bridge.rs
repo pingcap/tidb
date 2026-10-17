@@ -1022,16 +1022,22 @@ pub(super) fn update_target_columns(
         let name = &plan.output_names()[index].names;
         let mut target = None;
         for table in &tables {
-            let (database, original) = split_table_path(&table.name, current_db)?;
-            let visible = table.alias.as_deref().unwrap_or(original);
             // Go `buildUpdateLists`: `if isCTE(tlW) || IsView() ||
-            // IsSequence()` is 1288.
+            // IsSequence()` is 1288. A CTE is no stored table, so it is
+            // recognised before any schema is resolved for it (it needs none).
             if is_cte(update.with.as_ref(), table) {
+                let visible = table
+                    .alias
+                    .as_deref()
+                    .or_else(|| table.name.last().map(String::as_str))
+                    .unwrap_or_default();
                 if visible.eq_ignore_ascii_case(&name.table.original) {
                     break;
                 }
                 continue;
             }
+            let (database, original) = split_table_path(&table.name, current_db)?;
+            let visible = table.alias.as_deref().unwrap_or(original);
             if !visible.eq_ignore_ascii_case(&name.table.original)
                 || !database.eq_ignore_ascii_case(&name.database.original)
             {

@@ -388,6 +388,50 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
     ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+        let requests = self.collect_table_privileges_without_views(stmt, preparing)?;
+        self.apply_view_security(requests)
+    }
+
+    /// Go `BuildDataSourceFromView`'s `SQL SECURITY` handling, which runs while
+    /// the statement is PLANNED and so before any of the statement's own
+    /// privileges are checked: a DEFINER view's body must be readable by its
+    /// definer (`ErrViewInvalid` otherwise) and then asks nothing of the
+    /// invoker beyond the view itself, while an INVOKER view's body privileges
+    /// are the invoker's to hold.
+    fn apply_view_security(
+        &self,
+        requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
+    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+        let Some((registry, _, _)) = self.privilege_context() else {
+            return Ok(requests);
+        };
+        let catalog = self.lock_catalog()?;
+        let mut out = Vec::with_capacity(requests.len());
+        for request in requests {
+            let is_select = request.privilege == privilege::GlobalPriv::Select;
+            let (database, table) = (request.database.clone(), request.table.clone());
+            out.push(request);
+            if !is_select {
+                continue;
+            }
+            for (database, table) in
+                view_body_visits(registry, &catalog, &database, &table, 0)?
+            {
+                out.push(crate::table_privilege::TablePrivilegeRequest::new(
+                    &database,
+                    &table,
+                    privilege::GlobalPriv::Select,
+                ));
+            }
+        }
+        Ok(out)
+    }
+
+    fn collect_table_privileges_without_views(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        preparing: bool,
+    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
         self.validate_ddl_preprocess(stmt)?;
         crate::table_privilege::required_table_privileges(stmt, &self.current_db, |dml| {
             let mut ctx = self.statement_context_for_stmt(stmt, false);
@@ -1056,6 +1100,63 @@ impl Session {
 }
 
 /// Go `RequestVerification(activeRoles, database, table, "", priv)` for an
+/// What the view `database`.`name` adds to the statement's privilege list, as
+/// Go's `BuildDataSourceFromView` leaves it: nothing for a table, and for a view
+/// the `SELECT` visits of its body (nested views expanded in turn) -- cleared
+/// once checked against the definer for a `DEFINER` view, whose failure is
+/// `ErrViewInvalid`, and kept for the invoker for an `INVOKER` one.
+fn view_body_visits(
+    registry: &privilege::PrivilegeRegistry,
+    catalog: &tidb_executor::Catalog,
+    database: &str,
+    name: &str,
+    depth: usize,
+) -> Result<Vec<(String, String)>, DriverError> {
+    // A recursive definition is the planner's own error; the check only
+    // follows a bounded chain.
+    if depth > 32 {
+        return Ok(Vec::new());
+    }
+    let Some(tidb_executor::TableEntry::View(view)) = catalog.table_in(database, name) else {
+        return Ok(Vec::new());
+    };
+    let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(&view.select_sql) else {
+        return Ok(Vec::new());
+    };
+    let body = tidb_ast::Stmt::Query(query);
+    let mut visits = Vec::new();
+    for (body_db, body_table) in crate::table_privilege::read_tables(&body, database) {
+        let nested = view_body_visits(registry, catalog, &body_db, &body_table, depth + 1)?;
+        visits.push((body_db, body_table));
+        visits.extend(nested);
+    }
+    if !view.security.eq_ignore_ascii_case("DEFINER") {
+        return Ok(visits);
+    }
+    // Go `RequestVerificationWithUser` matches the definer's identity against
+    // the stored accounts by host pattern (`root`@`localhost` is `root`@`%`).
+    let definer = registry
+        .matching_account(&view.definer_user, &view.definer_host)
+        .unwrap_or_else(|| (view.definer_user.clone(), view.definer_host.clone()));
+    let roles = registry.default_roles(&definer);
+    for (body_db, body_table) in &visits {
+        if !scoped_privilege(
+            registry,
+            &definer.0,
+            &definer.1,
+            &roles,
+            body_db,
+            body_table,
+            privilege::GlobalPriv::Select,
+        ) {
+            return Err(DriverError::Schema(tidb_executor::SchemaErrorKind::ViewInvalid(format!(
+                "{database}.{name}"
+            ))));
+        }
+    }
+    Ok(Vec::new())
+}
+
 /// identity: the SEM table verdict, the virtual schemas, then the grants
 /// (own or through `roles`).
 fn scoped_privilege(

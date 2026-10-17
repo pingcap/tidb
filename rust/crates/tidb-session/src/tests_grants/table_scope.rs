@@ -802,3 +802,59 @@ fn view_owner_batch_replace_requires_drop_privilege() {
         .unwrap();
     assert_eq!(row_text(boot.run("SELECT a FROM v")), vec![vec!["2"]]);
 }
+
+/// Go `BuildDataSourceFromView` checks a `SQL SECURITY DEFINER` view's body
+/// against the DEFINER while planning, `ErrViewInvalid` (1356) when the
+/// definer cannot read it -- before the invoker's own missing `SELECT` on the
+/// view is reported (1142). Corpus: `privilege/privileges` `TestSelectViewSecurity`.
+#[test]
+fn a_definer_view_is_invalid_when_its_definer_lost_the_base_table() {
+    let (privs, mut boot, mut bob) = scoped();
+    boot.run("CREATE TABLE viewsecurity (c INT)").unwrap();
+    boot.run("CREATE USER 'selectusr'@'localhost'").unwrap();
+    boot.run("GRANT CREATE VIEW ON test.* TO 'selectusr'@'localhost'")
+        .unwrap();
+    boot.run("GRANT SELECT ON test.viewsecurity TO 'selectusr'@'localhost'")
+        .unwrap();
+    let mut definer = session_as(&privs, boot.shared_catalog(), "selectusr", "localhost");
+    definer.run("SELECT * FROM test.viewsecurity").unwrap();
+    definer
+        .run(
+            "CREATE ALGORITHM = UNDEFINED SQL SECURITY DEFINER VIEW test.selectviewsecurity \
+             AS SELECT * FROM test.viewsecurity",
+        )
+        .unwrap();
+    boot.run("SELECT * FROM test.selectviewsecurity").unwrap();
+    // While the definer can read the base table, the invoker is asked only
+    // for the view.
+    boot.run("GRANT SELECT ON test.selectviewsecurity TO 'bob'@'%'")
+        .unwrap();
+    bob.run("SELECT * FROM test.selectviewsecurity").unwrap();
+    boot.run("REVOKE SELECT ON test.viewsecurity FROM 'selectusr'@'localhost'")
+        .unwrap();
+    for session in [&mut definer, &mut bob] {
+        assert_eq!(
+            denied(session, "SELECT * FROM test.selectviewsecurity").0,
+            1356
+        );
+    }
+}
+
+/// `TestFieldList`: a connection with no schema selected may still name one in
+/// `DESC db.t`, and an account without a column privilege is refused with 1142
+/// rather than `ErrNoDB`.
+#[test]
+fn desc_of_a_qualified_table_without_a_current_database_checks_privileges() {
+    let (privs, mut boot, _) = scoped();
+    boot.run("CREATE USER 'tableaccess'@'localhost'").unwrap();
+    boot.run("CREATE TABLE fieldlistt1 (a INT)").unwrap();
+    let mut user = session_as(&privs, boot.shared_catalog(), "tableaccess", "localhost");
+    assert_eq!(
+        denied(&mut user, "DESC test.fieldlistt1"),
+        (
+            1142,
+            "SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'"
+                .to_owned()
+        )
+    );
+}

@@ -292,6 +292,9 @@ pub struct Catalog {
     /// `LOCK TABLES` lock, which every statement's `CheckTableLock` asks;
     /// monotonic for the same reason as `foreign_keys_present`.
     table_locks_present: bool,
+    /// Go `PlanBuilder.renamingViewName`: the view a `CREATE OR REPLACE VIEW`
+    /// is redefining, set on the statement's private catalog copy only.
+    renaming_view: Option<(String, String)>,
     /// Bumped by every mutation that actually CHANGED something, so a
     /// transaction can detect that the shared catalog moved under it (Go
     /// detects the same at commit through TiKV's optimistic conflict check on
@@ -478,6 +481,8 @@ pub(crate) struct PlannerCatalog {
     /// The table ids the open transaction has staged writes under, which Go
     /// reads through `Context.HasDirtyContent` (`tableHasDirtyContent`).
     dirty_tables: Vec<i64>,
+    /// See [`Catalog::set_renaming_view`].
+    renaming_view: Option<(String, String)>,
 }
 
 impl PlannerCatalog {
@@ -647,6 +652,12 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
             .get(&CatalogTableKey::new(db_name, view_name))
     }
 
+    fn renaming_view(&self) -> Option<(&str, &str)> {
+        self.renaming_view
+            .as_ref()
+            .map(|(database, name)| (database.as_str(), name.as_str()))
+    }
+
     fn find_sequence(&self, db_name: &str, table_name: &str) -> Option<&str> {
         self.view
             .sequences
@@ -748,6 +759,7 @@ impl CatalogSnapshot {
             next_table_id: self.next_table_id,
             foreign_keys_present: self.foreign_keys_present,
             table_locks_present: self.table_locks_present,
+            renaming_view: None,
             version: self.version,
             metadata_version: self.metadata_version,
             latest_index_schema: self.latest_index_schema.clone(),
@@ -945,6 +957,7 @@ impl Default for Catalog {
             temporary_sweep: None,
             foreign_keys_present: false,
             table_locks_present: false,
+            renaming_view: None,
         };
         // Go's bootstrap builds the `information_schema` tables into the
         // infoschema itself, so they are ordinary objects to every name
@@ -2081,7 +2094,14 @@ impl Catalog {
             hypo_indexes: None,
             hypo_tiflash_replicas: None,
             dirty_tables: Vec::new(),
+            renaming_view: self.renaming_view.clone(),
         }
+    }
+
+    /// Marks `database`.`name` as the view being redefined, for the planner of
+    /// the view's body (Go `renamingViewName`). Used on a private copy.
+    pub(crate) fn set_renaming_view(&mut self, database: &str, name: &str) {
+        self.renaming_view = Some((database.to_owned(), name.to_owned()));
     }
 
     /// The planner's view of this catalog's schema, built on first use and

@@ -1764,3 +1764,38 @@ fn a_parenthesized_view_body_keeps_its_braces() {
         "{shown:?}"
     );
 }
+
+/// Go reads a schema-qualified table without a current database: no `ErrNoDB`.
+/// (`TestFieldList` and `TestIssue53490` in `privilege/privileges` run as users
+/// whose connection selected no schema.)
+#[test]
+fn qualified_statements_need_no_current_database() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE nodb").unwrap();
+    session
+        .run("CREATE TABLE nodb.tt1 (id INT, pid INT, name VARCHAR(20), fullname VARCHAR(20))")
+        .unwrap();
+    session
+        .run("INSERT INTO nodb.tt1 VALUES (1, NULL, 'a', ''), (2, 1, 'b', '')")
+        .unwrap();
+    session.deselect_database();
+    session.run("DESC nodb.tt1").unwrap();
+    session
+        .run(
+            "WITH t_f AS (SELECT id, pid, name, 'AAA' fullname FROM nodb.tt1) \
+             UPDATE nodb.tt1 INNER JOIN t_f SET tt1.fullname = t_f.fullname WHERE tt1.id = t_f.id",
+        )
+        .unwrap();
+    assert_eq!(
+        session
+            .run(
+                "WITH t_f AS (SELECT id, pid, name, 'AAA' fullname FROM nodb.tt1) \
+                 UPDATE nodb.tt1 INNER JOIN t_f SET t_f.fullname = t_f.fullname \
+                 WHERE tt1.id = t_f.id"
+            )
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1288
+    );
+}

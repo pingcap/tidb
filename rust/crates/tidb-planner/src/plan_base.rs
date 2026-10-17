@@ -368,6 +368,10 @@ pub enum PlanErrorKind {
     UnknownDatabase(String),
     /// Go `infoschema.ErrTableNotExists`.
     UnknownTable(String),
+    /// Go `plannererrors.ErrNoSuchTable` raised by `checkRecursiveView` for the
+    /// view being renamed: unlike an ordinary missing table it is not turned
+    /// into `ErrViewInvalid` by a view that reads it.
+    RenamingViewMissing(String),
     /// Go `plannererrors.ErrBadTable` (1051).
     BadTable(String),
     /// Go ErrUnknownTable (1109), with the clause owning name resolution.
@@ -634,6 +638,16 @@ impl PlanError {
         Self {
             message: format!("Table '{table}' doesn't exist"),
             kind: PlanErrorKind::UnknownTable(table),
+        }
+    }
+
+    /// Go `plannererrors.ErrNoSuchTable` for the view being renamed.
+    #[must_use]
+    pub fn renaming_view_missing(table: impl Into<String>) -> Self {
+        let table = table.into();
+        Self {
+            message: format!("Table '{table}' doesn't exist"),
+            kind: PlanErrorKind::RenamingViewMissing(table),
         }
     }
 

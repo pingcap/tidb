@@ -17300,6 +17300,9 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
          (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
         "ALTER TABLE tv0 MODIFY tv0.b BIGINT",
         "CREATE TABLE jd8 (id INT PRIMARY KEY, j2 JSON DEFAULT (JSON_ARRAY(id, id * 2)))",
+        "CREATE VIEW v_a AS SELECT * FROM tv0",
+        "CREATE VIEW v_b AS SELECT * FROM v_a",
+        "CREATE TABLE sd (c INT, c1 VARCHAR(32) DEFAULT (STR_TO_DATE('01-01', '%Y-%m-%d')))",
     ] {
         session.execute_write(ddl).unwrap_or_else(|error| panic!("{ddl}: {error:?}"));
     }
@@ -17389,6 +17392,28 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
              FOREIGN KEY fk_user_id ((CAST(doc->'$[*]' AS SIGNED ARRAY))) REFERENCES tv0 (a))",
             1072,
             "Key column '_V$_fk_user_id_0' doesn't exist in table",
+        ),
+        (
+            "CREATE TABLE ivn (id INT UNSIGNED) PARTITION BY RANGE (id) INTERVAL (1000000) \
+             FIRST PARTITION LESS THAN (NULL) LAST PARTITION LESS THAN (10000000)",
+            8200,
+            "Unsupported INTERVAL partitioning: Error when generating partition values",
+        ),
+        (
+            "CREATE TABLE ivn (id INT UNSIGNED) PARTITION BY RANGE (id) INTERVAL (1000000) \
+             FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (NULL)",
+            8200,
+            "Unsupported INTERVAL: expr () not matching FIRST + n INTERVALs (0 + n * 1000000)",
+        ),
+        (
+            "CREATE OR REPLACE VIEW v_a AS SELECT * FROM v_b",
+            1146,
+            "Table 'test.v_a' doesn't exist",
+        ),
+        (
+            "INSERT INTO sd (c) VALUES (1)",
+            1292,
+            "Incorrect datetime value: '2001-01-00 00:00:00'",
         ),
         (
             "INSERT INTO jd8 (id) VALUES (1)",

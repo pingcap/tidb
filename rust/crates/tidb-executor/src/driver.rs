@@ -345,6 +345,9 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::UnknownTable(table) => {
             DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
         }
+        tidb_planner::plan_base::PlanErrorKind::RenamingViewMissing(table) => {
+            DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
+        }
         tidb_planner::plan_base::PlanErrorKind::BadTable(table) => {
             DriverError::Mysql(MysqlError::new(1051, format!("Unknown table '{table}'")))
         }

@@ -69,7 +69,7 @@ pub(crate) struct TablePrivilegeRequest {
 }
 
 impl TablePrivilegeRequest {
-    fn new(database: &str, table: &str, privilege: GlobalPriv) -> Self {
+    pub(crate) fn new(database: &str, table: &str, privilege: GlobalPriv) -> Self {
         Self {
             database: database.to_owned(),
             table: table.to_owned(),
@@ -235,7 +235,7 @@ fn split_path<'a>(path: &'a [String], current_db: &'a str) -> Option<(String, St
 /// Every `TableRef` reachable from `node`, in traversal order -- the row
 /// sources Go's `buildDataSource` visits, and therefore the tables it
 /// demands `SELECT` on.
-fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
+pub(crate) fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
     crate::binding::collect_physical_table_refs(stmt)
         .iter()
         .filter_map(|path| split_path(path, current_db))
