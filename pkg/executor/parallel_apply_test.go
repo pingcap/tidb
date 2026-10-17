@@ -1087,3 +1087,54 @@ func flattenRows(rows [][]any) []string {
 	}
 	return result
 }
+
+func TestParallelApplyCacheSharesInflightInner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, a int)")
+	tk.MustExec("create table t2 (a int, b int)")
+	// 40 outer rows, each value of a four times in a row, so the rows with the
+	// same correlated value reach different workers at about the same time.
+	values := make([]string, 0, 40)
+	for i := range 40 {
+		values = append(values, fmt.Sprintf("(%d, %d)", i, i/4))
+	}
+	tk.MustExec("insert into t1 values " + strings.Join(values, ","))
+	tk.MustExec("insert into t2 values (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10)")
+	tk.MustExec("analyze table t1, t2")
+
+	queries := []string{
+		"select t1.id, (select /*+ NO_DECORRELATE() */ max(t2.b) from t2 where t2.a = t1.a) from t1",
+		"select t1.id, (select /*+ NO_DECORRELATE() */ max(t2.b) from t2 where t2.a = t1.a) from t1 order by t1.id",
+	}
+	tk.MustExec("set tidb_enable_parallel_apply = false")
+	expected := make([][][]any, 0, len(queries))
+	for _, sql := range queries {
+		expected = append(expected, tk.MustQuery(sql).Sort().Rows())
+	}
+
+	tk.MustExec("set tidb_enable_parallel_apply = true")
+	tk.MustExec("set tidb_executor_concurrency = 4")
+	// Slow inner reads overlap, so without sharing them most duplicates would
+	// miss the cache.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner", `return(50)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner"))
+	}()
+	for i, sql := range queries {
+		checkApplyPlan(t, tk, sql, 4)
+		tk.MustQuery(sql).Sort().Check(expected[i])
+		// Every outer row after the first of its value either waits for the
+		// read already running or finds its rows in the cache: 30 of 40.
+		var applyLine string
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if line := fmt.Sprintf("%v", row); strings.Contains(line, "Apply") {
+				applyLine = line
+				break
+			}
+		}
+		require.Contains(t, applyLine, "cache:ON", sql)
+		require.Contains(t, applyLine, "cacheHitRatio:75.000%", sql)
+	}
+}
