@@ -131,9 +131,11 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // in
 				sql: "select * from t where t.b in (select d from t where t.c > 2)",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					ph, ok := p.(*physicalop.PhysicalHashJoin)
+					ph, ok := p.(*physicalop.PhysicalIndexHashJoin)
 					require.True(t, ok)
-					ptr, ok := ph.Children()[1].(*physicalop.PhysicalTableReader)
+					agg, ok := ph.Children()[0].(*physicalop.PhysicalHashAgg)
+					require.True(t, ok)
+					ptr, ok := agg.Children()[0].(*physicalop.PhysicalTableReader)
 					require.True(t, ok)
 					require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 				},

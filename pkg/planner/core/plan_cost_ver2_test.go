@@ -25,17 +25,21 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -976,4 +980,289 @@ func TestHashAggMemCostGatedOnFreeOrdering(t *testing.T) {
 		require.NotRegexp(t, hashAggMemPattern, traceJoin,
 			"HashAgg over a join output must NOT include the memory penalty (gated on free ordering), got: %s", traceJoin)
 	})
+}
+
+// TestIndexJoinRequestPenalty checks that the new request model is independent
+// of the legacy ratio and charges probe execution independently of reader type.
+func TestIndexJoinRequestPenalty(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("create table request_outer(k int primary key)")
+	tk.MustExec("create table request_inner(k int, v int, payload varchar(100), key kv(k,v))")
+	tk.MustExec("insert into request_outer values (1),(2),(3)")
+	tk.MustExec("insert into request_inner values (1,0,'a'),(2,0,'b'),(3,0,'c')")
+	tk.MustExec("create table request_primary(k int primary key, payload varchar(100))")
+	tk.MustExec("insert into request_primary values (1,'a'),(2,'b'),(3,'c')")
+	tk.MustExec("analyze table request_outer, request_inner, request_primary all columns")
+	for _, c := range []struct {
+		name, columns, reader, table, filter string
+		doubleReads                          int
+	}{
+		{"covering", "count(*)", "IndexReader", "request_inner", " where i.v=0", 0},
+		{"lookup", "sum(length(i.payload))", "IndexLookUp", "request_inner", " where i.v=0", 1},
+		{"primary lookup", "sum(length(i.payload))", "TableReader", "request_primary", "", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var expectedCost, expectedFormula any
+			for _, rate := range []string{"0", "1", "10"} {
+				tk.MustExec("set tidb_index_join_double_read_penalty_cost_rate=" + rate)
+				rows := tk.MustQuery("explain format='cost_trace' select /*+ INL_HASH_JOIN(i) */ " + c.columns + " from request_outer o join " + c.table + " i on o.k=i.k" + c.filter).Rows()
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+				plan := fmt.Sprint(rows)
+				require.Contains(t, plan, "IndexHashJoin")
+				require.Contains(t, plan, c.reader)
+				require.Equal(t, 1, strings.Count(rows[0][3].(string), "requestPenalty("))
+				require.Equal(t, c.doubleReads, strings.Count(rows[0][3].(string), "doubleRead("))
+				if rate == "0" {
+					expectedCost, expectedFormula = rows[0][2], rows[0][3]
+				} else {
+					require.Equal(t, expectedCost, rows[0][2], "legacy rate=%s", rate)
+					require.Equal(t, expectedFormula, rows[0][3], "legacy rate=%s", rate)
+				}
+			}
+		})
+	}
+	t.Run("probe batches", func(t *testing.T) {
+		for _, c := range []struct{ size, quantity, pressure string }{
+			{"25000", "0.12288", "3"},
+			{"2", "1536", "2"},
+			{"1", "3072", "1"},
+		} {
+			tk.MustExec("set tidb_index_join_batch_size=" + c.size)
+			rows := tk.MustQuery("explain format='cost_trace' select /*+ INL_HASH_JOIN(i) */ sum(length(i.payload)) from request_outer o join request_primary i on o.k=i.k").Rows()
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			require.Contains(t, rows[0][3], "requestPenalty(quantity("+c.quantity+")*tidb_request_factor(6e+06)*g(copPressureNum("+c.pressure+")/capacity(4096)))")
+		}
+		tk.MustExec("set tidb_index_join_batch_size=25000")
+	})
+	t.Run("tiny noncovering natural plan", func(t *testing.T) {
+		originalConcurrency := fmt.Sprint(tk.MustQuery("select @@tidb_hash_join_concurrency").Rows()[0][0])
+		tk.MustExec("set tidb_hash_join_concurrency=1")
+		defer tk.MustExec("set tidb_hash_join_concurrency=" + originalConcurrency)
+		tk.MustExec("create table request_tiny_inner(a bigint, b bigint, index idx(a))")
+		tk.MustExec("create table request_tiny_outer(a bigint, b bigint, index idx(a))")
+		tk.MustExec("insert into request_tiny_inner values (1,1),(1,1),(1,1),(1,1),(1,1)")
+		tk.MustExec("insert into request_tiny_outer values (1,1)")
+		tk.MustExec("analyze table request_tiny_inner, request_tiny_outer")
+		sql := "select * from request_tiny_inner i join request_tiny_outer o on i.a=o.a"
+		rows := tk.MustQuery("explain format='cost_trace' " + sql).Rows()
+		require.Contains(t, fmt.Sprint(rows), "IndexHashJoin")
+		require.Contains(t, rows[0][3], "doubleRead(")
+		tk.MustQuery(sql).Check(testkit.Rows("1 1 1 1", "1 1 1 1", "1 1 1 1", "1 1 1 1", "1 1 1 1"))
+	})
+	t.Run("small covering natural plan", func(t *testing.T) {
+		tk.MustExec("create table request_cover_outer(id int primary key, k int)")
+		tk.MustExec("create table request_cover_inner(k int, v int, payload varchar(100), key kv(k,v))")
+		tk.MustExec("set cte_max_recursion_depth=32768")
+		tk.MustExec("insert into request_cover_outer with recursive seq(n) as (select 0 union all select n+1 from seq where n<511) select n,n from seq")
+		tk.MustExec("insert into request_cover_inner with recursive seq(n) as (select 0 union all select n+1 from seq where n<32767) select n div 4,n%4,repeat('x',100) from seq")
+		tk.MustExec("analyze table request_cover_outer, request_cover_inner all columns")
+		sql := "select count(*) from request_cover_outer o join request_cover_inner i on o.k=i.k where i.v=0"
+		rows := tk.MustQuery("explain format='cost_trace' " + sql).Rows()
+		require.Contains(t, fmt.Sprint(rows), "IndexHashJoin")
+		require.Contains(t, rows[0][3], "requestPenalty(quantity(20.97152)*tidb_request_factor(6e+06)*g(copPressureNum(512)/capacity(4096)))")
+		tk.MustQuery(sql).Check(testkit.Rows("512"))
+	})
+
+	t.Run("apply lookup", func(t *testing.T) {
+		rows := tk.MustQuery("explain format='cost_trace' select (select /*+ NO_DECORRELATE() */ sum(length(i.payload)) from request_inner i force index(kv) where i.k=o.k and i.v=0) from request_outer o").Rows()
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		require.Contains(t, fmt.Sprint(rows), "Apply")
+		var readerFormula string
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexLookUp") {
+				readerFormula = row[3].(string)
+				break
+			}
+		}
+		require.NotEmpty(t, readerFormula)
+		require.NotContains(t, readerFormula, "requestPenalty(")
+		require.Equal(t, 1, strings.Count(readerFormula, "doubleRead("))
+		require.Contains(t, rows[0][3], readerFormula)
+		require.Equal(t, 1, strings.Count(rows[0][3].(string), "requestPenalty("))
+	})
+
+	t.Run("apply primary lookup", func(t *testing.T) {
+		rows := tk.MustQuery("explain format='cost_trace' select (select /*+ NO_DECORRELATE() */ sum(length(i.payload)) from request_primary i where i.k=o.k) from request_outer o").Rows()
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		require.Contains(t, fmt.Sprint(rows), "Apply")
+		require.Contains(t, fmt.Sprint(rows), "TableReader")
+		require.Equal(t, 1, strings.Count(rows[0][3].(string), "requestPenalty("))
+	})
+	t.Run("index merge selectivity", func(t *testing.T) {
+		tk.MustExec("create table request_merge(a int primary key, c int, f int, payload varchar(100), key ic(c), key ifx(f))")
+		tk.MustExec("set cte_max_recursion_depth=10000")
+		tk.MustExec("insert into request_merge with recursive seq(n) as (select 0 union all select n+1 from seq where n<9999) select n, n*73%10000, n*137%10000, repeat('x',96) from seq")
+		tk.MustExec("analyze table request_merge all columns with 4096 buckets, 0 topn, 1 samplerate")
+		for _, c := range []struct {
+			limit int
+			plan  string
+		}{
+			{100, "IndexMerge"},
+			{3333, "TableReader"},
+		} {
+			suffix := fmt.Sprintf(" * from request_merge where c<%d or f<%d", c.limit, c.limit)
+			rows := tk.MustQuery("explain format='cost_trace' select" + suffix).Rows()
+			require.Contains(t, rows[0][0], c.plan)
+			require.NotContains(t, fmt.Sprint(rows), "stats:pseudo")
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			require.Equal(t, tk.MustQuery("select /*+ NO_INDEX_MERGE() */"+suffix).Sort().Rows(), tk.MustQuery("select"+suffix).Sort().Rows())
+		}
+	})
+}
+
+func TestRequestCostComposition(t *testing.T) {
+	for _, traced := range []bool{false, true} {
+		t.Run(fmt.Sprint(traced), func(t *testing.T) {
+			opt := costusage.NewDefaultPlanCostOption()
+			if traced {
+				opt.WithCostFlag(costusage.CostFlagTrace)
+			}
+			factor := costusage.CostVer2Factor{Name: "request_penalty", Value: 2}
+			baseFactor := costusage.CostVer2Factor{Name: "base", Value: 1}
+			penalty := costusage.NewRequestPenaltyVer2(opt, 3, 1, 10, factor)
+			localPenalty := 6 * 0.01 / 1.01
+			require.InDelta(t, localPenalty, penalty.GetCost(), 1e-12)
+			baseCost := costusage.NewCostVer2(opt, baseFactor, 7, func() string { return "base(7)" })
+			child := costusage.SumCostVer2(baseCost, penalty)
+			before := child.GetCost()
+			// Repetition scales quantity/work, without repricing the local pressure.
+			serial := costusage.MulCostVer2(child, 1e6)
+			require.InDelta(t, before*1e6, serial.GetCost(), 1e-6)
+			discounted := costusage.DivCostVer2(serial, 5)
+			require.InDelta(t, before*1e6/5, discounted.GetCost(), 1e-6)
+			tieBreak := costusage.AddCostWithoutTrace(child, 3)
+			require.InDelta(t, before+3, tieBreak.GetCost(), 1e-8)
+			zero := costusage.MulCostVer2(child, 0)
+			require.Zero(t, zero.GetCost())
+			// Each request stage fixes its own pressure before costs are composed.
+			second := costusage.NewRequestPenaltyVer2(opt, 4, 20, 10, factor)
+			two := costusage.SumCostVer2(penalty, second)
+			require.InDelta(t, localPenalty+8*4.0/5.0, two.GetCost(), 1e-8)
+			for _, pressure := range []float64{0, 10, 1e300} {
+				p := costusage.NewRequestPenaltyVer2(opt, 3, pressure, 10, factor)
+				expected := 0.0
+				if pressure == 10 {
+					expected = 3
+				} else if pressure > 10 {
+					expected = 6
+				}
+				require.InDelta(t, expected, p.GetCost(), 1e-12)
+			}
+			// Small lookup populations receive a discount; above
+			// capacity the request price approaches its full value monotonically.
+			previous := 0.0
+			for _, c := range []struct{ pressure, discount float64 }{
+				{1, 1.0 / 16777217},
+				{128, 1.0 / 1025},
+				{256, 1.0 / 257},
+				{512, 1.0 / 65},
+				{1024, 1.0 / 17},
+				{2048, 0.2},
+				{4096, 0.5},
+				{8192, 0.8},
+			} {
+				p := costusage.NewRequestPenaltyVer2(opt, 1, c.pressure, 4096, factor)
+				require.InDelta(t, factor.Value*c.discount, p.GetCost(), 1e-15)
+				require.Greater(t, p.GetCost(), previous)
+				previous = p.GetCost()
+			}
+			noQuantity := costusage.NewRequestPenaltyVer2(opt, 0, 10, 10, factor)
+			require.Zero(t, noQuantity.GetCost())
+			require.Equal(t, before, child.GetCost())
+			if traced {
+				formula := child.GetTrace().GetFormula()
+				for _, c := range []costusage.CostVer2{serial, discounted, two} {
+					sum := 0.0
+					for _, v := range c.GetTrace().GetFactorCosts() {
+						sum += v
+					}
+					require.InDelta(t, c.GetCost(), sum, 1e-6)
+					require.Contains(t, c.GetTrace().GetFormula(), "quantity(3)")
+					require.Contains(t, c.GetTrace().GetFormula(), "copPressureNum(1)")
+				}
+				require.Contains(t, serial.GetTrace().GetFormula(), formula)
+				require.InDelta(t, localPenalty*1e6, serial.GetTrace().GetFactorCosts()[factor.Name], 1e-6)
+				// Arithmetic results own their trace maps; children retain cached values.
+				serial.GetTrace().GetFactorCosts()[factor.Name] = -1
+				require.InDelta(t, localPenalty, child.GetTrace().GetFactorCosts()[factor.Name], 1e-12)
+				require.InDelta(t, localPenalty*1e6/5, discounted.GetTrace().GetFactorCosts()[factor.Name], 1e-6)
+				require.Equal(t, formula, child.GetTrace().GetFormula())
+			} else {
+				require.Nil(t, serial.GetTrace())
+			}
+		})
+	}
+}
+
+func TestApplyRequestCostComposition(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().CostModelVersion = 2
+	opt := costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagTrace)
+	baseFactor := costusage.CostVer2Factor{Name: "base", Value: 1}
+	leaf := func(rows, cost float64) *physicalop.PhysicalTableReader {
+		p := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+		p.TablePlan = &physicalop.PhysicalTableScan{}
+		p.SetStats(&property.StatsInfo{RowCount: rows})
+		p.SetSchema(expression.NewSchema())
+		p.PlanCostInit = true
+		p.PlanCostVer2 = costusage.NewCostVer2(opt, baseFactor, cost, func() string { return fmt.Sprintf("base(%v)", cost) })
+		return p
+	}
+	factor := costusage.CostVer2Factor{Name: "request_penalty", Value: 2}
+	probe := leaf(1, 0)
+	probe.PlanCostVer2 = costusage.NewRequestPenaltyVer2(opt, 3, 1, 10, factor)
+	buildA, buildB := leaf(1000, 5), leaf(1000, 7)
+	inner := physicalop.PhysicalApply{}.Init(ctx, &property.StatsInfo{RowCount: 1000}, 0)
+	inner.SetChildren(buildB, probe)
+	outer := physicalop.PhysicalApply{}.Init(ctx, &property.StatsInfo{RowCount: 1000}, 0)
+	outer.SetChildren(buildA, inner)
+	cost, err := outer.GetPlanCostVer2(property.RootTaskType, opt)
+	require.NoError(t, err)
+	// Each Apply adds its own probe penalty and multiplies the cached child cost.
+	// Parent repetition does not reprice either child's local g.
+	localPenalty := 6 * 0.01 / 1.01
+	requestFactor := costusage.CostVer2Factor{Name: "tidb_request_factor", Value: 6e6}
+	x := 1000.0 / 4096.0
+	applyPenalty := 1000 * requestFactor.Value * x * x / (1 + x*x)
+	require.InDelta(t, 7+1000*localPenalty+applyPenalty, inner.PlanCostVer2.GetCost(), 1e-5)
+	require.InDelta(t, 5+1000*(7+1000*localPenalty+applyPenalty)+applyPenalty, cost.GetCost(), 0.01)
+	require.InDelta(t, buildA.PlanCostVer2.GetCost()+1000*inner.PlanCostVer2.GetCost()+applyPenalty, cost.GetCost(), 0.01)
+	require.InDelta(t, 1001*applyPenalty, cost.GetTrace().GetFactorCosts()[requestFactor.Name], 0.01)
+	require.Equal(t, 3, strings.Count(cost.GetTrace().GetFormula(), "requestPenalty("))
+	require.Contains(t, cost.GetTrace().GetFormula(), inner.PlanCostVer2.GetTrace().GetFormula())
+	require.Contains(t, inner.PlanCostVer2.GetTrace().GetFormula(), probe.PlanCostVer2.GetTrace().GetFormula())
+	require.Contains(t, cost.GetTrace().GetFormula(), "quantity(3)")
+	require.Contains(t, cost.GetTrace().GetFormula(), "copPressureNum(1)")
+	plans := []base.PhysicalPlan{outer, inner, probe, buildA, buildB}
+	type snapshot struct {
+		cost    float64
+		formula string
+		factors map[string]float64
+	}
+	snapshots := make([]snapshot, len(plans))
+	for i, p := range plans {
+		c, err := p.GetPlanCostVer2(property.RootTaskType, opt)
+		require.NoError(t, err)
+		factors := make(map[string]float64)
+		for name, value := range c.GetTrace().GetFactorCosts() {
+			factors[name] = value
+		}
+		snapshots[i] = snapshot{c.GetCost(), c.GetTrace().GetFormula(), factors}
+	}
+	for _, repeats := range []float64{10, 2, 0} {
+		result := costusage.MulCostVer2(cost, repeats)
+		require.InDelta(t, cost.GetCost()*repeats, result.GetCost(), 1e-5)
+		require.InDelta(t, 1e6*localPenalty*repeats, result.GetTrace().GetFactorCosts()[factor.Name], 1e-5)
+		result.GetTrace().GetFactorCosts()[factor.Name] = -1
+		for i, p := range plans {
+			c, err := p.GetPlanCostVer2(property.RootTaskType, opt)
+			require.NoError(t, err)
+			require.Equal(t, snapshots[i].cost, c.GetCost())
+			require.Equal(t, snapshots[i].formula, c.GetTrace().GetFormula())
+			require.Equal(t, snapshots[i].factors, c.GetTrace().GetFactorCosts())
+		}
+	}
 }
