@@ -57,7 +57,7 @@ func TestTuner(t *testing.T) {
 	testHeap = make([]byte, threshold/2)
 	// wait for tuner set gcPercent to ~= 100
 	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
-	for tn.getGCPercent() == currentGCPercent {
+	for tn.getGCPercent() > 100 {
 		runtime.GC()
 		t.Logf("new gc percent after gc: %d", tn.getGCPercent())
 	}
