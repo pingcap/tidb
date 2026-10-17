@@ -2048,7 +2048,9 @@ impl InitStats<'_> {
                 Some(statistics) if !pseudo_collection => {
                     statistics.columns.contains_key(&metadata.id)
                 }
-                _ => !column.is_hidden,
+                // Go `PseudoTable` walks `TableInfo.Columns`, which holds
+                // neither `_tidb_rowid` nor the other extra (negative id) columns.
+                _ => !column.is_hidden && metadata.id > 0,
             })
             .map(|(metadata, column)| {
                 (

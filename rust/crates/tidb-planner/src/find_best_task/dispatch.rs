@@ -891,30 +891,9 @@ fn exhaust_physical_plans(
             for candidate in hash_candidates.into_iter().chain(other_candidates.into_iter())
             {
                 let strategy = candidate.strategy.clone();
-                // Go's INL_JOIN/INL_HASH_JOIN/INL_MERGE_JOIN hints are
-                // family-and-side selectors.  An index candidate that points
-                // at the opposite side is not an ordinary fallback: when no
-                // candidate satisfies the requested side, Go falls back to a
-                // non-index join and reports the hint as inapplicable.  Drop
-                // those opposite-side candidates before child enumeration so
-                // an invalid force hint cannot silently choose a normal
-                // index join.
-                if let (crate::logical::LogicalPlan::Join(join), JoinStrategy::Index { .. }) =
-                    (plan, &strategy)
-                {
-                    let has_force_index_hint = join.prefer_any(&[
-                        join_hint_flags::LEFT_AS_INLJ_INNER,
-                        join_hint_flags::RIGHT_AS_INLJ_INNER,
-                        join_hint_flags::LEFT_AS_INLHJ_INNER,
-                        join_hint_flags::RIGHT_AS_INLHJ_INNER,
-                        join_hint_flags::LEFT_AS_INLMJ_INNER,
-                        join_hint_flags::RIGHT_AS_INLMJ_INNER,
-                    ]);
-                    if has_force_index_hint && !index_join_candidate_matches_hint(join, &strategy) {
-                        burn_index_join_candidate_ids(ctx, op, &strategy);
-                        continue;
-                    }
-                }
+                // Go keeps an index join candidate of the unhinted side: force
+                // hints are applied after the children are optimized
+                // (`preferIndexJoinFamily`), so its inner task is still built.
                 let filtered = match &strategy {
                     // Go: `if !forced && shouldSkipHashJoin { return nil }`,
                     // after the hash joins were constructed (ids spent).
@@ -1293,6 +1272,13 @@ fn exhaust_physical_plans(
                 1.0 - ndv / stats.row_count() > 0.1
             });
             let (left_join_keys, right_join_keys, is_null_eq, _) = op.join.get_join_keys();
+            // Go `GetHashJoin` builds the hash join the Apply embeds: one per
+            // index-join-pushed side with an index join prop, else one, and
+            // `PhysicalApply.Init` then draws a fresh id of its own.
+            let hash_joins_built = if prop.index_join_prop.is_some() { 2 } else { 1 };
+            for _ in 0..hash_joins_built {
+                ctx.allocator.alloc();
+            }
             let mut base = physical::BasePhysicalPlan::new(
                 ctx.allocator,
                 crate::logical::LogicalApply::TYPE,
@@ -4935,39 +4921,6 @@ fn logical_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan, child_is_co
         LogicalPlan::Limit(limit) => limit.prefer_limit_to_cop && child_is_cop,
         LogicalPlan::Aggregation(aggregation) => aggregation.prefer_agg_to_cop && child_is_cop,
         _ => false,
-    }
-}
-
-/// Whether an index-join candidate satisfies one of the requested Go force
-/// hints.  This is deliberately separate from `logical_hint_applies`: the
-/// latter marks a built candidate as preferred, while this gate prevents an
-/// opposite-side candidate from becoming the normal-cost fallback when the
-/// requested family is unavailable.
-fn index_join_candidate_matches_hint(
-    join: &crate::logical::LogicalJoin,
-    strategy: &crate::find_best_task::JoinStrategy,
-) -> bool {
-    let crate::find_best_task::JoinStrategy::Index {
-        outer_idx, kind, ..
-    } = strategy
-    else {
-        return true;
-    };
-    let inner_is_left = *outer_idx == 1;
-    use crate::plan_builder::from::join_hint_flags as hint;
-    match kind {
-        crate::plan_cost_ver2::IndexJoinKind::IndexJoin => {
-            (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLJ_INNER]))
-                || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLJ_INNER]))
-        }
-        crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin => {
-            (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLHJ_INNER]))
-                || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLHJ_INNER]))
-        }
-        crate::plan_cost_ver2::IndexJoinKind::IndexMergeJoin => {
-            (inner_is_left && join.prefer_any(&[hint::LEFT_AS_INLMJ_INNER]))
-                || (!inner_is_left && join.prefer_any(&[hint::RIGHT_AS_INLMJ_INNER]))
-        }
     }
 }
 

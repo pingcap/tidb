@@ -16856,3 +16856,110 @@ fn join_hints_spend_the_plan_ids_go_does() {
         ]
     );
 }
+
+/// Go keeps the index join candidates of the side a force hint does not name:
+/// the hint only prefers a built candidate afterwards
+/// (`preferIndexJoinFamily`), so the other side's inner task still spends its
+/// ids. Expected ids: Go 1.27 on this branch (`TestZZ` probe `IJ1`).
+#[test]
+fn force_index_join_hint_still_builds_the_other_sides_inner_task() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1127)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE ihs1 (j1 JSON, a INT, b INT, KEY idx_a (a), KEY idx_b (b), KEY idx_a_b (a, b))",
+        "CREATE TABLE ihs2 (j1 JSON, a INT, b INT, KEY idx_a (a), KEY idx_b (b), KEY idx_a_b (a, b))",
+        "INSERT INTO ihs1 VALUES ('{\"a\": 1}',1,1),('{\"a\": 1}',1,1),('{\"a\": 1}',1,1),('{\"a\": 1}',1,1),('{\"a\": 1}',1,1)",
+        "INSERT INTO ihs2 VALUES ('{\"a\": 1}',1,1)",
+        "ANALYZE TABLE ihs1, ihs2",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let ids = |session: &mut ClusterServerSession, hint: &str| -> Vec<String> {
+        displayed(rows(
+            session,
+            &format!(
+                "EXPLAIN FORMAT = 'verbose' SELECT /*+ {hint}(ihs2) */ * FROM ihs1 JOIN ihs2 ON ihs1.a = ihs2.a"
+            ),
+        ))
+        .into_iter()
+        .filter(|row| row.len() > 5 && row[3] == "root")
+        .skip(1)
+        .map(|row| row[0].clone())
+        .collect()
+    };
+    assert_eq!(
+        ids(&mut session, "INL_JOIN"),
+        ["└─IndexJoin_22", "  ├─TableReader_62(Build)", "  └─IndexLookUp_59(Probe)"]
+    );
+    assert_eq!(
+        ids(&mut session, "INL_HASH_JOIN"),
+        ["└─IndexHashJoin_26", "  ├─TableReader_62(Build)", "  └─IndexLookUp_59(Probe)"]
+    );
+}
+
+/// A filter over `_tidb_rowid` has no column statistics in Go (`PseudoTable`
+/// walks `TableInfo.Columns`), so the data source keeps the default selection
+/// factor and `adjustCountAfterAccess` lifts the range's count to the table's.
+/// Expected rows: Go 1.27 on this branch (`TestZZ` probe `RW2`).
+#[test]
+fn rowid_range_estimates_use_the_default_selectivity_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1128)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE rowid_range (a INT, b INT, KEY b (b))")
+        .unwrap();
+    let counts = |session: &mut ClusterServerSession, sql: &str| -> Vec<(String, String)> {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
+            .into_iter()
+            .map(|row| (row[0].trim_start_matches([' ', '└', '─']).to_string(), row[1].clone()))
+            .collect()
+    };
+    let pair = |id: &str, rows: &str| (id.to_string(), rows.to_string());
+    assert_eq!(
+        counts(&mut session, "SELECT a FROM rowid_range WHERE _tidb_rowid BETWEEN 1 AND 100"),
+        [
+            pair("TableReader", "8000.00"),
+            pair("Projection", "8000.00"),
+            pair("TableRangeScan", "10000.00"),
+        ]
+    );
+    assert_eq!(
+        counts(&mut session, "DELETE FROM rowid_range WHERE _tidb_rowid BETWEEN 1 AND 100"),
+        [
+            pair("Delete", "N/A"),
+            pair("TableReader", "10000.00"),
+            pair("TableRangeScan", "10000.00"),
+        ]
+    );
+}
+
+/// `exhaustPhysicalPlans4LogicalApply` builds the embedded hash join before
+/// the Apply itself, so the Apply's id is one past the hash join's. Expected
+/// ids: Go 1.27 on this branch (`TestZZ` probe `AP1`).
+#[test]
+fn apply_enumeration_spends_the_embedded_hash_join_id() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1129)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "SET @@session.tidb_opt_insubq_to_join_and_agg = 0",
+        "CREATE TABLE apply_ids (a INT PRIMARY KEY, b INT, c INT, KEY idx (b))",
+        "INSERT INTO apply_ids VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 3, 4), (5, 3, 5)",
+        "ANALYZE TABLE apply_ids",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let plan = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'verbose' SELECT t.c IN (SELECT COUNT(*) FROM apply_ids s, apply_ids t1 \
+         WHERE s.b = t.a AND s.b = 3 AND s.a = t1.a) FROM apply_ids t",
+    ));
+    let ids: Vec<&str> = plan
+        .iter()
+        .filter(|row| row.len() > 5 && row[3] == "root")
+        .map(|row| row[0].trim_start_matches([' ', '├', '└', '─', '│']))
+        .collect();
+    assert_eq!(&ids[..2], ["Projection_15", "Apply_18"]);
+}
