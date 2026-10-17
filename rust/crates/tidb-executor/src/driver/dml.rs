@@ -2866,8 +2866,9 @@ fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPl
             access_cols: Some(scan.cost_columns.clone()),
             ranges: scan.ranges.clone(),
             range_rebuild: Some(PointRangeRebuild::Table(rebuild)),
-            lock: false, select_lock: None,
-});
+            lock: false,
+            select_lock: None,
+        });
         return;
     }
     if let PhysicalPlan::TableReader(reader) = plan {

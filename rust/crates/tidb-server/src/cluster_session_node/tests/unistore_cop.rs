@@ -16597,7 +16597,7 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
     for ddl in [
         "CREATE TABLE tlk (a INT PRIMARY KEY, b INT, c INT, UNIQUE KEY(b), KEY(c))",
         "CREATE TABLE tlp (a INT PRIMARY KEY, b INT) PARTITION BY HASH(a) PARTITIONS 3",
-        "INSERT INTO tlk VALUES (1,1,1),(2,2,2),(3,3,3)",
+        "INSERT INTO tlk VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4)",
         "INSERT INTO tlp VALUES (1,1),(2,2),(3,3)",
     ] {
         session.execute_write(ddl).unwrap();
@@ -16644,6 +16644,46 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
             Err(error) if error.code == 3572
         ),
         "the point lock must be held"
+    );
+    // A prepared statement caches the fast plan: its second EXECUTE, with a
+    // different key, locks that key too.
+    session
+        .execute_write("PREPARE lockp FROM 'SELECT b FROM tlk WHERE a = ? FOR UPDATE'")
+        .unwrap();
+    session.execute_write("SET @lk = 3").unwrap();
+    for key in [3, 2] {
+        session
+            .execute_write(&format!("SET @lk = {key}"))
+            .unwrap();
+        assert_eq!(
+            displayed(rows(&mut session, "EXECUTE lockp USING @lk")),
+            [[key.to_string()]]
+        );
+        assert!(
+            matches!(
+                contender.execute(&format!(
+                    "SELECT b FROM tlk WHERE a = {key} FOR UPDATE NOWAIT"
+                )),
+                Err(error) if error.code == 3572
+            ),
+            "EXECUTE must lock key {key}"
+        );
+    }
+    // The same holds for a prepared locking read that is no point read.
+    session
+        .execute_write("PREPARE lockq FROM 'SELECT b FROM tlk WHERE c = ? FOR UPDATE'")
+        .unwrap();
+    session.execute_write("SET @lc = 4").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "EXECUTE lockq USING @lc")),
+        [["4"]]
+    );
+    assert!(
+        matches!(
+            contender.execute("SELECT b FROM tlk WHERE a = 4 FOR UPDATE NOWAIT"),
+            Err(error) if error.code == 3572
+        ),
+        "a prepared locking index read must lock its row"
     );
     contender.control_transaction("ROLLBACK").unwrap();
     session.control_transaction("ROLLBACK").unwrap();

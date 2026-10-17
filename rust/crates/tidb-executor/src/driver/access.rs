@@ -2495,7 +2495,7 @@ fn build_fast_point_physical_plan(
             range_rebuild,
             lock: select_lock.is_some(),
             select_lock,
-},
+        },
     )))
 }
 

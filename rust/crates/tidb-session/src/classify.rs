@@ -354,6 +354,25 @@ impl Session {
     /// executor, which binds once and shares the resulting tree with planning.
     #[must_use]
     pub fn statement_read_shape_bound(&self, stmt: &Stmt) -> StatementReadShape {
+        // `EXECUTE p` answers with whatever `p` answers, so a prepared
+        // `SELECT ... FOR UPDATE` is a locking read: classifying the
+        // `EXECUTE` keyword alone as Unknown ran it without the locks its
+        // transaction owes (Go `ExecuteExec` runs the prepared plan, whose
+        // `SelectLock` takes them). Only the locking shape is taken from the
+        // template; every other shape needs bound parameters.
+        if let Stmt::Session(session) = stmt {
+            if let tidb_ast::SessionStmt::Execute { name, .. } = &**session {
+                return match self.prepared_statements.get(name) {
+                    Some(prepared)
+                        if self.statement_read_shape_bound(&prepared.statement)
+                            == StatementReadShape::LockingRead =>
+                    {
+                        StatementReadShape::LockingRead
+                    }
+                    _ => StatementReadShape::Unknown,
+                };
+            }
+        }
         let disable_point_get =
             crate::variables::effective_fix_52592(stmt, self.vars.optimizer_fix_control());
         let catalog = self

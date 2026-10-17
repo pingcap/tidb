@@ -1214,8 +1214,9 @@ mod tests {
             index_id: None,
             access_cols: access_cols.then_some(vec![column]),
             ranges: Vec::new(),
-            range_rebuild: None, select_lock: None,
-})
+            range_rebuild: None,
+            select_lock: None,
+        })
     }
 
     fn root(plan: PhysicalPlan) -> Task {

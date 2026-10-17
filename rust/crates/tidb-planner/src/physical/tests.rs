@@ -367,8 +367,9 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
             vec![parameter_condition("eq", handle, 0)],
             int_type.clone(),
             false,
-        ))), select_lock: None,
-});
+        ))),
+        select_lock: None,
+    });
 
     let index_column = Column::new(2, int_type);
     let batch = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
@@ -386,7 +387,9 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
             vec![tidb_datatype::UNSPECIFIED_LENGTH],
         ))),
         keep_order: false,
-        desc: false, select_lock: None, lock: false,
+        desc: false,
+        select_lock: None,
+        lock: false,
 });
     let index_merge = PhysicalPlan::IndexMergeReader(PhysicalIndexMergeReader {
         base: BasePhysicalPlan::with_id(13, "IndexMerge", 0),
@@ -466,8 +469,9 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
             conditions(),
             vec![first.clone(), second.clone()],
             lengths.clone(),
-        ))), select_lock: None,
-});
+        ))),
+        select_lock: None,
+    });
     let unique_index = PhysicalPlan::PointGet(PhysicalPointGet {
         lock: false,
         base: BasePhysicalPlan::with_id(32, "PointGet", 0),
@@ -480,8 +484,9 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
             conditions(),
             vec![first, second],
             lengths,
-        ))), select_lock: None,
-});
+        ))),
+        select_lock: None,
+    });
 
     for template in [common_handle, unique_index] {
         for parameters in [
@@ -555,8 +560,9 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
             vec![Expression::ScalarFunction(eq)],
             vec![column],
             vec![tidb_datatype::UNSPECIFIED_LENGTH],
-        ))), select_lock: None,
-});
+        ))),
+        select_lock: None,
+    });
 
     let value = Datum::String(tidb_datatype::StringDatum::new(
         b"Abc ".to_vec(),
@@ -632,7 +638,9 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
             vec![tidb_datatype::UNSPECIFIED_LENGTH; 2],
         ))),
         keep_order: false,
-        desc: false, select_lock: None, lock: false,
+        desc: false,
+        select_lock: None,
+        lock: false,
 });
 
     let rebuilt = batch
@@ -2567,4 +2575,30 @@ fn remove_union_scans_replaces_each_by_its_child() {
     assert!(matches!(&plan, PhysicalPlan::Selection(_)));
     assert!(matches!(plan.children()[0], PhysicalPlan::TableScan(_)));
     plan.dismantle();
+}
+
+#[test]
+fn shallow_clone_keeps_the_lock_a_locking_point_read_takes() {
+    use crate::logical::SelectLockType;
+    let lock = Some((SelectLockType::ForUpdateNoWait, 0));
+    let point = PhysicalPlan::PointGet(PhysicalPointGet {
+        base: BasePhysicalPlan::with_id(31, "Point_Get", 0),
+        lock: true,
+        select_lock: lock,
+        ..Default::default()
+    });
+    let PhysicalPlan::PointGet(copy) = point.clone_shallow() else {
+        unreachable!("a shallow clone keeps the operator");
+    };
+    assert!(copy.lock && copy.select_lock == lock);
+    let batch = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+        base: BasePhysicalPlan::with_id(32, "Batch_Point_Get", 0),
+        lock: true,
+        select_lock: lock,
+        ..Default::default()
+    });
+    let PhysicalPlan::BatchPointGet(copy) = batch.clone_shallow() else {
+        unreachable!("a shallow clone keeps the operator");
+    };
+    assert!(copy.lock && copy.select_lock == lock);
 }

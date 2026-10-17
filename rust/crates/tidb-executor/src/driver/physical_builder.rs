@@ -6906,8 +6906,9 @@ mod tests {
                 low_exclude: false,
                 high_exclude: false,
             }],
-            range_rebuild: None, select_lock: None,
-});
+            range_rebuild: None,
+            select_lock: None,
+        });
 
         let ctx = crate::StmtContext::for_query();
         let mut executor = build(&plan, &catalog, &ctx).expect("build cached point get");
@@ -6972,8 +6973,9 @@ mod tests {
                 low_exclude: false,
                 high_exclude: false,
             }],
-            range_rebuild: None, select_lock: None,
-});
+            range_rebuild: None,
+            select_lock: None,
+        });
 
         let ctx = crate::StmtContext::for_query();
         let mut executor = build(&plan, &catalog, &ctx).expect("build unique point get");
@@ -7023,7 +7025,9 @@ mod tests {
             partition_names: Vec::new(),
             range_rebuild: None,
             keep_order: true,
-            desc: false, select_lock: None, lock: false,
+            desc: false,
+            select_lock: None,
+            lock: false,
 });
 
         let ctx = crate::StmtContext::for_query();
@@ -7091,7 +7095,9 @@ mod tests {
             partition_names: Vec::new(),
             range_rebuild: None,
             keep_order: true,
-            desc: false, select_lock: None, lock: false,
+            desc: false,
+            select_lock: None,
+            lock: false,
 });
 
         let ctx = crate::StmtContext::for_query();
