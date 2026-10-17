@@ -883,6 +883,38 @@ ORDER BY field1`).Check(testkit.Rows())
 		))
 	}
 
+	// issue-69902-point-update-empty-string-to-time
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, tm time default null, u time, unique key (u))")
+		tk.MustExec("insert into foo values (1, '01:00:00', '01:00:00'), (2, '02:00:00', '02:00:00'), (3, '03:00:00', '03:00:00'), (4, '04:00:00', '04:00:00'), (5, '05:00:00', '05:00:00')")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		tk.MustExec("update foo set tm = (select '') where id = 1")
+
+		// Fast point-update path should behave the same; before the fix for #69902 it failed because CAST('' AS TIME) is NULL.
+		tk.MustExec("update foo set tm = '' where id = 2")
+		tk.MustExec("update foo set tm = '' where u = '03:00:00'")
+		tk.MustExec("update foo set tm = '' where id in (4, 5)")
+		tk.MustQuery("select id, tm from foo order by id").Check(testkit.Rows(
+			"1 00:00:00",
+			"2 00:00:00",
+			"3 00:00:00",
+			"4 00:00:00",
+			"5 00:00:00",
+		))
+
+		// A hex value still goes through CAST, also when plans are cached for string parameters.
+		tk.MustExec("prepare st from 'update foo set tm = ? where id = 1'")
+		tk.MustExec("set @s = '01:00:00', @h = 0x313233, @e = ''")
+		tk.MustExec("execute st using @s")
+		tk.MustExec("execute st using @s")
+		tk.MustExec("execute st using @h")
+		tk.MustQuery("select tm from foo where id = 1").Check(testkit.Rows("00:01:23"))
+		tk.MustExec("execute st using @e")
+		tk.MustQuery("select tm from foo where id = 1").Check(testkit.Rows("00:00:00"))
+	}
+
 	// issue-67967-unionscan-should-eliminate-tabledual-for-null-comparison
 	{
 		tk := prepareSharedTestKit(t)
