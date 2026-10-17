@@ -795,6 +795,52 @@ func TestScanLimitConcurrency(t *testing.T) {
 	}
 }
 
+func TestScanLimitConcurrencyWithRowCountUpperBound(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	for _, tt := range []struct {
+		name        string
+		upperBound  uint64
+		hasBound    bool
+		concurrency int
+	}{
+		{"NoBound", 0, false, 1},
+		{"BoundBelowLimit", 35, true, dctx.DistSQLConcurrency},
+		{"BoundEqualsLimit", 100, true, dctx.DistSQLConcurrency},
+		{"BoundAboveLimit", 101, true, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dag := &tipb.DAGRequest{Executors: []*tipb.Executor{
+				{Tp: tipb.ExecType_TypeIndexScan, IdxScan: &tipb.IndexScan{}},
+				{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: 100}},
+			}}
+			builder := &RequestBuilder{}
+			if tt.hasBound {
+				builder.SetDAGRequestWithRowCountUpperBound(dag, tt.upperBound)
+			} else {
+				builder.SetDAGRequest(dag)
+			}
+			actual, err := builder.SetFromSessionVars(dctx).Build()
+			require.NoError(t, err)
+			require.Equal(t, tt.concurrency, actual.Concurrency)
+		})
+	}
+
+	// The bound only relaxes the plain Scan -> Limit case, not the pushed-down IndexLookUp one.
+	indexLookUpIndex := uint32(3)
+	dag := &tipb.DAGRequest{Executors: []*tipb.Executor{
+		{Tp: tipb.ExecType_TypeIndexScan, IdxScan: &tipb.IndexScan{}},
+		{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: 100}, ParentIdx: &indexLookUpIndex},
+		{Tp: tipb.ExecType_TypeTableScan, TblScan: &tipb.TableScan{}},
+		{Tp: tipb.ExecType_TypeIndexLookUp, IndexLookup: &tipb.IndexLookUp{}},
+	}}
+	actual, err := (&RequestBuilder{}).
+		SetDAGRequestWithRowCountUpperBound(dag, 1).
+		SetFromSessionVars(dctx).
+		Build()
+	require.NoError(t, err)
+	require.Equal(t, 1, actual.Concurrency)
+}
+
 func TestIndexLookUpPushDownScanConcurrency(t *testing.T) {
 	dctx := NewDistSQLContextForTest()
 	for _, tt := range []struct {
