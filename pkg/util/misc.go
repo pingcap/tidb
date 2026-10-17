@@ -411,24 +411,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	requireTLS := tlsutil.RequireSecureTransport.Load()
 
-	var minTLSVersion uint16 = tls.VersionTLS12
-	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
-	case "TLSv1.2":
-		minTLSVersion = tls.VersionTLS12
-	case "TLSv1.3":
-		minTLSVersion = tls.VersionTLS13
-	case "":
-	default:
-		logutil.BgLogger().Warn(
-			"Invalid TLS version, using default instead",
-			zap.String("tls-version", tlsver),
-		)
-	}
-	if minTLSVersion < tls.VersionTLS12 {
-		err = errors.New("Minimum TLS version pre-TLSv1.2 protocols are not allowed")
-		return
-	}
-
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
 	if requireTLS {
@@ -453,26 +435,9 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		}
 	}
 
-	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
-	var cipherSuites []uint16
-	var cipherNames []string
-	for _, sc := range tls.CipherSuites() {
-		switch sc.ID {
-		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
-			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
-		default:
-			cipherNames = append(cipherNames, sc.Name)
-			cipherSuites = append(cipherSuites, sc.ID)
-		}
-	}
-	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
-
-	/* #nosec G402 */
-	tlsConfig = &tls.Config{
-		ClientCAs:    certPool,
-		ClientAuth:   clientAuthPolicy,
-		MinVersion:   minTLSVersion,
-		CipherSuites: cipherSuites,
+	tlsConfig, err = NewServerTLSConfig(config.GetGlobalConfig().Security.MinTLSVersion, clientAuthPolicy, certPool)
+	if err != nil {
+		return nil, autoReload, err
 	}
 	tlsConfig.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 		certs, err := tls.LoadX509KeyPair(cert, key)
@@ -488,6 +453,49 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		return newCerts, nil
 	}
 	return
+}
+
+// NewServerTLSConfig constructs the TLS version, cipher, and client-authentication
+// policy shared by all MySQL protocol server certificate providers.
+func NewServerTLSConfig(minTLSVersion string, clientAuth tls.ClientAuthType, clientCAs *x509.CertPool) (*tls.Config, error) {
+	minVersion := uint16(tls.VersionTLS12)
+	switch minTLSVersion {
+	case "TLSv1.2":
+		minVersion = tls.VersionTLS12
+	case "TLSv1.3":
+		minVersion = tls.VersionTLS13
+	case "":
+	default:
+		logutil.BgLogger().Warn(
+			"Invalid TLS version, using default instead",
+			zap.String("tls-version", minTLSVersion),
+		)
+	}
+	if minVersion < tls.VersionTLS12 {
+		return nil, errors.New("Minimum TLS version pre-TLSv1.2 protocols are not allowed")
+	}
+
+	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more.
+	var cipherSuites []uint16
+	var cipherNames []string
+	for _, sc := range tls.CipherSuites() {
+		switch sc.ID {
+		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
+			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
+		default:
+			cipherNames = append(cipherNames, sc.Name)
+			cipherSuites = append(cipherSuites, sc.ID)
+		}
+	}
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+
+	/* #nosec G402 */
+	return &tls.Config{
+		ClientCAs:    clientCAs,
+		ClientAuth:   clientAuth,
+		MinVersion:   minVersion,
+		CipherSuites: cipherSuites,
+	}, nil
 }
 
 var (
