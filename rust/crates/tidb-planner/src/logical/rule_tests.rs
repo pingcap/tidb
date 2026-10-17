@@ -37,7 +37,7 @@ use tidb_expr::schema::Schema;
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanIdAllocator;
 
-use super::aggregation::{LogicalAggregation, AGG_FUNC_COUNT};
+use super::aggregation::{LogicalAggregation, AGG_FUNC_COUNT, AGG_FUNC_FIRST_ROW};
 use super::apply::LogicalApply;
 use super::data_source::DataSource;
 use super::fold::{fold_owned, Descend, OwnedRewrite};
@@ -1335,12 +1335,24 @@ fn predicate_push_down_keeps_an_aggregate_filter_above_a_non_group_by_column() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
     let source = data_source(&allocator, &[1, 2]);
-    let mut agg = LogicalAggregation::new(
+    // One aggregate function per output column, as Go's builder produces:
+    // `first_row(a)` for the group-by column and `count(b)` for column 9.
+    let desc = |name: &str, arg: i64| tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: name.to_owned(),
+            args: vec![col_expr(arg)],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let agg = LogicalAggregation::new(
         base(&allocator, "Aggregation", Some(schema_of(&[1, 9]))),
-        Vec::new(),
+        vec![desc(AGG_FUNC_FIRST_ROW, 1), desc(AGG_FUNC_COUNT, 2)],
         vec![col_expr(1)],
     );
-    agg.agg_funcs = Vec::new();
     let mut agg = LogicalPlan::Aggregation(agg);
     agg.set_children(vec![source]);
     // `a` IS a group-by column and so may be pushed; column 9 is the aggregate
@@ -1360,6 +1372,87 @@ fn predicate_push_down_keeps_an_aggregate_filter_above_a_non_group_by_column() {
     assert!(matches!(agg, LogicalPlan::Aggregation(_)));
     let LogicalPlan::DataSource(source) = &agg.children()[0] else {
         panic!("the group-by filter should reach the aggregate's DataSource");
+    };
+    assert_eq!(source.pushed_down_conds.len(), 1);
+    out.dismantle();
+}
+
+fn logical_fn(name: &str, args: Vec<Expression>) -> Expression {
+    Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int_type(), args))
+}
+
+/// An aggregation over a two-column source whose outputs are `first_row(a)`
+/// (column 1, also the group-by column) and `count(b)` (column 9).
+fn grouped_count_over_source(allocator: &PlanIdAllocator) -> LogicalPlan {
+    let desc = |name: &str, arg: i64| tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: name.to_owned(),
+            args: vec![col_expr(arg)],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: false,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let mut agg = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(allocator, "Aggregation", Some(schema_of(&[1, 9]))),
+        vec![desc(AGG_FUNC_FIRST_ROW, 1), desc(AGG_FUNC_COUNT, 2)],
+        vec![col_expr(1)],
+    ));
+    agg.set_children(vec![data_source(allocator, &[1, 2])]);
+    agg
+}
+
+#[test]
+fn predicate_push_down_relaxes_a_dnf_with_an_unpushable_branch_below_an_aggregate() {
+    // Go `pushDownDNFPredicates`: `(a = 7 and count > 3) or (a = 8)` cannot move
+    // whole, but its group-by parts relax to `a = 7 or a = 8`, which can; the
+    // original stays above.
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let dnf = logical_fn(
+        "or",
+        vec![
+            logical_fn("and", vec![eq_const(1, 7), gt_const(9, 3)]),
+            eq_const(1, 8),
+        ],
+    );
+    let root = selection_over(&allocator, vec![dnf], grouped_count_over_source(&allocator));
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Selection(kept) = &out else {
+        panic!("the original disjunction must stay above the aggregate, got {out:?}");
+    };
+    assert_eq!(kept.conditions.len(), 1);
+    let agg = &out.children()[0];
+    let LogicalPlan::DataSource(source) = &agg.children()[0] else {
+        panic!("the relaxed disjunction should reach the DataSource");
+    };
+    assert_eq!(source.pushed_down_conds.len(), 1);
+    let Expression::ScalarFunction(pushed) = &source.pushed_down_conds[0] else {
+        panic!("the pushed condition is a disjunction");
+    };
+    assert_eq!(pushed.func_name.lowercase(), "or");
+    out.dismantle();
+}
+
+#[test]
+fn predicate_push_down_moves_a_fully_pushable_dnf_below_an_aggregate() {
+    // Every branch reads only group-by columns, so the whole disjunction moves
+    // and nothing is left above.
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let dnf = logical_fn("or", vec![eq_const(1, 7), eq_const(1, 8)]);
+    let root = selection_over(&allocator, vec![dnf], grouped_count_over_source(&allocator));
+
+    let out = push(&ctx, root);
+    assert!(
+        matches!(out, LogicalPlan::Aggregation(_)),
+        "no filter should remain above the aggregate, got {out:?}"
+    );
+    let LogicalPlan::DataSource(source) = &out.children()[0] else {
+        panic!("the disjunction should reach the DataSource");
     };
     assert_eq!(source.pushed_down_conds.len(), 1);
     out.dismantle();

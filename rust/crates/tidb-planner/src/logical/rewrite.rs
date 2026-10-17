@@ -765,7 +765,8 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             // Go `LogicalAggregation.PredicatePushDown`
             // (`logical_aggregation.go:113`).
             LogicalPlan::Aggregation(op) => {
-                let (to_push, ret) = op.split_cond_for_aggregation(&predicates);
+                let opts = SubstituteOptions::new(self.ctx.builder);
+                let (to_push, ret) = op.split_cond_for_aggregation(&own_schema, &predicates, &opts);
                 self.stash.push(PendingPredicates::AddSelection(ret));
                 Descend::Children(vec![to_push])
             }

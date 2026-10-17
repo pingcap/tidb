@@ -2108,7 +2108,70 @@ pub(crate) fn try_fast_dml_point_physical_plan_with_allocator(
     )
 }
 
+/// Go `checkLockClauseTables` runs in `Preprocess`, before `tryPointGetPlan`:
+/// an `OF` target that names an aliased table by its base name is accepted
+/// with warning 1105, and a target that names no FROM table is "Unknown table
+/// ... in locking clause". The fast plan has no `SelectLock` to carry the
+/// clause, so the targets are checked here; `None` hands an unresolvable target
+/// to the ordinary planner, which raises the error.
+fn fast_point_lock_of_warnings(
+    select: &tidb_ast::SelectStmt,
+    current_db: &str,
+) -> Option<Vec<String>> {
+    let Some(lock) = select.lock.as_ref().filter(|lock| !lock.of.is_empty()) else {
+        return Some(Vec::new());
+    };
+    let table_ref = sole_table_ref(&select.from)?;
+    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
+    let mut warned = std::collections::BTreeSet::new();
+    let mut warnings = Vec::new();
+    for target in &lock.of {
+        let (target_database, target_table) = match target.as_slice() {
+            [table] => (None, table),
+            [target_database, table] => (Some(target_database), table),
+            _ => return None,
+        };
+        if target_database.is_some_and(|target| !target.eq_ignore_ascii_case(database)) {
+            return None;
+        }
+        match table_ref.alias.as_deref() {
+            Some(alias) if alias.eq_ignore_ascii_case(target_table) => {}
+            Some(alias) if name.eq_ignore_ascii_case(target_table) => {
+                if warned.insert(target.clone()) {
+                    warnings.push(format!(
+                        "FOR UPDATE OF references the base table name while the table is aliased. Use the alias '{alias}' in OF to make the lock target explicit."
+                    ));
+                }
+            }
+            None if name.eq_ignore_ascii_case(target_table) => {}
+            _ => return None,
+        }
+    }
+    Some(warnings)
+}
+
 fn try_fast_point_physical_plan_with_allocator_mode(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+    dml_source: bool,
+) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+    let Some(of_warnings) = fast_point_lock_of_warnings(select, current_db) else {
+        return Ok(None);
+    };
+    let plan =
+        build_fast_point_physical_plan(select, catalog, current_db, ctx, plan_ids, dml_source)?;
+    if plan.is_some() {
+        for warning in &of_warnings {
+            ctx.append_warning_parts(1105, warning);
+        }
+    }
+    Ok(plan)
+}
+
+fn build_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,

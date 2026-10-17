@@ -16140,3 +16140,110 @@ fn top_n_over_a_prefix_index_column_stays_on_the_table_side() {
         [["3", "abcA"], ["4", "abcB"]]
     );
 }
+
+/// Go runs `checkLockClauseTables` in `Preprocess`, before `tryPointGetPlan`:
+/// an `OF` target naming an aliased table by its base name is accepted with
+/// warning 1105, the alias itself is silent, and an unknown target is error
+/// 1109 -- on the autocommit point-get fast path as much as in the planner.
+/// Expected values: Go 1.27 on this branch (`TestZZ` probe).
+#[test]
+fn for_update_of_checks_its_targets_on_the_point_get_fast_path() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1114)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tfo (id INT PRIMARY KEY, a INT)")
+        .unwrap();
+    let warnings = |session: &mut ClusterServerSession| -> Vec<Vec<String>> {
+        displayed(rows(session, "SHOW WARNINGS"))
+    };
+    rows(
+        &mut session,
+        "SELECT ue.id FROM tfo ue WHERE ue.id = 1 FOR UPDATE OF tfo",
+    );
+    assert_eq!(
+        warnings(&mut session),
+        [[
+            "Warning",
+            "1105",
+            "FOR UPDATE OF references the base table name while the table is aliased. Use the alias 'ue' in OF to make the lock target explicit."
+        ]]
+    );
+    rows(
+        &mut session,
+        "SELECT ue.id FROM tfo ue WHERE ue.id = 1 FOR UPDATE OF ue",
+    );
+    assert!(warnings(&mut session).is_empty());
+    let error = session
+        .execute("SELECT ue.id FROM tfo ue WHERE ue.id = 1 FOR UPDATE OF zz")
+        .err()
+        .map(|error| format!("{error:?}"))
+        .unwrap_or_default();
+    assert!(
+        error.contains("Unknown table 'zz' in locking clause"),
+        "an unresolvable OF target is error 1109, got {error}"
+    );
+}
+
+/// Go's `LogicalAggregation.pushDownDNFPredicates`: a HAVING disjunction with
+/// an aggregate-output branch cannot move below the aggregate whole, but the
+/// group-by parts relax to a disjunction that can (`d_year = 2001 or d_year =
+/// 2002` reaches the scan) while the original stays above. A DNF whose every
+/// branch reads group-by columns moves entirely. Expected plans: Go 1.27 on
+/// this branch (`TestZZ` probe).
+#[test]
+fn aggregation_pushes_the_relaxed_part_of_a_dnf_filter_below_itself() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1115)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tdd (d_sk INT PRIMARY KEY, d_year INT)")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE tss (s_date INT, s_amt INT)")
+        .unwrap();
+    let plan = |session: &mut ClusterServerSession, filter: &str| -> String {
+        let sql = format!(
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM (SELECT d_year, SUM(s_amt) total FROM tss, tdd \
+             WHERE s_date = d_sk GROUP BY d_year) v WHERE {filter}"
+        );
+        displayed(rows(session, &sql))
+            .into_iter()
+            .map(|row| row.join(" | "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let relaxed = "or(eq(test.tdd.d_year, 2001), eq(test.tdd.d_year, 2002))";
+    let pushed_to_scan = |plan: &str| {
+        plan.lines()
+            .any(|line| line.contains("cop[tikv]") && line.contains(relaxed))
+    };
+
+    // One branch reads the aggregate: the relaxed disjunction reaches the scan
+    // and the original is kept above the aggregate.
+    let mixed = plan(
+        &mut session,
+        "(d_year = 2001 AND total > 0) OR d_year = 2002",
+    );
+    assert!(
+        pushed_to_scan(&mixed),
+        "the relaxed filter should be pushed to the tdd scan:\n{mixed}"
+    );
+    assert!(
+        mixed.contains("Selection") && mixed.contains("gt(Column#8, 0)"),
+        "the original disjunction stays above the aggregate:\n{mixed}"
+    );
+
+    // Every branch is a group-by filter: it moves whole, none is left above.
+    let pushable = plan(&mut session, "d_year = 2001 OR d_year = 2002");
+    assert!(
+        pushed_to_scan(&pushable),
+        "the group-by disjunction should reach the scan:\n{pushable}"
+    );
+    assert!(
+        !pushable
+            .lines()
+            .any(|line| line.contains("root") && line.contains("or(")),
+        "no root Selection should keep the disjunction:\n{pushable}"
+    );
+}

@@ -270,47 +270,79 @@ impl LogicalAggregation {
     /// (`logical_aggregation.go:631`): the predicates an aggregate may pass to
     /// its child, and those that must stay above it.
     ///
-    /// Returns `(conds_to_push, ret)` in Go's order.
+    /// Returns `(conds_to_push, ret)` in Go's order. `self_schema` is Go's
+    /// `la.Schema()`: a pushed predicate over an aggregate OUTPUT column is
+    /// rewritten onto the aggregate's argument (`ColumnSubstitute`), so what
+    /// reaches the child reads child columns.
     ///
-    /// # What is ported
-    ///
-    /// Go splits each predicate into CNF items and then runs each item through
-    /// `pushDownDNFPredicates` twice — once against the GROUP BY columns and
-    /// once against the `first_row` aggregate columns. The GROUP BY arm is the
-    /// soundness core and is ported: an item that reads ONLY group-by columns
-    /// has the same value for every row of a group, so filtering before the
-    /// aggregate removes exactly the groups it would have removed after. That
-    /// is what the `tidb-executor` driver's `agg_predicate_pushdown` prototype
-    /// established, and it is the arm folded in here.
-    ///
-    /// # Narrowings, by exact blocking Go symbol
-    ///
-    /// * `la.pushDownPredicatesByAggFuncs` with `getAggFuncsColsForFirstRow()`
-    ///   — a `first_row(c)` output is `c` itself, so a predicate on it may be
-    ///   rewritten onto `c` and pushed. Blocked on the argument SUBSTITUTION,
-    ///   `expression.ColumnSubstitute`, needing a builder this method is not
-    ///   given.
-    /// * `la.getAggFuncsColsForConstResult()` plus `expression.FoldConstant`,
-    ///   the const-result rewrite Go applies to each CNF item first.
-    /// * `la.pushDownDNFPredicates`, which relaxes a DNF whose every branch is
-    ///   pushable into a pushable disjunction.
-    ///
-    /// All three only ever push MORE down, so their absence leaves a filter
-    /// above the aggregate rather than below it.
+    /// Each CNF item first has its constant-result outputs (`max`/`min` of a
+    /// row-independent argument) folded to that argument, then goes through
+    /// `pushDownDNFPredicates` against the GROUP BY columns; the part that
+    /// found nothing to push is tried again against the single-column
+    /// `first_row` outputs. A DNF whose every branch has a pushable part
+    /// pushes the relaxed disjunction of those parts and keeps the original
+    /// above (`(a > 1 and avg(b) > 1) or (a < 3)` pushes `a > 1 or a < 3`).
     #[must_use]
     pub fn split_cond_for_aggregation(
         &self,
+        self_schema: &Schema,
         predicates: &[Expression],
+        opts: &SubstituteOptions<'_>,
     ) -> (Vec<Expression>, Vec<Expression>) {
+        use tidb_expr::expr_util::fold::fold_constant;
+        use tidb_expr::expr_util::normal_form::split_cnf_items;
+        use tidb_expr::expr_util::substitute::column_substitute;
+
+        let exprs_original: Vec<Expression> = self
+            .agg_funcs
+            .iter()
+            .map(|func| {
+                func.args().first().cloned().unwrap_or_else(|| {
+                    Expression::Constant(tidb_expr::constant::Constant::new_one())
+                })
+            })
+            .collect();
         let group_by_columns = Schema::new(self.get_group_by_cols());
+        let agg_first_row_columns = Schema::new(self.agg_funcs_cols_for_first_row(self_schema));
+        let (const_result_columns, const_result_exprs) =
+            self.agg_funcs_cols_for_const_result(self_schema);
+        let const_result_schema =
+            (!const_result_columns.is_empty()).then(|| Schema::new(const_result_columns));
+        let pusher = AggPredicatePusher {
+            self_schema,
+            exprs_original: &exprs_original,
+            opts,
+        };
+
         let mut conds_to_push = Vec::new();
         let mut ret = Vec::new();
         for cond in predicates {
-            for item in tidb_expr::expr_util::normal_form::split_cnf_items(cond) {
-                if crate::expression_rewriter::expr_from_schema(&item, &group_by_columns) {
-                    conds_to_push.push(item);
-                } else {
-                    ret.push(item);
+            for mut cnf_item in split_cnf_items(cond) {
+                if let Some(schema) = &const_result_schema {
+                    cnf_item = fold_constant(
+                        &column_substitute(&cnf_item, schema, &const_result_exprs, opts),
+                        &NoColumns,
+                        opts,
+                    );
+                }
+                let (sub_conds_to_push, sub_ret) = pusher.push_down_dnf_predicates(
+                    &cnf_item,
+                    &group_by_columns,
+                    AggPushKind::GroupBy,
+                );
+                conds_to_push.extend(sub_conds_to_push);
+                // "If we cannot find columns that can be pushed down in the
+                // GROUP BY clause, we will then look for columns that can be
+                // pushed down in the aggregate functions. Currently, only the
+                // first row is supported."
+                for item in sub_ret {
+                    let (sub_conds_to_push, sub_ret) = pusher.push_down_dnf_predicates(
+                        &item,
+                        &agg_first_row_columns,
+                        AggPushKind::FirstRow,
+                    );
+                    conds_to_push.extend(sub_conds_to_push);
+                    ret.extend(sub_ret);
                 }
             }
         }
@@ -710,5 +742,155 @@ impl LogicalAggregation {
             input_count: self.input_count,
             no_cop_push_down: self.no_cop_push_down,
         }
+    }
+}
+
+/// Go's `pushDownPredicatesFunc` choice: which columns a pushed predicate may
+/// read, `pushDownPredicatesByGroupby` or `pushDownPredicatesByAggFuncs`.
+#[derive(Clone, Copy)]
+enum AggPushKind {
+    GroupBy,
+    FirstRow,
+}
+
+/// The state Go's `pushDownCNFPredicatesForAggregation` /
+/// `pushDownDNFPredicates` / `pushDownPredicates` share for one aggregation.
+struct AggPredicatePusher<'a> {
+    /// Go `la.Schema()`.
+    self_schema: &'a Schema,
+    /// Go `exprsOriginal`: the first argument of each aggregate function.
+    exprs_original: &'a [Expression],
+    opts: &'a SubstituteOptions<'a>,
+}
+
+impl AggPredicatePusher<'_> {
+    /// Go `pushDownPredicates`: a constant is pushed AND retained (`having
+    /// 1=0` must still empty the one-row result), a scalar function goes to
+    /// the by-group-by / by-first-row split, anything else stays above.
+    fn push_down_predicates(
+        &self,
+        cond: &Expression,
+        columns: &Schema,
+        kind: AggPushKind,
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        match cond {
+            Expression::Constant(_) => (vec![cond.clone()], vec![cond.clone()]),
+            Expression::ScalarFunction(_) => match kind {
+                AggPushKind::GroupBy => self.push_down_by_group_by(cond, columns),
+                AggPushKind::FirstRow => self.push_down_by_first_row(cond, columns),
+            },
+            _ => (Vec::new(), vec![cond.clone()]),
+        }
+    }
+
+    fn substituted(&self, cond: &Expression) -> Expression {
+        tidb_expr::expr_util::substitute::column_substitute(
+            cond,
+            self.self_schema,
+            self.exprs_original,
+            self.opts,
+        )
+    }
+
+    /// Go `pushDownPredicatesByGroupby`.
+    fn push_down_by_group_by(
+        &self,
+        cond: &Expression,
+        group_by_columns: &Schema,
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        if extract_columns(cond)
+            .iter()
+            .all(|column| group_by_columns.contains(column))
+        {
+            (vec![self.substituted(cond)], Vec::new())
+        } else {
+            (Vec::new(), vec![cond.clone()])
+        }
+    }
+
+    /// Go `pushDownPredicatesByAggFuncs`: only for `first_row`.
+    fn push_down_by_first_row(
+        &self,
+        cond: &Expression,
+        agg_first_row_columns: &Schema,
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        let extracted = extract_columns(cond);
+        if extracted.len() != 1 || agg_first_row_columns.columns.is_empty() {
+            return (Vec::new(), vec![cond.clone()]);
+        }
+        // `aggFirstRowColumns` are the output columns of the first row
+        // function; the predicate's column must be one of them.
+        if agg_first_row_columns
+            .retrieve_column(&extracted[0])
+            .is_some()
+        {
+            (vec![self.substituted(cond)], Vec::new())
+        } else {
+            (Vec::new(), vec![cond.clone()])
+        }
+    }
+
+    /// Go `pushDownCNFPredicatesForAggregation`: `(a > 1 or avg(b) > 1) and
+    /// (a < 3)` pushes `a < 3` and keeps the disjunction.
+    fn push_down_cnf_predicates(
+        &self,
+        cond: &Expression,
+        columns: &Schema,
+        kind: AggPushKind,
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        use tidb_expr::expr_util::normal_form::split_cnf_items;
+        use tidb_expr::simple_expr::compose_dnf_condition;
+
+        let items = split_cnf_items(cond);
+        if let [only] = items.as_slice() {
+            return self.push_down_predicates(only, columns, kind);
+        }
+        let mut conds_to_push = Vec::new();
+        let mut ret = Vec::new();
+        for item in &items {
+            let (pushed, kept) = self.push_down_dnf_predicates(item, columns, kind);
+            if let Some(composed) = compose_dnf_condition(pushed) {
+                conds_to_push.push(composed);
+            }
+            if let Some(composed) = compose_dnf_condition(kept) {
+                ret.push(composed);
+            }
+        }
+        (conds_to_push, ret)
+    }
+
+    /// Go `pushDownDNFPredicates`: `(a > 1 and avg(b) > 1) or (a < 3)` pushes
+    /// `(a > 1) or (a < 3)` and keeps the original above.
+    fn push_down_dnf_predicates(
+        &self,
+        cond: &Expression,
+        columns: &Schema,
+        kind: AggPushKind,
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        use tidb_expr::expr_util::normal_form::split_dnf_items;
+        use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition};
+
+        let items = split_dnf_items(cond);
+        if let [only] = items.as_slice() {
+            return self.push_down_predicates(only, columns, kind);
+        }
+        let mut conds_to_push = Vec::with_capacity(items.len());
+        let mut any_kept = false;
+        for item in &items {
+            let (pushed, kept) = self.push_down_cnf_predicates(item, columns, kind);
+            let Some(composed) = compose_cnf_condition(pushed) else {
+                return (Vec::new(), vec![cond.clone()]);
+            };
+            conds_to_push.push(composed);
+            any_kept |= !kept.is_empty();
+        }
+        if !any_kept {
+            // All the condition can be pushed down.
+            return (vec![cond.clone()], Vec::new());
+        }
+        // Some condition can't be pushed down, we need to keep all the
+        // condition.
+        let relaxed = compose_dnf_condition(conds_to_push).into_iter().collect();
+        (relaxed, vec![cond.clone()])
     }
 }

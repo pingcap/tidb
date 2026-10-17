@@ -3361,8 +3361,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     // `getTableScanPenalty` charges no full-range penalty to
                     // a scan that has one -- its full placeholder range is
                     // rebuilt per outer row.
+                    //
+                    // Go's `buildPhysPlanPartInfo` sets `PruningConds` to
+                    // `ds.AllConds` for every table, partitioned or not, and
+                    // `getTableScanPenalty` reads a non-empty list as "a
+                    // partition-level scan": a filtered scan is charged
+                    // `max(MaxPenaltyRowCount, rows)` rather than the table's
+                    // modify count.
                     table_scan_penalty: crate::plan_cost_ver2::TableScanPenaltyInput {
                         has_range_info: prop.index_join_prop.is_some(),
+                        has_partition_scan: !ds.all_conds.is_empty(),
                         ..ds.table_scan_penalty
                     },
                     tikv_pushdown: None,
@@ -4098,11 +4106,29 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     let scale = |rows| table_stats.as_ref()
                         .map(|stats| stats.scale_by_expect_cnt(rows, ctx.skew_ratio))
                         .unwrap_or_else(|| crate::stats_info::StatsInfo::new(rows, []));
-                    (scale(final_rows), scale(index_rows), scale(access_rows))
+                    // Go `addPushedDownSelection4PhysicalIndexScan`: the index
+                    // Selection is the scan's (possibly table-capped) row count
+                    // times `CountAfterIndex / CountAfterAccess`, both RAW
+                    // counts, so a probe estimate above the table's row count
+                    // still loses the index filters' selectivity.
+                    let index_filter_ratio = if access_rows > 0.0 { index_rows / access_rows } else { 0.0 };
+                    (scale(final_rows), scale(index_rows), scale(access_rows), index_filter_ratio)
                 });
                 let runtime_final_stats = runtime_counts.as_ref().map(|counts| counts.0.clone());
-                let runtime_probe_stats = runtime_counts.as_ref().map(|counts| counts.1.clone());
-                let scan_stats = runtime_counts.as_ref().map(|counts| counts.2.clone()).or(stats.clone());
+                let scan_stats = runtime_counts
+                    .as_ref()
+                    .map(|counts| counts.2.clone())
+                    .or(stats.clone());
+                let runtime_index_selection_stats = runtime_counts
+                    .as_ref()
+                    .zip(scan_stats.as_ref())
+                    .map(|(counts, scan_stats)| {
+                        let count = scan_stats.row_count() * counts.3;
+                        table_stats
+                            .as_ref()
+                            .map(|stats| stats.scale_by_expect_cnt(count, ctx.skew_ratio))
+                            .unwrap_or_else(|| crate::stats_info::StatsInfo::new(count, []))
+                    });
                 base.base.set_stats(scan_stats.clone());
                 // Go `getPlanCostVer24PhysicalIndexScan` prices the scan's own
                 // physical schema (`InitSchema`): every index column -- a
@@ -4155,6 +4181,17 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 };
                 let has_root_filters = !virtual_table_filters.is_empty()
                     || !rejected_index_filters.is_empty() || !rejected_table_filters.is_empty();
+                let global_partition_filter =
+                    global_index_partition_filter(ds, source_index, scan.schema());
+                // Go `(*CopTask).finishIndexPlan`: the lookup's table side
+                // takes the INDEX PLAN's stats -- the index Selection's when
+                // one exists, else the scan's.
+                let runtime_table_side_stats =
+                    if index_filters.is_empty() && global_partition_filter.is_none() {
+                        runtime_counts.as_ref().and(scan_stats.clone())
+                    } else {
+                        runtime_index_selection_stats.clone()
+                    };
                 let (mut table_side, mut root_task_conds) = if single_scan {
                     // A condition that is not covered by the index key (for
                     // example an unsigned integer handle predicate) remains
@@ -4172,7 +4209,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     );
                     table_base
                         .base
-                        .set_stats(runtime_probe_stats.clone().or_else(|| {
+                        .set_stats(runtime_table_side_stats.clone().or_else(|| {
                             scan.base().base.stats_info().cloned().map(|stats| {
                                 // Go `convertToIndexScan`:
                                 // `ts.SetStats(&property.StatsInfo{StatsVersion:
@@ -4231,8 +4268,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 virtual_table_filters.append(&mut rejected_index_filters);
                 virtual_table_filters.extend(root_task_conds);
                 root_task_conds = virtual_table_filters;
-                let global_partition_filter =
-                    global_index_partition_filter(ds, source_index, scan.schema());
                 let index_plan = if index_filters.is_empty() && global_partition_filter.is_none() {
                     scan
                 } else {
@@ -4245,7 +4280,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .base
                         .set_schema(scan.schema().cloned());
                     selection_base.base.set_stats(
-                        if let Some(runtime_stats) = &runtime_probe_stats {
+                        if let Some(runtime_stats) = &runtime_index_selection_stats {
                             Some(runtime_stats.clone())
                         } else if let Some(count_after_index) =
                             filled_path.and_then(|path| path.count_after_index)
