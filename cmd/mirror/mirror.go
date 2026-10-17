@@ -49,6 +49,8 @@ var (
 	isUpload bool
 )
 
+const maxCommandAttempts = 3
+
 func init() {
 	flag.BoolVar(&isMirror, "mirror", false, "deprecated; ignored")
 	flag.BoolVar(&isUpload, "upload", false, "deprecated; ignored")
@@ -107,10 +109,6 @@ func createTmpDir() (tmpdir string, err error) {
 func downloadZips(
 	tmpdir string, listed map[string]listedModule,
 ) (map[string]downloadedModule, error) {
-	gobin, err := bazel.Runfile("bin/go")
-	if err != nil {
-		return nil, err
-	}
 	downloadArgs := make([]string, 0, len(listed)+3)
 	downloadArgs = append(downloadArgs, "mod", "download", "-json")
 	for _, mod := range listed {
@@ -123,12 +121,7 @@ func downloadZips(
 			downloadArgs = append(downloadArgs, fmt.Sprintf("%s@%s", mod.Path, mod.Version))
 		}
 	}
-	cmd := exec.Command(gobin, downloadArgs...)
-	cmd.Dir = tmpdir
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
-	cmd.Env = env
-	jsonBytes, err := cmd.Output()
+	jsonBytes, err := runGoCommand(tmpdir, downloadArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -149,16 +142,7 @@ func downloadZips(
 }
 
 func listAllModules(tmpdir string) (map[string]listedModule, error) {
-	gobin, err := bazel.Runfile("bin/go")
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.Command(gobin, "list", "-mod=readonly", "-m", "-json", "all")
-	cmd.Dir = tmpdir
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
-	cmd.Env = env
-	jsonBytes, err := cmd.Output()
+	jsonBytes, err := runGoCommand(tmpdir, "list", "-mod=readonly", "-m", "-json", "all")
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +163,48 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 		}
 	}
 	return ret, nil
+}
+
+func runGoCommand(tmpdir string, args ...string) ([]byte, error) {
+	gobin, err := bazel.Runfile("bin/go")
+	if err != nil {
+		return nil, err
+	}
+	fullArgs := strings.Join(append([]string{gobin}, args...), " ")
+	return runCommandWithRetries(fullArgs, func() *exec.Cmd {
+		cmd := exec.Command(gobin, args...)
+		cmd.Dir = tmpdir
+		env := os.Environ()
+		env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
+		cmd.Env = env
+		return cmd
+	})
+}
+
+func runCommandWithRetries(commandLine string, cmdBuilder func() *exec.Cmd) ([]byte, error) {
+	var output []byte
+	var err error
+	attempts := 0
+	for attempts < maxCommandAttempts {
+		attempts++
+		output, err = cmdBuilder().Output()
+		if err == nil {
+			return output, nil
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			break
+		}
+	}
+	errMsg := fmt.Sprintf("command %q failed after %d attempt(s): %v", commandLine, attempts, err)
+	if len(output) > 0 {
+		errMsg += fmt.Sprintf("\nstdout:\n%s", output)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+		errMsg += fmt.Sprintf("\nstderr:\n%s", exitErr.Stderr)
+	}
+	return nil, errors.New(errMsg)
 }
 
 func mungeBazelRepoNameComponent(component string) string {
@@ -325,10 +351,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--upload is deprecated and ignored; modules are resolved through GOPROXY")
 	}
 	if err := mirror(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			panic("subprocess exited with stderr:\n" + string(exitErr.Stderr))
-		}
 		panic(err)
 	}
 }
