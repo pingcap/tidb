@@ -6548,6 +6548,7 @@ func (c *timestampAddFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	compareAsDatetime := types.IsTypeTime(args[2].GetType(ctx.GetEvalCtx()).GetType())
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETReal, types.ETDatetime)
 	if err != nil {
 		return nil, err
@@ -6566,20 +6567,26 @@ func (c *timestampAddFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 
 	bf.tp.SetFlen(flen)
-	sig := &builtinTimestampAddSig{bf}
+	sig := &builtinTimestampAddSig{
+		baseBuiltinFunc:   bf,
+		compareAsDatetime: compareAsDatetime,
+	}
 	sig.setPbCode(tipb.ScalarFuncSig_TimestampAdd)
 	return sig, nil
 }
 
 type builtinTimestampAddSig struct {
 	baseBuiltinFunc
+	// compareAsDatetime records whether the third argument was temporal before
+	// its implicit cast. It is used only to select comparison coercion.
+	compareAsDatetime bool
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
 	// as this expression may be shared across sessions.
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinTimestampAddSig) Clone() builtinFunc {
-	newSig := &builtinTimestampAddSig{}
+	newSig := &builtinTimestampAddSig{compareAsDatetime: b.compareAsDatetime}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
