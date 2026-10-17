@@ -398,3 +398,43 @@ func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, tc types.C
 	}
 	return key, value, nil
 }
+
+func TestCompareIndexAndValMVIndex(t *testing.T) {
+	// The original per-element comparison, kept here as the reference behavior.
+	reference := func(rowVal, idxVal types.Datum) int {
+		bj := rowVal.GetMysqlJSON()
+		cmpRes := 0
+		for i := range bj.GetElemCount() {
+			elem := types.NewJSONDatum(bj.ArrayGetElem(i))
+			var err error
+			cmpRes, err = elem.Compare(types.DefaultStmtNoWarningContext, &idxVal, collate.GetBinaryCollator())
+			require.NoError(t, err)
+			if cmpRes == 0 {
+				break
+			}
+		}
+		return cmpRes
+	}
+	rows := []string{`[]`, `[1, 2, 7.0]`, `["a", "b"]`, `[true, null, "7"]`, `["$.a=\"x\"", "$.b=7"]`}
+	idxVals := []types.Datum{
+		types.NewIntDatum(7), types.NewIntDatum(3), types.NewUintDatum(2), types.NewFloat64Datum(7),
+		types.NewStringDatum("a"), types.NewStringDatum("7"), types.NewStringDatum("$.b=7"),
+		types.NewStringDatum("c"), {},
+	}
+	for _, row := range rows {
+		bj, err := types.ParseBinaryJSONFromString(row)
+		require.NoError(t, err)
+		rowVal := types.NewJSONDatum(bj)
+		for _, idxVal := range idxVals {
+			got, err := CompareIndexAndVal(types.DefaultStmtNoWarningContext, rowVal, idxVal, collate.GetBinaryCollator(), true)
+			require.NoError(t, err)
+			want := reference(rowVal, idxVal)
+			require.Equal(t, want == 0, got == 0, "row %s, index value %v", row, idxVal)
+			require.Equal(t, want < 0, got < 0, "row %s, index value %v", row, idxVal)
+
+			gotSorted, err := compareMVIndexValSorted(types.DefaultStmtNoWarningContext, sortedJSONArrayElems(bj), rowVal, idxVal)
+			require.NoError(t, err)
+			require.Equal(t, want == 0, gotSorted == 0, "sorted: row %s, index value %v", row, idxVal)
+		}
+	}
+}
