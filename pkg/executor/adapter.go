@@ -974,9 +974,6 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil
 	}
-	if depth > maxForeignKeyCascadeDepth {
-		return exeerrors.ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
-	}
 	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
 	defer func() {
 		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
@@ -996,7 +993,19 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			terror.Log(exec.Close(e))
 			return err
 		}
-		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
+		if depth >= maxForeignKeyCascadeDepth {
+			// The root statement counts as the first level. At the limit, only
+			// reject a cascade that actually matches rows; an empty child table
+			// (including the end of a self-referencing chain) needs no cascade.
+			child := e.AllChildren()[0]
+			chk := exec.NewFirstChunk(child)
+			err = exec.Next(ctx, child, chk)
+			if err == nil && chk.NumRows() > 0 {
+				err = exeerrors.ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+			}
+		} else {
+			err = exec.Next(ctx, e, exec.NewFirstChunk(e))
+		}
 		failpoint.Inject("handleForeignKeyCascadeError", func(val failpoint.Value) {
 			// Next can recover panic and convert it to error. So we inject error directly here.
 			if val.(bool) && err == nil {
