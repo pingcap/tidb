@@ -57,6 +57,28 @@ func countCollectedMetrics(collector prometheus.Collector) int {
 }
 
 func TestRUV2MetricDefinitions(t *testing.T) {
+	t.Run("engine results", func(t *testing.T) {
+		InitRUV2Metrics()
+		for _, values := range [][3]float64{{0, 0, 0}, {3.5, 0, 0}, {0, 2.5, 0}, {0, 0, 4.5}, {1, 2, 3}} {
+			tikv, tidb, tiflash := values[0], values[1], values[2]
+			before := []float64{
+				readCounterValue(t, RUV2ByEngineTiKV),
+				readCounterValue(t, ruv2TiDB),
+				readCounterValue(t, ruv2TiFlash),
+				readCounterValue(t, RUV2Total),
+				readCounterValue(t, ruv2Select),
+			}
+			AddRUV2Results(tikv, tidb, tiflash, tikv+tidb+tiflash, "select")
+			require.Equal(t, before[0]+tikv, readCounterValue(t, RUV2ByEngineTiKV))
+			require.Equal(t, before[1]+tidb, readCounterValue(t, ruv2TiDB))
+			require.Equal(t, before[2]+tiflash, readCounterValue(t, ruv2TiFlash))
+			require.Equal(t, before[3]+tikv+tidb+tiflash, readCounterValue(t, RUV2Total))
+			require.Equal(t, before[4]+tikv+tidb+tiflash, readCounterValue(t, ruv2Select))
+			// Zero-valued engine series are available even before their first use.
+			require.Equal(t, 3, countCollectedMetrics(RUV2ByEngine))
+		}
+	})
+
 	require.Equal(t,
 		[]string{"ddl", "read", "write", "analyze", "other"},
 		[]string{LblSQLTypeDDL, LblSQLTypeRead, LblSQLTypeWrite, LblSQLTypeAnalyze, LblSQLTypeOther},
@@ -98,6 +120,30 @@ func TestRUV2MetricDefinitions(t *testing.T) {
 	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", LblRUV2Unit, LblRUV2UnitCPUWork)
 	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "status", "success")
 	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "reason", "incomplete")
+}
+
+func BenchmarkAddRUV2Results(b *testing.B) {
+	for _, testCase := range []struct {
+		name                string
+		tikv, tidb, tiflash float64
+	}{
+		{name: "point", tikv: 320, tidb: 2},
+		{name: "point-fractional", tikv: 0.25, tidb: 0.5},
+		{name: "tiflash", tidb: 0.5, tiflash: 0.25},
+		{name: "all-engines", tikv: 0.25, tidb: 0.5, tiflash: 0.125},
+	} {
+		b.Run(testCase.name, func(b *testing.B) {
+			InitRUV2Metrics()
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					AddRUV2Results(testCase.tikv, testCase.tidb, testCase.tiflash,
+						testCase.tikv+testCase.tidb+testCase.tiflash, "select")
+				}
+			})
+		})
+	}
 }
 
 func requireMetricFamilyHasLabel(t *testing.T, families []*dto.MetricFamily, familyName, labelName, labelValue string) {
