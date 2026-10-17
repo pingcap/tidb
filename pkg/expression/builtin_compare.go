@@ -476,6 +476,24 @@ func resolveType4Extremum(ctx EvalContext, args []Expression) (_ *types.FieldTyp
 		timeType = GLRetDate
 	} else if aggType.GetType() == mysql.TypeDatetime || aggType.GetType() == mysql.TypeTimestamp {
 		timeType = GLRetDatetime
+		// When the merged type is Datetime/Timestamp, check if the only temporal
+		// type among the args is DATE. This handles the case where a string
+		// constant is folded to Datetime but the actual column is DATE, causing
+		// an incorrect promotion to Datetime.
+		// See https://github.com/pingcap/tidb/issues/70503
+		var hasDate, hasDatetimeOrTimestamp bool
+		for _, arg := range args {
+			t := arg.GetType(ctx).GetType()
+			if t == mysql.TypeDate {
+				hasDate = true
+			}
+			if t == mysql.TypeDatetime || t == mysql.TypeTimestamp {
+				hasDatetimeOrTimestamp = true
+			}
+		}
+		if hasDate && !hasDatetimeOrTimestamp {
+			timeType = GLRetDate
+		}
 	}
 	return aggType, timeType, cmpStringMode
 }
