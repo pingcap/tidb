@@ -53,6 +53,7 @@ const (
 	FlagFullTextIndexResolveTopN
 	FlagFullTextIndexResolveProjection
 	FlagFullTextIndexResolveReject
+	FlagEliminateSemiJoinEmptyChild
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {
