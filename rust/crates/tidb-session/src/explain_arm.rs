@@ -81,6 +81,12 @@ impl Session {
         // ANALYZE can write, and plain EXPLAIN still exposes the target plan.
         self.require_statement_table_privileges(target)?;
         self.require_explain_view_privileges(target)?;
+        // Go's preprocessor walks the statement INSIDE the EXPLAIN, so its
+        // `checkSelectNoopFuncs` refuses (or warns about) `LOCK IN SHARE MODE`
+        // and `SQL_CALC_FOUND_ROWS` exactly as it does for the bare SELECT.
+        if let Stmt::Query(query) = target {
+            self.check_noop_functions(query)?;
+        }
         self.activate_statement_resource_group(target);
         let current_db = self.current_db.clone();
         // Both forms plan through the driver's own build path (see

@@ -2121,7 +2121,16 @@ fn try_fast_point_physical_plan_with_allocator_mode(
             .optimizer_fix_control()
             .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
         || select.into_outfile.is_some()
-        || select.lock.is_some()
+        // Go `tryPointGetPlan` accepts a locking read and `getLockWaitTime`
+        // sets `Lock` only when `PessimisticLockEligible` (autocommit off, or
+        // a transaction open): an autocommit `FOR UPDATE` is a plain
+        // `Point_Get` with no `SelectLock` above it. An eligible lock keeps
+        // the ordinary plan, whose `SelectLock` takes the row lock.
+        || select.lock.as_ref().is_some_and(|lock| {
+            lock.kind != tidb_ast::LockKind::Update
+                || ctx.pessimistic_transaction()
+                || ctx.optimistic_transaction()
+        })
     {
         return Ok(None);
     }

@@ -1861,6 +1861,20 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         l_len: usize,
     ) -> Result<LogicalPlan, RewriteError> {
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
+        // Go: "We need to try to eliminate the agg and the projection produced
+        // by this operation." A primary or unique key in the subquery's output
+        // makes the de-duplicating aggregation redundant, but the rule only
+        // runs when these flags are set.
+        {
+            use crate::logical::rule::flags;
+            self.env.opt_flags.set(
+                self.env.opt_flags.get()
+                    | flags::ELIMINATE_AGG
+                    | flags::ELIMINATE_PROJECTION
+                    | flags::JOIN_REORDER
+                    | flags::EMPTY_SELECTION_ELIMINATOR,
+            );
+        }
         // Go: buildSubqueryJoin allocates Selection + Agg output Projection
         // + Join wrapper around the inner join. This port folds them into
         // build_distinct and the join construction below; the plan ids go's

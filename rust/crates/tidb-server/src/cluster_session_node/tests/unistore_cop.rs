@@ -15813,6 +15813,298 @@ fn statement_summary_plan_digests_match_go() {
         .unwrap();
 }
 
+/// Go's IN-subquery rewrite turns `a IN (SELECT b FROM ...)` into an inner join
+/// over a de-duplicating aggregation and sets the flags that let
+/// `aggregationEliminator` remove it again. When the subquery's column is a
+/// primary key the aggregation is redundant and Go's plan has none; without the
+/// flags this port kept a `StreamAgg` below the join.
+#[test]
+fn in_subquery_over_a_primary_key_has_no_deduplicating_aggregation() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1112)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE sia(id INT PRIMARY KEY, x INT, y INT)",
+        "CREATE TABLE sib(id INT PRIMARY KEY, y INT, z INT, KEY(y))",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let operators = |session: &mut ClusterServerSession, sql: &str| -> String {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| {
+                row[0]
+                    .trim_start_matches(['├', '└', '─', '│', ' '])
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let unique = operators(
+        &mut session,
+        "EXPLAIN SELECT * FROM sia WHERE id IN (SELECT id FROM sib WHERE z > 1)",
+    );
+    assert!(!unique.contains("Agg"), "{unique}");
+    // A non-unique column still needs the de-duplication.
+    let not_unique = operators(
+        &mut session,
+        "EXPLAIN SELECT * FROM sia WHERE x IN (SELECT y FROM sib)",
+    );
+    assert!(not_unique.contains("StreamAgg"), "{not_unique}");
+}
+
+/// Go's fast point-get plan accepts a locking read and sets `Lock` only when
+/// `PessimisticLockEligible` (autocommit off, or a transaction open): an
+/// autocommit `SELECT ... FOR UPDATE` on a primary key is a plain `Point_Get`
+/// with no `SelectLock` above it, as is the IN-list form's `Batch_Point_Get`.
+#[test]
+fn autocommit_for_update_point_gets_have_no_select_lock() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1113)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tfu (id INT PRIMARY KEY, x INT)")
+        .unwrap();
+    let operators = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| {
+                row[0]
+                    .trim_start_matches(['├', '└', '─', '│', ' '])
+                    .split('_')
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    };
+    assert_eq!(
+        operators(
+            &mut session,
+            "EXPLAIN SELECT * FROM tfu WHERE id = 1 FOR UPDATE"
+        ),
+        ["Point"]
+    );
+    assert_eq!(
+        operators(
+            &mut session,
+            "EXPLAIN SELECT * FROM tfu WHERE id IN (1, 2) FOR UPDATE"
+        ),
+        ["Batch"]
+    );
+    // A non-point read keeps its SelectLock (a no-op at execution).
+    assert_eq!(
+        operators(
+            &mut session,
+            "EXPLAIN SELECT * FROM tfu WHERE x = 1 FOR UPDATE"
+        )[0],
+        "SelectLock"
+    );
+}
+
+/// More operator shapes than `statement_summary_plan_digests_match_go`: window
+/// and Shuffle, TopN, aggregates, semi-join rewrites, apply, CTE, unique-index
+/// point gets and in-list collapsing. Expected digests are the Go oracle's,
+/// recorded under the replay's session setup (`tidb_hash_join_concurrency=1`).
+#[test]
+fn statement_summary_plan_digests_match_go_for_more_shapes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1114)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("SET @@tidb_hash_join_concurrency = 1")
+        .unwrap();
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
+        .unwrap();
+    for ddl in [
+        "CREATE TABLE a(id INT PRIMARY KEY, x INT, y INT, KEY(x), KEY(y))",
+        "CREATE TABLE b(id INT PRIMARY KEY, y INT, z INT, KEY(y))",
+        "CREATE TABLE c(id INT PRIMARY KEY, z INT)",
+        "CREATE TABLE u(id INT, k INT, v VARCHAR(20), UNIQUE KEY uk(k), KEY(v))",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    for sql in [
+        "select * from u where k = 1",
+        "select * from u where k in (1,2,3)",
+        "select * from u where v = 'a'",
+        "select * from u where v like 'a%'",
+        "select id, row_number() over (partition by x order by y) from a",
+        "select x, y from a order by x desc limit 3",
+        "select * from a where x = 1 or y = 2",
+        "select /*+ use_index_merge(a) */ * from a where x = 1 or y = 2",
+        "select x, count(distinct y) from a group by x",
+        "select /*+ stream_agg() */ x, sum(y) from a group by x",
+        "select * from a where id in (select id from b)",
+        "select * from a where id not in (select id from b)",
+        "select * from a where exists (select 1 from b where b.id = a.id)",
+        "select * from a where x > (select avg(z) from b)",
+        "with t as (select x, y from a where y > 1) select * from t join b on t.x = b.id",
+        "select distinct x from a",
+        "select x + y, abs(x) from a where y between 1 and 10",
+        "select * from a where x in (1,2,3,4,5,6,7,8)",
+        "select * from a where x in (1,2)",
+        "select * from a where id = 1 and x = 2",
+        "select * from a where x is null",
+        "select * from a where x = y",
+        "select a.*, b.z from a join b on a.id = b.id join c on b.id = c.id",
+        "select * from a join b on a.x = b.y join c on b.z = c.id where a.y > 1",
+        "select /*+ hash_join(a, b) */ * from a join b on a.x = b.y",
+        "select * from a right join b on a.id = b.id",
+        "select * from a where id > 5 order by id limit 2",
+        "select * from a order by x limit 5 offset 2",
+        "select max(x), min(y) from a",
+        "select * from a union select * from a",
+        "select count(*) from a where x > 1 group by y having count(*) > 1",
+        "select x from a where x = 1 and y in (select y from b where z = 3)",
+    ] {
+        rows(&mut session, sql);
+    }
+    let recorded: std::collections::BTreeMap<String, String> = displayed(rows(
+        &mut session,
+        "SELECT digest_text, plan_digest FROM information_schema.statements_summary \
+         WHERE schema_name = 'test' AND digest_text NOT LIKE '%statements_summary%' \
+         AND digest_text NOT LIKE 'set %' AND digest_text NOT LIKE 'drop%' \
+         AND digest_text NOT LIKE 'create%'",
+    ))
+    .into_iter()
+    .map(|row| (row[0].clone(), row[1].clone()))
+    .collect();
+    let expected: [(&str, &str); 30] = [
+        (
+            "select * from `a` join `b` on `a` . `x` = `b` . `y`",
+            "9422e139f8cb8589192103534e1e6b7513fdb528bd83699e698657939ff6cd02",
+        ),
+        (
+            "select * from `a` join `b` on `a` . `x` = `b` . `y` join `c` on `b` . `z` = `c` . `id` where `a` . `y` > ?",
+            "c3c1da9ec3073353f92673b3ab1ff31baab954c50fc75814d3ef8e49288d6bf7",
+        ),
+        (
+            "select * from `a` order by `x` limit ? offset ?",
+            "aa7c930b8637b9589808d46b5c9ce524a4c0e9dc7e74f37b10e9f01736c04277",
+        ),
+        (
+            "select * from `a` right join `b` on `a` . `id` = `b` . `id`",
+            "76c89b9f77f013ca7de0de19a7751008715a384774c35d909e5a9f53d7ff1bc4",
+        ),
+        (
+            "select * from `a` union select * from `a`",
+            "9457d36f71476a29dac88288c79fbe278a9c265697092e04b7742f1437703b99",
+        ),
+        (
+            "select * from `a` where `id` = ? and `x` = ?",
+            "73937a629211beecade7391365368dbae3d44cc9dba7f53a398f0a5bb700f5e9",
+        ),
+        (
+            "select * from `a` where `id` > ? order by `id` limit ?",
+            "0c92331e892af0dfa50609875e3a5be6f7082541ce234cf295c484723078562b",
+        ),
+        (
+            "select * from `a` where `id` in ( select `id` from `b` )",
+            "0e1e7baf142e077d27a48d405e83fba1813fb6bf368841cfdeb65103737ecfa9",
+        ),
+        (
+            "select * from `a` where `id` not in ( select `id` from `b` )",
+            "9e0ede8bc4e81b6419df9f23b5fb65c4d1d20ed4eeddb99e44235f4c7c3aaeec",
+        ),
+        (
+            "select * from `a` where `x` = ? or `y` = ?",
+            "83d9e13aa02429530a794d7501b4aee4ffd0489c651eb2241d3df9e6b2d1d176",
+        ),
+        (
+            "select * from `a` where `x` = `y`",
+            "827fa0ddfdb6da9011b78e3562dfa97d75121112e5d9e020864424d3ba866607",
+        ),
+        (
+            "select * from `a` where `x` > ( select avg ( `z` ) from `b` )",
+            "04500b49f759e055d5625ad5c4f472f1a4b5c98d9d187400d2aae27d80b5bbd9",
+        ),
+        (
+            "select * from `a` where `x` in ( ... )",
+            "eff50ddd607cd7f575c486db304b1f63e65767db109024ea8561b00936a14317",
+        ),
+        (
+            "select * from `a` where `x` is ?",
+            "eff50ddd607cd7f575c486db304b1f63e65767db109024ea8561b00936a14317",
+        ),
+        (
+            "select * from `a` where exists ( select ? from `b` where `b` . `id` = `a` . `id` )",
+            "c1197fa02e2d5137b3eb5d9b60937668235224282121c7b810e5b7432342b199",
+        ),
+        (
+            "select * from `u` where `k` = ?",
+            "29ff78a0ff02e393c46a1134a52a665f9ce7231719e3b0bdf7a0d10945791661",
+        ),
+        (
+            "select * from `u` where `k` in ( ... )",
+            "23b7d175a9eb2de45a422305816f197a8d786b3e998d5644844887f7e4b81534",
+        ),
+        (
+            "select * from `u` where `v` = ?",
+            "75babbf1e7a60c27a17d0d5b91af7fe8ab5c7fd63eaf416ec81a81e7f52a8543",
+        ),
+        (
+            "select * from `u` where `v` like ?",
+            "f98956390255d7c8956504748cebf67e79a106eef191142abac58e4c235d2877",
+        ),
+        (
+            "select `a` . * , `b` . `z` from `a` join `b` on `a` . `id` = `b` . `id` join `c` on `b` . `id` = `c` . `id`",
+            "1297ae489c76eb4abc807eddb49a48161e773ea24ff48ace1191d467e0b6f4d7",
+        ),
+        (
+            "select `id` , `row_number` ( ) `over` ( partition by `x` order by `y` ) from `a`",
+            "c3ab2025bc7e7467f794ba33577ba173b8173268701bba1fcc971f573dbf4d58",
+        ),
+        (
+            "select `x` + `y` , `abs` ( `x` ) from `a` where `y` between ? and ?",
+            "b25f5fbd41ce96ba4c8f158836787f68fc6cac1abad3537d981f6e77c837e94d",
+        ),
+        (
+            "select `x` , `y` from `a` order by `x` desc limit ?",
+            "50529e8ff3c19402089a106189d1964052b89078992a617f528106b7ead33818",
+        ),
+        (
+            "select `x` , count ( distinct `y` ) from `a` group by `x`",
+            "e6362a0035c238cf0862091d697b6ba96457074ab7cd731904fab7437d2630cc",
+        ),
+        (
+            "select `x` , sum ( `y` ) from `a` group by `x`",
+            "235573aa0e74336de87fe3b3b98e601f3c89939d34c78da0f81bd6dc180e370b",
+        ),
+        (
+            "select `x` from `a` where `x` = ? and `y` in ( select `y` from `b` where `z` = ? )",
+            "6e118d7bc99503a32f679dd6027d7853057856fee1dbc3328d3575df43c02427",
+        ),
+        (
+            "select count ( ? ) from `a` where `x` > ? group by `y` having count ( ? ) > ?",
+            "7e6637b5bc2f3412427d21fda3a187866e7ec58eff40c39b65d0a950a74ebf98",
+        ),
+        (
+            "select distinct `x` from `a`",
+            "1cb38efe73f80d5bc368f7fb165b838c01361bcc3093827c0401d291a2c6f7db",
+        ),
+        (
+            "select max ( `x` ) , min ( `y` ) from `a`",
+            "bc3ae90d6c3a5cee3cf518d5bd81e7a0096506588c76a1ad2f6be97770983075",
+        ),
+        (
+            "with `t` as ( select `x` , `y` from `a` where `y` > ? ) select * from `t` join `b` on `t` . `x` = `b` . `id`",
+            "47c44b86fea9d9ae5e725900bd99ba2eb80ec49b4a758d7d85ee70bc54fabed4",
+        )
+    ];
+    for (text, digest) in expected {
+        assert_eq!(
+            recorded.get(text).map(String::as_str),
+            Some(digest),
+            "{text}"
+        );
+    }
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
+        .unwrap();
+}
+
 /// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
 /// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
 /// and orders by the full value.

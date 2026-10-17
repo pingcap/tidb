@@ -5911,3 +5911,28 @@ fn update_lock_and_lookup_shapes_follow_go() {
     .is_empty());
     session.run("rollback").unwrap();
 }
+
+/// Go's preprocessor checks the statement inside an EXPLAIN: a shared lock
+/// or `SQL_CALC_FOUND_ROWS` is refused with 1235 unless noop functions are on.
+#[test]
+fn explain_refuses_noop_select_clauses_like_the_bare_select() {
+    let mut session = Session::new();
+    session
+        .run("create table te (id int primary key, x int)")
+        .unwrap();
+    for sql in [
+        "explain select * from te where id = 1 lock in share mode",
+        "explain select * from te where x = 1 for share",
+        "explain select sql_calc_found_rows * from te",
+    ] {
+        let error = session.run(sql).unwrap_err();
+        assert!(
+            format!("{error:?}").contains("FunctionsNoopImpl"),
+            "{sql}: {error:?}"
+        );
+    }
+    session.run("set tidb_enable_noop_functions = on").unwrap();
+    session
+        .run("explain select * from te where x = 1 for share")
+        .unwrap();
+}
