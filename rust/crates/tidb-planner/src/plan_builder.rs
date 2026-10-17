@@ -4130,7 +4130,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let (mut next_plan, _) = self.lower_scalar_subqueries(plan, &mut scratch)?;
                 hide_rewrite_columns(&mut next_plan, plan_len);
                 plan = next_plan;
-                let (schema, names) = snapshot_schema_and_names(&plan);
+                let (schema, _) = snapshot_schema_and_names(&plan);
                 let mut current_markers = markers.clone();
                 current_markers.insert(MarkerKind::Column, schema.columns.clone());
                 self.rewrite_scalar_with_plan(&scratch, &plan, &current_markers)?
@@ -4400,7 +4400,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<LogicalPlan, PlanError> {
         self.cur_clause = ClauseCode::OrderBy;
-        let (schema, names) = snapshot_schema_and_names(&plan);
+        let (schema, _) = snapshot_schema_and_names(&plan);
 
         let mut by_items = Vec::with_capacity(items.len());
         for item in items {
@@ -5037,7 +5037,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `buildTableRefs` (`:420`) is the FROM clause's own entry point; the
         // `None` arm is its `buildTableDual`.
         let mut plan = self.build_table_refs(select.from.as_ref())?;
-        let (source_schema, source_names) = snapshot_schema_and_names(&plan);
+        let (_, source_names) = snapshot_schema_and_names(&plan);
 
         // `:4348` `unfoldWildStar`, then `:4360` `resolveGbyExprs` — GROUP BY
         // is resolved against the SOURCE scope and the written select list,

@@ -3611,6 +3611,15 @@ pub fn explain_insert_stmt(
         ctx,
         &fk_spec,
     )?;
+    // The source's own width: Go appends ON DUPLICATE fields past it.
+    let select_width = match &physical {
+        PhysicalPlan::Dml(root) => root.select_plan.as_deref().and_then(|select| {
+            crate::driver::insert_plan_source_actual_width(insert, catalog, current_db)
+                .or_else(|| select.schema().map(|schema| schema.columns.len()))
+        }),
+        _ => None,
+    };
+    crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, select_width)?;
     render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
 }
 

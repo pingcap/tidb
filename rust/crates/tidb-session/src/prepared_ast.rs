@@ -126,6 +126,19 @@ impl PreparedAst {
 }
 
 impl Session {
+    /// Go `TblInfo2UnionScan`'s dirty tables, as the physical plan cache keys
+    /// them: what this transaction has staged, none inside a statement
+    /// snapshot.
+    pub(crate) fn plan_cache_dirty_tables(&self) -> Vec<i64> {
+        // Nothing is dirty outside a transaction: the tracker keeps what the
+        // last autocommit statement staged until the next one opens.
+        if self.statement_snapshot.is_some() || self.txn.is_none() {
+            Vec::new()
+        } else {
+            self.staged_writes.dirty_table_ids()
+        }
+    }
+
     pub(crate) fn prepared_plan_cache_environment(
         &self,
     ) -> Option<Arc<tidb_executor::PreparedPlanCacheEnvironment>> {
@@ -488,6 +501,7 @@ impl Session {
                 values,
                 &catalog,
                 self.current_database(),
+                &self.plan_cache_dirty_tables(),
                 &environment,
                 statement,
             ) {
@@ -527,6 +541,7 @@ impl Session {
             &catalog,
             self.current_database(),
             &planner_context,
+            &self.plan_cache_dirty_tables(),
             &environment,
             statement,
         )
@@ -572,6 +587,7 @@ impl Session {
                 values,
                 &catalog,
                 self.current_database(),
+                &self.plan_cache_dirty_tables(),
                 &environment,
                 statement,
             ) {
@@ -596,6 +612,7 @@ impl Session {
             &catalog,
             self.current_database(),
             &ctx,
+            &self.plan_cache_dirty_tables(),
             &environment,
             statement,
         )

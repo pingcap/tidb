@@ -2872,3 +2872,39 @@ fn result_output_names_carry_each_column_origin() {
     assert_eq!(current_db, "test");
     assert_eq!(spelled(names), [row(["test", "x", "origin_t", "d", "d"])]);
 }
+
+/// Go keys a prepared plan by the statement's dirty tables
+/// (`NewPlanCacheKey`'s `TblInfo2UnionScan`): a plan built over a table this
+/// transaction has written is a different cache entry. Expected
+/// `@@last_plan_from_cache` sequence: Go 1.27 on this branch (`TestZZ`
+/// probe `DK1`).
+#[test]
+fn a_prepared_plan_over_a_dirty_table_is_a_separate_cache_entry() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE dirty_key (a INT PRIMARY KEY, b INT, KEY ib (b))")
+        .unwrap();
+    session.run("CREATE TABLE dirty_other (a INT PRIMARY KEY, b INT)").unwrap();
+    session
+        .run("INSERT INTO dirty_key VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
+    session
+        .run("PREPARE dirty_stmt FROM 'SELECT * FROM dirty_key WHERE b > ?'")
+        .unwrap();
+    session.run("SET @dirty_x = 0").unwrap();
+    let mut hit = |session: &mut Session| {
+        session.run("EXECUTE dirty_stmt USING @dirty_x").unwrap();
+        cache_flag(session)
+    };
+    let mut observed = vec![hit(&mut session), hit(&mut session)];
+    session.run("BEGIN").unwrap();
+    observed.push(hit(&mut session));
+    session.run("INSERT INTO dirty_key VALUES (4,4)").unwrap();
+    observed.push(hit(&mut session));
+    observed.push(hit(&mut session));
+    session.run("INSERT INTO dirty_other VALUES (1,1)").unwrap();
+    observed.push(hit(&mut session));
+    session.run("ROLLBACK").unwrap();
+    observed.push(hit(&mut session));
+    assert_eq!(observed, ["0", "1", "0", "0", "1", "1", "1"]);
+}

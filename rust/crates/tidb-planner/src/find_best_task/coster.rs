@@ -214,7 +214,7 @@ impl Ver2Coster {
         let Some(cache) = &self.explain_costs else {
             return;
         };
-        self.plan_cost(plan, TaskType::Root, false);
+        let _ = self.plan_cost(plan, TaskType::Root, false);
         fn record(
             node: &mut PhysicalPlan,
             cache: &std::collections::HashMap<usize, CostVer2>,

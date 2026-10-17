@@ -172,6 +172,15 @@ pub(crate) fn insert_plan_source(
     super::on_duplicate_scope::extended_source(insert, catalog, current_db).map(|(query, _)| query)
 }
 
+/// The width of the source's own columns when Go extended it for ON DUPLICATE.
+pub(crate) fn insert_plan_source_actual_width(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<usize> {
+    super::on_duplicate_scope::extended_source(insert, catalog, current_db).map(|(_, width)| width)
+}
+
 fn dml_execution_parts<'a>(
     plan: Option<&'a mut tidb_planner::physical::PhysicalPlan>,
     operator: &str,
@@ -635,6 +644,37 @@ fn resolve_insert_target(
         column_meta,
         extra_handle_offset,
     })
+}
+
+/// Go's `buildInsert` checks the target and the width of every row before it
+/// plans anything, so `EXPLAIN INSERT` refuses what the statement would. The
+/// executor's own check lives in `execute_insert`, after the source ran.
+pub(crate) fn validate_insert_for_explain(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    select_width: Option<usize>,
+) -> Result<(), DriverError> {
+    let layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
+    let target_width = layout.target_offsets.len();
+    if insert.source.is_some() {
+        if select_width.is_some_and(|width| width != target_width) {
+            return Err(DriverError::WrongValueCountOnRow { row: 1 });
+        }
+        return Ok(());
+    }
+    let names_a_column = insert.set_syntax || insert.columns_specified;
+    let mut previous_width = target_width;
+    for (index, values) in insert.rows.iter().enumerate() {
+        let width = values.len();
+        let expected = if index == 0 { target_width } else { previous_width };
+        if (index > 0 || names_a_column || width > 0) && width != expected {
+            return Err(DriverError::WrongValueCountOnRow { row: index + 1 });
+        }
+        previous_width = width;
+    }
+    Ok(())
 }
 
 /// Go evaluates an uncorrelated subquery in a VALUES list or an ON
@@ -2326,6 +2366,21 @@ fn update_assignment_values_for_plan(
     if let Some(column) = crate::driver::from::extra_handle_column(table) {
         columns.push(column);
     }
+    // Go `buildUpdate` resolves every assignment target while planning, so an
+    // unknown one fails `EXPLAIN UPDATE` as it fails the statement.
+    for assignment in &update.assignments {
+        let unknown = assignment.col.last().is_none_or(|target| {
+            !columns
+                .iter()
+                .any(|(column, _)| column.eq_ignore_ascii_case(target))
+        });
+        if unknown {
+            return Err(DriverError::UnknownColumnInClause {
+                column: assignment.col.join("."),
+                clause: "field list".to_owned(),
+            });
+        }
+    }
     let scope = dml_table_scope(table_ref, &database, &name, columns, ctx);
     update
         .assignments
@@ -2475,6 +2530,7 @@ impl PreparedDmlPlan {
                 .lock()
                 .expect("prepared limits poisoned")
                 .clone(),
+            dirty_tables: Vec::new(),
         });
     }
 
@@ -2503,6 +2559,7 @@ impl PreparedDmlPlan {
             catalog,
             current_database,
             &ctx,
+            &[],
             environment,
             &self.statement,
         )
@@ -2519,6 +2576,7 @@ impl PreparedDmlPlan {
         catalog: &Catalog,
         current_database: &str,
         ctx: &crate::StmtContext,
+        dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &Stmt,
     ) -> Option<PreparedDmlExecution> {
@@ -2528,6 +2586,7 @@ impl PreparedDmlPlan {
             catalog,
             current_database,
             Some(ctx),
+            dirty_ids,
             environment,
             statement,
         )
@@ -2543,6 +2602,7 @@ impl PreparedDmlPlan {
         params: &[Datum],
         catalog: &Catalog,
         current_database: &str,
+        dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &Stmt,
     ) -> Option<PreparedDmlExecution> {
@@ -2552,6 +2612,7 @@ impl PreparedDmlPlan {
             catalog,
             current_database,
             None,
+            dirty_ids,
             environment,
             statement,
         )
@@ -2564,6 +2625,7 @@ impl PreparedDmlPlan {
         catalog: &Catalog,
         current_database: &str,
         ctx: Option<&crate::StmtContext>,
+        dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &Stmt,
     ) -> Option<PreparedDmlExecution> {
@@ -2594,6 +2656,7 @@ impl PreparedDmlPlan {
             stats_version_hash,
             environment: environment.clone(),
             limit_values,
+            dirty_tables: super::plan_cache::dirty_statement_tables(catalog, &self.table_keys, dirty_ids),
         };
         let refusal = environment.refusal(self.stmt_info);
         let admitted = refusal.is_none();

@@ -2931,11 +2931,6 @@ fn find_best_task_4_logical_data_source_paths(
         let mut cur_always_kept = false;
         let mut candidate_metrics = None;
         let mut heuristic = None;
-        // Go `convertToTableScan` / `convertToIndexScan` refuse a path whose
-        // single or double read does not fit a COP property only after
-        // `skylinePruning` compared it: the refused path still takes part in
-        // the pruning and the preferRange filter.
-        let mut read_type_refused = false;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if partial_order.is_some() {
@@ -2952,7 +2947,11 @@ fn find_best_task_4_logical_data_source_paths(
                 // Go `getBestIndexJoinInnerTaskByProp` builds the inner cop task
                 // whatever single/multi-read kind the parent asked for; only a
                 // root request converts it afterwards.
-                read_type_refused = cop_multi_read && prop.index_join_prop.is_none();
+                // Go `convertToTableScan` / `convertToIndexScan` refuse a path
+                // whose single or double read does not fit a COP property only
+                // after `skylinePruning` compared it: the refused path still
+                // takes part in the pruning and the preferRange filter.
+                let read_type_refused = cop_multi_read && prop.index_join_prop.is_none();
                 let keep_order = ordered;
                 if keep_order && !table_path_matches_order(ds, prop) {
                     continue 'paths;
@@ -3810,7 +3809,8 @@ fn find_best_task_4_logical_data_source_paths(
                     });
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
-                read_type_refused = prop.index_join_prop.is_none()
+                // Refused after pruning, as for the table path above.
+                let read_type_refused = prop.index_join_prop.is_none()
                     && ((prop.task_tp == TaskType::CopSingleRead && !single_scan)
                         || (cop_multi_read && single_scan));
                 // Go `skylinePruning` keepIndex (`find_best_task.go:1812`):

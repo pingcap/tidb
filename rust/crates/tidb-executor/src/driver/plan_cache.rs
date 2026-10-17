@@ -31,13 +31,17 @@ pub(super) struct PhysicalPlanCacheKey {
     pub stats_version_hash: u64,
     pub environment: PreparedPlanCacheEnvironment,
     pub limit_values: Vec<u64>,
+    /// Go `NewPlanCacheKey`'s dirty tables: the statement's tables this
+    /// transaction has written, which plan with a `UnionScan` over them.
+    pub dirty_tables: Vec<i64>,
 }
 
 impl PlanCacheKey for PhysicalPlanCacheKey {
     fn memory_usage(&self) -> i64 {
         (std::mem::size_of::<Self>() + self.statement.capacity() + self.environment.memory_usage()
             - std::mem::size_of::<PreparedPlanCacheEnvironment>()
-            + self.limit_values.capacity() * std::mem::size_of::<u64>()) as i64
+            + self.limit_values.capacity() * std::mem::size_of::<u64>()
+            + self.dirty_tables.capacity() * std::mem::size_of::<i64>()) as i64
     }
 }
 
@@ -460,6 +464,36 @@ pub(super) fn statement_key(database: &str, sql: &str) -> String {
 }
 
 // Go cacheable_checker.checkTable: both cache tiers refuse temporary tables.
+/// The statement's tables this transaction has written, sorted, as the logical
+/// table ids Go's `NewPlanCacheKey` appends (`TblInfo2UnionScan`).
+pub(super) fn dirty_statement_tables(
+    catalog: &super::Catalog,
+    keys: &[super::catalog::CatalogTableKey],
+    dirty: &[i64],
+) -> Vec<i64> {
+    if dirty.is_empty() {
+        return Vec::new();
+    }
+    let mut ids = Vec::new();
+    for key in keys {
+        let Some(super::TableEntry::Kv(table)) = catalog.get_by_key(key) else {
+            continue;
+        };
+        let partitions = table
+            .partition()
+            .map(|partition| partition.definitions.iter().map(|definition| definition.id));
+        if std::iter::once(table.table_id)
+            .chain(partitions.into_iter().flatten())
+            .any(|id| dirty.contains(&id))
+        {
+            ids.push(table.table_id);
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 pub(super) fn tables_cacheable(
     catalog: &super::Catalog,
     keys: &[super::catalog::CatalogTableKey],

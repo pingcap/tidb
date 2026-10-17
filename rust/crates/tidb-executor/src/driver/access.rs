@@ -743,6 +743,7 @@ impl PreparedSelectPlan {
                 .lock()
                 .expect("prepared limits poisoned")
                 .clone(),
+            dirty_tables: Vec::new(),
         });
     }
 
@@ -785,6 +786,7 @@ impl PreparedSelectPlan {
             catalog,
             current_database,
             ctx,
+            &ctx.staged_writes().dirty_table_ids(),
             environment,
             &self.statement,
         )
@@ -801,6 +803,7 @@ impl PreparedSelectPlan {
         catalog: &Catalog,
         current_database: &str,
         ctx: &crate::StmtContext,
+        dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &tidb_ast::Stmt,
     ) -> Option<PreparedSelectExecution> {
@@ -810,6 +813,7 @@ impl PreparedSelectPlan {
             catalog,
             current_database,
             Some(ctx),
+            dirty_ids,
             environment,
             statement,
         )
@@ -825,6 +829,7 @@ impl PreparedSelectPlan {
         values: &[Datum],
         catalog: &Catalog,
         current_database: &str,
+        dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedSelectExecution> {
         self.bind_cached_for_statement(
@@ -832,6 +837,7 @@ impl PreparedSelectPlan {
             values,
             catalog,
             current_database,
+            dirty_ids,
             environment,
             &self.statement,
         )
@@ -846,6 +852,7 @@ impl PreparedSelectPlan {
         values: &[Datum],
         catalog: &Catalog,
         current_database: &str,
+        dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &tidb_ast::Stmt,
     ) -> Option<PreparedSelectExecution> {
@@ -855,6 +862,7 @@ impl PreparedSelectPlan {
             catalog,
             current_database,
             None,
+            dirty_ids,
             environment,
             statement,
         )
@@ -867,6 +875,7 @@ impl PreparedSelectPlan {
         catalog: &Catalog,
         current_database: &str,
         ctx: Option<&crate::StmtContext>,
+        dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
         statement: &tidb_ast::Stmt,
     ) -> Option<PreparedSelectExecution> {
@@ -903,6 +912,7 @@ impl PreparedSelectPlan {
             stats_version_hash,
             environment: environment.clone(),
             limit_values,
+            dirty_tables: super::plan_cache::dirty_statement_tables(catalog, &self.table_keys, dirty_ids),
         };
         let refusal = environment.refusal(self.stmt_info);
         let admitted = refusal.is_none();

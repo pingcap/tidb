@@ -1110,6 +1110,7 @@ impl crate::Session {
                 &parameterized.values,
                 &catalog,
                 self.current_database(),
+                &self.plan_cache_dirty_tables(),
                 &environment,
                 effective_statement,
             ) {
@@ -1133,6 +1134,7 @@ impl crate::Session {
             &catalog,
             self.current_database(),
             &ctx,
+            &self.plan_cache_dirty_tables(),
             &environment,
             effective_statement,
         )
@@ -1206,6 +1208,7 @@ impl crate::Session {
                 &parameterized.values,
                 &catalog,
                 self.current_database(),
+                &self.plan_cache_dirty_tables(),
                 &environment,
                 effective_statement,
             ) {
@@ -1230,6 +1233,7 @@ impl crate::Session {
             &catalog,
             self.current_database(),
             &ctx,
+            &self.plan_cache_dirty_tables(),
             &environment,
             effective_statement,
         );
