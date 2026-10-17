@@ -584,6 +584,13 @@ func requireLastZlibWarning(t *testing.T, ctx *mock.Context, expected error) {
 func TestCompress(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Compress]
+	t.Run("unknown input length", func(t *testing.T) {
+		ft := types.NewFieldType(mysql.TypeVarString)
+		ft.SetFlen(types.UnspecifiedLength)
+		f, err := fc.getFunction(ctx, []Expression{&Column{Index: 0, RetType: ft}})
+		require.NoError(t, err)
+		require.Equal(t, mysql.MaxBlobWidth, f.getRetTp().GetFlen())
+	})
 	tests := []struct {
 		chs    string
 		in     any
