@@ -1801,7 +1801,7 @@ func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uui
 func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uuid.UUID, ts uint64) error {
 	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
 	if e == nil {
-		return errors.Errorf("engine %s not found in SetTSBeforeImportEngine", engineUUID.String())
+		return errdef.ErrEngineNotFound.GenWithStackByArgs(engineUUID.String())
 	}
 	defer e.unlock()
 	if ts == 0 {
