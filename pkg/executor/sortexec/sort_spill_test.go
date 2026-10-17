@@ -368,7 +368,9 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort")
 
-	for range 50 {
+	// Each round covers all spill scenarios; keep the count modest because
+	// the failpoint path intentionally sleeps once per fetched chunk.
+	for range 10 {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
 		multiPartitionCase(t, ctx, sortCase, false)
