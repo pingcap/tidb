@@ -9,8 +9,12 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 50,
+=======
+    shard_count = 41,
+>>>>>>> f40ad1d845c (statistics: add sampling-based NDV analysis (#71520))
     deps = [
         "//pkg/config",
         "//pkg/domain",

@@ -793,10 +793,26 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeStartTime, Value: DefAutoAnalyzeStartTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeEndTime, Value: DefAutoAnalyzeEndTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindingCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindingCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return strconv.FormatInt(MemQuotaBindingCache.Load(), 10), nil
+=======
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAnalyzeSampledNDVThreshold, Value: strconv.Itoa(vardef.DefTiDBAnalyzeSampledNDVThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64,
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return strconv.FormatInt(vardef.AnalyzeSampledNDVThreshold.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			vardef.AnalyzeSampledNDVThreshold.Store(TidbOptInt64(val, vardef.DefTiDBAnalyzeSampledNDVThreshold))
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeStartTime, Value: vardef.DefAutoAnalyzeStartTime, Type: vardef.TypeTime},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeEndTime, Value: vardef.DefAutoAnalyzeEndTime, Type: vardef.TypeTime},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBMemQuotaBindingCache, Value: strconv.FormatInt(vardef.DefTiDBMemQuotaBindingCache, 10), Type: vardef.TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return strconv.FormatInt(vardef.MemQuotaBindingCache.Load(), 10), nil
+>>>>>>> f40ad1d845c (statistics: add sampling-based NDV analysis (#71520))
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		MemQuotaBindingCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindingCache))
 		return nil
@@ -3803,6 +3819,7 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
 	// It is better to change the value in the Sysvar struct, so that
 	// all installs will have the same value.
+<<<<<<< HEAD
 	case TiDBRowFormatVersion:
 		varVal = strconv.Itoa(DefTiDBRowFormatV2)
 	case TiDBTxnAssertionLevel:
@@ -3811,6 +3828,29 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		varVal = On
 	case TiDBPessimisticTransactionFairLocking:
 		varVal = On
+=======
+	case vardef.TiDBRowFormatVersion:
+		varVal = strconv.Itoa(vardef.DefTiDBRowFormatV2)
+	case vardef.TiDBTxnAssertionLevel:
+		if kerneltype.IsNextGen() {
+			varVal = vardef.GetDefaultTxnAssertionLevel()
+		} else {
+			varVal = vardef.AssertionFastStr
+		}
+	case vardef.TiDBEnableMutationChecker:
+		varVal = vardef.On
+	case vardef.TiDBEnableAdaptiveLimitScan:
+		varVal = vardef.On
+	case vardef.TiDBAnalyzeSampledNDVThreshold:
+		// New clusters sample NDV for tables and partitions above 500 million rows.
+		varVal = "500000000"
+	case vardef.TiDBPessimisticTransactionFairLocking:
+		if kerneltype.IsNextGen() {
+			varVal = vardef.Off
+		} else {
+			varVal = vardef.On
+		}
+>>>>>>> f40ad1d845c (statistics: add sampling-based NDV analysis (#71520))
 	}
 	return varVal
 }

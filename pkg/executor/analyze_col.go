@@ -501,5 +501,8 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
 		}
 		fmt.Fprintf(&b, "%v samplerate", sampleRate)
 	}
+	if rate := e.analyzePB.ColReq.NdvRate; rate != nil {
+		fmt.Fprintf(&b, ", %g ndvrate", *rate)
+	}
 	e.job.JobInfo = b.String()
 }
