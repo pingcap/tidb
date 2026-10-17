@@ -579,7 +579,17 @@ pub fn resolve_cluster_analyze_statement<
                 selected_columns(&mut snapshot, &catalog, &table, &target_statement)
                     .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
             if let Some(selected) = selected.as_mut() {
-                add_mandatory_columns(&table, selected);
+                let predicate = match &target_statement.columns {
+                    AnalyzeColumnChoice::Predicate => true,
+                    AnalyzeColumnChoice::Default => {
+                        matches!(
+                            target_statement.default_columns,
+                            AnalyzeColumnChoice::Predicate
+                        )
+                    }
+                    _ => false,
+                };
+                add_mandatory_columns(&table, selected, predicate);
             }
             selected =
                 filter_skipped_column_types(&table, selected, &target_statement.skip_column_types);
@@ -845,7 +855,7 @@ fn final_column_choice(
             })?;
         selected.insert(column.read().id);
     }
-    add_mandatory_columns(table, &mut selected);
+    add_mandatory_columns(table, &mut selected, false);
     Ok(AnalyzeColumnChoice::Explicit(
         table
             .cols()
@@ -2583,7 +2593,26 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
     selected_columns(snapshot, catalog, table, &statement)
 }
 
-fn add_mandatory_columns(table: &tidb_model::table_info::TableInfo, selected: &mut HashSet<i64>) {
+/// Go `getMustAnalyzedColumns` (and, for the PREDICATE choice,
+/// `getPredicateColumns`) folded into `selected`: ordinary index columns and
+/// the handle, plus the base columns a VIRTUAL generated column among them
+/// reads, transitively (`addColumnsWithVirtualExprs` follows `VirtualExpr`,
+/// which only virtual generated columns carry -- a stored generated column
+/// is decoded from storage, so its base columns stay skippable).
+/// `expand_selected` also follows the columns already in `selected` (the
+/// predicate columns); an explicit column list is not expanded.
+fn add_mandatory_columns(
+    table: &tidb_model::table_info::TableInfo,
+    selected: &mut HashSet<i64>,
+    expand_selected: bool,
+) {
+    // Columns whose base columns are followed: Go's `cols.data` before the
+    // virtual-expression walk.
+    let mut roots = if expand_selected {
+        selected.clone()
+    } else {
+        HashSet::new()
+    };
     for index in table.indices.iter_deref() {
         let index = index.read();
         if index.state != tidb_model::SchemaState::PUBLIC || index.mv_index {
@@ -2592,7 +2621,9 @@ fn add_mandatory_columns(table: &tidb_model::table_info::TableInfo, selected: &m
         for indexed in index.columns.iter_deref() {
             let offset = indexed.read().offset;
             if let Some(column) = table.cols().get(offset as usize) {
-                selected.insert(column.read().id);
+                let id = column.read().id;
+                selected.insert(id);
+                roots.insert(id);
             }
         }
     }
@@ -2605,10 +2636,10 @@ fn add_mandatory_columns(table: &tidb_model::table_info::TableInfo, selected: &m
         }
     }
     loop {
-        let before = selected.len();
+        let before = roots.len();
         for column in table.cols().iter_deref() {
             let column = column.read();
-            if !selected.contains(&column.id) {
+            if !roots.contains(&column.id) || !column.is_generated() || column.generated_stored {
                 continue;
             }
             for dependency in column.dependences.snapshot() {
@@ -2621,11 +2652,13 @@ fn add_mandatory_columns(table: &tidb_model::table_info::TableInfo, selected: &m
                             .eq_ignore_ascii_case(dependency)
                     })
                 }) {
-                    selected.insert(base.read().id);
+                    let id = base.read().id;
+                    selected.insert(id);
+                    roots.insert(id);
                 }
             }
         }
-        if selected.len() == before {
+        if roots.len() == before {
             break;
         }
     }
@@ -2648,7 +2681,7 @@ fn filter_skipped_column_types(
             .collect::<HashSet<_>>()
     });
     let mut mandatory = HashSet::new();
-    add_mandatory_columns(table, &mut mandatory);
+    add_mandatory_columns(table, &mut mandatory, false);
     let mut skipped_names = HashSet::new();
     for column in &columns {
         let column = column.read();

@@ -293,13 +293,14 @@ impl SortPartition {
             .collect();
         let mut sort_err: Option<ExecError> = None;
         let mut compare_count = 0u64;
-        // Go's `slices.SortFunc` runs insertionSort for n <= 12, which never
-        // swaps equal keys -- tied rows keep their scan order. Rust's stable
-        // `sort_by` reproduces that exactly on the small inputs the oracle
-        // exercises; beyond 12 rows go's pdqsort has no contract this port
-        // could match deterministically, and stable is the stand-in.
-        self.rows
-            .sort_by(|&(left_chunk, left_row), &(right_chunk, right_row)| {
+        // Go `sortPartition.sortNoLock`: `slices.SortFunc(savedRows,
+        // keyColumnsCompare)`, the unstable pdqsort. Up to 12 rows it is an
+        // insertion sort that never swaps equal keys; beyond that its pivot
+        // and pattern schedule decides where tied rows end up, so the port of
+        // that schedule (`go_sort_func_by`) is what matches Go.
+        tidb_stats::go_sort_func_by(
+            &mut self.rows,
+            |&(left_chunk, left_row), &(right_chunk, right_row)| {
                 if let Some((memory, checkpoint)) = memory {
                     if compare_count >= checkpoint {
                         if let Err(error) = memory.check() {
@@ -350,7 +351,8 @@ impl SortPartition {
                         Ordering::Equal
                     }
                 }
-            });
+            },
+        );
         if let Some(error) = sort_err {
             return Err(error);
         }

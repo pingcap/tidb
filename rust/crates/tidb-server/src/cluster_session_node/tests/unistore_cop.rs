@@ -15297,6 +15297,78 @@ fn cop_top_n_ties_follow_go_heap_layout_and_pdqsort() {
     );
 }
 
+/// Go's root `SortExec` sorts with `slices.SortFunc` (pdqsort): beyond twelve
+/// rows tied keys come out in pdqsort's order, not scan order. The partition
+/// sorted with Rust's stable sort and printed the ties in insertion order.
+#[test]
+fn sort_ties_beyond_twelve_rows_follow_go_pdqsort() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1099)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE st1 (id INT, k INT)")
+        .unwrap();
+    let values: Vec<String> = (1..=40).map(|id| format!("({id},{})", id % 3)).collect();
+    session
+        .execute_write(&format!("INSERT INTO st1 VALUES {}", values.join(",")))
+        .unwrap();
+    let ids = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect()
+    };
+    // Expected: Go 1.27 on this branch (`TestZZ` probe).
+    assert_eq!(
+        ids(&mut session, "SELECT id FROM st1 ORDER BY k"),
+        [
+            "15", "39", "3", "36", "33", "6", "30", "27", "9", "24", "21", "12", "18", "31", "4",
+            "16", "40", "13", "19", "37", "28", "22", "34", "10", "25", "1", "7", "8", "29", "14",
+            "26", "32", "5", "23", "35", "11", "20", "38", "2", "17"
+        ]
+    );
+    assert_eq!(
+        ids(&mut session, "SELECT id FROM st1 ORDER BY k DESC"),
+        [
+            "14", "2", "38", "35", "5", "32", "29", "8", "26", "23", "11", "20", "17", "31", "4",
+            "16", "13", "40", "19", "37", "28", "22", "10", "34", "25", "1", "7", "27", "15", "30",
+            "9", "6", "33", "24", "21", "36", "12", "3", "39", "18"
+        ]
+    );
+}
+
+/// Go's must-analyze set follows only VIRTUAL generated columns back to their
+/// base columns (`VirtualExpr`); an indexed STORED generated column is decoded
+/// from storage, so its JSON base columns stay under
+/// `tidb_analyze_skip_column_types` and get no histogram. Rust followed every
+/// generated column, collected `j1`/`j2`, and so priced the table's scans on a
+/// wider row than Go does (`TableFullScan` 271.59 for Go's 410.74).
+#[test]
+fn analyze_skips_json_bases_of_stored_generated_index_columns() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1100)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE sgb (j1 JSON, j2 JSON, a INT AS (JSON_EXTRACT(j1, '$.a')) STORED, \
+             b VARCHAR(20) AS (JSON_KEYS(j2)) STORED, KEY idx_a (a), KEY idx_b (b))",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO sgb(j1, j2) VALUES ('{\"a\": 1}', '{\"1\": \"1\"}')")
+        .unwrap();
+    rows(&mut session, "ANALYZE TABLE sgb");
+    let analyzed: Vec<String> = displayed(rows(
+        &mut session,
+        "SHOW STATS_HISTOGRAMS WHERE table_name = 'sgb' AND is_index = 0",
+    ))
+    .into_iter()
+    .map(|row| row[3].clone())
+    .collect();
+    // Expected: Go 1.27 on this branch (`TestZZ` probe, `show stats_histograms`).
+    assert_eq!(analyzed, ["a", "b"]);
+}
+
 /// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
 /// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
 /// and orders by the full value.
