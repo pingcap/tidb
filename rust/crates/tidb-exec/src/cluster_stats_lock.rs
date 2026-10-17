@@ -531,12 +531,6 @@ mod statement_tests {
             for mutation in mutations {
                 match mutation.kind() {
                     BufferMutationOp::Set => {
-                        assert!(self
-                            .pairs
-                            .insert(mutation.key().to_vec(), mutation.value().to_vec())
-                            .is_none());
-                    }
-                    BufferMutationOp::Set => {
                         self.pairs
                             .insert(mutation.key().to_vec(), mutation.value().to_vec());
                     }

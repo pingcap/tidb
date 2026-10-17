@@ -142,7 +142,10 @@ fn loads_databases_tables_and_schema_version_from_stored_bytes() {
     let catalog = load_cluster_catalog(&mut snapshot).expect("catalog loads");
 
     assert_eq!(catalog.schema_version, 412);
-    assert_eq!(catalog.databases.len(), 1);
+    // The loader also seeds Go's bootstrap-created `METRICS_SCHEMA`, which is
+    // not stored in the cluster; the stored database is the other one.
+    assert_eq!(catalog.databases.len(), 2);
+    assert_eq!(catalog.databases[1].info.name.original(), "METRICS_SCHEMA");
     let database = &catalog.databases[0];
     assert_eq!(database.info.id, 3);
     assert_eq!(database.info.name.original(), "Campaign");

@@ -953,19 +953,26 @@ fn caller_cancelled_status_rpc_is_typed_and_lite_cleanup_is_best_effort() {
             "remote canceled".to_owned(),
         ),
     ));
-    assert_eq!(
-        resolve_optimistic_locks(
-            &remote_runtime,
-            &[secondary()],
-            1_300 << 18,
-            &KvrpcContext::default(),
-            &call(),
-            &Arc::new(FixedTimestampSource::new(1_100 << 18)),
-            true,
-        ),
-        Ok(ignoring(vec![1_000 << 18]))
+    // A REMOTE gRPC cancellation is a send failure of that peer, not the
+    // caller cancelling. The native client follows client-go's replica
+    // selector: the one peer failed and no other replica remains, so the
+    // statement surfaces the selector's exhausted-route region error after a
+    // single attempt (it is not `CallerCancelled`, and it is not retried
+    // against the same failed peer).
+    let remote = resolve_optimistic_locks(
+        &remote_runtime,
+        &[secondary()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &Arc::new(FixedTimestampSource::new(1_100 << 18)),
+        true,
     );
-    assert_eq!(remote_recorded.lock().unwrap().checks.len(), 2);
+    assert!(
+        matches!(&remote, Err(LockRecoveryError::RegionError(message)) if message.contains("epoch_not_match: Some")),
+        "{remote:?}"
+    );
+    assert_eq!(remote_recorded.lock().unwrap().checks.len(), 1);
 }
 
 fn txn_not_found_status() -> KvrpcCheckTxnStatusResponse {

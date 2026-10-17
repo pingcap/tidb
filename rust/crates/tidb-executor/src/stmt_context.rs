@@ -4771,10 +4771,22 @@ impl StmtContext {
             }
             return;
         }
+        // Go keeps ONE warning buffer in order of occurrence, and a constant
+        // fold raises its warnings while planning -- before anything the
+        // executor raises. The fold stash is thread-local and joins this list
+        // only when drained, so an executor warning appended first would
+        // overtake it: move the stash in ahead of every later append.
+        let folded = tidb_expr::constant_fold::take_fold_warnings();
         let mut warnings = self
             .warnings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (fold_code, fold_message) in folded {
+            if warnings.len() >= MAX_WARNING_COUNT {
+                break;
+            }
+            warnings.push((WarningLevel::Warning, fold_code, fold_message));
+        }
         if warnings.len() >= MAX_WARNING_COUNT {
             return;
         }

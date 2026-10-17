@@ -329,9 +329,16 @@ fn point_get_answers_nothing_for_min_int64_and_one_row_for_zero() {
 }
 
 /// Go `TestClosureExecutor` (`cop_handler_test.go:357`): the composed
-/// executor chain `TableScan + Selection(EQInt(offset 1, -1)) + Limit(1)`
+/// executor chain `TableScan + Selection(EQInt(offset, -1)) + Limit(1)`
 /// over a point range on handle 1 answers ZERO rows — nothing survives the
 /// pushed selection.
+///
+/// Go's test names offset 1, the VARCHAR column, so its `EQInt` reads the
+/// column through `chunk.Row.GetInt64`, which reinterprets the string's
+/// bytes as an integer and cannot fail; zero rows there is an accident of
+/// those bytes. This port converts the string and (correctly) refuses `'abc'`
+/// as an integer, so the test names the handle column, offset 0, whose value
+/// 1 is not -1 -- the same zero-row answer through a well-typed comparison.
 #[test]
 fn closure_executor_selection_over_point_range_answers_zero_rows() {
     let mut store = MvccStore::new();
@@ -340,7 +347,7 @@ fn closure_executor_selection_over_point_range_answers_zero_rows() {
     let dag = cop_dag(
         cop_column_infos(),
         COP_TABLE_ID,
-        Some(cop_cmp_int_expr(tipb::ScalarFuncSig::EqInt, 1, -1)),
+        Some(cop_cmp_int_expr(tipb::ScalarFuncSig::EqInt, 0, -1)),
         Some(1),
     );
     let select = run_dag(&mut store, dag, vec![cop_point_range(COP_TABLE_ID, 1)]);

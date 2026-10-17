@@ -15610,6 +15610,40 @@ fn prepared_execute_is_summarized_under_the_prepared_text() {
         .unwrap();
 }
 
+/// Go's statement warnings are one buffer in order of occurrence: the casts
+/// inside an `INSERT ... SELECT` overflow while the SELECT evaluates, and the
+/// store conversion of their result overflows after. The port appended the
+/// conversion row first.
+#[test]
+fn insert_select_warnings_keep_the_order_they_were_raised_in() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1110)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tiw (a DECIMAL(10,2))")
+        .unwrap();
+    session.execute_write("SET @@sql_mode = ''").unwrap();
+    session
+        .execute_write(
+            "INSERT INTO tiw SELECT ROUND(CAST('88888899999999999888888888888888888888888888888888888.11111111111111111111' AS DECIMAL(18,12)) \
+             * CAST('88888899999999999888888888888888888888888888888888888.11111111111111111111' AS DECIMAL(42,18)))",
+        )
+        .unwrap();
+    // Expected: Go 1.27 on this branch (`TestZZ` probe).
+    let messages: Vec<String> = displayed(rows(&mut session, "SHOW WARNINGS"))
+        .into_iter()
+        .map(|row| row[2].clone())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "DECIMAL value is out of range in '(18, 12)'",
+            "DECIMAL value is out of range in '(42, 18)'",
+            "DECIMAL value is out of range in '(10, 2)'",
+        ]
+    );
+}
+
 /// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
 /// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
 /// and orders by the full value.
