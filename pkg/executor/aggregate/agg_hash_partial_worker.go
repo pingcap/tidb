@@ -51,6 +51,11 @@ type HashAggPartialWorker struct {
 	partialResultsBuffer  [][]aggfuncs.PartialResult
 	partialResultNumInRow int
 
+	// The arenas back the keys and values of new groups in partialResultsMap,
+	// avoiding two small allocations per group.
+	groupKeyArena       groupKeyArena
+	partialResultsArena partialResultsArena
+
 	// Length of this map is equal to the number of final workers
 	// All data in one AggPartialResultMapper are specifically sent to a target final worker.
 	// e.g. all data in partialResultsMap[3] should be sent to final worker 3.
@@ -237,7 +242,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 		}
 
 		// It's the first time that this group by key appeared, create it
-		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, w.partialResultNumInRow))
+		w.partialResultsBuffer = append(w.partialResultsBuffer, w.partialResultsArena.alloc(w.partialResultNumInRow))
 		lastIdx := len(w.partialResultsBuffer) - 1
 		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
@@ -245,7 +250,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 			allMemDelta += memDelta // the memory usage of PartialResult
 		}
 		allMemDelta += int64(w.partialResultNumInRow * 8)
-		delta := mapper[finalWorkerIdx].Set(string(groupKey[i]), w.partialResultsBuffer[lastIdx])
+		delta := mapper[finalWorkerIdx].Set(w.groupKeyArena.copyString(groupKey[i]), w.partialResultsBuffer[lastIdx])
 		allMemDelta += int64(len(groupKey[i]))
 		if delta > 0 {
 			w.partialResultsMapMem.Add(delta)
@@ -336,6 +341,9 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 		for i := range w.partialResultsMap {
 			w.partialResultsMap[i] = aggfuncs.NewAggPartialResultMapper()
 		}
+		// The spilled groups are dropped, so their arena blocks can be collected.
+		w.groupKeyArena.reset()
+		w.partialResultsArena.reset()
 
 		w.memTracker.Consume(-w.partialResultsMapMem.Load())
 		w.partialResultsMapMem.Store(0)
