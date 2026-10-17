@@ -2096,6 +2096,37 @@ Projection	root		Column, left(cast(from_unixtime(cast(executor__aggregate.t_a.e,
     └─TableReader	root		data:Selection
       └─Selection	cop[tikv]		eq(executor__aggregate.t_a.g, 0), ge(executor__aggregate.t_a.f, 1753632000), le(executor__aggregate.t_a.f, 1753718399)
         └─TableFullScan	cop[tikv]	table:t_a	keep order:false, stats:pseudo
+create table float_group_key (a float);
+insert into float_group_key values (1), (2), (-2), (0), (0.1236711), (null), (1);
+select min(a), max(a), count(*) from float_group_key group by coalesce(a) order by min(a);
+min(a)	max(a)	count(*)
+NULL	NULL	1
+-2	-2	1
+0	0	1
+0.1236711	0.1236711	1
+1	1	2
+2	2	1
+select distinct coalesce(a) from float_group_key order by 1;
+coalesce(a)
+NULL
+-2
+0
+0.1236711
+1
+2
+select coalesce(a) from float_group_key where coalesce(a) group by coalesce(a) order by 1;
+coalesce(a)
+-2
+0.1236711
+1
+2
+select ref0 from (select coalesce(a) as ref0, coalesce(a) as ref1 from float_group_key group by coalesce(a)) s where ref1 order by 1;
+ref0
+-2
+0.1236711
+1
+2
+drop table float_group_key;
 SELECT
 MAX(id) AS id,
 LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
