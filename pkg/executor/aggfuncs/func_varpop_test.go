@@ -26,6 +26,21 @@ import (
 )
 
 func TestMergePartialResult4Varpop(t *testing.T) {
+	t.Run("equal large means", func(t *testing.T) {
+		const mean = float64(1 << 64)
+		for src := int64(1); src <= 32; src++ {
+			for dst := int64(1); dst <= 32; dst++ {
+				if got := aggfuncs.CalculateMergeForTesting(src, dst, float64(src)*mean, float64(dst)*mean, 0, 0); got != 0 {
+					t.Fatalf("merging equal means with counts %d and %d produced variance %v", src, dst, got)
+				}
+			}
+		}
+		for n := 3; n <= 32; n++ {
+			test := buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 0, n, types.NewFloat64Datum(0), types.NewFloat64Datum(0), types.NewFloat64Datum(0))
+			test.dataGen = func(int) types.Datum { return types.NewFloat64Datum(mean) }
+			testMergePartialResult(t, test)
+		}
+	})
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 0, 5, types.NewFloat64Datum(float64(2)), types.NewFloat64Datum(float64(2)/float64(3)), types.NewFloat64Datum(float64(59)/float64(8)-float64(19*19)/float64(8*8))),
 	}
