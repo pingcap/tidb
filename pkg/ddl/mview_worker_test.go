@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parser_types "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -37,21 +38,51 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	sessVars.CurrentDB = "before"
 	job := &model.Job{
 		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:  mysql.ModePadCharToFullLength,
 			Location: &model.TimeZoneLocation{Name: "UTC"},
 		},
 	}
 	mviewTableInfo := &model.TableInfo{
 		MaterializedView: &model.MaterializedViewInfo{DefinitionDivPrecisionIncrement: 9},
 	}
+	sessionVar := func(name string) string {
+		value, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		require.NoError(t, err)
+		return value
+	}
 
 	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
 	require.NoError(t, err)
 	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "test", sessVars.CurrentDB)
+	require.Equal(t, "9", sessionVar(vardef.DivPrecisionIncrement))
+	require.Equal(t, "PAD_CHAR_TO_FULL_LENGTH", sessionVar(vardef.SQLModeVar))
+	require.Equal(t, "UTC", sessionVar(vardef.TimeZone))
 
 	restore()
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "before", sessVars.CurrentDB)
+	require.Equal(t, "2", sessionVar(vardef.DivPrecisionIncrement))
+	require.Equal(t, mysql.FormatSQLMode(sessVars.SQLMode), sessionVar(vardef.SQLModeVar))
+}
+
+func TestInitCreateMaterializedViewBuildSessionAppliesJobResourceGroup(t *testing.T) {
+	sessCtx := mock.NewContext()
+	sessVars := sessCtx.GetSessionVars()
+	sessVars.SetResourceGroupName("default")
+	job := &model.Job{
+		ReorgMeta: &model.DDLReorgMeta{
+			Location:          &model.TimeZoneLocation{Name: "UTC"},
+			ResourceGroupName: "rg1",
+		},
+	}
+
+	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, nil, "test")
+	require.NoError(t, err)
+	require.Equal(t, "rg1", sessVars.ResourceGroupName)
+
+	restore()
+	require.Equal(t, "default", sessVars.ResourceGroupName)
 }
 
 func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {

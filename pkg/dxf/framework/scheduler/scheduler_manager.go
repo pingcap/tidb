@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
@@ -50,6 +51,8 @@ var (
 	DefaultCleanUpInterval = 10 * time.Minute
 	// DefaultExpiredFileCleanInterval is the interval of owner-side expired-file cleanup.
 	DefaultExpiredFileCleanInterval = 3 * time.Hour
+	// DefaultKeepTaskInterval is the interval of running task keepers.
+	DefaultKeepTaskInterval = time.Minute
 	// metric scraping mostly happens at 15s intervals, it's meaningless to update
 	// internal collected date more frequently, so we align with that.
 	defaultCollectMetricsInterval = 15 * time.Second
@@ -227,6 +230,7 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanTaskLoop)
+	sm.wg.Run(sm.keepTaskLoop)
 	if kerneltype.IsNextGen() {
 		sm.wg.Run(sm.expiredFileCleanLoop)
 	}
@@ -481,6 +485,64 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.orphanMonitor.Trigger(sm.ctx)
 		}
 	}
+}
+
+func (sm *Manager) keepTaskLoop() {
+	sm.logger.Info("task keeper loop start")
+	defer sm.logger.Info("task keeper loop exits")
+	ticker := time.NewTicker(DefaultKeepTaskInterval)
+	defer ticker.Stop()
+	for {
+		sm.runTaskKeepers()
+		select {
+		case <-sm.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// runTaskKeepers runs the registered keepers for all unfinished tasks,
+// including the ones without a scheduler.
+func (sm *Manager) runTaskKeepers() {
+	keepers := getTaskKeepers()
+	if len(keepers) == 0 {
+		return
+	}
+	tasks, err := sm.taskMgr.GetAllTasks(sm.ctx)
+	if err != nil {
+		sm.logger.Warn("get tasks for task keepers failed", zap.Error(err))
+		return
+	}
+	for _, basicTask := range tasks {
+		keeper, ok := keepers[basicTask.Type]
+		if !ok || basicTask.IsDone() {
+			continue
+		}
+		if err := sm.keepTask(keeper, basicTask.ID); err != nil {
+			if sm.ctx.Err() != nil {
+				return
+			}
+			sm.logger.Warn("keep task failed", zap.Int64("task-id", basicTask.ID),
+				zap.String("task-key", basicTask.Key), zap.Error(err))
+		}
+	}
+}
+
+func (sm *Manager) keepTask(keeper TaskKeeper, taskID int64) error {
+	task, err := sm.taskMgr.GetTaskByID(sm.ctx, taskID)
+	if err != nil {
+		if errors.ErrorEqual(err, storage.ErrTaskNotFound) {
+			// The task has been moved to history since it was listed.
+			return nil
+		}
+		return err
+	}
+	ctx, cancel := context.WithTimeout(sm.ctx, DefaultKeepTaskInterval)
+	defer cancel()
+	return keeper.KeepTask(ctx, task, func() (sqlsvrapi.Runtime, func(), error) {
+		return dxfutil.AcquireTaskRuntime(sm.taskMgr, task.Keyspace, dxfutil.GenHolderID("keeper", task.ID))
+	})
 }
 
 func (sm *Manager) expiredFileCleanLoop() {

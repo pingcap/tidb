@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -259,8 +260,27 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
+// QueryPlan records source metadata and session settings after tenant privilege checks.
+type QueryPlan struct {
+	// ReadTS is the submitting SELECT snapshot.
+	ReadTS uint64
+	// SchemaVersion is the schema version at ReadTS, sent with the worker's
+	// coprocessor and MPP requests.
+	SchemaVersion int64
+	Timestamp     int64
+	Keyspace      string
+	Databases     map[int64]*model.DBInfo
+	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
+	// Persist table definitions grouped by database ID explicitly.
+	Tables map[int64][]*model.TableInfo
+	// SessionStates are the states of the submitting session that the SELECT
+	// runs with on the worker, such as its variables and current database.
+	SessionStates *sessionstates.SessionStates
+}
+
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
+	Query  *QueryPlan `json:",omitempty"`
 	DBName string
 	DBID   int64
 	// TableInfo is the table info we used during import, we might change it
