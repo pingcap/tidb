@@ -2790,7 +2790,10 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     let mut physical =
         tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
-    let mut physical = tidb_planner::physical::eliminate_union_scan_over_point_get(physical);
+    let mut physical = tidb_planner::physical::eliminate_union_scan_over_point_get(
+        physical,
+        ctx.pessimistic_transaction() || ctx.optimistic_transaction(),
+    );
     tidb_planner::physical::shuffle::install_receivers(&mut physical, plan_ids)?;
     if ctx.enable_parallel_apply() {
         tidb_planner::physical::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
@@ -3613,6 +3616,7 @@ fn optimize_built_logical(
         catalog: &'a Catalog,
         builder: &'a RealFunctionBuilder<'a, crate::StmtContext>,
         context: &'a crate::StmtContext,
+        plan_ids: &'a PlanIdAllocator,
     }
 
     impl tidb_planner::logical::rule_partition_processor::PartitionPruning
@@ -3637,6 +3641,27 @@ fn optimize_built_logical(
             })?;
             partition_indices_for_spec(partition, source, self.builder, self.context)
         }
+
+        // Go `generateHashPartitionExpr` and `MakePartitionByFnCol` each
+        // `PlanID.Add(1)` before parsing the partition expression, "to make
+        // sure some tests will pass" (their words): a HASH and a plain RANGE
+        // table spend one plan id per statically pruned source.
+        fn spend_partition_expression_plan_id(&self, source: &tidb_planner::logical::DataSource) {
+            let spends = self
+                .catalog
+                .kv_table_by_id(source.table_id)
+                .and_then(|table| table.partition().map(|partition| partition.kind.clone()))
+                .is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        crate::partition_routing::PartitionKind::Hash
+                            | crate::partition_routing::PartitionKind::Range { .. }
+                    )
+                });
+            if spends {
+                self.plan_ids.alloc();
+            }
+        }
     }
 
     // Go `adjustOptimizationFlags` enables both statistics rules for every
@@ -3660,6 +3685,7 @@ fn optimize_built_logical(
         catalog,
         builder: &function_builder,
         context: ctx,
+        plan_ids,
     };
     let optimizer_cost_env = ctx.optimizer_cost_env();
     let cte_optimizer = DriverCteOptimizer {

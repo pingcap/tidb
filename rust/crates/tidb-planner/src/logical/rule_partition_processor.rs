@@ -142,6 +142,12 @@ pub trait PartitionPruning {
     /// Go `PartitionProcessor.prune`, reduced to its surviving definition
     /// ordinals in table-definition order.
     fn partition_indices(&self, source: &DataSource) -> Result<Vec<usize>, PlanError>;
+
+    /// Go's static pruner `PlanID.Add(1)`s before it parses the partition
+    /// expression (`generateHashPartitionExpr`, `MakePartitionByFnCol`); the
+    /// dynamic-mode access object does not run that code. The default spends
+    /// nothing.
+    fn spend_partition_expression_plan_id(&self, _source: &DataSource) {}
 }
 
 fn make_children(
@@ -157,6 +163,14 @@ fn make_children(
         let Some(physical_id) = source.partition_definition_ids.get(index).copied() else {
             continue;
         };
+        // Go builds each copy with `NewBaseLogicalPlan`, which draws a plan id,
+        // and then `SetID(ds.ID())` puts the original back: the id is spent
+        // all the same.
+        let _ = crate::logical::BaseLogicalPlan::new(
+            ctx.allocator,
+            "TableScan",
+            query_block_offset,
+        );
         let mut child = source.clone_shallow();
         child.derived_access_paths = None;
         child.partition_def_idx = Some(index);
@@ -218,7 +232,10 @@ fn prune_data_source(
     }
     let indices = ctx.partition_pruning.map_or_else(
         || Ok((0..source.partition_definition_ids.len()).collect()),
-        |pruning| pruning.partition_indices(&source),
+        |pruning| {
+            pruning.spend_partition_expression_plan_id(&source);
+            pruning.partition_indices(&source)
+        },
     )?;
     if let Some(marker) = ctx.plan_cache_marker {
         marker.set_skip_plan_cache("Static partition pruning mode");

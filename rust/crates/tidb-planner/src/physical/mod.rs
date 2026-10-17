@@ -306,14 +306,33 @@ pub fn remove_union_scans(mut plan: PhysicalPlan) -> PhysicalPlan {
     plan
 }
 
-/// Go `eliminateUnionScanAndLock` (`optimizer.go:1174`), its UnionScan half:
-/// when the single-child chain from the root reaches a `Point_Get` or a
+/// Replaces every `PhysicalLock` by its child.
+fn remove_locks(mut plan: PhysicalPlan) -> PhysicalPlan {
+    while let PhysicalPlan::Lock(_) = &plan {
+        let mut children = std::mem::take(plan.base_mut().children_mut());
+        let Some(child) = children.pop() else {
+            return plan;
+        };
+        plan = child;
+    }
+    let children = std::mem::take(plan.base_mut().children_mut());
+    plan.base_mut()
+        .set_children(children.into_iter().map(remove_locks).collect());
+    plan
+}
+
+/// Go `eliminateUnionScanAndLock` (`optimizer.go:1174`): when the
+/// single-child chain from the root reaches a `Point_Get` or a
 /// `Batch_Point_Get`, the `UnionScan` (a point get reads its own transaction's
-/// rows itself) disappears from the plan.
+/// rows itself) and the `SelectLock` above it disappear from the plan. The
+/// point get takes the lock over when `lock_eligible` says the statement locks
+/// (Go `getLockWaitTime`: inside a transaction, for a supported lock type);
+/// otherwise the lock is simply dropped.
 #[must_use]
-pub fn eliminate_union_scan_over_point_get(plan: PhysicalPlan) -> PhysicalPlan {
+pub fn eliminate_union_scan_over_point_get(plan: PhysicalPlan, lock_eligible: bool) -> PhysicalPlan {
     let mut has_point_get = false;
     let mut has_union_scan = false;
+    let mut lock = None;
     let mut stack = vec![&plan];
     while let Some(node) = stack.pop() {
         // Go stops at a node with several children without looking at it.
@@ -323,14 +342,41 @@ pub fn eliminate_union_scan_over_point_get(plan: PhysicalPlan) -> PhysicalPlan {
         match node {
             PhysicalPlan::PointGet(_) | PhysicalPlan::BatchPointGet(_) => has_point_get = true,
             PhysicalPlan::UnionScan(_) => has_union_scan = true,
+            PhysicalPlan::Lock(op) => lock = Some((op.lock_type, op.wait_sec)),
             _ => {}
         }
         stack.extend(node.children());
     }
-    if has_point_get && has_union_scan {
-        remove_union_scans(plan)
-    } else {
-        plan
+    if !has_point_get || !(has_union_scan || lock.is_some()) {
+        return plan;
+    }
+    let mut plan = plan;
+    if let Some(lock) = lock.filter(|(lock_type, _)| {
+        lock_eligible && *lock_type != crate::logical::SelectLockType::None
+    }) {
+        set_point_get_lock(&mut plan, lock);
+    }
+    remove_locks(remove_union_scans(plan))
+}
+
+/// Marks the point get at the end of the single-child chain as locking.
+fn set_point_get_lock(plan: &mut PhysicalPlan, lock: (crate::logical::SelectLockType, u64)) {
+    match plan {
+        PhysicalPlan::PointGet(op) => {
+            op.lock = true;
+            op.select_lock = Some(lock);
+        }
+        PhysicalPlan::BatchPointGet(op) => {
+            op.lock = true;
+            op.select_lock = Some(lock);
+        }
+        other => {
+            if other.children().len() <= 1 {
+                for child in other.base_mut().children_mut() {
+                    set_point_get_lock(child, lock);
+                }
+            }
+        }
     }
 }
 
@@ -1995,9 +2041,15 @@ pub fn exhaust_physical_plans_4_logical_partition_union_all(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
+    mpp_allowed: bool,
 ) -> Vec<PhysicalPlan> {
-    let mut plans =
-        exhaust_physical_plans_4_logical_union_all(&p.union_all, prop, allocator, skew_ratio, false);
+    let mut plans = exhaust_physical_plans_4_logical_union_all(
+        &p.union_all,
+        prop,
+        allocator,
+        skew_ratio,
+        mpp_allowed,
+    );
     for plan in &mut plans {
         plan.base_mut()
             .base

@@ -56,12 +56,33 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
         let Some(index) = source.indexes.get(index_offset) else {
             return Vec::new();
         };
-        let order: Vec<Column> = index
+        // Go `IndexInfo2PrefixCols`: the index columns up to the first one
+        // the schema lacks, a prefix-length column included.
+        let mut order: Vec<Column> = index
             .columns
             .iter()
-            .take_while(|column| column.length < 0)
             .map_while(|column| source.schema_column_for_index_column(column).cloned())
             .collect();
+        // Go `fillIndexPath`: a secondary (non-unique, non-primary) index
+        // whose columns are all resolved also orders by the signed integer
+        // primary-key handle it carries.
+        if !index.unique && !index.primary && order.len() == index.columns.len() {
+            if let Some(handle) = source.handle_cols.first().filter(|_| source.pk_is_handle) {
+                let unsigned = handle
+                    .ret_type
+                    .as_ref()
+                    .is_some_and(|field_type| {
+                        field_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+                    });
+                let already = order.iter().any(|column| {
+                    column.id == tidb_model::column::EXTRA_HANDLE_ID
+                        || column.unique_id == handle.unique_id
+                });
+                if !unsigned && !already {
+                    order.push(handle.clone());
+                }
+            }
+        }
         if order.is_empty() {
             return Vec::new();
         }

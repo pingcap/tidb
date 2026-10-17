@@ -142,6 +142,10 @@ pub struct EnumeratedJoin {
     /// `PhysicalProperty.IndexJoinProp` on each child, which this port carries
     /// beside the property rather than inside it -- see [`LeafRole`].
     pub child_roles: [LeafRole; 2],
+    /// Go constructed the candidate (its plan id is spent) but returns the
+    /// enumeration without it: the hash joins built before a `MERGE_JOIN`
+    /// hint returns the merge joins alone.
+    pub discarded: bool,
 }
 
 /// A `LogicalJoin` reduced to what the enumeration reads about it.
@@ -431,6 +435,7 @@ pub fn exhaust_join(
     use_hash_join_v2: bool,
     hash_force: (bool, bool),
     skip_hash_join: bool,
+    forced_hash: bool,
 ) -> Vec<EnumeratedJoin> {
     // Go `exhaustPhysicalPlans4LogicalJoin`: `if !p.IsNAAJ() && prop.IndexJoinProp
     // == nil { ...generate merge join and index join... }` -- merge join and
@@ -443,6 +448,12 @@ pub fn exhaust_join(
     if prop.index_join_prop.is_some() || join.has_na_keys {
         return hash_join_candidates(join, prop, use_hash_join_v2, hash_force);
     }
+    // Go builds the hash joins FIRST (`getHashJoins`), and a forced hash
+    // hint returns them before any merge or index join exists.
+    let hashes = hash_join_candidates(join, prop, use_hash_join_v2, hash_force);
+    if forced_hash && !hashes.is_empty() {
+        return hashes;
+    }
     // Go `GetMergeJoin`: the naturally ordered candidates; then NO_MERGE_JOIN
     // vetoes them all unless MERGE_JOIN names the same join (the caller warns
     // that NO_MERGE_JOIN is ignored); then the enforced candidate under
@@ -451,17 +462,34 @@ pub fn exhaust_join(
     // Both up-front refusals of `GetMergeJoin` (ENUM/SET keys, then null-eq
     // keys) return before its enforced candidate is considered.
     let mut out = Vec::new();
-    if !join.keys_contain_enum_or_set && !join.has_null_eq && (!join.no_merge || join.force_merge) {
-        out.extend(merge_join_candidates(join, prop));
-        if join.force_merge || skip_hash_join {
-            out.extend(enforced_merge_join_candidates(join, prop));
+    if !join.keys_contain_enum_or_set && !join.has_null_eq {
+        let mut natural = merge_join_candidates(join, prop);
+        if join.no_merge && !join.force_merge {
+            // Go builds the natural merge joins, then `NO_MERGE_JOIN` returns
+            // none of them (and no enforced one).
+            for candidate in &mut natural {
+                candidate.discarded = true;
+            }
+            out.extend(natural);
+        } else {
+            out.extend(natural);
+            if join.force_merge || skip_hash_join {
+                out.extend(enforced_merge_join_candidates(join, prop));
+            }
         }
     }
     if join.force_merge && !out.is_empty() {
-        return out;
+        // The merge joins are returned alone, after the hash joins above were
+        // already constructed.
+        let mut spent = hashes;
+        for hash in &mut spent {
+            hash.discarded = true;
+        }
+        spent.extend(out);
+        return spent;
     }
     out.extend(index_join_candidates(join, prop));
-    out.extend(hash_join_candidates(join, prop, use_hash_join_v2, hash_force));
+    out.extend(hashes);
     out
 }
 
@@ -551,8 +579,8 @@ fn enforced_merge_join_candidates(
             desc,
         },
         child_props: [child_prop(&left_keys), child_prop(&right_keys)],
-        child_roles: [LeafRole::Plain, LeafRole::Plain],
-    }]
+        child_roles: [LeafRole::Plain, LeafRole::Plain], discarded: false,
+        }]
 }
 
 /// `physicalop.GetMergeJoin` without the enforced branch, which
@@ -587,20 +615,21 @@ fn merge_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         }) {
             continue;
         }
-        let Some(child_props) =
-            merge_join_child_props(join.join_type, &left_keys, &right_keys, prop)
-        else {
-            continue;
-        };
         let (_, desc) = prop.all_same_order();
+        // Go `GetMergeJoin` `Init`s the join (spending its plan id) BEFORE
+        // `tryToGetChildReqProp`, which may then refuse it.
+        let child_props = merge_join_child_props(join.join_type, &left_keys, &right_keys, prop);
+        let discarded = child_props.is_none();
         out.push(EnumeratedJoin {
             strategy: JoinStrategy::Merge {
                 left_keys,
                 right_keys,
                 desc,
             },
-            child_props,
+            child_props: child_props
+                .unwrap_or_else(|| [PhysicalProperty::default(), PhysicalProperty::default()]),
             child_roles: [LeafRole::Plain, LeafRole::Plain],
+            discarded,
         });
     }
     out
@@ -680,8 +709,8 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
                     keep_outer_order: !prop.is_sort_item_empty(),
                 },
                 child_props: child_props.clone(),
-                child_roles,
-            });
+                child_roles, discarded: false,
+        });
         }
     }
     out
@@ -731,15 +760,15 @@ fn hash_join_candidates(
                 candidates.push(EnumeratedJoin {
                     strategy: JoinStrategy::Hash(shape.clone()),
                     child_props,
-                    child_roles: [LeafRole::Plain, LeafRole::Plain],
-                });
+                    child_roles: [LeafRole::Plain, LeafRole::Plain], discarded: false,
+        });
             }
         } else {
             candidates.push(EnumeratedJoin {
                 strategy: JoinStrategy::Hash(shape),
                 child_props: [child_prop(), child_prop()],
-                child_roles: [LeafRole::Plain, LeafRole::Plain],
-            });
+                child_roles: [LeafRole::Plain, LeafRole::Plain], discarded: false,
+        });
         }
     }
     candidates
@@ -887,7 +916,7 @@ mod tests {
             no_cop_push_down: true,
             ..PhysicalProperty::default()
         };
-        let candidates = exhaust_join(&join, &prop, true, (false, false), false);
+        let candidates = exhaust_join(&join, &prop, true, (false, false), false, false);
         assert!(!candidates.is_empty());
         // Go enumerates both probe paths and join families before the inner
         // datasource checks available access paths; sort properties are not

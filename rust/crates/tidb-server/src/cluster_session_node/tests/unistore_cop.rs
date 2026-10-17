@@ -16724,3 +16724,135 @@ fn correlated_subquery_enumeration_draws_the_same_ids_as_go() {
         assert!(text.contains(expected), "missing {expected:?} in\n{text}");
     }
 }
+
+/// The skyline's preferRange filter keeps an index path that serves a required
+/// order next to a table range scan that does not: a stream aggregation over
+/// `id < 10 GROUP BY k` reads the index `k` (the handle column answers the
+/// filter) rather than sorting a table range. Expected rows: Go 1.27 on this
+/// branch (`TestZZ` probe `SB3`).
+#[test]
+fn ordered_request_keeps_the_index_path_next_to_a_table_range() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1124)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE tsk (id INT NOT NULL, k INT NOT NULL DEFAULT 0, c CHAR(120) NOT NULL \
+             DEFAULT '', PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */, KEY k (k))",
+        )
+        .unwrap();
+    let plan = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'verbose' SELECT /*+ STREAM_AGG() */ k, COUNT(*) FROM tsk \
+         WHERE id < 10 GROUP BY k",
+    ))
+    .into_iter()
+    .take(3)
+    .map(|row| format!("{} {} {}", row[0], row[1], row[2]))
+    .collect::<Vec<_>>();
+    assert_eq!(
+        plan,
+        [
+            "Projection_5 8.00 169804.71",
+            "└─StreamAgg_16 8.00 169803.12",
+            "  └─IndexReader_17 8.00 169000.72",
+        ]
+    );
+}
+
+/// Static partition pruning spends the plan ids Go does: one for the
+/// partition expression of a HASH or plain RANGE table, one for every
+/// partition copy (`NewBaseLogicalPlan` before `SetID`), and the union's MPP
+/// candidate. Expected rows: Go 1.27 on this branch (`TestZZ` probe `PP1`).
+#[test]
+fn static_partition_pruning_spends_the_plan_ids_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1125)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "SET @@tidb_partition_prune_mode = 'static'",
+        "CREATE TABLE tsp (a BIT(1) DEFAULT NULL, b INT DEFAULT NULL) PARTITION BY HASH(a) PARTITIONS 3",
+        "CREATE TABLE tsr (a INT, b INT, KEY(b)) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), \
+         PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (MAXVALUE))",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
+            .into_iter()
+            .filter(|row| row.len() > 5 && row[3] == "root")
+            .map(|row| format!("{} {} {} {}", row[0], row[1], row[2], row[5]))
+            .collect()
+    };
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tsp"),
+        [
+            "PartitionUnion_8 20000.00 142694.60 ",
+            "├─TableReader_11 10000.00 356736.49 data:TableFullScan_10",
+            "└─TableReader_13 10000.00 356736.49 data:TableFullScan_12",
+        ]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tsr WHERE a = 5"),
+        ["TableReader_9 10.00 336428.45 data:Selection_8"]
+    );
+}
+
+/// Join candidates spend the plan ids Go's constructors do even when a hint or
+/// a refused child property drops them afterwards: the hash joins are built
+/// before a `MERGE_JOIN` hint returns the merge joins, a skipped hash join and
+/// a vetoed natural merge join are built then discarded, and an index join's
+/// four variants are all built. Expected rows: Go 1.27 on this branch
+/// (`TestZZ` probe `HJ1`).
+#[test]
+fn join_hints_spend_the_plan_ids_go_does() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1126)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE tja (id INT PRIMARY KEY, x INT, y INT, KEY(x), KEY(y))",
+        "CREATE TABLE tjb (id INT PRIMARY KEY, y INT, z INT, KEY(y))",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
+            .into_iter()
+            .filter(|row| row.len() > 5 && row[3] == "root")
+            .map(|row| format!("{} {} {}", row[0], row[1], row[2]))
+            .collect()
+    };
+    assert_eq!(
+        plan(
+            &mut session,
+            "SELECT /*+ MERGE_JOIN(tja, tjb) */ * FROM tja JOIN tjb ON tja.x = tjb.id"
+        )[..4],
+        [
+            "MergeJoin_12 12487.50 7621831.92",
+            "├─TableReader_29(Build) 10000.00 429797.30",
+            "└─Sort_27(Probe) 9990.00 7182059.61",
+            "  └─TableReader_23 9990.00 462937.25",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "SELECT /*+ NO_HASH_JOIN(tja, tjb) */ * FROM tja JOIN tjb ON tja.x = tjb.id"
+        )[..3],
+        [
+            "IndexJoin_13 12487.50 5564987.43",
+            "├─TableReader_47(Build) 9990.00 462937.25",
+            "└─TableReader_52(Probe) 9990.00 18.78",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "SELECT /*+ NO_MERGE_JOIN(tja, tjb) */ * FROM tja JOIN tjb ON tja.x = tjb.id"
+        )[1..3],
+        [
+            "├─TableReader_26(Build) 9990.00 462937.25",
+            "└─TableReader_37(Probe) 10000.00 429797.30",
+        ]
+    );
+}

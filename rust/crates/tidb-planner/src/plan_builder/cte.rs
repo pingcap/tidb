@@ -974,6 +974,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.compute_cte_inline_flag(index);
 
             if self.outer_ctes[index].recur_lp.is_none() && self.outer_ctes[index].is_inline {
+                // Go builds the reference's `LogicalCTE` and its result schema
+                // BEFORE deciding to inline (`tryBuildCTE:4817-4822`), then
+                // discards both: the plan id and one column id per output
+                // column are spent all the same.
+                let seed_schema = self.outer_ctes[index]
+                    .seed_lp
+                    .as_ref()
+                    .and_then(|seed| seed.schema().cloned())
+                    .unwrap_or_default();
+                let _ = self.base(LogicalCTE::TYPE);
+                let _ = self.get_result_cte_schema(&seed_schema);
                 // Go hides every CTE from `i` onwards for the duration, so the
                 // merged body cannot see itself, and restores them after.
                 let saved = self.outer_ctes.split_off(index);

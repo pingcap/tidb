@@ -718,6 +718,7 @@ fn exhaust_physical_plans(
                 prop,
                 ctx.allocator,
                 ctx.skew_ratio,
+                ctx.mpp_allowed,
             ),
         )),
         LogicalPlan::Sequence(op) => Ok(one(physical::exhaust_physical_plans_4_logical_sequence(
@@ -882,6 +883,7 @@ fn exhaust_physical_plans(
                 ctx.use_hash_join_v2,
                 (hash_hints.force_left, hash_hints.force_right),
                 skip_hash_join,
+                hash_hints.forced,
             );
             let (hash_candidates, other_candidates): (Vec<_>, Vec<_>) = all_join_candidates
                 .into_iter()
@@ -909,12 +911,24 @@ fn exhaust_physical_plans(
                         join_hint_flags::RIGHT_AS_INLMJ_INNER,
                     ]);
                     if has_force_index_hint && !index_join_candidate_matches_hint(join, &strategy) {
+                        burn_index_join_candidate_ids(ctx, op, &strategy);
                         continue;
                     }
                 }
                 let filtered = match &strategy {
-                    // Go: `if !forced && shouldSkipHashJoin { return nil }`.
-                    JoinStrategy::Hash(_) => !hash_hints.forced && hash_hints.skip,
+                    // Go: `if !forced && shouldSkipHashJoin { return nil }`,
+                    // after the hash joins were constructed (ids spent).
+                    JoinStrategy::Hash(_) => {
+                        if !hash_hints.forced && hash_hints.skip {
+                            let _ = physical::BasePhysicalPlan::new(
+                                ctx.allocator,
+                                op.base.base.tp(),
+                                op.base.base.query_block_offset(),
+                            );
+                            continue;
+                        }
+                        false
+                    }
                     // NO_MERGE_JOIN was applied by `exhaust_join`.
                     JoinStrategy::Merge { .. } => false,
                     JoinStrategy::Index { kind, .. } => match kind {
@@ -930,6 +944,19 @@ fn exhaust_physical_plans(
                     },
                 };
                 if filtered {
+                    // Go `handleFilterIndexJoinHints` drops an index join
+                    // AFTER `tryToEnumerateIndexJoin` constructed it.
+                    burn_index_join_candidate_ids(ctx, op, &strategy);
+                    continue;
+                }
+                if candidate.discarded {
+                    // Constructed, then dropped by the enumeration's early
+                    // return: only the plan id remains.
+                    let _ = physical::BasePhysicalPlan::new(
+                        ctx.allocator,
+                        op.base.base.tp(),
+                        op.base.base.query_block_offset(),
+                    );
                     continue;
                 }
                 let mut child_props = candidate.child_props;
@@ -1465,6 +1492,25 @@ fn admits_index_join_inner_child_pattern(
         LogicalPlan::UnionScan(_) => true,
         _ => false,
     }
+}
+
+/// Go builds every index join candidate (`constructIndexJoinStatic` /
+/// `constructIndexHashJoinStatic`) before any hint drops it, so a dropped
+/// candidate has still spent its plan ids: one, plus the embedded
+/// `PhysicalIndexJoin` of an index hash join.
+fn burn_index_join_candidate_ids(
+    ctx: &DispatchContext<'_>,
+    join: &crate::logical::LogicalJoin,
+    strategy: &crate::find_best_task::JoinStrategy,
+) {
+    let crate::find_best_task::JoinStrategy::Index { kind, .. } = strategy else {
+        return;
+    };
+    let query_block_offset = join.base.base.query_block_offset();
+    if matches!(kind, crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin) {
+        let _ = physical::BasePhysicalPlan::new(ctx.allocator, "IndexJoin", query_block_offset);
+    }
+    let _ = physical::BasePhysicalPlan::new(ctx.allocator, join.base.base.tp(), query_block_offset);
 }
 
 fn find_best_task_uncached(
@@ -3044,8 +3090,12 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     }
                     continue 'paths;
                 }
-                let mut base = crate::physical::BasePhysicalPlan::new(
-                    ctx.allocator,
+                // Go tries the point/batch point conversion BEFORE
+                // `convertToTableScan` (`find_best_task.go:2247`); a winning
+                // point get never builds the scan, so the scan's plan id is
+                // drawn only once the point block below has passed.
+                let mut base = crate::physical::BasePhysicalPlan::with_id(
+                    0,
                     "TableScan",
                     ds.base.base.query_block_offset(),
                 );
@@ -3238,8 +3288,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             .iter()
                             .all(|range| range.low_val.len() == index.columns.len())
                 });
+                // Go `isPointGetConvertableSchema`: every column must be public,
+                // and the extra partition-id column a lock or union scan adds
+                // carries no public state, so it forbids the conversion.
+                let convertable_schema = !ds
+                    .columns
+                    .iter()
+                    .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
                 if prop.index_join_prop.is_none()
                     && ctx.enable_point_get_conversion
+                    && convertable_schema
                     && point_handle_ok
                     // Go disallows ordinary partitioned batches in dynamic
                     // prune mode, including an explicit PARTITION(p).
@@ -3356,6 +3414,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     root.set_plan(point);
                     return Ok(Task::Root(root));
                 }
+                base.base.set_id(ctx.allocator.alloc());
                 let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
                     table_filters, tidb_expr::infer_pushdown::PushDownStore::TiKv,
                     &ctx.expr_pushdown_blacklist,

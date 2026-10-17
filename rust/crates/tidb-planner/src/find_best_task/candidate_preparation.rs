@@ -223,11 +223,14 @@ fn range_scan_flags(
             let Some(table) = retained.table_path.as_ref() else {
                 return (false, false);
             };
+            // A table path is always a single scan; like an index path it is
+            // a preferred range scan only when it serves the required order.
             (
-                !crate::ranger::types::has_full_range(
-                    &table.detached.ranges,
-                    ds.table_scan_penalty.unsigned_int_handle,
-                ),
+                (prop.is_sort_item_empty() || metrics.is_some_and(|metrics| metrics.matches_property))
+                    && !crate::ranger::types::has_full_range(
+                        &table.detached.ranges,
+                        ds.table_scan_penalty.unsigned_int_handle,
+                    ),
                 !ds.forced_index_ids.is_empty(),
             )
         }

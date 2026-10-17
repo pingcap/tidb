@@ -1925,7 +1925,7 @@ fn a_union_all_fans_one_child_property_per_child() {
 
     let partition = LogicalPartitionUnionAll { union_all: union };
     let plans =
-        exhaust_physical_plans_4_logical_partition_union_all(&partition, &prop, &allocator, 1.0);
+        exhaust_physical_plans_4_logical_partition_union_all(&partition, &prop, &allocator, 1.0, false);
     assert_eq!(plans[0].base().base.tp(), "PartitionUnion", "re-stamped");
 }
 
@@ -2544,7 +2544,7 @@ fn point_get(id: i32) -> PhysicalPlan {
 fn union_scan_over_a_point_get_is_eliminated() {
     // Go `eliminateUnionScanAndLock`: the point get reads the transaction's
     // own rows, so the union scan above it (even through a selection) goes.
-    let plan = eliminate_union_scan_over_point_get(selection(3, union_scan(2, point_get(1))));
+    let plan = eliminate_union_scan_over_point_get(selection(3, union_scan(2, point_get(1))), false);
     assert!(matches!(&plan, PhysicalPlan::Selection(_)));
     assert!(matches!(plan.children()[0], PhysicalPlan::PointGet(_)));
     plan.dismantle();
@@ -2552,7 +2552,7 @@ fn union_scan_over_a_point_get_is_eliminated() {
 
 #[test]
 fn union_scan_over_a_reader_is_kept() {
-    let plan = eliminate_union_scan_over_point_get(union_scan(2, scan(1, &[1])));
+    let plan = eliminate_union_scan_over_point_get(union_scan(2, scan(1, &[1])), false);
     assert!(matches!(&plan, PhysicalPlan::UnionScan(_)));
     plan.dismantle();
 }
@@ -2561,10 +2561,10 @@ fn union_scan_over_a_reader_is_kept() {
 fn union_scan_elimination_stops_at_a_multi_child_operator() {
     // Go's walk does not look inside a node with several children, so a point
     // get under a join does not strip the union scan above the join.
-    let plan = eliminate_union_scan_over_point_get(union_scan(
-        4,
-        hash_join(3, point_get(1), scan(2, &[2])),
-    ));
+    let plan = eliminate_union_scan_over_point_get(
+        union_scan(4, hash_join(3, point_get(1), scan(2, &[2]))),
+        false,
+    );
     assert!(matches!(&plan, PhysicalPlan::UnionScan(_)));
     plan.dismantle();
 }
@@ -2601,4 +2601,48 @@ fn shallow_clone_keeps_the_lock_a_locking_point_read_takes() {
         unreachable!("a shallow clone keeps the operator");
     };
     assert!(copy.lock && copy.select_lock == lock);
+}
+
+fn lock_over(id: i32, child: PhysicalPlan, lock_type: crate::logical::SelectLockType) -> PhysicalPlan {
+    let mut base = BasePhysicalPlan::with_id(id, "SelectLock", 0);
+    base.set_children(vec![child]);
+    PhysicalPlan::Lock(PhysicalLock {
+        base,
+        lock_type,
+        wait_sec: 0,
+        tbl_id_to_handle_cols: Default::default(),
+        tbl_id_to_phys_tbl_id_col: Default::default(),
+    })
+}
+
+#[test]
+fn a_select_lock_over_a_point_get_becomes_the_point_gets_lock() {
+    use crate::logical::SelectLockType;
+    // Go `eliminateUnionScanAndLock`: inside a transaction the point get
+    // takes the lock and both the lock and the union scan above it vanish.
+    let plan = eliminate_union_scan_over_point_get(
+        lock_over(3, union_scan(2, point_get(1)), SelectLockType::ForUpdateNoWait),
+        true,
+    );
+    let PhysicalPlan::PointGet(point) = &plan else {
+        panic!("the point get is the root: {:?}", plan.tp());
+    };
+    assert!(point.lock);
+    assert_eq!(point.select_lock, Some((SelectLockType::ForUpdateNoWait, 0)));
+    plan.dismantle();
+    // Outside one the lock is dropped and the point get does not lock.
+    let plan =
+        eliminate_union_scan_over_point_get(lock_over(3, point_get(1), SelectLockType::ForUpdate), false);
+    let PhysicalPlan::PointGet(point) = &plan else {
+        panic!("the point get is the root: {:?}", plan.tp());
+    };
+    assert!(!point.lock && point.select_lock.is_none());
+    plan.dismantle();
+    // A lock over anything but a point get stays.
+    let plan = eliminate_union_scan_over_point_get(
+        lock_over(3, scan(1, &[1]), SelectLockType::ForUpdate),
+        true,
+    );
+    assert!(matches!(&plan, PhysicalPlan::Lock(_)));
+    plan.dismantle();
 }

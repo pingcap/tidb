@@ -79,7 +79,7 @@ pub struct Ver2Coster {
     cost_option: Option<crate::cost_usage::PlanCostOption>,
     // Go stores costs on physical nodes. EXPLAIN uses a temporary cache over
     // its immutable retained tree so child rendering reuses recursive costs.
-    explain_costs: Option<std::cell::RefCell<std::collections::HashMap<usize, CostVer2>>>,
+    explain_costs: Option<std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, CostVer2>>>>,
 }
 
 impl TaskCoster for Ver2Coster {
@@ -815,9 +815,12 @@ impl Ver2Coster {
                         matches!(expr, tidb_expr::expression::Expression::ScalarFunction(_))
                     })
                     .collect();
+                // Go `getPlanCostVer24PhysicalProjection`: `inputRows :=
+                // getCardinality(p.Children()[0], ...)`, the child's rows
+                // and not the projection's own (scaled) estimate.
                 projection_cost(
                     self.cost_option(),
-                    rows,
+                    Self::rows(&plan.children()[0]),
                     &is_scalar,
                     self.factors.task_cpu(task_type),
                     self.session.projection_concurrency,

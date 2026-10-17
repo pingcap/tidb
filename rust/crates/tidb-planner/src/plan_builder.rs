@@ -4301,18 +4301,27 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 resolved_index,
                 matches!(&built, Expression::CorrelatedColumn(_)),
             );
-            let ret_type = built
-                .static_type()
-                .cloned()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-            // Go `buildProjectionField` (`logical_plan_builder.go:1601`): a
-            // computed expression's fresh column carries NO `OrigName` — the
-            // alias lives on the `FieldName` only, so `EXPLAIN` renders
-            // `expr->Column#N` instead of the user alias.
-            let mut output = Column::new(self.column_ids.alloc(), ret_type);
-            if let Expression::CorrelatedColumn(correlated) = &built {
-                output.correlated_col_unique_id = correlated.column.unique_id;
-            }
+            // Go `buildProjectionField` (`logical_plan_builder.go:1591`): a
+            // rewritten Column -- here the window operator's own output --
+            // is the projection column itself and draws no id.
+            let mut output = if let Expression::Column(column) = &built {
+                column.clone()
+            } else {
+                let ret_type = built
+                    .static_type()
+                    .cloned()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                // Go `buildProjectionField` (`logical_plan_builder.go:1601`): a
+                // computed expression's fresh column carries NO `OrigName` — the
+                // alias lives on the `FieldName` only, so `EXPLAIN` renders
+                // `expr->Column#N` instead of the user alias.
+                let mut column = Column::new(self.column_ids.alloc(), ret_type);
+                if let Expression::CorrelatedColumn(correlated) = &built {
+                    column.correlated_col_unique_id = correlated.column.unique_id;
+                }
+                column
+            };
+            output.index = projection_columns.len() as i64;
             output.is_hidden = field.hidden;
             projection_columns.push(output);
             projection_names.push(name);
@@ -5409,7 +5418,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // hidden auxiliary field by resolveHavingAndOrderBy, which is what
         // fires the trim and renders q42's `Column#77->Column#81`.
         let plan_width = plan.schema().map_or(0, |schema| schema.columns.len());
-        let trim_needed = fields.len() != old_len || plan_width > old_len;
+        // The window stage's projection drops the spec columns its fields
+        // carry, so a longer `fields` list alone does not widen the plan.
+        let trim_needed = plan_width != old_len;
         if trim_needed {
             plan = self.build_trim_projection(plan, old_len);
         }
