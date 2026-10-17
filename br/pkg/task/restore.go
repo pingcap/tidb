@@ -2241,7 +2241,8 @@ func filterRestoreFiles(
 				}
 			}
 			if table.Info.MaterializedView != nil ||
-				table.Info.MaterializedViewLog != nil {
+				table.Info.MaterializedViewLog != nil ||
+				table.Info.MaterializedViewShadow != nil {
 				continue
 			}
 			if table.Info.MaterializedViewBase != nil {
