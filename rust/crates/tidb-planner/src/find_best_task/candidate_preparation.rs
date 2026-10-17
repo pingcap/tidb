@@ -27,6 +27,10 @@ pub(super) struct PreparedOrdinaryPaths<'a> {
     pub range_flags: Vec<(bool, bool)>,
     pub idx_missing_stats: bool,
     pub heuristic_selected: bool,
+    /// Go `isRefinedPath` and the selected path's `IsSingleScan`, which the
+    /// heuristic selection note reports.
+    pub heuristic_refined: bool,
+    pub heuristic_single_scan: bool,
 }
 
 /// Unfilled native sources retain the later fallback until logical derivation.
@@ -168,12 +172,15 @@ pub(super) fn prepare_ordinary_paths<'a>(
         .map(|candidate| candidate.2.clone())
         .collect::<Option<Vec<_>>>()
     {
-        if let Some(selected) = super::candidate::choose_heuristic_path(&heuristics) {
+        if let Some((selected, refined)) = super::candidate::choose_heuristic_path_detail(&heuristics)
+        {
             return Some(PreparedOrdinaryPaths {
                 paths: vec![candidates[selected].0],
                 range_flags: vec![candidates[selected].3],
                 idx_missing_stats: false,
                 heuristic_selected: true,
+                heuristic_refined: refined,
+                heuristic_single_scan: heuristics[selected].single_scan,
             });
         }
     }
@@ -196,6 +203,8 @@ pub(super) fn prepare_ordinary_paths<'a>(
         paths: skyline.into_iter().map(|candidate| candidate.0).collect(),
         idx_missing_stats,
         heuristic_selected: false,
+        heuristic_refined: false,
+        heuristic_single_scan: false,
     })
 }
 
@@ -281,6 +290,8 @@ pub(super) enum PreparedMerge<'a> {
 pub(super) struct PreparedDataSourcePaths<'a> {
     pub ordinary: Option<PreparedOrdinaryPaths<'a>>,
     pub merges: Vec<PreparedMerge<'a>>,
+    /// Each merge's position in the retained path list, in `merges` order.
+    pub merge_positions: Vec<usize>,
 }
 
 /// Resolve candidate identities and merge alternatives before converting any path.
@@ -293,6 +304,7 @@ pub(super) fn prepare_access_paths<'a>(
 ) -> PreparedDataSourcePaths<'a> {
     let ordinary = prepare_ordinary_paths(ds, paths, prop, ctx, table_pseudo);
     let mut merges = Vec::new();
+    let mut merge_positions = Vec::new();
     // Go admits ordered unions only when all converged partials match.
     // Intersection still cannot provide the required order.
     if matches!(prop.task_tp, TaskType::Root | TaskType::CopMultiRead)
@@ -302,7 +314,7 @@ pub(super) fn prepare_access_paths<'a>(
             .is_some_and(|paths| paths.heuristic_selected)
     {
         if let Some(paths) = &ds.derived_access_paths {
-            for path in &paths.paths {
+            for (position, path) in paths.paths.iter().enumerate() {
                 match path {
                     crate::access_path::DerivedAccessPath::Union(path) => {
                         if let Some(path) =
@@ -311,6 +323,7 @@ pub(super) fn prepare_access_paths<'a>(
                             )
                         {
                             merges.push(PreparedMerge::Union(path));
+                            merge_positions.push(position);
                         }
                     }
                     // Go `isMatchPropForIndexMerge` refuses an order to an
@@ -319,6 +332,7 @@ pub(super) fn prepare_access_paths<'a>(
                     crate::access_path::DerivedAccessPath::IndexMerge(path) => {
                         if prop.is_sort_item_empty() {
                             merges.push(PreparedMerge::IndexMerge(path));
+                            merge_positions.push(position);
                         }
                     }
                     crate::access_path::DerivedAccessPath::Ordinary(_) => {}
@@ -356,8 +370,9 @@ pub(super) fn prepare_access_paths<'a>(
             prepared.range_flags.retain(|(preferred, kept)| *preferred || *kept);
             if !prefer_merge {
                 merges.clear();
+                merge_positions.clear();
             }
         }
     }
-    PreparedDataSourcePaths { ordinary, merges }
+    PreparedDataSourcePaths { ordinary, merges, merge_positions }
 }

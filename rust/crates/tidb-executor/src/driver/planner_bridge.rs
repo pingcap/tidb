@@ -850,6 +850,10 @@ impl tidb_planner::find_best_task::dispatch::MppWarningSink for crate::StmtConte
     fn set_hint_warning(&self, message: &str) {
         self.append_warning_parts(1815, message);
     }
+
+    fn append_planner_note(&self, message: &str) {
+        crate::StmtContext::append_planner_note(self, message);
+    }
 }
 
 /// Go `isCTE(tblW)` for a write statement's table ref: `buildDataSource`
@@ -2535,6 +2539,29 @@ impl InitStats<'_> {
                     if index.primary && source.is_common_handle {
                         source.table_path_count_after_access = Some(estimate.est);
                     }
+                }
+            }
+        }
+        // Go's `fillIndexPath` estimates every index path, a full-range one
+        // included: with no condition on this source the count is the whole
+        // table (`GetRowCountByIndexRanges` skips estimating a full range).
+        // Without it the skyline could not compare an index with the table
+        // path, so an ordered request kept every index alive.
+        if source.pushed_down_conds.is_empty() && scoped_predicate.is_none() {
+            if let Some(TableEntry::Kv(_)) = source_table {
+                let full_range_count = statistics
+                    .filter(|statistics| !statistics.pseudo)
+                    .map_or(row_count, |statistics| statistics.row_count as f64);
+                for index in &source.indexes {
+                    source
+                        .derived_index_paths
+                        .entry(index.id)
+                        .or_default()
+                        .row_estimate = Some(
+                        tidb_planner::cardinality::row_count_column::RowEstimate::default_est(
+                            full_range_count,
+                        ),
+                    );
                 }
             }
         }

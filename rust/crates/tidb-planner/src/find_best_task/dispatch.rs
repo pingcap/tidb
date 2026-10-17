@@ -81,6 +81,10 @@ pub trait MppWarningSink {
 
     /// Go `StmtCtx.SetHintWarning`: a planner `ErrInternal` hint warning.
     fn set_hint_warning(&self, message: &str);
+
+    /// A planner note: Go `AppendNote` under `EXPLAIN FORMAT='verbose'`
+    /// (`InVerboseExplain`), `AppendExtraNote` otherwise.
+    fn append_planner_note(&self, message: &str);
 }
 
 /// Go `compareTaskCost` (`find_best_task.go:479`): whether `cur` beats
@@ -190,6 +194,9 @@ pub struct DispatchContext<'a> {
     pub opt_prefix_index_single_scan: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
     pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
+    /// DataSources whose heuristic-selection note was already raised: Go
+    /// derives a DataSource's statistics, and so selects, only once.
+    pub heuristic_noted: std::collections::HashSet<usize>,
     /// Go `StmtCtx.SetSkipPlanCache` for decisions physical optimization
     /// makes; `None` drops them.
     pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
@@ -268,6 +275,7 @@ impl<'a> DispatchContext<'a> {
             partial_ordered_index_for_topn: false,
             opt_prefix_index_single_scan: true,
             mpp_warning_sink: None,
+            heuristic_noted: std::collections::HashSet::new(),
             plan_cache_marker: None,
             use_plan_cache: false,
             fix_44830: false,
@@ -2738,6 +2746,21 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
+    let mut pruning_info = None;
+    let task = find_best_task_4_logical_data_source_paths(ds, prop, ctx, &mut pruning_info)?;
+    // Go's deferred `getPruningInfo` note, raised only for a valid task.
+    if let (Some(info), false, Some(sink)) = (pruning_info, task.invalid(), ctx.mpp_warning_sink) {
+        sink.append_planner_note(&info);
+    }
+    Ok(task)
+}
+
+fn find_best_task_4_logical_data_source_paths(
+    ds: &crate::logical::DataSource,
+    prop: &PhysicalProperty,
+    ctx: &mut DispatchContext<'_>,
+    pruning_info: &mut Option<String>,
+) -> Result<Task, PlanError> {
     // Go's DataSource findBestTask serves both COP property kinds. The
     // single-read property admits table and covering-index scans; the
     // multi-read property admits only a non-covering index path whose COP
@@ -2812,8 +2835,33 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         ds, &ordinary_paths, prop, ctx, table_pseudo,
     );
     let merge_candidates = preparation.merges;
+    let merge_positions = preparation.merge_positions;
     let preparation = preparation.ordinary;
     let prepared = preparation.is_some();
+    if let (Some(prepared_paths), Some(derived)) = (&preparation, &ds.derived_access_paths) {
+        if prepared_paths.heuristic_selected {
+            if let (Some(path), Some(sink)) = (prepared_paths.paths.first(), ctx.mpp_warning_sink)
+            {
+                if ctx.heuristic_noted.insert(std::ptr::from_ref(ds).addr()) {
+                    sink.append_planner_note(&heuristic_selection_note(
+                        ds,
+                        path,
+                        prepared_paths.heuristic_refined,
+                        prepared_paths.heuristic_single_scan,
+                    ));
+                }
+            }
+        } else {
+            *pruning_info = pruning_info_message(
+                ds,
+                derived,
+                &prepared_paths.paths,
+                &merge_candidates,
+                &merge_positions,
+                prop,
+            );
+        }
+    }
     let mut prepared_missing_stats = false;
     let mut heuristic_selected = false;
     if let Some(preparation) = preparation {
@@ -3894,8 +3942,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     }
                     continue 'paths;
                 }
-                let mut base = crate::physical::BasePhysicalPlan::new(
-                    ctx.allocator,
+                // Go draws the scan's id in `GetOriginalPhysicalIndexScan`, after
+                // the point-get conversion below has declined.
+                let mut base = crate::physical::BasePhysicalPlan::with_id(
+                    0,
                     "IndexScan",
                     ds.base.base.query_block_offset(),
                 );
@@ -4042,6 +4092,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     root.set_plan(point);
                     break 'index_path Task::Root(root);
                 }
+                base.base.set_id(ctx.allocator.alloc());
                 let table_stats = ds
                     .table_stats
                     .clone()
@@ -4679,6 +4730,146 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     Ok(best)
 }
 
+/// Go `DataSource` table name in a note: the alias when there is one.
+fn note_table_name(ds: &crate::logical::DataSource) -> &str {
+    ds.table_as_name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&ds.table_name)
+}
+
+/// The note Go raises when `derivePathStatsAndTryHeuristics` keeps one path
+/// (`stats.go`, "is selected since the path ...").
+fn heuristic_selection_note(
+    ds: &crate::logical::DataSource,
+    path: &crate::access_path::PossiblePath,
+    refined: bool,
+    single_scan: bool,
+) -> String {
+    let table = note_table_name(ds);
+    let index = match path {
+        crate::access_path::PossiblePath::Index { index } => ds.indexes.get(*index),
+        _ => None,
+    };
+    let Some(index) = index else {
+        return format!("handle of {table} is selected since the path only has point ranges");
+    };
+    format!(
+        "{}index {} of {table} is selected since the path {}{}",
+        if index.unique { "unique " } else { "" },
+        index.name,
+        if refined {
+            "only fetches limited number of rows"
+        } else {
+            "only has point ranges"
+        },
+        if single_scan {
+            " with single scan"
+        } else {
+            " with double scan"
+        },
+    )
+}
+
+/// Go `getPruningInfo`: the paths that survive `skylinePruning`, in the
+/// order of `PossibleAccessPaths`, when pruning removed any.
+fn pruning_info_message(
+    ds: &crate::logical::DataSource,
+    derived: &crate::access_path::DerivedAccessPaths,
+    ordinary: &[&crate::access_path::PossiblePath],
+    merges: &[super::candidate_preparation::PreparedMerge<'_>],
+    merge_positions: &[usize],
+    prop: &PhysicalProperty,
+) -> Option<String> {
+    use crate::access_path::{DerivedAccessPath, PossiblePath};
+    use super::candidate_preparation::PreparedMerge;
+    if ordinary.len() + merges.len() == derived.paths.len() {
+        return None;
+    }
+    let table = note_table_name(ds);
+    let path_name = |path: &PossiblePath| match path {
+        PossiblePath::Table { .. } => table.to_owned(),
+        PossiblePath::TiFlashTable => format!("{table}(tiflash)"),
+        PossiblePath::Index { index } => ds
+            .indexes
+            .get(*index)
+            .map_or_else(String::new, |index| index.name.clone()),
+    };
+    let index_name = |position: usize| {
+        ds.indexes
+            .get(position)
+            .map_or_else(String::new, |index| index.name.clone())
+    };
+    let mut names = Vec::new();
+    for (position, path) in derived.paths.iter().enumerate() {
+        match path {
+            DerivedAccessPath::Ordinary(path) => {
+                if ordinary.iter().any(|kept| std::ptr::eq(*kept, path)) {
+                    names.push(path_name(path));
+                }
+            }
+            DerivedAccessPath::Union(_) | DerivedAccessPath::IndexMerge(_) => {
+                let Some(merge) = merge_positions
+                    .iter()
+                    .position(|merge_position| *merge_position == position)
+                    .and_then(|merge| merges.get(merge))
+                else {
+                    continue;
+                };
+                let partials: Vec<String> = match merge {
+                    PreparedMerge::Union(path) => path
+                        .partials()
+                        .iter()
+                        .map(|partial| match partial {
+                            crate::access_path::index_merge::Partial::Index { index_pos, .. }
+                            | crate::access_path::index_merge::Partial::MvIndex {
+                                index_pos, ..
+                            } => index_name(*index_pos),
+                            crate::access_path::index_merge::Partial::Table { .. } => {
+                                table.to_owned()
+                            }
+                        })
+                        .collect(),
+                    PreparedMerge::IndexMerge(path) => path
+                        .partials
+                        .iter()
+                        .map(|partial| index_name(partial.index_pos))
+                        .collect(),
+                };
+                names.push(format!("IndexMerge{{{}}}", partials.join(",")));
+            }
+        }
+    }
+    // Go prints the DataSource's own column, which carries the original name.
+    let items: Vec<String> = prop
+        .sort_items
+        .iter()
+        .map(|item| {
+            let mut item = item.clone();
+            if item.col.orig_name.is_empty() {
+                if let Some(column) = ds
+                    .base
+                    .base
+                    .schema()
+                    .into_iter()
+                    .flat_map(|schema| &schema.columns)
+                    .chain(&ds.table_columns)
+                    .find(|column| column.unique_id == item.col.unique_id)
+                {
+                    item.col.orig_name.clone_from(&column.orig_name);
+                }
+            }
+            item.to_string()
+        })
+        .collect();
+    Some(format!(
+        "[{}] remain after pruning paths for {table} given Prop{{SortItems: [{}], TaskTp: {}}}",
+        names.join(","),
+        items.join(" "),
+        prop.task_tp.as_str(),
+    ))
+}
+
 #[derive(Default)]
 struct EnumerateState {
     topn_cop_exists: bool,
@@ -5048,6 +5239,8 @@ mod tests {
         fn set_hint_warning(&self, message: &str) {
             self.0.borrow_mut().push(message.to_owned());
         }
+
+        fn append_planner_note(&self, _message: &str) {}
     }
 
     #[test]

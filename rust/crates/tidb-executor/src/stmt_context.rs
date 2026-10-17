@@ -4446,6 +4446,18 @@ impl StmtContext {
         }
     }
 
+    /// A planner note: Go `AppendNote` when the statement is
+    /// `EXPLAIN FORMAT='verbose'` (`InVerboseExplain`), else `AppendExtraNote`,
+    /// which only the slow log and statement summary read.
+    pub fn append_planner_note(&self, message: &str) {
+        if self.in_explain_stmt && matches!(self.explain_format, Some(crate::ExplainFormat::Verbose))
+        {
+            self.append_note_parts(1105, message);
+        } else {
+            self.append_extra_leveled(WarningLevel::Note, 1105, message);
+        }
+    }
+
     /// Drains Go's extra-warning handler without exposing entries through the
     /// ordinary statement warning path.
     #[must_use]

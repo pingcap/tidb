@@ -16935,6 +16935,70 @@ fn rowid_range_estimates_use_the_default_selectivity_like_go() {
     );
 }
 
+/// `EXPLAIN FORMAT='verbose'` records Go's path-pruning and heuristic-selection
+/// notes (`getPruningInfo`, `derivePathStatsAndTryHeuristics`) for `SHOW
+/// WARNINGS`, and an index point get draws no scan id before its own. Expected
+/// notes and ids: Go 1.27 on this branch (`TestZZ` probes `NP1` and `NP3`).
+#[test]
+fn verbose_explain_records_path_pruning_and_heuristic_notes_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1130)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE note_t (a INT PRIMARY KEY, b INT, c INT, d INT, UNIQUE KEY ub (b), KEY ic (c))",
+        "CREATE TABLE note_u (a INT, b INT, c INT, KEY ia (a), KEY ib (b), KEY iab (a, b))",
+        "INSERT INTO note_t VALUES (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5)",
+        "INSERT INTO note_u VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
+        "ANALYZE TABLE note_t, note_u",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let notes = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}"));
+        displayed(rows(session, "SHOW WARNINGS"))
+            .into_iter()
+            .filter(|row| row[0] == "Note")
+            .map(|row| row[2].clone())
+            .collect()
+    };
+    assert_eq!(
+        notes(&mut session, "SELECT * FROM note_u WHERE a = 1 AND b = 2"),
+        ["[note_u,iab] remain after pruning paths for note_u given Prop{SortItems: [], TaskTp: rootTask}"]
+    );
+    assert_eq!(
+        notes(&mut session, "SELECT * FROM note_u WHERE b > 1 ORDER BY b"),
+        [
+            "[note_u,ib] remain after pruning paths for note_u given Prop{SortItems: [], TaskTp: rootTask}",
+            "[note_u,ib] remain after pruning paths for note_u given Prop{SortItems: [{test.note_u.b asc}], TaskTp: rootTask}",
+        ]
+    );
+    assert_eq!(
+        notes(&mut session, "SELECT * FROM note_t WHERE b = 2 AND c > 0"),
+        ["unique index ub of note_t is selected since the path only has point ranges with double scan"]
+    );
+    assert_eq!(
+        notes(&mut session, "SELECT * FROM note_t WHERE a = 1 AND c > 0"),
+        ["handle of note_t is selected since the path only has point ranges"]
+    );
+    // A join with no filter still estimates each index's full range, so an
+    // ordered request prunes the indexes against the table path.
+    assert_eq!(
+        notes(
+            &mut session,
+            "SELECT * FROM note_t JOIN note_u ON note_t.a = note_u.a"
+        )[..1],
+        ["[note_t] remain after pruning paths for note_t given Prop{SortItems: [{test.note_t.a asc}], TaskTp: rootTask}"]
+    );
+    let point_get_ids = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'verbose' SELECT * FROM note_t WHERE b = 2 AND c > 0",
+    ))
+    .into_iter()
+    .map(|row| row[0].trim_start_matches([' ', '└', '─']).to_string())
+    .collect::<Vec<_>>();
+    assert_eq!(point_get_ids, ["Selection_6", "Point_Get_5"]);
+}
+
 /// `exhaustPhysicalPlans4LogicalApply` builds the embedded hash join before
 /// the Apply itself, so the Apply's id is one past the hash join's. Expected
 /// ids: Go 1.27 on this branch (`TestZZ` probe `AP1`).

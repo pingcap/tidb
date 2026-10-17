@@ -308,6 +308,13 @@ pub(super) fn converge_union_index_merge_path<'a>(
     })
 }
 
+impl<'a> ConvergedUnionPath<'a> {
+    /// The converged partial accesses, in OR-list order.
+    pub(super) fn partials(&self) -> &[&'a Partial] {
+        &self.partials
+    }
+}
+
 pub(super) struct ConvergedUnionPath<'a> {
     partials: Vec<&'a Partial>,
     partial_matches: Vec<crate::physical_property::PhysicalPropMatchResult>,

@@ -27,11 +27,17 @@ pub(crate) struct HeuristicPath {
 /// Select the unique point path, unless a covering range strictly refines it
 /// and needs fewer than twice as many ranges (Go `stats.go:663`).
 pub(crate) fn choose_heuristic_path(paths: &[HeuristicPath]) -> Option<usize> {
+    choose_heuristic_path_detail(paths).map(|(index, _)| index)
+}
+
+/// [`choose_heuristic_path`] plus Go's `isRefinedPath`: the selected path is a
+/// covering range that refines the best unique point path.
+pub(crate) fn choose_heuristic_path_detail(paths: &[HeuristicPath]) -> Option<(usize, bool)> {
     let mut unique = Vec::new();
     let mut single = Vec::new();
     for (index, path) in paths.iter().enumerate() {
         if path.range_count == 0 || (path.only_points && path.unique && path.single_scan) {
-            return Some(index);
+            return Some((index, false));
         }
         if path.only_points {
             if path.unique {
@@ -57,7 +63,7 @@ pub(crate) fn choose_heuristic_path(paths: &[HeuristicPath]) -> Option<usize> {
     Some(
         refined
             .filter(|&index| paths[index].range_count < 2 * paths[best].range_count)
-            .unwrap_or(best),
+            .map_or((best, false), |index| (index, true)),
     )
 }
 
