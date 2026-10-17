@@ -46,7 +46,7 @@ func newStatementRUForestBenchmark(
 ) (*plannercore.FlatPhysicalPlan, *execdetails.RuntimeStatsColl) {
 	b.Helper()
 	fixture := newStatementRUSimpleSelectFixture(b)
-	fixture.owner.calculationSetup.fullReport = false
+	setStatementRUFullReportForTest(fixture.owner, false)
 	planCtx := fixture.stmt.Ctx.(*mock.Context)
 	stmtCtx := planCtx.GetSessionVars().StmtCtx
 	base := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
@@ -188,9 +188,9 @@ func BenchmarkStatementRUExecutionDetailsAggregation(b *testing.B) {
 
 func BenchmarkStatementRUTreeTraversal(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
-	fixture.owner.calculationSetup.fullReport = false
+	setStatementRUFullReportForTest(fixture.owner, false)
 	flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
-	setup := fixture.owner.calculationSetup
+	setup := fixture.owner.calculationSetup()
 	stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
 	calculator := newStatementRUCalculator(setup)
 	result := calculateStatementRUPlan(
@@ -345,7 +345,7 @@ func BenchmarkStatementRUPointDirectCalculator(b *testing.B) {
 
 func BenchmarkStatementRUPointGeneralCalculator(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
-	fixture.owner.calculationSetup.fullReport = false
+	setStatementRUFullReportForTest(fixture.owner, false)
 	plan := newStatementRUPointLookupPlanForTest(fixture, false)
 	flat := plannercore.FlattenPhysicalPlan(plan, false)
 	runtimeStats := execdetails.NewRuntimeStatsColl(nil)
@@ -374,13 +374,13 @@ func BenchmarkStatementRUPointGeneralCalculator(b *testing.B) {
 
 func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
-	fixture.owner.calculationSetup.fullReport = false
+	setStatementRUFullReportForTest(fixture.owner, false)
 	calculator := statementRUCalculator{
 		units: ruv2.StmtUnits{
 			CPUWork:              5,
 			ScanBytes:            10,
 			NetBytes:             20,
-			FrontendCompileBytes: fixture.owner.calculationSetup.frontendCompileBytes,
+			FrontendCompileBytes: fixture.owner.frontendCompileBytes,
 			HashStateRows:        7,
 			JoinOutputRows:       8,
 		},
@@ -401,8 +401,26 @@ func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 }
 
 func BenchmarkStatementRUSyntheticTerminal(b *testing.B) {
+	for _, nonempty := range []bool{false, true} {
+		name := "commit-empty"
+		if nonempty {
+			name = "commit-writes"
+		}
+		b.Run(name, func(b *testing.B) {
+			stmt := prepareStatementRUCommitTerminalForBenchmark(b, nonempty)
+			stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
+			b.ReportAllocs()
+			for b.Loop() {
+				stmtCtx.SetFlatPlan(nil)
+				installStatementRUOwner(stmt)
+				stmt.recordStatementRURootEOF()
+				stmt.RecordStatementRUFinalOutcome(true)
+				stmt.finishStatementRU(nil)
+			}
+		})
+	}
 	fixture := newStatementRUSimpleSelectFixture(b)
-	fixture.owner.calculationSetup.fullReport = false
+	setStatementRUFullReportForTest(fixture.owner, false)
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 	flat := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
@@ -433,11 +451,65 @@ func BenchmarkStatementRUSyntheticTerminal(b *testing.B) {
 			}
 		})
 	}
+	// These subcases exercise the actual point terminal branch with a prepared
+	// plan-cache hit. The original cases above use a TableReader and vary only
+	// flat-plan cache availability; they remain useful generic-path controls.
+	for _, batch := range []bool{false, true} {
+		for _, remote := range []bool{false, true} {
+			name := "point-prepared-local"
+			if remote {
+				name = "point-prepared-remote"
+			}
+			if batch {
+				name = "batch" + name[len("point"):]
+			}
+			b.Run(name, func(b *testing.B) {
+				fixture := newStatementRUSimpleSelectFixture(b)
+				stmt := fixture.stmt
+				vars := stmt.Ctx.GetSessionVars()
+				vars.FoundInPlanCache = true
+				vars.RUV2Metrics = execdetails.NewRUV2Metrics()
+				plan := newStatementRUPointLookupPlanForTest(fixture, batch)
+				stmt.Plan = plan
+				vars.StmtCtx.SetPlan(plan)
+				vars.StmtCtx.SetFlatPlan(nil)
+				stats := statementRUPointResponseStatsForTest{}
+				if remote {
+					vars.RUV2Metrics.AddTiKVCoprocessorResponseBytes(29)
+					stats.stats = statementRUPointResponseStatsForTestFromResponse(
+						&kvrpcpb.ScanDetailV2{TotalVersions: 2, ProcessedVersions: 1, ProcessedVersionsSize: 37}, 17)
+				}
+				vars.StmtCtx.RuntimeStatsColl.RegisterStats(plan.ID(), &stats)
+				installStatementRUOwner(stmt)
+				if stmt.statementRUOwner == nil || stmt.statementRUOwner.calculationFullReport || stmt.statementRUOwner.frontendCompileBytes != 0 {
+					b.Fatal("benchmark requires a result-only prepared point owner")
+				}
+				want, ok := calculateStatementRUPointLookup(plan.ID(), vars.StmtCtx.RuntimeStatsColl, vars.RUV2Metrics, stmt.statementRUOwner.calculationSetup(), true)
+				if !ok {
+					b.Fatal("point fixture did not finalize")
+				}
+				stmt.recordStatementRURootEOF()
+				stmt.RecordStatementRUFinalOutcome(true)
+				if got := stmt.finishStatementRU(nil); got != want.result.TotalRU || vars.StmtCtx.GetFlatPlan() != nil {
+					b.Fatalf("point terminal fixture mismatch: RU=%v, want=%v", got, want.result.TotalRU)
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					vars.StmtCtx.SetFlatPlan(nil)
+					installStatementRUOwner(stmt)
+					stmt.recordStatementRURootEOF()
+					stmt.RecordStatementRUFinalOutcome(true)
+					stmt.finishStatementRU(nil)
+				}
+			})
+		}
+	}
+
 }
 
 func BenchmarkStatementRUOwnerSetup(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
-	fixture.owner.calculationSetup.fullReport = false
+	setStatementRUFullReportForTest(fixture.owner, false)
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 	stmtCtx.SetFlatPlan(nil)
