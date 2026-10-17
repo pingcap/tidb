@@ -827,16 +827,25 @@ func locateStringWithCollator(str, substr string, collator collate.Collator) int
 		return int64(index + 1)
 	}
 
-	// todo: we can use binary search to make it faster.
 	count := int64(0)
 	for {
 		r, size := utf8.DecodeRuneInString(str)
 		count++
-		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
-		if index <= 0 {
+		keyLen := len(collator.KeyWithoutTrimRightSpace(string(r)))
+		index -= keyLen
+		strKey = strKey[keyLen:]
+		str = str[size:]
+		if index < 0 {
+			// Reject matches inside a character's key and continue searching
+			// from the next character boundary.
+			index = bytes.Index(strKey, subStrKey)
+			if index == -1 {
+				return 0
+			}
+		}
+		if index == 0 {
 			return count + 1
 		}
-		str = str[size:]
 	}
 }
 
