@@ -16,11 +16,14 @@ package physicalop
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -34,6 +37,11 @@ import (
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	BasePhysicalAgg
+
+	// LooseScan asks Attach2Task to read its child cop task with a loose
+	// index scan instead of pushing a partial aggregation down. If the child
+	// can't be read that way, the candidate is invalid.
+	LooseScan bool
 }
 
 func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -152,6 +160,15 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 			}
 			streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
 			streamAggs = append(streamAggs, streamAgg)
+			if taskTp == property.CopSingleReadTaskType && prop.IndexJoinProp == nil && looseScanAggFuncsAllowed(la) {
+				looseBaseAgg := &BasePhysicalAgg{
+					GroupByItems: slices.Clone(newGbyItems),
+					AggFuncs:     slices.Clone(newAggFuncs),
+				}
+				looseAgg := looseBaseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
+				looseAgg.(*PhysicalStreamAgg).LooseScan = true
+				streamAggs = append(streamAggs, looseAgg)
+			}
 		}
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
@@ -160,6 +177,48 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		streamAggs = append(streamAggs, getEnforcedStreamAggs(la, prop)...)
 	}
 	return streamAggs
+}
+
+// looseScanMinGroupSize is the smallest estimated average group size for which
+// a loose index scan candidate is built.
+const looseScanMinGroupSize = 1000
+
+// looseScanAggFuncsAllowed is a cheap pre-check that the aggregation could be
+// computed from the first rows of each index prefix group. Attach2Task does
+// the full check once the index is known.
+func looseScanAggFuncsAllowed(la *logicalop.LogicalAggregation) bool {
+	if len(la.GroupByItems) == 0 || la.SCtx().GetSessionVars().CostModelVersion != 2 {
+		return false
+	}
+	// Only consider a loose scan when groups are large: each group costs a
+	// coprocessor round trip, which measured at roughly the cost of scanning
+	// a thousand index rows. Skipping the candidate otherwise also keeps it
+	// from allocating plan IDs for queries it can't win.
+	forced := false
+	failpoint.Inject("forceLooseIndexScan", func() {
+		forced = true
+	})
+	if !forced && la.InputCount < looseScanMinGroupSize*la.StatsInfo().RowCount {
+		return false
+	}
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.HasDistinct || len(aggFunc.OrderByItems) > 0 {
+			return false
+		}
+		switch aggFunc.Name {
+		case ast.AggFuncFirstRow:
+		case ast.AggFuncMin, ast.AggFuncMax:
+			if len(aggFunc.Args) != 1 {
+				return false
+			}
+			if _, ok := aggFunc.Args[0].(*expression.Column); !ok {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // GetPointer return inner base physical agg.
@@ -176,6 +235,7 @@ func (p *PhysicalStreamAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 		return nil, err
 	}
 	cloned.BasePhysicalAgg = *base
+	cloned.LooseScan = p.LooseScan
 	return cloned, nil
 }
 
