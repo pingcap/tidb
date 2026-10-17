@@ -288,6 +288,20 @@ fn physical_dml_plan_with_cache_mode(
     let column_ids = tidb_planner::expression_rewriter::ColumnIdAllocator::new();
     let mut update_expressions = Vec::new();
 
+    // Go `buildInsert` builds the target's schema first
+    // (`TableInfo2SchemaAndNames`), which draws a plan column id for every
+    // public column of the table before the source plan exists.
+    if operator.eq_ignore_ascii_case("Insert") {
+        if let Some(Some(TableEntry::Kv(table))) = fk_specs
+            .first()
+            .map(|spec| catalog.get_in(&spec.database, &spec.table))
+        {
+            for _ in 0..table.columns.len() {
+                column_ids.alloc();
+            }
+        }
+    }
+
     // Go `buildInsert`'s mockTablePlan filler, right after the Insert root.
     let mut root_base = if operator.eq_ignore_ascii_case("Insert") {
         let root = BasePhysicalPlan::new(&plan_ids, operator, 0);

@@ -2370,6 +2370,10 @@ fn index_inner_output_offsets(
             if is_extra_handle_column(column) {
                 return Ok(table.columns().len());
             }
+            // The partition id column sits just past the extra handle slot.
+            if column.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
+                return Ok(table.columns().len() + 1);
+            }
             table
                 .logical_columns()
                 .iter()
@@ -2729,6 +2733,10 @@ fn build_index_inner_reader(
     let row_schema = offset_schema.unwrap_or(&schema);
     let output_offsets = index_inner_output_offsets(row_schema, &table)?;
     let emits_extra_handle = row_schema.columns.iter().any(is_extra_handle_column);
+    let emits_physical_table_id = row_schema
+        .columns
+        .iter()
+        .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
     let index_side = match plan {
         PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref(),
         _ => Some(embedded),
@@ -2785,6 +2793,9 @@ fn build_index_inner_reader(
     source.set_column_projection(Some(output_offsets), []);
     if emits_extra_handle {
         source.emit_extra_handle();
+    }
+    if emits_physical_table_id {
+        source.emit_physical_table_id();
     }
     if let Some((true, desc)) = index_inner_scan_order(plan) {
         source.set_keep_order(desc);

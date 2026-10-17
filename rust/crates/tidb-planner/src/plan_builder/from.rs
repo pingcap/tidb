@@ -1944,7 +1944,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
     /// Go setExtraPhysTblIDColsOnDataSource/addExtraPhysTblIDColumn4DS.
     /// The synthetic value belongs to the record reader, not to SQL data.
-    fn set_extra_phys_tbl_id_cols(
+    pub(super) fn set_extra_phys_tbl_id_cols(
         &mut self,
         plan: &mut LogicalPlan,
         columns: &mut BTreeMap<i64, Column>,

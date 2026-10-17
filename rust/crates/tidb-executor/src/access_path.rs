@@ -5012,6 +5012,9 @@ impl LookupForkTemplate {
             lookup_chunk: None,
             remote_handles: None,
             last_partition_id: None,
+            lookup_physical_ids: Vec::new(),
+            emit_physical_table_id: false,
+            current_physical_id: None,
             lookup_rows: Vec::new(),
             lookup_handles: Vec::new(),
             lookup_row_at: 0,
@@ -5114,7 +5117,16 @@ pub struct IndexJoinLookupExec {
     /// The handle each pending lookup row came from, parallel to
     /// `lookup_rows`.
     lookup_handles: Vec<Option<TableHandle>>,
+    /// The physical (partition) table each pending lookup row was read from,
+    /// parallel to `lookup_rows` when every handle's route is known.
+    lookup_physical_ids: Vec<i64>,
     lookup_row_at: usize,
+    /// Whether each row carries Go's `_tidb_tid` right after the extra handle
+    /// slot: a partitioned table's reader under a `UnionScan` reports which
+    /// partition each row came from.
+    emit_physical_table_id: bool,
+    /// The partition of the row [`Self::next_lookup_row`] returned last.
+    current_physical_id: Option<i64>,
     /// Whether each row carries Go's `_tidb_rowid` just past the stored
     /// columns: an inner IndexLookUp over a heap table keeps the handle in
     /// its schema (a Projection above it prunes the column).
@@ -5218,6 +5230,9 @@ impl IndexJoinLookupExec {
             lookup_chunk: None,
             remote_handles: None,
             last_partition_id: None,
+            lookup_physical_ids: Vec::new(),
+            emit_physical_table_id: false,
+            current_physical_id: None,
             lookup_rows: Vec::new(),
             lookup_handles: Vec::new(),
             lookup_row_at: 0,
@@ -5257,6 +5272,7 @@ impl IndexJoinLookupExec {
         self.remote_handles = None;
         self.lookup_rows.clear();
         self.lookup_handles.clear();
+        self.lookup_physical_ids.clear();
         self.lookup_row_at = 0;
         self.open_remote_index_handles()
     }
@@ -5486,6 +5502,12 @@ impl IndexJoinLookupExec {
     /// which an output offset of `table.columns().len()` selects.
     pub(crate) fn emit_extra_handle(&mut self) {
         self.emit_extra_handle = true;
+    }
+
+    /// Emits each row's partition id as the column just past the extra
+    /// handle slot, an output offset of `table.columns().len() + 1`.
+    pub(crate) fn emit_physical_table_id(&mut self) {
+        self.emit_physical_table_id = true;
     }
 
     /// The live count of rows this source produced.
@@ -5972,7 +5994,7 @@ impl IndexJoinLookupExec {
     /// The decoded column each output column reads, or `None` when an
     /// output column is not among the decoded ones.
     fn chunk_output_columns(&self) -> Option<Vec<usize>> {
-        if self.emit_extra_handle {
+        if self.emit_extra_handle || self.emit_physical_table_id {
             return None;
         }
         let visible = self.table.visible_column_count();
@@ -6139,13 +6161,18 @@ impl IndexJoinLookupExec {
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
     ) -> Result<Vec<(Option<TableHandle>, Option<Vec<Datum>>)>, ExecError> {
-        if let Some(rows) = self.window_rows_by_ranges(handles, physical_ids)? {
-            return Ok(rows);
+        self.lookup_physical_ids = physical_ids.map(<[i64]>::to_vec).unwrap_or_default();
+        // A reader that reports `_tidb_tid` must know the partition of every
+        // row, so it reads through the local batch-get that names it.
+        if !self.emit_physical_table_id {
+            if let Some(rows) = self.window_rows_by_ranges(handles, physical_ids)? {
+                return Ok(rows);
+            }
         }
         // The batch-get answers one slot per handle, in handle order.
-        let rows = self
+        let (rows, located) = self
             .table
-            .get_rows_by_routed_handles_projected_with_context(
+            .get_located_rows_by_routed_handles_projected_with_context(
                 handles,
                 physical_ids,
                 self.decode_offsets.as_deref(),
@@ -6153,6 +6180,9 @@ impl IndexJoinLookupExec {
             )
             .map_err(ExecError::from)?;
         note_found_rows(&self.table, &rows)?;
+        if self.emit_physical_table_id {
+            self.lookup_physical_ids = located.iter().map(|id| id.unwrap_or_default()).collect();
+        }
         Ok(handles.iter().cloned().map(Some).zip(rows).collect())
     }
 
@@ -6225,6 +6255,7 @@ impl IndexJoinLookupExec {
 
     fn next_lookup_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         self.current_handle = None;
+        self.current_physical_id = None;
         if self.covering {
             if let Some(remote) = self.remote_handles.as_mut() {
                 if self.emit_extra_handle {
@@ -6278,6 +6309,7 @@ impl IndexJoinLookupExec {
                         )?
                         .into_iter()
                         .unzip();
+
                     // A window every row of which is gone -- the index named
                     // handles whose records no longer exist, and a range scan
                     // answers exactly what exists -- contributes nothing;
@@ -6291,9 +6323,11 @@ impl IndexJoinLookupExec {
                 }
                 let row = self.lookup_rows[self.lookup_row_at].take();
                 let handle = self.lookup_handles[self.lookup_row_at].take();
+                let physical_id = self.lookup_physical_ids.get(self.lookup_row_at).copied();
                 self.lookup_row_at += 1;
                 if row.is_some() {
                     self.current_handle = handle;
+                    self.current_physical_id = physical_id;
                     return Ok(row);
                 }
             }
@@ -6424,6 +6458,7 @@ impl Executor for IndexJoinLookupExec {
         self.remote_handles = None;
         self.lookup_rows.clear();
         self.lookup_handles.clear();
+        self.lookup_physical_ids.clear();
         self.lookup_row_at = 0;
         self.produced.set(0);
         self.filter_chunk.reset();
@@ -6450,13 +6485,19 @@ impl Executor for IndexJoinLookupExec {
             if !passes {
                 continue;
             }
-            if self.emit_extra_handle {
+            if self.emit_extra_handle || self.emit_physical_table_id {
                 physical.push(
                     self.current_handle
                         .as_ref()
                         .and_then(TableHandle::int_value)
                         .map_or(Datum::Null, Datum::Int),
                 );
+            }
+            if self.emit_physical_table_id {
+                let id = self.current_physical_id.ok_or_else(|| {
+                    ExecError::internal("index-join lookup lost its physical partition identity")
+                })?;
+                physical.push(Datum::Int(id));
             }
             if let Some(offsets) = &self.output_offsets {
                 for (output, source) in offsets.iter().copied().enumerate() {
@@ -6482,6 +6523,7 @@ impl Executor for IndexJoinLookupExec {
         self.remote_handles = None;
         self.lookup_rows.clear();
         self.lookup_handles.clear();
+        self.lookup_physical_ids.clear();
         self.lookup_row_at = 0;
         Ok(())
     }

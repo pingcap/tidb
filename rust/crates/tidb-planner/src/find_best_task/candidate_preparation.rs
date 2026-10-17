@@ -22,6 +22,9 @@ use crate::physical_property::{PhysicalProperty, TaskType};
 
 pub(super) struct PreparedOrdinaryPaths<'a> {
     pub paths: Vec<&'a PossiblePath>,
+    /// Per path, in `paths` order: Go `skylinePruning`'s preferRange inputs,
+    /// `(is a preferred range scan, is kept regardless)`.
+    pub range_flags: Vec<(bool, bool)>,
     pub idx_missing_stats: bool,
     pub heuristic_selected: bool,
 }
@@ -154,7 +157,8 @@ pub(super) fn prepare_ordinary_paths<'a>(
             }
             PossiblePath::TiFlashTable => (None, None),
         };
-        candidates.push((path, metrics, heuristic));
+        let flags = range_scan_flags(ds, path, prop, ctx, metrics.as_ref());
+        candidates.push((path, metrics, heuristic, flags));
     }
     // Go `derivePathStatsAndTryHeuristics` prunes `PossibleAccessPaths` in
     // `DataSource.DeriveStats`, before any physical property exists, so the
@@ -167,6 +171,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
         if let Some(selected) = super::candidate::choose_heuristic_path(&heuristics) {
             return Some(PreparedOrdinaryPaths {
                 paths: vec![candidates[selected].0],
+                range_flags: vec![candidates[selected].3],
                 idx_missing_stats: false,
                 heuristic_selected: true,
             });
@@ -187,10 +192,82 @@ pub(super) fn prepare_ordinary_paths<'a>(
         idx_missing_stats |= missing;
     }
     Some(PreparedOrdinaryPaths {
+        range_flags: skyline.iter().map(|candidate| candidate.3).collect(),
         paths: skyline.into_iter().map(|candidate| candidate.0).collect(),
         idx_missing_stats,
         heuristic_selected: false,
     })
+}
+
+/// Go `skylinePruning`'s per-candidate preferRange inputs: whether the path is
+/// a range scan worth preferring (`!isFullRange`, and either an equal/IN
+/// predicate, more filtering in the index than against the table, or a single
+/// scan that serves the required order) and whether it is kept regardless
+/// (forced, global or multi-valued). The same rule the conversion loop applies
+/// once a task is built; computing it here lets the filter run before any
+/// plan id is drawn, as in Go.
+fn range_scan_flags(
+    ds: &DataSource,
+    path: &PossiblePath,
+    prop: &PhysicalProperty,
+    ctx: &DispatchContext<'_>,
+    metrics: Option<&CandidateMetrics>,
+) -> (bool, bool) {
+    let retained = match ds.derived_access_paths.as_ref() {
+        Some(retained) => retained,
+        None => return (false, false),
+    };
+    let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
+    match path {
+        PossiblePath::Table { .. } => {
+            let Some(table) = retained.table_path.as_ref() else {
+                return (false, false);
+            };
+            (
+                !crate::ranger::types::has_full_range(
+                    &table.detached.ranges,
+                    ds.table_scan_penalty.unsigned_int_handle,
+                ),
+                !ds.forced_index_ids.is_empty(),
+            )
+        }
+        PossiblePath::Index { index } => {
+            let Some(index) = ds.indexes.get(*index) else {
+                return (false, false);
+            };
+            let Some(filled) = ds
+                .derived_index_paths
+                .get(&index.id)
+                .and_then(|state| state.filled.as_ref())
+            else {
+                return (false, false);
+            };
+            let single_scan = metrics.is_some_and(|metrics| metrics.single_scan);
+            let matches_property = metrics.is_some_and(|metrics| metrics.matches_property);
+            let remained = &filled.detached.remained_conds;
+            let index_filter_count = remained
+                .iter()
+                .filter(|condition| {
+                    crate::logical::data_source::index_covers_condition(
+                        ds,
+                        index,
+                        condition,
+                        ctx.opt_prefix_index_single_scan,
+                    )
+                })
+                .count();
+            let index_filters =
+                filled.detached.eq_or_in_count > 0 || remained.len() - index_filter_count < index_filter_count;
+            (
+                (prefer_merge
+                    || ((single_scan || index_filters)
+                        && (prop.is_sort_item_empty() || matches_property)))
+                    && !crate::ranger::types::has_full_range(&filled.detached.ranges, false),
+                ds.forced_index_ids.contains(&index.id) || index.global || index.is_multi_valued,
+            )
+        }
+        PossiblePath::TiFlashTable => (false, true),
+    }
 }
 
 pub(super) enum PreparedMerge<'a> {
@@ -243,6 +320,39 @@ pub(super) fn prepare_access_paths<'a>(
                     }
                     crate::access_path::DerivedAccessPath::Ordinary(_) => {}
                 }
+            }
+        }
+    }
+    let mut ordinary = ordinary;
+    // Go `skylinePruning`'s closing preferRange filter: once several
+    // candidates include a preferred range scan, only the preferred ones and
+    // the paths kept regardless remain. It runs on the candidate list, before
+    // any of them is converted into a physical plan.
+    if let Some(prepared) = ordinary.as_mut() {
+        let prefer_merge =
+            !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
+        let prefer_range = ctx.prefer_range_scan
+            && prop.index_join_prop.is_none()
+            && (prefer_merge
+                || prepared.idx_missing_stats
+                || table_pseudo
+                || ds
+                    .table_stats
+                    .as_ref()
+                    .or_else(|| ds.base.base.stats_info())
+                    .is_none_or(|stats| stats.row_count() < 1.0));
+        let has_range_scan_path = prepared.range_flags.iter().any(|(preferred, _)| *preferred)
+            || (prefer_merge && !merges.is_empty());
+        if prefer_range
+            && prepared.paths.len() + merges.len() > 1
+            && has_range_scan_path
+            && !prepared.heuristic_selected
+        {
+            let mut keep = prepared.range_flags.iter().map(|(preferred, kept)| *preferred || *kept);
+            prepared.paths.retain(|_| keep.next().unwrap_or(true));
+            prepared.range_flags.retain(|(preferred, kept)| *preferred || *kept);
+            if !prefer_merge {
+                merges.clear();
             }
         }
     }

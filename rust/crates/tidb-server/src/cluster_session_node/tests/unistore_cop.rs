@@ -16517,3 +16517,69 @@ fn empty_input_aggregation_and_scalar_subquery_ids_match_go() {
         ]
     );
 }
+
+/// Plan ids and a dirty partitioned table's shape follow Go: the skyline's
+/// preferRange filter runs before any candidate draws a plan id, `Delete`
+/// takes its id before the pruning projection, `INSERT ... SELECT` draws the
+/// target's column ids first, and a table the transaction wrote in is read
+/// through a `UnionScan` carrying the partition id. Expected rows: Go 1.27 on
+/// this branch (`TestZZ` probes `US9`, `US16`, `US17`).
+#[test]
+fn plan_ids_and_dirty_partition_shapes_match_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1120)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE tpi (a INT PRIMARY KEY, b INT, c INT, KEY(c))",
+        "CREATE TABLE tpd (a INT PRIMARY KEY, b INT, c INT, UNIQUE KEY(b), KEY(c))",
+        "CREATE TABLE tpp (a INT PRIMARY KEY, b INT) PARTITION BY HASH(a) PARTITIONS 3",
+        "INSERT INTO tpd VALUES (1,1,1),(2,2,2),(3,3,3)",
+        "INSERT INTO tpp VALUES (1,1),(2,2),(3,3)",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
+            .into_iter()
+            .filter(|row| row.len() > 5)
+            .map(|row| format!("{} {} {} {}", row[0], row[1], row[2], row[5]))
+            .collect()
+    };
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tpi WHERE c = 1")[0],
+        "IndexLookUp_7 10.00 19521.54 "
+    );
+    assert_eq!(
+        plan(&mut session, "DELETE FROM tpd WHERE c = 1")[..2],
+        ["Delete_3 N/A N/A N/A", "└─IndexLookUp_8 10.00 19521.54 "]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "INSERT INTO tpd SELECT a + 10, b + 10, c FROM tpd"
+        )[1],
+        "└─Projection_5 10000.00 630395.30 plus(test.tpd.a, 10)->Column#8, \
+         plus(test.tpd.b, 10)->Column#9, test.tpd.c"
+    );
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO tpp VALUES (4,4)")
+        .unwrap();
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tpp WHERE a > 1")[..3],
+        [
+            "Projection_5 3333.33 93418.22 test.tpp.a, test.tpp.b",
+            "└─UnionScan_7 3333.33 92752.88 gt(test.tpp.a, 1)",
+            "  └─TableReader_9 3333.33 92752.88 data:TableRangeScan_8",
+        ]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT COUNT(*) FROM tpp")[..3],
+        [
+            "HashAgg_8 1.00 588672.28 funcs:count(1)->Column#5",
+            "└─UnionScan_11 10000.00 387557.30 ",
+            "  └─TableReader_13 10000.00 387557.30 data:TableFullScan_12",
+        ]
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+}

@@ -724,6 +724,13 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// `used` set of `buildUpdate` for a multi-table UPDATE): everything
     /// else leaves the read. `None` keeps every column.
     pub dml_keep: Option<BTreeSet<(String, String)>>,
+    /// Go `buildDelete` initializes the `Delete` root right after its source
+    /// (the lock, sort and limit included) and before the pruning projection.
+    /// When set, [`Self::build_dml_source`] draws that root's plan id at that
+    /// point and leaves the root in [`Self::dml_root`].
+    pub allocate_delete_root: bool,
+    /// The root [`Self::allocate_delete_root`] drew.
+    pub dml_root: Option<crate::physical::BasePhysicalPlan>,
 
     /// Go `SessionVars`, narrowed exactly as the rewriter narrows it.
     pub flags: RewriterSessionFlags,
@@ -1480,6 +1487,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             is_for_update_read: false,
             in_update_or_delete_stmt: false,
             dml_keep: None,
+            allocate_delete_root: false,
+            dml_root: None,
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),
@@ -3249,26 +3258,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // transaction wrote, a local temporary table and a cached table are
         // read through a `LogicalUnionScan`. A partitioned table is dirty when
         // any partition is (Go checks each definition's id).
-        let table_ids: Vec<i64> = if table.partition_definition_ids.is_empty() {
-            vec![table.table_id]
-        } else {
-            table.partition_definition_ids.clone()
-        };
+        // The logical id is asked too: a store that stages writes under the
+        // logical table (this engine's `TxnStaging`) records a partition row
+        // there, where Go's membuffer keys carry the partition's own id.
+        let mut table_ids = vec![table.table_id];
+        table_ids.extend(table.partition_definition_ids.iter().copied());
         let dirty = self.source.table_has_dirty_content(&table_ids);
         if !(dirty || table.is_local_temporary || table.is_cached) {
             return Ok(LogicalPlan::DataSource(data_source));
         }
+        let handle_cols = data_source.handle_cols.clone();
+        let mut child = LogicalPlan::DataSource(data_source);
+        // Go `buildDataSource`: "Adding ExtraPhysTblIDCol for UnionScan
+        // (transaction buffer handling)" -- one TableReader serves every
+        // partition, so the rows carry the partition id the buffer is keyed by.
+        // The union scan is built after the column, so its schema includes it.
+        if !table.partition_definition_ids.is_empty()
+            && self.opt_flag & flags::PARTITION_PROCESSOR == 0
+        {
+            self.set_extra_phys_tbl_id_cols(&mut child, &mut BTreeMap::new());
+        }
         let mut union_scan = crate::logical::LogicalUnionScan::new(
             self.base(crate::logical::LogicalUnionScan::TYPE),
-            data_source.handle_cols.clone(),
+            handle_cols,
         );
         union_scan
             .base
             .base
-            .set_schema(data_source.base.base.schema().cloned());
-        union_scan
-            .base
-            .set_children(vec![LogicalPlan::DataSource(data_source)]);
+            .set_schema(child.schema().cloned());
+        union_scan.base.set_children(vec![child]);
         Ok(LogicalPlan::UnionScan(union_scan))
     }
 
@@ -4757,6 +4775,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             plan = self.build_limit(plan, limit)?;
         }
 
+        if self.allocate_delete_root {
+            self.dml_root = Some(crate::physical::BasePhysicalPlan::new(self.plan_ids, "Delete", 0));
+        }
         // Go's UPDATE projection explicitly removes ExtraCommitTS. DELETE's
         // column-position projection reaches the same retained single-table
         // layout. Keep the original column identities so handle metadata and

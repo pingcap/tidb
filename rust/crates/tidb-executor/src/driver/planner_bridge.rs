@@ -3434,6 +3434,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     builder.dml_keep = dml_keep;
+    builder.allocate_delete_root = operator.eq_ignore_ascii_case("Delete");
     // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
     // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
     // write locks the rows it writes instead.
@@ -3464,7 +3465,10 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     // allocates the physical projection candidate (Go id 6 in the captured
     // W51 receipt) before the physical `SelectLock` — reproducing Go's
     // exact id sequence without a filler.
-    let root = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, operator, 0);
+    let root = builder
+        .dml_root
+        .take()
+        .unwrap_or_else(|| tidb_planner::physical::BasePhysicalPlan::new(plan_ids, operator, 0));
     // Go burns three logical plan ids AFTER buildUpdate's own ctor and
     // BEFORE the read plan is optimized: the conflict-detector's two join
     // rewrites and the join-order projection (`find_best_task` W52 ledger:

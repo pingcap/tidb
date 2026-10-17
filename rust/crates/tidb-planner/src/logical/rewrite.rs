@@ -1429,6 +1429,11 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                     .expect("column pruning requires the child schema");
                 if let LogicalPlan::Limit(op) = &mut node {
                     op.prune_columns_local(&parent_used_cols, &child_schema);
+                } else if matches!(node, LogicalPlan::UnionScan(_)) {
+                    // Go's `LogicalUnionScan` has no schema of its own: it
+                    // reads its child's, which keeps the handle and partition
+                    // id columns the union scan asked the child to retain.
+                    set_own_schema(&mut node, child_schema);
                 } else {
                     let mut schema = child_schema;
                     schema_producer::inline_projection(&mut schema, &parent_used_cols);

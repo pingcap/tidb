@@ -162,17 +162,34 @@ impl KvTable {
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
+        self.get_located_rows_by_routed_handles_projected_with_context(
+            handles, routes, keep, context,
+        )
+        .map(|(rows, _)| rows)
+    }
+
+    /// [`Self::get_rows_by_routed_handles_projected_with_context`] that also
+    /// answers the physical table each found row was read from, so a reader
+    /// reporting Go's `_tidb_tid` knows the partition of a handle it probed
+    /// for in every partition. A slot with no row has no physical id.
+    pub(crate) fn get_located_rows_by_routed_handles_projected_with_context(
+        &mut self,
+        handles: &[TableHandle],
+        routes: Option<&[i64]>,
+        keep: Option<&[usize]>,
+        context: &RowDecodeContext,
+    ) -> Result<(Vec<Option<Vec<Datum>>>, Vec<Option<i64>>), KvTableError> {
         if routes.is_some_and(|ids| ids.len() != handles.len()) {
             return Err(KvTableError::Decode(
                 "index lookup partition routes lost alignment".to_owned(),
             ));
         }
         if handles.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let physical_ids = self.record_physical_ids();
         if physical_ids.is_empty() {
-            return Ok(vec![None; handles.len()]);
+            return Ok((vec![None; handles.len()], vec![None; handles.len()]));
         }
         let candidates = if routes.is_some() {
             1
@@ -226,17 +243,24 @@ impl KvTable {
             None
         };
         let mut rows = Vec::with_capacity(handles.len());
+        let mut located = Vec::with_capacity(handles.len());
         for (handle_index, keys) in keys.chunks_exact(candidates).enumerate() {
             let entry = if candidates == 1 {
-                entries.get(&keys[0]).map(|entry| (&keys[0], entry))
+                entries.get(&keys[0]).map(|entry| (0, &keys[0], entry))
             } else {
-                keys.iter()
-                    .find_map(|key| entries.get(key).map(|entry| (key, entry)))
+                keys.iter().enumerate().find_map(|(candidate, key)| {
+                    entries.get(key).map(|entry| (candidate, key, entry))
+                })
             };
-            let Some((key, entry)) = entry else {
+            let Some((candidate, key, entry)) = entry else {
                 rows.push(None);
+                located.push(None);
                 continue;
             };
+            located.push(Some(match routes {
+                Some(ids) => ids[handle_index],
+                None => physical_ids[candidate],
+            }));
             let values = if let (Some(prepared), Some(prepared_context)) =
                 (prepared.as_ref(), prepared_context.as_ref())
             {
@@ -250,7 +274,7 @@ impl KvTable {
             };
             rows.push(Some(values));
         }
-        Ok(rows)
+        Ok((rows, located))
     }
 
     fn row_cursor_with_decoder(
