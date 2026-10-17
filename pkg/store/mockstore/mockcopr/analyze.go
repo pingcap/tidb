@@ -16,6 +16,7 @@ package mockcopr
 
 import (
 	"context"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -84,11 +84,9 @@ func (h coprHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		hdStatus:       tablecodec.HandleNotNeeded,
 	}
 
-	tz, err := timeutil.ConstructTimeZone("", int(analyzeReq.TimeZoneOffset))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	sctx := flagsAndTzToSessionContext(analyzeReq.Flags, tz)
+	// Analyze is time zone and flag independent, matching TiKV's EvalConfig::default().
+	// See issue #52429.
+	sctx := flagsAndTzToSessionContext(0, time.UTC)
 	sc := sctx.GetSessionVars().StmtCtx
 	statsBuilder := statistics.NewSortedBuilder(sc, analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statistics.Version1)
 	var cms *statistics.CMSketch
@@ -135,12 +133,9 @@ type analyzeColumnsExec struct {
 }
 
 func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
-	tz, err := timeutil.ConstructTimeZone("", int(analyzeReq.TimeZoneOffset))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	sctx := flagsAndTzToSessionContext(analyzeReq.Flags, tz)
+	// Analyze is time zone and flag independent, matching TiKV's EvalConfig::default().
+	// See issue #52429.
+	sctx := flagsAndTzToSessionContext(0, time.UTC)
 
 	evalCtx := &evalContext{sctx: sctx}
 	columns := analyzeReq.ColReq.ColumnsInfo
