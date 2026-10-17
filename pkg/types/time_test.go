@@ -2338,3 +2338,37 @@ func BenchmarkStrToDate(b *testing.B) {
 	benchmarkStrToDate(b, "strToDate %r ddMMyyyy", typeCtx, "04:13:56 AM 13/05/2019", "%r %d/%c/%Y")
 	benchmarkStrToDate(b, "strToDate %T ddMMyyyy", typeCtx, " 4:13:56 13/05/2019", "%T %d/%c/%Y")
 }
+
+func TestDateTimeFractionRounding(t *testing.T) {
+	ctx := types.NewContext(types.StrictFlags, time.UTC, contextutil.IgnoreWarn)
+	for _, tc := range []struct {
+		input string
+		fsp   int
+		want  string
+	}{
+		{"2024-06-15 12:00:00.4999999", 0, "2024-06-15 12:00:01"},
+		{"2024-06-15 12:00:00.4999995", 0, "2024-06-15 12:00:01"},
+		{"2024-06-15 12:00:00.0499999", 1, "2024-06-15 12:00:00.1"},
+		{"2024-06-15 12:00:00.0049999", 2, "2024-06-15 12:00:00.01"},
+		{"2024-06-15 12:00:00.0004999", 3, "2024-06-15 12:00:00.001"},
+		{"2024-06-15 12:00:00.0000499", 4, "2024-06-15 12:00:00.0001"},
+		{"2024-06-15 12:00:00.0000049", 5, "2024-06-15 12:00:00.00001"},
+		{"2024-06-15 12:00:00.0000009", 6, "2024-06-15 12:00:00.000001"},
+		{"2024-06-15 12:00:00.499999", 0, "2024-06-15 12:00:00"},
+		{"2024-06-15 12:00:00.4999994", 0, "2024-06-15 12:00:00"},
+		{"2024-02-28 23:59:59.4999999", 0, "2024-02-29 00:00:00"},
+		{"2024-12-31 23:59:59.9999999", 0, "2025-01-01 00:00:00"},
+	} {
+		for _, tp := range []byte{mysql.TypeDatetime, mysql.TypeTimestamp} {
+			got, err := types.ParseTime(ctx, tc.input, tp, tc.fsp)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got.String(), "input=%s type=%d fsp=%d", tc.input, tp, tc.fsp)
+		}
+	}
+	numeric, err := types.ParseTimeFromFloatString(ctx, "20240615120000.4999999", mysql.TypeDatetime, 0)
+	require.NoError(t, err)
+	require.Equal(t, "2024-06-15 12:00:01", numeric.String())
+	date, err := types.ParseDate(ctx, "2024-06-15 23:59:59.4999999")
+	require.NoError(t, err)
+	require.Equal(t, "2024-06-15", date.String())
+}
