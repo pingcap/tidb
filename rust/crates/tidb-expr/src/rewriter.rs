@@ -3559,6 +3559,14 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 ))
             }
         }
+        // Go's preprocessor (`preprocess.go`, `*ast.FuncCallExpr` with a
+        // schema) answers every qualified call with `ErrFunctionNotExists`,
+        // naming the lowercased `schema.function`.
+        Expr::GenericFuncCall { schema, name, .. } => Err(EvalError::FunctionNotExists(format!(
+            "{}.{}",
+            tidb_mysql::to_lowercase(schema),
+            tidb_mysql::to_lowercase(name)
+        ))),
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",
         )),

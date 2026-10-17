@@ -1262,6 +1262,10 @@ pub enum KvTableError {
     AutoIdExhausted,
     /// A stored value failed to decode.
     Decode(String),
+    /// The partition expression could not be evaluated over the row; the
+    /// evaluation failure carries the MySQL code the statement reports (1365
+    /// for a zero divisor under `ERROR_FOR_DIVISION_BY_ZERO`).
+    PartitionEval(tidb_expr::EvalError),
     /// The storage layer refused a read or write.
     Storage(StorageError),
     /// TiDB `ErrOptOnCacheTable` (8242).
@@ -1733,7 +1737,7 @@ impl KvTable {
                     KvTableError::PartitionValueOverflowsBigint(value)
                 }
                 crate::partition_routing::RoutingError::Eval(error) => {
-                    KvTableError::Decode(format!("{error:?}"))
+                    KvTableError::PartitionEval(error)
                 }
                 crate::partition_routing::RoutingError::Conversion(error) => {
                     KvTableError::Decode(error)

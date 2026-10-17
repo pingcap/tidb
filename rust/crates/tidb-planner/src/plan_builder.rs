@@ -236,7 +236,17 @@ pub const EXTRA_COMMIT_TS_NAME: &str = "_tidb_commit_ts";
 
 impl From<RewriteError> for PlanError {
     fn from(error: RewriteError) -> Self {
-        Self::internal(error.to_string())
+        match error {
+            // The rewriter's own typed errors keep the MySQL identity Go
+            // gives them; only the builder-level messages stay flat.
+            RewriteError::Eval(error) => error.into(),
+            RewriteError::OperandColumns(count) => Self::eval(EvalError::OperandColumns(count)),
+            RewriteError::UnknownColumn(column, clause) => {
+                Self::unknown_column_in_clause(column, clause)
+            }
+            RewriteError::Ambiguous(column, clause) => Self::ambiguous_column_in(column, clause),
+            other => Self::internal(other.to_string()),
+        }
     }
 }
 

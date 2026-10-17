@@ -700,7 +700,7 @@ impl Session {
                 serde_json::json!({"metadata": {"comment": text}}).to_string()
             }
             Some(tidb_ast::CreateUserCommentOrAttribute::Attribute(json)) => {
-                serde_json::json!({"metadata": serde_json::from_str::<serde_json::Value>(json).map_err(|error| DriverError::unsupported(error.to_string()))?}).to_string()
+                serde_json::json!({"metadata": serde_json::from_str::<serde_json::Value>(json).map_err(|_| invalid_user_attribute_json())?}).to_string()
             }
         };
         // Go then appends `"resource_group": "<name>"`.
@@ -2335,4 +2335,12 @@ pub(crate) fn max_user_connections_option(
         .rev()
         .find(|option| option.kind == tidb_ast::AlterUserResourceKind::MaxUserConnections)
         .map(|option| option.count.min(i64::from(i16::MAX)))
+}
+
+/// Go folds the ATTRIBUTE text into `{"metadata": <text>}` and stores the whole
+/// document in the `User_attributes` JSON column, so a malformed text is that
+/// column's `Invalid JSON text` (3140).
+pub(crate) fn invalid_user_attribute_json() -> DriverError {
+    let error = tidb_expr::JsonError::InvalidText;
+    DriverError::Mysql(tidb_executor::MysqlError::new(error.code(), error.message()))
 }

@@ -2772,6 +2772,12 @@ impl Session {
                 ),
             )));
         }
+        if let Some(function) = &scan.qualified_function {
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
+                1305,
+                format!("FUNCTION {function} does not exist"),
+            )));
+        }
         self.validate_snapshot_statement(&stmt)?;
         if self.vars.snapshot_ts() != 0
             && self.in_transaction()

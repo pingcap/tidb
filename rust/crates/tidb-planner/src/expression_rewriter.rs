@@ -402,6 +402,9 @@ pub enum RewriteError {
     NullEqQuantifierUnsupported,
     /// Go's `expression.NewFunction` error, kept verbatim.
     FunctionBuild(String),
+    /// A typed evaluation-layer error Go's rewriter stored in `er.err` as it
+    /// came back: a collation mix is 1267, not a message.
+    Eval(tidb_expr::EvalError),
     /// Go's `aggregation.NewAggFuncDesc` error.
     AggFuncBuild(String),
     /// The outer plan produced no schema, which Go reaches by dereferencing
@@ -423,6 +426,7 @@ impl std::fmt::Display for RewriteError {
                 write!(f, "We don't support <=> all or <=> any now")
             }
             Self::FunctionBuild(reason) | Self::AggFuncBuild(reason) => write!(f, "{reason}"),
+            Self::Eval(error) => write!(f, "{error:?}"),
             Self::MissingSchema => write!(f, "plan produces no schema"),
         }
     }
@@ -842,7 +846,10 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         self.env
             .builder()
             .new_function(name, Some(ret_type), args)
-            .map_err(|err| RewriteError::FunctionBuild(err.to_string()))
+            .map_err(|err| match err.error {
+                Some(error) => RewriteError::Eval(error),
+                None => RewriteError::FunctionBuild(err.to_string()),
+            })
     }
 
     fn new_agg_func(
@@ -1304,10 +1311,16 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             return Err(RewriteError::OperandColumns(1));
         }
         if l_len != np_schema.len() {
-            eprintln!("E1241:compare-subquery l_len={l_len} np={}", np_schema.len());
             return Err(RewriteError::OperandColumns(l_len));
         }
         let rexpr = self.row_of_schema(&np_schema)?;
+        // Go: "Lexpr cannot compare with rexpr by different collate".
+        tidb_expr::collation_derive::check_and_derive_collation_from_exprs(
+            op.func_name(),
+            tidb_datatype::EvalType::Int,
+            &[lexpr.clone(), rexpr.clone()],
+        )
+        .map_err(RewriteError::Eval)?;
 
         let mut plan = match op {
             CompareOp::Eq if all => self.handle_eq_all(outer, lexpr, &rexpr, np, no_decorrelate)?,

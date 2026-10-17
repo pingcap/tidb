@@ -197,6 +197,21 @@ pub(super) fn partition_value_resolver(
     .with_connection_charset(charset, collation)
 }
 
+/// Go's `EvalSimpleAst` hands the rewriter's own error back, so a partition
+/// bound naming a column is 1054 ("Unknown column 'a' in 'expression'"), not
+/// the value-type refusal the other failures keep.
+pub(super) fn partition_value_failure(error: tidb_expr::EvalError, otherwise: DriverError) -> DriverError {
+    match error {
+        tidb_expr::EvalError::UnknownColumnInClause(column, clause) => {
+            DriverError::UnknownColumnInClause {
+                column,
+                clause: clause.to_owned(),
+            }
+        }
+        _ => otherwise,
+    }
+}
+
 pub(super) fn eval_column_value(
     expr: &Expr,
     ctx: &crate::StmtContext,
@@ -386,7 +401,7 @@ fn fold_list_value(
 ) -> Result<Option<i64>, DriverError> {
     let rewritten =
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx))
-            .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
+            .map_err(|error| partition_value_failure(error, DriverError::PartitionValuesNotInt(partition.to_owned())))?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
     match rewritten

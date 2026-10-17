@@ -1832,6 +1832,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // ordinary missing dependencies instead invalidate the view.
             match error.kind() {
                 PlanErrorKind::Internal
+                | PlanErrorKind::ViewRecursive
                 | PlanErrorKind::FieldNotInGroupBy { .. }
                 | PlanErrorKind::FieldNotInAggregatedQuery { .. }
                 | PlanErrorKind::NotSupportedYet(_) => error,

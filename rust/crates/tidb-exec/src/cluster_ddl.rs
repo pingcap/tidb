@@ -1861,6 +1861,27 @@ fn lower_alter_table_catalog(
                                     _ => return Ok(None),
                                 }
                             }
+                            // Go `fillMultiSchemaInfo`'s default arm names the
+                            // job type of a table option it has no sub-job for.
+                            tidb_ast::TableOption::AutoIdCache(_) => {
+                                return Err(DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                                    "Unsupported multi schema change for modify auto id cache",
+                                ));
+                            }
+                            tidb_ast::TableOption::ShardRowIdBits(_) => {
+                                return Err(DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                                    "Unsupported multi schema change for shard row ID",
+                                ));
+                            }
+                            tidb_ast::TableOption::AutoRandomBase(_)
+                            | tidb_ast::TableOption::ForceAutoRandomBase(_) => {
+                                return Err(DdlAdmissionError::with_code(
+                                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                                    "Unsupported multi schema change for rebase auto_random ID",
+                                ));
+                            }
                             _ => return Ok(None),
                         }
                     }
@@ -2322,7 +2343,7 @@ fn lower_alter_table_catalog(
             column,
             position,
         } => {
-            if *if_exists || !column.qualifier.is_empty() {
+            if *if_exists {
                 return Ok(None);
             }
             let Some(auto_random) = column.options.iter().find_map(|option| match option {
@@ -2776,7 +2797,13 @@ fn lower_alter_table_catalog(
             8200,
             "This type of ALTER TABLE is currently unsupported",
         )),
-        tidb_ast::AlterTableAction::Force => Err(DdlAdmissionError::with_code(
+        // Go `AlterTable`'s default arm: the specifications it has no job for.
+        tidb_ast::AlterTableAction::Force
+        | tidb_ast::AlterTableAction::TablespaceImport(_)
+        | tidb_ast::AlterTableAction::Partition(
+            tidb_ast::AlterPartitionAction::ImportTablespace { .. }
+            | tidb_ast::AlterPartitionAction::DiscardTablespace { .. },
+        ) => Err(DdlAdmissionError::with_code(
             8200,
             "Unsupported Unsupported/unknown ALTER TABLE specification",
         )),
@@ -9146,6 +9173,14 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
 ) -> Result<DdlPlan, DdlPlanError> {
     let cdc_write_source = job_context.ddl_cdc_write_source();
     let catalog = load_cluster_catalog(snapshot)?;
+    // Go `executor.AlterTable` refuses a view or a sequence before any
+    // specification is looked at, whichever specification the statement carries.
+    if let Some((schema, table)) = alter_table_target(statement) {
+        if let Some(stored) = find_database(&catalog, schema).and_then(|db| find_table(db, table))
+        {
+            refuse_non_base_table(stored, schema, table)?;
+        }
+    }
     // Go `meta.Mutator.GetBDRRole`, at the plan's own snapshot.
     let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
     // Filled by the arms that change what PD must know about an object's
@@ -11586,6 +11621,14 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         } => {
             use tidb_executor::ddl::modify_column_type::ModifyColumnType;
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `executor.ModifyColumn`: a qualified column name must name
+            // the altered table (1102 / 1103).
+            tidb_executor::ddl::check_column_qualifier(&column.qualifier, schema, table).map_err(
+                |error| {
+                    let error = error.to_mysql_error();
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+                },
+            )?;
             let PreparedModifyColumn {
                 column: prepared,
                 kind,
@@ -14299,6 +14342,61 @@ fn table_name_key(schema: &str, table: &str) -> String {
 /// missing database or table is always an error here.
 /// Go `executor.AlterTable`: a view or a sequence is refused before any
 /// specification is looked at (`ErrWrongObject`).
+/// The table an `ALTER TABLE` specification names; `None` for every statement
+/// that is not one. `CREATE INDEX` and `DROP INDEX` lower to the same index
+/// variants as `ALTER TABLE ... ADD/DROP INDEX` but Go does not run them through
+/// `AlterTable`'s view refusal (`drop index i on v` is 1091), so they stay out.
+fn alter_table_target(statement: &DdlStatement) -> Option<(&str, &str)> {
+    use DdlStatement as S;
+    match statement {
+        S::RebaseAutoRandom { schema, table, .. }
+        | S::ModifyAutoIdCache { schema, table, .. }
+        | S::SetTiFlashReplica { schema, table, .. }
+        | S::AlterTableAttributes { schema, table, .. }
+        | S::AlterTablePartitionAttributes { schema, table, .. }
+        | S::AlterAutoRandomBits { schema, table, .. }
+        | S::AddColumn { schema, table, .. }
+        | S::AddCheckConstraint { schema, table, .. }
+        | S::DropCheckConstraint { schema, table, .. }
+        | S::AlterCheckConstraint { schema, table, .. }
+        | S::IgnoredCheckConstraint { schema, table }
+        | S::AddPartitions { schema, table, .. }
+        | S::DropPartitions { schema, table, .. }
+        | S::TruncatePartitions { schema, table, .. }
+        | S::ExchangePartition { schema, table, .. }
+        | S::DropColumn { schema, table, .. }
+        | S::ModifyColumn { schema, table, .. }
+        | S::AddForeignKey { schema, table, .. }
+        | S::AlterTableCache { schema, table, .. }
+        | S::DropForeignKey { schema, table, .. }
+        | S::RenameColumn { schema, table, .. }
+        | S::MultiSchemaChange { schema, table, .. }
+        | S::ReorganizePartitions { schema, table, .. }
+        | S::ModifyEngineAttribute { schema, table, .. }
+        | S::AlterTtl { schema, table, .. }
+        | S::RemoveTtl { schema, table }
+        | S::AlterTablePlacement { schema, table, .. }
+        | S::AlterTablePartitionPlacement { schema, table, .. }
+        | S::ShardRowId { schema, table, .. }
+        | S::ModifyTableComment { schema, table, .. }
+        | S::AlterIndexVisibility { schema, table, .. }
+        | S::DropPrimaryKey { schema, table }
+        | S::ModifyTableCharsetAndCollate { schema, table, .. }
+        | S::RenameIndex { schema, table, .. }
+        | S::SetColumnDefault { schema, table, .. }
+        | S::IgnoredTableOption { schema, table, .. }
+        | S::OrderByColumns { schema, table }
+        | S::RebaseAutoIncrementId { schema, table, .. } => Some((schema, table)),
+        S::RenameTable {
+            is_alter: true,
+            from_schema,
+            from_table,
+            ..
+        } => Some((from_schema, from_table)),
+        _ => None,
+    }
+}
+
 fn refuse_non_base_table(
     stored: &TableInfo,
     schema: &str,

@@ -338,7 +338,12 @@ pub(super) fn fold_range_bound(
         expr,
         &super::table_partition_list::partition_value_resolver(ctx),
     )
-    .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
+    .map_err(|error| {
+        super::table_partition_list::partition_value_failure(
+            error,
+            DriverError::PartitionValuesNotInt(partition.to_owned()),
+        )
+    })?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
     let value = rewritten

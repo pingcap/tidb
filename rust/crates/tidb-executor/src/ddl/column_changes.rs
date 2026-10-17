@@ -76,7 +76,7 @@ pub(super) fn is_column_change(action: &AlterTableAction) -> bool {
 
 /// Go `ModifyColumn`'s check of a qualified column name (`db.t.c`): its
 /// schema and table must be the altered table's.
-fn check_column_qualifier(
+pub fn check_column_qualifier(
     qualifier: &[String],
     database: &str,
     table: &str,

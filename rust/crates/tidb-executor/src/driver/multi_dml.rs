@@ -137,6 +137,9 @@ struct SourceTable {
     generated_columns: Vec<usize>,
     /// Where this table's columns start in the joined row.
     offset: usize,
+    /// The partition ids a `PARTITION (...)` clause on the reference selects;
+    /// a write that routes outside them is `ErrRowDoesNotMatchGivenPartitionSet`.
+    selected_partitions: Option<Vec<i64>>,
 }
 
 impl SourceTable {
@@ -246,6 +249,7 @@ fn build_multi_layout(
         ctx: &crate::StmtContext,
         columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
     ) -> Result<MultiLayout, DriverError> {
+        let mut selected_partitions = None;
         let (visible, qualifiable_db, origin, mut columns, default_meta) = match node {
             tidb_ast::JoinNode::Join(join) => {
                 return join_layout(join, with, catalog, current_db, ctx, columns_for_alias)
@@ -263,6 +267,7 @@ fn build_multi_layout(
                         "{database}.{name}"
                     )))
                 })?;
+                selected_partitions = selected_partition_ids(table, entry, name)?;
                 let origin = match entry {
                     TableEntry::Mem(_) | TableEntry::Kv(_) => SourceOrigin::Base {
                         database: database.to_owned(),
@@ -338,6 +343,7 @@ fn build_multi_layout(
                 default_meta,
                 generated_columns,
                 offset: 0,
+                selected_partitions,
             }],
             constant_context: ctx.clone(),
             coalesced: Vec::new(),
@@ -431,6 +437,34 @@ pub fn delete_privilege_tables(
 /// Merge naming metadata while retaining the full DML value layout.
 /// Row execution, including outer padding and conditions, belongs to the
 /// shared physical child.
+/// Go's `PARTITION (...)` selection on one reference: the names are resolved
+/// once, against the table, and an unknown one is `ErrUnknownPartition`; a
+/// clause on a table without partitions is its own error.
+fn selected_partition_ids(
+    table: &tidb_ast::TableRef,
+    entry: &TableEntry,
+    name: &str,
+) -> Result<Option<Vec<i64>>, DriverError> {
+    let Some(first) = table.partitions.first() else {
+        return Ok(None);
+    };
+    let TableEntry::Kv(kv) = entry else {
+        return Err(DriverError::UnknownPartition {
+            partition: first.clone(),
+            table: name.to_owned(),
+        });
+    };
+    let Some(spec) = kv.partition() else {
+        return Err(DriverError::PartitionClauseOnNonpartitioned);
+    };
+    crate::partition_pruning::ids_for_selected_partitions(spec, &table.partitions)
+        .map(Some)
+        .map_err(|partition| DriverError::UnknownPartition {
+            partition,
+            table: name.to_owned(),
+        })
+}
+
 fn merge_source_layout(
     left: MultiLayout,
     right: MultiLayout,
@@ -703,7 +737,7 @@ pub(crate) fn run_multi_update(
                 id,
                 old,
                 new,
-                None,
+                source.tables[slot].selected_partitions.as_deref(),
                 update.ignore,
                 super::GeneratedWrite::Update { row_index },
                 ctx,

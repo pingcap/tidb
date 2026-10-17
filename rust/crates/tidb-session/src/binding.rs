@@ -165,6 +165,10 @@ pub(crate) struct StatementTableScan {
     /// Go preprocessor's `ast.ColumnName` check: `_tidb_commit_ts` was named
     /// while the statement type was SELECT, UPDATE or DELETE.
     pub(crate) names_commit_ts: bool,
+    /// Go preprocessor's `*ast.FuncCallExpr` arm: the last schema-qualified
+    /// call, as the `schema.function` its `ErrFunctionNotExists` names. Go
+    /// does not support stored procedures, so every such call is refused.
+    pub(crate) qualified_function: Option<String>,
 }
 
 /// Collects [`StatementTableScan`] in one in-place walk, no clone.
@@ -176,6 +180,7 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
         // DELETE or INSERT node and never restored on leave.
         in_select_update_or_delete: bool,
         names_commit_ts: bool,
+        qualified_function: Option<String>,
     }
     fn is_commit_ts(path: &[String]) -> bool {
         path.last().is_some_and(|name| {
@@ -184,6 +189,15 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
     }
     impl Visitor for Scanner {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if let Some(tidb_ast::Expr::GenericFuncCall { schema, name, .. }) =
+                node.downcast_ref::<tidb_ast::Expr>()
+            {
+                self.qualified_function = Some(format!(
+                    "{}.{}",
+                    tidb_mysql::to_lowercase(schema),
+                    tidb_mysql::to_lowercase(name)
+                ));
+            }
             if node.is::<tidb_ast::SelectStmt>()
                 || node.is::<tidb_ast::UpdateStmt>()
                 || node.is::<tidb_ast::DeleteStmt>()
@@ -233,12 +247,14 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
         has_as_of: false,
         in_select_update_or_delete: false,
         names_commit_ts: false,
+        qualified_function: None,
     };
     stmt.accept(&mut scanner);
     StatementTableScan {
         names: scanner.names,
         has_as_of: scanner.has_as_of,
         names_commit_ts: scanner.names_commit_ts,
+        qualified_function: scanner.qualified_function,
     }
 }
 

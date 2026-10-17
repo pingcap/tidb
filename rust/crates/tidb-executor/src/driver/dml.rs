@@ -615,16 +615,6 @@ fn resolve_insert_target(
             generated: false,
         });
     }
-    if insert.source.is_some() {
-        for &offset in &target_offsets {
-            if generated_targets[offset] {
-                return Err(DriverError::BadGeneratedColumn {
-                    column: column_list[offset].0.clone(),
-                    table: table_name,
-                });
-            }
-        }
-    }
     // Go `initInsertColumns`' `table.CheckOnce`, after the planner's checks:
     // a column named twice, in the column list or the SET form.
     for (position, &offset) in target_offsets.iter().enumerate() {
@@ -646,6 +636,22 @@ fn resolve_insert_target(
     })
 }
 
+/// Go `buildSelectPlanOfInsert`: once the select's width matches the target's,
+/// a generated column among the targets is refused. The order is Go's own --
+/// `insert into t (b) select * from t` over a generated `b` is a count error,
+/// `insert into t select * from t` the generated-column one.
+fn refuse_generated_insert_select_targets(layout: &InsertTargetLayout) -> Result<(), DriverError> {
+    for &offset in &layout.target_offsets {
+        if layout.generated_targets[offset] {
+            return Err(DriverError::BadGeneratedColumn {
+                column: layout.column_list[offset].0.clone(),
+                table: layout.table_name.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Go's `buildInsert` checks the target and the width of every row before it
 /// plans anything, so `EXPLAIN INSERT` refuses what the statement would. The
 /// executor's own check lives in `execute_insert`, after the source ran.
@@ -662,7 +668,7 @@ pub(crate) fn validate_insert_for_explain(
         if select_width.is_some_and(|width| width != target_width) {
             return Err(DriverError::WrongValueCountOnRow { row: 1 });
         }
-        return Ok(());
+        return refuse_generated_insert_select_targets(&layout);
     }
     let names_a_column = insert.set_syntax || insert.columns_specified;
     let mut previous_width = target_width;
@@ -708,10 +714,13 @@ fn fold_insert_subqueries(
     // list refuses it (`buildValuesListOfInsert`, issue 30626).
     for value in values.clone() {
         for query in outermost_subqueries(value) {
+            // The subquery is built against a dual: a column that does not
+            // resolve there is Go's own build error (1054), not a reason to
+            // fold it with the target table in scope.
             if super::planner_bridge::query_builds_correlated_columns(
                 &query, catalog, current_db, ctx,
             )
-            .unwrap_or(false)
+            .map_err(super::planner_error_to_driver)?
             {
                 return Err(DriverError::unsupported(
                     "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now",
@@ -859,6 +868,20 @@ fn run_insert_with_physical(
         None
     };
 
+    // Go checks the select's width, then its generated targets, while it plans
+    // the INSERT -- before the source runs, and whether or not it yields rows.
+    if insert.source.is_some() {
+        let width = on_duplicate_scope.actual_col_len().or_else(|| {
+            physical_source
+                .as_deref()
+                .and_then(|source| source.schema())
+                .map(|schema| schema.columns.len())
+        });
+        if width.is_some_and(|width| width != target_layout.target_offsets.len()) {
+            return Err(DriverError::WrongValueCountOnRow { row: 1 });
+        }
+        refuse_generated_insert_select_targets(&target_layout)?;
+    }
     // Once the target is valid, `INSERT ... SELECT` runs its source over the
     // pre-insert catalog and materializes those rows before the table is
     // borrowed mutably.
@@ -1848,6 +1871,9 @@ pub fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
         crate::kv_table::KvTableError::Generation {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
+        crate::kv_table::KvTableError::PartitionEval(eval) => {
+            DriverError::Exec(crate::ExecError::Eval(eval))
+        }
         crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
             DriverError::CheckConstraintViolated(name)
         }

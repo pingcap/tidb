@@ -2623,12 +2623,10 @@ fn build_table(
                     .lowercase()
                     .eq_ignore_ascii_case(&part.name)
             }) else {
+                // Go `buildIndexColumns`: `ErrKeyColumnDoesNotExits` (1072).
                 return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    format!(
-                        "index `{name}` names column `{}`, which the table does not declare",
-                        part.name
-                    ),
+                    tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+                    format!("column does not exist: {}", part.name),
                 ));
             };
             // Go `checkIndexColumn` plus `buildIndexColumns`' normalization,

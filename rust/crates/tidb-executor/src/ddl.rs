@@ -323,7 +323,7 @@ pub mod auto_random;
 pub(crate) mod bdr;
 pub mod check_constraint;
 mod column_changes;
-pub use column_changes::modify_column_error;
+pub use column_changes::{check_column_qualifier, modify_column_error};
 pub mod column_field_type;
 mod column_types;
 mod constraint_changes;

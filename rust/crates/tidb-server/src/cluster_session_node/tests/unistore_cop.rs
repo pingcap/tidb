@@ -17275,3 +17275,157 @@ fn apply_enumeration_spends_the_embedded_hash_join_id() {
         .collect();
     assert_eq!(&ids[..2], ["Projection_15", "Apply_18"]);
 }
+
+/// Statements both engines reject (or, for the one MODIFY, accept) used to be
+/// skipped by the corpus replay as "both rejected", which hid wrong codes. Each
+/// expectation below is what Go on this branch answers (probe sets `PL3`-`PL5`).
+#[test]
+fn rejected_statements_answer_with_go_codes_and_messages() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1130)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE ge (a INT, b INT, c INT AS (a + b))",
+        "CREATE TABLE tv0 (a INT PRIMARY KEY, b INT)",
+        "CREATE VIEW vv AS SELECT * FROM tv0",
+        "CREATE TABLE pt (a INT, b VARCHAR(10)) PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20), \
+         PARTITION p2 VALUES LESS THAN (30))",
+        "CREATE TABLE pt3 (a INT, b VARCHAR(10))",
+        "INSERT INTO pt VALUES (1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')",
+        "INSERT INTO pt3 VALUES (1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')",
+        "CREATE TABLE tc1 (c VARCHAR(10) COLLATE utf8_general_ci, d INT)",
+        "CREATE TABLE tc2 (c VARCHAR(10) COLLATE utf8_unicode_ci, d INT)",
+        "CREATE TABLE dz (a INT) PARTITION BY RANGE (10 DIV a) \
+         (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        "ALTER TABLE tv0 MODIFY tv0.b BIGINT",
+    ] {
+        session.execute_write(ddl).unwrap_or_else(|error| panic!("{ddl}: {error:?}"));
+    }
+    let write_error = |session: &mut ClusterServerSession, sql: &str| {
+        let error = session.execute_write(sql).unwrap_err();
+        (error.code, error.message)
+    };
+    for (sql, code, message) in [
+        (
+            "INSERT INTO ge (c) SELECT a, b FROM ge",
+            1136,
+            "Column count doesn't match value count at row 1",
+        ),
+        (
+            "INSERT INTO ge SELECT * FROM ge",
+            3105,
+            "The value specified for generated column 'c' in table 'ge' is not allowed.",
+        ),
+        (
+            "INSERT INTO tv0 VALUES (11, (SELECT NOT b))",
+            1054,
+            "Unknown column 'b' in 'field list'",
+        ),
+        (
+            "ALTER TABLE vv ADD COLUMN x INT",
+            1347,
+            "'test.vv' is not BASE TABLE",
+        ),
+        ("ALTER TABLE vv CACHE", 1347, "'test.vv' is not BASE TABLE"),
+        (
+            "CREATE TABLE tq (a INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (a))",
+            1054,
+            "Unknown column 'a' in 'expression'",
+        ),
+        (
+            "CREATE USER pu2 ATTRIBUTE '{\"name\": \"Tom\", age: 19}'",
+            3140,
+            "Invalid JSON text: The document root must not be followed by other values.",
+        ),
+        (
+            "CREATE TABLE ie (c1 INT, KEY (c_not_exist))",
+            1072,
+            "column does not exist: c_not_exist",
+        ),
+        (
+            "ALTER TABLE tv0 MODIFY testx.tv0.b BIGINT",
+            1102,
+            "Incorrect database name 'testx'",
+        ),
+        (
+            "ALTER TABLE tv0 MODIFY t.b BIGINT",
+            1103,
+            "Incorrect table name 't'",
+        ),
+        (
+            "ALTER TABLE pt IMPORT PARTITION p1 TABLESPACE",
+            8200,
+            "Unsupported Unsupported/unknown ALTER TABLE specification",
+        ),
+        (
+            "ALTER TABLE ge ADD COLUMN cc INT, AUTO_ID_CACHE = 10",
+            8200,
+            "Unsupported multi schema change for modify auto id cache",
+        ),
+        (
+            "UPDATE pt PARTITION (p0, p_non), pt3 SET pt.a = 40 WHERE pt3.a = 2",
+            1735,
+            "Unknown partition 'p_non' in table 'pt'",
+        ),
+        (
+            "UPDATE pt PARTITION (p0), pt3 SET pt.a = 15 WHERE pt3.a = 1",
+            1748,
+            "Found a row not matching the given partition set",
+        ),
+        (
+            "SET @@sql_mode = 'STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO'",
+            0,
+            "",
+        ),
+    ] {
+        if code == 0 {
+            session.execute_write(sql).unwrap();
+            continue;
+        }
+        assert_eq!(write_error(&mut session, sql), (code, message.to_owned()), "{sql}");
+    }
+    assert_eq!(
+        write_error(&mut session, "INSERT INTO dz VALUES (NULL), (0), (1)"),
+        (1365, "Division by 0".to_owned())
+    );
+    for (sql, code, message) in [
+        (
+            "SELECT t.upper(1) FROM nonexist",
+            1305,
+            "FUNCTION t.upper does not exist",
+        ),
+        (
+            "SELECT * FROM tc1 WHERE c < ANY (SELECT c FROM tc2)",
+            1267,
+            "Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'",
+        ),
+        (
+            "SELECT * FROM tc1 WHERE (c, d) = ANY (SELECT c FROM tc2)",
+            1241,
+            "Operand should contain 2 column(s)",
+        ),
+        (
+            "SELECT a, SUM(b) OVER (PARTITION BY zz) FROM tv0",
+            1054,
+            "Unknown column 'zz' in 'window partition by'",
+        ),
+        (
+            "SELECT a, SUM(b) OVER (ORDER BY zz) FROM tv0",
+            1054,
+            "Unknown column 'zz' in 'window order by'",
+        ),
+        (
+            "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT SUM(n) + 1 FROM c WHERE n < 3) SELECT * FROM c",
+            3575,
+            "Recursive Common Table Expression 'c' can contain neither aggregation nor window functions in recursive query block",
+        ),
+        (
+            "SELECT 'a' COLLATE utf8mb4_bin UNION SELECT 'b' COLLATE utf8mb4_general_ci",
+            1271,
+            "Illegal mix of collations for operation 'UNION'",
+        ),
+    ] {
+        assert_eq!(query_error(&mut session, sql), (code, message.to_owned()), "{sql}");
+    }
+}

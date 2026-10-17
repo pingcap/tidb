@@ -39,6 +39,9 @@ pub struct FunctionBuildError {
     pub func_name: String,
     /// Why construction failed.
     pub reason: String,
+    /// The typed failure behind `reason`, for a caller that has to report
+    /// Go's own error identity (1267 for a collation mix, say).
+    pub error: Option<crate::EvalError>,
 }
 
 impl std::fmt::Display for FunctionBuildError {
@@ -66,6 +69,7 @@ fn dedicated_cast(arg: Expression, target: FieldType) -> Result<Expression, Func
         FunctionBuildError {
             func_name: "cast".to_owned(),
             reason: format!("{error:?}"),
+            error: Some(error),
         }
     })
 }
@@ -273,6 +277,7 @@ impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> 
             FunctionBuildError {
                 func_name: func_name.to_owned(),
                 reason: format!("{err:?}"),
+                error: Some(err),
             }
         })
     }
@@ -319,6 +324,7 @@ impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> 
             .map_err(|error| FunctionBuildError {
                 func_name: "cast".to_owned(),
                 reason: format!("{error:?}"),
+                error: Some(error),
             })?
         };
         function.collation.set_coercibility(collation.coer);

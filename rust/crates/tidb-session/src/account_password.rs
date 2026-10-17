@@ -463,7 +463,7 @@ impl Session {
                     &user,
                     &host,
                     serde_json::from_str(&patch)
-                        .map_err(|error| DriverError::unsupported(error.to_string()))?,
+                        .map_err(|_| crate::account::invalid_user_attribute_json())?,
                     drop_secondary,
                 );
             }
