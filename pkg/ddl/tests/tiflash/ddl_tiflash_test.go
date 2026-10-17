@@ -1377,6 +1377,15 @@ func TestTiFlashPartitionNotAvailable(t *testing.T) {
 		return replica == nil || !replica.Available
 	}, ddl.PollTiFlashInterval*RoundToBeAvailable*3, ddl.PollTiFlashInterval/2)
 	CheckTableAvailable(s.dom, t, 1, []string{})
+	// The poller continues refreshing progress for already-available tables. Stop it
+	// before teardown closes the mock TiFlash status server.
+	ddl.DisableTiFlashPoll(s.dom.DDL())
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
+	require.NoError(t, infosync.UpdateTiFlashProgressCache(tb.Meta().Partition.Definitions[0].ID, 0))
+	require.Never(t, func() bool {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
+		return isExist && progress == 1
+	}, ddl.PollTiFlashInterval*2, ddl.PollTiFlashInterval/5)
 }
 
 func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
