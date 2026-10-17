@@ -632,6 +632,29 @@ func TestCodec(t *testing.T) {
 }
 
 func TestParseTimeFromNum(t *testing.T) {
+	for _, tp := range []byte{mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate} {
+		for _, fsp := range []int{types.UnspecifiedFsp, 0, 1, 3, 6, 7} {
+			t.Run(fmt.Sprintf("zero/type=%d/fsp=%d", tp, fsp), func(t *testing.T) {
+				v, err := types.ParseTimeFromNum(types.DefaultStmtNoWarningContext, 0, tp, fsp)
+				require.NoError(t, err)
+				wantFsp := min(max(fsp, 0), types.MaxFsp)
+				want := types.ZeroDatetimeStr
+				if tp == mysql.TypeDate {
+					wantFsp = 0
+					want = types.ZeroDateStr
+				} else if wantFsp > 0 {
+					want += "." + "000000"[:wantFsp]
+				}
+				require.Equal(t, tp, v.Type())
+				require.Equal(t, wantFsp, v.Fsp())
+				require.Equal(t, want, v.String())
+				strictCtx := types.DefaultStmtNoWarningContext.WithFlags(types.DefaultStmtNoWarningContext.Flags().WithIgnoreZeroDateErr(false))
+				_, err = types.ParseTimeFromNum(strictCtx, 0, tp, fsp)
+				require.True(t, types.ErrTruncatedWrongVal.Equal(err))
+			})
+		}
+	}
+
 	table := []struct {
 		Input                int64
 		ExpectDateTimeError  bool
