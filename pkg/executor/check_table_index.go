@@ -575,6 +575,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
 			break
 		}
+		failpoint.InjectCall("fastCheckTableByGroup", times)
 		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) div %d %% %d)", md5Handle, offset, mod, bucketSize)
 		if !checkOnce {
