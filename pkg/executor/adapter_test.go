@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -566,6 +567,45 @@ func TestSlowLogMaxPerSec(t *testing.T) {
 	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
 		testkit.Rows("tidb_slow_log_max_per_sec 0"),
 	)
+}
+
+type compilePanicStmt struct {
+	ast.StmtNode
+}
+
+func (*compilePanicStmt) AcceptInPlace(ast.InPlaceVisitor) bool {
+	panic(exeerrors.ErrMemoryExceedForQuery)
+}
+
+func TestCompilePanicSQLRedaction(t *testing.T) {
+	const sql = "SELECT 'compile-secret', 12345"
+	for _, tc := range []struct {
+		mode     string
+		expected string
+	}{
+		{mode: "OFF", expected: sql},
+		{mode: "ON", expected: "select ..."},
+		{mode: "MARKER", expected: "select ‹compile-secret› , ‹12345›"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(sql, "", "")
+			require.NoError(t, err)
+			sctx := mock.NewContext()
+			sctx.GetSessionVars().EnableRedactLog = tc.mode
+			core, recorded := observer.New(zap.ErrorLevel)
+			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			compiler := executor.Compiler{Ctx: sctx}
+
+			// Raise a handled panic while preprocessing, so the real recovery log runs.
+			execStmt, err := compiler.Compile(ctx, &compilePanicStmt{StmtNode: stmt})
+			require.Nil(t, execStmt)
+			require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err), "%v", err)
+			entries := recorded.FilterMessage("compile SQL panic").All()
+			require.Len(t, entries, 1)
+			require.Equal(t, tc.expected, entries[0].ContextMap()["SQL"])
+			require.Equal(t, sql, stmt.Text())
+		})
+	}
 }
 
 func BenchmarkCheckSlowThreshold(b *testing.B) {
