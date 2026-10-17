@@ -296,7 +296,7 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 			if result.lastProcessedKey != nil {
 				*e.paging = coprocessor.KeyRange{Start: result.lastProcessedKey}
 			} else {
-				*e.paging = coprocessor.KeyRange{Start: e.kvRanges[len(e.kvRanges)-1].StartKey}
+				*e.paging = coprocessor.KeyRange{Start: e.kvRanges[0].StartKey}
 			}
 		} else {
 			if result.lastProcessedKey != nil {
@@ -477,7 +477,7 @@ func (e *indexScanExec) next() (*chunk.Chunk, error) {
 		if e.paging != nil {
 			if e.desc {
 				if e.chkIdx == len(e.chunks) {
-					*e.paging = coprocessor.KeyRange{Start: e.kvRanges[len(e.kvRanges)-1].StartKey}
+					*e.paging = coprocessor.KeyRange{Start: e.kvRanges[0].StartKey}
 				} else {
 					*e.paging = coprocessor.KeyRange{Start: e.chunkLastProcessedKeys[e.chkIdx-1]}
 				}
@@ -494,7 +494,7 @@ func (e *indexScanExec) next() (*chunk.Chunk, error) {
 
 	if e.paging != nil {
 		if e.desc {
-			*e.paging = coprocessor.KeyRange{Start: e.kvRanges[len(e.kvRanges)-1].StartKey}
+			*e.paging = coprocessor.KeyRange{Start: e.kvRanges[0].StartKey}
 		} else {
 			*e.paging = coprocessor.KeyRange{End: e.kvRanges[len(e.kvRanges)-1].EndKey}
 		}
