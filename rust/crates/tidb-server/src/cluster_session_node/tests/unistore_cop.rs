@@ -16688,3 +16688,39 @@ fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
     contender.control_transaction("ROLLBACK").unwrap();
     session.control_transaction("ROLLBACK").unwrap();
 }
+
+/// A correlated scalar subquery's aggregation, decorrelated into a join,
+/// enumerates its index-join inner side the way Go does: the single/multi-read
+/// kind a parent asks for does not refuse an index-join inner task, and the
+/// decorrelation reuses the inner projection's node (no new plan id). The
+/// plan ids and the partial aggregate's column ids below are Go 1.27's on
+/// this branch (`TestZZ` probe `DZ5`).
+#[test]
+fn correlated_subquery_enumeration_draws_the_same_ids_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1123)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE tcs (a INT, b VARCHAR(10), c DECIMAL(10,2), KEY(a))",
+        "CREATE TABLE tcu (a INT, b INT, c DECIMAL(10,2), KEY(a))",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let text = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'verbose' SELECT a FROM tcs WHERE c < \
+         (SELECT AVG(c) FROM tcu WHERE tcu.a = tcs.a)",
+    ))
+    .into_iter()
+    .map(|row| format!("{} {}", row[0], row[5]))
+    .collect::<Vec<_>>()
+    .join("\n");
+    for expected in [
+        "Selection_87(Build) not(isnull(Column#11))",
+        "HashAgg_95 group by:test.tcu.a, funcs:avg(Column#31, Column#32)->Column#11, \
+         funcs:firstrow(test.tcu.a)->test.tcu.a",
+        "TableReader_96 data:HashAgg_88",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+    }
+}

@@ -2869,7 +2869,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 {
                     continue 'paths;
                 }
-                read_type_refused = cop_multi_read;
+                // Go `getBestIndexJoinInnerTaskByProp` builds the inner cop task
+                // whatever single/multi-read kind the parent asked for; only a
+                // root request converts it afterwards.
+                read_type_refused = cop_multi_read && prop.index_join_prop.is_none();
                 let keep_order = ordered;
                 if keep_order && !table_path_matches_order(ds, prop) {
                     continue 'paths;
@@ -3714,8 +3717,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     });
                 // The two COP property kinds are disjoint: a covering index
                 // is single-read, while a lookup is multi-read.
-                read_type_refused = (prop.task_tp == TaskType::CopSingleRead && !single_scan)
-                    || (cop_multi_read && single_scan);
+                read_type_refused = prop.index_join_prop.is_none()
+                    && ((prop.task_tp == TaskType::CopSingleRead && !single_scan)
+                        || (cop_multi_read && single_scan));
                 // Go `skylinePruning` keepIndex (`find_best_task.go:1812`):
                 // an index path with no access conditions, no order match, no
                 // force hint, and no single-scan coverage is pruned before

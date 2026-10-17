@@ -832,9 +832,11 @@ impl DecorrelateSolver {
         if inner_exprs.next().is_some() {
             return Ok(None);
         }
+        // Go reuses the inner `proj` itself as the node above the apply, so
+        // no new plan id is drawn.
         let mut wrapper = LogicalProjection::new(
-            BaseLogicalPlan::new(
-                ctx.allocator,
+            BaseLogicalPlan::with_id(
+                projection.base.base.id(),
                 LogicalProjection::TYPE,
                 apply.base().base.query_block_offset(),
             ),
