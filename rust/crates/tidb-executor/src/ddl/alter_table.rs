@@ -2126,7 +2126,10 @@ fn reject_drop_index_used_by_added_foreign_key(
             && table.partial_index_safe_for_columns(index, offsets)
     };
     for definition in &added {
-        let fk_names = super::indexes::index_part_names(&definition.parts)?;
+        let fk_names = super::indexes::foreign_key_part_names(
+            &definition.parts,
+            definition.name.as_deref().unwrap_or_default(),
+        )?;
         let Some(fk_offsets) = fk_names
             .iter()
             .map(|column| {

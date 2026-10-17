@@ -610,7 +610,7 @@ pub(crate) fn build_foreign_key(
             ));
         }
         let mut cols = Vec::with_capacity(definition.parts.len());
-        for name in index_part_names(&definition.parts)? {
+        for name in super::indexes::foreign_key_part_names(&definition.parts, &fk_name)? {
             let offset = columns
                 .iter()
                 .position(|column| column.name.eq_ignore_ascii_case(&name))
@@ -1058,6 +1058,16 @@ pub(crate) fn primary_key_column(
                 name, prefix_len, ..
             } = part
             else {
+                // Go builds the hidden column first, so an expression Go
+                // refuses (a nested CAST .. ARRAY, 1235) is reported before
+                // the primary key is.
+                if let tidb_ast::IndexPart::Expr { expr, .. } = part {
+                    crate::expression_index::check_illegal_fn_4_generated(
+                        "primary",
+                        crate::expression_index::GenType::Index,
+                        expr,
+                    )?;
+                }
                 // Go `CheckPKOnGeneratedColumn`: the key part is a hidden
                 // virtual column, which a primary key may not be (3756).
                 return Err(DriverError::DdlCoded {

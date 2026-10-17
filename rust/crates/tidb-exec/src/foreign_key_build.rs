@@ -120,7 +120,15 @@ pub(crate) fn build_fk_info(
         }
     }
     let mut cols = Vec::with_capacity(keys.len());
-    for key in keys {
+    for (position, key) in keys.iter().enumerate() {
+        // Go names an expression part's hidden column `_V$_<key>_<position>`
+        // and fails to find it among the table's columns (1072).
+        if matches!(key, IndexPart::Expr { .. }) {
+            return Err(coded(
+                tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+                format!("Key column '_V$_{fk_name}_{position}' doesn't exist in table"),
+            ));
+        }
         let name = part_column(key)?;
         let Some(column) = find_column_info(&table.columns, &name) else {
             return Err(refusal(DriverError::ForeignKeyChildColumnMissing(name)));

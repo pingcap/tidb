@@ -485,6 +485,25 @@ pub(crate) fn validate_partial_index_condition(
     check_index_condition(&column, expression, ctx.connection_charset_info())
 }
 
+/// [`index_part_names`] for a FOREIGN KEY's child key. Go names an expression
+/// part's hidden column `_V$_<key name>_<position>` and then fails to find it
+/// among the table's columns: `ErrKeyColumnDoesNotExits` (1072).
+pub(crate) fn foreign_key_part_names(
+    parts: &[tidb_ast::IndexPart],
+    key_name: &str,
+) -> Result<Vec<String>, DriverError> {
+    if let Some(position) = parts
+        .iter()
+        .position(|part| matches!(part, tidb_ast::IndexPart::Expr { .. }))
+    {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+            message: format!("Key column '_V$_{key_name}_{position}' doesn't exist in table"),
+        });
+    }
+    index_part_names(parts)
+}
+
 /// The column names an index's key parts name, rejecting the forms this tier
 /// does not maintain rather than creating an index that ignores them.
 pub(crate) fn index_part_names(parts: &[tidb_ast::IndexPart]) -> Result<Vec<String>, DriverError> {

@@ -1387,6 +1387,16 @@ fn synthesize_expression_index_columns(
         }
         if constraint.kind == ConstraintKind::PrimaryKey && exprs.iter().any(|expr| expr.is_some())
         {
+            // Go builds each hidden column before it checks the primary key,
+            // so an expression Go refuses outright (1235) wins over 3756.
+            for expr in exprs.iter().flatten() {
+                tidb_executor::expression_index::check_illegal_fn_4_generated(
+                    "primary",
+                    tidb_executor::expression_index::GenType::Index,
+                    expr,
+                )
+                .map_err(default_admission_error)?;
+            }
             // go `CheckPKOnGeneratedColumn` -> `ErrUnsupportedOnGeneratedColumn`
             // (3756): the primary key cannot be an expression index.
             return Err(DdlAdmissionError::with_code(

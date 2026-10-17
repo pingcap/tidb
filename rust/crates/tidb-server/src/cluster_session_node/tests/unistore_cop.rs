@@ -17380,6 +17380,17 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
             "Unsupported multi schema change for set tiflash replica",
         ),
         (
+            "CREATE TABLE mvpk (f1 JSON, PRIMARY KEY mvi ((CAST(CAST(f1 AS UNSIGNED ARRAY) AS UNSIGNED ARRAY))))",
+            1235,
+            "This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'",
+        ),
+        (
+            "CREATE TABLE mvfk (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON, \
+             FOREIGN KEY fk_user_id ((CAST(doc->'$[*]' AS SIGNED ARRAY))) REFERENCES tv0 (a))",
+            1072,
+            "Key column '_V$_fk_user_id_0' doesn't exist in table",
+        ),
+        (
             "INSERT INTO jd8 (id) VALUES (1)",
             1054,
             "Unknown column 'id' in 'expression'",
