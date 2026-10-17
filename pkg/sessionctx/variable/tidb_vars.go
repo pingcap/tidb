@@ -93,6 +93,11 @@ const (
 	// TiDBAutoAnalyzeRatio will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
+	// TiDBAnalyzeSampledNDVThreshold is the row count above which ANALYZE
+	// estimates the NDV of a table or partition from sampled rows. Zero turns
+	// sampled NDV off.
+	TiDBAnalyzeSampledNDVThreshold = "tidb_analyze_sampled_ndv_threshold"
+
 	// TiDBAutoAnalyzeStartTime will run if current time is within start time and end time.
 	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
 	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
@@ -1345,6 +1350,7 @@ const (
 	DefHostname                             = "localhost"
 	DefIndexLookupConcurrency               = ConcurrencyUnset
 	DefIndexLookupJoinConcurrency           = ConcurrencyUnset
+	DefTiDBAnalyzeSampledNDVThreshold       = 0
 	DefIndexSerialScanConcurrency           = 1
 	DefIndexJoinBatchSize                   = 25000
 	DefIndexLookupSize                      = 20000
@@ -1774,6 +1780,7 @@ var (
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	AnalyzeSampledNDVThreshold           = atomic.NewInt64(DefTiDBAnalyzeSampledNDVThreshold)
 	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
 	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
