@@ -295,7 +295,7 @@ impl KvTable {
     /// Go `IndexInfo.MVIndex`: whether one of `index`'s key parts is a
     /// multi-valued (`CAST(... AS ... ARRAY)`) hidden column. Go's DDL sets
     /// the flag from exactly this test (`buildIndexColumns`).
-    pub(crate) fn is_mv_index(&self, index: &KvIndex) -> bool {
+    pub fn is_mv_index(&self, index: &KvIndex) -> bool {
         index.column_offsets.iter().any(|offset| {
             self.columns
                 .get(*offset)

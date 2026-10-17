@@ -577,6 +577,93 @@ fn selected_column_ids(
     Ok(selected)
 }
 
+/// Go `filterSkipColumnTypes`: drop the columns whose type is in
+/// `tidb_analyze_skip_column_types` (and every vector column) unless an index
+/// or the integer handle needs their sample values, then the generated columns
+/// that depend on a skipped one.
+fn skip_column_types(
+    table: &tidb_executor::kv_table::KvTable,
+    selected: Option<HashSet<i64>>,
+    skip_types: &std::collections::BTreeSet<String>,
+) -> Option<HashSet<i64>> {
+    let columns = table.columns();
+    let mut selected =
+        selected.unwrap_or_else(|| columns.iter().map(|column| column.id).collect::<HashSet<_>>());
+    // Go `getMustAnalyzedColumns`: public non-multi-valued index columns, the
+    // integer handle, and what a virtual generated one of them is built from.
+    let mut mandatory = HashSet::new();
+    for index in table.indexes() {
+        if table.is_mv_index(index) {
+            continue;
+        }
+        for offset in &index.column_offsets {
+            if let Some(column) = columns.get(*offset) {
+                mandatory.insert(column.id);
+            }
+        }
+    }
+    let mut roots = mandatory.clone();
+    if let Some(column) = table.pk_handle_offset().and_then(|offset| columns.get(offset)) {
+        mandatory.insert(column.id);
+    }
+    loop {
+        let before = roots.len();
+        for column in columns {
+            let Some(generated) = &column.generated else {
+                continue;
+            };
+            if !roots.contains(&column.id) || generated.stored {
+                continue;
+            }
+            for dependency in &generated.dependencies {
+                if let Some(base) = columns
+                    .iter()
+                    .find(|base| base.name.eq_ignore_ascii_case(dependency))
+                {
+                    roots.insert(base.id);
+                    mandatory.insert(base.id);
+                }
+            }
+        }
+        if roots.len() == before {
+            break;
+        }
+    }
+    let mut skipped_names = HashSet::new();
+    for column in columns {
+        let vector = column.field_type.code() == tidb_datatype::FieldTypeCode::VectorFloat32;
+        let skipped = skip_types.contains(tidb_datatype::type_to_str(
+            column.field_type.code(),
+            column.field_type.charset_name(),
+        ));
+        if vector || (skipped && !mandatory.contains(&column.id)) {
+            selected.remove(&column.id);
+            skipped_names.insert(column.name.to_ascii_lowercase());
+        }
+    }
+    for column in columns {
+        let Some(generated) = &column.generated else {
+            continue;
+        };
+        if !selected.contains(&column.id) {
+            continue;
+        }
+        // A stored generated column that must be analyzed is read from
+        // storage, so its skipped dependencies do not matter.
+        if generated.stored && mandatory.contains(&column.id) {
+            continue;
+        }
+        if generated
+            .dependencies
+            .iter()
+            .any(|dependency| skipped_names.contains(&dependency.to_ascii_lowercase()))
+        {
+            selected.remove(&column.id);
+        }
+    }
+    (selected.len() != columns.len()).then_some(selected)
+}
+
 fn saved_options(
     table: &tidb_executor::kv_table::KvTable,
     options: &PhysicalAnalyzeOptions,
@@ -661,6 +748,11 @@ impl Session {
             let mut statement = statement.clone();
             statement.persist_options = persist_options;
             statement.default_columns = default_columns.clone();
+            statement.skip_column_types = self
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
+                .map(|value| crate::varsutil::parse_analyze_skip_column_types(&value))
+                .unwrap_or_default();
             statement.options.memory_quota = memory_quota;
             self.analyze_one_table(&statement)?;
         }
@@ -819,22 +911,27 @@ impl Session {
             let mut predicate_warning_emitted = false;
             let mut explicit_warning_emitted = true;
             let mut selections = std::collections::HashMap::new();
+            let mut executed = std::collections::HashMap::new();
             for options in &resolution.physical {
-                selections.insert(
+                let selected = selected_column_ids(
+                    &table,
+                    &options.columns,
+                    &statement.default_columns,
+                    &predicate_ids,
+                    table_id,
+                    &schema,
+                    &name,
+                    &ctx,
+                    &mut predicate_warning_emitted,
+                    &mut explicit_warning_emitted,
+                )?;
+                // Go persists the options from `genV2AnalyzeOptions` and only
+                // then applies `filterSkipColumnTypes` to what executes.
+                executed.insert(
                     options.physical_id,
-                    selected_column_ids(
-                        &table,
-                        &options.columns,
-                        &statement.default_columns,
-                        &predicate_ids,
-                        table_id,
-                        &schema,
-                        &name,
-                        &ctx,
-                        &mut predicate_warning_emitted,
-                        &mut explicit_warning_emitted,
-                    )?,
+                    skip_column_types(&table, selected.clone(), &statement.skip_column_types),
                 );
+                selections.insert(options.physical_id, selected);
             }
             let realtime_count = |physical_id| {
                 // Go's `getAdjustedSampleRate` reads the CURRENT
@@ -917,7 +1014,7 @@ impl Session {
                     .iter()
                     .filter(|options| options.is_partition != partition_ids.is_empty())
                 {
-                    let columns = selections
+                    let columns = executed
                         .get(&options.physical_id)
                         .and_then(Option::as_ref)
                         .map(|selected| {
@@ -955,7 +1052,7 @@ impl Session {
                     ));
                 }
             }
-            for (physical_id, selected) in &selections {
+            for (physical_id, selected) in &executed {
                 rebuilt_columns.insert(*physical_id, selected.clone());
             }
             analyzed_table = Some((*table).clone());
@@ -970,7 +1067,7 @@ impl Session {
                         let options = &resolution.physical[0];
                         let mut effective = options.effective;
                         effective.memory_quota = statement.options.memory_quota;
-                        let selected = selections
+                        let selected = executed
                             .get(&table_id)
                             .expect("the logical table selection exists");
                         let statistics = analyze_kv_table_columns(
@@ -999,7 +1096,7 @@ impl Session {
                                 .expect("every requested partition has options");
                             let mut effective = options.effective;
                             effective.memory_quota = statement.options.memory_quota;
-                            let selected = selections
+                            let selected = executed
                                 .get(&physical_id)
                                 .expect("every requested partition has a selection");
                             let mut partition = (*table).clone();
