@@ -552,6 +552,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	rangesPerTaskLimit := rangesPerTask
+	if req.RangesPerTask > 0 {
+		rangesPerTaskLimit = req.RangesPerTask
+	}
 	failpoint.Inject("setRangesPerTask", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
 			rangesPerTaskLimit = v

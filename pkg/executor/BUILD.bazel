@@ -34,6 +34,7 @@ go_library(
         "distsql.go",
         "expand.go",
         "explain.go",
+        "first_row_per_range.go",
         "foreign_key.go",
         "grant.go",
         "import_into.go",

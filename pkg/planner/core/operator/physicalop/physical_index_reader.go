@@ -43,7 +43,15 @@ type PhysicalIndexReader struct {
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
+
+	// FirstRowPerRange is set on the inner reader of an index join when each
+	// lookup range only needs its first row. See PhysicalTableReader.FirstRowPerRange.
+	FirstRowPerRange bool
 }
+
+// firstRowPerRangeExplainInfo is appended to a reader's explain info when it
+// reads only the first row of each range.
+const firstRowPerRangeExplainInfo = ", first row per range"
 
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexReader {
@@ -69,6 +77,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
 	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
+	cloned.FirstRowPerRange = p.FirstRowPerRange
 	return cloned, err
 }
 
@@ -156,7 +165,11 @@ func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObj
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.IndexPlan.ExplainID().String()
+	info := "index:" + p.IndexPlan.ExplainID().String()
+	if p.FirstRowPerRange {
+		info += firstRowPerRangeExplainInfo
+	}
+	return info
 }
 
 // ExplainNormalizedInfo implements Plan interface.

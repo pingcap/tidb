@@ -467,6 +467,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	markIndexJoinFirstRowPerRange(plan)
 	plan = avoidColumnEvaluatorForProjBelowUnion(plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(ctx, sctx, plan)

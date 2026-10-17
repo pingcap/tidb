@@ -257,6 +257,8 @@ type IndexReaderExecutor struct {
 	partitionIDMap map[int64]struct{}
 
 	paging bool
+	// firstRowPerRange makes each key range its own task; see PhysicalIndexReader.FirstRowPerRange.
+	firstRowPerRange bool
 
 	keepOrder bool
 	desc      bool
@@ -377,11 +379,15 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
-	builder.SetKeyRanges(r).
-		SetDAGRequest(e.dagPB).
+	if e.firstRowPerRange {
+		setFirstRowPerRangeKeyRanges(&builder, r)
+	} else {
+		builder.SetKeyRanges(r)
+	}
+	builder.SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
+		SetKeepOrder(e.keepOrder && !e.firstRowPerRange).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
@@ -391,6 +397,9 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 	kvReq, err := builder.Build()
+	if err == nil && e.firstRowPerRange {
+		adjustFirstRowPerRangeRequest(kvReq, e.dctx)
+	}
 	return kvReq, err
 }
 
