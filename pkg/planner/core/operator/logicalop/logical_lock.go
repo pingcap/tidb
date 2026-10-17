@@ -33,8 +33,9 @@ type LogicalLock struct {
 
 	// tblID2phyTblIDCol is used for partitioned tables,
 	// the child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	TblID2PhysTblIDCol map[int64]*expression.Column
+	// the Physical Table ID (i.e. from which partition the row came from).
+	// TblID2PhysTblIDCol[tblID][i] belongs to the alias of TblID2Handle[tblID][i].
+	TblID2PhysTblIDCol map[int64][]*expression.Column
 }
 
 // Init initializes LogicalLock.
@@ -70,9 +71,11 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 				parentUsedCols = append(parentUsedCols, c)
 			}
 		}
-		if physTblIDCol, ok := p.TblID2PhysTblIDCol[tblID]; ok {
+		for _, physTblIDCol := range p.TblID2PhysTblIDCol[tblID] {
 			// If the children include partitioned tables, there is an extra partition ID column.
-			parentUsedCols = append(parentUsedCols, physTblIDCol)
+			if physTblIDCol != nil {
+				parentUsedCols = append(parentUsedCols, physTblIDCol)
+			}
 		}
 	}
 	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
