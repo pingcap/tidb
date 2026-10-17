@@ -793,6 +793,15 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBAnalyzeSampledNDVThreshold, Value: strconv.Itoa(DefTiDBAnalyzeSampledNDVThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64,
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return strconv.FormatInt(AnalyzeSampledNDVThreshold.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			AnalyzeSampledNDVThreshold.Store(TidbOptInt64(val, DefTiDBAnalyzeSampledNDVThreshold))
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeStartTime, Value: DefAutoAnalyzeStartTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeEndTime, Value: DefAutoAnalyzeEndTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindingCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindingCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
@@ -3813,6 +3822,9 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		varVal = AssertionFastStr
 	case TiDBEnableMutationChecker:
 		varVal = On
+	case TiDBAnalyzeSampledNDVThreshold:
+		// New clusters sample NDV for tables and partitions above 500 million rows.
+		varVal = "500000000"
 	case TiDBPessimisticTransactionFairLocking:
 		varVal = On
 	}
