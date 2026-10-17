@@ -967,11 +967,17 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 		return nil
 	}
 	for _, schema := range ex.ListSchemas(e.is) {
+		if err := ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
 		tables, err := e.is.SchemaTableInfos(ctx, schema)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
+			if err := ctx.Err(); err != nil {
+				return errors.Trace(err)
+			}
 			if len(table.Constraints) > 0 {
 				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
 					continue
