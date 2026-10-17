@@ -20,7 +20,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -50,20 +52,6 @@ type aggregationEliminateChecker struct {
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
 func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.LogicalAggregation) *logicalop.LogicalProjection {
-	for _, af := range agg.AggFuncs {
-		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
-		// arguments it accepts are promised to be NOT-NULL.
-		// When it accepts only 1 argument, we can extract this argument into a
-		// projection.
-		// When it accepts multiple arguments, we can wrap the arguments with a
-		// function CONCAT_WS and extract this function into a projection.
-		// BUT, GROUP_CONCAT should truncate the final result according to the
-		// system variable `group_concat_max_len`. To ensure the correctness of
-		// the result, we close the elimination of GROUP_CONCAT here.
-		if af.Name == ast.AggFuncGroupConcat {
-			return nil
-		}
-	}
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
 	for _, key := range agg.Children()[0].Schema().PKOrUK {
@@ -188,7 +176,7 @@ func ConvertAggToProj(agg *logicalop.LogicalAggregation, schema *expression.Sche
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func rewriteExpr(ctx expression.BuildContext, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
+func rewriteExpr(ctx exprctx.ExprContext, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		if aggFunc.Mode == aggregation.FinalMode &&
@@ -204,13 +192,57 @@ func rewriteExpr(ctx expression.BuildContext, aggFunc *aggregation.AggFuncDesc) 
 			return false, nil
 		}
 		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
-	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncGroupConcat:
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncFirstRow:
 		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
+	case ast.AggFuncGroupConcat:
+		return rewriteGroupConcat(ctx, aggFunc)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		return true, rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)
 	default:
 		return false, nil
 	}
+}
+
+// rewriteGroupConcat rewrites GROUP_CONCAT over a single-row group to CONCAT
+// of its arguments (excluding the trailing separator), see issue #9968.
+// For one row, both return NULL when any argument is NULL, and DISTINCT,
+// ORDER BY and the separator have no effect.
+// GROUP_CONCAT also truncates its result to `group_concat_max_len` bytes and
+// reports a warning, which CONCAT cannot do. So the rewrite is only applied
+// when the maximum byte length of the concatenated arguments fits into both
+// `group_concat_max_len` and the GROUP_CONCAT return type. Because the decision
+// depends on a session variable, the plan is not cached once it is rewritten.
+func rewriteGroupConcat(ctx exprctx.ExprContext, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
+	if aggFunc.Mode != aggregation.CompleteMode || len(aggFunc.Args) < 2 {
+		return false, nil
+	}
+	args := aggFunc.Args[:len(aggFunc.Args)-1]
+	maxBytes := uint64(0)
+	for _, arg := range args {
+		tp := arg.GetType(ctx.GetEvalCtx())
+		if !(types.IsTypeChar(tp.GetType()) || types.IsTypeVarchar(tp.GetType()) || types.IsTypeBlob(tp.GetType())) {
+			return false, nil
+		}
+		flen := tp.GetFlen()
+		if flen < 0 {
+			return false, nil
+		}
+		cs, err := charset.GetCharsetInfo(tp.GetCharset())
+		if err != nil {
+			return false, nil
+		}
+		maxBytes += uint64(flen) * uint64(cs.Maxlen)
+	}
+	retFlen := aggFunc.RetTp.GetFlen()
+	if maxBytes > ctx.GetGroupConcatMaxLen() || (retFlen >= 0 && maxBytes > uint64(retFlen)) {
+		return false, nil
+	}
+	concat, err := expression.NewFunction(ctx, ast.Concat, aggFunc.RetTp, args...)
+	if err != nil {
+		return false, nil
+	}
+	ctx.SetSkipPlanCache("GROUP_CONCAT elimination depends on group_concat_max_len")
+	return true, wrapCastFunction(ctx, concat, aggFunc.RetTp)
 }
 
 func rewriteCount(ctx expression.BuildContext, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
