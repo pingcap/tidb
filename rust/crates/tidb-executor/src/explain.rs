@@ -1608,7 +1608,10 @@ fn physical_operator_info(
             } else {
                 String::new()
             };
-            let order = format!("keep order:{}, desc:{}", batch.keep_order, batch.desc);
+            let mut order = format!("keep order:{}, desc:{}", batch.keep_order, batch.desc);
+            if batch.lock {
+                order.push_str(", lock");
+            }
             if prefix.is_empty() {
                 order
             } else {
@@ -3064,6 +3067,9 @@ fn physical_normalized_info(
                 "keep order:{}, desc:{}",
                 batch.keep_order, batch.desc
             ));
+            if batch.lock {
+                info.push_str(", lock");
+            }
             format!("{}, {info}", access(plan))
         }
         _ => String::new(),

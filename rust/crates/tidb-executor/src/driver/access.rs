@@ -2187,16 +2187,29 @@ fn build_fast_point_physical_plan(
         // Go `tryPointGetPlan` accepts a locking read and `getLockWaitTime`
         // sets `Lock` only when `PessimisticLockEligible` (autocommit off, or
         // a transaction open): an autocommit `FOR UPDATE` is a plain
-        // `Point_Get` with no `SelectLock` above it. An eligible lock keeps
-        // the ordinary plan, whose `SelectLock` takes the row lock.
+        // `Point_Get` with no `SelectLock` above it, and inside a transaction
+        // the point plan itself carries `lock`. Shared locks and `SKIP
+        // LOCKED` keep the ordinary plan.
         || select.lock.as_ref().is_some_and(|lock| {
             lock.kind != tidb_ast::LockKind::Update
-                || ctx.pessimistic_transaction()
-                || ctx.optimistic_transaction()
+                || lock.wait == tidb_ast::LockWait::SkipLocked
         })
     {
         return Ok(None);
     }
+    // Go `getLockWaitTime`: the lock a locking SELECT takes inside a
+    // transaction. A write's point plan locks its rows through the statement.
+    let select_lock = (!dml_source
+        && (ctx.pessimistic_transaction() || ctx.optimistic_transaction()))
+    .then_some(select.lock.as_ref())
+    .flatten()
+    .map(|lock| match lock.wait {
+        tidb_ast::LockWait::NoWait => (tidb_planner::logical::SelectLockType::ForUpdateNoWait, 0),
+        tidb_ast::LockWait::Wait(seconds) => {
+            (tidb_planner::logical::SelectLockType::ForUpdateWaitN, seconds)
+        }
+        _ => (tidb_planner::logical::SelectLockType::ForUpdate, 0),
+    });
     // The PARTITION clause is decided below, against the table and pin.
     let Some(table_ref) = sole_table_ref(&select.from) else {
         return Ok(None);
@@ -2378,6 +2391,8 @@ fn build_fast_point_physical_plan(
                     .map(tidb_planner::physical_plan_cache::PointRangeRebuild::Constants),
                 keep_order: false,
                 desc: false,
+                lock: select_lock.is_some(),
+                select_lock,
             },
         )));
     }
@@ -2407,13 +2422,17 @@ fn build_fast_point_physical_plan(
     }
     // Go `tryPointGetPlan` plans partitioned tables too. This fast path
     // keeps the global unique index, whose entry records the row's
-    // partition; handle and local-index pins take the ordinary planner,
-    // which routes them by the partition expression.
+    // partition, and an integer handle pin, which the executor routes by the
+    // partition expression (`point_partition_id`); common-handle, local-index
+    // and PARTITION-clause pins take the ordinary planner.
     let global_index = point
         .index_id
         .and_then(|index_id| table.plan_indexes().find(|index| index.id == index_id))
         .is_some_and(|index| index.global);
-    if table.partition().is_some() && !global_index {
+    let routed_int_handle = point.index_id.is_none()
+        && table.common_handle_offsets().is_empty()
+        && table_ref.partitions.is_empty();
+    if table.partition().is_some() && !global_index && !routed_int_handle {
         return Ok(None);
     }
     let index_name = point.index_id.and_then(|index_id| {
@@ -2464,18 +2483,19 @@ fn build_fast_point_physical_plan(
             table_id: table.table_id,
             // Go `PointGetPlan.PartitionNames`: a global index applies them
             // to the partition its entry records.
-            partition: (global_index && !table_ref.partitions.is_empty()).then(|| {
-                tidb_planner::physical::PointGetPartition {
-                    names: table_ref.partitions.clone(),
-                    physical_table_id: None,
-                }
+            partition: ((global_index && !table_ref.partitions.is_empty())
+                || (routed_int_handle && table.partition().is_some()))
+            .then(|| tidb_planner::physical::PointGetPartition {
+                names: table_ref.partitions.clone(),
+                physical_table_id: None,
             }),
             index_id: point.index_id,
             access_cols: None,
             ranges: closed_point_ranges(&[point.key_values]),
             range_rebuild,
-            lock: false,
-        },
+            lock: select_lock.is_some(),
+            select_lock,
+},
     )))
 }
 

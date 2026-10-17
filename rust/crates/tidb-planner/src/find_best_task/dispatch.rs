@@ -3304,8 +3304,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             range_rebuild: table_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Table),
-                            lock: false,
-                        })
+                            lock: false, select_lock: None,
+})
                     } else {
                         PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {
                             base: point_base,
@@ -3320,8 +3320,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Table),
                             keep_order,
-                            desc,
-                        })
+                            desc, select_lock: None, lock: false,
+})
                     };
                     if !table_filters.is_empty() {
                         let mut selection_base = crate::physical::BasePhysicalPlan::new(
@@ -3939,8 +3939,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             range_rebuild: index_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Index),
-                            lock: false,
-                        })
+                            lock: false, select_lock: None,
+})
                     } else {
                         PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {
                             base: point_base,
@@ -3959,8 +3959,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Index),
                             keep_order,
-                            desc,
-                        })
+                            desc, select_lock: None, lock: false,
+})
                     };
                     if !remained_conds.is_empty() {
                         let mut selection_base = crate::physical::BasePhysicalPlan::new(

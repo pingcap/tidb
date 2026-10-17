@@ -2713,10 +2713,14 @@ pub struct PhysicalPointGet {
     pub ranges: crate::ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
-    /// Go `PointGetPlan.Lock`: the enclosing UPDATE/DELETE locks the row it
-    /// reads, rendered as the `lock` operator detail. SELECT-built point
-    /// plans leave this off.
+    /// Go `PointGetPlan.Lock`: the enclosing UPDATE/DELETE, or a locking
+    /// SELECT inside a transaction, locks the row it reads; rendered as the
+    /// `lock` operator detail.
     pub lock: bool,
+    /// The lock a locking SELECT takes (Go `LockInfo` / `LockWaitTime`),
+    /// which the executor applies around this read. `None` for a write's
+    /// point plan, whose statement locks its rows itself.
+    pub select_lock: Option<(crate::logical::SelectLockType, u64)>,
 }
 
 /// Go `PointGetPlan.PartitionNames` and its execution-time `PartitionIdx`.
@@ -2756,6 +2760,11 @@ pub struct PhysicalBatchPointGet {
     pub keep_order: bool,
     /// Go `Desc`.
     pub desc: bool,
+    /// Go `BatchPointGetPlan.Lock`: a locking SELECT inside a transaction
+    /// locks the rows it reads; rendered as the `lock` operator detail.
+    pub lock: bool,
+    /// See [`PhysicalPointGet::select_lock`].
+    pub select_lock: Option<(crate::logical::SelectLockType, u64)>,
 }
 
 /// Go `physicalop.PhysicalIndexMergeReader`. Each partial access path owns a
@@ -4774,8 +4783,8 @@ impl PhysicalPlan {
                 access_cols: op.access_cols.clone(),
                 ranges: op.ranges.clone(),
                 range_rebuild: op.range_rebuild.clone(),
-                lock: op.lock,
-            }),
+                lock: op.lock, select_lock: None,
+}),
             Self::BatchPointGet(op) => Self::BatchPointGet(PhysicalBatchPointGet {
                 base: base_of(&op.base),
                 table_id: op.table_id,
@@ -4787,8 +4796,8 @@ impl PhysicalPlan {
                 unsigned_handle: op.unsigned_handle,
                 range_rebuild: op.range_rebuild.clone(),
                 keep_order: op.keep_order,
-                desc: op.desc,
-            }),
+                desc: op.desc, select_lock: None, lock: false,
+}),
             Self::IndexMergeReader(op) => Self::IndexMergeReader(PhysicalIndexMergeReader {
                 base: base_of(&op.base),
                 partial_plans_raw: op.partial_plans_raw.clone(),

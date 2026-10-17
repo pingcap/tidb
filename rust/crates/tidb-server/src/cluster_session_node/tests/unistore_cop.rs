@@ -16583,3 +16583,68 @@ fn plan_ids_and_dirty_partition_shapes_match_go() {
     );
     session.control_transaction("ROLLBACK").unwrap();
 }
+
+/// Inside a transaction a locking SELECT over a point key plans as the point
+/// plan itself carrying `lock` (Go `PointGetPlan.Lock` /
+/// `BatchPointGetPlan.Lock`), not as a `SelectLock` above it; a partitioned
+/// table's integer-handle pin takes the same fast plan, outside a transaction
+/// too. Expected rows: Go 1.27 on this branch (`TestZZ` probes `US9`, `US19`).
+#[test]
+fn locking_point_reads_in_a_transaction_plan_as_point_get_with_lock() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1121)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE tlk (a INT PRIMARY KEY, b INT, c INT, UNIQUE KEY(b), KEY(c))",
+        "CREATE TABLE tlp (a INT PRIMARY KEY, b INT) PARTITION BY HASH(a) PARTITIONS 3",
+        "INSERT INTO tlk VALUES (1,1,1),(2,2,2),(3,3,3)",
+        "INSERT INTO tlp VALUES (1,1),(2,2),(3,3)",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
+            .into_iter()
+            .map(|row| format!("{} {} {} {} {}", row[0], row[1], row[2], row[4], row[5]))
+            .collect()
+    };
+    // Autocommit: no lock, and the partitioned pin is already a fast plan.
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tlp WHERE a = 1 FOR UPDATE"),
+        ["Point_Get_1 1.00 0.00 table:tlp, partition:p1 handle:1"]
+    );
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tlk WHERE a = 1 FOR UPDATE"),
+        ["Point_Get_1 1.00 0.00 table:tlk handle:1, lock"]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tlk WHERE b = 1 FOR UPDATE"),
+        ["Point_Get_1 1.00 0.00 table:tlk, index:b(b) lock"]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tlk WHERE a IN (1, 2) FOR UPDATE"),
+        ["Batch_Point_Get_1 2.00 0.00 table:tlk handle:[1 2], keep order:false, desc:false, lock"]
+    );
+    assert_eq!(
+        plan(&mut session, "SELECT * FROM tlp WHERE a = 1 FOR UPDATE"),
+        ["Point_Get_1 1.00 0.00 table:tlp, partition:p1 handle:1, lock"]
+    );
+    // The lock is taken: a second session cannot lock the row without waiting.
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT b FROM tlk WHERE a = 1 FOR UPDATE")),
+        [["1"]]
+    );
+    let mut contender = stack.factory.open_session(session_context(1122)).unwrap();
+    contender.execute_write("USE test").unwrap();
+    contender.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert!(
+        matches!(
+            contender.execute("SELECT b FROM tlk WHERE a = 1 FOR UPDATE NOWAIT"),
+            Err(error) if error.code == 3572
+        ),
+        "the point lock must be held"
+    );
+    contender.control_transaction("ROLLBACK").unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+}

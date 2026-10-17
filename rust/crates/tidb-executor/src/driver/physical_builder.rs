@@ -4187,6 +4187,208 @@ fn partition_ids_named(table: &crate::kv_table::KvTable, names: &[String]) -> Op
     )
 }
 
+/// Go `PhysicalLock`'s executor (`SelectLockExec`) around an already built
+/// `child`: a locking read inside a transaction locks every row it returns.
+/// The lock is a no-op outside one, and a shared lock stays one unless the
+/// session promotes it.
+fn select_lock_executor(
+    lock: &tidb_planner::physical::PhysicalLock,
+    child: Box<dyn Executor>,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let Some(selected) = ctx.selected_lock_keys() else {
+        return Ok(child);
+    };
+    use tidb_planner::logical::SelectLockType;
+    use tidb_txnkv::transaction::LockWaitTime;
+    if matches!(
+        lock.lock_type,
+        SelectLockType::ForShare | SelectLockType::ForShareNoWait
+    ) && !selected.shared_lock_promotion()
+    {
+        return Ok(child);
+    }
+    let wait = match lock.lock_type {
+        SelectLockType::ForUpdateNoWait | SelectLockType::ForShareNoWait => {
+            LockWaitTime::NoWait
+        }
+        SelectLockType::ForUpdateWaitN => {
+            LockWaitTime::Timeout(std::time::Duration::from_secs(lock.wait_sec))
+        }
+        _ => selected.default_wait(),
+    };
+    let types = child.ret_field_types().to_vec();
+    let mut expressions: Vec<SelectedRecordKey> = Vec::new();
+    for (table_id, columns) in &lock.tbl_id_to_handle_cols {
+        let table = catalog.kv_table_by_id(*table_id).ok_or_else(|| {
+            DriverError::unsupported("SelectLock table ID is absent from the catalog")
+        })?;
+        if table.is_temporary() {
+            continue;
+        }
+        let width = table.common_handle_offsets().len().max(1);
+        if columns.len() % width != 0 {
+            return Err(DriverError::unsupported(
+                "SelectLock has an incomplete handle",
+            ));
+        }
+        let partition_offset = lock
+            .tbl_id_to_phys_tbl_id_col
+            .get(table_id)
+            .map(|column| {
+                usize::try_from(child.schema().column_index(column)).map_err(|_| {
+                    DriverError::unsupported("SelectLock lost its physical table ID")
+                })
+            })
+            .transpose()?;
+        if table.partition().is_some() && partition_offset.is_none() {
+            return Err(DriverError::unsupported(
+                "SelectLock requires its physical partition ID",
+            ));
+        }
+        for handle_columns in columns.chunks(width) {
+            let offsets = handle_columns
+                .iter()
+                .map(|column| {
+                    usize::try_from(child.schema().column_index(column)).map_err(|_| {
+                        DriverError::unsupported("SelectLock lost its record handle")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let table = table.clone();
+            let types = types.clone();
+            let context = ctx.clone();
+            expressions.push(Box::new(move |row| {
+                use tidb_datatype::Datum;
+                let values = offsets
+                    .iter()
+                    .map(|offset| row.get_datum(*offset, &types[*offset]))
+                    .collect::<Vec<_>>();
+                if values.iter().all(Datum::is_null) {
+                    return Ok(None);
+                }
+                let handle = if table.common_handle_offsets().is_empty() {
+                    match values[0] {
+                        Datum::Int(id) => TableHandle::Int(id),
+                        Datum::UInt(id) => TableHandle::Int(id as i64),
+                        _ => {
+                            return Err(crate::ExecError::internal(
+                                "invalid integer lock handle",
+                            ));
+                        }
+                    }
+                } else {
+                    table
+                        .common_handle_from_values(&values, &context.session_zone())
+                        .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?
+                };
+                let physical_id =
+                    partition_offset.map_or(table.table_id, |offset| row.get_int64(offset));
+                if physical_id == 0 {
+                    return Ok(None);
+                }
+                Ok(Some(tidb_codec::table_key::encode_row_key_with_handle(
+                    physical_id,
+                    &handle.record_handle(),
+                )))
+            }));
+        }
+    }
+    Ok(
+        Box::new(SelectLockExec::new(child, expressions, selected).with_wait(wait))
+            as Box<dyn Executor>,
+    )
+
+}
+
+/// Go's `PointGetExecutor` / `BatchPointGetExec` with `lock` set: a locking
+/// SELECT inside a transaction locks the row each point read returns. The
+/// read is built over a schema that also carries the record handle (and the
+/// partition id of a partitioned table), `SelectLockExec` takes the locks
+/// from those columns, and a projection restores the plan's own columns.
+fn with_select_lock(
+    plan: &PhysicalPlan,
+    select_lock: Option<(tidb_planner::logical::SelectLockType, u64)>,
+    table_id: i64,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    build: impl FnOnce(&PhysicalPlan) -> Result<Box<dyn Executor>, DriverError>,
+) -> Result<Box<dyn Executor>, DriverError> {
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    let Some((lock_type, wait_sec)) = select_lock else {
+        return build(plan);
+    };
+    if ctx.selected_lock_keys().is_none() {
+        return build(plan);
+    }
+    let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
+        DriverError::unsupported("a locking point read's table ID is absent from the catalog")
+    })?;
+    let schema = plan_schema(plan)?;
+    let mut widened = schema.clone();
+    let mut next_unique_id = i64::MAX;
+    let mut synthetic = |id: i64, field_type: FieldType| {
+        let mut column = Column::new(next_unique_id, field_type);
+        next_unique_id -= 1;
+        column.id = id;
+        column
+    };
+    let mut handle_columns = Vec::new();
+    if table.common_handle_offsets().is_empty() {
+        handle_columns.push(synthetic(
+            tidb_model::column::EXTRA_HANDLE_ID,
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+    } else {
+        for offset in table.common_handle_offsets() {
+            let stored = table.columns().get(*offset).ok_or_else(|| {
+                DriverError::unsupported("a common handle column is outside its table")
+            })?;
+            handle_columns.push(synthetic(stored.id, stored.field_type.clone()));
+        }
+    }
+    let phys_column = table.partition().is_some().then(|| {
+        synthetic(
+            tidb_model::column::EXTRA_PHYS_TBL_ID,
+            FieldType::new(FieldTypeCode::LongLong),
+        )
+    });
+    widened.columns.extend(handle_columns.iter().cloned());
+    widened.columns.extend(phys_column.iter().cloned());
+    let mut widened_plan = plan.clone();
+    widened_plan
+        .base_mut()
+        .base
+        .set_schema(Some(widened.clone()));
+    let child = build(&widened_plan)?;
+    let lock = tidb_planner::physical::PhysicalLock {
+        base: tidb_planner::physical::BasePhysicalPlan::default(),
+        lock_type,
+        wait_sec,
+        tbl_id_to_handle_cols: std::collections::BTreeMap::from([(table_id, handle_columns)]),
+        tbl_id_to_phys_tbl_id_col: phys_column
+            .into_iter()
+            .map(|column| (table_id, column))
+            .collect(),
+    };
+    let locked = select_lock_executor(&lock, child, catalog, ctx)?;
+    let expressions = resolve_expressions(
+        &schema
+            .columns
+            .iter()
+            .cloned()
+            .map(Expression::Column)
+            .collect::<Vec<_>>(),
+        locked.schema(),
+    )?;
+    // Id 0 keeps the wrapper out of the runtime statistics: they belong to
+    // the point read the plan names.
+    let (init_cap, max_chunk_size) = ctx.executor_chunk_sizes();
+    let restored = ExecutorMeta::new(schema, 0, init_cap, max_chunk_size);
+    Ok(Box::new(ProjectionExec::new(restored, expressions, locked, ctx.clone())))
+}
+
 fn build_point_get(
     plan: &PhysicalPlan,
     point: &PhysicalPointGet,
@@ -5263,113 +5465,20 @@ fn build_with_state(
             ctx.mark_physical_table_reader();
             Ok(executor)
         }
-        PhysicalPlan::PointGet(point) => build_point_get(plan, point, catalog, ctx),
-        PhysicalPlan::BatchPointGet(batch) => build_batch_point_get(plan, batch, catalog, ctx),
+        PhysicalPlan::PointGet(point) => {
+            with_select_lock(plan, point.select_lock, point.table_id, catalog, ctx, |plan| {
+                build_point_get(plan, point, catalog, ctx)
+            })
+        }
+        PhysicalPlan::BatchPointGet(batch) => {
+            with_select_lock(plan, batch.select_lock, batch.table_id, catalog, ctx, |plan| {
+                build_batch_point_get(plan, batch, catalog, ctx)
+            })
+        }
         PhysicalPlan::Lock(lock) => {
             state.has_lock = true;
             let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
-            let Some(selected) = ctx.selected_lock_keys() else {
-                return Ok(child);
-            };
-            use tidb_planner::logical::SelectLockType;
-            use tidb_txnkv::transaction::LockWaitTime;
-            if matches!(
-                lock.lock_type,
-                SelectLockType::ForShare | SelectLockType::ForShareNoWait
-            ) && !selected.shared_lock_promotion()
-            {
-                return Ok(child);
-            }
-            let wait = match lock.lock_type {
-                SelectLockType::ForUpdateNoWait | SelectLockType::ForShareNoWait => {
-                    LockWaitTime::NoWait
-                }
-                SelectLockType::ForUpdateWaitN => {
-                    LockWaitTime::Timeout(std::time::Duration::from_secs(lock.wait_sec))
-                }
-                _ => selected.default_wait(),
-            };
-            let types = child.ret_field_types().to_vec();
-            let mut expressions: Vec<SelectedRecordKey> = Vec::new();
-            for (table_id, columns) in &lock.tbl_id_to_handle_cols {
-                let table = catalog.kv_table_by_id(*table_id).ok_or_else(|| {
-                    DriverError::unsupported("SelectLock table ID is absent from the catalog")
-                })?;
-                if table.is_temporary() {
-                    continue;
-                }
-                let width = table.common_handle_offsets().len().max(1);
-                if columns.len() % width != 0 {
-                    return Err(DriverError::unsupported(
-                        "SelectLock has an incomplete handle",
-                    ));
-                }
-                let partition_offset = lock
-                    .tbl_id_to_phys_tbl_id_col
-                    .get(table_id)
-                    .map(|column| {
-                        usize::try_from(child.schema().column_index(column)).map_err(|_| {
-                            DriverError::unsupported("SelectLock lost its physical table ID")
-                        })
-                    })
-                    .transpose()?;
-                if table.partition().is_some() && partition_offset.is_none() {
-                    return Err(DriverError::unsupported(
-                        "SelectLock requires its physical partition ID",
-                    ));
-                }
-                for handle_columns in columns.chunks(width) {
-                    let offsets = handle_columns
-                        .iter()
-                        .map(|column| {
-                            usize::try_from(child.schema().column_index(column)).map_err(|_| {
-                                DriverError::unsupported("SelectLock lost its record handle")
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let table = table.clone();
-                    let types = types.clone();
-                    let context = ctx.clone();
-                    expressions.push(Box::new(move |row| {
-                        use tidb_datatype::Datum;
-                        let values = offsets
-                            .iter()
-                            .map(|offset| row.get_datum(*offset, &types[*offset]))
-                            .collect::<Vec<_>>();
-                        if values.iter().all(Datum::is_null) {
-                            return Ok(None);
-                        }
-                        let handle = if table.common_handle_offsets().is_empty() {
-                            match values[0] {
-                                Datum::Int(id) => TableHandle::Int(id),
-                                Datum::UInt(id) => TableHandle::Int(id as i64),
-                                _ => {
-                                    return Err(crate::ExecError::internal(
-                                        "invalid integer lock handle",
-                                    ));
-                                }
-                            }
-                        } else {
-                            table
-                                .common_handle_from_values(&values, &context.session_zone())
-                                .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?
-                        };
-                        let physical_id =
-                            partition_offset.map_or(table.table_id, |offset| row.get_int64(offset));
-                        if physical_id == 0 {
-                            return Ok(None);
-                        }
-                        Ok(Some(tidb_codec::table_key::encode_row_key_with_handle(
-                            physical_id,
-                            &handle.record_handle(),
-                        )))
-                    }));
-                }
-            }
-            Ok(
-                Box::new(SelectLockExec::new(child, expressions, selected).with_wait(wait))
-                    as Box<dyn Executor>,
-            )
+            select_lock_executor(lock, child, catalog, ctx)
         }
         PhysicalPlan::Projection(projection) => {
             let mut child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
@@ -6797,8 +6906,8 @@ mod tests {
                 low_exclude: false,
                 high_exclude: false,
             }],
-            range_rebuild: None,
-        });
+            range_rebuild: None, select_lock: None,
+});
 
         let ctx = crate::StmtContext::for_query();
         let mut executor = build(&plan, &catalog, &ctx).expect("build cached point get");
@@ -6863,8 +6972,8 @@ mod tests {
                 low_exclude: false,
                 high_exclude: false,
             }],
-            range_rebuild: None,
-        });
+            range_rebuild: None, select_lock: None,
+});
 
         let ctx = crate::StmtContext::for_query();
         let mut executor = build(&plan, &catalog, &ctx).expect("build unique point get");
@@ -6914,8 +7023,8 @@ mod tests {
             partition_names: Vec::new(),
             range_rebuild: None,
             keep_order: true,
-            desc: false,
-        });
+            desc: false, select_lock: None, lock: false,
+});
 
         let ctx = crate::StmtContext::for_query();
         let mut executor = build(&plan, &catalog, &ctx).expect("build cached batch point get");
@@ -6982,8 +7091,8 @@ mod tests {
             partition_names: Vec::new(),
             range_rebuild: None,
             keep_order: true,
-            desc: false,
-        });
+            desc: false, select_lock: None, lock: false,
+});
 
         let ctx = crate::StmtContext::for_query();
         let mut executor = build(&plan, &catalog, &ctx).expect("build unique batch point get");
