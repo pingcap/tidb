@@ -810,5 +810,7 @@ fn breaks_intersect_run(term: &SetOprTerm) -> bool {
 
 /// Go `collate.ErrIllegalMixCollation.GenWithStackByArgs("UNION")` (MySQL 1271).
 fn illegal_mix_collation() -> PlanError {
-    PlanError::internal("Illegal mix of collations for operation 'UNION'")
+    PlanError::eval(tidb_expr::EvalError::IllegalMixCollationGeneric(
+        "Illegal mix of collations for operation 'UNION'".to_owned(),
+    ))
 }

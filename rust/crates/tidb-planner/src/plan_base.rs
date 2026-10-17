@@ -426,6 +426,9 @@ pub enum PlanErrorKind {
     CteRecursiveForbidsAggregation(String),
     /// Go `plannererrors.ErrInvalidRequiresSingleReference` (3577).
     CteRecursiveForbiddenJoinOrder(String),
+    /// Go `plannererrors.ErrCTERecursiveForbiddenJoinOrder` (3576): the
+    /// recursive table sits in the right argument of a LEFT JOIN.
+    CteRecursiveForbidsLeftJoin(String),
     /// Go `exeerrors.ErrSubqueryMoreThan1Row` (1242), raised when a
     /// separately evaluated scalar child produced more than one row. The
     /// executor's `MaxOneRowExec` detects it; this variant carries the typed
@@ -828,6 +831,18 @@ impl PlanError {
                 "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must be referenced only once, and not in any subquery"
             ),
             kind: PlanErrorKind::CteRecursiveForbiddenJoinOrder(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrCTERecursiveForbiddenJoinOrder` (3576).
+    #[must_use]
+    pub fn cte_recursive_forbids_left_join(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            message: format!(
+                "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints"
+            ),
+            kind: PlanErrorKind::CteRecursiveForbidsLeftJoin(name),
         }
     }
 

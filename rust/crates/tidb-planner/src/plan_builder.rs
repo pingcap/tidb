@@ -5027,10 +5027,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if (has_window_func_field || !select.windows.is_empty())
             && self.building_recursive_part_for_cte
         {
-            return Err(PlanError::internal(format!(
-                "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
-                self.gen_cte_table_name_for_error()
-            )));
+            return Err(PlanError::cte_recursive_forbids_aggregation(
+                self.gen_cte_table_name_for_error(),
+            ));
         }
 
         // `:4342` FROM.

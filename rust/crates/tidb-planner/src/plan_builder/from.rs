@@ -1053,12 +1053,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // `:829` "The recursive part in CTE must not be on the right side of a
         // LEFT JOIN."
-        if matches!(right_plan, LogicalPlan::CTETable(_)) && join_node.tp == JoinType::Left {
-            return Err(PlanError::internal(
-                "ERROR 3577: In recursive query block of Recursive Common Table Expression, \
-                 the recursive table must neither be in the right argument of a LEFT JOIN, \
-                 nor be forced to be non-first with join order hints",
-            ));
+        if let LogicalPlan::CTETable(cte) = &right_plan {
+            if join_node.tp == JoinType::Left {
+                return Err(PlanError::cte_recursive_forbids_left_join(cte.name.clone()));
+            }
         }
 
         self.handle_helper.pop_two_and_merge().ok_or_else(|| {

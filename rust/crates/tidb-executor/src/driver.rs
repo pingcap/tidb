@@ -461,6 +461,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveForbiddenJoinOrder(name) => {
             DriverError::CteRecursiveForbiddenJoinOrder(name.clone())
         }
+        tidb_planner::plan_base::PlanErrorKind::CteRecursiveForbidsLeftJoin(_) => {
+            DriverError::DdlCoded {
+                errno: 3576,
+                message: error.message().to_owned(),
+            }
+        }
         tidb_planner::plan_base::PlanErrorKind::SubqueryReturnsMoreThanOneRow => {
             DriverError::SubqueryReturnsMoreThanOneRow
         }

@@ -863,7 +863,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 continue;
             }
             let mut expr = fields[position].expr.clone();
-            self.resolve_window_expr_columns(&mut expr, fields, names, false)?;
+            self.resolve_window_expr_columns(&mut expr, fields, names, None, false)?;
             fields[position].expr = expr;
             position += 1;
         }
@@ -876,10 +876,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // projected stays bound through this hidden duplicate, and the
             // window-stage projection skips emitting it.
             for expr in &mut def.spec.partition_by {
-                self.resolve_window_expr_columns(expr, fields, names, true)?;
+                self.resolve_window_expr_columns(
+                    expr,
+                    fields,
+                    names,
+                    Some("window partition by"),
+                    true,
+                )?;
             }
             for item in &mut def.spec.order_by {
-                self.resolve_window_expr_columns(&mut item.expr, fields, names, true)?;
+                self.resolve_window_expr_columns(
+                    &mut item.expr,
+                    fields,
+                    names,
+                    Some("window order by"),
+                    true,
+                )?;
             }
         }
         Ok(())
@@ -891,6 +903,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         expr: &mut Expr,
         fields: &mut Vec<ProjectionField>,
         names: &[FieldName],
+        // The clause an unknown column is reported in (`window partition by` /
+        // `window order by`), `None` for a window function's own arguments.
+        spec_clause: Option<&'static str>,
+        // Whether this walks a `WINDOW name AS (...)` definition's columns.
         spec_walk: bool,
     ) -> Result<(), PlanError> {
         let mut error = None;
@@ -901,6 +917,41 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // A marker some earlier pass substituted is already bound.
             if PlanMarker::from_expr(node).is_some() {
                 return true;
+            }
+            // An inline `OVER (...)` names its own clauses: Go's resolver
+            // walks the arguments, then the partition and order items, and an
+            // unknown column reports the clause it sits in. The parts handled
+            // here are markers afterwards, so the walk below skips them.
+            if let Expr::Window {
+                args,
+                over: WindowOver::Def(def),
+                ..
+            } = node
+            {
+                let parts = args
+                    .iter_mut()
+                    .map(|arg| (arg, None))
+                    .chain(
+                        def.spec
+                            .partition_by
+                            .iter_mut()
+                            .map(|expr| (expr, Some("window partition by"))),
+                    )
+                    .chain(
+                        def.spec
+                            .order_by
+                            .iter_mut()
+                            .map(|item| (&mut item.expr, Some("window order by"))),
+                    );
+                for (part, clause) in parts {
+                    if let Err(failure) =
+                        self.resolve_window_expr_columns(part, fields, names, clause, false)
+                    {
+                        error = Some(failure);
+                        return true;
+                    }
+                }
+                return false;
             }
             if is_aggregate_call(node) {
                 // Go's windowAggMap points to an auxiliary select field.
@@ -965,10 +1016,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             {
                 return true;
             }
-            error = Some(PlanError::internal(format!(
-                "Unknown column '{}' in 'field list'",
-                path.join(".")
-            )));
+            error = Some(PlanError::unknown_column_in_clause(
+                path.join("."),
+                spec_clause.unwrap_or("field list"),
+            ));
             true
         });
         error.map_or(Ok(()), Err)
