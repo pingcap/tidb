@@ -394,6 +394,7 @@ impl MppTask {
             store_type: StoreType::TiFlash,
             is_common_handle: false,
             read_req_type: ReadReqType::Mpp,
+            plan_part_info: None,
         });
 
         let mut root = RootTask::default();
@@ -471,9 +472,11 @@ pub struct CopTask {
     /// Go `PartialOrderMatchResult`, set when a prefix index supplies the
     /// partial order requested by a TopN child property.
     pub partial_order_match_result: Option<crate::physical_property::PartialOrderMatchResult>,
+    /// Go `PhysPlanPartInfo`: shared with the table scan below and carried
+    /// onto the reader this task becomes.
+    pub phys_plan_part_info: Option<std::sync::Arc<crate::physical::PhysPlanPartInfo>>,
     // boundary: `ExtraHandleCol`,
     // `TblColHists`, `TblCols`,
-    // `PhysPlanPartInfo`,
     /// Go `Warnings`.
     pub warnings: SimpleWarnings,
 }
@@ -786,6 +789,7 @@ impl CopTask {
             expect_cnt: self.expect_cnt,
             paging: false,
             pushed_limit: None,
+            plan_part_info: self.phys_plan_part_info.clone(),
         });
         let reader = if self.need_extra_proj && !agg_pushed_down {
             Self::project_origin_schema(reader, self.origin_schema.take(), allocator)?
@@ -900,6 +904,7 @@ impl CopTask {
                         Vec::new()
                     },
                     keep_order: self.keep_order,
+                    plan_part_info: self.phys_plan_part_info.clone(),
                 });
             let reader = if self.need_extra_proj {
                 Self::project_origin_schema(reader, self.origin_schema.take(), allocator)?
@@ -979,6 +984,7 @@ impl CopTask {
                 base,
                 index_plan: Some(index_plan),
                 output_columns,
+                plan_part_info: self.phys_plan_part_info.clone(),
             });
             let mut root = RootTask::default();
             root.set_plan(reader);
@@ -1064,6 +1070,7 @@ impl CopTask {
             store_type,
             is_common_handle,
             read_req_type,
+            plan_part_info: self.phys_plan_part_info.clone(),
         });
         let reader = if self.need_extra_proj && !agg_pushed_down {
             let mut projection =

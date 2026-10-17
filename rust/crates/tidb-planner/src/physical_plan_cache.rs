@@ -49,33 +49,11 @@ pub struct PlanCacheabilityContext {
     pub max_plan_size: u64,
 }
 
-/// The physical tree footprint used by cache admission and session accounting.
+/// The physical tree footprint used by cache admission and session accounting:
+/// Go's `PhysicalPlan.MemoryUsage()`, which already includes the push-down
+/// plans a reader owns and the select plan under a DML root.
 pub fn cached_plan_memory_usage(plan: &PhysicalPlan) -> u64 {
-    let mut total = u64::try_from(plan.memory_usage()).unwrap_or(u64::MAX);
-    let hidden = match plan {
-        PhysicalPlan::CTE(cte) => std::iter::once(cte.seed_plan.as_ref())
-            .chain(cte.recursive_plan.as_deref())
-            .collect(),
-        PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().into_iter().collect(),
-        PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref().into_iter().collect(),
-        PhysicalPlan::IndexLookUpReader(reader) => reader
-            .index_plan
-            .as_deref()
-            .into_iter()
-            .chain(reader.table_plan.as_deref())
-            .collect(),
-        PhysicalPlan::IndexMergeReader(reader) => reader
-            .partial_plans_raw
-            .iter()
-            .chain(reader.table_plan.as_deref())
-            .collect(),
-        PhysicalPlan::Dml(dml) => dml.select_plan.as_deref().into_iter().collect(),
-        _ => Vec::new(),
-    };
-    for child in hidden {
-        total = total.saturating_add(cached_plan_memory_usage(child));
-    }
-    total
+    u64::try_from(plan.memory_usage()).unwrap_or(u64::MAX)
 }
 
 fn table_scan_is_full(scan: &PhysicalTableScan) -> bool {

@@ -39,6 +39,9 @@
 //! * `MemoryUsage` returns a source-shaped estimate over the Rust layout; see
 //!   [`crate::plan_base`].
 
+mod memory;
+pub mod part_info;
+pub use part_info::PhysPlanPartInfo;
 mod resolve_indices;
 pub mod shuffle;
 pub mod shuffle_optimize;
@@ -468,7 +471,7 @@ fn base_physical_join_memory_usage(
     let conditions = condition_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
     let keys = key_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
     let mut sum = GO_EMPTY_BASE_PHYSICAL_JOIN_SIZE
-        + base.base.memory_usage()
+        + base.go_schema_producer_memory_usage()
         + is_null_eq.len() as i64 * SIZE_OF_BOOL
         + conditions * SIZE_OF_INTERFACE
         + keys * SIZE_OF_POINTER
@@ -880,11 +883,7 @@ impl PhysicalSort {
     /// items and the partial-sort flag.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        self.base.base.memory_usage()
-            + std::mem::size_of::<Vec<tidb_expr::aggregation::ByItems>>() as i64
-            + (self.by_items.capacity() * std::mem::size_of::<tidb_expr::aggregation::ByItems>())
-                as i64
-            + std::mem::size_of::<bool>() as i64
+        memory::sort_memory_usage(self)
     }
 }
 
@@ -1160,6 +1159,17 @@ pub struct PhysicalTableScan {
     /// The resolved table metadata behind Go's `Table` pointer. The Rust
     /// schema boundary retains only the fields needed by this scan.
     pub resolved_descriptor: Option<crate::access_path::ResolvedTableDescriptor>,
+    /// Go `PlanPartInfo` (`copTask.PhysPlanPartInfo`, shared with the reader
+    /// above): kept so the plan cache charges what Go charges.
+    pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
+    /// Go `FilterCondition`: the conditions evaluated at the scan, which Go
+    /// also hands to the pushed-down Selection.
+    pub filter_condition: Vec<Expression>,
+    /// Go `DBName`.
+    pub db_name: String,
+    /// Go `Prop`: the property the scan was planned under (nil for a lookup's
+    /// row-id side).
+    pub prop: Option<Box<PhysicalProperty>>,
 }
 
 /// Go `physicalop.PhysicalTableSample`: a root leaf that returns the first
@@ -1181,8 +1191,7 @@ impl PhysicalTableSample {
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
         self.base
-            .base
-            .memory_usage()
+            .go_schema_producer_memory_usage()
             .saturating_add(self.table_sample_info.memory_usage())
             .saturating_add(std::mem::size_of::<i64>() as i64)
             .saturating_add(std::mem::size_of::<bool>() as i64)
@@ -2181,6 +2190,8 @@ pub struct PhysicalTableReader {
     pub is_common_handle: bool,
     /// Go `ReadReqType`.
     pub read_req_type: ReadReqType,
+    /// Go `PlanPartInfo`.
+    pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
 }
 
 impl PhysicalTableReader {
@@ -2203,12 +2214,14 @@ impl PhysicalTableReader {
             .set_stats(table_scan.base.base.stats_info().cloned());
         base.base.set_schema(table_scan.base.base.schema().cloned());
         let store_type = table_scan.store_type;
+        let plan_part_info = table_scan.plan_part_info.clone();
         Ok(Self {
             base,
             table_plan: Some(Box::new(PhysicalPlan::TableScan(table_scan))),
             store_type,
             is_common_handle,
             read_req_type: ReadReqType::Cop,
+            plan_part_info,
         })
     }
 
@@ -2354,6 +2367,12 @@ pub struct PhysicalIndexScan {
     pub covering_ranges: Vec<crate::cardinality::index_range_policy::IndexRangeShape>,
     /// Schema-validated fields consumed by TiKV protobuf lowering.
     pub tikv_pushdown: Option<crate::tikv_scan_spec::ValidatedIndexPushdown>,
+    /// Go `DBName`.
+    pub db_name: String,
+    /// Go `Prop`.
+    pub prop: Option<Box<PhysicalProperty>>,
+    /// Go `PkIsHandleCol`: the integer primary key that is the row handle.
+    pub pk_is_handle_col: Option<Column>,
 }
 
 impl PhysicalIndexScan {
@@ -2474,6 +2493,8 @@ pub struct PhysicalIndexReader {
     pub base: BasePhysicalPlan,
     /// Go `IndexPlan`.
     pub index_plan: Option<Box<PhysicalPlan>>,
+    /// Go `PlanPartInfo`.
+    pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
 }
 
 /// Go `physicalop.PhysicalIndexLookUpReader`
@@ -2512,6 +2533,8 @@ pub struct PhysicalIndexLookUpReader {
     /// Go `PushedLimit` (`physicalop.PushedDownLimit`), sunk by
     /// `sinkIntoIndexLookUp` after conversion.
     pub pushed_limit: Option<PushedDownLimit>,
+    /// Go `PlanPartInfo`.
+    pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
 }
 
 /// Go `physicalop.PhysicalLocalIndexLookUp`: the TiKV-side junction between
@@ -2661,6 +2684,8 @@ pub struct PhysicalIndexMergeReader {
     pub by_items: Vec<tidb_expr::aggregation::ByItems>,
     /// Go `KeepOrder`.
     pub keep_order: bool,
+    /// Go `PlanPartInfo`.
+    pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
 }
 
 /// The cached physical root of an INSERT/UPDATE/DELETE whose source is a
@@ -4298,60 +4323,16 @@ impl PhysicalPlan {
         self.clone()
     }
 
-    /// Go `MemoryUsage()` (`<16th>`): the node's own bytes plus the children's
-    /// and the required properties'. Walked with an explicit stack.
+    /// Go `MemoryUsage()` (`<16th>`): the node's own bytes plus its children's
+    /// and, for a reader, the push-down plans it owns. The per-operator terms
+    /// are in [`memory`](self::memory); this walks the children with an
+    /// explicit stack.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
         let mut total = 0;
         let mut stack = vec![self];
         while let Some(node) = stack.pop() {
-            total += match node {
-                Self::Dml(root) => {
-                    root.base.base.memory_usage()
-                        + (root.fk_triggers.capacity() * std::mem::size_of::<FkTriggerNode>())
-                            as i64
-                        + root
-                            .fk_triggers
-                            .iter()
-                            .map(|node| {
-                                (node.access.capacity()
-                                    + node.info.capacity()
-                                    + node.child_database.capacity()
-                                    + node.child_table.capacity()
-                                    + node.parent_database.capacity()
-                                    + node.parent_table.capacity()
-                                    + node.constraint.capacity()
-                                    + (node.child_offsets.capacity()
-                                        + node.parent_offsets.capacity())
-                                        * std::mem::size_of::<usize>())
-                                    as i64
-                            })
-                            .sum::<i64>()
-                }
-                Self::ShuffleReceiver(receiver) => {
-                    receiver.base.base.memory_usage()
-                        + std::mem::size_of::<Box<Self>>() as i64
-                        + receiver.data_source.memory_usage()
-                }
-                Self::ExchangeReceiver(receiver) => {
-                    receiver.base.base.memory_usage()
-                        + std::mem::size_of::<Vec<MppTaskMeta>>() as i64
-                        + (receiver.tasks.capacity() * std::mem::size_of::<MppTaskMeta>()) as i64
-                        + receiver
-                            .tasks
-                            .iter()
-                            .map(|task| task.address.capacity() as i64)
-                            .sum::<i64>()
-                }
-                Self::Shuffle(shuffle) => shuffle.memory_usage(),
-                Self::Sort(sort) => sort.memory_usage(),
-                Self::TableSample(sample) => sample.memory_usage(),
-                Self::HashJoin(join) => join.memory_usage(),
-                Self::MergeJoin(join) => join.memory_usage(),
-                Self::IndexJoin(join) => join.memory_usage(),
-                Self::Apply(apply) => apply.memory_usage(),
-                _ => node.base().base.memory_usage(),
-            };
+            total += memory::go_node_memory_usage(node);
             for child in node.children() {
                 stack.push(child);
             }
@@ -4526,6 +4507,10 @@ impl PhysicalPlan {
                 table_scan_penalty: op.table_scan_penalty,
                 tikv_pushdown: op.tikv_pushdown.clone(),
                 resolved_descriptor: op.resolved_descriptor,
+                plan_part_info: op.plan_part_info.clone(),
+                filter_condition: op.filter_condition.clone(),
+                db_name: op.db_name.clone(),
+                prop: op.prop.clone(),
             }),
             Self::TableSample(op) => Self::TableSample(PhysicalTableSample {
                 base: base_of(&op.base),
@@ -4625,6 +4610,7 @@ impl PhysicalPlan {
                 store_type: op.store_type,
                 is_common_handle: op.is_common_handle,
                 read_req_type: op.read_req_type,
+                plan_part_info: op.plan_part_info.clone(),
             }),
             Self::ExchangeSender(op) => Self::ExchangeSender(PhysicalExchangeSender {
                 base: base_of(&op.base),
@@ -4650,11 +4636,15 @@ impl PhysicalPlan {
                 range_rebuild: op.range_rebuild.clone(),
                 covering_ranges: op.covering_ranges.clone(),
                 tikv_pushdown: op.tikv_pushdown.clone(),
+                db_name: op.db_name.clone(),
+                prop: op.prop.clone(),
+                pk_is_handle_col: op.pk_is_handle_col.clone(),
             }),
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 output_columns: op.output_columns.clone(),
                 base: base_of(&op.base),
                 index_plan: op.index_plan.clone(),
+                plan_part_info: op.plan_part_info.clone(),
             }),
             Self::IndexLookUpReader(op) => Self::IndexLookUpReader(PhysicalIndexLookUpReader {
                 base: base_of(&op.base),
@@ -4669,6 +4659,7 @@ impl PhysicalPlan {
                 expect_cnt: op.expect_cnt,
                 paging: op.paging,
                 pushed_limit: op.pushed_limit,
+                plan_part_info: op.plan_part_info.clone(),
             }),
             Self::LocalIndexLookUp(op) => Self::LocalIndexLookUp(PhysicalLocalIndexLookUp {
                 base: base_of(&op.base),
@@ -4706,6 +4697,7 @@ impl PhysicalPlan {
                 pushed_limit: op.pushed_limit,
                 by_items: op.by_items.clone(),
                 keep_order: op.keep_order,
+                plan_part_info: op.plan_part_info.clone(),
             }),
             Self::Dml(op) => Self::Dml(PhysicalDmlRoot {
                 base: base_of(&op.base),

@@ -2780,6 +2780,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             choose_index_join_common_handle_path(ds, &ordinary_paths, runtime, ctx)
         }
     });
+    // Go `buildPhysPlanPartInfo(ds)`: one value shared by the cop task, its
+    // table scan and the reader above (Go shares the pointer).
+    let phys_plan_part_info = crate::physical::PhysPlanPartInfo::from_data_source(ds);
     'paths: for (path_position, path) in ordinary_paths.iter().enumerate() {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
@@ -3341,6 +3344,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 };
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
+                    plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
+                    filter_condition: table_filters.clone(),
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
@@ -3374,6 +3379,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ..ds.table_scan_penalty
                     },
                     tikv_pushdown: None,
+                    db_name: ds.db_name.clone(),
+                    prop: Some(Box::new(prop.clone())),
                     resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         common_handle.is_some(),
@@ -3422,6 +3429,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     })
                 };
                 Task::Cop(crate::task::CopTask {
+                    phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     table_plan: Some(Box::new(table_plan)),
                     index_plan_finished: true,
                     keep_order,
@@ -3474,6 +3482,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     range_rebuild: None,
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
+                    db_name: ds.db_name.clone(),
+                    prop: None,
+                    plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
+                    filter_condition: Vec::new(),
                     resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         ds.is_common_handle,
@@ -4163,6 +4175,9 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     },
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
+                    db_name: ds.db_name.clone(),
+                    prop: Some(Box::new(prop.clone())),
+                    pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
                 });
                 let (table_filters, mut virtual_table_filters) =
                     crate::pushdown::split_virtual_column_filters(table_filters);
@@ -4252,6 +4267,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         range_rebuild: None,
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
+                        db_name: ds.db_name.clone(),
+                        prop: None,
+                        plan_part_info: None,
+                        filter_condition: Vec::new(),
                         resolved_descriptor: Some(
                             crate::access_path::ResolvedTableDescriptor::new(
                                 ds.physical_table_id,
@@ -4391,6 +4410,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     }
                 }
                 let mut cop = crate::task::CopTask {
+                    phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
                     need_extra_proj: extra_handle_proj,

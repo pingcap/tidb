@@ -46,6 +46,7 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
         table_scan_penalty: Default::default(),
         tikv_pushdown: None,
         resolved_descriptor: None,
+        ..Default::default()
     })
 }
 
@@ -147,6 +148,7 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
         range_rebuild: None,
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
+        ..Default::default()
     });
     let PhysicalPlan::IndexScan(scan) = &mut index_scan else {
         unreachable!();
@@ -676,6 +678,7 @@ fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
         base: BasePhysicalPlan::with_id(22, "IndexReader", 0),
         index_plan: Some(Box::new(inner_scan)),
         output_columns: Vec::new(),
+        ..Default::default()
     });
     let mut base = BasePhysicalPlan::with_id(23, "IndexJoin", 0);
     base.set_children(vec![
@@ -931,11 +934,22 @@ fn join_accessors_answer_only_for_a_physical_join() {
 #[test]
 fn memory_usage_sums_the_whole_subtree() {
     let tree = selection(2, scan(1, &[1]));
-    let own = tree.base().base.memory_usage();
+    let PhysicalPlan::Selection(root) = &tree else {
+        panic!("selection builds a Selection");
+    };
+    // Go `PhysicalSelection.MemoryUsage`: the physical base, one flag, and
+    // every condition; the child is charged by its own walk.
+    let own = root.base.go_memory_usage()
+        + tidb_util::size::SIZE_OF_BOOL
+        + root
+            .conditions
+            .iter()
+            .map(tidb_expr::expression::Expression::memory_usage)
+            .sum::<i64>();
     assert!(tree.memory_usage() > own);
     assert_eq!(
         tree.memory_usage(),
-        own + tree.children()[0].base().base.memory_usage()
+        own + tree.children()[0].memory_usage()
     );
     tree.dismantle();
 }
@@ -2079,7 +2093,7 @@ fn join_memory_usage_charges_its_own_keys_and_conditions() {
         panic!("hash_join builds a HashJoin");
     };
     let own = join.memory_usage();
-    assert!(own > join.base.base.memory_usage());
+    assert!(own > join.base.go_schema_producer_memory_usage());
     let mut heavier = join.clone();
     heavier.is_null_eq.push(false);
     assert_eq!(heavier.memory_usage(), own + tidb_util::size::SIZE_OF_BOOL);

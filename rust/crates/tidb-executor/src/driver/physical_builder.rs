@@ -6676,6 +6676,7 @@ mod tests {
             store_type: tidb_planner::physical_table_reader::StoreType::TiKv,
             is_common_handle: false,
             read_req_type: tidb_planner::physical_table_reader::ReadReqType::Cop,
+            plan_part_info: None,
         });
 
         let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);

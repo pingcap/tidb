@@ -861,6 +861,39 @@ impl PhysicalProperty {
         code
     }
 
+    /// Go `PhysicalProperty.MemoryUsage` (`physical_property.go:747`): the
+    /// struct, the cached hash code, and every sort item, partition column
+    /// and advisory item it owns. Go's struct is 200 bytes on 64-bit
+    /// (`emptyPhysicalPropertySize`); its `hashcode` is filled the first time
+    /// the property keys a task map, which every property attached to a plan
+    /// has been.
+    #[must_use]
+    pub fn go_memory_usage(&self) -> i64 {
+        const EMPTY_PHYSICAL_PROPERTY_SIZE: i64 = 200;
+        let items = |items: &[SortItem]| {
+            items
+                .iter()
+                .map(|item| tidb_util::size::SIZE_OF_BOOL + item.col.memory_usage())
+                .sum::<i64>()
+        };
+        EMPTY_PHYSICAL_PROPERTY_SIZE
+            + self.hash_code().len() as i64
+            + items(&self.sort_items)
+            + items(&self.sort_items_for_partition)
+            + self
+                .mpp_partition_cols
+                .iter()
+                .map(|col| tidb_util::size::SIZE_OF_INT32 + col.col.memory_usage())
+                .sum::<i64>()
+            + items(&self.advisory_sort_items)
+            + self.partial_order_info.as_ref().map_or(0, |info| {
+                const EMPTY_PARTIAL_ORDER_INFO_SIZE: i64 = 24;
+                EMPTY_PARTIAL_ORDER_INFO_SIZE
+                    + info.sort_items.len() as i64 * tidb_util::size::SIZE_OF_POINTER
+                    + items(&info.sort_items)
+            })
+    }
+
     /// Source-shaped owned memory accounting for the package fields.
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>()

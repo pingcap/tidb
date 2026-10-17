@@ -135,8 +135,10 @@ pub struct BasePlan {
     noncacheable_reason: String,
 }
 
-/// Go `PlanSize = unsafe.Sizeof(Plan{})`, over the Rust layout.
-pub const PLAN_SIZE: i64 = std::mem::size_of::<BasePlan>() as i64;
+/// Go `PlanSize = unsafe.Sizeof(Plan{})` (`baseimpl/plan.go:131`): 72 bytes on
+/// 64-bit. The plan cache charges plans by Go's weight, not this port's own
+/// layout, so the constant is Go's.
+pub const PLAN_SIZE: i64 = 72;
 
 impl BasePlan {
     /// Go `baseimpl.NewBasePlan(ctx, tp, qbBlock)`.

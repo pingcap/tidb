@@ -74,6 +74,9 @@ pub(super) fn build_prepared_index_merge_task(
             ),
             covering_ranges: Vec::new(),
             tikv_pushdown: None,
+            db_name: ds.db_name.clone(),
+            prop: Some(Box::new(crate::physical_property::PhysicalProperty::default())),
+            pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
         });
         if !filled.index_filters.is_empty() {
             let mut selection = crate::physical::BasePhysicalPlan::new(
@@ -123,6 +126,10 @@ pub(super) fn build_prepared_index_merge_task(
         range_rebuild: None,
         table_scan_penalty: ds.table_scan_penalty,
         tikv_pushdown: None,
+        db_name: ds.db_name.clone(),
+        prop: None,
+        plan_part_info: None,
+        filter_condition: Vec::new(),
         resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
             ds.physical_table_id,
             !ds.common_handle_cols.is_empty(),
@@ -168,6 +175,7 @@ pub(super) fn build_prepared_index_merge_task(
     // Go seals the index phase when table-side filtering has begun.
     let index_plan_finished = !matches!(&table_plan, PhysicalPlan::TableScan(_));
     Ok(Task::Cop(crate::task::CopTask {
+        phys_plan_part_info: Some(crate::physical::PhysPlanPartInfo::from_data_source(ds)),
         table_plan: Some(Box::new(table_plan)),
         idx_merge_part_plans: partial_plans_raw,
         idx_merge_is_intersection: path.is_intersection,

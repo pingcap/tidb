@@ -481,6 +481,10 @@ pub(super) fn build_converged_union_index_merge_task(
                         range_rebuild: partial_table_range_rebuild(ds, filled),
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
+                        db_name: ds.db_name.clone(),
+                        prop: None,
+                        plan_part_info: None,
+                        filter_condition: Vec::new(),
                         resolved_descriptor: Some(
                             crate::access_path::ResolvedTableDescriptor::new(
                                 ds.physical_table_id,
@@ -573,6 +577,10 @@ pub(super) fn build_converged_union_index_merge_task(
                 range_rebuild: None,
                 table_scan_penalty: ds.table_scan_penalty,
                 tikv_pushdown: None,
+                db_name: ds.db_name.clone(),
+                prop: None,
+                plan_part_info: None,
+                filter_condition: Vec::new(),
                 resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
                     ds.physical_table_id,
                     !ds.common_handle_cols.is_empty(),
@@ -617,6 +625,7 @@ pub(super) fn build_converged_union_index_merge_task(
     }
 
     Ok(Task::Cop(crate::task::CopTask {
+        phys_plan_part_info: Some(crate::physical::PhysPlanPartInfo::from_data_source(ds)),
         table_plan,
         idx_merge_part_plans: partial_plans_raw,
         keep_order: !by_items.is_empty(),
@@ -717,6 +726,11 @@ fn push_index_partial(
         range_rebuild: partial_index_range_rebuild(filled),
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
+        db_name: ds.db_name.clone(),
+        // Go's partial scan keeps the data source's required property (the
+        // default one for an unordered read) and the integer handle column.
+        prop: Some(Box::new(crate::physical_property::PhysicalProperty::default())),
+        pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
     }));
     let global_partition_filter = super::dispatch::global_index_partition_filter(
         ds,

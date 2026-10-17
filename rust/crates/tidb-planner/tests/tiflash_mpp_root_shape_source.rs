@@ -49,6 +49,7 @@ fn mpp_reader_over_sender(sender_id: i32) -> PhysicalTableReader {
         store_type: StoreType::TiFlash,
         is_common_handle: false,
         read_req_type: ReadReqType::Mpp,
+        ..Default::default()
     }
 }
 

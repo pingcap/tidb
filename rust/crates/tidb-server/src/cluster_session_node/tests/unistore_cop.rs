@@ -16247,3 +16247,109 @@ fn aggregation_pushes_the_relaxed_part_of_a_dnf_filter_below_itself() {
         "no root Selection should keep the disjunction:\n{pushable}"
     );
 }
+
+/// Go charges a plan by the sum of every operator's `MemoryUsage()` and the
+/// plan cache refuses one above `tidb_plan_cache_max_plan_size`
+/// (`plan_cacheable_checker.go:588`). The sizes below were measured on Go 1.27
+/// of this branch for each statement over `t(a int, b int, c varchar(20))` and
+/// `ti(id int primary key, k int, k2 int, v int, key(k), key(k2))`; a plan
+/// under 3% above Go's size must still be cached and one 3% below must be
+/// refused, which fails if any operator's own terms go missing (the partition
+/// info Go holds in the reader and the scan, the scan's filter conditions, the
+/// properties, the names).
+#[test]
+fn plan_cache_admission_follows_go_plan_sizes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1116)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE t (a INT, b INT, c VARCHAR(20))")
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE ti (id INT PRIMARY KEY, k INT, k2 INT, v INT, KEY(k), KEY(k2))",
+        )
+        .unwrap();
+    session
+        .execute_write("SET @@tidb_hash_join_concurrency = 1")
+        .unwrap();
+    let cases: [(&str, i64); 15] = [
+        ("select * from t where a=1", 13_753),
+        ("select a from t", 8_406),
+        ("select * from t where a<10 order by b limit 5", 15_385),
+        ("select a, count(*) from t group by a", 12_488),
+        ("select * from t order by a", 9_245),
+        ("select * from t limit 3", 9_144),
+        ("select max(a) from t", 16_911),
+        ("select k from ti where k=1", 8_056),
+        ("select * from ti where k=1", 12_892),
+        (
+            "select /*+ use_index_merge(ti) */ * from ti where k=1 or k2=2",
+            36_936,
+        ),
+        ("select a from t union all select b from t", 17_523),
+        ("select * from ti where k>2 and v<5", 19_328),
+        ("select distinct a from t", 10_385),
+        ("select * from t where a in (select k from ti)", 32_745),
+        (
+            "select * from t t1 where exists (select 1 from ti where ti.k=t1.a)",
+            25_883,
+        ),
+    ];
+    let cached_at = |session: &mut ClusterServerSession, sql: &str, max: i64| -> bool {
+        session
+            .execute_write(&format!("SET @@tidb_plan_cache_max_plan_size = {max}"))
+            .unwrap();
+        session
+            .execute_write(&format!("PREPARE sz FROM '{sql}'"))
+            .unwrap();
+        rows(session, "EXECUTE sz");
+        rows(session, "EXECUTE sz");
+        let cached = displayed(rows(session, "SELECT @@last_plan_from_cache"))[0][0] == "1";
+        rows(session, "DEALLOCATE PREPARE sz");
+        cached
+    };
+    for (sql, go_size) in cases {
+        let above = go_size + go_size * 3 / 100;
+        let below = go_size - go_size * 3 / 100;
+        assert!(
+            cached_at(&mut session, sql, above),
+            "{sql}: a plan Go sizes at {go_size} must fit under {above}"
+        );
+        assert!(
+            !cached_at(&mut session, sql, below),
+            "{sql}: a plan Go sizes at {go_size} must not fit under {below}"
+        );
+    }
+}
+
+/// `TestPreparedPlanCacheLargePlan`: fifteen UNION ALL legs (1,289,867 bytes
+/// to Go) fit the 2 MiB default, thirty (2,579,567) do not until the limit is
+/// raised.
+#[test]
+fn plan_cache_refuses_the_thirty_leg_union_by_default() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1117)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tu (a INT, b INT, c VARCHAR(2048))")
+        .unwrap();
+    let leg = "select * from tu, tu t1 where t1.c=space(2048) and tu.c=space(2048) and tu.a=t1.b";
+    let union = |legs: usize| vec![leg; legs].join(" union all ");
+    let cached = |session: &mut ClusterServerSession, legs: usize| -> bool {
+        session
+            .execute_write(&format!("PREPARE big FROM '{}'", union(legs)))
+            .unwrap();
+        rows(session, "EXECUTE big");
+        rows(session, "EXECUTE big");
+        let cached = displayed(rows(session, "SELECT @@last_plan_from_cache"))[0][0] == "1";
+        rows(session, "DEALLOCATE PREPARE big");
+        cached
+    };
+    assert!(cached(&mut session, 15));
+    assert!(!cached(&mut session, 30));
+    session
+        .execute_write("SET @@tidb_plan_cache_max_plan_size = 1073741824")
+        .unwrap();
+    assert!(cached(&mut session, 30));
+}

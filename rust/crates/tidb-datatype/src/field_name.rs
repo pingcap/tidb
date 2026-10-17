@@ -32,6 +32,14 @@ pub struct IdentifierMetadata {
 }
 
 impl IdentifierMetadata {
+    /// Go `CIStr.MemoryUsage` (`ast/model.go:326`): two string headers plus
+    /// both spellings.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        const SIZE_OF_STRING: i64 = 16;
+        SIZE_OF_STRING * 2 + (self.original.len() + self.lower.len()) as i64
+    }
+
     /// Creates the ordinary `ast.NewCIStr` shape for ASCII SQL identifiers.
     ///
     /// Call [`Self::from_parts`] at an AST boundary that already has Go's
@@ -90,6 +98,19 @@ pub struct FieldName {
 }
 
 impl FieldName {
+    /// Go `FieldName.MemoryUsage` (`types/field_name.go:62`): the five name
+    /// spellings plus the three flag bytes.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        const SIZE_OF_BOOL: i64 = 1;
+        self.names.original_table.memory_usage()
+            + self.names.original_column.memory_usage()
+            + self.names.database.memory_usage()
+            + self.names.table.memory_usage()
+            + self.names.column.memory_usage()
+            + SIZE_OF_BOOL * 3
+    }
+
     /// Constructs a visible, explicitly usable, non-redundant field.
     pub fn new(names: FieldNameMetadata) -> Self {
         Self {
