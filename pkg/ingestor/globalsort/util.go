@@ -286,9 +286,14 @@ func PreparedMetaPath(taskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), "plan", "prepared", metaName)
 }
 
-// SubtaskMetaPath returns the path of the subtask meta file.
-func SubtaskMetaPath(taskID int64, subtaskID int64) string {
-	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
+// SubtaskMetaPath returns the path of the subtask meta file. attemptID keeps
+// concurrent executions of the same subtask on separate keys: a reassigned-away
+// executor can still finish and write after the new one committed, and object
+// writes carry no ownership check, so the committed subtask row is what decides
+// which object is authoritative.
+func SubtaskMetaPath(taskID int64, subtaskID int64, attemptID string) string {
+	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10),
+		"meta-"+attemptID+".json")
 }
 
 // DivideMergeSortDataFiles divides data files into groups, one per merge-sort

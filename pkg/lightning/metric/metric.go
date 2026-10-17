@@ -55,6 +55,14 @@ const (
 	BlockDeliverKindIndex = "index"
 	BlockDeliverKindData  = "data"
 
+	// Chunk process operation labels for encode-and-sort timing.
+	ChunkProcessOpRead       = "read"
+	ChunkProcessOpEncode     = "encode"
+	ChunkProcessOpSend       = "send"
+	ChunkProcessOpWriteData  = "write_data"
+	ChunkProcessOpWriteIndex = "write_index"
+	ChunkProcessOpDeliver    = "deliver"
+
 	lightningNamespace = "lightning"
 )
 
@@ -81,6 +89,9 @@ type Common struct {
 	BlockDeliverSecondsHistogram prometheus.Histogram
 	BlockDeliverBytesHistogram   *prometheus.HistogramVec
 	BlockDeliverKVPairsHistogram *prometheus.HistogramVec
+	// ChunkProcessSecondsHistogram records operation-level time in chunk process
+	// pipeline (read/encode/send/deliver/write_data/write_index).
+	ChunkProcessSecondsHistogram *prometheus.HistogramVec
 }
 
 // NewCommon returns common metrics instance.
@@ -166,6 +177,15 @@ func NewCommon(factory promutil.Factory, namespace, subsystem string, constLabel
 				ConstLabels: constLabels,
 				Buckets:     prometheus.ExponentialBuckets(1, 2, 10),
 			}, []string{"kind"}),
+		ChunkProcessSecondsHistogram: factory.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace:   namespace,
+				Subsystem:   subsystem,
+				Name:        "chunk_process_operation_seconds",
+				Help:        "time needed for each operation in chunk process pipeline",
+				ConstLabels: constLabels,
+				Buckets:     prometheus.ExponentialBuckets(0.001, 3.1622776601683795, 10),
+			}, []string{"operation"}),
 	}
 }
 
@@ -180,6 +200,7 @@ func (c *Common) RegisterTo(r promutil.Registry) {
 		c.BlockDeliverSecondsHistogram,
 		c.BlockDeliverBytesHistogram,
 		c.BlockDeliverKVPairsHistogram,
+		c.ChunkProcessSecondsHistogram,
 	)
 }
 
@@ -193,6 +214,7 @@ func (c *Common) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(c.BlockDeliverSecondsHistogram)
 	r.Unregister(c.BlockDeliverBytesHistogram)
 	r.Unregister(c.BlockDeliverKVPairsHistogram)
+	r.Unregister(c.ChunkProcessSecondsHistogram)
 }
 
 // Metrics contains all metrics used by lightning.
