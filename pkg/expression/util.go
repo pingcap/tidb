@@ -613,6 +613,12 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 			return false, false, v
 		}
+		// COERCIBILITY() reports metadata of its argument rather than its value, and a propagated
+		// constant is coercible while the column it replaces is implicit, e.g. for c = 'A',
+		// COERCIBILITY(c) is 2 but COERCIBILITY('A') is 4.
+		if ctx.IsConstantPropagateCheck() && v.FuncName.L == ast.Coercibility {
+			return false, false, v
+		}
 		// If the collation of the column is PAD SPACE,
 		// we can't propagate the constant to the length function.
 		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
