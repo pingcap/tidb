@@ -37,6 +37,7 @@ go_test(
         "//pkg/config",
         "//pkg/executor",
         "//pkg/metrics",
+        "//pkg/session",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
