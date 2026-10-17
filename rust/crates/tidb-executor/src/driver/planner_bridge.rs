@@ -2761,6 +2761,13 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
             "Can't find a proper physical plan for this query",
         )
     })?;
+    // Go caches each operator's cost while `findBestTask` compares tasks
+    // (`PlanCostInit`), and EXPLAIN shows that cost for the finished plan even
+    // where `postOptimize` later put an operator between a parent and its
+    // child. Keep the enumeration-time costs on the nodes the same way.
+    tidb_planner::find_best_task::coster::Ver2Coster::from_env(ctx.optimizer_cost_env())
+        .with_explain_cache()
+        .record_enumeration_costs(&mut physical);
     // Go physicalOptimize: "collect the warnings from task". Every task
     // warning is a planner `ErrInternal` (hint warnings), code 1815.
     for warning in task.warnings().get_warnings() {
@@ -3046,8 +3053,9 @@ pub(crate) struct RegisteredScalarSubquery {
     pub output_col_ids: Vec<i64>,
     /// Go `ScalarSubqueryEvalCtx.scalarSubQuery`, the optimized child.
     pub physical: PhysicalPlan,
-    /// Go `ScalarSubqueryEvalCtx.QueryBlockOffset()`, the EXPLAIN node id.
-    pub block_offset: i32,
+    /// Go `ScalarSubqueryEvalCtx.ID()`: `Init` allocates it from the plan id
+    /// counter once the child has been optimized, and EXPLAIN prints it.
+    pub plan_id: i32,
 }
 
 /// The per-statement list of [`RegisteredScalarSubquery`]s, Go's
@@ -3168,14 +3176,14 @@ fn subquery_evaluator<'a>(
         let output_col_ids = (0..logical.schema().map_or(0, |schema| schema.len()))
             .map(|_| column_ids.alloc())
             .collect::<Vec<_>>();
-        let block_offset = logical.base().base.query_block_offset();
+        let plan_id = plan_ids.alloc();
         let (row, has_row) =
             crate::driver::physical_builder::execute_first_row(&mut physical, catalog, ctx)
                 .map_err(driver_error_to_plan)?;
         registry.borrow_mut().push(RegisteredScalarSubquery {
             output_col_ids: output_col_ids.clone(),
             physical,
-            block_offset,
+            plan_id,
         });
         Ok(tidb_planner::plan_builder::EvaluatedSubquery {
             column_ids: output_col_ids,

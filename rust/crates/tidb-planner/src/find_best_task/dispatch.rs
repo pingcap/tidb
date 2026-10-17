@@ -1318,8 +1318,11 @@ pub fn find_best_task(
     // Go's function-pointer wiring does. They are born in root tasks and
     // are never memoized poorly: the general tail below still stores them.
     let key = (std::ptr::from_ref(plan).addr(), prop_key(prop));
-    if let Some(cached) = ctx.task_map.get(&key) {
-        return Ok(cached.copy());
+    let memoized = !has_own_unmemoized_find_best_task(plan);
+    if memoized {
+        if let Some(cached) = ctx.task_map.get(&key) {
+            return Ok(cached.copy());
+        }
     }
     let mut best = find_best_task_uncached(plan, prop, ctx)?;
     // `IndexJoinProp` is not merely a costing hint: Go's selected inner task
@@ -1334,8 +1337,27 @@ pub fn find_best_task(
     if let Some(plan) = best.plan_mut() {
         apply_reader_cost_side_effects(plan, ctx.enable_paging);
     }
-    ctx.task_map.insert(key, best.copy());
+    if memoized {
+        ctx.task_map.insert(key, best.copy());
+    }
     Ok(best)
+}
+
+/// Go `physicalop.FindBestTask` routes these operators to their own
+/// `findBestTask4Logical*` before the generic `findBestTask`, and none of those
+/// calls `GetTask`/`StoreTask`: every parent enumeration builds the operator
+/// again and draws a fresh plan id. (`DataSource` keeps its own cache, which
+/// the memo here stands in for.)
+fn has_own_unmemoized_find_best_task(plan: &LogicalPlan) -> bool {
+    match plan {
+        LogicalPlan::TableDual(_)
+        | LogicalPlan::CTETable(_)
+        | LogicalPlan::Show(_)
+        | LogicalPlan::ShowDDLJobs(_)
+        | LogicalPlan::MemTable(_) => true,
+        LogicalPlan::CTE(op) => op.base.children().is_empty(),
+        _ => false,
+    }
 }
 
 /// Go's lookup-reader cost functions set `PhysicalIndexLookUpReader.Paging`
@@ -5007,6 +5029,26 @@ mod tests {
     }
 
     #[test]
+    fn table_dual_is_rebuilt_for_every_enumeration_like_go() {
+        // Go `FindBestTask` hands a `LogicalTableDual` to its own
+        // `findBestTask4LogicalTableDual`, which never calls `StoreTask`, so
+        // each parent candidate draws a new plan id for the same property.
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let mut dual_base = BaseLogicalPlan::new(&allocator, LogicalTableDual::TYPE, 0);
+        dual_base.base.set_stats(Some(StatsInfo::new(0.0, [])));
+        let logical = LogicalPlan::TableDual(LogicalTableDual::new(dual_base, 0));
+        let prop = PhysicalProperty::default();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let task = find_best_task(&logical, &prop, &mut ctx).expect("table dual task");
+            ids.push(task.plan().expect("physical plan").base().base.id());
+        }
+        assert_eq!(ids, [2, 3, 4]);
+    }
+
+    #[test]
     fn max_one_row_refusal_raises_the_source_warning_once_per_refusal() {
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -6886,8 +6928,9 @@ mod tests {
     #[test]
     fn the_task_map_memoizes_per_plan_and_property() {
         // Go's taskMap lookup: the second ask answers from the map. Pinned
-        // by planning twice and checking the map holds entries for both the
-        // selection and its child.
+        // by planning twice and checking the map holds the selection. Its
+        // `TableDual` child is not stored: Go's own `findBestTask4LogicalTableDual`
+        // never calls `StoreTask`.
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
@@ -6900,7 +6943,7 @@ mod tests {
         let first =
             find_best_task(&selection, &PhysicalProperty::default(), &mut ctx).expect("plans");
         let entries = ctx.task_map.len();
-        assert!(entries >= 2, "the selection and its child are both stored");
+        assert_eq!(entries, 1, "only the selection is stored, not its table dual");
         let second = find_best_task(&selection, &PhysicalProperty::default(), &mut ctx)
             .expect("answers from the map");
         assert_eq!(ctx.task_map.len(), entries, "no new entries on a hit");

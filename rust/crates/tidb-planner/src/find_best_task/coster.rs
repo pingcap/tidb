@@ -196,6 +196,77 @@ impl Ver2Coster {
         self.cost_option.as_ref()
     }
 
+    /// `CostFlagRecalculate` (or a trace, whose formula decomposition a cached
+    /// cost does not carry) bypasses a plan's cached cost.
+    fn recalculates(&self) -> bool {
+        self.cost_option().is_some_and(|option| {
+            option.cost_flag()
+                & (crate::cost_usage::COST_FLAG_RECALCULATE | crate::cost_usage::COST_FLAG_TRACE)
+                != 0
+        })
+    }
+
+    /// Costs `plan` once, as `findBestTask` did when it enumerated it, and keeps
+    /// each operator's cost on the operator (Go's `PlanCostInit` /
+    /// `PlanCostVer2`). The coster must have its explain cache enabled: that
+    /// cache is how every priced node is found again.
+    pub fn record_enumeration_costs(&self, plan: &mut PhysicalPlan) {
+        let Some(cache) = &self.explain_costs else {
+            return;
+        };
+        self.plan_cost(plan, TaskType::Root, false);
+        fn record(
+            node: &mut PhysicalPlan,
+            cache: &std::collections::HashMap<usize, CostVer2>,
+        ) {
+            let key = std::ptr::from_ref::<PhysicalPlan>(node) as usize;
+            if let Some(cost) = cache.get(&key) {
+                node.base_mut().plan_cost_ver2 = Some(cost.clone());
+                node.base_mut().plan_cost_init = true;
+            }
+            for child in node.base_mut().children_mut() {
+                record(child, cache);
+            }
+            match node {
+                PhysicalPlan::TableReader(reader) => {
+                    if let Some(plan) = reader.table_plan.as_deref_mut() {
+                        record(plan, cache);
+                    }
+                }
+                PhysicalPlan::IndexReader(reader) => {
+                    if let Some(plan) = reader.index_plan.as_deref_mut() {
+                        record(plan, cache);
+                    }
+                }
+                PhysicalPlan::IndexLookUpReader(reader) => {
+                    if let Some(plan) = reader.index_plan.as_deref_mut() {
+                        record(plan, cache);
+                    }
+                    if let Some(plan) = reader.table_plan.as_deref_mut() {
+                        record(plan, cache);
+                    }
+                }
+                PhysicalPlan::IndexMergeReader(reader) => {
+                    for plan in &mut reader.partial_plans_raw {
+                        record(plan, cache);
+                    }
+                    if let Some(plan) = reader.table_plan.as_deref_mut() {
+                        record(plan, cache);
+                    }
+                }
+                PhysicalPlan::CTE(cte) => {
+                    record(&mut cte.seed_plan, cache);
+                    if let Some(plan) = cte.recursive_plan.as_deref_mut() {
+                        record(plan, cache);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let costs = cache.borrow().clone();
+        record(plan, &costs);
+    }
+
     /// Pins the cost option for every pricing this coster performs — the
     /// EXPLAIN cost-trace path builds its coster with
     /// `COST_FLAG_TRACE` so each operator's `CostVer2` carries its formula.
@@ -295,6 +366,16 @@ impl Ver2Coster {
         task_type: TaskType,
         is_child_of_inl: Option<bool>,
     ) -> CostVer2 {
+        // Go `GetPlanCostVer2`: "if p.PlanCostInit && !hasCostFlag(option.CostFlag,
+        // CostFlagRecalculate) { return p.PlanCostVer2 }". A plan costed while it
+        // was enumerated keeps that cost, so an operator injected afterwards
+        // (`InjectExtraProjection`) is priced against its children but never
+        // adds to its ancestors' displayed cost.
+        if plan.base().plan_cost_init && !self.recalculates() {
+            if let Some(cost) = plan.base().plan_cost_ver2.as_ref() {
+                return cost.clone();
+            }
+        }
         let key = std::ptr::from_ref(plan) as usize;
         if let Some(cache) = &self.explain_costs {
             if let Some(cost) = cache.borrow().get(&key) {
@@ -1167,6 +1248,35 @@ mod tests {
         assert_eq!(coster.plan_cost(scan, TaskType::Root, false).value(), cached);
         assert_eq!(coster.explain_costs.as_ref().unwrap().borrow().len(), 2);
         assert_eq!(root_cost, Ver2Coster::default().plan_cost(&plan, TaskType::Root, false).value());
+    }
+
+    #[test]
+    fn enumeration_costs_stay_on_the_plan_until_recalculation() {
+        let allocator = PlanIdAllocator::new();
+        let mut union_base = BasePhysicalPlan::new(&allocator, "Union", 0);
+        union_base.set_children(vec![point(3, true), point(4, true)]);
+        let mut union = PhysicalPlan::UnionAll(PhysicalUnionAll {
+            base: union_base,
+            mpp: false,
+        });
+        Ver2Coster::default()
+            .with_explain_cache()
+            .record_enumeration_costs(&mut union);
+        assert!(union.base().plan_cost_init);
+        let recorded = union
+            .base()
+            .plan_cost_ver2
+            .as_ref()
+            .expect("recorded cost")
+            .value();
+        assert!(recorded > 0.0);
+        // Go `GetPlanCostVer2`: an operator put under it after enumeration
+        // (`InjectExtraProjection`) does not move the cost EXPLAIN shows.
+        union.base_mut().children_mut()[1] = point(5, false);
+        let coster = Ver2Coster::default();
+        assert_eq!(coster.plan_cost(&union, TaskType::Root, false).value(), recorded);
+        union.base_mut().plan_cost_init = false;
+        assert_ne!(coster.plan_cost(&union, TaskType::Root, false).value(), recorded);
     }
 
     #[test]

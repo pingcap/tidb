@@ -16474,3 +16474,46 @@ fn index_join_inner_side_under_a_union_scan_updates_like_go() {
     );
     session.control_transaction("ROLLBACK").unwrap();
 }
+
+/// An aggregate over an empty input keeps Go's `ndv >= 1` row estimate, a
+/// `TableDual` is rebuilt (and takes a fresh plan id) for every parent
+/// enumeration, and a constant scalar subquery draws its output column from
+/// the same stream Go does: its `DoOptimize` runs without the rules only an
+/// Apply turns on. Expected rows: Go 1.27 on this branch (`TestZZ` probe,
+/// `select count(*) from t where 1=0` and `a > (select 1 from t where 1=0)`).
+#[test]
+fn empty_input_aggregation_and_scalar_subquery_ids_match_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1119)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tdz (a INT, b VARCHAR(10), c DECIMAL(10,2))")
+        .unwrap();
+    let plan = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'verbose' {sql}")))
+            .into_iter()
+            .map(|row| format!("{} {} {} {}", row[0], row[1], row[2], row[5]))
+            .collect()
+    };
+    assert_eq!(
+        plan(&mut session, "SELECT COUNT(*) FROM tdz WHERE 1 = 0"),
+        [
+            "StreamAgg_11 1.00 49.90 funcs:count(1)->Column#6",
+            "└─TableDual_16 0.00 0.00 rows:0",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "SELECT a, 1 + a FROM tdz WHERE a > (SELECT 1 FROM tdz WHERE 1 = 0)"
+        ),
+        [
+            "Projection_14 0.00 10.08 test.tdz.a, plus(1, test.tdz.a)->Column#13",
+            "└─TableDual_15 0.00 0.00 rows:0",
+            "ScalarSubQuery_11 N/A N/A Output: ScalarQueryCol#12",
+            "└─MaxOneRow_8 1.00 0.10 ",
+            "  └─Projection_9 0.00 0.10 1->Column#11",
+            "    └─TableDual_10 0.00 0.00 rows:0",
+        ]
+    );
+}

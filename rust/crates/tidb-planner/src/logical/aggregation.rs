@@ -632,7 +632,6 @@ impl LogicalAggregation {
                 child,
                 group_ndv_skew_ratio,
             );
-        let ndv = ndv.min(child.row_count());
         let stats = StatsInfo::new(
             ndv,
             self_schema

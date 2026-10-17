@@ -2304,7 +2304,7 @@ fn scalar_subquery_root(
         .map(|id| format!("ScalarQueryCol#{id}"))
         .collect::<Vec<_>>()
         .join(", ");
-    ExplainOperator::new("ScalarSubQuery", subquery.block_offset)
+    ExplainOperator::new("ScalarSubQuery", subquery.plan_id)
         .with_operator_info(format!("Output: {output}"))
         .with_children(vec![physical_explain_operator(
             costs,

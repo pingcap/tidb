@@ -998,6 +998,20 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         tp: LogicalJoinType,
         mark_no_decorrelate: bool,
     ) -> Result<LogicalPlan, RewriteError> {
+        // Go `buildApplyWithJoinType` turns these rules on only when it really
+        // builds the Apply; a subquery evaluated on its own never does, so its
+        // `DoOptimize` runs without them.
+        {
+            use crate::logical::rule::flags;
+            let mut turned_on = flags::PREDICATE_PUSH_DOWN
+                | flags::BUILD_KEY_INFO
+                | flags::DECORRELATE
+                | flags::CONSTANT_PROPAGATION;
+            if tp == LogicalJoinType::LeftOuter {
+                turned_on |= flags::ELIMINATE_OUTER_JOIN;
+            }
+            self.env.opt_flags.set(self.env.opt_flags.get() | turned_on);
+        }
         let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let inner_schema = inner.schema().ok_or(RewriteError::MissingSchema)?;
         let outer_len = outer_schema.len();
@@ -1130,6 +1144,16 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         consider_rewrite: bool,
         mark_no_decorrelate: bool,
     ) -> Result<LogicalPlan, RewriteError> {
+        // Go `buildSemiApply` opens with the same three rules.
+        {
+            use crate::logical::rule::flags;
+            self.env.opt_flags.set(
+                self.env.opt_flags.get()
+                    | flags::PREDICATE_PUSH_DOWN
+                    | flags::BUILD_KEY_INFO
+                    | flags::DECORRELATE,
+            );
+        }
         let join =
             self.build_semi_join(outer, inner, condition, as_scalar, not, consider_rewrite)?;
         let LogicalPlan::Join(mut join) = join else {
@@ -1872,7 +1896,10 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                     | flags::ELIMINATE_AGG
                     | flags::ELIMINATE_PROJECTION
                     | flags::JOIN_REORDER
-                    | flags::EMPTY_SELECTION_ELIMINATOR,
+                    | flags::EMPTY_SELECTION_ELIMINATOR
+                    // Go `buildDistinct`, which `buildSubqueryJoin` calls.
+                    | flags::BUILD_KEY_INFO
+                    | flags::PUSH_DOWN_AGG,
             );
         }
         // Go: buildSubqueryJoin allocates Selection + Agg output Projection
