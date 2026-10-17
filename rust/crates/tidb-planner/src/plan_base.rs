@@ -410,6 +410,8 @@ pub enum PlanErrorKind {
     WrongNumberOfColumnsInSelect,
     /// Go `dbterror.ErrViewWrongList` (1353).
     ViewWrongList,
+    /// Go `plannererrors.ErrViewRecursive` (1462), carrying its message.
+    ViewRecursive,
     /// Go plannererrors.ErrViewInvalid (1356), with the qualified view name.
     ViewInvalid(String),
     /// Go plannererrors.ErrInvalidLateralJoin (3809).
@@ -731,6 +733,15 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::WrongNumberOfColumnsInSelect,
             message: "The used SELECT statements have a different number of columns".to_owned(),
+        }
+    }
+
+    /// Go `plannererrors.ErrViewRecursive` (1462).
+    #[must_use]
+    pub fn view_recursive(database: &str, view: &str) -> Self {
+        Self {
+            kind: PlanErrorKind::ViewRecursive,
+            message: format!("`{database}`.`{view}` contains view recursion"),
         }
     }
 

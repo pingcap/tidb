@@ -37,6 +37,8 @@
 
 use tidb_ast::{BinaryOp, Expr, MatchModifier, UnaryOp};
 
+use crate::DriverError;
+
 /// Answers whether every column a `MATCH` names resolves, in this SELECT's
 /// own scope, to a STRING column. Go checks `EvalType() != ETString` on the
 /// resolved expressions (`matchAgainstToLike`) and refuses with "Doesn't
@@ -55,19 +57,20 @@ pub type ColumnsAreStrings<'a> = dyn Fn(&tidb_ast::SelectStmt, &[Vec<String>]) -
 pub fn rewrite_select_fts(
     select: &mut tidb_ast::SelectStmt,
     columns_are_strings: &ColumnsAreStrings<'_>,
-) {
+) -> Result<(), DriverError> {
     // The closure needs the SELECT it is resolving in, and the boolean roots
     // need `&mut` -- so take the immutable facts out first.
     let probe = select.clone();
     if let Some(where_clause) = select.where_clause.as_mut() {
-        rewrite_boolean_root(where_clause, &probe, columns_are_strings);
+        rewrite_boolean_root(where_clause, &probe, columns_are_strings)?;
     }
     if let Some(having) = select.having.as_mut() {
-        rewrite_boolean_root(having, &probe, columns_are_strings);
+        rewrite_boolean_root(having, &probe, columns_are_strings)?;
     }
     if let Some(join) = select.from.as_mut() {
-        rewrite_join_fts(join, &probe, columns_are_strings);
+        rewrite_join_fts(join, &probe, columns_are_strings)?;
     }
+    Ok(())
 }
 
 /// Every `ON` in the join tree is a boolean root of its own.
@@ -75,18 +78,19 @@ fn rewrite_join_fts(
     join: &mut tidb_ast::Join,
     probe: &tidb_ast::SelectStmt,
     columns_are_strings: &ColumnsAreStrings<'_>,
-) {
+) -> Result<(), DriverError> {
     if let Some(on) = join.on.as_mut() {
-        rewrite_boolean_root(on, probe, columns_are_strings);
+        rewrite_boolean_root(on, probe, columns_are_strings)?;
     }
     for node in [Some(&mut join.left), join.right.as_mut()]
         .into_iter()
         .flatten()
     {
         if let tidb_ast::JoinNode::Join(inner) = node {
-            rewrite_join_fts(inner, probe, columns_are_strings);
+            rewrite_join_fts(inner, probe, columns_are_strings)?;
         }
     }
+    Ok(())
 }
 
 /// Go `inDirectMatchBooleanContext`: descend only through the connectives a
@@ -96,15 +100,15 @@ fn rewrite_boolean_root(
     expr: &mut Expr,
     probe: &tidb_ast::SelectStmt,
     columns_are_strings: &ColumnsAreStrings<'_>,
-) {
+) -> Result<(), DriverError> {
     match expr {
-        Expr::Paren(inner) => rewrite_boolean_root(inner, probe, columns_are_strings),
+        Expr::Paren(inner) => rewrite_boolean_root(inner, probe, columns_are_strings)?,
         Expr::Unary(UnaryOp::Not | UnaryOp::NotKeyword, inner) => {
-            rewrite_boolean_root(inner, probe, columns_are_strings);
+            rewrite_boolean_root(inner, probe, columns_are_strings)?;
         }
         Expr::Binary(BinaryOp::LogicAnd | BinaryOp::LogicOr, lhs, rhs) => {
-            rewrite_boolean_root(lhs, probe, columns_are_strings);
-            rewrite_boolean_root(rhs, probe, columns_are_strings);
+            rewrite_boolean_root(lhs, probe, columns_are_strings)?;
+            rewrite_boolean_root(rhs, probe, columns_are_strings)?;
         }
         Expr::MatchAgainst {
             columns,
@@ -114,70 +118,79 @@ fn rewrite_boolean_root(
             // Go refuses a non-string matched column ("Doesn't support match
             // search on a non-string column without fulltext index") BEFORE
             // the NULL fast path, which is why `match(int_col) against(NULL)`
-            // errors rather than answering NULL. Leaving the node unrewritten
-            // is that refusal here: the evaluator rejects a bare
-            // `MatchAgainst`, as Go's native builtin does with no replica.
+            // errors rather than answering NULL.
             if !columns_are_strings(probe, columns) {
-                return;
+                return Err(not_supported_yet(
+                    "Doesn't support match search on a non-string column without fulltext index",
+                ));
             }
-            if let Some(built) = build_fts_like(columns, against, *modifier) {
+            if let Some(built) = build_fts_like(columns, against, *modifier)? {
                 *expr = built;
             }
         }
         _ => {}
     }
+    Ok(())
+}
+
+/// Go `ErrNotSupportedYet.GenWithStackByArgs` (1235).
+fn not_supported_yet(feature: &str) -> DriverError {
+    DriverError::NotSupportedYet(feature.to_owned().into())
 }
 
 /// Go `matchAgainstToLike` + `BuildFTSToILikeExpression`, over the AST.
 ///
-/// `None` leaves the node unrewritten -- a mutable search string, a search
-/// text outside the strict subset, or `WITH QUERY EXPANSION` -- and the later
-/// evaluation refuses it, which is Go's own outcome with no FTS replica to
-/// fall back to.
+/// `Ok(None)` leaves the node unrewritten -- a mutable search string or one
+/// that is not a literal -- and the later evaluation refuses it, which is Go's
+/// own outcome with no FTS replica to fall back to. A search outside the
+/// strict subset, or `WITH QUERY EXPANSION`, is the rewrite's own refusal.
 fn build_fts_like(
     columns: &[Vec<String>],
     against: &Expr,
     modifier: MatchModifier,
-) -> Option<Expr> {
-    if columns.is_empty() || modifier.with_query_expansion() {
-        return None;
+) -> Result<Option<Expr>, DriverError> {
+    if columns.is_empty() {
+        return Ok(None);
     }
     // Go evaluates the AGAINST constant; a NULL search yields NULL, which is
     // what keeps three-valued logic honest under NOT -- a literal 0 would
     // make `NOT MATCH(...)` admit every row.
     let search = match against {
         Expr::String(text) | Expr::RawString(text) => text.clone(),
-        Expr::Null => return Some(Expr::Null),
+        Expr::Null => return Ok(Some(Expr::Null)),
+        // A numeric constant is not a string search expression.
+        Expr::Int(_) | Expr::Decimal(_) | Expr::Float(_) | Expr::Bool(_) => {
+            return Err(not_supported_yet(
+                "MATCH...AGAINST with non-string search expression",
+            ));
+        }
         // A `?` marker, user variable or expression: Go's
         // `SetSkipPlanCache` case, and outside the literal subset this
         // rewrite bakes into constants.
-        _ => return None,
+        _ => return Ok(None),
     };
+    if modifier.with_query_expansion() {
+        return Err(not_supported_yet(
+            "MATCH...AGAINST WITH QUERY EXPANSION is not supported in the LIKE fallback",
+        ));
+    }
     // Go `ValidateFTSSearchStringForLikeFallback`: tokens are `word`, and in
     // boolean mode optionally `+word`/`-word`, with an alphanumeric-or-UTF8
     // body. Anything else -- phrases, `*`, relevance operators, mid-word
     // punctuation -- tokenizes differently in MySQL FTS than a substring
     // match, and is refused rather than approximated.
+    tidb_expr::fts::validate_fts_search_string_for_like_fallback(&search, modifier)
+        .map_err(|error| DriverError::NotSupportedYet(error.message.into()))?;
     let boolean = modifier.is_boolean_mode();
-    for token in search.split_whitespace() {
-        let body = if boolean && (token.starts_with('+') || token.starts_with('-')) {
-            &token[1..]
-        } else {
-            token
-        };
-        if body.is_empty() || !body.bytes().all(is_fts_word_byte) {
-            return None;
-        }
-    }
 
     if search.split_whitespace().next().is_none() {
-        return Some(zero());
+        return Ok(Some(zero()));
     }
-    if boolean {
+    Ok(if boolean {
         build_boolean_mode(columns, &search)
     } else {
         build_natural_language_mode(columns, &search)
-    }
+    })
 }
 
 /// Go `isFTSWordByte`: ASCII alphanumerics and every non-ASCII byte.

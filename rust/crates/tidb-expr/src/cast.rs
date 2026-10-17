@@ -1374,6 +1374,24 @@ pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Resu
         _ => None,
     };
     match text {
+        // Go `StrToInt`/`StrToUint` report an out-of-range operand as
+        // `ErrOverflow` (1690) naming the integer type, not as a truncation;
+        // a read statement downgrades it to the same warning, while a strict
+        // write refuses it.
+        Some(text)
+            if signed_string_integer_parse_overflows(text)
+                && ctx.truncate_level() == crate::ErrorLevel::Error =>
+        {
+            let trimmed = text.trim();
+            Err(EvalError::DataOutOfRange {
+                value: if trimmed.starts_with('-') {
+                    "BIGINT"
+                } else {
+                    "BIGINT UNSIGNED"
+                },
+                expression: trimmed.strip_prefix('+').unwrap_or(trimmed).to_owned(),
+            })
+        }
         Some(text)
             if !int_prefix_consumed_all(text) || signed_string_integer_parse_overflows(text) =>
         {

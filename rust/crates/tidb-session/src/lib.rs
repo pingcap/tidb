@@ -1937,6 +1937,11 @@ impl Session {
     /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
     /// switch also updates `collation_database`.
     fn use_database(&mut self, name: &str) -> Result<(), DriverError> {
+        // An empty schema name (`USE ``) is `ErrNoDB`, as Go's preprocessor
+        // answers it, not an unknown database.
+        if name.is_empty() {
+            return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
+        }
         // Go `executeUse` (`executor/simple.go` around line 608) refuses an
         // invisible schema with 1044 BEFORE it looks the schema up, so a
         // schema the account cannot see is never distinguishable from one
@@ -2194,7 +2199,7 @@ impl Session {
         let (effective_statement, binding_sql) =
             self.prepared_statement_with_binding(prepared.statement());
         let mut effective_statement = effective_statement.into_owned();
-        self.rewrite_fts_for_planning(&mut effective_statement);
+        self.rewrite_fts_for_planning(&mut effective_statement)?;
         if self.prepared_plan_cache_allowed_for_statement(&effective_statement) {
             if let Some(cached) = prepared.select_plan().as_ref().and_then(|plan| {
                 self.bind_cached_prepared_select_for_statement(
@@ -2236,7 +2241,7 @@ impl Session {
         let (effective_statement, binding_sql) =
             self.prepared_statement_with_binding(prepared.statement());
         let mut effective_statement = effective_statement.into_owned();
-        self.rewrite_fts_for_planning(&mut effective_statement);
+        self.rewrite_fts_for_planning(&mut effective_statement)?;
         if self.prepared_plan_cache_allowed_for_statement(&effective_statement) {
             if let Some(cached) = prepared.select_plan().as_ref().and_then(|plan| {
                 self.bind_cached_prepared_select_for_statement(

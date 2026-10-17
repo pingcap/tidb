@@ -37,8 +37,10 @@ fn add_partitions_to_non_hash_refuses() {
         )
         .unwrap();
     let error = error(&mut session, "alter table r add partition partitions 2");
+    // Go `BuildAddedPartitionInfo`: a bare count carries no definitions, so a
+    // RANGE table answers `ErrPartitionsMustBeDefined` (1492).
     assert!(
-        error.contains("not supported yet") || error.contains("REORGANIZE"),
+        error.contains("For RANGE partitions each partition must be defined"),
         "{error}"
     );
 }

@@ -218,12 +218,14 @@ pub fn build_constraint_infos(
             Ok(built) => built,
             Err(error) => {
                 if let Some(missing) = resolver.missing_name() {
+                    column_constraint_references_other(&name, check)?;
                     return Err(unknown_column(&name, &missing, mode));
                 }
                 return Err(CheckConstraintError::new(1105, format!("{error:?}")));
             }
         };
         if let Some(missing) = resolver.missing_name() {
+            column_constraint_references_other(&name, check)?;
             return Err(unknown_column(&name, &missing, mode));
         }
         let dependencies = resolver.dependency_names();
@@ -302,6 +304,43 @@ pub fn build_constraint_infos(
         });
     }
     Ok(infos)
+}
+
+/// Go `createTableInfo`'s column-type check dependency test, which reads the
+/// column names off the AST: a constraint written inside a column definition
+/// may name that column only, whether or not the other names resolve.
+fn column_constraint_references_other(
+    name: &str,
+    check: &CheckConstraintInput,
+) -> Result<(), CheckConstraintError> {
+    struct Names(std::collections::BTreeSet<String>);
+    impl tidb_ast::Visitor for Names {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(Expr::Column(path)) = node.downcast_ref::<Expr>() {
+                if let Some(column) = path.last() {
+                    self.0.insert(column.go_to_lower());
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let Some(in_column) = &check.in_column else {
+        return Ok(());
+    };
+    let mut expression = check.definition.expression.clone();
+    let mut names = Names(std::collections::BTreeSet::new());
+    let _ = tidb_ast::Visitable::accept(&mut expression, &mut names);
+    if names.0.len() > 1 || (names.0.len() == 1 && !names.0.contains(&in_column.go_to_lower())) {
+        return Err(CheckConstraintError::new(
+            tidb_error::tidb::errcode::ErrColumnCheckConstraintReferencesOtherColumn,
+            format!("Column check constraint '{name}' references other column."),
+        ));
+    }
+    Ok(())
 }
 
 fn unknown_column(

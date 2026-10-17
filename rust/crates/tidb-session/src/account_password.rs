@@ -29,6 +29,84 @@ use crate::*;
 use tidb_util::stringutil::go_to_lower;
 
 impl Session {
+    /// The per-account admission gate of Go `executeAlterUser`: whether the
+    /// statement needs the CREATE USER administrator check for this account,
+    /// and the refusal when the caller lacks it. It runs for every spec,
+    /// including the accounts that turn out not to exist, because Go checks
+    /// privileges before it reports a missing account.
+    #[allow(clippy::too_many_arguments)]
+    fn alter_user_admin_gate(
+        &self,
+        registry: &crate::privilege::PrivilegeRegistry,
+        spec: &tidb_ast::CreateUserSpec,
+        user: &str,
+        host: &str,
+        has_other_stmt_options: bool,
+        effective: &dyn Fn(&str) -> String,
+    ) -> Result<bool, DriverError> {
+        let (spec_retain, spec_discard) = match spec.dual_password {
+            Some(tidb_ast::AlterUserDualPassword::RetainCurrent) => (true, false),
+            Some(tidb_ast::AlterUserDualPassword::DiscardOld) => (false, true),
+            None => (false, false),
+        };
+        let spec_dual_requested = spec_retain || spec_discard;
+        let current_plugin = registry.plugin(user, host).unwrap_or_default();
+            let alter_current_user = spec.user.current_user || self.is_own_account(user, host);
+            // Go's `alterPassword`: a bare self password change --
+            // `IDENTIFIED BY` with no plugin change and no statement-level
+            // option -- which MySQL allows without CREATE USER.
+            let alter_password = matches!(spec.auth, Some(tidb_ast::CreateUserAuth::By(_)))
+                && !has_other_stmt_options;
+            // Go reads the target row BEFORE the privilege gate (the
+            // "no plugin change" classification needs the current plugin);
+            // the missing-user outcome still surfaces only after the checks.
+            let same_or_unspecified_plugin = match &spec.auth {
+                None | Some(tidb_ast::CreateUserAuth::By(_)) => true,
+                Some(tidb_ast::CreateUserAuth::With { plugin, .. }) => {
+                    effective(plugin) == effective(&current_plugin)
+                }
+            };
+            // Go's `selfServiceDualPwd`: a dual-password change to the
+            // caller's OWN account with no other privileged option and no
+            // plugin change is governed by APPLICATION_PASSWORD_ADMIN, not
+            // the CREATE USER admin check.
+            let self_service_dual = alter_current_user
+                && spec_dual_requested
+                && !has_other_stmt_options
+                && same_or_unspecified_plugin;
+            let need_admin_check = !(alter_current_user && alter_password) && !self_service_dual;
+            if need_admin_check {
+                // Static half of Go's gate (CREATE USER, or UPDATE on the
+                // mysql schema); the SYSTEM_USER half runs after the exists
+                // test below, in Go's own order.
+                if !(self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+                    || self.has_scoped_privilege(
+                        tidb_mysql::consts::SystemDB,
+                        tidb_mysql::consts::UserTable,
+                        privilege::GlobalPriv::Update,
+                    ))
+                {
+                    return Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()));
+                }
+            }
+            // Go: self-service dual-password additionally requires
+            // APPLICATION_PASSWORD_ADMIN (CREATE USER / UPDATE-mysql being
+            // accepted as supersets).
+            if self_service_dual
+                && !(self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+                    || self.has_scoped_privilege(
+                        tidb_mysql::consts::SystemDB,
+                        tidb_mysql::consts::UserTable,
+                        privilege::GlobalPriv::Update,
+                    )
+                    || self.has_dynamic_privilege("APPLICATION_PASSWORD_ADMIN", false))
+            {
+                return Err(DriverError::SpecificAccessDenied(
+                    "APPLICATION_PASSWORD_ADMIN".to_owned(),
+                ));
+            }
+        Ok(need_admin_check)
+    }
     /// `ALTER USER [IF EXISTS] <account | USER()> [IDENTIFIED [WITH
     /// '<plugin>'] BY '<password>' [RETAIN CURRENT PASSWORD] | DISCARD OLD
     /// PASSWORD] [ACCOUNT LOCK | UNLOCK] [PASSWORD ...] [COMMENT|ATTRIBUTE]`,
@@ -108,6 +186,16 @@ impl Session {
             for spec in specs {
                 let (user, host) = self.resolve_account(&spec.user)?;
                 if !registry.user_exists(&user, &host) {
+                    // Go checks the caller's privileges before it reports an
+                    // account as missing.
+                    self.alter_user_admin_gate(
+                        &registry,
+                        spec,
+                        &user,
+                        &host,
+                        has_other_stmt_options,
+                        &effective,
+                    )?;
                     missing.push((user, host));
                 }
             }
@@ -136,65 +224,18 @@ impl Session {
                 Some(tidb_ast::AlterUserDualPassword::DiscardOld) => (false, true),
                 None => (false, false),
             };
-            let spec_dual_requested = spec_retain || spec_discard;
             let (user, host) = self.resolve_account(&spec.user)?;
-            let alter_current_user = spec.user.current_user || self.is_own_account(&user, &host);
-            // Go's `alterPassword`: a bare self password change --
-            // `IDENTIFIED BY` with no plugin change and no statement-level
-            // option -- which MySQL allows without CREATE USER.
-            let alter_password = matches!(spec.auth, Some(tidb_ast::CreateUserAuth::By(_)))
-                && !has_other_stmt_options;
-            // Go reads the target row BEFORE the privilege gate (the
-            // "no plugin change" classification needs the current plugin);
-            // the missing-user outcome still surfaces only after the checks.
+            let need_admin_check = self.alter_user_admin_gate(
+                &registry,
+                spec,
+                &user,
+                &host,
+                has_other_stmt_options,
+                &effective,
+            )?;
             let exists = registry.user_exists(&user, &host);
             let current_plugin = registry.plugin(&user, &host).unwrap_or_default();
             let current_auth_string = registry.auth_string(&user, &host).unwrap_or_default();
-            let same_or_unspecified_plugin = match &spec.auth {
-                None | Some(tidb_ast::CreateUserAuth::By(_)) => true,
-                Some(tidb_ast::CreateUserAuth::With { plugin, .. }) => {
-                    effective(plugin) == effective(&current_plugin)
-                }
-            };
-            // Go's `selfServiceDualPwd`: a dual-password change to the
-            // caller's OWN account with no other privileged option and no
-            // plugin change is governed by APPLICATION_PASSWORD_ADMIN, not
-            // the CREATE USER admin check.
-            let self_service_dual = alter_current_user
-                && spec_dual_requested
-                && !has_other_stmt_options
-                && same_or_unspecified_plugin;
-            let need_admin_check = !(alter_current_user && alter_password) && !self_service_dual;
-            if need_admin_check {
-                // Static half of Go's gate (CREATE USER, or UPDATE on the
-                // mysql schema); the SYSTEM_USER half runs after the exists
-                // test below, in Go's own order.
-                if !(self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
-                    || self.has_scoped_privilege(
-                        tidb_mysql::consts::SystemDB,
-                        tidb_mysql::consts::UserTable,
-                        privilege::GlobalPriv::Update,
-                    ))
-                {
-                    return Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()));
-                }
-            }
-            // Go: self-service dual-password additionally requires
-            // APPLICATION_PASSWORD_ADMIN (CREATE USER / UPDATE-mysql being
-            // accepted as supersets).
-            if self_service_dual
-                && !(self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
-                    || self.has_scoped_privilege(
-                        tidb_mysql::consts::SystemDB,
-                        tidb_mysql::consts::UserTable,
-                        privilege::GlobalPriv::Update,
-                    )
-                    || self.has_dynamic_privilege("APPLICATION_PASSWORD_ADMIN", false))
-            {
-                return Err(DriverError::SpecificAccessDenied(
-                    "APPLICATION_PASSWORD_ADMIN".to_owned(),
-                ));
-            }
             if !exists {
                 if alter.if_exists {
                     // Go collects the miss into `failedUsers` and, after the

@@ -202,7 +202,7 @@ impl Session {
                 // EXECUTE plans the tree the statement dispatch rewrites:
                 // MATCH ... AGAINST's LIKE fallback is applied there, so the
                 // PREPARE-time plan is built over the same tree.
-                self.rewrite_fts_for_planning(&mut bound);
+                self.rewrite_fts_for_planning(&mut bound)?;
                 Some(bound)
             }
             _ => None,
@@ -421,7 +421,7 @@ impl Session {
         // EXECUTE and its bound body share one result lifecycle. Keep the
         // binding match while the body applies its own hints and metadata.
         let binding_matched = binding_sql.is_some();
-        self.rewrite_fts_for_planning(&mut effective_statement);
+        self.rewrite_fts_for_planning(&mut effective_statement)?;
         // go's plan cache re-checks the stored verdict on every EXECUTE and
         // records the refusal as a statement warning (oracle m21: EXECUTE
         // st3 carries the same skip row as its PREPARE). A cacheable plan

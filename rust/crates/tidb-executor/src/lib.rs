@@ -106,6 +106,7 @@ pub mod index_merge_reader;
 mod index_prefix_cut;
 pub mod join;
 pub mod joiner;
+pub mod import_into_options;
 pub mod keydecoder;
 pub mod kv_table;
 pub mod label_manager;

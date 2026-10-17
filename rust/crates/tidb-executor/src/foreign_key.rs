@@ -1190,6 +1190,50 @@ pub fn check_index_needed(
     Ok(())
 }
 
+/// Go `checkDropColumnWithForeignKeyConstraint`: a column a foreign key of this
+/// table is declared over (1828), or that another table's foreign key refers to
+/// (1829), cannot be dropped.
+pub(crate) fn check_drop_column(
+    catalog: &Catalog,
+    database: &str,
+    table: &str,
+    column: &str,
+) -> Result<(), DriverError> {
+    let column = column.go_to_lower();
+    let (declared_keys, _) = declared(catalog, database, table);
+    for foreign_key in &declared_keys {
+        if foreign_key
+            .cols
+            .iter()
+            .any(|col| col.eq_ignore_ascii_case(&column))
+        {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::mysql::errcode::ErrFkColumnCannotDrop,
+                message: format!(
+                    "Cannot drop column '{column}': needed in a foreign key constraint '{}'",
+                    foreign_key.name
+                ),
+            });
+        }
+    }
+    for (_, child_table, foreign_key) in referring(catalog, database, table) {
+        if foreign_key
+            .ref_cols
+            .iter()
+            .any(|col| col.eq_ignore_ascii_case(&column))
+        {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::mysql::errcode::ErrFkColumnCannotDropChild,
+                message: format!(
+                    "Cannot drop column '{column}': needed in a foreign key constraint '{}' of table '{child_table}'",
+                    foreign_key.name
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Go `checkDropTableHasForeignKeyReferredInOwner`: a table may not be
 /// dropped while a table OUTSIDE this statement still references it. Unlike
 /// TRUNCATE, DROP uses the dedicated 3730 `ErrForeignKeyCannotDrop` diagnostic.

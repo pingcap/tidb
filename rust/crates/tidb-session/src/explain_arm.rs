@@ -51,6 +51,14 @@ impl Session {
                 explain.format
             )));
         }
+        // Go `buildExplain`: the true-cardinality cost format needs the
+        // actual row counts only ANALYZE produces.
+        if !explain.analyze && explain.format.eq_ignore_ascii_case("true_card_cost") {
+            return Err(DriverError::unsupported(format!(
+                "'explain format=true_card_cost' cannot work without 'analyze', please use \
+                 'explain analyze format=true_card_cost'"
+            )));
+        }
         let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
             // go `plannererrors.ErrUnknownExplainFormat` (1791) names the
             // format it could not match (oracle: `EXPLAIN FORMAT='tree'`

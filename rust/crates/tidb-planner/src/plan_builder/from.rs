@@ -1731,9 +1731,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // "If this view has already been on the building stack, it means this
         // view contains a recursive definition."
         if self.building_view_stack.contains(&key) {
-            return Err(PlanError::internal(format!(
-                "`{db_name}`.`{table_name}` contains view recursion"
-            )));
+            return Err(PlanError::view_recursive(db_name, table_name));
         }
         self.building_view_stack.insert(key.clone());
         Ok(ViewBuildGuard { key })

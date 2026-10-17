@@ -210,6 +210,9 @@ pub enum EvalError {
     /// operation with an arity other than two or three, which MySQL reports
     /// WITHOUT naming the operands.
     IllegalMixCollationGeneric(String),
+    /// Go `collate.ErrIllegalMix3Collation` (1270): three operands whose
+    /// collations cannot be aggregated.
+    IllegalMix3Collation(String),
     /// Go `charset.ErrUnknownCollation` (1273): a `COLLATE` clause naming a
     /// collation the registry does not know.
     UnknownCollation(String),

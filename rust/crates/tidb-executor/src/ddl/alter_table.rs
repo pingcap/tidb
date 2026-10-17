@@ -958,6 +958,7 @@ fn submitted_jobs(
             .map(|change| {
                 Job::new(match change {
                     PreparedMetadataChange::Comment(_) => A::ACTION_MODIFY_TABLE_COMMENT,
+                    PreparedMetadataChange::ShardRowId(_) => A::ACTION_SHARD_ROW_ID,
                     PreparedMetadataChange::Charset { .. } => {
                         A::ACTION_MODIFY_TABLE_CHARSET_AND_COLLATE
                     }
@@ -1425,6 +1426,20 @@ fn drop_partition_action(
         .map_err(|error| crate::driver::kv_read_error("drop partition", error))
 }
 
+/// The method Go prints for a RANGE or LIST table's partitioning (`RANGE`,
+/// `LIST`); anything else falls to the list spelling the old message used.
+fn non_hash_partition_method(catalog: &Catalog, database: &str, table_name: &str) -> &'static str {
+    match catalog.table_in(database, table_name) {
+        Some(crate::TableEntry::Kv(table)) => table
+            .partition()
+            .map_or("LIST", |partition| match partition.kind.sql() {
+                "RANGE" => "RANGE",
+                _ => "LIST",
+            }),
+        _ => "LIST",
+    }
+}
+
 fn add_partition_action(
     catalog: &mut Catalog,
     database: &str,
@@ -1461,9 +1476,13 @@ fn add_partition_action(
         tidb_ast::AddPartitionSpec::Definitions(definitions) => definitions,
         tidb_ast::AddPartitionSpec::Count(count) => {
             if !hash_or_key {
-                return Err(DriverError::unsupported(
-                    "ADD PARTITION PARTITIONS n on a non-HASH table is not supported yet",
-                ));
+                // Go `BuildAddedPartitionInfo`: a RANGE/LIST table needs its
+                // definitions written out; a bare count carries none.
+                return Err(DriverError::PartitionsMustBeDefined(non_hash_partition_method(
+                    catalog,
+                    database,
+                    table_name,
+                )));
             }
             let change = HashManagement::Add {
                 count: *count,
@@ -1473,7 +1492,30 @@ fn add_partition_action(
         }
     };
     if definitions.is_empty() {
-        return Err(DriverError::PartitionsMustBeDefined("LIST"));
+        return Err(DriverError::PartitionsMustBeDefined(non_hash_partition_method(
+            catalog,
+            database,
+            table_name,
+        )));
+    }
+    // Go `checkListPartitions` / `buildRangePartitionDefinitions`: a definition
+    // without its VALUES clause is 1479 naming the clause the method needs.
+    let method = non_hash_partition_method(catalog, database, table_name);
+    if let Some(clause) = match method {
+        "LIST" => Some("IN"),
+        "RANGE" => Some("LESS THAN"),
+        _ => None,
+    } {
+        if definitions.iter().any(|definition| {
+            matches!(definition.clause, tidb_ast::PartitionDefinitionClause::None)
+        }) {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrPartitionRequiresValues,
+                message: format!(
+                    "Syntax : {method} PARTITIONING requires definition of VALUES {clause} for each partition"
+                ),
+            });
+        }
     }
     if definitions
         .iter()
@@ -2110,6 +2152,8 @@ fn reject_drop_index_used_by_added_foreign_key(
 /// applying one job must retain sibling column/index changes.
 enum PreparedMetadataChange {
     Comment(String),
+    /// Go `ActionShardRowID`: the new `SHARD_ROW_ID_BITS`.
+    ShardRowId(u64),
     Charset {
         target: TableCharset,
         overwrite_columns: bool,
@@ -2170,6 +2214,9 @@ impl PreparedMetadataChange {
                 let table = std::sync::Arc::make_mut(table);
                 match change {
                     Self::Comment(comment) => table.set_comment(comment),
+                    // Go `onShardRowID`: lowering the count only narrows the
+                    // shard; raising it moves `MaxShardRowIDBits` with it.
+                    Self::ShardRowId(bits) => table.set_shard_row_id_bits(bits),
                     Self::Charset {
                         target,
                         overwrite_columns,
@@ -2477,6 +2524,31 @@ fn prepare_table_options(
                     .map_err(DriverError::unsupported)?;
                 reject_metadata_multi_job(multi_schema, "modify auto id cache")?;
                 changes.push(PreparedMetadataChange::AutoIdCache(cache));
+            }
+            // Go `AlterTable` clamps the value to `MaxShardRowIDBits`, then
+            // `ShardRowID` checks in its own order.
+            tidb_ast::TableOption::ShardRowIdBits(value) => {
+                let bits = value
+                    .parse::<u64>()
+                    .map_err(|_| DriverError::unsupported("SHARD_ROW_ID_BITS needs an integer value"))?
+                    .min(tidb_vardef::tidb_vars::MAX_SHARD_ROW_ID_BITS);
+                if table.temp_table_type() != tidb_model::TempTableType::NONE {
+                    return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"));
+                }
+                if bits == table.shard_row_id_bits() {
+                    continue;
+                }
+                if bits > 0
+                    && (table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty())
+                {
+                    return Err(DriverError::UnsupportedShardRowIdBits);
+                }
+                if bits >= table.shard_row_id_bits() {
+                    table.verify_no_overflow_shard_bits(bits).map_err(|message| {
+                        DriverError::Mysql(crate::driver::MysqlError::new(1467, message))
+                    })?;
+                }
+                changes.push(PreparedMetadataChange::ShardRowId(bits));
             }
             tidb_ast::TableOption::Comment(comment) => {
                 changes.push(PreparedMetadataChange::Comment(
@@ -4190,6 +4262,18 @@ pub(super) fn prepare_modify_column(
                 crate::column_default::validate_on_update_current_timestamp(expr, &field_type)
                     .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;
                 field_type.add_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
+            }
+            // Go `ProcessModifyColumnOptions` refuses a key written on a
+            // modified column with a bare 8200 reason.
+            tidb_ast::ColumnOption::InlineKey(key) => {
+                let constraint = match key.kind {
+                    tidb_ast::InlineKeyKind::Primary { .. } => "PRIMARY KEY",
+                    _ => "UNIQUE KEY",
+                };
+                return Err(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    message: format!("can't change column constraint ({constraint})"),
+                });
             }
             _ => {
                 return Err(DriverError::unsupported(

@@ -208,6 +208,7 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::IllegalMixCollationGeneric(message) => {
             MysqlError::new(ER_CANT_AGGREGATE_NCOLLATIONS, message)
         }
+        EvalError::IllegalMix3Collation(message) => MysqlError::new(1270, message),
         EvalError::UnknownCollation(name) => {
             MysqlError::new(ER_UNKNOWN_COLLATION, format!("Unknown collation: '{name}'"))
         }

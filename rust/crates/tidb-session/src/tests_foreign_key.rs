@@ -560,7 +560,7 @@ fn show_create_table_prints_the_constraint_and_its_implicit_index() {
 /// below as the statements that must keep working.
 #[test]
 fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
-    for statement in ["ALTER TABLE c DROP COLUMN id"] {
+    for statement in ["ALTER TABLE c DROP COLUMN pid", "ALTER TABLE p DROP COLUMN id"] {
         let mut session = pair("");
         assert!(
             session.run(statement).is_err(),
@@ -584,6 +584,13 @@ fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
             "{statement}"
         );
     }
+    // A column no constraint uses drops freely, and the key still holds.
+    let mut session = pair("");
+    session.run("ALTER TABLE c DROP COLUMN id").unwrap();
+    assert_eq!(
+        code(&mut session, "INSERT INTO c (pid) VALUES (99)"),
+        Some(1452)
+    );
     // An index change touches neither addressing scheme, so it still runs.
     let mut session = pair("");
     session.run("ALTER TABLE c ADD INDEX kid (id)").unwrap();
@@ -1695,35 +1702,28 @@ fn adding_a_column_to_a_constrained_table_is_accepted() {
         None
     );
 }
-
-/// DROP COLUMN remains refused on a constrained table, while both Go and this
-/// tier now rewrite metadata for column renames.
-///
-/// Go accepts `alter table c rename column b to bb` and carries the constraint;
-/// `alter table c drop column b`
-/// is Go's `[ddl:1828] Cannot drop column 'b': needed in a foreign key
-/// constraint 'fk'` -- a REFUSAL, but under a different code than the 1105
-/// this tier raises.
-///
+/// Go `checkDropColumnWithForeignKeyConstraint`: a column a foreign key of
+/// the table is declared over is `[ddl:1828]`, one another table's key refers
+/// to is `[ddl:1829]` naming the child, and every other column drops freely.
 #[test]
-fn drop_column_is_still_refused_on_a_constrained_table() {
+fn drop_column_is_refused_only_for_the_columns_a_constraint_needs() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE p (a VARCHAR(20) NOT NULL PRIMARY KEY, z INT)")
+        .run("CREATE TABLE p (a VARCHAR(20) NOT NULL PRIMARY KEY, k INT UNIQUE, z INT)")
         .unwrap();
     session
-        .run("CREATE TABLE c (b VARCHAR(20), z INT, FOREIGN KEY fk (b) REFERENCES p(a))")
+        .run("CREATE TABLE c (b INT, z INT, FOREIGN KEY fk (b) REFERENCES p(k))")
         .unwrap();
     assert_eq!(
         code(&mut session, "ALTER TABLE c DROP COLUMN b"),
-        Some(1105)
+        Some(1828)
     );
-    // The UNCONSTRAINED column is not covered by the refusal's blast radius
-    // in Go, but it is here: this line records the WIDTH of the gap.
     assert_eq!(
-        code(&mut session, "ALTER TABLE c DROP COLUMN z"),
-        Some(1105)
+        code(&mut session, "ALTER TABLE p DROP COLUMN k"),
+        Some(1829)
     );
+    assert_eq!(code(&mut session, "ALTER TABLE c DROP COLUMN z"), None);
+    assert_eq!(code(&mut session, "ALTER TABLE p DROP COLUMN z"), None);
 }
 
 /// The OTHER half of the rename rewrite, and the one a child-side-only test

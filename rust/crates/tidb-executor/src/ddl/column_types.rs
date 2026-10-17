@@ -87,16 +87,56 @@ fn collation_named(name: &str) -> Result<Collation, DriverError> {
 
 /// The table's own `DEFAULT CHARSET=` / `DEFAULT COLLATE=` options, falling
 /// back to the owning database when neither is written.
+///
+/// Go `GetCharsetAndCollateInTableOption`: the options are read in order, a
+/// second charset naming another set is 1302, and a collation that belongs to
+/// a different set than the one already named is 1253.
 pub(crate) fn table_charset_of(
     options: &[tidb_ast::TableOption],
     database: TableCharset,
 ) -> Result<TableCharset, DriverError> {
-    let mut charset = None;
-    let mut collation = None;
+    let mut charset: Option<Charset> = None;
+    let mut collation: Option<Collation> = None;
     for option in options {
         match option {
-            tidb_ast::TableOption::CharacterSet(name) => charset = Some(charset_named(name)?),
-            tidb_ast::TableOption::Collate(name) => collation = Some(collation_named(name)?),
+            tidb_ast::TableOption::CharacterSet(name) => {
+                let named = charset_named(name)?;
+                match charset {
+                    None => charset = Some(named),
+                    Some(current) if current != named => {
+                        return Err(DriverError::DdlCoded {
+                            errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                            message: format!(
+                                "Conflicting declarations: 'CHARACTER SET {}' and 'CHARACTER SET {}'",
+                                current.name(),
+                                named.name()
+                            ),
+                        });
+                    }
+                    Some(_) => {}
+                }
+                if collation.is_none() {
+                    collation = Some(named.default_collation());
+                }
+            }
+            tidb_ast::TableOption::Collate(name) => {
+                let named = collation_named(name)?;
+                match charset {
+                    None => charset = Some(named.charset()),
+                    Some(current) if current != named.charset() => {
+                        return Err(DriverError::DdlCoded {
+                            errno: tidb_error::mysql::errcode::ErrCollationCharsetMismatch,
+                            message: format!(
+                                "COLLATION '{}' is not valid for CHARACTER SET '{}'",
+                                named.name(),
+                                current.name()
+                            ),
+                        });
+                    }
+                    Some(_) => {}
+                }
+                collation = Some(named);
+            }
             _ => {}
         }
     }

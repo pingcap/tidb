@@ -2951,6 +2951,20 @@ impl ExchangePartitionValidator for KvTableIndexBackfiller {
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
+        // Go `checkExchangePartitionRecordValidation`'s partition-type switch
+        // refuses a KEY-partitioned table before any row is read.
+        if plan.partitioned.partition.as_ref().is_some_and(|partition| {
+            partition.read().partition_type == tidb_ast::PartitionType::KEY
+        }) {
+            return Err(LockSqlError {
+                code: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                state: *b"HY000",
+                message: format!(
+                    "Unsupported partition type of table {} when exchanging partition",
+                    plan.partitioned.name.original()
+                ),
+            });
+        }
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
         let mut standalone = cluster_table(&plan.standalone, &storage, &AutoIdSource::Unavailable)
             .map_err(exchange_validation_internal)?;

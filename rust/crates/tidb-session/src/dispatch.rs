@@ -2911,13 +2911,13 @@ impl Session {
     /// Runs Go's `matchAgainstToLike` before physical planning. Prepared
     /// cache misses and ordinary statements both call this method, so the
     /// cache retains the same rewritten tree the normal executor receives.
-    pub(crate) fn rewrite_fts_for_planning(&self, stmt: &mut Stmt) {
+    pub(crate) fn rewrite_fts_for_planning(&self, stmt: &mut Stmt) -> Result<(), DriverError> {
         let enabled = self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS)
             .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
         if !enabled {
-            return;
+            return Ok(());
         }
 
         let current_db = self.current_db.clone();
@@ -2925,21 +2925,27 @@ impl Session {
         // before holding the catalog guard used by every resolved-type probe.
         let ctx = self.statement_context(false);
         let Ok(catalog) = self.lock_catalog() else {
-            return;
+            return Ok(());
         };
         let columns_are_strings = |select: &tidb_ast::SelectStmt, columns: &[Vec<String>]| {
             tidb_executor::fts_columns_are_strings(select, columns, &catalog, &current_db, &ctx)
         };
         struct FtsRewriter<'a> {
             columns_are_strings: &'a tidb_executor::fts_like_rewrite::ColumnsAreStrings<'a>,
+            error: Option<DriverError>,
         }
         impl tidb_ast::Visitor for FtsRewriter<'_> {
             fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if self.error.is_some() {
+                    return false;
+                }
                 if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
-                    tidb_executor::fts_like_rewrite::rewrite_select_fts(
+                    if let Err(error) = tidb_executor::fts_like_rewrite::rewrite_select_fts(
                         select,
                         self.columns_are_strings,
-                    );
+                    ) {
+                        self.error = Some(error);
+                    }
                 }
                 false
             }
@@ -2949,9 +2955,12 @@ impl Session {
             }
         }
         use tidb_ast::Visitable as _;
-        stmt.accept(&mut FtsRewriter {
+        let mut rewriter = FtsRewriter {
             columns_are_strings: &columns_are_strings,
-        });
+            error: None,
+        };
+        stmt.accept(&mut rewriter);
+        rewriter.error.map_or(Ok(()), Err)
     }
 
     // Go keys memory arbitration by StatementContext.SQLDigest's normalized
@@ -3184,7 +3193,7 @@ impl Session {
         // The Apply channel describes THIS statement's plan.
         self.planned_apply
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.rewrite_fts_for_planning(&mut stmt);
+        self.rewrite_fts_for_planning(&mut stmt)?;
         // Go's row-id shard generator belongs to the TRANSACTION, so a
         // statement that IS its own transaction starts a fresh run. Inside an
         // explicit `BEGIN`/`COMMIT` the run continues across statements,
@@ -3550,8 +3559,13 @@ impl Session {
                         self.drain_eval_warnings(&ctx);
                         output
                     }
-                    DmlStmt::ImportInto(_) => {
-                        Err(DriverError::unsupported("IMPORT INTO is not supported yet"))
+                    DmlStmt::ImportInto(import) => {
+                        // Go validates the FORMAT and WITH options before it
+                        // reads anything; the import itself is not modelled.
+                        tidb_executor::import_into_options::validate_import_into_options(import)
+                            .and_then(|()| {
+                                Err(DriverError::unsupported("IMPORT INTO is not supported yet"))
+                            })
                     }
                     DmlStmt::Call(_) => {
                         // go's unsupported-statement wall names the AST node:

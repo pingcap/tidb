@@ -227,8 +227,8 @@ fn display_name(func_name: &str) -> &str {
     }
 }
 
-/// Go `illegalMixCollationErr`: 1267 for two or three arguments, 1271 for any
-/// other arity.
+/// Go `illegalMixCollationErr`: 1267 for two arguments, 1270 for three, 1271 for
+/// any other arity.
 ///
 /// Captured from TiDB, byte for byte:
 /// `[expression:1267]Illegal mix of collations (utf8mb4_general_ci,EXPLICIT)
@@ -250,8 +250,8 @@ pub fn illegal_mix_collation_err(func_name: &str, args: &[Expression]) -> EvalEr
             part(&args[0]),
             part(&args[1])
         )),
-        3 => EvalError::IllegalMixCollation(format!(
-            "Illegal mix of collations {}, {} and {} for operation '{display}'",
+        3 => EvalError::IllegalMix3Collation(format!(
+            "Illegal mix of collations {}, {}, {} for operation '{display}'",
             part(&args[0]),
             part(&args[1]),
             part(&args[2])

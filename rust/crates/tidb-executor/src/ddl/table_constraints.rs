@@ -128,9 +128,11 @@ pub(crate) fn table_indexes(
         if index.options.primary_key_storage.is_some()
             && index.kind != tidb_ast::IndexConstraintKind::PrimaryKey
         {
-            return Err(DriverError::unsupported(
-                "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
-            ));
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                message: "CLUSTERED/NONCLUSTERED keyword is only supported for primary key"
+                    .to_owned(),
+            });
         }
         if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey
             && index.options.condition.is_some()

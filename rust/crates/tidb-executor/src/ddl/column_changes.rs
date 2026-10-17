@@ -138,12 +138,13 @@ pub(super) fn prepare(
             if_exists,
             name: column,
         } => {
-            // Preserve the existing unsupported FK boundary until the full
-            // foreign-key drop-column owner is available.
-            if crate::foreign_key::participates(catalog, database, name) {
-                return Err(DriverError::unsupported("changing the columns of a table involved in a FOREIGN KEY is not supported yet"));
+            let prepared =
+                alter_table::prepare_drop_column(catalog, database, name, column, *if_exists, ctx)?;
+            // Go's worker refuses the drop of a column a foreign key needs.
+            if prepared.is_some() {
+                crate::foreign_key::check_drop_column(catalog, database, name, column)?;
             }
-            alter_table::prepare_drop_column(catalog, database, name, column, *if_exists, ctx)
+            Ok(prepared)
         }
         AlterTableAction::ModifyColumn {
             if_exists,

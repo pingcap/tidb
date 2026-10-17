@@ -427,9 +427,26 @@ impl Session {
     /// Preprocessor errors precede both grant checking and implicit commits.
     pub fn validate_ddl_preprocess(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
         // Go's preprocessor grammar checks over the statement's own names
-        // and declarations, before anything reads the catalog.
+        // and declarations, before anything reads the catalog. Its
+        // `handleTableName` has already given an unqualified CREATE TABLE the
+        // current schema, which `checkContainDotColumn` compares against.
+        let named;
+        let graded = match stmt {
+            tidb_ast::Stmt::Ddl(ddl) => match ddl.as_ref() {
+                tidb_ast::DdlStmt::CreateTable(create)
+                    if create.name.len() == 1 && !self.current_db.is_empty() =>
+                {
+                    let mut create = create.clone();
+                    create.name.insert(0, self.current_db.clone());
+                    named = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::CreateTable(create)));
+                    &named
+                }
+                _ => stmt,
+            },
+            _ => stmt,
+        };
         tidb_executor::ddl::preprocess::check_ddl_grammar(
-            stmt,
+            graded,
             self.vars.sql_mode().has_strict_mode(),
         )?;
         // Go checkCreateTableGrammar resolves LIKE through the session

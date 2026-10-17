@@ -1477,7 +1477,7 @@ fn run_insert_with_physical(
                             return Err(DriverError::Exec(killed));
                         }
                         match error {
-                            AutoIdError::Exhausted => return Err(DriverError::AutoincReadFailed),
+                            AutoIdError::Exhausted => return Err(kv.auto_id_exhausted_error()),
                             // An id that does not fit the COLUMN is not a full
                             // domain: Go `setDatumAutoIDAndCast` casts the
                             // allocated id, and the cast's 1690 names the value

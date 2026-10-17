@@ -185,6 +185,28 @@ impl KvTable {
         }
     }
 
+    /// What a full AUTO_INCREMENT domain answers. An `AUTO_ID_CACHE=1` table
+    /// draws its ids from Go's autoid service, whose failures cross the RPC as
+    /// plain text and surface as 1105: a signed column's overflow reads
+    /// `auto increment action failed`, an unsigned column's carries the
+    /// original 1467 as its prefix. Every other allocator raises 1467 itself.
+    #[must_use]
+    pub fn auto_id_exhausted_error(&self) -> crate::DriverError {
+        if self.auto_id_cache != 1 {
+            return crate::DriverError::AutoincReadFailed;
+        }
+        let unsigned = self
+            .auto_increment_offset
+            .and_then(|offset| self.columns.get(offset))
+            .is_some_and(|column| column.field_type.is_unsigned());
+        let message = if unsigned {
+            "[autoid:1467]Failed to read auto-increment value from storage engine"
+        } else {
+            "auto increment action failed"
+        };
+        crate::DriverError::Mysql(crate::driver::MysqlError::unknown(message))
+    }
+
     /// The AUTO_INCREMENT column's offset, if any.
     #[must_use]
     pub fn auto_increment_offset(&self) -> Option<usize> {

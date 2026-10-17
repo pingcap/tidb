@@ -407,6 +407,31 @@ pub(crate) fn required_table_privileges(
                     ));
                 }
             }
+            // Go `buildImportInto`: IMPORT INTO needs the full DML privileges
+            // of the target (ALTER too, for add-index by SQL), each carrying
+            // the table-named 1142, plus FILE for a server-disk source.
+            DmlStmt::ImportInto(import) => {
+                if let Some((schema, table)) = split_path(&import.table, current_db) {
+                    for privilege in [
+                        GlobalPriv::Select,
+                        GlobalPriv::Update,
+                        GlobalPriv::Insert,
+                        GlobalPriv::Delete,
+                        GlobalPriv::Alter,
+                    ] {
+                        requests.push(TablePrivilegeRequest::new(&schema, &table, privilege));
+                    }
+                }
+                if let tidb_ast::ImportSource::File { path, .. } = &import.source {
+                    // `objstore.IsLocal`: no scheme, or the `file` scheme.
+                    let local = path
+                        .split_once("://")
+                        .is_none_or(|(scheme, _)| scheme.is_empty() || scheme == "file");
+                    if local {
+                        requests.push(TablePrivilegeRequest::specific(GlobalPriv::File, "FILE"));
+                    }
+                }
+            }
             // Every other DML form is refused as unsupported before it
             // could touch a table.
             _ => {}
@@ -444,6 +469,29 @@ pub(crate) fn required_table_privileges(
         // `planbuilder.go` around line 5622: "only by administrator".
         Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::CleanupTableLock(_)) => {
             requests.push(TablePrivilegeRequest::unnamed("", "", GlobalPriv::Super));
+        }
+        // Go `buildTraffic`: each operation needs its own dynamic privilege
+        // (or SUPER), reported as `ErrSpecificAccessDenied`.
+        Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Traffic(_)) => {
+            let tidb_ast::AdminStmt::Traffic(traffic) = &**admin else {
+                unreachable!("matched above")
+            };
+            requests.push(match &**traffic {
+                tidb_ast::TrafficStmt::Capture { .. } => TablePrivilegeRequest::dynamic(
+                    &["TRAFFIC_CAPTURE_ADMIN"],
+                    "SUPER or TRAFFIC_CAPTURE_ADMIN",
+                ),
+                tidb_ast::TrafficStmt::Replay { .. } => TablePrivilegeRequest::dynamic(
+                    &["TRAFFIC_REPLAY_ADMIN"],
+                    "SUPER or TRAFFIC_REPLAY_ADMIN",
+                ),
+                tidb_ast::TrafficStmt::ShowJobs | tidb_ast::TrafficStmt::CancelJobs => {
+                    TablePrivilegeRequest::dynamic(
+                        &["TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"],
+                        "SUPER, TRAFFIC_CAPTURE_ADMIN or TRAFFIC_REPLAY_ADMIN",
+                    )
+                }
+            });
         }
         Stmt::Admin(_) | Stmt::Session(_) => {}
     }

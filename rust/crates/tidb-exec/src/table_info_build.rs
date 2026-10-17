@@ -338,10 +338,12 @@ pub fn build_table_info_in_schema(
         &create.table_options,
     )
     .map_err(default_admission_error)?;
-    // Go `GetCharsetAndCollateInTableOption`: the LAST declared pair wins, and
-    // whatever it leaves unset the database supplies.
-    let mut declared_charset = None;
-    let mut declared_collate = None;
+    // Go `GetCharsetAndCollateInTableOption`: the options are read in order, a
+    // second charset naming another set is 1302, a collation of a different
+    // set than the one already named is 1253, and whatever stays unset the
+    // database supplies.
+    let mut declared_charset: Option<String> = None;
+    let mut declared_collate: Option<String> = None;
     let mut comment = String::new();
     let mut auto_inc_id = 0i64;
     let mut auto_rand_id = 0i64;
@@ -352,8 +354,42 @@ pub fn build_table_info_in_schema(
     let mut pre_split_regions = None;
     for option in &create.table_options {
         match option {
-            TableOption::CharacterSet(charset) => declared_charset = Some(charset.clone()),
-            TableOption::Collate(collate) => declared_collate = Some(collate.clone()),
+            TableOption::CharacterSet(charset) => {
+                let (name, default_collate) =
+                    resolve_charset_collation(Some(charset), None, db_charset, db_collate)?;
+                match &declared_charset {
+                    None => declared_charset = Some(name),
+                    Some(current) if *current != name => {
+                        return Err(DdlAdmissionError::with_code(
+                            tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                            format!(
+                                "Conflicting declarations: 'CHARACTER SET {current}' and 'CHARACTER SET {name}'"
+                            ),
+                        ));
+                    }
+                    Some(_) => {}
+                }
+                if declared_collate.is_none() {
+                    declared_collate = Some(default_collate);
+                }
+            }
+            TableOption::Collate(collate) => {
+                let (info_charset, info_collate) =
+                    resolve_charset_collation(None, Some(collate), db_charset, db_collate)?;
+                match &declared_charset {
+                    None => declared_charset = Some(info_charset),
+                    Some(current) if !current.eq_ignore_ascii_case(&info_charset) => {
+                        return Err(DdlAdmissionError::with_code(
+                            1253,
+                            format!(
+                                "COLLATION '{info_collate}' is not valid for CHARACTER SET '{current}'"
+                            ),
+                        ));
+                    }
+                    Some(_) => {}
+                }
+                declared_collate = Some(info_collate);
+            }
             TableOption::Comment(text) => comment = text.clone(),
             // Go `handleTableOptions`: the parsed value is unsigned, and
             // anything past int64 is refused with its own message.
@@ -1242,6 +1278,14 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
             ))
         }
     };
+    // Go `BuildTableInfo`: `CLUSTERED` / `NONCLUSTERED` written on anything
+    // but the primary key is `ErrUnsupportedClusteredSecondaryKey`.
+    if index.options.primary_key_storage.is_some() && kind != ConstraintKind::PrimaryKey {
+        return Err(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
+        ));
+    }
     let mut parts = Vec::with_capacity(index.parts.len());
     for part in &index.parts {
         match part {
@@ -1476,14 +1520,11 @@ pub fn build_added_column(
             // `build_column` below owns Go's single OFF warning and returns
             // the inline constraint that `CreateNewColumn` discards.
             ColumnOption::Check(_) => {}
-            ColumnOption::Generated { stored: false, .. } if generated_preceding.is_some() => {}
-            ColumnOption::Generated { stored: true, .. } if generated_preceding.is_some() => {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
-                    "'Adding generated stored column through ALTER TABLE' is not supported \
-                         for generated columns.",
-                ));
-            }
+            // A STORED expression is refused only after it has been built:
+            // Go validates the expression (arity, columns) first.
+            ColumnOption::Generated { .. } if generated_preceding.is_some() => {}
+            // Go builds the ON UPDATE of an added column like CREATE TABLE's.
+            ColumnOption::OnUpdate(_) => {}
             other => {
                 return Err(DdlAdmissionError::unsupported(format!(
                     "ADD COLUMN {} waits on its DDL course",
@@ -1529,6 +1570,18 @@ pub fn build_added_column(
         context,
         generated_preceding.map_or(GeneratedColumns::Refused, GeneratedColumns::Existing),
     )?;
+    if generated_preceding.is_some()
+        && column
+            .options
+            .iter()
+            .any(|option| matches!(option, ColumnOption::Generated { stored: true, .. }))
+    {
+        return Err(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+            "'Adding generated stored column through ALTER TABLE' is not supported \
+                 for generated columns.",
+        ));
+    }
     // Go `checkAutoIncrementRef` (`AddColumn`): unless
     // `tidb_enable_auto_increment_in_generated` allows it, a generated column
     // may not read the table's AUTO_INCREMENT column (3109).
@@ -2068,20 +2121,16 @@ fn build_column(
                     field_type.code(),
                     FieldTypeCode::Timestamp | FieldTypeCode::Datetime
                 ) {
+                    // Go `ErrInvalidOnUpdate` (1294).
                     return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        format!(
-                        "column `{name}` declares ON UPDATE on a type that is not TIMESTAMP or \
-                         DATETIME"
-                    ),
+                        tidb_error::tidb::errcode::ErrInvalidOnUpdate,
+                        format!("Invalid ON UPDATE clause for '{name}' column"),
                     ));
                 }
                 if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type)) {
                     return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        format!(
-                            "column `{name}` declares an ON UPDATE that is not CURRENT_TIMESTAMP"
-                        ),
+                        tidb_error::tidb::errcode::ErrInvalidOnUpdate,
+                        format!("Invalid ON UPDATE clause for '{name}' column"),
                     ));
                 }
                 field_type.add_flags(FieldTypeFlags::ON_UPDATE_NOW);

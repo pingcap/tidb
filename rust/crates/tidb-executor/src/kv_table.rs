@@ -2412,6 +2412,25 @@ impl KvTable {
         self.shard_row_id_bits
     }
 
+    /// Go `verifyNoOverflowShardBits`: the next global row id must leave the
+    /// new shard bits clear (`tables.OverflowShardBits`, sign bit reserved).
+    pub fn verify_no_overflow_shard_bits(&self, bits: u64) -> Result<(), String> {
+        if bits == 0 {
+            return Ok(());
+        }
+        let next = self
+            .row_id_allocator()
+            .next_for_show()
+            .map_err(|error| error.to_string())?;
+        let mask = ((1u64 << bits) - 1) << (64 - bits - 1);
+        if next & mask > 0 {
+            return Err(format!(
+                "shard_row_id_bits {bits} will cause next global auto ID {next} overflow"
+            ));
+        }
+        Ok(())
+    }
+
     /// Records `PRE_SPLIT_REGIONS` (Go `TableInfo.PreSplitRegions`).
     pub fn set_pre_split_regions(&mut self, regions: u64) {
         self.pre_split_regions = regions;

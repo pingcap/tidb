@@ -185,20 +185,19 @@ fn build_table_partitioning_inner(
         )));
     }
     // Go `buildTablePartitionInfo`: subpartitioning is only legal under
-    // RANGE/LIST, and Go WARNS rather than errors there. This tier routes no
-    // subpartition either way, so it refuses both: 1500 under HASH, which is
-    // Go's own error, and a loud refusal under RANGE, where accepting the
-    // clause and ignoring the subpartitioning is the discard this module
-    // exists to prevent.
+    // RANGE/LIST (1500 under HASH/KEY), and there Go WARNS (8200) and builds
+    // the table with the first-level partitioning alone.
     if partitioning.subpartition.is_some() {
         if matches!(method.kind, PartitionType::HASH | PartitionType::KEY) {
             return Err(DriverError::PartitionSubpartition);
         }
-        return Err(DriverError::unsupported(format!(
-            "CREATE TABLE ... PARTITION BY {} ... SUBPARTITION BY is not supported by this \
-                 node",
-            method.kind.sql()
-        )));
+        ctx.append_warning_parts(
+            8200,
+            &format!(
+                "Unsupported subpartitioning, only using {} partitioning",
+                method.kind.sql()
+            ),
+        );
     }
 
     // Go `generatePartitionDefinitionsFromInterval`: INTERVAL expands into
@@ -236,6 +235,7 @@ fn build_table_partitioning_inner(
         let mut expanded = partitioning.clone();
         expanded.definitions = definitions;
         expanded.method.interval = None;
+        expanded.subpartition = None;
         return build_table_partitioning_inner(
             &expanded,
             names,

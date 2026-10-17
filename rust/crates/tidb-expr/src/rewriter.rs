@@ -3544,6 +3544,21 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // aggregation did not map (nested in another aggregate's argument)
         // is `ErrInvalidGroupFuncUse` (1111), before its arguments are seen.
         Expr::Aggregate { .. } | Expr::GroupConcat { .. } => Err(EvalError::InvalidGroupFuncUse),
+        // Go `matchAgainstToBuiltin`: a modifier the native FTS builtin cannot
+        // carry through pushdown is refused outright; the default mode builds
+        // the native function, which only a fulltext index can evaluate.
+        Expr::MatchAgainst { modifier, .. } => {
+            if modifier.is_boolean_mode() || modifier.with_query_expansion() {
+                Err(EvalError::NotImplemented(
+                    "MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)"
+                        .into(),
+                ))
+            } else {
+                Err(EvalError::Unsupported(
+                    "cannot use 'MATCH ... AGAINST' outside of fulltext index",
+                ))
+            }
+        }
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",
         )),

@@ -255,13 +255,44 @@ fn schema_shape_refusal(stmt: &tidb_ast::Stmt) -> Option<(u16, String)> {
             "Failed to repair table: TiDB is not in REPAIR MODE".to_owned(),
         )),
         tidb_ast::DdlStmt::AlterTable(alter) => {
-            let stats_persistent = alter.actions.iter().any(|action| match action {
-                tidb_ast::AlterTableAction::SetTableOptions { options } => options
-                    .iter()
-                    .any(|option| matches!(option, tidb_ast::TableOption::StatsPersistent)),
+            // Go `executor.AlterTable` refuses these partition specs outright
+            // (`pkg/ddl/executor.go:1763`).
+            for action in &alter.actions {
+                if let tidb_ast::AlterTableAction::Partition(partition) = action {
+                    use tidb_ast::{AlterPartitionAction, PartitionMaintenanceOp};
+                    let message = match partition {
+                        AlterPartitionAction::MergeFirstPartitionLessThan { .. } => {
+                            "Unsupported MERGE FIRST PARTITION"
+                        }
+                        AlterPartitionAction::SplitMaxValuePartition { .. } => {
+                            "Unsupported SPLIT LAST PARTITION"
+                        }
+                        AlterPartitionAction::Check { .. } => "Unsupported check partition",
+                        AlterPartitionAction::Maintain { operation, .. } => match operation {
+                            PartitionMaintenanceOp::Rebuild => "Unsupported rebuild partition",
+                            PartitionMaintenanceOp::Optimize => "Unsupported optimize partition",
+                            PartitionMaintenanceOp::Repair => "Unsupported repair partition",
+                        },
+                        _ => continue,
+                    };
+                    return Some((8200, message.to_owned()));
+                }
+            }
+            // `STATS_PERSISTENT` and `PRE_SPLIT_REGIONS` are outside Go's
+            // ALTER TABLE option switch.
+            let unsupported_option = alter.actions.iter().any(|action| match action {
+                tidb_ast::AlterTableAction::SetTableOptions { options } => options.iter().any(
+                    |option| {
+                        matches!(
+                            option,
+                            tidb_ast::TableOption::StatsPersistent
+                                | tidb_ast::TableOption::PreSplitRegions(_)
+                        )
+                    },
+                ),
                 _ => false,
             });
-            stats_persistent.then(|| {
+            unsupported_option.then(|| {
                 (
                     8200,
                     "This type of ALTER TABLE is currently unsupported".to_owned(),

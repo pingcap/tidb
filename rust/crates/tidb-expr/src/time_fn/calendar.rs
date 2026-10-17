@@ -1083,8 +1083,25 @@ pub(super) fn whole_interval_amount(
     Ok(Some(match amount {
         Datum::Null => return Ok(None),
         Datum::Int(value) => *value,
-        Datum::UInt(value) => i64::try_from(*value).unwrap_or(i64::MAX),
-        Datum::Decimal(value) => value.round_to_i64_saturating(),
+        // Go `getIntervalFromInt` formats the unsigned value, and
+        // `ParseDurationValue`'s `ParseInt` refuses it as
+        // `ErrIncorrectDatetimeValue`, through `handleInvalidTimeError`.
+        Datum::UInt(value) => match i64::try_from(*value) {
+            Ok(value) => value,
+            Err(_) => {
+                cols.handle_truncate(&format!("Incorrect datetime value: '{value}'"))?;
+                i64::MAX
+            }
+        },
+        // Go `intervalDecimalToString`: a decimal that does not round into an
+        // int64 is `ErrTruncatedWrongVal("DECIMAL", dec)`.
+        Datum::Decimal(value) => match value.round_to_i64() {
+            Some(rounded) => rounded,
+            None => {
+                cols.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{value}'"))?;
+                value.round_to_i64_saturating()
+            }
+        },
         Datum::String(_) | Datum::Bytes(_) => {
             let Some(value) = coerce_str(amount)? else {
                 return Ok(None);

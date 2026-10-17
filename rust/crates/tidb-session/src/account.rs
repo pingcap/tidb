@@ -604,8 +604,22 @@ impl Session {
         dynamic: &[String],
         is_grant: bool,
     ) -> Result<(), DriverError> {
+        // Go `genAuthErrForGrantStmt`: a statement scoped to
+        // `performance_schema` carries the database-access denial instead of
+        // the generic privilege-check failure.
+        let database_denial = database
+            .eq_ignore_ascii_case("performance_schema")
+            .then(|| self.current_identity())
+            .flatten()
+            .map(|(user, host)| DriverError::DbAccessDenied {
+                user: user.to_owned(),
+                host: host.to_owned(),
+                database: database.to_owned(),
+            });
         let denied = |priv_: privilege::GlobalPriv| {
-            DriverError::PrivilegeCheckFail(priv_.check_fail_name().to_owned())
+            database_denial.clone().unwrap_or_else(|| {
+                DriverError::PrivilegeCheckFail(priv_.check_fail_name().to_owned())
+            })
         };
         for priv_ in privilege::ALL_GLOBAL_PRIVS {
             if static_mask & priv_.bit() != 0 && !self.has_scoped_privilege(database, table, *priv_)
