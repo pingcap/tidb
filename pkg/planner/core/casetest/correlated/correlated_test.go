@@ -168,6 +168,25 @@ func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
 }
 
 func TestWrongDecorrelate(t *testing.T) {
+	t.Run("nested filtering apply", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(c1 int, c2 int)")
+		tk.MustExec("insert into t values(null,null),(-7,null)")
+		predicate := "(o.c2 in(select i.c1 from t i where o.c1 is not null)) and ((o.c1 in(select 1 from t)) or true)"
+		tk.MustQuery("select o.c2 from t o where " + predicate).Check(testkit.Rows())
+		tk.MustQuery("select o.c2 from t o where not(" + predicate + ") or (" + predicate + ") is null").Check(testkit.Rows("<nil>", "<nil>"))
+		tk.MustExec("insert into t values(1,1)")
+		tk.MustQuery("select o.c2 from t o where " + predicate).Check(testkit.Rows("1"))
+		for _, ca := range []struct{ condition, count string }{
+			{"exists(select 1 from t i where i.c1=o.c1)", "2"},
+			{"not exists(select 1 from t i where i.c1=o.c1)", "1"},
+			{"o.c2 not in(select i.c1 from t i where o.c1 is not null)", "1"},
+		} {
+			tk.MustQuery("select count(*) from t o where (" + ca.condition + ") and ((o.c1 in(select 1 from t)) or true)").Check(testkit.Rows(ca.count))
+		}
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
