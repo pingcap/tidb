@@ -16,12 +16,15 @@ package task
 
 import (
 	"context"
+	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -30,6 +33,8 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestPhysicalRestoreSysTables(t *testing.T) {
@@ -156,4 +161,22 @@ func TestCheckSnapshotRestoreModeRejectsRawBackup(t *testing.T) {
 	err = checkSnapshotRestoreMode(ctx, cfg)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "restore mode mismatch")
+}
+
+func TestCheckpointStorageLogRedaction(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	restoreLogger := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	defer restoreLogger()
+	contextJSON := `{"tenant":"context-value"}`
+	cfg := &RestoreConfig{
+		// A missing bucket stops the test before any storage request.
+		CheckpointStorage: "s3:///?sse-kms-context=" + url.QueryEscape(contextJSON),
+	}
+	require.Error(t, cfg.newStorageCheckpointMetaManagerPITR(context.Background(), 1, 2))
+	entries := logs.FilterMessage("creating storage checkpoint meta managers for PiTR").All()
+	require.Len(t, entries, 1)
+	logged, err := json.Marshal(entries[0].ContextMap())
+	require.NoError(t, err)
+	require.NotContains(t, string(logged), "context-value")
+	require.Contains(t, cfg.CheckpointStorage, "context-value")
 }

@@ -4244,13 +4244,16 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 // RedactedValue replaces a secret in redacted output.
 const RedactedValue = "xxxxxx"
 
-// RedactURL redacts sensitive query parameters in supported storage URLs.
-// If the URL is not valid, it returns the original string.
+// RedactURL redacts sensitive query parameters and removes fragments in supported storage URLs.
+// Plain local paths are unchanged; an invalid URL is replaced by a placeholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
+	if !strings.Contains(str, "://") && !strings.Contains(str, "?") {
+		return str
+	}
 	u, err := url.Parse(str)
 	if err != nil {
-		return str
+		return "(invalid storage URL)"
 	}
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
@@ -4264,6 +4267,7 @@ func RedactURL(str string) string {
 			"access-key":        {},
 			"secret-access-key": {},
 			"session-token":     {},
+			"sse-kms-context":   {},
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
@@ -4277,6 +4281,9 @@ func RedactURL(str string) string {
 	}
 
 	if len(redactKeys) > 0 {
+		// An unescaped '#' in a secret query value starts a fragment.
+		u.Fragment = ""
+		u.RawFragment = ""
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key

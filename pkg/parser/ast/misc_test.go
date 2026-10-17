@@ -316,6 +316,14 @@ func TestBRIESecureText(t *testing.T) {
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
 		},
 		{
+			input:   `backup database * to 's3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}'`,
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?sse-kms-context=xxxxxx'\E$`,
+		},
+		{
+			input:   "backup database * to 's3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D'",
+			secured: `^\QBACKUP DATABASE * TO '(invalid storage URL)'\E$`,
+		},
+		{
 			// we need to use regexp to match to avoid the random ordering since a map was used.
 			// unfortunately Go's regexp doesn't support lookahead assertion, so the test case below
 			// has false positives.
@@ -389,12 +397,17 @@ func TestRedactURL(t *testing.T) {
 		{args{""}, ""},
 		{args{":"}, ":"},
 		{args{"~/file"}, "~/file"},
+		{args{"/data/my files/100%off#name"}, "/data/my files/100%off#name"},
+		{args{"s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "(invalid storage URL)"},
 		{args{"gs://bucket/file"}, "gs://bucket/file"},
 		// gs don't have access-key/secret-access-key, so it will NOT be redacted
 		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123"},
 		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123"},
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
+		{args{"s3://bucket/file?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "s3://bucket/file?sse-kms-context=xxxxxx"},
+		{args{`s3://bucket/file?sse-kms-context={"tenant":"#context-value"}`}, "s3://bucket/file?sse-kms-context=xxxxxx"},
+		{args{"s3://bucket/file?SSE_KMS_CONTEXT=first&SSE_KMS_CONTEXT=second"}, "s3://bucket/file?SSE_KMS_CONTEXT=xxxxxx"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
 		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},
