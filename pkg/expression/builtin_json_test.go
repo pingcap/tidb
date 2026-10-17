@@ -887,6 +887,42 @@ func TestJSONKeys(t *testing.T) {
 	}
 }
 
+func TestTiDBJSONKeepKeys(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.TiDBJSONKeepKeys]
+	tbl := []struct {
+		args     []any
+		expected any
+		success  bool
+	}{
+		{[]any{`{"cells": {"c1": 1, "c2": 2}}`, "$.cells", `["c1", "c9"]`}, `{"cells": {"c1": 1}}`, true},
+		{[]any{`{"x": 1}`, "$.cells", `["c1"]`}, `{"x": 1}`, true},
+		{[]any{nil, "$.cells", `["c1"]`}, nil, true},
+		{[]any{`{"cells": {}}`, nil, `["c1"]`}, nil, true},
+		{[]any{`{"cells": {}}`, "$.cells", nil}, nil, true},
+		{[]any{`{"cells": {"c1": 1}}`, "$.*", `["c1"]`}, nil, false},
+		{[]any{`{"cells": {"c1": 1}}`, "$.cells", `"c1"`}, nil, false},
+		{[]any{`{"cells": {"c1": 1}}`, "$.cells", `["c1", 2]`}, nil, false},
+	}
+	for _, tt := range tbl {
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.args...)))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		if !tt.success {
+			require.Error(t, err, "args %v", tt.args)
+			continue
+		}
+		require.NoError(t, err)
+		if tt.expected == nil {
+			require.True(t, d.IsNull())
+			continue
+		}
+		expected, err := types.ParseBinaryJSONFromString(tt.expected.(string))
+		require.NoError(t, err)
+		require.Equal(t, 0, types.CompareBinaryJSON(expected, d.GetMysqlJSON()), "args %v got %s", tt.args, d.GetMysqlJSON())
+	}
+}
+
 func TestJSONDepth(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONDepth]
