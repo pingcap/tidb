@@ -103,7 +103,6 @@ mod hash_agg_spill_tests;
 mod hash_join;
 pub mod index_merge_reader;
 mod index_prefix_cut;
-mod index_range;
 pub mod join;
 pub mod joiner;
 pub mod keydecoder;

@@ -22,7 +22,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
 use tidb_expr::expr_util::RealFunctionBuilder;
@@ -1139,159 +1139,6 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     }
 }
 
-/// Splits an AST predicate into its top-level `AND` conjuncts.
-fn split_ast_conjuncts(expr: &tidb_ast::Expr, out: &mut Vec<tidb_ast::Expr>) {
-    if let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) = expr {
-        split_ast_conjuncts(left, out);
-        split_ast_conjuncts(right, out);
-    } else {
-        out.push(expr.clone());
-    }
-}
-
-/// Keeps only the `WHERE` conjuncts whose every column resolves against ONE
-/// data source's scope. Go derives a data source's statistics from its
-/// `PushedDownConds`; before predicate push-down runs, this is the equivalent
-/// split of the statement predicate, and it keeps a cross-table equality from
-/// being charged to either side as an extra selection factor.
-fn single_table_predicate(
-    expr: &tidb_ast::Expr,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-) -> Option<tidb_ast::Expr> {
-    struct Paths(Vec<Vec<String>>);
-    impl tidb_ast::Visitor for Paths {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_ref::<tidb_ast::Expr>() {
-                self.0.push(path.clone());
-            }
-            false
-        }
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-
-    // A conjunct that CONTAINS a subquery is never one source's own filter:
-    // Go's pre-push-down `DataSource` has no `PushedDownConds`, and the
-    // predicate push-down rules attach subquery-derived predicates (the
-    // semi-join's not-null probe, for instance) later. Without this an
-    // unqualified `k IN (SELECT k FROM t)` resolved against the SUBQUERY's
-    // own source too and charged it the generic 0.8 fallback, halving its NDV.
-    struct ContainsSubquery(bool);
-    impl tidb_ast::Visitor for ContainsSubquery {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
-                if matches!(
-                    expr,
-                    tidb_ast::Expr::Subquery(_)
-                        | tidb_ast::Expr::CompareSubquery { .. }
-                        | tidb_ast::Expr::InSubquery { .. }
-                        | tidb_ast::Expr::Exists { .. }
-                ) {
-                    self.0 = true;
-                }
-            }
-            false
-        }
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-
-    let mut conjuncts = Vec::new();
-    split_ast_conjuncts(expr, &mut conjuncts);
-    conjuncts.retain(|conjunct| {
-        let mut visitor = ContainsSubquery(false);
-        let mut owned = conjunct.clone();
-        tidb_ast::Visitable::accept(&mut owned, &mut visitor);
-        !visitor.0
-    });
-    let resolves = |conjunct: &tidb_ast::Expr| {
-        let mut paths = Paths(Vec::new());
-        let mut owned = conjunct.clone();
-        tidb_ast::Visitable::accept(&mut owned, &mut paths);
-        !paths.0.is_empty()
-            && paths
-                .0
-                .iter()
-                .all(|path| resolver.resolve_expression(path).is_some())
-    };
-    let mut kept: Vec<tidb_ast::Expr> = conjuncts
-        .iter()
-        .filter(|conjunct| resolves(conjunct))
-        .cloned()
-        .collect();
-    // Go `PropagateConstantForJoin`: `src.col = other.col AND other.col = 1`
-    // also filters `src.col = 1`. The pre-push-down split needs the same
-    // constant so the source's point estimate sees the complete key.
-    for conjunct in &conjuncts {
-        let Some((left, right)) = equality_sides(conjunct) else {
-            continue;
-        };
-        let (local, foreign) = match (resolves(left), resolves(right)) {
-            (true, false) => (left, right),
-            (false, true) => (right, left),
-            _ => continue,
-        };
-        let tidb_ast::Expr::Column(local_path) = local else {
-            continue;
-        };
-        let tidb_ast::Expr::Column(foreign_path) = foreign else {
-            continue;
-        };
-        let Some(constant) = conjuncts.iter().find_map(|candidate| {
-            let (candidate_left, candidate_right) = equality_sides(candidate)?;
-            let same = |side: &tidb_ast::Expr| {
-                matches!(
-                    side,
-                    tidb_ast::Expr::Column(path)
-                        if path.len() == foreign_path.len()
-                            && path
-                                .iter()
-                                .zip(foreign_path.iter())
-                                .all(|(a, b)| a.eq_ignore_ascii_case(b))
-                )
-            };
-            if same(candidate_left) && !matches!(candidate_right, tidb_ast::Expr::Column(_)) {
-                Some(candidate_right.clone())
-            } else if same(candidate_right) && !matches!(candidate_left, tidb_ast::Expr::Column(_))
-            {
-                Some(candidate_left.clone())
-            } else {
-                None
-            }
-        }) else {
-            continue;
-        };
-        let synthesized = tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::Eq,
-            Box::new(tidb_ast::Expr::Column(local_path.clone())),
-            Box::new(constant),
-        );
-        if !kept.iter().any(|existing| existing == &synthesized) {
-            kept.push(synthesized);
-        }
-    }
-    let mut iter = kept.into_iter();
-    let mut combined = iter.next()?;
-    for conjunct in iter {
-        combined = tidb_ast::Expr::Binary(
-            tidb_ast::BinaryOp::LogicAnd,
-            Box::new(combined),
-            Box::new(conjunct),
-        );
-    }
-    Some(combined)
-}
-
-/// The two operands of a top-level `=` conjunct.
-fn equality_sides(expr: &tidb_ast::Expr) -> Option<(&tidb_ast::Expr, &tidb_ast::Expr)> {
-    let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = expr else {
-        return None;
-    };
-    Some((left, right))
-}
-
 /// The columns Go's lite statistics initialization loads for this statement:
 /// every column compared against a constant in any query block. Go loads
 /// exactly these payloads (and the indexes whose first column they cover) and
@@ -1428,11 +1275,8 @@ impl OwnedRewrite for StampIndexForce {
 
 struct InitStats<'a> {
     error: Option<tidb_planner::plan_base::PlanError>,
-    range_context: crate::index_range::RangeContext<'a>,
     catalog: &'a Catalog,
     select: Option<&'a tidb_ast::SelectStmt>,
-    default_string_match_selectivity: f64,
-    selectivity_factor: f64,
     enable_pseudo_for_outdated_stats: bool,
     context: &'a crate::StmtContext,
 }
@@ -1445,6 +1289,11 @@ fn record_used_item_stats_status(
     item_id: i64,
     is_index: bool,
 ) {
+    // Go `recordUsedItemStatsStatus`: `_tidb_rowid` (id -1) and other internal
+    // pseudo columns have no statistics to report.
+    if item_id <= 0 {
+        return;
+    }
     let Some(statistics) = statistics else {
         return;
     };
@@ -1492,94 +1341,7 @@ fn record_used_item_stats_status(
     );
 }
 
-/// Go `fillIndexPath`'s suffix as table offsets: the signed integer handle
-/// after a complete non-unique index's declared key parts.
-fn handle_columns_to_append(
-    source: &tidb_planner::logical::DataSource,
-    source_index: &tidb_planner::plan_builder::catalog::SourceIndex,
-    index: &crate::kv_table::KvIndex,
-    table: &crate::kv_table::KvTable,
-) -> Vec<(usize, i64)> {
-    if source_index.unique
-        || source_index.primary
-        || index.clustered_primary
-        || source_index.columns.len() != index.column_offsets.len()
-        || source_index
-            .columns
-            .iter()
-            .zip(&index.column_offsets)
-            .any(|(declared, offset)| declared.offset != *offset)
-    {
-        return Vec::new();
-    }
 
-    let declared = source_index
-        .columns
-        .iter()
-        .map_while(|key| {
-            source
-                .schema_column_for_index_column(key)
-                .cloned()
-                .map(|column| (column, key.length))
-        })
-        .collect::<Vec<_>>();
-    let appended = source.handle_cols_to_append(source_index, &declared);
-    let expected_offsets = table.pk_handle_offset().into_iter().collect::<Vec<_>>();
-    if appended.len() != expected_offsets.len() {
-        return Vec::new();
-    }
-    appended
-        .into_iter()
-        .zip(expected_offsets)
-        .map(|((column, length), offset)| {
-            table
-                .columns
-                .get(offset)
-                .filter(|stored| stored.id == column.id)
-                .map(|_| (offset, length))
-        })
-        .collect::<Option<Vec<_>>>()
-        .unwrap_or_default()
-}
-
-
-/// Go `getGeneralAttributesFromPaths`: minimum access-path selectivity used
-/// by `GetOriginalPhysicalIndexScan` to decide whether LIMIT row-count
-/// adjustment is safe. `Some(index_filter_selectivity)` identifies a path
-/// with index filters, whose `CountAfterIndex` is floored at datasource rows.
-fn min_access_path_selectivity(
-    counts_after_access: impl IntoIterator<Item = (f64, Option<f64>)>,
-    datasource_rows: f64,
-    total_rows: f64,
-) -> f64 {
-    if total_rows <= 0.0 {
-        return 1.0;
-    }
-    counts_after_access
-        .into_iter()
-        .map(|(count_after_access, index_filter_selectivity)| {
-            let count_after_index = index_filter_selectivity
-                .map_or(count_after_access, |selectivity| {
-                    (count_after_access * selectivity).max(datasource_rows)
-                });
-            count_after_index / total_rows
-        })
-        .fold(1.0_f64, f64::min)
-}
-
-#[cfg(test)]
-mod access_path_min_selectivity_tests {
-    use super::min_access_path_selectivity;
-
-    #[test]
-    fn minimum_uses_count_after_index_and_the_datasource_row_floor() {
-        let paths = [(80.0, None), (100.0, Some(0.1)), (60.0, Some(0.9))];
-        // Table path: 80/1000. Index path with index filters: max(10, 50)/1000.
-        // The final index path uses max(54, 50)/1000.
-        assert_eq!(min_access_path_selectivity(paths, 50.0, 1000.0), 0.05);
-        assert_eq!(min_access_path_selectivity([], 50.0, 0.0), 1.0);
-    }
-}
 
 impl InitStats<'_> {
     /// The `(column ids, index ids)` Go's lite statistics initialization
@@ -2169,308 +1931,44 @@ impl InitStats<'_> {
             |error: tidb_planner::cardinality::row_count_estimator::EstimationError| {
                 tidb_planner::plan_base::PlanError::internal_coded(error.to_string())
             };
-        // Go derives a data source's statistics from its own pushed-down
-        // conditions. Before predicate push-down, keep only the statement
-        // conjuncts that resolve against THIS source, so a cross-table
-        // equality cannot scale either side's profile.
         let source_table = self.catalog.get_in(&source.db_name, &source.table_name);
-        let scoped_predicate = self.select.and_then(|select| {
-            let where_clause = select.where_clause.as_ref()?;
-            let TableEntry::Kv(table) = source_table? else {
-                return None;
-            };
-            let visible = source
-                .table_as_name
-                .as_deref()
-                .unwrap_or(&source.table_name);
-            // Go uses the data source's current ranger/evaluation context.
-            // A name-only scope cannot evaluate EXECUTE parameters or apply
-            // the statement's conversion policy while deriving path costs.
-            // Go Selectivity consumes built expressions. This AST replay
-            // must retain session inputs without replaying build warnings.
-            let rewrite_context = self.context.with_isolated_warnings();
-            let mut scope = FromScope::for_statement(&rewrite_context);
-            scope.tables.push(FromTable {
-                name: visible.to_owned(),
-                database: Some(source.db_name.clone()),
-                columns: table
-                    .visible_columns()
-                    .iter()
-                    .map(|column| (column.name.clone(), column.field_type.clone()))
-                    .collect(),
-                offset: 0,
-            });
-            let predicate =
-                single_table_predicate(where_clause, &crate::driver::from::scope_resolver(&scope))?;
-            Some((predicate, scope))
-        });
-        if let (Some((predicate, scope)), Some(TableEntry::Kv(table)), Some(table_stats)) = (
-            scoped_predicate.as_ref(),
+        // Go `deriveStatsByFilter(ds, ds.PushedDownConds, ...)`: one
+        // `Selectivity` over the pushed-down conditions, whose reads of column
+        // and index statistics are what `EXPLAIN`'s `stats:partial[...]` marks
+        // report. The planner's own derivation has no recorder to call yet, so
+        // this pass only records them.
+        if let (false, Some(TableEntry::Kv(_)), Some(table_stats)) = (
+            source.pushed_down_conds.is_empty(),
             source_table,
-            source.table_stats.clone(),
+            source.table_stats.as_ref(),
         ) {
-            let resolver = crate::driver::from::scope_resolver(scope);
-            source.table_path_count_after_access =
-                crate::handle_range::build_handle_ranges(table, predicate, &resolver)
-                    .map(|built| {
-                        crate::handle_range::handle_range_row_count(
-                            table,
-                            &built.ranges,
-                            statistics,
-                            false,
-                            self.context.optimizer_cost_env().session.estimator_options.clone(),
-                        )
-                    })
-                    .transpose()
-                    .map_err(estimation_error)?;
-            let mut index_path_filter_selectivities = BTreeMap::new();
-            let simple_expr_schema = source.base.base.schema().cloned();
-            let simple_expr_names = source
-                .columns
-                .iter()
-                .map(|column| {
-                    tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
-                        table: tidb_datatype::IdentifierMetadata::new(
-                            source
-                                .table_as_name
-                                .as_deref()
-                                .unwrap_or(&source.table_name),
-                        ),
-                        column: tidb_datatype::IdentifierMetadata::new(&column.name),
-                        ..Default::default()
-                    })
-                })
-                .collect::<Vec<_>>();
-            for index in table.plan_indexes() {
-                let source_index = source
-                    .indexes
-                    .iter()
-                    .find(|candidate| candidate.id == index.id);
-                let appended_handle_columns = source_index.map_or_else(Vec::new, |source_index| {
-                    handle_columns_to_append(source, source_index, index, table)
-                });
-                let mut columns = index
-                    .column_offsets
-                    .iter()
-                    .enumerate()
-                    .map(|(position, offset)| {
-                        let column = table.columns.get(*offset)?;
-                        Some(crate::index_range::RangeColumn {
-                            name: column.name.clone(),
-                            field_type: column.field_type.clone(),
-                            prefix_len: index.prefix_length(position),
-                        })
-                    })
-                    .collect::<Option<Vec<_>>>();
-                let Some(mut columns) = columns.take() else {
-                    continue;
-                };
-                for (offset, prefix_len) in &appended_handle_columns {
-                    let Some(column) = table.columns.get(*offset) else {
-                        columns.clear();
-                        break;
-                    };
-                    columns.push(crate::index_range::RangeColumn {
-                        name: column.name.clone(),
-                        field_type: column.field_type.clone(),
-                        // Datasource statistics use Go's already-filled access path,
-                        // so appended handle dimensions keep their physical prefixes.
-                        prefix_len: *prefix_len,
-                    });
-                }
-                if columns.is_empty() {
-                    continue;
-                }
-                let Some(built) = crate::index_range::detach_cond_and_build_range_for_index(
-                    &columns, predicate, &resolver,
-                ) else {
-                    continue;
-                };
-                let index_filter_conjuncts = if let (Some(source_index), Some(schema)) =
-                    (source_index, simple_expr_schema.as_ref())
-                {
-                    let options = tidb_expr::simple_expr::BuildOptions::new()
-                        .with_input_schema_and_names(schema.clone(), simple_expr_names.clone());
-                    let mut index_filters = Vec::new();
-                    for condition in &built.residual {
-                        let expression = tidb_expr::simple_expr::build_simple_expr(
-                            &resolver, condition, &options,
-                        )
-                        .map_err(|error| {
-                            tidb_planner::plan_base::PlanError::internal_coded(error.to_string())
-                        })?;
-                        if tidb_planner::logical::data_source::index_covers_condition(
-                            source,
-                            source_index,
-                            &expression,
-                            self.context.opt_prefix_index_single_scan(),
-                        ) {
-                            index_filters.push(*condition);
-                        }
-                    }
-                    index_filters
-                } else {
-                    Vec::new()
-                };
-                let index_filter_selectivity = if index_filter_conjuncts.is_empty() {
-                    1.0
-                } else {
-                    let mut observe = |item_id, is_index| {
-                        record_used_item_stats_status(
-                            self.context,
-                            &source.table_name,
-                            source.physical_table_id,
-                            statistics,
-                            item_id,
-                            is_index,
-                        );
-                    };
-                    crate::access_cost::selectivity_of_conjuncts_with_range_context_observing(
-                        &index_filter_conjuncts,
-                        table,
-                        &resolver,
-                        statistics,
-                        tidb_planner::selectivity_greedy::SelectivityDefaults {
-                            trigger_load: false,
-                            estimator_options: self
-                                .context
-                                .optimizer_cost_env()
-                                .session
-                                .estimator_options.clone(),
-                            ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
-                                self.default_string_match_selectivity,
-                                self.selectivity_factor,
-                            )
-                        },
-                        self.range_context,
-                        &mut observe,
-                    )
-                };
+            let record = |item_id, is_index| {
                 record_used_item_stats_status(
                     self.context,
                     &source.table_name,
                     source.physical_table_id,
                     statistics,
-                    index.id,
-                    true,
+                    item_id,
+                    is_index,
                 );
-                // Go `detachCondAndBuildRangeForPath`: the estimate ranges
-                // drop the appended handle dimensions (`pruneEstimateRange`).
-                let estimate = crate::access_cost::index_row_count_with_options(
-                    index,
-                    table,
-                    &crate::access_cost::prune_estimate_ranges(
-                        &built.ranges,
-                        index.column_offsets.len(),
-                    ),
-                    statistics,
-                    row_count,
-                    false,
-                    self.context.optimizer_cost_env().session.estimator_options.clone(),
-                )
-                .map_err(estimation_error)?;
-                for (offset, _) in &appended_handle_columns {
-                    if let Some(column) = table.columns.get(*offset) {
-                        record_used_item_stats_status(
-                            self.context,
-                            &source.table_name,
-                            source.physical_table_id,
-                            statistics,
-                            column.id,
-                            false,
-                        );
-                    }
-                }
-                source
-                    .derived_index_paths
-                    .entry(index.id)
-                    .or_default()
-                    .row_estimate = Some(estimate);
-                index_path_filter_selectivities.insert(
-                    index.id,
-                    (!index_filter_conjuncts.is_empty(), index_filter_selectivity),
-                );
-            }
-            // Go `deriveStatsByFilter(ds, ds.PushedDownConds,
-            // ds.AllPossibleAccessPaths)`: one `Selectivity`, with an error
-            // answered by `cost.SelectionFactor`.
-            let selectivity = {
-                let record = |item_id, is_index| {
-                    record_used_item_stats_status(
-                        self.context,
-                        &source.table_name,
-                        source.physical_table_id,
-                        statistics,
-                        item_id,
-                        is_index,
-                    );
-                };
-                let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(self.context);
-                let options = self.context.optimizer_cost_env().session.estimator_options.clone();
-                let filled_paths = source.derive_stats_filled_paths();
-                let selectivity_context = tidb_planner::cardinality::selectivity::SelectivityContext {
-                    range_fallback_handler: Some(self.context.range_fallback_handler()),
-                    record_used_item: Some(&record),
-                    ..tidb_planner::cardinality::selectivity::SelectivityContext::new(
-                        &options, &evaluate,
-                    )
-                };
-                source
-                    .table_stats
-                    .as_ref()
-                    .and_then(|stats| {
-                        tidb_planner::logical::rewrite::filter_selectivity(
-                            stats,
-                            &source.pushed_down_conds,
-                            &selectivity_context,
-                            Some(&filled_paths),
-                        )
-                    })
-                    .unwrap_or(tidb_planner::cost_factors::SELECTION_FACTOR)
             };
-            // A source estimate belongs to its pushed-down predicates; before
-            // push-down the planner derives it at the first DeriveStats.
-            if !source.pushed_down_conds.is_empty() {
-                let filtered_stats = table_stats.scale(
-                    selectivity,
-                    self.context.optimizer_cost_env().session.scale_ndv_skew_ratio,
-                );
-                let total_rows = row_count as f64;
-                let path_counts = source
-                    .enumerated_paths
-                    .iter()
-                    .filter_map(|path| match path {
-                        tidb_planner::access_path::PossiblePath::Table { .. }
-                        | tidb_planner::access_path::PossiblePath::TiFlashTable => source
-                            .table_path_count_after_access
-                            .map(|count_after_access| (count_after_access, None)),
-                        tidb_planner::access_path::PossiblePath::Index { index } => {
-                            source.indexes.get(*index).and_then(|source_index| {
-                                source
-                                    .derived_index_paths
-                                    .get(&source_index.id)
-                                    .and_then(|path| path.count_after_access())
-                                    .map(|count_after_access| {
-                                        let (has_index_filters, index_filter_selectivity) =
-                                            index_path_filter_selectivities
-                                                .get(&source_index.id)
-                                                .copied()
-                                                .unwrap_or((false, 1.0));
-                                        (
-                                            count_after_access,
-                                            has_index_filters.then_some(index_filter_selectivity),
-                                        )
-                                    })
-                            })
-                        }
-                    });
-                source.access_path_min_selectivity = min_access_path_selectivity(
-                    path_counts,
-                    filtered_stats.row_count(),
-                    total_rows,
-                );
-                source.base.base.set_stats(Some(filtered_stats));
-            }
+            // The planner's own derivation already warns for each converted
+            // endpoint; this pass must not repeat them.
+            let statement = tidb_planner::ranger::points::StatementRangerEvaluator(self.context);
+            let evaluate = tidb_planner::ranger::points::QuietRangerEvaluator(&statement);
+            let options = self.context.optimizer_cost_env().session.estimator_options.clone();
+            let filled_paths = source.derive_stats_filled_paths();
+            let selectivity_context = tidb_planner::cardinality::selectivity::SelectivityContext {
+                range_fallback_handler: Some(self.context.range_fallback_handler()),
+                record_used_item: Some(&record),
+                ..tidb_planner::cardinality::selectivity::SelectivityContext::new(&options, &evaluate)
+            };
+            let _ = tidb_planner::logical::rewrite::filter_selectivity(
+                table_stats,
+                &source.pushed_down_conds,
+                &selectivity_context,
+                Some(&filled_paths),
+            );
         }
         // Propagated predicates may not occur in this source's AST WHERE.
         // Rebuild path estimates from the optimizer's current expressions.
@@ -2488,6 +1986,16 @@ impl InitStats<'_> {
                         continue;
                     }
                     let (columns, lengths): (Vec<_>, Vec<_>) = prefix.into_iter().unzip();
+                    // Go `GetRowCountByIndexRanges` records the index it reads
+                    // (`row_count_index.go:48`) before any fast path.
+                    record_used_item_stats_status(
+                        self.context,
+                        &source.table_name,
+                        source.physical_table_id,
+                        statistics,
+                        index.id,
+                        true,
+                    );
                     // Go's `fillIndexPath` builds a path's ranges and row
                     // count in one pass; the logical derivation's port of it
                     // converts the points under the statement's warnings, so
@@ -2547,7 +2055,7 @@ impl InitStats<'_> {
         // table (`GetRowCountByIndexRanges` skips estimating a full range).
         // Without it the skyline could not compare an index with the table
         // path, so an ordered request kept every index alive.
-        if source.pushed_down_conds.is_empty() && scoped_predicate.is_none() {
+        if source.pushed_down_conds.is_empty() {
             if let Some(TableEntry::Kv(_)) = source_table {
                 let full_range_count = statistics
                     .filter(|statistics| !statistics.pseudo)
@@ -2968,16 +2476,8 @@ impl DriverCteOptimizer<'_> {
         // as the outer query before join reorder can inspect their sources.
         let mut initializer = InitStats {
             error: None,
-            range_context: crate::index_range::RangeContext {
-                max_size: ctx.range_max_size(),
-                fallback_handler: Some(ctx.range_fallback_handler()),
-                eval_ctx: Some(ctx),
-                ranger_options: ctx.ranger_options(),
-            },
             catalog: self.catalog,
             select: None,
-            default_string_match_selectivity: ctx.default_string_match_selectivity(),
-            selectivity_factor: ctx.selectivity_factor(),
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             context: ctx,
         };
@@ -3616,16 +3116,8 @@ fn optimize_built_logical(
         ) -> Result<LogicalPlan, (LogicalPlan, tidb_planner::plan_base::PlanError)> {
             let mut initializer = InitStats {
                 error: None,
-                range_context: crate::index_range::RangeContext {
-                    max_size: self.context.range_max_size(),
-                    fallback_handler: Some(self.context.range_fallback_handler()),
-                    eval_ctx: Some(self.context),
-                    ranger_options: self.context.ranger_options(),
-                },
                 catalog: self.catalog,
                 select: self.select,
-                default_string_match_selectivity: self.context.default_string_match_selectivity(),
-                selectivity_factor: self.context.selectivity_factor(),
                 enable_pseudo_for_outdated_stats: self.context.enable_pseudo_for_outdated_stats(),
                 context: self.context,
             };
@@ -4189,6 +3681,7 @@ mod statistics_initialization_tests {
     use tidb_expr::constant::{Constant, ParamMarker};
     use tidb_expr::expression::Expression;
     use tidb_expr::scalar_function::ScalarFunction;
+    use std::collections::BTreeMap;
     use tidb_expr::schema::Schema;
     use tidb_planner::logical::DataSource;
     use tidb_planner::logical::data_source::DataSourceColumn;
@@ -4260,11 +3753,8 @@ mod statistics_initialization_tests {
         let context = crate::StmtContext::default();
         let mut initializer = InitStats {
             error: None,
-            range_context: Default::default(),
             catalog: &catalog,
             select: None,
-            default_string_match_selectivity: 0.0,
-            selectivity_factor: 0.8,
             enable_pseudo_for_outdated_stats: false,
             context: &context,
         };
@@ -4413,11 +3903,8 @@ mod statistics_initialization_tests {
             let context = crate::StmtContext::default();
             let mut initializer = InitStats {
                 error: None,
-                range_context: Default::default(),
                 catalog: &catalog,
                 select: None,
-                default_string_match_selectivity: 0.0,
-                selectivity_factor: 0.8,
                 enable_pseudo_for_outdated_stats: false,
                 context: &context,
             };
@@ -4594,11 +4081,8 @@ mod statistics_initialization_tests {
                 });
                 let mut initializer = InitStats {
                     error: None,
-                    range_context: Default::default(),
                     catalog: &catalog,
                     select: None,
-                    default_string_match_selectivity: 0.0,
-                    selectivity_factor: 0.8,
                     enable_pseudo_for_outdated_stats: false,
                     context: &context,
                 };

@@ -65,117 +65,10 @@
 //! The shared planner owns that estimate and lower bound; this module now
 //! performs range algebra only.
 
-use crate::access_cost::{realtime_row_count, TableStatistics};
-use crate::index_range::IndexRanges;
 use crate::kv_table::{IndexRange, KvIndex, KvTable};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
-use tidb_planner::cardinality::row_count_estimator::{
-    get_row_count_by_column_ranges, ColumnRange, EstimatorOptions,
-};
 use tidb_txnkv::Key;
-
-/// The ranges a `WHERE` implies over `table`'s clustered handle, or
-/// `None` when this tier builds none.
-///
-/// `None` is Go's full range, and the caller reads the whole table for it.
-/// The refusals are:
-///
-/// * a table with no declared primary-key handle -- a `_tidb_rowid` table has
-///   no handle a `WHERE` can name;
-/// * an UNSIGNED handle. The record key encodes a handle with the SIGNED
-///   integer codec, so an unsigned value above `i64::MAX` encodes as a
-///   negative key and a range over it is not the interval its bounds read
-///   like. Go handles this through `points2TableRanges`' unsigned domain;
-///   refusing is a lost optimization on such tables, never a wrong answer,
-///   because the `WHERE` above the source still filters every row;
-/// * a `WHERE` that constrains the handle with nothing the ranger can use.
-///
-/// An UNSIGNED handle is ranged over like any other. Its two extra steps --
-/// materialising an open endpoint in the unsigned domain, and cutting the
-/// ranges where the signed key codec flips sign -- both live at the point of
-/// USE ([`record_key_ranges`], [`column_range`]) rather than here. Go
-/// materialises earlier, inside `points2TableRanges`, so its `path.Ranges`
-/// already carry `0`/`MaxUint64` where this list still carries
-/// `MinNotNull`/`MaxValue`; the bounds those two spellings denote are the
-/// same, every consumer here converts through [`to_table_range_in_domain`]
-/// before reading them, and keeping the sentinels is what leaves the range
-/// text `EXPLAIN` prints for a SIGNED handle untouched.
-pub(crate) fn build_handle_ranges<'a>(
-    table: &KvTable,
-    where_clause: &'a tidb_ast::Expr,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-) -> Option<IndexRanges<'a>> {
-    let common_offsets = table.common_handle_offsets();
-    if !common_offsets.is_empty() {
-        let columns = common_offsets
-            .iter()
-            .map(|offset| {
-                let column = table.columns.get(*offset)?;
-                Some(crate::index_range::RangeColumn::whole(
-                    column.name.clone(),
-                    column.field_type.clone(),
-                ))
-            })
-            .collect::<Option<Vec<_>>>()?;
-        return crate::index_range::detach_cond_and_build_range_for_index(
-            &columns,
-            where_clause,
-            resolver,
-        );
-    }
-    let column = handle_column(table)?;
-    let mut built = crate::index_range::detach_cond_and_build_range_for_index(
-        // The clustered handle stores the whole column: a row identifier has
-        // no declared prefix to cut to.
-        &[crate::index_range::RangeColumn::whole(
-            column.name.clone(),
-            column.field_type.clone(),
-        )],
-        where_clause,
-        resolver,
-    )?;
-    // Go `points2TableRanges` (`pkg/util/ranger/ranger.go:466`) calls
-    // `convertPointsInPlace` with `skipNull = true`, and that function DROPS
-    // any interval whose END point is still `KindNull` (`:102-104`) -- while
-    // converting a NULL START point to the domain minimum, INCLUSIVE
-    // (`:85-88`), which is what [`to_table_range`] does below.
-    //
-    // The asymmetry is the whole point: a row handle is never NULL, so an
-    // interval that ENDS at NULL selects nothing and Go removes it, leaving
-    // zero ranges and a `TableDual`. Captured:
-    //
-    // ```text
-    // explain select * from t where id is null    TableDual_6 | 0.00 | rows:0
-    // explain select * from t where id <=> null   TableDual_5 | 1.00 | rows:0
-    // ```
-    //
-    // Without this the `[NULL, NULL]` pair became `[MinInt64, MaxInt64]` and
-    // the plan was a FULL TABLE SCAN -- the right rows (the `WHERE` above
-    // still filters), read the most expensive possible way.
-    built
-        .ranges
-        .retain(|range| range.high.first() != Some(&Datum::Null));
-    // Go materialises the open endpoints here, inside `points2TableRanges`,
-    // and an UNSIGNED handle is where that becomes VISIBLE: its domain
-    // minimum is `0`, and `formatDatum` (`ranger/types.go:371`) prints a
-    // `KindUint64` low bound as the number rather than as `-inf` -- so Go's
-    // `EXPLAIN` says `range:[0,9223372036854775808)` where the sentinel would
-    // say `[-inf,...)`. The high end agrees either way, because `MaxUint64`
-    // on the right prints `+inf` too.
-    //
-    // A SIGNED handle keeps the sentinels: `formatDatum` maps `MinInt64` on
-    // the left and `MaxInt64` on the right to the same `-inf`/`+inf` the
-    // sentinels print, every consumer here converts through
-    // [`to_table_range_in_domain`] before reading a bound, and not rewriting
-    // them leaves this crate's existing range text untouched.
-    if handle_is_unsigned(table) {
-        for range in &mut built.ranges {
-            *range = materialize_open_bounds(range, true);
-        }
-    }
-    Some(built)
-}
 
 /// The PRIMARY index whose columns are the common row handle.
 ///
@@ -226,64 +119,6 @@ pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow:
     }))
 }
 
-/// Go `deriveTablePathStats`' `path.CountAfterAccess` for clustered handles.
-/// `trigger_load` is false for the executor's eager precompute, which runs
-/// before index pruning; see [`crate::access_cost::index_row_count_with_options`].
-pub(crate) fn handle_range_row_count(
-    table: &KvTable,
-    ranges: &[IndexRange],
-    stats: Option<&TableStatistics>,
-    trigger_load: bool,
-    options: EstimatorOptions,
-) -> Result<f64, tidb_planner::cardinality::row_count_estimator::EstimationError> {
-    let realtime = realtime_row_count(stats);
-    if let Some(index) = clustered_primary_metadata(table) {
-        return crate::access_cost::index_range_row_count(
-            &index,
-            table,
-            ranges,
-            stats,
-            realtime,
-            trigger_load,
-            options,
-        );
-    }
-    let Some(column) = handle_column(table) else {
-        return Ok(realtime);
-    };
-    let unsigned = column.field_type.is_unsigned();
-    let column_ranges = ranges
-        .iter()
-        .map(|range| {
-            let materialized = materialize_open_bounds(range, unsigned);
-            ColumnRange {
-                low: materialized
-                    .low
-                    .first()
-                    .cloned()
-                    .unwrap_or(Datum::MinNotNull),
-                high: materialized
-                    .high
-                    .first()
-                    .cloned()
-                    .unwrap_or(Datum::MaxValue),
-                low_exclude: materialized.low_exclusive,
-                high_exclude: materialized.high_exclusive,
-            }
-        })
-        .collect::<Vec<_>>();
-    Ok(get_row_count_by_column_ranges(
-        stats.and_then(|stats| stats.column_for_estimation(column.id)),
-        &column_ranges,
-        column.field_type.collation(),
-        realtime as i64,
-        stats.map_or(0, |stats| stats.modify_count),
-        true,
-        &options,
-    )?
-    .est)
-}
-
 /// The primary-key column that IS the row handle, when the table has one and
 /// this tier can range over it.
 fn handle_column(table: &KvTable) -> Option<HandleColumn> {
@@ -302,8 +137,6 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
             return None;
         }
         return Some(HandleColumn {
-            name: column.name.clone(),
-            id: column.id,
             field_type: column.field_type.clone(),
         });
     }
@@ -322,8 +155,6 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
         .then_some(())
         .map_or(
             Some(HandleColumn {
-                name: tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
-                id: tidb_model::column::EXTRA_HANDLE_ID,
                 // Go `NewExtraHandleSchemaCol`: `TypeLonglong`, signed, with
                 // `PriKeyFlag | NotNullFlag`.
                 field_type: FieldType::new(FieldTypeCode::LongLong)
@@ -336,8 +167,6 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
 /// The column a table's INTEGER row handle IS: its integer primary key, or
 /// `_tidb_rowid` when it has none.
 struct HandleColumn {
-    name: String,
-    id: i64,
     field_type: FieldType,
 }
 

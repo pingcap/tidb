@@ -479,13 +479,16 @@ pub(super) fn dirty_statement_tables(
         let Some(super::TableEntry::Kv(table)) = catalog.get_by_key(key) else {
             continue;
         };
-        let partitions = table
-            .partition()
-            .map(|partition| partition.definitions.iter().map(|definition| definition.id));
-        if std::iter::once(table.table_id)
-            .chain(partitions.into_iter().flatten())
-            .any(|id| dirty.contains(&id))
-        {
+        // Go `tableHasDirtyContent`: a partitioned table is dirty when any
+        // partition is; its own id is not consulted.
+        let is_dirty = match table.partition() {
+            Some(partition) => partition
+                .definitions
+                .iter()
+                .any(|definition| dirty.contains(&definition.id)),
+            None => dirty.contains(&table.table_id),
+        };
+        if is_dirty {
             ids.push(table.table_id);
         }
     }

@@ -3600,6 +3600,9 @@ pub fn explain_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
+    // Go `buildInsert` resolves the target columns and checks a VALUES list's
+    // width before it builds an INSERT ... SELECT's source.
+    crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, None)?;
     let fk_spec = crate::driver::fk_spec_for_insert(insert, current_db)?;
     let extended_source = crate::driver::insert_plan_source(insert, catalog, current_db);
     let physical = crate::driver::physical_dml_plan(

@@ -198,11 +198,6 @@ impl ScopeResolver<'_> {
     }
 }
 
-/// A resolver over `scope`, for the modules that build their own expressions.
-pub(crate) fn scope_resolver(scope: &FromScope) -> impl ColumnResolver + '_ {
-    ScopeResolver { scope }
-}
-
 impl ColumnResolver for ScopeResolver<'_> {
     fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
         self.scope.constant_context.as_ref()?.user_vars()

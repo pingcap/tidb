@@ -2841,7 +2841,18 @@ fn find_best_task_4_logical_data_source_paths(
         if prepared_paths.heuristic_selected {
             if let (Some(path), Some(sink)) = (prepared_paths.paths.first(), ctx.mpp_warning_sink)
             {
-                if ctx.heuristic_noted.insert(std::ptr::from_ref(ds).addr()) {
+                // Go `derivePathStatsAndTryHeuristics` returns before the note
+                // when a TiFlash preference keeps the TiFlash path next to the
+                // selected TiKV one.
+                let tiflash_kept = ds.prefer_store_type
+                    & crate::logical::data_source::PREFER_TIFLASH
+                    != 0
+                    && !matches!(path, crate::access_path::PossiblePath::TiFlashTable)
+                    && ds
+                        .enumerated_paths
+                        .iter()
+                        .any(|path| matches!(path, crate::access_path::PossiblePath::TiFlashTable));
+                if !tiflash_kept && ctx.heuristic_noted.insert(std::ptr::from_ref(ds).addr()) {
                     sink.append_planner_note(&heuristic_selection_note(
                         ds,
                         path,
