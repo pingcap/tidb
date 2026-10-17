@@ -207,6 +207,7 @@ func (e *InfoSchemaBaseExtractor) Extract(
 		}
 		e.ColPredicates[colName] = resultSet
 	}
+	nameRemained := remained
 	for _, colName := range e.colNames {
 		if _, ok := patternMatchable[colName]; !ok {
 			continue
@@ -232,6 +233,15 @@ func (e *InfoSchemaBaseExtractor) Extract(
 			remained = newRemained
 			e.LikePatterns[colName] = oldLikePatterns
 			e.colsRegexp[colName] = regs
+		}
+	}
+	if !e.SkipRequest {
+		// Case-insensitive name lookup only selects candidates. Restore its predicates
+		// after pattern extraction so they retain their original SQL collation semantics.
+		for _, predicate := range predicates {
+			if !slices.Contains(nameRemained, predicate) {
+				remained = append(remained, predicate)
+			}
 		}
 	}
 	return remained
