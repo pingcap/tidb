@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -409,8 +408,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 	cs := &atomic.Pointer[tls.Certificate]{}
 	cs.Store(&certs)
 
-	requireTLS := tlsutil.RequireSecureTransport.Load()
-
 	var minTLSVersion uint16 = tls.VersionTLS12
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
 	case "TLSv1.2":
@@ -431,9 +428,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
-	if requireTLS {
-		clientAuthPolicy = tls.RequestClientCert
-	}
 	var certPool *x509.CertPool
 	if len(ca) > 0 {
 		var caCert []byte
@@ -445,11 +439,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		}
 		certPool = x509.NewCertPool()
 		if certPool.AppendCertsFromPEM(caCert) {
-			if requireTLS {
-				clientAuthPolicy = tls.RequireAndVerifyClientCert
-			} else {
-				clientAuthPolicy = tls.VerifyClientCertIfGiven
-			}
+			clientAuthPolicy = tls.VerifyClientCertIfGiven
 		}
 	}
 
