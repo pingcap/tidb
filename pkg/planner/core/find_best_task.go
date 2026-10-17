@@ -987,21 +987,37 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lh
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
 		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
-			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
-				lhsPseudo = false // We have statistics for the lhs index
-			} else {
-				lhsPseudo = true
-			}
+			lhsPseudo = !hasStatsForEstimation(lhs, statsTbl)
 		}
 		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
-			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
-				rhsPseudo = false // We have statistics on the rhs index
-			} else {
-				rhsPseudo = true
-			}
+			rhsPseudo = !hasStatsForEstimation(rhs, statsTbl)
 		}
 	}
 	return lhsPseudo, rhsPseudo
+}
+
+// hasStatsForEstimation returns true if the index of the candidate has statistics, or if every column
+// referenced by its access conditions has statistics. In the latter case, the row count of the index
+// is estimated from the column statistics (using exponential backoff for multiple columns), so the
+// candidate can be compared on its estimates rather than on the missing-statistics heuristics.
+func hasStatsForEstimation(c *candidatePath, statsTbl *statistics.Table) bool {
+	if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(c.path.Index.ID, true) {
+		return true
+	}
+	if len(c.accessCondsColMap) == 0 {
+		return false
+	}
+	found := 0
+	for _, col := range c.path.IdxCols {
+		if _, ok := c.accessCondsColMap[col.UniqueID]; !ok {
+			continue
+		}
+		if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
+			return false
+		}
+		found++
+	}
+	return found == len(c.accessCondsColMap)
 }
 
 func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int) int {
