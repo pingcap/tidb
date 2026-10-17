@@ -15,13 +15,18 @@
 package task
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"testing"
 
 	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -31,6 +36,75 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
+
+type checkpointCleanupTestManager struct {
+	checkpoint.SnapshotMetaManagerT
+	err   error
+	calls int
+}
+
+func (m *checkpointCleanupTestManager) RemoveCheckpointData(context.Context) error {
+	m.calls++
+	return m.err
+}
+
+type checkpointCleanupTestLogManager struct {
+	checkpoint.LogMetaManagerT
+	cleanup *checkpointCleanupTestManager
+}
+
+func (m *checkpointCleanupTestLogManager) RemoveCheckpointData(ctx context.Context) error {
+	return m.cleanup.RemoveCheckpointData(ctx)
+}
+
+type checkpointCleanupTestConsole struct {
+	glue.NoOPConsoleGlue
+	bytes.Buffer
+}
+
+func (c *checkpointCleanupTestConsole) Out() io.Writer { return &c.Buffer }
+
+func TestCheckpointCleanupWarning(t *testing.T) {
+	for _, failed := range []string{"", "log", "compacted", "snapshot", "all"} {
+		managers := map[string]*checkpointCleanupTestManager{}
+		for _, name := range []string{"log", "compacted", "snapshot"} {
+			mgr := &checkpointCleanupTestManager{}
+			if failed == name || failed == "all" {
+				mgr.err = errors.New("checkpoint removal unavailable")
+			}
+			managers[name] = mgr
+		}
+		cfg := &RestoreConfig{UseCheckpoint: true,
+			logCheckpointMetaManager: &checkpointCleanupTestLogManager{cleanup: managers["log"]},
+			sstCheckpointMetaManager: managers["compacted"], snapshotCheckpointMetaManager: managers["snapshot"]}
+		console := &checkpointCleanupTestConsole{}
+		cleanUpCheckpoints(context.Background(), cfg, glue.ConsoleOperations{ConsoleGlue: console})
+		for _, mgr := range managers {
+			require.Equal(t, 1, mgr.calls)
+		}
+		if failed != "" {
+			require.Contains(t, console.String(), "WARNING")
+			for name, mgr := range managers {
+				if mgr.err != nil {
+					require.Contains(t, console.String(), name+" restore")
+					require.Contains(t, console.String(), mgr.err.Error())
+				}
+			}
+		} else {
+			require.Empty(t, console.String())
+		}
+	}
+	console := &checkpointCleanupTestConsole{}
+	mgr := &checkpointCleanupTestManager{err: errors.New("must not be called")}
+	cfg := &RestoreConfig{snapshotCheckpointMetaManager: mgr}
+	cleanUpCheckpoints(context.Background(), cfg, glue.ConsoleOperations{ConsoleGlue: console})
+	require.Zero(t, mgr.calls)
+	require.Empty(t, console.String())
+	cfg.UseCheckpoint = true
+	cfg.snapshotCheckpointMetaManager = nil
+	cleanUpCheckpoints(context.Background(), cfg, glue.ConsoleOperations{ConsoleGlue: console})
+	require.Empty(t, console.String())
+}
 
 func TestPhysicalRestoreSysTables(t *testing.T) {
 	usePhysicalCfg := &SnapshotRestoreConfig{RestoreConfig: &RestoreConfig{
