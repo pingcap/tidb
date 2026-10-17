@@ -1524,6 +1524,14 @@ func collectStatementRUPointPayload(
 	}
 
 	_, groups := rootStats.MergeStats()
+	// This is the current root's complete group list, including registrations
+	// already merged by type. Borrow the sole concrete snapshot only here;
+	// no executor or plan pointer is retained across terminal calls.
+	if len(groups) == 1 {
+		if stats, ok := groups[0].(*runtimeStatsWithSnapshot); ok && stats != nil {
+			return collectStatementRUSingleSnapshotPayload(stats)
+		}
+	}
 	var aggregate clientutil.PointResponseStats
 	for _, group := range groups {
 		stats, ok := statementRUPointResponseStatsSnapshot(group)
@@ -1535,6 +1543,18 @@ func collectStatementRUPointPayload(
 		}
 	}
 	return statementRUPointPayloadFromStats(&aggregate)
+}
+
+func collectStatementRUSingleSnapshotPayload(stats *runtimeStatsWithSnapshot) (float64, float64, statementRUOperatorState) {
+	point := stats.GetPointResponseStats()
+	// Validate the incoming snapshot at the old pre-merge boundary. In
+	// particular, an already-overflowed concrete group must fail here before
+	// the coverage checks. zero.Merge(point) otherwise preserves every field.
+	if !point.IsValid() || point.ScanDetail.TotalKeys < 0 ||
+		point.ScanDetail.ProcessedKeys < 0 || point.ScanDetail.ProcessedKeysSize < 0 {
+		return 0, 0, statementRUOperatorInvalid
+	}
+	return statementRUPointPayloadFromStats(&point)
 }
 
 // The aggregate may have wrapped while merging individually valid providers.

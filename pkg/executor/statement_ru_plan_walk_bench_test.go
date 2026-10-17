@@ -541,3 +541,82 @@ func BenchmarkStatementRUReportingModes(b *testing.B) {
 		})
 	}
 }
+
+var statementRUSingleScanSink, statementRUSinglePayloadSink float64
+var statementRUSingleStateSink statementRUOperatorState
+
+// These fixtures retain the real wrapper and client getter. RPC/store setup is
+// completed and closed before timers; only the collector or terminal is timed.
+func BenchmarkStatementRUSingleSnapshot(b *testing.B) {
+	complete := newStatementRUSingleSnapshotFixture(b, &kvrpcpb.ScanDetailV2{TotalVersions: 3, ProcessedVersions: 2, ProcessedVersionsSize: 37}, true, false)
+	missing := newStatementRUSingleSnapshotFixture(b, nil, true, false)
+	zero := newStatementRUSingleSnapshotFixture(b, &kvrpcpb.ScanDetailV2{}, true, true)
+	for _, scenario := range []struct {
+		name      string
+		providers []execdetails.RuntimeStats
+		state     statementRUOperatorState
+	}{
+		{"concrete-complete", []execdetails.RuntimeStats{complete.Clone()}, statementRUOperatorComplete},
+		{"concrete-premerged", []execdetails.RuntimeStats{complete.Clone(), complete.Clone()}, statementRUOperatorComplete},
+		{"concrete-zero", []execdetails.RuntimeStats{zero.Clone()}, statementRUOperatorComplete},
+		{"concrete-missing", []execdetails.RuntimeStats{missing.Clone()}, statementRUOperatorUnsupported},
+		{"custom-fallback", []execdetails.RuntimeStats{&statementRUPointResponseStatsForTest{stats: complete.GetPointResponseStats()}}, statementRUOperatorComplete},
+	} {
+		b.Run(scenario.name, func(b *testing.B) {
+			fixture := newStatementRUSimpleSelectFixture(b)
+			stmt := fixture.stmt
+			vars := stmt.Ctx.GetSessionVars()
+			vars.FoundInPlanCache = true
+			vars.RUV2Metrics = execdetails.NewRUV2Metrics()
+			plan := newStatementRUPointLookupPlanForTest(fixture, false)
+			stmt.Plan = plan
+			vars.StmtCtx.SetPlan(plan)
+			vars.StmtCtx.SetFlatPlan(nil)
+			for _, provider := range scenario.providers {
+				vars.StmtCtx.RuntimeStatsColl.RegisterStats(plan.ID(), provider)
+			}
+			root, found := vars.StmtCtx.RuntimeStatsColl.GetRootStatsIfExists(plan.ID())
+			if !found {
+				b.Fatal("missing fixture root")
+			}
+			_, groups := root.MergeStats()
+			if len(groups) != 1 {
+				b.Fatalf("expected one registered/premerged group, got %d", len(groups))
+			}
+			wantScan, wantPayload, wantState := statementRUSingleSnapshotReference(plan.ID(), vars.StmtCtx.RuntimeStatsColl)
+			gotScan, gotPayload, gotState := collectStatementRUPointPayload(plan.ID(), vars.StmtCtx.RuntimeStatsColl)
+			if gotState != scenario.state || gotState != wantState || gotScan != wantScan || gotPayload != wantPayload {
+				b.Fatal("evidence fixture differs from frozen collector")
+			}
+			installStatementRUOwner(stmt)
+			if stmt.statementRUOwner == nil || stmt.statementRUOwner.calculationFullReport || stmt.statementRUOwner.frontendCompileBytes != 0 {
+				b.Fatal("requires result-only prepared owner")
+			}
+			want, wantOK := calculateStatementRUPointLookup(plan.ID(), vars.StmtCtx.RuntimeStatsColl, vars.RUV2Metrics, stmt.statementRUOwner.calculationSetup(), true)
+			if wantOK != (scenario.state == statementRUOperatorComplete) {
+				b.Fatal("full collector oracle state mismatch")
+			}
+			stmt.recordStatementRURootEOF()
+			stmt.RecordStatementRUFinalOutcome(true)
+			if got := stmt.finishStatementRU(nil); got != want.result.TotalRU {
+				b.Fatalf("terminal=%v, want=%v", got, want.result.TotalRU)
+			}
+			b.Run("evidence", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					statementRUSingleScanSink, statementRUSinglePayloadSink, statementRUSingleStateSink = collectStatementRUPointPayload(plan.ID(), vars.StmtCtx.RuntimeStatsColl)
+				}
+			})
+			b.Run("terminal", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					vars.StmtCtx.SetFlatPlan(nil)
+					installStatementRUOwner(stmt)
+					stmt.recordStatementRURootEOF()
+					stmt.RecordStatementRUFinalOutcome(true)
+					stmt.finishStatementRU(nil)
+				}
+			})
+		})
+	}
+}
