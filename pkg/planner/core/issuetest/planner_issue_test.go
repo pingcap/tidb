@@ -48,6 +48,29 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		return sharedTK
 	}
 
+	// issue-71580-full-outer-join-cast-guard
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("set tidb_enable_full_outer_join = on")
+		tk.MustExec("create table ti (id int)")
+		tk.MustExec("create table tv (id varchar(20))")
+		tk.MustExec("insert into ti values (1)")
+		tk.MustExec("insert into tv values ('1.5')")
+		queries := []string{
+			"select ti.id, tv.id from ti full outer join tv on ti.id = tv.id",
+			"select ti.id, tv.id from tv full outer join ti on ti.id = tv.id",
+		}
+		for _, sql := range queries {
+			tk.MustQuery(sql).Sort().Check(testkit.Rows("1 <nil>", "<nil> 1.5"))
+		}
+		tk.MustExec("insert into ti values (2), (null)")
+		tk.MustExec("insert into tv values ('1'), ('3'), (null)")
+		for _, sql := range queries {
+			tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1", "2 <nil>", "<nil> 1.5", "<nil> 3", "<nil> <nil>", "<nil> <nil>"))
+		}
+		tk.MustExec("set tidb_enable_full_outer_join = default")
+	}
+
 	// index-lookup-columns-mismatch
 	{
 		tk := prepareSharedTestKit(t)
