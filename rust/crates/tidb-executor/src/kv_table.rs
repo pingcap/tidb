@@ -4384,6 +4384,19 @@ impl KvTable {
         stats_ctx: Option<&crate::StmtContext>,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
+        // Go `addRecord`: a temporary table refuses a row once what it holds
+        // (committed plus this transaction's) exceeds
+        // `@@tidb_tmp_table_max_size`, before the row is written (1114).
+        if let Some(statement) = stats_ctx.filter(|_| self.is_temporary()) {
+            if i64::try_from(self.store.size_bytes()).unwrap_or(i64::MAX)
+                > statement.tmp_table_max_size()
+            {
+                return Err(KvTableError::ColumnCast(crate::MysqlError::new(
+                    tidb_error::mysql::errcode::ErrRecordFileFull,
+                    format!("The table '{}' is full", self.name),
+                )));
+            }
+        }
         // Go AddRecord receives a row completed by the mutation executor.
         // Re-evaluation here would duplicate warnings and could replace its
         // converted/NULL-substituted generated values before index encoding.

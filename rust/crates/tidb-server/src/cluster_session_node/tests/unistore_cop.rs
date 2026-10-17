@@ -14827,3 +14827,112 @@ fn prepared_ddl_and_create_table_build_warnings_follow_go() {
         .unwrap_err();
     assert_eq!(error.code, 1356);
 }
+
+/// Go stamps `Grantor` (the session's `User.String()`) on the table-scope row
+/// a GRANT writes, leaves it alone on REVOKE, and `SET DEFAULT ROLE` deletes
+/// and re-inserts the account's `mysql.default_roles` rows, so a set rewritten
+/// from `r_2` to `ALL` reads back `r_1, r_2` rather than the surviving row
+/// first.
+#[test]
+fn grant_stamps_the_grantor_and_set_default_role_rewrites_its_rows() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1051)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for sql in [
+        "CREATE USER gtu",
+        "CREATE ROLE gr_1",
+        "CREATE ROLE gr_2",
+        "GRANT gr_1 TO gtu",
+        "GRANT gr_2 TO gtu",
+        "CREATE TABLE gtab (a INT)",
+        "GRANT SELECT ON test.gtab TO gtu",
+    ] {
+        session
+            .execute_write(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    let grants = |session: &mut ClusterServerSession| {
+        displayed(rows(
+            session,
+            "SELECT grantor, table_priv FROM mysql.tables_priv WHERE user = 'gtu'",
+        ))
+    };
+    let granted_by = displayed(rows(&mut session, "SELECT CONCAT(user, '@', host) FROM (SELECT SUBSTRING_INDEX(CURRENT_USER(), '@', 1) AS user, SUBSTRING_INDEX(CURRENT_USER(), '@', -1) AS host) c"))
+        [0][0]
+        .clone();
+    assert_eq!(grants(&mut session), [[granted_by.as_str(), "Select"]]);
+    session
+        .execute_write("GRANT INSERT ON test.gtab TO gtu")
+        .unwrap();
+    assert_eq!(
+        grants(&mut session),
+        [[granted_by.as_str(), "Select,Insert"]]
+    );
+    session
+        .execute_write("REVOKE SELECT ON test.gtab FROM gtu")
+        .unwrap();
+    assert_eq!(grants(&mut session), [[granted_by.as_str(), "Insert"]]);
+
+    let default_roles = |session: &mut ClusterServerSession| {
+        displayed(rows(
+            session,
+            "SELECT default_role_user FROM mysql.default_roles WHERE user = 'gtu'",
+        ))
+    };
+    session
+        .execute_write("SET DEFAULT ROLE gr_2 TO gtu")
+        .unwrap();
+    assert_eq!(default_roles(&mut session), [["gr_2"]]);
+    session
+        .execute_write("SET DEFAULT ROLE ALL TO gtu")
+        .unwrap();
+    assert_eq!(default_roles(&mut session), [["gr_1"], ["gr_2"]]);
+    session
+        .execute_write("SET DEFAULT ROLE NONE TO gtu")
+        .unwrap();
+    assert_eq!(default_roles(&mut session), Vec::<Vec<String>>::new());
+}
+
+/// Go `checkTempTableSize` refuses a row once a temporary table holds more
+/// than `@@tidb_tmp_table_max_size` -- what it committed plus this
+/// transaction's own writes -- with 1114, before the row is written.
+#[test]
+fn temporary_table_refuses_rows_past_tmp_table_max_size() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1052)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE GLOBAL TEMPORARY TABLE tg (c1 INT, c2 MEDIUMTEXT) ON COMMIT DELETE ROWS",
+        )
+        .unwrap();
+    session
+        .execute_write("CREATE TEMPORARY TABLE tl (c1 INT, c2 MEDIUMTEXT)")
+        .unwrap();
+    session
+        .execute_write("SET @@session.tidb_tmp_table_max_size = 1048576")
+        .unwrap();
+    let row = |table: &str| format!("INSERT INTO {table} VALUES (1, REPEAT('x', 512*1024))");
+    for table in ["tg", "tl"] {
+        session.control_transaction("BEGIN").unwrap();
+        session.execute_write(&row(table)).unwrap();
+        session.execute_write(&row(table)).unwrap();
+        let error = session.execute_write(&row(table)).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1114, format!("The table '{table}' is full").as_str())
+        );
+        session.control_transaction("ROLLBACK").unwrap();
+    }
+    // A LOCAL table's committed rows count against the next transaction.
+    session.execute_write(&row("tl")).unwrap();
+    session.control_transaction("BEGIN").unwrap();
+    session.execute_write(&row("tl")).unwrap();
+    let error = session.execute_write(&row("tl")).unwrap_err();
+    assert_eq!(error.code, 1114);
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*) FROM tl")),
+        [["1"]]
+    );
+}

@@ -6741,7 +6741,8 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        let pending = self.accounts.begin().map_err(SqlQueryError::unknown)?;
+        let mut pending = self.accounts.begin().map_err(SqlQueryError::unknown)?;
+        pending.set_write_hints(self.account_write_hints(sql));
         let scratch = pending.registry();
         let live = self.session.swap_privileges(scratch);
         let applied = self
@@ -6767,6 +6768,35 @@ impl ClusterServerSession {
             affected_rows: 0,
             last_insert_id: 0,
         })
+    }
+
+    /// What Go's executor for this account statement writes that the account
+    /// image alone cannot say: a GRANT stamps the session user as `Grantor`,
+    /// and `SET DEFAULT ROLE` deletes and re-inserts the account's rows.
+    fn account_write_hints(
+        &self,
+        sql: &str,
+    ) -> tidb_exec::cluster_account_write::AccountWriteHints {
+        let mut hints = tidb_exec::cluster_account_write::AccountWriteHints::default();
+        let Ok(stmt) = self.session.parse_statement(sql) else {
+            return hints;
+        };
+        match &stmt {
+            Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Grant(_)) => {
+                hints.grantor = Some(
+                    self.session
+                        .current_identity()
+                        .map_or_else(String::new, |(user, host)| format!("{user}@{host}")),
+                );
+            }
+            Stmt::Session(session)
+                if matches!(session.as_ref(), tidb_ast::SessionStmt::SetDefaultRole(_)) =>
+            {
+                hints.rewrite_default_roles = true;
+            }
+            _ => {}
+        }
+        hints
     }
 
     /// Performs one `SET GLOBAL` change.

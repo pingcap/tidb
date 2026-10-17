@@ -103,6 +103,7 @@ pub(crate) struct StatementVarSnapshot {
     select_limit: u64,
     new_only_full_group_by_check: bool,
     auto_increment_in_generated: bool,
+    tmp_table_max_size: i64,
     remove_orderby_in_subquery: bool,
     pub(crate) mem_quota: i64,
     replica_read: tidb_executor::ReplicaReadType,
@@ -1030,6 +1031,12 @@ impl Session {
                 tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK,
             ),
             auto_increment_in_generated: on("tidb_enable_auto_increment_in_generated"),
+            tmp_table_max_size: self
+                .vars
+                .get_system("tidb_tmp_table_max_size")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(64 << 20),
             remove_orderby_in_subquery: on(tidb_vardef::tidb_vars::TIDB_REMOVE_ORDERBY_IN_SUBQUERY),
             mem_quota: self
                 .vars
@@ -1439,6 +1446,7 @@ impl Session {
                     .with_only_full_group_by(sql_mode.has_only_full_group_by())
                     .with_new_only_full_group_by_check(new_only_full_group_by_check)
                     .with_auto_increment_in_generated(snapshot.auto_increment_in_generated)
+                    .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                     .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                     .with_session_state(current_db, version)
                     .with_user(self.current_user.clone(), self.login_user.clone())
@@ -1557,6 +1565,7 @@ impl Session {
                 .with_only_full_group_by(sql_mode.has_only_full_group_by())
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
                 .with_auto_increment_in_generated(snapshot.auto_increment_in_generated)
+                .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                 .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())

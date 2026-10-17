@@ -143,6 +143,13 @@ where
 /// is single-threaded in spirit and its interior mutability stays behind
 /// `&mut self` methods.
 pub trait TableStorage: fmt::Debug + Send + Sync {
+    /// The bytes (keys plus values) this storage holds, for a backend that
+    /// counts them. Go's `checkTempTableSize` reads the same figure from the
+    /// transaction's membuffer; a backend that does not count answers 0.
+    fn size_bytes(&self) -> u64 {
+        0
+    }
+
     /// Installs immutable statement policy on the native snapshot, where available.
     fn set_snapshot_read_options(&self, _options: tidb_txnkv::SnapshotReadOptions) {}
 
@@ -413,6 +420,8 @@ impl StorageIterator for MaterializedStorageIterator {
 #[derive(Clone, Debug, Default)]
 pub struct MemTableStorage {
     inner: MemStorage,
+    /// Keys plus values currently stored; see [`TableStorage::size_bytes`].
+    byte_size: u64,
     /// The transaction's staged writes while a write runs inside a
     /// transaction (see [`TableStorage::attach_txn_staging`]).
     staging: Option<crate::kv_table::TxnStaging>,
@@ -434,18 +443,31 @@ impl TableStorage for MemTableStorage {
             .map_err(StorageError::from)
     }
 
+    fn size_bytes(&self) -> u64 {
+        self.byte_size
+    }
+
     fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
         if let Some(staging) = &self.staging {
             staging.writes.note(staging.table_id, key.as_bytes());
         }
-        Mutator::set(&mut self.inner, key, value).map_err(StorageError::from)
+        let replaced = Getter::get(&mut self.inner, &key, GetOptions::default())
+            .map_or(0, |entry| (key.as_bytes().len() + entry.value.len()) as u64);
+        let added = (key.as_bytes().len() + value.len()) as u64;
+        Mutator::set(&mut self.inner, key, value).map_err(StorageError::from)?;
+        self.byte_size = self.byte_size.saturating_sub(replaced) + added;
+        Ok(())
     }
 
     fn delete(&mut self, key: Key) -> Result<(), StorageError> {
         if let Some(staging) = &self.staging {
             staging.writes.note(staging.table_id, key.as_bytes());
         }
-        Mutator::delete(&mut self.inner, key).map_err(StorageError::from)
+        let removed = Getter::get(&mut self.inner, &key, GetOptions::default())
+            .map_or(0, |entry| (key.as_bytes().len() + entry.value.len()) as u64);
+        Mutator::delete(&mut self.inner, key).map_err(StorageError::from)?;
+        self.byte_size = self.byte_size.saturating_sub(removed);
+        Ok(())
     }
 
     /// Go `GetLocal` over the attached log: a key this transaction wrote
@@ -508,6 +530,7 @@ impl TableStorage for MemTableStorage {
 
     fn clear(&mut self) {
         self.inner = MemStorage::new();
+        self.byte_size = 0;
     }
 
     fn clone_box(&self) -> Box<dyn TableStorage> {

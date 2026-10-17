@@ -770,6 +770,8 @@ pub struct StmtContextData {
     /// sets `isCreateView` and `capFlag |= canExpandAST`.
     create_view: bool,
     auto_increment_in_generated: bool,
+    /// Go `SessionVars.TMPTableSize` (`@@tidb_tmp_table_max_size`).
+    tmp_table_max_size: i64,
     /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`
     /// (`@@tidb_enable_new_only_full_group_by_check`, default OFF): the
     /// functional-dependency `ONLY_FULL_GROUP_BY` checker, gating the checks
@@ -1859,6 +1861,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_tmp_table_max_size`, the bytes a temporary table may hold.
+    #[must_use]
+    pub fn with_tmp_table_max_size(mut self, bytes: i64) -> Self {
+        self.tmp_table_max_size = bytes;
+        self
+    }
+
     /// Sets `@@tidb_enable_new_only_full_group_by_check` for this statement.
     #[must_use]
     pub fn with_new_only_full_group_by_check(mut self, enabled: bool) -> Self {
@@ -2318,6 +2327,8 @@ impl StmtContext {
             only_full_group_by: false,
             create_view: false,
             auto_increment_in_generated: false,
+            // Go `DefTiDBTmpTableMaxSize`.
+            tmp_table_max_size: 64 << 20,
             new_only_full_group_by_check: false,
             // Go `DefTiDBRemoveOrderbyInSubquery = true`.
             remove_orderby_in_subquery: true,
@@ -3785,6 +3796,11 @@ impl StmtContext {
     /// Whether generated expressions may reference AUTO_INCREMENT columns.
     pub fn auto_increment_in_generated(&self) -> bool {
         self.auto_increment_in_generated
+    }
+
+    /// `@@tidb_tmp_table_max_size`: the bytes a temporary table may hold.
+    pub fn tmp_table_max_size(&self) -> i64 {
+        self.tmp_table_max_size
     }
 
     /// Whether the functional-dependency `ONLY_FULL_GROUP_BY` checker is on

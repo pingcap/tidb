@@ -105,6 +105,22 @@ impl From<crate::cluster_catalog::ClusterCatalogError> for AccountWriteError {
     }
 }
 
+/// What the statement that produced the desired image says about HOW Go
+/// writes it. The image is a state, so two writes Go distinguishes by their
+/// statement alone -- who granted, and whether a row was rewritten -- are
+/// recorded here instead.
+#[derive(Clone, Debug, Default)]
+pub struct AccountWriteHints {
+    /// Go `composeTablePrivUpdateForGrant` records the session's
+    /// `User.String()` as `Grantor` on every table-scope row a GRANT writes.
+    /// Set only for a GRANT: REVOKE leaves the column alone.
+    pub grantor: Option<String>,
+    /// Go `SET DEFAULT ROLE` deletes the account's `mysql.default_roles` rows
+    /// and inserts the new set, so the surviving rows take fresh row ids and
+    /// read back in the new set's order.
+    pub rewrite_default_roles: bool,
+}
+
 /// One planned account change: the mutations that make the cluster's rows
 /// match the desired image, and who they are about.
 #[derive(Debug, Default)]
@@ -175,6 +191,26 @@ pub fn plan_account_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     desired: &ClusterPrivileges,
     now: Time,
+    reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
+) -> Result<AccountWritePlan, AccountWriteError> {
+    plan_account_write_with_hints(
+        snapshot,
+        catalog,
+        desired,
+        now,
+        &AccountWriteHints::default(),
+        reserve_ids,
+    )
+}
+
+/// [`plan_account_write`] for a statement whose own kind decides some values
+/// (see [`AccountWriteHints`]).
+pub fn plan_account_write_with_hints<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    desired: &ClusterPrivileges,
+    now: Time,
+    hints: &AccountWriteHints,
     reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
 ) -> Result<AccountWritePlan, AccountWriteError> {
     let mut plan = AccountWritePlan::default();
@@ -298,6 +334,7 @@ pub fn plan_account_write<S: MetaSnapshot>(
             &desired_rows,
             &policy_values,
             now,
+            hints,
             &mut plan,
             &mut changed,
             reserve_ids,
@@ -687,6 +724,7 @@ fn reconcile<S: MetaSnapshot>(
     desired: &LogicalRows,
     policy_values: &AccountPolicyValues,
     now: Time,
+    hints: &AccountWriteHints,
     plan: &mut AccountWritePlan,
     changed: &mut std::collections::BTreeSet<String>,
     reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
@@ -736,6 +774,13 @@ fn reconcile<S: MetaSnapshot>(
         })
         .collect::<Result<_, _>>()?;
 
+    // `Grantor` is no value column of this writer's: only the statement that
+    // GRANTs knows it, so it is stamped on the rows that statement writes.
+    let grantor = match (&hints.grantor, account_table.name == TABLES_PRIV_TABLE) {
+        (Some(grantor), true) => Some((column_id(table, "grantor")?, grantor.clone())),
+        _ => None,
+    };
+
     let stored = read_rows(snapshot, table)?;
     let mut by_key: BTreeMap<Vec<String>, StoredRow> = BTreeMap::new();
     for row in stored {
@@ -744,6 +789,33 @@ fn reconcile<S: MetaSnapshot>(
             .map(|id| stored_text(&row.values, *id))
             .collect::<Result<Vec<_>, _>>()?;
         by_key.insert(identity, row);
+    }
+    // Go's `SET DEFAULT ROLE` rewrites an account's rows whole. An account
+    // whose stored set differs from the desired one is taken out of `by_key`
+    // here, so every desired row of it is inserted afresh (in the set's own
+    // order) and the old rows are deleted below.
+    let mut rewritten: Vec<(Vec<String>, StoredRow)> = Vec::new();
+    if hints.rewrite_default_roles && account_table.name == DEFAULT_ROLES_TABLE {
+        let accounts: std::collections::BTreeSet<(String, String)> = desired
+            .keys()
+            .filter(|identity| !by_key.contains_key(*identity))
+            .chain(
+                by_key
+                    .keys()
+                    .filter(|identity| !desired.contains_key(*identity)),
+            )
+            .map(|identity| (identity[0].clone(), identity[1].clone()))
+            .collect();
+        let moved: Vec<Vec<String>> = by_key
+            .keys()
+            .filter(|identity| accounts.contains(&(identity[0].clone(), identity[1].clone())))
+            .cloned()
+            .collect();
+        for identity in moved {
+            if let Some(row) = by_key.remove(&identity) {
+                rewritten.push((identity, row));
+            }
+        }
     }
 
     let missing = desired
@@ -784,6 +856,10 @@ fn reconcile<S: MetaSnapshot>(
                     &mut row.values,
                 )?;
                 if moved {
+                    if let Some((id, grantor)) = &grantor {
+                        row.values
+                            .insert(*id, Datum::Bytes(grantor.clone().into_bytes()));
+                    }
                     plan.mutations
                         .push(update_row(table, &row.key, &row.values)?);
                     note_changed(changed, account_table, identity);
@@ -811,6 +887,9 @@ fn reconcile<S: MetaSnapshot>(
                     let wanted = values.get(column).cloned().unwrap_or_default();
                     fresh.insert(*id, Datum::Bytes(wanted.into_bytes()));
                 }
+                if let Some((id, grantor)) = &grantor {
+                    fresh.insert(*id, Datum::Bytes(grantor.clone().into_bytes()));
+                }
                 apply_policy_values(table, account_table, identity, policy_values, &mut fresh)?;
                 plan.mutations.extend(insert_row(table, row_id, &fresh)?);
                 note_changed(changed, account_table, identity);
@@ -818,11 +897,52 @@ fn reconcile<S: MetaSnapshot>(
         }
     }
     // Whatever the desired image did not claim is a row the change removed.
-    for (identity, row) in by_key {
+    for (identity, row) in rewritten.into_iter().chain(by_key) {
         plan.mutations
             .extend(delete_row(table, &row.key, &row.values)?);
         note_changed(changed, account_table, &identity);
     }
+    fold_delete_then_insert(&mut plan.mutations)?;
+    Ok(())
+}
+
+/// A rewritten row deletes the entry of its unique index and inserts the same
+/// entry again under a new handle. Go's membuffer keeps the later write; the
+/// one commit batch here must name each key once, and the surviving put may
+/// not claim the key was absent (it exists in the snapshot).
+fn fold_delete_then_insert(mutations: &mut Vec<BufferMutation>) -> Result<(), AccountWriteError> {
+    use tidb_txnkv::transaction::BufferMutationOp;
+    let set_keys: std::collections::BTreeSet<Vec<u8>> = mutations
+        .iter()
+        .filter(|mutation| mutation.kind() == BufferMutationOp::Set)
+        .map(|mutation| mutation.key().to_vec())
+        .collect();
+    let deleted: std::collections::BTreeSet<Vec<u8>> = mutations
+        .iter()
+        .filter(|mutation| {
+            mutation.kind() == BufferMutationOp::Delete && set_keys.contains(mutation.key())
+        })
+        .map(|mutation| mutation.key().to_vec())
+        .collect();
+    if deleted.is_empty() {
+        return Ok(());
+    }
+    let mut folded = Vec::with_capacity(mutations.len());
+    for mutation in std::mem::take(mutations) {
+        if deleted.contains(mutation.key()) {
+            if mutation.kind() == BufferMutationOp::Delete {
+                continue;
+            }
+            let (_, key, value, ..) = mutation.into_parts();
+            folded.push(
+                BufferMutation::set(key, value)
+                    .map_err(|error| AccountWriteError::Unsupported(error.to_string()))?,
+            );
+        } else {
+            folded.push(mutation);
+        }
+    }
+    *mutations = folded;
     Ok(())
 }
 

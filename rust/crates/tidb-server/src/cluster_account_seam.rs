@@ -62,7 +62,9 @@ use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::PdRegionLoader;
 
-use tidb_exec::cluster_account_write::{plan_account_write, AccountWriteError};
+use tidb_exec::cluster_account_write::{
+    plan_account_write, plan_account_write_with_hints, AccountWriteError, AccountWriteHints,
+};
 use tidb_exec::cluster_auto_id::ClusterAutoIdStore;
 use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use tidb_exec::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
@@ -130,6 +132,11 @@ pub trait PendingAccountChange {
     /// The scratch account table the statement is to run against. It holds
     /// the cluster's accounts as of this change's own snapshot.
     fn registry(&self) -> PrivilegeRegistry;
+
+    /// What the statement says about how Go writes its rows (the grantor of
+    /// a GRANT, the rewrite of `SET DEFAULT ROLE`), which the scratch table
+    /// alone cannot tell. A pending change that persists nothing ignores it.
+    fn set_write_hints(&mut self, _hints: AccountWriteHints) {}
 
     /// Persists whatever the statement did to [`Self::registry`], publishes it
     /// into the node's live table, and announces it.
@@ -228,6 +235,7 @@ where
             live: self.live.clone(),
             timeout: self.timeout,
             notifier: self.notifier.clone(),
+            hints: AccountWriteHints::default(),
         }))
     }
 }
@@ -248,6 +256,7 @@ where
     live: PrivilegeRegistry,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
+    hints: AccountWriteHints,
 }
 
 impl<C, L, P> PendingAccountChange for RealPendingAccountChange<C, L, P>
@@ -260,6 +269,10 @@ where
         self.scratch.clone()
     }
 
+    fn set_write_hints(&mut self, hints: AccountWriteHints) {
+        self.hints = hints;
+    }
+
     fn commit(mut self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
         let mut transaction = self
             .transaction
@@ -268,11 +281,12 @@ where
         let desired = cluster_image_from_registry(&self.scratch);
         let plan = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            plan_account_write(
+            plan_account_write_with_hints(
                 &mut snapshot,
                 &self.catalog,
                 &desired,
                 utc_now_timestamp(),
+                &self.hints,
                 &mut |db, table, minimum, count| {
                     reserve_account_ids(&self.opener, self.timeout, db, table, minimum, count)
                 },
