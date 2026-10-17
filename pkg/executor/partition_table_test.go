@@ -2538,6 +2538,9 @@ func TestSelectLockOnPartitionTableSelfJoin(t *testing.T) {
 				checkLocked("select * from t t1 join t t2 on t1.b = t2.b where t1.a = 1 and t2.a = 12 for update", 1, 12)
 				checkLocked("select * from t where a in (select a from t where b = 100) and b = 100 for update", 1, 12)
 				checkLocked("select * from t where exists (select 1 from t t2 where t2.a = t.a) for update", 1, 12)
+				// The subquery's row is in the other partition, so the outer row must be locked with its own partition ID.
+				checkLocked("select * from t where a = 1 and b in (select b from t t2 where t2.a = 12) for update", 1)
+				checkLocked("select * from t where a = 1 and exists (select 1 from t t2 where t2.b = t.b and t2.a = 12) for update", 1)
 				if strings.HasPrefix(partitioning, "partition by range") {
 					checkLocked("select * from t partition (p0) t1 join t partition (p1) t2 on t1.b = t2.b where t1.a = 1 and t2.a = 12 for update", 1, 12)
 				}
