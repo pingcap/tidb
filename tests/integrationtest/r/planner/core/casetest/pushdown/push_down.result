@@ -262,7 +262,7 @@ Projection	root		1->Column, Column
 └─Projection	root		format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)->Column
   └─HashAgg	root		group by:planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, funcs:firstrow(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74)->planner__core__casetest__pushdown__push_down.t4a8656d1.col_74
     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column)]
-      ├─Selection(Build)	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), json_overlaps(planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, cast("[0.035131302371695955]", json BINARY))
+      ├─Selection(Build)	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1))
       │ └─IndexMerge	root		type: union
       │   ├─Selection(Build)	cop[tikv]		
       │   │ └─IndexRangeScan	cop[tikv]	table:t4a8656d1, index:idx_39(cast(`col_73` as double array), col_74)	range:[0.035131302371695955,0.035131302371695955], keep order:false, stats:pseudo

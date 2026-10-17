@@ -523,3 +523,21 @@ drop table t;
 create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
 insert into t values ('1', 'abcde');
 drop table t;
+
+# TestMVIndexSkipCoveredJSONPredicateRecheck
+drop table if exists t;
+create table t (id bigint primary key, j json, index zips ((cast(json_extract(j, '$.zipcode') as unsigned array))));
+insert into t values (1, '{"zipcode":[1,2]}'), (2, '{"zipcode":[3,4]}'), (3, '{"zipcode":[5,6]}'), (4, '{"zipcode":[]}'), (5, null);
+# JSON_OVERLAPS can't be pushed down to TiKV, but the index ranges enforce it exactly, so no Selection is needed.
+explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]');
+select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') order by id;
+# A condition the index ranges don't cover is still evaluated.
+explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') and json_overlaps(j->'$.zipcode', '[2, 6]');
+select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') and json_overlaps(j->'$.zipcode', '[2, 6]') order by id;
+# Inside a transaction, uncommitted rows come through UnionScan rather than the index, so the Selection is kept.
+begin;
+insert into t values (6, '{"zipcode":[3]}'), (7, '{"zipcode":[8]}');
+explain format='brief' select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]');
+select id from t use index(zips) where json_overlaps(j->'$.zipcode', '[1, 3, 7]') order by id;
+rollback;
+drop table t;
