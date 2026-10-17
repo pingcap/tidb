@@ -1,0 +1,23 @@
+use test;
+set sql_mode='';
+drop table if exists load_hard_errors;
+create table load_hard_errors (id int primary key, s varchar(10), g json as (cast(s as json)) stored);
+--error 3140
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors (id) set s='oops';
+select count(*) from load_hard_errors;
+drop table load_hard_errors;
+create table load_hard_errors (id int primary key, s varchar(10), g tinyint as (regexp_like('a',s)) stored);
+--error 1139
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors (id) set s='(';
+select count(*) from load_hard_errors;
+drop table load_hard_errors;
+create table load_hard_errors (id int primary key, v vector(3) not null);
+--error 1105
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors;
+select count(*) from load_hard_errors;
+drop table load_hard_errors;
+create table load_hard_errors (id int primary key, v int not null);
+load data local infile './t/executor/load_data_hard_errors.csv' into table load_hard_errors;
+select * from load_hard_errors;
+drop table load_hard_errors;
+set sql_mode=default;
