@@ -568,6 +568,73 @@ func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
 	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
+
+	t.Run("LRU capacity", func(t *testing.T) {
+		lruVars := variable.NewSessionVars(nil)
+		lruVars.SessionPlanCacheSize = 2
+		stmt1, stmt2, stmt3 := new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt), new(plannercore.PlanCacheStmt)
+		lruSQL1 := "select * from t where a>?"
+		lruSQL2 := "select * from t where a<?"
+		lruSQL3 := "select * from t where a=?"
+
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL1, stmt1)
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL2, stmt2)
+		// Touch lruSQL1 so lruSQL2 is the least recently used entry.
+		require.Same(t, stmt1, lruVars.GetNonPreparedPlanCacheStmt(lruSQL1))
+		lruVars.AddNonPreparedPlanCacheStmt(lruSQL3, stmt3)
+		require.Same(t, stmt1, lruVars.GetNonPreparedPlanCacheStmt(lruSQL1))
+		require.Nil(t, lruVars.GetNonPreparedPlanCacheStmt(lruSQL2))
+		require.Same(t, stmt3, lruVars.GetNonPreparedPlanCacheStmt(lruSQL3))
+	})
+
+	t.Run("parser context isolation", func(t *testing.T) {
+		contextVars := variable.NewSessionVars(nil)
+		contextVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+		contextVars.SessionPlanCacheSize = 10
+		stmt := new(plannercore.PlanCacheStmt)
+		const sql = "select * from t where a>?"
+
+		contextVars.AddNonPreparedPlanCacheStmt(sql, stmt)
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalDB := contextVars.CurrentDB
+		contextVars.CurrentDB = "another_db"
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.CurrentDB = originalDB
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalSQLMode := contextVars.SQLMode
+		contextVars.SQLMode = mysql.ModePipesAsConcat
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.SQLMode = originalSQLMode
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalCharset, originalCollation := contextVars.GetCharsetInfo()
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetConnection, "latin1"))
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetConnection, originalCharset))
+		require.NoError(t, contextVars.SetSystemVar(variable.CollationConnection, originalCollation))
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalClient, err := contextVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetClient)
+		require.NoError(t, err)
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetClient, "latin1"))
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		require.NoError(t, contextVars.SetSystemVar(variable.CharacterSetClient, originalClient))
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalWindowFunction := contextVars.EnableWindowFunction
+		contextVars.EnableWindowFunction = !originalWindowFunction
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.EnableWindowFunction = originalWindowFunction
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+
+		originalStrictDoubleCheck := contextVars.EnableStrictDoubleTypeCheck
+		contextVars.EnableStrictDoubleTypeCheck = !originalStrictDoubleCheck
+		require.Nil(t, contextVars.GetNonPreparedPlanCacheStmt(sql))
+		contextVars.EnableStrictDoubleTypeCheck = originalStrictDoubleCheck
+		require.Same(t, stmt, contextVars.GetNonPreparedPlanCacheStmt(sql))
+	})
 }
 
 func TestHookContext(t *testing.T) {

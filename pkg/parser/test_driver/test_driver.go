@@ -58,6 +58,9 @@ type ValueExpr struct {
 
 // Restore implements Node interface.
 func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
+	if handled, err := ctx.TryRestoreLiteral(n); handled || err != nil {
+		return err
+	}
 	switch n.Kind() {
 	case KindNull:
 		ctx.WriteKeyWord("NULL")

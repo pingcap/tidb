@@ -1403,7 +1403,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(field.OriginalText()) > 0 {
+				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(field.OriginalText()) > 0 && ctx.CanUseOriginalText(field) {
 					ctx.WritePlain(field.OriginalText())
 				} else {
 					if err := field.Restore(ctx); err != nil {
@@ -1421,7 +1421,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 
 		if n.From != nil {
 			ctx.WriteKeyWord(" FROM ")
-			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.From.OriginalText()) > 0 {
+			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.From.OriginalText()) > 0 && ctx.CanUseOriginalText(n.From) {
 				ctx.WritePlain(n.From.OriginalText())
 			} else {
 				if err := n.From.Restore(ctx); err != nil {
@@ -2505,7 +2505,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 {
+				if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(v.OriginalText()) > 0 && ctx.CanUseOriginalText(v) {
 					ctx.WritePlain(v.OriginalText())
 				} else {
 					if err := v.Restore(ctx); err != nil {

@@ -1585,6 +1585,9 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
+	// EnableNonPreparedPlanCacheUnified indicates whether to use the unified non-prepared plan cache checks.
+	EnableNonPreparedPlanCacheUnified bool
+
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
@@ -2437,6 +2440,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.EnableTiKVShortCircuitExpression = DefTiDBEnableTiKVShortCircuitExpression
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
+	vars.EnableNonPreparedPlanCacheUnified = DefTiDBEnableNonPreparedPlanCacheUnified
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
@@ -2857,12 +2861,59 @@ func (k planCacheStmtKey) Hash() []byte {
 	return []byte(k)
 }
 
+func writePlanCacheStmtKeyString(builder *strings.Builder, value string) {
+	var length [8]byte
+	binary.LittleEndian.PutUint64(length[:], uint64(len(value)))
+	_, _ = builder.Write(length[:])
+	_, _ = builder.WriteString(value)
+}
+
+// nonPreparedPlanCacheStmtKey builds the key for a non-prepared statement
+// carrier. The carrier owns a parsed AST, so every parser and name-resolution
+// input that can change that AST must be part of the key.
+func (s *SessionVars) nonPreparedPlanCacheStmtKey(sql string) planCacheStmtKey {
+	charset, collation := s.GetCharsetInfo()
+	characterSetClient, ok := s.systems[CharacterSetClient]
+	if !ok && s.GlobalVarsAccessor != nil {
+		var err error
+		characterSetClient, err = s.GetSessionOrGlobalSystemVar(context.Background(), CharacterSetClient)
+		ok = err == nil
+	}
+	if !ok {
+		characterSetClient = GetSysVar(CharacterSetClient).Value
+	}
+	parserConfig := s.BuildParserConfig()
+
+	var builder strings.Builder
+	builder.Grow(len(sql) + len(charset) + len(collation) + len(characterSetClient) + len(s.CurrentDB) + 64)
+	writePlanCacheStmtKeyString(&builder, sql)
+	writePlanCacheStmtKeyString(&builder, charset)
+	writePlanCacheStmtKeyString(&builder, collation)
+	writePlanCacheStmtKeyString(&builder, characterSetClient)
+	writePlanCacheStmtKeyString(&builder, s.CurrentDB)
+
+	var sqlMode [8]byte
+	binary.LittleEndian.PutUint64(sqlMode[:], uint64(s.SQLMode))
+	_, _ = builder.Write(sqlMode[:])
+	if parserConfig.EnableWindowFunction {
+		_ = builder.WriteByte(1)
+	} else {
+		_ = builder.WriteByte(0)
+	}
+	if parserConfig.EnableStrictDoubleTypeCheck {
+		_ = builder.WriteByte(1)
+	} else {
+		_ = builder.WriteByte(0)
+	}
+	return planCacheStmtKey(builder.String())
+}
+
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
 func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt any) {
 	if s.nonPreparedPlanCacheStmts == nil {
 		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
-	s.nonPreparedPlanCacheStmts.Put(planCacheStmtKey(sql), stmt)
+	s.nonPreparedPlanCacheStmts.Put(s.nonPreparedPlanCacheStmtKey(sql), stmt)
 }
 
 // GetNonPreparedPlanCacheStmt gets the PlanCacheStmt.
@@ -2870,8 +2921,16 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	if s.nonPreparedPlanCacheStmts == nil {
 		return nil
 	}
-	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
+	stmt, _ := s.nonPreparedPlanCacheStmts.Get(s.nonPreparedPlanCacheStmtKey(sql))
 	return stmt
+}
+
+// DeleteNonPreparedPlanCacheStmt deletes a statement carrier from the
+// non-prepared statement cache.
+func (s *SessionVars) DeleteNonPreparedPlanCacheStmt(sql string) {
+	if s.nonPreparedPlanCacheStmts != nil {
+		s.nonPreparedPlanCacheStmts.Delete(s.nonPreparedPlanCacheStmtKey(sql))
+	}
 }
 
 // PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.

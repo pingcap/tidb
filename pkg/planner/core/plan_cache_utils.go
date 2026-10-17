@@ -147,7 +147,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		if isPrepStmt {
 			cacheable, reason = IsASTCacheable(ctx, sctx.GetPlanCtx(), paramStmt, ret.InfoSchema)
 		} else {
-			cacheable = true // it is already checked here
+			// The non-prepared caller checks cacheability before building the PlanCacheStmt.
+			cacheable = true
 		}
 
 		if !cacheable && fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false) {
@@ -183,7 +184,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		// dynamic prune mode is not used, could be that global statistics not yet available!
 		cacheable = false
 		reason = "static partition prune mode used"
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
+		if isPrepStmt || !vars.EnableNonPreparedPlanCacheUnified {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
+		}
 	}
 
 	// Collect information for metadata lock.
@@ -705,6 +708,8 @@ type PlanCacheStmt struct {
 	// dbName and tbls are used to add metadata lock.
 	dbName []model.CIStr
 	tbls   []table.Table
+
+	nonPreparedASTValidation nonPreparedASTValidationState
 }
 
 // PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.

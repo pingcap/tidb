@@ -4296,10 +4296,14 @@ type BinaryLiteral interface {
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
 var NewDecimal func(string) (interface{}, error)
 
-// NewHexLiteral creates a types.HexLiteral value, it's provided by parser driver.
+// NewHexLiteral creates a hexadecimal literal value using the parser driver.
+// The concrete return type is driver-defined and implements BinaryLiteral. Callers
+// should normally pass it to NewValueExpr instead of assuming it is types.HexLiteral.
 var NewHexLiteral func(string) (interface{}, error)
 
-// NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
+// NewBitLiteral creates a bit literal value using the parser driver.
+// The concrete return type is driver-defined and implements BinaryLiteral. Callers
+// should normally pass it to NewValueExpr instead of assuming it is types.BitLiteral.
 var NewBitLiteral func(string) (interface{}, error)
 
 // SetResourceGroupStmt is a statement to set the resource group name for current session.

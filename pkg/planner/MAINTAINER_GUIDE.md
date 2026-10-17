@@ -204,10 +204,15 @@ Frontend entrypoints:
 - Prepared cache key: `pkg/planner/core/plan_cache_utils.go` (`NewPreparedPlanCacheKey`)
 - Cacheability rules:
   - prepared AST: `pkg/planner/core/plan_cacheable_checker.go` (`IsASTCacheable`)
-  - non-prepared: `pkg/planner/core/plan_cacheable_checker.go` (`NonPreparedPlanCacheableWithCtx`)
+  - non-prepared legacy path: `pkg/planner/core/plan_cacheable_checker.go` (`NonPreparedPlanCacheableWithCtx`)
+  - non-prepared unified path: context-aware parameterization followed by
+    `IsASTCacheable`; it is guarded by
+    `tidb_enable_non_prepared_plan_cache_unified`
   - plan-shape: `pkg/planner/core/plan_cacheable_checker.go` (`isPlanCacheable`)
 - Hit adjustment (ranges): `pkg/planner/core/plan_cache_rebuild.go` (`RebuildPlan4CachedPlan`)
-- Non-prepared parameterization: `pkg/planner/core/plan_cache_param.go` (`GetParamSQLFromAST`)
+- Non-prepared parameterization: `pkg/planner/core/plan_cache_param.go`
+  (`GetParamSQLFromAST` for the legacy path and
+  `ParameterizeForNonPreparedPlanCache` for the unified path)
 - Cache implementations:
   - session cache (LRU): `pkg/planner/core/plan_cache_lru.go`
   - instance cache (node-level): `pkg/planner/core/plan_cache_instance.go`
@@ -370,7 +375,39 @@ backend (`GetPlanFromPlanCache`) after turning constants into parameters.
 
 Invariants:
 - Parameterization MUST NOT leave mutations on the original AST. If you need to
-  mutate, you must restore (or operate on a copied AST).
+  mutate, you must restore (or operate on a copied AST). Validate every marker
+  before restoration so a malformed marker cannot leave a partially restored
+  AST.
+- `tidb_enable_non_prepared_plan_cache_unified=OFF` MUST run
+  the complete legacy checker and parameterizer flow. When it is `ON`, the
+  frontend applies parameterization safety checks and records explicit
+  validation provenance on the statement carrier. A hit may skip
+  `IsASTCacheable` only when the validation version, current database, schema
+  meta version, session-policy fingerprint, and local-temporary-table state are
+  still valid. Any new dynamic input to `IsASTCacheable` or
+  `checkTableCacheable` must be added to this fingerprint/validation matrix, or
+  be documented as covered by a downstream fence; static rule changes must
+  increment the validation version.
+- Unified parameterization analysis is read-only. Selected literal identities
+  must exactly match the identities handled by the Restore interceptor, and
+  selected/handled/value/parsed-or-cached marker counts must agree before plan
+  building. Do not validate marker counts by counting `?` characters in SQL.
+- The analysis may reject user variables and functions from the same
+  `UnCacheableFunctions` list used by `IsASTCacheable` before restoring and
+  parsing parameterized SQL. Both checks share one raw-AST predicate.
+  Keep the final AST cacheability check as the admission gate; do not move
+  checks that depend on parameter-marker placement, schema, or session state.
+- Every `RestoreForNonPrepPlanCache` shortcut that writes `OriginalText()` must
+  consult `RestoreCtx.CanUseOriginalText`. If a shortcut can contain a selected
+  literal, add its subtree as an analysis boundary and force structured Restore
+  whenever that boundary contains a selection.
+- A set-operation AST with the same non-nil `WithClause` owned by more than one
+  Restore node is not safe for parameterizing Restore. Keep the owner-only
+  preflight in sync with parser/Restore shape changes and fail closed before
+  visiting that set-operation subtree; identity de-duplication is not a fix for
+  duplicated `WITH` output.
+- The statement-carrier LRU MUST admit only carriers that passed the selected
+  frontend checks and have `StmtCacheable=true`.
 - The stored-routine-specific rules below apply only when
   `tidb_enable_sp_plan_cache=ON`; with the switch OFF, routine internal SQL
   stays on the plain execution path.
@@ -400,7 +437,11 @@ Invariants:
 - Non-prepared cacheability rules MUST remain conservative; widen only with
   dedicated semantic coverage.
 - The per-session `PlanCacheStmt` for non-prepared cache is keyed by the
-  parameterized SQL; it is a different object from the cached plan values.
+  parameterized SQL plus the parser/name-resolution context that can change its
+  AST: connection and client character sets, connection collation, current
+  database, SQL mode, and parser feature flags.
+  It is a different object from the cached plan values. Extend this key and the
+  validation fingerprint together when adding another AST-affecting input.
 
 Why this exists:
 - Mutating the original AST leaks state across retries/other code paths and

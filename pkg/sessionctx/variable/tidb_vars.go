@@ -920,6 +920,8 @@ const (
 
 	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
+	// TiDBEnableNonPreparedPlanCacheUnified controls whether the non-prepared plan cache uses unified cacheability checks.
+	TiDBEnableNonPreparedPlanCacheUnified = "tidb_enable_non_prepared_plan_cache_unified"
 	// TiDBEnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	TiDBEnableNonPreparedPlanCacheForDML = "tidb_enable_non_prepared_plan_cache_for_dml"
 	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
@@ -1742,6 +1744,9 @@ const (
 	DefConnectAttrsSize int64 = 4096
 )
 
+// DefTiDBEnableNonPreparedPlanCacheUnified is the default value for unified non-prepared plan cache checks.
+const DefTiDBEnableNonPreparedPlanCacheUnified = false
+
 const (
 	// MinTiDBAnalyzeDefaultNumBuckets is the lower bound for the default ANALYZE bucket count.
 	MinTiDBAnalyzeDefaultNumBuckets int64 = 1
@@ -1896,7 +1901,6 @@ var (
 	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
 	ConnectAttrsLost = atomic.NewInt64(0)
 )
-
 var (
 	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
 	SetMemQuotaAnalyze func(quota int64) = nil
