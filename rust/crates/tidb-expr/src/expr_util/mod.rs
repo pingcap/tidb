@@ -149,7 +149,8 @@ mod tests;
 
 pub use explain_normalized::{
     column_explain_info_normalized, explain_normalized_info, explain_normalized_info_4_in_list,
-    sorted_explain_normalized_expression_list, sorted_explain_normalized_scalar_func_list,
+    sorted_explain_expression_list_ignore_inlist, sorted_explain_normalized_expression_list,
+    sorted_explain_normalized_scalar_func_list,
 };
 pub use fold::{fold_constant, fold_constant_with, FoldOptions};
 pub use param::{

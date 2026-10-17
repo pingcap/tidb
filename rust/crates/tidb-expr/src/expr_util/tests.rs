@@ -454,3 +454,35 @@ fn real_function_builder_casts_comparison_arguments() {
         Expression::ScalarFunction(cast) if cast.func_name.lowercase() == "cast_double"
     )));
 }
+
+/// Go `sortedExplainExpressionList` sorts with `slices.Sort` and keeps every
+/// entry, so two equal conditions print twice in the normalized plan text.
+#[test]
+fn sorted_normalized_expression_list_keeps_duplicates() {
+    let condition = func("gt", vec![col(2), int_const(7)]);
+    let other = func("lt", vec![col(1), int_const(3)]);
+    assert_eq!(
+        sorted_explain_normalized_expression_list(&[condition.clone(), other, condition]),
+        "gt(t.c2, ?), gt(t.c2, ?), lt(t.c1, ?)"
+    );
+}
+
+/// Go names every cast `cast` and prints its target type as the second
+/// argument; this port keeps one name per cast signature, and the normalized
+/// text has to print Go's name and type string.
+#[test]
+fn normalized_cast_prints_go_s_name_and_target_type() {
+    let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+    decimal.set_flen(10);
+    decimal.set_decimal(0);
+    let cast = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("cast_decimal"),
+        decimal,
+        vec![col(1)],
+    ));
+    assert_eq!(explain_normalized_info(&cast), "cast(t.c1, decimal(10,0))");
+    assert_eq!(
+        explain_normalized_info_4_in_list(&cast),
+        "cast(t.c1, decimal(10,0))"
+    );
+}

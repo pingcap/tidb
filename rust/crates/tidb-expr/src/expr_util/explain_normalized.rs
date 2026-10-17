@@ -38,7 +38,6 @@
 use crate::column::Column;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
-use std::collections::BTreeSet;
 
 /// Go `Column.ColumnExplainInfoNormalized` (`explain.go:118`).
 ///
@@ -68,10 +67,21 @@ pub fn explain_normalized_info(expr: &Expression) -> String {
     }
 }
 
+/// Go's `ScalarFunction.FuncName.L`: every cast is named `cast`, while this
+/// port keeps one name per cast signature (`cast_decimal`, `cast_char`, ...).
+fn go_function_name(function: &ScalarFunction) -> &str {
+    let name = function.func_name.lowercase();
+    if name == "cast" || name.starts_with("cast_") {
+        "cast"
+    } else {
+        name
+    }
+}
+
 /// Go `ScalarFunction.explainInfo(nil, true)` (`explain.go:37`).
 #[must_use]
 pub fn scalar_func_explain_normalized_info(function: &ScalarFunction) -> String {
-    let name = function.func_name.lowercase();
+    let name = go_function_name(function);
     let args = function.get_args();
     let mut buffer = format!("{name}(");
 
@@ -98,7 +108,7 @@ pub fn scalar_func_explain_normalized_info(function: &ScalarFunction) -> String 
             buffer.push_str(&explain_normalized_info(arg));
             buffer.push_str(", ");
             if let Some(ret_type) = function.ret_type.as_ref() {
-                buffer.push_str(&ret_type.to_string());
+                buffer.push_str(&ret_type.source_string());
             }
         }
     } else {
@@ -133,7 +143,7 @@ pub fn explain_normalized_info_4_in_list(expr: &Expression) -> String {
 /// Go `ScalarFunction.ExplainNormalizedInfo4InList` (`explain.go:85`).
 #[must_use]
 pub fn scalar_func_explain_normalized_info_4_in_list(function: &ScalarFunction) -> String {
-    let name = function.func_name.lowercase();
+    let name = go_function_name(function);
     let args = function.get_args();
     let mut buffer = format!("{name}(");
     match name {
@@ -142,7 +152,7 @@ pub fn scalar_func_explain_normalized_info_4_in_list(function: &ScalarFunction) 
                 buffer.push_str(&explain_normalized_info_4_in_list(arg));
                 buffer.push_str(", ");
                 if let Some(ret_type) = function.ret_type.as_ref() {
-                    buffer.push_str(&ret_type.to_string());
+                    buffer.push_str(&ret_type.source_string());
                 }
             }
         }
@@ -160,26 +170,46 @@ pub fn scalar_func_explain_normalized_info_4_in_list(function: &ScalarFunction) 
     buffer
 }
 
+/// Go `sortedExplainExpressionList` (`explain.go:241`) over rendered texts:
+/// SORTED and comma-joined. Go sorts with `slices.Sort` and keeps every entry,
+/// so two equal conditions print twice.
+fn sorted_joined(mut rendered: Vec<String>) -> String {
+    rendered.sort();
+    rendered.join(", ")
+}
+
 /// Go `SortedExplainNormalizedExpressionList` (`explain.go:266`): the
 /// normalized forms of `exprs`, SORTED and comma-joined.
 ///
 /// The sort is what makes the output order-independent, so two plans that
 /// differ only in the order a rule happened to emit conditions share a digest.
-/// Go deduplicates via the same sort-and-compare; a `BTreeSet` gives both at
-/// once.
+/// Duplicates are kept, as Go does.
 #[must_use]
 pub fn sorted_explain_normalized_expression_list(exprs: &[Expression]) -> String {
-    let sorted: BTreeSet<String> = exprs.iter().map(explain_normalized_info).collect();
-    sorted.into_iter().collect::<Vec<_>>().join(", ")
+    sorted_joined(exprs.iter().map(explain_normalized_info).collect())
+}
+
+/// Go `SortedExplainExpressionListIgnoreInlist` (`explain.go:237`): the
+/// in-list-collapsing normalized forms, SORTED and comma-joined; the text
+/// selections and projections use while `tidb_ignore_inlist_plan_digest` is on.
+#[must_use]
+pub fn sorted_explain_expression_list_ignore_inlist(exprs: &[Expression]) -> String {
+    sorted_joined(
+        exprs
+            .iter()
+            .map(explain_normalized_info_4_in_list)
+            .collect(),
+    )
 }
 
 /// Go `SortedExplainNormalizedScalarFuncList` (`explain.go:271`): the same for
 /// a list already known to hold scalar functions.
 #[must_use]
 pub fn sorted_explain_normalized_scalar_func_list(exprs: &[ScalarFunction]) -> String {
-    let sorted: BTreeSet<String> = exprs
-        .iter()
-        .map(scalar_func_explain_normalized_info)
-        .collect();
-    sorted.into_iter().collect::<Vec<_>>().join(", ")
+    sorted_joined(
+        exprs
+            .iter()
+            .map(scalar_func_explain_normalized_info)
+            .collect(),
+    )
 }

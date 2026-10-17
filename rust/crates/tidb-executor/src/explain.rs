@@ -2663,6 +2663,544 @@ fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &m
     }
 }
 
+/// Go `normalizeStore`: the store a pushed-down plan runs on, as
+/// `kv.StoreType` numbers it (TiKV 0, TiFlash 1, TiDB 2).
+fn reader_store_code(store: tidb_planner::physical_table_reader::StoreType) -> u8 {
+    match store {
+        tidb_planner::physical_table_reader::StoreType::TiFlash => 1,
+        tidb_planner::physical_table_reader::StoreType::TiKv
+        | tidb_planner::physical_table_reader::StoreType::Unknown(_) => 0,
+    }
+}
+
+/// The context Go's index join hands the probe side of its inner child (see
+/// `physical_explain_operator`'s `_` arm): the join's own keys and ranges.
+fn index_join_child_context(
+    join: &tidb_planner::physical::PhysicalIndexJoin,
+) -> Option<IndexJoinExplainContext<'_>> {
+    join.inner_access_table_id
+        .map(|table_id| IndexJoinExplainContext {
+            table_id,
+            index_id: join.inner_access_index_id,
+            inner_keys: &join.inner_join_keys,
+            outer_keys: &join.outer_join_keys,
+            key_offsets: &join.key_off2_idx_off,
+            access_conditions: &join.inner_access_conditions,
+            range_bare: join.inner_range_bare,
+        })
+}
+
+/// Go `Expression.ExplainNormalizedInfo` over a column.
+fn normalized_column_text(column: &tidb_expr::column::Column) -> String {
+    tidb_expr::expr_util::explain_normalized_info(&tidb_expr::expression::Expression::Column(
+        column.clone(),
+    ))
+}
+
+/// Go `PhysicalSelection`/`PhysicalProjection.ExplainNormalizedInfo`: the
+/// expressions sorted by their normalized text, with IN lists collapsed while
+/// `tidb_ignore_inlist_plan_digest` is on.
+fn normalized_expression_list(
+    statement_context: &crate::StmtContext,
+    expressions: &[tidb_expr::expression::Expression],
+) -> String {
+    if statement_context.ignore_inlist_plan_digest() {
+        tidb_expr::expr_util::sorted_explain_expression_list_ignore_inlist(expressions)
+    } else {
+        tidb_expr::expr_util::sorted_explain_normalized_expression_list(expressions)
+    }
+}
+
+/// Go `explainJoinLeftSide` with `normalized`: the left child by plan TYPE.
+fn normalized_left_side(
+    join_type: tidb_planner::find_best_task::LogicalJoinType,
+    left_child: Option<&PhysicalPlan>,
+) -> Option<String> {
+    if join_type == tidb_planner::find_best_task::LogicalJoinType::Inner {
+        return None;
+    }
+    left_child.map(|child| format!("left side:{}", plan_explain_id(child, true)))
+}
+
+/// Go `PhysicalHashJoin.explainInfo(true)` (`physical_hash_join.go:221`).
+fn hash_join_normalized_info(
+    statement_context: &crate::StmtContext,
+    join: &tidb_planner::physical::PhysicalHashJoin,
+) -> String {
+    let _ = statement_context;
+    let mut text = String::new();
+    if join.equal_conditions.is_empty() {
+        text.push_str(if join.na_equal_conditions.is_empty() {
+            "CARTESIAN "
+        } else {
+            "Null-aware "
+        });
+    }
+    text.push_str(join_type_text(join.join_type));
+    if let Some(side) = normalized_left_side(join.join_type, join.base.children().first()) {
+        text.push_str(", ");
+        text.push_str(&side);
+    }
+    if !join.equal_conditions.is_empty() {
+        text.push_str(", equal:");
+        text.push_str(
+            &tidb_expr::expr_util::sorted_explain_normalized_scalar_func_list(
+                &join.equal_conditions,
+            ),
+        );
+    }
+    if !join.na_equal_conditions.is_empty() {
+        text.push_str(", equal:");
+        text.push_str(
+            &tidb_expr::expr_util::sorted_explain_normalized_scalar_func_list(
+                &join.na_equal_conditions,
+            ),
+        );
+    }
+    for (label, conditions) in [
+        ("left cond", &join.left_conditions),
+        ("right cond", &join.right_conditions),
+        ("other cond", &join.other_conditions),
+    ] {
+        if !conditions.is_empty() {
+            text.push_str(&format!(
+                ", {label}:{}",
+                tidb_expr::expr_util::sorted_explain_normalized_expression_list(conditions)
+            ));
+        }
+    }
+    text
+}
+
+/// Go `PhysicalMergeJoin.explainInfo(true)` (`physical_merge_join.go:292`).
+fn merge_join_normalized_info(
+    eval_ctx: &dyn tidb_expr::Columns,
+    join: &tidb_planner::physical::PhysicalMergeJoin,
+) -> String {
+    let mut text = join_type_text(join.join_type).to_owned();
+    if let Some(side) = normalized_left_side(join.join_type, join.base.children().first()) {
+        text.push_str(", ");
+        text.push_str(&side);
+    }
+    if !join.left_join_keys.is_empty() {
+        text.push_str(&format!(
+            ", left key:{}",
+            columns_text(eval_ctx, &join.left_join_keys)
+        ));
+    }
+    if !join.right_join_keys.is_empty() {
+        text.push_str(&format!(
+            ", right key:{}",
+            columns_text(eval_ctx, &join.right_join_keys)
+        ));
+    }
+    for (label, conditions) in [
+        ("left cond", &join.left_conditions),
+        ("right cond", &join.right_conditions),
+        ("other cond", &join.other_conditions),
+    ] {
+        if !conditions.is_empty() {
+            text.push_str(&format!(
+                ", {label}:{}",
+                tidb_expr::expr_util::sorted_explain_normalized_expression_list(conditions)
+            ));
+        }
+    }
+    text
+}
+
+/// Go `PhysicalIndexJoin.ExplainInfoInternal(true, isIndexMergeJoin)`
+/// (`physical_index_join.go:147`).
+fn index_join_normalized_info(
+    eval_ctx: &dyn tidb_expr::Columns,
+    join: &tidb_planner::physical::PhysicalIndexJoin,
+) -> String {
+    let mut parts = vec![join_type_text(join.join_type).to_owned()];
+    if let Some(inner) = join.base.children().get(join.inner_child_idx) {
+        parts.push(format!("inner:{}", plan_explain_id(inner, true)));
+    }
+    if let Some(side) = normalized_left_side(join.join_type, join.base.children().first()) {
+        parts.push(side);
+    }
+    if !join.outer_join_keys.is_empty() {
+        parts.push(format!(
+            "outer key:{}",
+            columns_text(eval_ctx, &join.outer_join_keys)
+        ));
+    }
+    if !join.inner_join_keys.is_empty() {
+        parts.push(format!(
+            "inner key:{}",
+            columns_text(eval_ctx, &join.inner_join_keys)
+        ));
+    }
+    if !join.outer_hash_keys.is_empty()
+        && join.kind != tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin
+    {
+        let mut equal = join
+            .outer_hash_keys
+            .iter()
+            .zip(&join.inner_hash_keys)
+            .enumerate()
+            .map(|(index, (outer, inner))| {
+                let operator = if join.is_null_eq.get(index).copied().unwrap_or(false) {
+                    "nulleq"
+                } else {
+                    "eq"
+                };
+                format!(
+                    "{operator}({}, {})",
+                    normalized_column_text(outer),
+                    normalized_column_text(inner)
+                )
+            })
+            .collect::<Vec<_>>();
+        equal.sort();
+        parts.push(format!("equal cond:{}", equal.join(", ")));
+    }
+    for (label, conditions) in [
+        ("left cond", &join.left_conditions),
+        ("right cond", &join.right_conditions),
+        ("other cond", &join.other_conditions),
+    ] {
+        if !conditions.is_empty() {
+            parts.push(format!(
+                "{label}:{}",
+                tidb_expr::expr_util::sorted_explain_normalized_expression_list(conditions)
+            ));
+        }
+    }
+    parts.join(", ")
+}
+
+/// Go `BasePhysicalAgg.explainInfo(true)` (`base_physical_agg.go:869`).
+fn aggregate_normalized_info(
+    functions: &[tidb_expr::aggregation::AggFuncDesc],
+    group_by: &[tidb_expr::expression::Expression],
+    schema: Option<&tidb_expr::schema::Schema>,
+) -> String {
+    let mut text = String::new();
+    if !group_by.is_empty() {
+        text.push_str("group by:");
+        text.push_str(&tidb_expr::expr_util::sorted_explain_normalized_expression_list(group_by));
+        text.push_str(", ");
+    }
+    for (index, function) in functions.iter().enumerate() {
+        let output = schema
+            .and_then(|schema| schema.columns.get(index))
+            .map_or_else(String::new, normalized_column_text);
+        text.push_str("funcs:");
+        text.push_str(&tidb_expr::aggregation::explain_agg_func_normalized(
+            function, false,
+        ));
+        text.push_str("->");
+        text.push_str(&output);
+        if index + 1 < functions.len() {
+            text.push_str(", ");
+        }
+    }
+    text
+}
+
+/// Go `PhysicalTopN.ExplainNormalizedInfo` (`physical_topn.go:173`).
+fn topn_normalized_info(topn: &tidb_planner::physical::PhysicalTopN) -> String {
+    let mut text = String::new();
+    if !topn.partition_by.is_empty() {
+        text.push_str("partition by ");
+        text.push_str(
+            &topn
+                .partition_by
+                .iter()
+                .map(|item| tidb_expr::expr_util::column_explain_info_normalized(&item.col))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        text.push(' ');
+    }
+    if !topn.by_items.is_empty() {
+        if !topn.partition_by.is_empty() {
+            text.push_str("order by ");
+        }
+        text.push_str(
+            &topn
+                .by_items
+                .iter()
+                .map(|item| {
+                    let expression = tidb_expr::expr_util::explain_normalized_info(&item.expr);
+                    if item.desc {
+                        format!("{expression}:desc")
+                    } else {
+                        expression
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    text
+}
+
+/// Go `PhysicalPlan.ExplainNormalizedInfo()`: fifteen operators render a
+/// normalized body (constants as `?`, no ranges or statistics, children by
+/// plan type); every other operator inherits the empty base implementation.
+fn physical_normalized_info(
+    eval_ctx: &dyn tidb_expr::Columns,
+    statement_context: &crate::StmtContext,
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    index_join_context: Option<IndexJoinExplainContext<'_>>,
+) -> String {
+    let access = |plan: &PhysicalPlan| {
+        physical_access(plan, catalog, statement_context.hypo_indexes())
+            .map(|object| object.normalized_string())
+            .unwrap_or_default()
+    };
+    // Go `Table/IndexScan.OperatorInfo(true)`'s range section: nothing for a
+    // runtime-decided range, the normalized access conditions for a
+    // correlated one, and `range:[?,?]` for any static range list.
+    let scan_ranges = |decided_by_join: bool, has_ranges: bool| {
+        if decided_by_join {
+            String::new()
+        } else if let Some(conditions) = correlated_access_conditions(plan) {
+            format!(
+                "range: decided by {}, ",
+                tidb_expr::expr_util::sorted_explain_normalized_expression_list(conditions)
+            )
+        } else if has_ranges {
+            "range:[?,?], ".to_owned()
+        } else {
+            String::new()
+        }
+    };
+    match plan {
+        PhysicalPlan::Selection(selection) => {
+            normalized_expression_list(statement_context, &selection.conditions)
+        }
+        PhysicalPlan::Projection(projection) => {
+            normalized_expression_list(statement_context, &projection.exprs)
+        }
+        PhysicalPlan::TopN(topn) => topn_normalized_info(topn),
+        PhysicalPlan::HashAgg(aggregation) => aggregate_normalized_info(
+            &aggregation.agg_funcs,
+            &aggregation.group_by_items,
+            aggregation.base.base.schema(),
+        ),
+        PhysicalPlan::StreamAgg(aggregation) => aggregate_normalized_info(
+            &aggregation.agg_funcs,
+            &aggregation.group_by_items,
+            aggregation.base.base.schema(),
+        ),
+        PhysicalPlan::HashJoin(join) => hash_join_normalized_info(statement_context, join),
+        // `PhysicalApply` embeds `PhysicalHashJoin`, so it inherits the method.
+        PhysicalPlan::Apply(apply) => {
+            hash_join_normalized_info(statement_context, &apply.hash_join)
+        }
+        PhysicalPlan::MergeJoin(join) => merge_join_normalized_info(eval_ctx, join),
+        PhysicalPlan::IndexJoin(join) => index_join_normalized_info(eval_ctx, join),
+        PhysicalPlan::IndexReader(reader) => format!(
+            "index:{}",
+            reader
+                .index_plan
+                .as_deref()
+                .map_or_else(String::new, |plan| physical_operator_name(
+                    plan,
+                    index_join_context
+                ))
+        ),
+        PhysicalPlan::TableScan(scan) => {
+            let ranges = scan_ranges(
+                is_index_join_table_range(plan, index_join_context),
+                !scan.ranges.is_empty(),
+            );
+            format!(
+                "{}, {ranges}{}",
+                access(plan),
+                scan_keep_order_text(scan.keep_order, scan.desc)
+            )
+        }
+        PhysicalPlan::IndexScan(scan) => {
+            let ranges = scan_ranges(
+                is_index_join_index_range(plan, index_join_context),
+                !scan.ranges.is_empty(),
+            );
+            format!(
+                "{}, {ranges}{}",
+                access(plan),
+                scan_keep_order_text(scan.keep_order, scan.desc)
+            )
+        }
+        PhysicalPlan::PointGet(point) => {
+            let common_handle = catalog
+                .kv_table_by_id(point.table_id)
+                .is_some_and(|table| !table.common_handle_offsets().is_empty());
+            let handle = point.index_id.is_none() && !common_handle && !point.ranges.is_empty();
+            let mut info = if handle {
+                "handle:?".to_owned()
+            } else {
+                String::new()
+            };
+            if point.lock {
+                info.push_str(if handle { ", lock" } else { "lock" });
+            }
+            if info.is_empty() {
+                access(plan)
+            } else {
+                format!("{}, {info}", access(plan))
+            }
+        }
+        PhysicalPlan::BatchPointGet(batch) => {
+            let common_handle = catalog
+                .kv_table_by_id(batch.table_id)
+                .is_some_and(|table| !table.common_handle_offsets().is_empty());
+            let mut info = String::new();
+            if batch.index_id.is_none() && !common_handle {
+                info.push_str("handle:?, ");
+            }
+            info.push_str(&format!(
+                "keep order:{}, desc:{}",
+                batch.keep_order, batch.desc
+            ));
+            format!("{}, {info}", access(plan))
+        }
+        _ => String::new(),
+    }
+}
+
+/// Go `NormalizeFlatPlan` over `FlattenPhysicalPlan(plan, false)`: one line per
+/// operator of the SELECT part of the plan, in natural child order, then the
+/// sha256 of the text. A DML contributes its select plan only; a plan without
+/// one, or an empty rendering, has no digest.
+#[must_use]
+pub fn normalize_physical_plan(
+    statement_context: &crate::StmtContext,
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+) -> (String, String) {
+    struct Walk<'a> {
+        statement_context: &'a crate::StmtContext,
+        catalog: &'a Catalog,
+        output: String,
+    }
+    impl Walk<'_> {
+        fn node(
+            &mut self,
+            plan: &PhysicalPlan,
+            is_root: bool,
+            store: u8,
+            depth: isize,
+            in_probe: bool,
+            index_join_context: Option<IndexJoinExplainContext<'_>>,
+        ) {
+            // The recorded plan's `PhysicalShuffleReceiverStub` carries neither
+            // a type nor an id (`flattenSingle` drops such operators), so its
+            // data source takes the stub's place in the digest text.
+            if let PhysicalPlan::ShuffleReceiver(receiver) = plan {
+                self.node(
+                    &receiver.data_source,
+                    true,
+                    2,
+                    depth,
+                    in_probe,
+                    index_join_context,
+                );
+                return;
+            }
+            let mut name = physical_operator_name(plan, index_join_context);
+            // Go `PhysicalTableScan.TP(isChildOfIndexLookUp)`.
+            if in_probe && matches!(plan, PhysicalPlan::TableScan(_)) && name.starts_with("Table") {
+                name = "TableRowIDScan".to_owned();
+            }
+            let info = physical_normalized_info(
+                self.statement_context,
+                self.statement_context,
+                plan,
+                self.catalog,
+                index_join_context,
+            );
+            tidb_util::plancodec::normalize_plan_node(
+                depth,
+                &name,
+                &tidb_util::plancodec::encode_task_type_for_normalize(is_root, store),
+                &info,
+                &mut self.output,
+            );
+            let next = depth + 1;
+            match plan {
+                PhysicalPlan::TableReader(reader) => {
+                    if let Some(child) = reader.table_plan.as_deref() {
+                        self.node(
+                            child,
+                            false,
+                            reader_store_code(reader.store_type),
+                            next,
+                            false,
+                            index_join_context,
+                        );
+                    }
+                }
+                PhysicalPlan::IndexReader(reader) => {
+                    if let Some(child) = reader.index_plan.as_deref() {
+                        self.node(child, false, 0, next, false, index_join_context);
+                    }
+                }
+                PhysicalPlan::IndexLookUpReader(reader) => {
+                    if let Some(child) = reader.index_plan.as_deref() {
+                        self.node(child, false, 0, next, in_probe, index_join_context);
+                    }
+                    if let Some(child) = reader.table_plan.as_deref() {
+                        self.node(child, false, 0, next, true, index_join_context);
+                    }
+                }
+                PhysicalPlan::IndexMergeReader(reader) => {
+                    for child in &reader.partial_plans_raw {
+                        self.node(child, false, 0, next, in_probe, index_join_context);
+                    }
+                    if let Some(child) = reader.table_plan.as_deref() {
+                        self.node(child, false, 0, next, true, index_join_context);
+                    }
+                }
+                PhysicalPlan::CTE(_) => {}
+                _ => {
+                    for (index, child) in plan.children().iter().enumerate() {
+                        let child_context = match plan {
+                            PhysicalPlan::IndexJoin(join) if index == join.inner_child_idx => {
+                                index_join_child_context(join)
+                            }
+                            PhysicalPlan::IndexJoin(_) => None,
+                            _ => index_join_context,
+                        };
+                        // Go `PhysicalLocalIndexLookUp`: the cloned table scan
+                        // is the index-lookup probe.
+                        let probe = in_probe
+                            || (matches!(plan, PhysicalPlan::LocalIndexLookUp(_)) && index == 1);
+                        self.node(child, is_root, store, next, probe, child_context);
+                    }
+                }
+            }
+        }
+    }
+    let select_plan = match physical {
+        PhysicalPlan::Dml(root) => root.select_plan.as_deref(),
+        other => Some(other),
+    };
+    let Some(select_plan) = select_plan else {
+        return (String::new(), String::new());
+    };
+    let mut walk = Walk {
+        statement_context,
+        catalog,
+        output: String::new(),
+    };
+    walk.node(select_plan, true, 2, 0, false, None);
+    if walk.output.is_empty() {
+        return (String::new(), String::new());
+    }
+    let digest = tidb_parser::digest_normalized(&walk.output)
+        .as_str()
+        .to_owned();
+    (walk.output, digest)
+}
+
 /// The plan-derived fields Go publishes while the ordinary executor is
 /// constructed.
 #[must_use]
@@ -2707,6 +3245,8 @@ pub fn process_plan_info_with_brief(
         tidb_util::plancodec::compress(encoded.as_bytes())
     };
     let binary = binary_plan_from_roots(statement_context, physical, catalog, full);
+    let (normalized_plan, plan_digest) =
+        normalize_physical_plan(statement_context, physical, catalog);
     let fast_candidate = match physical {
         PhysicalPlan::Projection(projection) => {
             projection.base.children().first().unwrap_or(physical)
@@ -2721,6 +3261,8 @@ pub fn process_plan_info_with_brief(
         },
         encoded_plan,
         summary_binary_plan: binary,
+        normalized_plan,
+        plan_digest,
         is_fast_plan: matches!(
             fast_candidate,
             PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)

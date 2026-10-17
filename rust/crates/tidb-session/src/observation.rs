@@ -54,6 +54,7 @@ struct LazyStatement {
     sql: String,
     binary_plan: String,
     encoded_plan: String,
+    plan_digest: String,
 }
 impl StmtExecLazyInfo for LazyStatement {
     fn original_sql(&self) -> String {
@@ -66,7 +67,7 @@ impl StmtExecLazyInfo for LazyStatement {
         self.binary_plan.clone()
     }
     fn plan_digest(&self) -> String {
-        String::new()
+        self.plan_digest.clone()
     }
     fn binding_sql_and_digest(&self) -> (String, String) {
         (String::new(), String::new())
@@ -496,7 +497,11 @@ impl Session {
             digest: observation.digest.to_string(),
             prev_sql,
             prev_sql_digest,
-            plan_digest: String::new(),
+            plan_digest: if observation.routed {
+                String::new()
+            } else {
+                plan.plan_digest.clone()
+            },
             user,
             total_latency: elapsed,
             parse_latency: phases.parse,
@@ -533,6 +538,11 @@ impl Session {
                     String::new()
                 } else {
                     plan.encoded_plan
+                },
+                plan_digest: if observation.routed {
+                    String::new()
+                } else {
+                    plan.plan_digest
                 },
                 binary_plan: if !observation.routed
                     && self

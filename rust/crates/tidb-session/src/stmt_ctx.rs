@@ -47,6 +47,8 @@ pub(crate) struct StatementVarSnapshot {
     allow_write_row_id: bool,
     /// `tidb_enable_ordered_result_mode` (Go `EnableStableResultMode`).
     stable_result_mode: bool,
+    /// `tidb_ignore_inlist_plan_digest`.
+    ignore_inlist_plan_digest: bool,
     sysdate_is_now: bool,
     timestamp: Option<f64>,
     sql_mode: tidb_mysql::SqlMode,
@@ -872,6 +874,7 @@ impl Session {
                 .unwrap_or_else(|_| "utf8mb4_bin".to_owned()),
             allow_write_row_id: on(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID),
             stable_result_mode: on(tidb_vardef::tidb_vars::TIDB_ENABLE_ORDERED_RESULT_MODE),
+            ignore_inlist_plan_digest: on(tidb_vardef::tidb_vars::TIDB_IGNORE_INLIST_PLAN_DIGEST),
             sysdate_is_now: on(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW),
             // Only an explicit override: this snapshot outlives the statement,
             // and the hook's live answer would pin `NOW()` to its first read.
@@ -1439,6 +1442,7 @@ impl Session {
                         self.vars.max_keys_read(self.statement_in_select),
                     ))
                     .with_enable_stable_result_mode(snapshot.stable_result_mode)
+                    .with_ignore_inlist_plan_digest(snapshot.ignore_inlist_plan_digest)
                     .with_brief_binary_plan(!self.binary_prepared_execution)
                     .with_allow_write_row_id(allow_write_row_id)
                     .with_static_partition_prune(static_partition_prune)
@@ -1560,6 +1564,7 @@ impl Session {
                     self.vars.max_keys_read(self.statement_in_select),
                 ))
                 .with_enable_stable_result_mode(snapshot.stable_result_mode)
+                .with_ignore_inlist_plan_digest(snapshot.ignore_inlist_plan_digest)
                 .with_brief_binary_plan(!self.binary_prepared_execution)
                 .with_allow_write_row_id(allow_write_row_id)
                 .with_only_full_group_by(sql_mode.has_only_full_group_by())

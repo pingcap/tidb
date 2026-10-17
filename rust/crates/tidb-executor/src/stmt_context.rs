@@ -248,6 +248,12 @@ pub struct ProcessPlanInfo {
     pub encoded_plan: String,
     /// Binary statement-summary sample, including binary prepared execution.
     pub summary_binary_plan: String,
+    /// Go `StmtCtx.GetPlanDigest` normalized text: the select plan with
+    /// constants and statistics removed (empty without a physical select plan).
+    pub normalized_plan: String,
+    /// Go `StmtCtx.GetPlanDigest` digest: the sha256 of [`Self::normalized_plan`]
+    /// in lowercase hex, empty when there is no normalized plan.
+    pub plan_digest: String,
     /// Go executor `IsFastPlan` (one optional projection over PointGet/TableDual).
     pub is_fast_plan: bool,
     /// Go `StmtCtx.TableIDs`.
@@ -1149,6 +1155,10 @@ pub struct StmtContextData {
     /// (`tidb_enable_ordered_result_mode`); see
     /// [`StmtContext::stable_result_mode`].
     enable_stable_result_mode: bool,
+    /// `tidb_ignore_inlist_plan_digest`: selections and projections collapse
+    /// their IN lists in the normalized plan text (Go
+    /// `vardef.IgnoreInlistPlanDigest`).
+    ignore_inlist_plan_digest: bool,
     /// Whether executor construction installed a physical table reader for
     /// this statement. Go records the corresponding table IDs while building
     /// those readers; `SLEEP` needs only the empty/non-empty distinction when
@@ -1797,6 +1807,13 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_stable_result_mode(mut self, enabled: bool) -> Self {
         self.enable_stable_result_mode = enabled;
+        self
+    }
+
+    /// Records `tidb_ignore_inlist_plan_digest`.
+    #[must_use]
+    pub fn with_ignore_inlist_plan_digest(mut self, enabled: bool) -> Self {
+        self.ignore_inlist_plan_digest = enabled;
         self
     }
 
@@ -2461,6 +2478,7 @@ impl StmtContext {
             enable_parallel_apply: false,
             statement_class: StatementClass::Other,
             enable_stable_result_mode: false,
+            ignore_inlist_plan_digest: tidb_vardef::defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST,
             has_physical_table_reader: Arc::default(),
             chunk_alloc_valid: Arc::default(),
             txn_read_snapshot: None,
@@ -2501,6 +2519,12 @@ impl StmtContext {
     #[must_use]
     pub fn statement_class(&self) -> StatementClass {
         self.statement_class
+    }
+
+    /// Go `vardef.IgnoreInlistPlanDigest`.
+    #[must_use]
+    pub fn ignore_inlist_plan_digest(&self) -> bool {
+        self.ignore_inlist_plan_digest
     }
 
     /// Go `checkStableResultMode`: the variable is on and the statement is

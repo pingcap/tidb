@@ -15644,6 +15644,175 @@ fn insert_select_warnings_keep_the_order_they_were_raised_in() {
     );
 }
 
+/// Go keys a statement-summary row by the plan digest: the sha256 of the
+/// normalized select plan (`NormalizeFlatPlan`). The expected digests below
+/// are what Go 1.27 on this branch records for the same statements, so the
+/// normalization (constants as `?`, no ranges or statistics, children by plan
+/// type, casts as `cast(arg, type)`) has to match byte for byte.
+#[test]
+fn statement_summary_plan_digests_match_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1111)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
+        .unwrap();
+    for ddl in [
+        "CREATE TABLE a(id INT PRIMARY KEY, x INT, y INT)",
+        "CREATE TABLE b(id INT PRIMARY KEY, y INT, z INT, KEY(y))",
+        "CREATE TABLE c(id INT PRIMARY KEY, z INT)",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    for sql in [
+        "select * from a where id = 1",
+        "select * from a where id in (1,2,3)",
+        "select * from a where x > 5",
+        "select x, count(*) from a group by x",
+        "select * from a join b on a.id=b.id",
+        "select * from a join b on a.x=b.y where a.y > 3",
+        "select * from b where y = 3",
+        "select y from b where y > 3",
+        "select * from a order by x limit 5",
+        "select * from a where x in (1,2,3) and y = 2",
+        "select /*+ merge_join(a,b) */ * from a join b on a.id=b.id",
+        "select /*+ inl_join(b) */ * from a join b on a.x = b.id",
+        "select * from a left join b on a.x=b.id",
+        "insert into a select * from b",
+        "update a set x=1 where y=2",
+        "delete from a where id=3",
+        "select sum(x), max(y) from a where y < 10",
+        "select * from a union all select * from a",
+        "select * from (select * from a where x>1) t where y<2",
+        "select a.x, sum(b.z) from a join b on a.x = b.id group by a.x",
+        "select * from a where id = 1 or id = 2",
+        "select x from a where y = 1 and x = 2 and id > 3",
+        "select count(*) from a",
+        "select * from b where y in (1,2,3,4,5)",
+        "select * from b where y in (1,2)",
+    ] {
+        if sql.starts_with("select") {
+            rows(&mut session, sql);
+        } else {
+            session.execute_write(sql).unwrap();
+        }
+    }
+    let recorded: std::collections::BTreeMap<String, String> = displayed(rows(
+        &mut session,
+        "SELECT digest_text, plan_digest FROM information_schema.statements_summary \
+         WHERE schema_name = 'test' AND digest_text NOT LIKE '%statements_summary%' \
+         AND digest_text NOT LIKE 'set %' AND digest_text NOT LIKE 'drop%' \
+         AND digest_text NOT LIKE 'create%'",
+    ))
+    .into_iter()
+    .map(|row| (row[0].clone(), row[1].clone()))
+    .collect();
+    let expected: [(&str, &str); 23] = [
+        (
+            "delete from `a` where `id` = ?",
+            "d29970167a003b98ca8a6f2e0daa0f807bf4f5ff5281dc96c28072e66a005520",
+        ),
+        (
+            "insert into `a` select * from `b`",
+            "b1aae3f2a4e07761a960a05c09c85e92d6bfa24d1152aee6e8f6d0b8791fe0bf",
+        ),
+        (
+            "select * from ( select * from `a` where `x` > ? ) `t` where `y` < ?",
+            "3273be776060fd8de6854902b84505c0a93b636e33d05b1e2654d6824b4120f5",
+        ),
+        (
+            "select * from `a` join `b` on `a` . `id` = `b` . `id`",
+            "0e1e7baf142e077d27a48d405e83fba1813fb6bf368841cfdeb65103737ecfa9",
+        ),
+        (
+            "select * from `a` join `b` on `a` . `x` = `b` . `id`",
+            "dfdf2e6d50fccfde4254aba057430f6915f4b8d34e331004ad50c8d9c15ef7db",
+        ),
+        (
+            "select * from `a` join `b` on `a` . `x` = `b` . `y` where `a` . `y` > ?",
+            "dd97e4de0b662db2162372f0771c79ae0790d5eaa208bd7582cd847f9427eb9a",
+        ),
+        (
+            "select * from `a` left join `b` on `a` . `x` = `b` . `id`",
+            "6cfb251e6cd76579b9580f81774b14f96840c31341976137c358bae9913edeb4",
+        ),
+        (
+            "select * from `a` order by `x` limit ?",
+            "1067bf004a3e0c7d495f241d6ba34dfb0536c1a0e2174991bb51731e2e8dab86",
+        ),
+        (
+            "select * from `a` union all select * from `a`",
+            "52b9478f1a9ef9515ee3d887f91906e4c1babb1bb492062dc4868ad48fb29308",
+        ),
+        (
+            "select * from `a` where `id` = ?",
+            "d29970167a003b98ca8a6f2e0daa0f807bf4f5ff5281dc96c28072e66a005520",
+        ),
+        (
+            "select * from `a` where `id` = ? or `id` = ?",
+            "014262c6f5bf53dd777929675ecf581b0aaed890b1816a2694e26e2649a4b623",
+        ),
+        (
+            "select * from `a` where `id` in ( ... )",
+            "014262c6f5bf53dd777929675ecf581b0aaed890b1816a2694e26e2649a4b623",
+        ),
+        (
+            "select * from `a` where `x` > ?",
+            "cf192d061522e508cd53b9d808c92b98bb0e8d2b93e70cfce94f00762c2ff934",
+        ),
+        (
+            "select * from `a` where `x` in ( ... ) and `y` = ?",
+            "83088a56b3604f0c1be1c19dd53d73b4b25ce2ffb40e7e565b530290e0c09ebd",
+        ),
+        (
+            "select * from `b` where `y` = ?",
+            "034a2651f373598c1085024d7e26a83d9f25cac34059d9cb9ae7cbd85c03bbc1",
+        ),
+        (
+            "select * from `b` where `y` in ( ... )",
+            "034a2651f373598c1085024d7e26a83d9f25cac34059d9cb9ae7cbd85c03bbc1",
+        ),
+        (
+            "select `a` . `x` , sum ( `b` . `z` ) from `a` join `b` on `a` . `x` = `b` . `id` group by `a` . `x`",
+            "cbf0060b5b52e0fb7ad74523a31c9739f0695e785722514a95f315e04637687b",
+        ),
+        (
+            "select `x` , count ( ? ) from `a` group by `x`",
+            "7e7b9248c5c70eaa7ecbc3a4677aafe4604c242e9d31d5e0952aeeb2426435c2",
+        ),
+        (
+            "select `x` from `a` where `y` = ? and `x` = ? and `id` > ?",
+            "84a2beb6b1d5300acdddcb8c4c56feae6c05689a8c5ef82d3ad05b4cb4fd98ee",
+        ),
+        (
+            "select `y` from `b` where `y` > ?",
+            "3da471c073d10289b7157ef67bb3c857bba94a88dd172aff63880d597718fa82",
+        ),
+        (
+            "select count ( ? ) from `a`",
+            "99c64d1aeb0cc1b601f09cc860790095f2dcb28f30b2242d3d2124bad53d8be9",
+        ),
+        (
+            "select sum ( `x` ) , max ( `y` ) from `a` where `y` < ?",
+            "7dfbcadf84bb9d1cd3251022e81c8ff61ba3c33265ec0132b0b85d0ad5e70a35",
+        ),
+        (
+            "update `a` set `x` = ? where `y` = ?",
+            "2cf881ae462c644791a5060e3d943ca47a14a58334581d0791f302411d979ef5",
+        )
+    ];
+    for (text, digest) in expected {
+        assert_eq!(
+            recorded.get(text).map(String::as_str),
+            Some(digest),
+            "{text}"
+        );
+    }
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
+        .unwrap();
+}
+
 /// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
 /// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
 /// and orders by the full value.
