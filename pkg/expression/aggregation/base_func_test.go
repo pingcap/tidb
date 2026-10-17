@@ -213,6 +213,22 @@ func TestTypeInfer4AvgSum(t *testing.T) {
 	}
 }
 
+func TestSplitMaxMinCountParam(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(5))
+	arg := &expression.Constant{ParamMarker: &expression.ParamMarker{}, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	for _, name := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
+		t.Run(name, func(t *testing.T) {
+			desc, err := NewAggFuncDesc(ctx, name, []expression.Expression{arg}, false)
+			require.NoError(t, err)
+			require.NotPanics(t, func() {
+				_, final := desc.Split(ctx, []int{0})
+				require.True(t, arg.GetType(ctx).Equal(final.Args[0].GetType(ctx)))
+			})
+		})
+	}
+}
+
 func TestBaseFunc_InferMaxMinCountRetType(t *testing.T) {
 	ctx := mock.NewContext()
 	retType := types.NewFieldType(mysql.TypeLonglong)
