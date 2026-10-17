@@ -25,14 +25,9 @@ pub(crate) struct HeuristicPath {
 }
 
 /// Select the unique point path, unless a covering range strictly refines it
-/// and needs fewer than twice as many ranges (Go `stats.go:663`).
-pub(crate) fn choose_heuristic_path(paths: &[HeuristicPath]) -> Option<usize> {
-    choose_heuristic_path_detail(paths).map(|(index, _)| index)
-}
-
-/// [`choose_heuristic_path`] plus Go's `isRefinedPath`: the selected path is a
-/// covering range that refines the best unique point path.
-pub(crate) fn choose_heuristic_path_detail(paths: &[HeuristicPath]) -> Option<(usize, bool)> {
+/// and needs fewer than twice as many ranges (Go `stats.go:663`), with Go's
+/// `isRefinedPath`: whether the selected path is that covering range.
+pub(crate) fn choose_heuristic_path(paths: &[HeuristicPath]) -> Option<(usize, bool)> {
     let mut unique = Vec::new();
     let mut single = Vec::new();
     for (index, path) in paths.iter().enumerate() {
@@ -428,7 +423,7 @@ mod skyline_tests {
         };
         // Go chooses unique points before costing, even for a tiny table.
         assert_eq!(
-            choose_heuristic_path(&[full.clone(), unique.clone()]),
+            choose_heuristic_path(&[full.clone(), unique.clone()]).map(|(index, _)| index),
             Some(1)
         );
         let mut refined = HeuristicPath {
@@ -439,10 +434,13 @@ mod skyline_tests {
         };
         assert_eq!(
             choose_heuristic_path(&[full.clone(), unique.clone(), refined.clone()]),
-            Some(2)
+            Some((2, true))
         );
         refined.range_count = 4;
-        assert_eq!(choose_heuristic_path(&[full, unique, refined]), Some(1));
+        assert_eq!(
+            choose_heuristic_path(&[full, unique, refined]),
+            Some((1, false))
+        );
     }
 
     #[test]

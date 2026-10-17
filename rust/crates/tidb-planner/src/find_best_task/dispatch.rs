@@ -2837,7 +2837,6 @@ fn find_best_task_4_logical_data_source_paths(
     let merge_candidates = preparation.merges;
     let merge_positions = preparation.merge_positions;
     let preparation = preparation.ordinary;
-    let prepared = preparation.is_some();
     if let (Some(prepared_paths), Some(derived)) = (&preparation, &ds.derived_access_paths) {
         if prepared_paths.heuristic_selected {
             if let (Some(path), Some(sink)) = (prepared_paths.paths.first(), ctx.mpp_warning_sink)
@@ -2862,11 +2861,9 @@ fn find_best_task_4_logical_data_source_paths(
             );
         }
     }
-    let mut prepared_missing_stats = false;
     let mut heuristic_selected = false;
     if let Some(preparation) = preparation {
         ordinary_paths = preparation.paths;
-        prepared_missing_stats = preparation.idx_missing_stats;
         heuristic_selected = preparation.heuristic_selected;
     }
     let access_path_min_selectivity = ds
@@ -2884,8 +2881,6 @@ fn find_best_task_4_logical_data_source_paths(
     };
     let mut best = Task::invalid_task();
     let mut ordinary_candidates = Vec::new();
-    // Go `rule.ShouldPreferIndexMerge`, read by the preferRange filter.
-    let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
     // Go `getBestIndexJoinInnerTaskByProp`: an index-join probe prices only
     // the path its rules choose -- the common handle path or the integer
     // handle for a table-range probe, the `indexJoinPathCompare` winner of
@@ -2925,12 +2920,6 @@ fn find_best_task_4_logical_data_source_paths(
                 continue;
             }
         }
-        // Go `skylinePruning`'s preferRange filter: a preferred range scan,
-        // and a path it keeps regardless (forced, TiFlash, global, MV).
-        let mut cur_preferred_range = false;
-        let mut cur_always_kept = false;
-        let mut candidate_metrics = None;
-        let mut heuristic = None;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if partial_order.is_some() {
@@ -3014,18 +3003,6 @@ fn find_best_task_4_logical_data_source_paths(
                         ),
                     },
                 };
-                // Go marks every table path `IsSingleScan`, and a table
-                // candidate here already serves the required order, so a
-                // table range is a preferred range scan. With USE/FORCE INDEX
-                // the table path is available only when forced.
-                // Go `getTableCandidate`: `ranger.HasFullRange(path.Ranges,
-                // unsignedIntHandle)`, whose full range of an unsigned
-                // integer handle starts at zero.
-                cur_preferred_range = !crate::ranger::types::has_full_range(
-                    &ranges,
-                    ds.table_scan_penalty.unsigned_int_handle,
-                );
-                cur_always_kept = !ds.forced_index_ids.is_empty();
                 // Go `constructDS2TableScanTask` computes the residual
                 // selectivity from `chosenRemained` BEFORE the inner-only
                 // access conditions are re-attached to the Selection.
@@ -3052,27 +3029,6 @@ fn find_best_task_4_logical_data_source_paths(
                     .table_stats
                     .clone()
                     .or_else(|| ds.base.base.stats_info().cloned());
-                heuristic = Some(crate::find_best_task::candidate::HeuristicPath {
-                    range_count: ranges.len(),
-                    only_points: ranges.iter().all(|range| {
-                        if let Some(index) = common_handle {
-                            range.is_point_non_nullable()
-                                && range.low_val.len() == index.columns.len()
-                        } else {
-                            range.is_point_nullable()
-                        }
-                    }),
-                    unique: true,
-                    single_scan: true,
-                    table_filter_count: residual_table_filters.len(),
-                    access_columns: crate::column_length::Col2Len::from_pairs(
-                        table_access_conds.iter().flat_map(|condition| {
-                            tidb_expr::simple_expr::extract_columns(condition)
-                                .into_iter()
-                                .map(|column| (column.unique_id, -1))
-                        }),
-                    ),
-                });
                 let mut count_after_access = table_path.count_after_access;
                 // Go `deriveTablePathStats` returns before
                 // `adjustCountAfterAccess` for a correlated integer handle.
@@ -3089,38 +3045,7 @@ fn find_best_task_4_logical_data_source_paths(
                             .min(base_stats.row_count());
                     }
                 }
-                if let Some(access) = count_after_access.filter(|_| !prepared) {
-                    let columns = crate::column_length::Col2Len::from_pairs(
-                        table_access_conds.iter().flat_map(|condition| {
-                            tidb_expr::simple_expr::extract_columns(condition)
-                                .into_iter()
-                                .map(|column| (column.unique_id, -1))
-                        }),
-                    );
-                    candidate_metrics = Some(
-                        crate::find_best_task::candidate::CandidateMetrics {
-                            access_columns: columns.clone(),
-                            index_columns: columns,
-                            table_path: true,
-                            single_scan: true,
-                            pseudo: table_pseudo,
-                            matches_property: !ordered || keep_order,
-                            count_after_access: access,
-                            count_after_index: access,
-                            ..Default::default()
-                        },
-                    );
-                }
                 if read_type_refused {
-                    if prop.index_join_prop.is_none() {
-                        ordinary_candidates.push((
-                            Task::invalid_task(),
-                            candidate_metrics,
-                            cur_preferred_range,
-                            cur_always_kept,
-                            heuristic,
-                        ));
-                    }
                     continue 'paths;
                 }
                 // Go tries the point/batch point conversion BEFORE
@@ -3831,21 +3756,6 @@ fn find_best_task_4_logical_data_source_paths(
                 {
                     continue 'paths;
                 }
-                if !prepared && prop.index_join_prop.is_none() {
-                    candidate_metrics = ds
-                        .derived_index_paths
-                        .get(&source_index.id)
-                        .and_then(|path| {
-                            super::candidate::index_candidate_metrics(
-                                ds,
-                                source_index,
-                                path,
-                                single_scan,
-                                !ordered || keep_order,
-                            )
-                        });
-                }
-                let cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
                 let remained_conds = match index_join_probe {
                     Some(result) => result.core.chosen_remained.clone(),
                     None => detach.as_ref().map_or_else(
@@ -3885,61 +3795,7 @@ fn find_best_task_4_logical_data_source_paths(
                         ctx.opt_prefix_index_single_scan,
                     )
                 };
-                // Go `skylinePruning`: "Preference plans with equals/IN
-                // predicates or where there is more filtering in the index
-                // than against the table", or a single scan, serving the
-                // required order.
-                let index_filter_count = remained_conds
-                    .iter()
-                    .filter(|condition| covered(condition))
-                    .count();
-                let index_filters = detach.as_ref().is_some_and(|result| result.eq_or_in_count > 0)
-                    || remained_conds.len() - index_filter_count < index_filter_count;
-                cur_preferred_range = (prefer_merge
-                    || ((single_scan || index_filters) && (!ordered || keep_order)))
-                    && !cur_is_full_range;
-                cur_always_kept = ds.forced_index_ids.contains(&source_index.id)
-                    || source_index.global
-                    || source_index.is_multi_valued;
-                heuristic = detach.as_ref().map(|detached| {
-                    crate::find_best_task::candidate::HeuristicPath {
-                        range_count: ranges.len(),
-                        only_points: declared_index_prefix_complete
-                            && !declared_index_has_prefix
-                            && ranges.iter().all(|range| {
-                                range.is_point_non_nullable()
-                                    && range.low_val.len() == source_index.columns.len()
-                            }),
-                        unique: source_index.unique,
-                        single_scan,
-                        table_filter_count: remained_conds
-                            .iter()
-                            .filter(|condition| !covered(condition))
-                            .count(),
-                        access_columns: crate::column_length::Col2Len::from_pairs(
-                            detached.access_conds.iter().flat_map(|condition| {
-                                tidb_expr::simple_expr::extract_columns(condition)
-                                    .into_iter()
-                                    .filter_map(|column| {
-                                        index_cols
-                                            .iter()
-                                            .position(|index| index.unique_id == column.unique_id)
-                                            .map(|index| (column.unique_id, index_lengths[index]))
-                                    })
-                            }),
-                        ),
-                    }
-                });
                 if read_type_refused {
-                    if prop.index_join_prop.is_none() {
-                        ordinary_candidates.push((
-                            Task::invalid_task(),
-                            candidate_metrics,
-                            cur_preferred_range,
-                            cur_always_kept,
-                            heuristic,
-                        ));
-                    }
                     continue 'paths;
                 }
                 // Go draws the scan's id in `GetOriginalPhysicalIndexScan`, after
@@ -4630,77 +4486,16 @@ fn find_best_task_4_logical_data_source_paths(
             cop.convert_to_root_task_in(ctx.allocator, ctx.expression_evaluator)?
         };
         if prop.index_join_prop.is_none() {
-            ordinary_candidates.push((
-                cur,
-                candidate_metrics,
-                cur_preferred_range,
-                cur_always_kept,
-                heuristic,
-            ));
+            ordinary_candidates.push(cur);
             continue;
         }
         if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
         }
     }
-    // The unordered root enumeration contains all candidates. Ordered and
-    // runtime join enumerations may omit paths, so cannot apply this rule here.
-    if !prepared && !ordered && prop.task_tp == TaskType::Root && prop.index_join_prop.is_none() {
-        if let Some(paths) = ordinary_candidates
-            .iter()
-            .map(|candidate| candidate.4.clone())
-            .collect::<Option<Vec<_>>>()
-        {
-            if let Some(selected) = crate::find_best_task::candidate::choose_heuristic_path(&paths)
-            {
-                return Ok(ordinary_candidates.swap_remove(selected).0);
-            }
-        }
-    }
-    let mut skyline_candidates = Vec::new();
-    let mut idx_missing_stats = prepared_missing_stats;
-    for candidate in ordinary_candidates {
-        if prepared {
-            skyline_candidates.push(candidate);
-            continue;
-        }
-        let (_, missing_stats, _) = crate::find_best_task::candidate::insert_skyline_candidate(
-            &mut skyline_candidates,
-            candidate,
-            |candidate| candidate.1.as_ref(),
-            table_pseudo,
-            prop.expected_cnt,
-            ctx.prefer_range_scan,
-            ctx.index_join_skyline_threshold,
-        );
-        idx_missing_stats |= missing_stats;
-    }
-    // Go keeps preferRange enabled only when the skyline saw an unanalyzed
-    // index winner, the table statistics are pseudo, or the table is empty
-    // -- or an index merge is preferred (`ShouldPreferIndexMerge`).
-    let prefer_range = ctx.prefer_range_scan
-        && prop.index_join_prop.is_none()
-        && (prefer_merge
-            || idx_missing_stats
-            || table_pseudo
-            || ds
-                .table_stats
-                .as_ref()
-                .or_else(|| ds.base.base.stats_info())
-                .is_none_or(|stats| stats.row_count() < 1.0));
-    // Go `skylinePruning`'s preferRange filter: once several candidates
-    // include a preferred range scan, only the preferred ones and the paths
-    // kept regardless remain; an index merge candidate is preferred only
-    // when an index merge is preferred.
-    let has_range_scan_path = skyline_candidates.iter().any(|candidate| candidate.2)
-        || (prefer_merge && !merge_candidates.is_empty());
-    let keep_preferred_only = prefer_range
-        && skyline_candidates.len() + merge_candidates.len() > 1
-        && has_range_scan_path;
-    for (cur, _, preferred, always_kept, _) in skyline_candidates {
-        if keep_preferred_only && !preferred && !always_kept {
-            continue;
-        }
+    // The survivors of `skylinePruning`, its preferRange filter and the
+    // heuristic selection were fixed by `prepare_access_paths`.
+    for cur in ordinary_candidates {
         if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
         }
@@ -4708,9 +4503,8 @@ fn find_best_task_4_logical_data_source_paths(
     if heuristic_selected {
         return Ok(best);
     }
-    let merges_pruned = keep_preferred_only && !prefer_merge;
     // All alternative choices were fixed before ordinary physical construction.
-    for candidate in merge_candidates.iter().filter(|_| !merges_pruned) {
+    for candidate in merge_candidates.iter() {
         let mut merge_task = match candidate {
             super::candidate_preparation::PreparedMerge::Union(path) =>
                 super::index_merge_union::build_converged_union_index_merge_task(ds, path, ctx)?,

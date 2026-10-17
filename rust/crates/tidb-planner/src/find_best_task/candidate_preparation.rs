@@ -33,7 +33,11 @@ pub(super) struct PreparedOrdinaryPaths<'a> {
     pub heuristic_single_scan: bool,
 }
 
-/// Unfilled native sources retain the later fallback until logical derivation.
+/// Go `skylinePruning` and `derivePathStatsAndTryHeuristics` over the logically
+/// derived paths. `None` means this request does not enumerate ordinary paths:
+/// an index-join probe prices only the path its rules choose, and a source that
+/// logical derivation never reached (a hand-built planner unit-test source)
+/// keeps every path unpruned.
 pub(super) fn prepare_ordinary_paths<'a>(
     ds: &DataSource,
     paths: &[&'a PossiblePath],
@@ -102,6 +106,12 @@ pub(super) fn prepare_ordinary_paths<'a>(
             }
             PossiblePath::Index { index } => {
                 let index = ds.indexes.get(*index)?;
+                // Go `convertToIndexScan`: a multi-valued index is read only
+                // through IndexMerge, so it is no ordinary candidate (and its
+                // logical derivation fills no ordinary path).
+                if index.is_multi_valued {
+                    continue;
+                }
                 let state = ds.derived_index_paths.get(&index.id)?;
                 let filled = state.filled.as_ref()?;
                 let partial = prop
@@ -172,7 +182,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
         .map(|candidate| candidate.2.clone())
         .collect::<Option<Vec<_>>>()
     {
-        if let Some((selected, refined)) = super::candidate::choose_heuristic_path_detail(&heuristics)
+        if let Some((selected, refined)) = super::candidate::choose_heuristic_path(&heuristics)
         {
             return Some(PreparedOrdinaryPaths {
                 paths: vec![candidates[selected].0],
