@@ -96,6 +96,20 @@ impl Session {
             ))
             .with_in_explain_stmt(true)
             .with_explain_format(format);
+        // Go `ResetContextOfStmt` unwraps the EXPLAIN (`s = explainStmt.Stmt`)
+        // before the kind switch, so the statement inside decides
+        // `InInsertStmt`/`InUpdateStmt`/`InDeleteStmt` -- which
+        // `checkStableResultMode` reads to keep `ResultReorder` off a DML.
+        let ctx = match target {
+            Stmt::Dml(dml) => ctx.with_statement_class(match &**dml {
+                tidb_ast::DmlStmt::Insert(_) => tidb_executor::StatementClass::Insert,
+                tidb_ast::DmlStmt::Update(_) => tidb_executor::StatementClass::Update,
+                tidb_ast::DmlStmt::Delete(_) => tidb_executor::StatementClass::Delete,
+                tidb_ast::DmlStmt::LoadData(_) => tidb_executor::StatementClass::LoadData,
+                _ => tidb_executor::StatementClass::Other,
+            }),
+            _ => ctx,
+        };
         if explain.analyze {
             if format == tidb_executor::ExplainFormat::PlanCache {
                 if let Some(output) =

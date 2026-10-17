@@ -528,7 +528,14 @@ fn partition_indices_for_spec(
     context: &crate::StmtContext,
 ) -> Result<Vec<usize>, tidb_planner::plan_base::PlanError> {
     let mut surviving = (0..partition.definitions.len()).collect::<Vec<_>>();
-    if source.all_conds.is_empty() || partition.dependencies.is_empty() {
+    // Go's hash pruning has no empty-condition shortcut (only the list pruner
+    // does): a full range still reaches the BIT-column branch, which drops
+    // the hash values the column's width cannot produce.
+    let hash = matches!(
+        partition.kind,
+        crate::partition_routing::PartitionKind::Hash
+    );
+    if (source.all_conds.is_empty() && !hash) || partition.dependencies.is_empty() {
         return Ok(remap_partition_indices(
             partition,
             &source.partition_names,
@@ -1723,9 +1730,12 @@ impl InitStats<'_> {
             .unwrap_or_default();
         let row_count = crate::access_cost::realtime_row_count(statistics);
         // Go's `fillIndexPath` initializes the table path's CountAfterAccess
-        // from the datasource row count even when there are no access
-        // conditions. A recognized handle range below replaces this value.
-        source.table_path_count_after_access = Some(row_count);
+        // from the datasource row count and `deriveTablePathStats` replaces
+        // it from the access conditions. Only a handle range this replay
+        // recognizes is recorded here; everything else is left to the
+        // planner's own derivation over the built conditions, which a
+        // placeholder equal to the row count would have overridden.
+        source.table_path_count_after_access = None;
         // Retain Go's loaded subset, including empty and TopN-only payloads.
         // The cache's explicit status excludes evicted metadata from NDV
         // scaling and histogram estimates without inferring state from buckets.
@@ -2205,8 +2215,7 @@ impl InitStats<'_> {
                         )
                     })
                     .transpose()
-                    .map_err(estimation_error)?
-                    .or(Some(row_count));
+                    .map_err(estimation_error)?;
             let mut index_path_filter_selectivities = BTreeMap::new();
             let simple_expr_schema = source.base.base.schema().cloned();
             let simple_expr_names = source
@@ -4189,7 +4198,10 @@ mod statistics_initialization_tests {
         };
         assert!(returned.derived_access_paths.is_none(), "statistics refresh invalidates candidate derivation");
         assert!(initializer.error.is_none(), "{:?}", initializer.error);
-        assert_eq!(returned.table_path_count_after_access, Some(1000.0));
+        // The bridge records only a handle range it recognized; an unfiltered
+        // table path's count is the planner's own derivation (the realtime
+        // row count, Go `fillIndexPath`'s initial CountAfterAccess).
+        assert_eq!(returned.table_path_count_after_access, None);
         assert_eq!(
             returned.derived_index_paths.len(),
             1,

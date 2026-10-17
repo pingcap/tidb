@@ -15469,6 +15469,119 @@ fn table_sample_ignores_the_transactions_pending_writes() {
     assert_eq!(rows_after_ddl, ["1000", "2100", "4500"]);
 }
 
+/// A non-unique index scan with an equality prefix is ordered by the integer
+/// handle the index appends, so `ORDER BY` the handle needs no Sort (Go's
+/// `fillIndexPath` appends the handle to `IdxCols`).
+#[test]
+fn index_with_equality_prefix_provides_the_handle_order() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1105)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tho (a INT PRIMARY KEY, b INT, c INT, KEY idx(b))")
+        .unwrap();
+    let operators = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| {
+                row[0]
+                    .trim_start_matches(['├', '└', '─', '│', ' '])
+                    .to_owned()
+            })
+            .map(|id| id.split('_').next().unwrap_or_default().to_owned())
+            .collect()
+    };
+    // Expected: Go 1.27 on this branch (`TestZZ` probe, `explain`).
+    assert_eq!(
+        operators(
+            &mut session,
+            "EXPLAIN SELECT a FROM tho WHERE b = 3 ORDER BY a"
+        ),
+        ["IndexReader", "Projection", "IndexRangeScan"]
+    );
+}
+
+/// The table path of a derived table's data source counts its rows from the
+/// pushed-down range: the statement's own WHERE (which the bridge replays)
+/// is not where the predicate lives, and the row count must not stand in for
+/// the range (`TableRangeScan` 10 rows for Go, 10000 here). The wrong count
+/// then priced an ordered index scan below the Sort Go chose.
+#[test]
+fn derived_table_range_scan_is_estimated_from_its_range() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1106)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE tdr (id INT UNSIGNED NOT NULL AUTO_INCREMENT, k INT UNSIGNED NOT NULL DEFAULT 0, \
+             PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */, KEY k (k))",
+        )
+        .unwrap();
+    let plan = displayed(rows(
+        &mut session,
+        "EXPLAIN SELECT a.k FROM (SELECT * FROM tdr WHERE id < 10) a ORDER BY a.k",
+    ));
+    let kinds: Vec<&str> = plan
+        .iter()
+        .map(|row| row[0].trim_start_matches(['├', '└', '─', '│', ' ']))
+        .collect();
+    assert!(kinds[0].starts_with("Sort"), "{kinds:?}");
+    let scan = plan
+        .iter()
+        .find(|row| row[0].contains("TableRangeScan"))
+        .expect("a range scan below the sort");
+    assert_eq!(scan[1], "10.00", "{plan:?}");
+}
+
+/// Go `ResetContextOfStmt` unwraps an EXPLAIN before its kind switch, so an
+/// EXPLAINed DML is still a DML to `checkStableResultMode`: with
+/// `tidb_enable_ordered_result_mode` on, its read keeps no order (the
+/// ResultReorder rule is not applied), as the DML itself would.
+#[test]
+fn explained_dml_is_exempt_from_ordered_result_mode() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1107)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE teo (a INT PRIMARY KEY, b INT, c INT, KEY(b))")
+        .unwrap();
+    session
+        .execute_write("SET tidb_enable_ordered_result_mode = 1")
+        .unwrap();
+    for sql in [
+        "EXPLAIN FORMAT='verbose' UPDATE teo SET a = a + 1",
+        "EXPLAIN FORMAT='verbose' INSERT INTO teo SELECT * FROM teo",
+    ] {
+        let plan = displayed(rows(&mut session, sql));
+        let scan = plan
+            .iter()
+            .find(|row| row[0].contains("TableFullScan"))
+            .unwrap_or_else(|| panic!("{sql}: {plan:?}"));
+        assert!(scan[5].contains("keep order:false"), "{sql}: {scan:?}");
+    }
+}
+
+/// Go's hash pruner has no empty-condition shortcut: a full range over a
+/// BIT(1) column still reaches the issue-22619 branch, so the third of three
+/// hash partitions (which a one-bit value can never reach) is not scanned.
+#[test]
+fn full_scan_of_a_bit_hash_table_skips_the_unreachable_partition() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1108)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE tbh (a BIT(1) DEFAULT NULL, b INT) PARTITION BY HASH(a) PARTITIONS 3",
+        )
+        .unwrap();
+    let plan = displayed(rows(&mut session, "EXPLAIN SELECT * FROM tbh"));
+    let reader = plan
+        .iter()
+        .find(|row| row[0].contains("TableReader"))
+        .expect("a table reader");
+    assert_eq!(reader[3], "partition:p0,p1", "{plan:?}");
+}
+
 /// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
 /// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
 /// and orders by the full value.

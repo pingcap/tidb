@@ -1728,20 +1728,45 @@ pub(super) fn index_path_matches_order(
     if prop.is_sort_item_empty() || !all_same {
         return false;
     }
+    // Go's `idxCols`: the leading resolved index columns plus the integer
+    // handle `fillIndexPath` appends to a non-unique index, whose entries
+    // really are ordered by (index columns, handle).
+    let mut columns = ds.index_range_columns(index);
+    // A non-unique secondary index on a common-handle table stores
+    // (index columns, handle columns); Go extends `idxCols` with the handle
+    // columns the index does not hold -- except where a v0 handle keeps
+    // collation sort keys instead of values.
+    if !index.unique
+        && !index.primary
+        && !ds.common_handle_cols.is_empty()
+        && ds.declared_index_columns(index).iter().all(Option::is_some)
+        && !has_v0_new_collation_string_handle(ds)
+    {
+        for (handle, length) in ds.common_handle_cols.iter().zip(&ds.common_handle_lens) {
+            if !columns
+                .iter()
+                .any(|(column, _)| column.unique_id == handle.unique_id)
+            {
+                columns.push((handle.clone(), *length));
+            }
+        }
+    }
+    if columns.len() < prop.sort_items.len() {
+        return false;
+    }
     let fixed = equality_fixed_ids(ds);
     let mut index_offset = 0;
     for item in &prop.sort_items {
         let mut found = false;
-        while let Some(index_column) = index.columns.get(index_offset) {
+        while let Some((column, length)) = columns.get(index_offset) {
             index_offset += 1;
-            let schema_column = ds.schema_column_for_index_column(index_column);
-            if index_column.length < 0
-                && schema_column.is_some_and(|column| column.unique_id == item.col.unique_id)
+            if *length == tidb_datatype::UNSPECIFIED_LENGTH
+                && column.unique_id == item.col.unique_id
             {
                 found = true;
                 break;
             }
-            if schema_column.is_some_and(|column| fixed.contains(&column.unique_id)) {
+            if fixed.contains(&column.unique_id) {
                 continue;
             }
             return false;
@@ -1751,6 +1776,19 @@ pub(super) fn index_path_matches_order(
         }
     }
     true
+}
+
+/// Go `hasV0NewCollationStringHandle`.
+fn has_v0_new_collation_string_handle(ds: &crate::logical::DataSource) -> bool {
+    if ds.common_handle_version != 0 || !tidb_datatype::new_collation_enabled() {
+        return false;
+    }
+    ds.common_handle_cols.iter().any(|column| {
+        column.ret_type.as_ref().is_some_and(|ty| {
+            ty.eval_type() == tidb_datatype::EvalType::String
+                && ty.flags() & tidb_datatype::FieldTypeFlags::BINARY == 0
+        })
+    })
 }
 
 /// Go `PhysicalIndexScan.AddSelectionConditionForGlobalIndex`
