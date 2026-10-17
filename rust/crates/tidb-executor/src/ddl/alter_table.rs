@@ -3261,7 +3261,24 @@ fn prepare_computed_origin(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Datum, DriverError> {
     let flags = ctx.ddl_default_conversion_flags();
-    let stored = column_default_storage_value(value, field_type, column, flags, zone, Some(ctx))?;
+    let stored = column_default_storage_value(value, field_type, column, flags, zone, Some(ctx))
+        .map_err(|error| match error {
+            // Go casts the evaluated default into the column (`CastColumnValue`);
+            // a value an ENUM or SET cannot hold is a truncation whose message
+            // Go leaves unformatted (the `%s` and `%d` are literal).
+            DriverError::InvalidDefault(_)
+                if matches!(
+                    field_type.code(),
+                    tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+                ) =>
+            {
+                DriverError::DdlCoded {
+                    errno: 1265,
+                    message: "Data truncated for column '%s' at row %d".to_owned(),
+                }
+            }
+            other => other,
+        })?;
     let stored = timestamp_default_to_utc(stored, field_type, column, flags, zone)?;
     let stored = pad_fixed_width_binary_default(stored, field_type);
     validate_column_default(

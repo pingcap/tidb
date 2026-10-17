@@ -688,11 +688,12 @@ fn compare_output(
     }
     match (outcome, recorded_error) {
         // TiDB rejected it and so did we. The wording is TiDB's; only the
-        // rejection is asserted -- unless `INTEGRATION_COMPARE_ERROR_CODES` is
-        // set, which also compares the recorded error code with ours (a
-        // survey switch while the codes are being aligned).
+        // rejection is asserted, and so is the recorded error CODE -- a
+        // rejection with the wrong code is a real divergence (it hid ~150 of
+        // them while this was an opt-in survey switch).
+        // `INTEGRATION_IGNORE_ERROR_CODES` turns the code comparison off.
         (Err(error), true) => {
-            if std::env::var_os("INTEGRATION_COMPARE_ERROR_CODES").is_some() {
+            if std::env::var_os("INTEGRATION_IGNORE_ERROR_CODES").is_none() {
                 let first = recorded.first().map(|line| display_line(line));
                 let want = first.as_deref().and_then(|line| {
                     line.strip_prefix("Error ")?

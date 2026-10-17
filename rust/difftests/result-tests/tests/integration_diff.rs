@@ -222,12 +222,51 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
         total.skipped
     );
 
+    // Statements whose RECORDING is older than the Go on this branch, each
+    // confirmed by running the statement through that Go (the local oracle):
+    // Go now prints `USE_INDEX(`t`)` where the recording has `USE_INDEX(`t` )`.
+    // The list must stay exact: a statement that stops diverging has to leave
+    // it, and one that is not on it is a real divergence.
+    const KNOWN_STALE_RECORDINGS: &[&str] = &[
+        "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t;",
+        "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t on duplicate key update t1.b=t.b;",
+        "batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;",
+    ];
+    let (stale, real): (Vec<&String>, Vec<&String>) = total.divergences.iter().partition(|d| {
+        KNOWN_STALE_RECORDINGS
+            .iter()
+            .any(|sql| d.contains(&format!("] {sql}")))
+    });
+    let still_diverging = KNOWN_STALE_RECORDINGS
+        .iter()
+        .filter(|sql| stale.iter().any(|d| d.contains(&format!("] {sql}"))))
+        .count();
+    assert_eq!(
+        still_diverging,
+        KNOWN_STALE_RECORDINGS.len(),
+        "a statement on KNOWN_STALE_RECORDINGS no longer diverges: remove it from the list"
+    );
     assert!(
-        total.divergences.is_empty(),
+        real.is_empty(),
         "{} of {} compared statements diverge from TiDB's recording:{}",
-        total.divergences.len(),
+        real.len(),
         total.matched_total() + total.divergences.len(),
-        total.divergences.join("")
+        real.iter().map(|d| d.as_str()).collect::<String>()
+    );
+    // Rust refusing what Go answered is skipped (`OutOfDomain`), which can hide
+    // a regression: it once grew from 5 to 61 with no divergence reported. The
+    // budget may only go down; lowering it is the way to record a fix.
+    const OUT_OF_DOMAIN_BUDGET: usize = 5;
+    let out_of_domain = total
+        .skipped
+        .iter()
+        .filter(|(class, _)| format!("{class:?}") == "OutOfDomain")
+        .map(|(_, count)| *count)
+        .sum::<usize>();
+    assert!(
+        out_of_domain <= OUT_OF_DOMAIN_BUDGET,
+        "{out_of_domain} statements are out of domain (budget {OUT_OF_DOMAIN_BUDGET}): \
+         rerun with INTEGRATION_SHOW_OUT_OF_DOMAIN=1 to see what Rust now refuses"
     );
 }
 
