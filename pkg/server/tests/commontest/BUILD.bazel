@@ -15,6 +15,7 @@ go_test(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/util",
+        "//pkg/errno",
         "//pkg/extension",
         "//pkg/metrics",
         "//pkg/parser",

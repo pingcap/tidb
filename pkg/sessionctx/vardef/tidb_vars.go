@@ -2017,6 +2017,7 @@ var (
 	EnablePProfSQLCPU              = atomic.NewBool(false)
 	EnableBatchDML                 = atomic.NewBool(false)
 	EnableTmpStorageOnOOM          = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	EnableOfflineMode              = atomic.NewBool(false)
 	DDLReorgWorkerCounter    int32 = DefTiDBDDLReorgWorkerCount
 	DDLReorgBatchSize        int32 = DefTiDBDDLReorgBatchSize
 	DDLFlashbackConcurrency  int32 = DefTiDBDDLFlashbackConcurrency

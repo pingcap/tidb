@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/handler/ttlhandler"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
@@ -718,6 +719,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	// acquires a lock that may already be held by the shutdown process.
 	if !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	// Report unhealthy in offline mode so that load balancers take this server out of rotation.
+	if vardef.EnableOfflineMode.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	initStatsPercentage := min(100, initstats.InitStatsPercentage.Load())
