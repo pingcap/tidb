@@ -1605,6 +1605,28 @@
           "1 10 1 100 1 1000 1 10000",
           "3 30 <nil> <nil> 3 3000 <nil> <nil>"
         ]
+      },
+      {
+        "SQL": "SELECT /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ t1.a FROM (SELECT 1 AS a FROM t1, t2) v0, t2 LEFT JOIN t1 ON t2.a = t1.a",
+        "Plan": [
+          "HashJoin root  CARTESIAN inner join",
+          "├─HashJoin(Build) root  left outer join, left side:TableReader, equal:[eq(test.t2.a, test.t1.a)]",
+          "│ ├─TableReader(Build) root  data:Selection",
+          "│ │ └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "│ │   └─TableFullScan cop[tikv] table:t1 keep order:false",
+          "│ └─TableReader(Probe) root  data:TableFullScan",
+          "│   └─TableFullScan cop[tikv] table:t2 keep order:false",
+          "└─HashJoin(Probe) root  CARTESIAN inner join",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t2 keep order:false",
+          "  └─TableReader(Probe) root  data:TableFullScan",
+          "    └─TableFullScan cop[tikv] table:t1 keep order:false"
+        ],
+        "Result": [
+          "1", "1", "1", "1", "1", "1", "1", "1", "1",
+          "2", "2", "2", "2", "2", "2", "2", "2", "2",
+          "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"
+        ]
       }
     ]
   }
