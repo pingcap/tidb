@@ -1086,7 +1086,8 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	}
 
 	// build tableInfo
-	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx,
+		metabuild.WithTiDBDefaultAutoIDCache(ctx.GetSessionVars().TiDBDefaultAutoIDCache))
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)

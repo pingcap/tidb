@@ -84,6 +84,30 @@ func TestNoNumLimit(t *testing.T) {
 	execAlter(t, tracker, sql)
 }
 
+func TestDefaultAutoIDCache(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TiDBDefaultAutoIDCache = 100
+	p := parser.New()
+	for _, tc := range []struct {
+		name, definition string
+		cache            int64
+	}{
+		{"implicit", "(id int primary key auto_increment)", 100},
+		{"zero", "(id int primary key auto_increment) auto_id_cache = 0", 0},
+		{"one", "(id int primary key auto_increment) auto_id_cache = 1", 1},
+		{"copy_zero", "like test.zero", 0},
+	} {
+		stmt, err := p.ParseOneStmt("create table test."+tc.name+" "+tc.definition, "", "")
+		require.NoError(t, err)
+		require.NoError(t, tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt)))
+		tbl, err := tracker.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tc.name))
+		require.NoError(t, err)
+		require.Equal(t, tc.cache, tbl.AutoIDCache)
+	}
+}
+
 func TestCreateTableLongIndex(t *testing.T) {
 	sql := "create table test.t (c1 int, c2 blob, c3 varchar(64), index idx_c2(c2(555555)));"
 
