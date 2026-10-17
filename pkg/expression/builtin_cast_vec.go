@@ -140,7 +140,7 @@ func (b *builtinCastRealAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chu
 	f64s := result.Float64s()
 	conditionUnionAndUnsigned := b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag())
 	if !conditionUnionAndUnsigned {
-		return nil
+		return b.checkFloatOverflowInChunk(result)
 	}
 	for i := range n {
 		if result.IsNull(i) {
@@ -150,7 +150,7 @@ func (b *builtinCastRealAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chu
 			f64s[i] = 0
 		}
 	}
-	return nil
+	return b.checkFloatOverflowInChunk(result)
 }
 
 func (*builtinCastRealAsRealSig) vectorized() bool {
@@ -469,7 +469,7 @@ func (b *builtinCastJSONAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chu
 			return err
 		}
 	}
-	return nil
+	return b.checkFloatOverflowInChunk(result)
 }
 
 func (*builtinCastJSONAsTimeSig) vectorized() bool {
@@ -1470,7 +1470,7 @@ func (b *builtinCastDecimalAsRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 		}
 		rs[i] = res
 	}
-	return nil
+	return b.checkFloatOverflowInChunk(result)
 }
 
 func (*builtinCastDecimalAsTimeSig) vectorized() bool {
