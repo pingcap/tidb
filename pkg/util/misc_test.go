@@ -17,6 +17,7 @@ package util
 import (
 	"bytes"
 	"crypto/x509/pkix"
+	"net"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/fastrand"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunWithRetry(t *testing.T) {
@@ -187,4 +189,59 @@ func TestComposeURL(t *testing.T) {
 	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
 	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
 	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
+}
+
+func TestIsIPBoundLocally(t *testing.T) {
+	// Test bind-all addresses
+	t.Run("bind all ipv4", func(t *testing.T) {
+		assert.True(t, IsIPBoundLocally("0.0.0.0"))
+	})
+
+	t.Run("bind all ipv6", func(t *testing.T) {
+		assert.True(t, IsIPBoundLocally("::"))
+	})
+
+	// Test invalid IP
+	t.Run("invalid ip", func(t *testing.T) {
+		assert.False(t, IsIPBoundLocally("not-an-ip"))
+		assert.False(t, IsIPBoundLocally("999.999.999.999"))
+		assert.False(t, IsIPBoundLocally(""))
+	})
+
+	// Test loopback addresses (should be bound on all systems)
+	t.Run("loopback ipv4", func(t *testing.T) {
+		assert.True(t, IsIPBoundLocally("127.0.0.1"))
+	})
+
+	t.Run("loopback ipv6", func(t *testing.T) {
+		assert.True(t, IsIPBoundLocally("::1"))
+	})
+
+	// Test an IP that is definitely not bound locally
+	t.Run("external ip", func(t *testing.T) {
+		// Use a well-known external IP (Google DNS)
+		assert.False(t, IsIPBoundLocally("8.8.8.8"))
+		assert.False(t, IsIPBoundLocally("2001:4860:4860::8888"))
+	})
+
+	// Test with actual local IPs
+	t.Run("actual local ips", func(t *testing.T) {
+		addrs, err := net.InterfaceAddrs()
+		require.NoError(t, err)
+
+		foundAtLeastOne := false
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ipStr := ipnet.IP.String()
+			// This IP should be bound locally
+			if IsIPBoundLocally(ipStr) {
+				foundAtLeastOne = true
+			}
+		}
+		// We should find at least loopback
+		assert.True(t, foundAtLeastOne, "should find at least one local IP")
+	})
 }
