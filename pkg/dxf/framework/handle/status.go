@@ -71,7 +71,10 @@ func GetScheduleStatus(ctx context.Context) (*schstatus.Status, error) {
 			// currently, we expect same mount of TiKV worker as TiDB worker.
 			RequiredCount: requiredNodes,
 		},
-		Flags: flags,
+		// CoprocessorWorker is a placeholder for now: it always reports 0 until the
+		// control plane starts consuming it and per-task-type sizing is added.
+		CoprocessorWorker: schstatus.NodeGroup{},
+		Flags:             flags,
 	}
 	return status, nil
 }
