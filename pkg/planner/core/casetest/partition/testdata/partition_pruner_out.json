@@ -1880,12 +1880,12 @@
         "Result": null,
         "Plan": [
           "TableReader root partition:dual data:Selection",
-          "└─Selection cop[tikv]  le(test_partition.t1.a, 1), or(ge(test_partition.t1.b, 6), ge(test_partition.t1.a, 6))",
+          "└─Selection cop[tikv]  ge(test_partition.t1.b, 6), le(test_partition.t1.a, 1)",
           "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
           "IndexReader root partition:dual index:Selection",
-          "└─Selection cop[tikv]  or(ge(test_partition_1.t1.b, 6), ge(test_partition_1.t1.a, 6))",
+          "└─Selection cop[tikv]  ge(test_partition_1.t1.b, 6)",
           "  └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range:[-inf,1], keep order:false, stats:pseudo"
         ]
       },
