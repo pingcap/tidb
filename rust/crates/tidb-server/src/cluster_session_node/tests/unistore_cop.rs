@@ -15582,6 +15582,34 @@ fn full_scan_of_a_bit_hash_table_skips_the_unreachable_partition() {
     assert_eq!(reader[3], "partition:p0,p1", "{plan:?}");
 }
 
+/// Go summarizes an EXECUTE under the digest of the text as PREPAREd
+/// (`select ?`); the port ran a marker-aliased copy (`select ? as `?``) and
+/// summarized that (`TestStmtSummaryPreparedStatements`).
+#[test]
+fn prepared_execute_is_summarized_under_the_prepared_text() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1109)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
+        .unwrap();
+    session
+        .execute_write("PREPARE stmt FROM 'select ?'")
+        .unwrap();
+    session.execute_write("SET @number = 1").unwrap();
+    rows(&mut session, "EXECUTE stmt USING @number");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT exec_count FROM information_schema.statements_summary WHERE digest_text LIKE 'select ?'",
+        )),
+        [["1"]]
+    );
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
+        .unwrap();
+}
+
 /// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
 /// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
 /// and orders by the full value.
