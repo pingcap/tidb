@@ -22,16 +22,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,6 +50,30 @@ func newLiveSessionManager(dom *domain.Domain, sessions ...sessionapi.Session) *
 		Dom:  dom,
 		Conn: conn,
 	}
+}
+
+type analyzeCloseTestDDL struct {
+	ddl.DDL
+}
+
+func (analyzeCloseTestDDL) OwnerManager() owner.Manager {
+	return nil
+}
+
+func newAnalyzeCloseTestSession(t *testing.T) sessionapi.Session {
+	t.Helper()
+
+	// Use a real session without bootstrapping a mock store; this test only
+	// needs the analyze attach path and the production session.Close cleanup.
+	factory := func() (pools.Resource, error) {
+		t.Fatal("unexpected internal session request")
+		return nil, nil
+	}
+	dom := domain.NewDomain(&mock.Store{}, time.Second, 0, 0, factory)
+	dom.SetDDL(analyzeCloseTestDDL{}, nil)
+	se, err := session.CreateSessionWithDomain(dom.Store(), dom)
+	require.NoError(t, err)
+	return se
 }
 
 func TestLiveSessionManagerTracksLatestProcessInfo(t *testing.T) {
@@ -282,20 +312,23 @@ func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
 }
 
 func TestAnalyzeSessionMemTrackerDetachOnClose(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	se := newAnalyzeCloseTestSession(t)
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			se.Close()
+		}
+	})
+	require.NoError(t, executor.ResetContextOfStmt(se, &ast.AnalyzeTableStmt{}))
 
-	err := tk.ExecToErr("analyze table test.not_exists with 1 topn")
-	require.Error(t, err)
-
-	vars := tk.Session().GetSessionVars()
+	vars := se.GetSessionVars()
 	// Clear any residue from the analyze statement to make the delta deterministic.
 	vars.MemTracker.ReplaceBytesUsed(0)
 	base := executor.GlobalAnalyzeMemoryTracker.BytesConsumed()
 	vars.MemTracker.Consume(1024)
 	require.Equal(t, base+1024, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
 
-	tk.Session().Close()
+	se.Close()
+	closed = true
 	require.Equal(t, base, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
 }
