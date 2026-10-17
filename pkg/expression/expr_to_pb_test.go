@@ -1561,6 +1561,30 @@ func TestNullEQPushDownToTiFlash(t *testing.T) {
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {
+	t.Run("correlated bit constant", func(t *testing.T) {
+		ctx := mock.NewContext()
+		client := new(mock.Client)
+		pushCtx := NewPushDownContextFromSessionVars(ctx,
+			ctx.GetSessionVars(), client)
+		col := genColumn(mysql.TypeBit, 1)
+		data := types.NewDatum(nil)
+		cor := &CorrelatedColumn{Column: *col, Data: &data}
+		require.False(t, canExprPushDown(pushCtx, cor, kv.TiKV, false))
+		data = types.NewMysqlBitDatum([]byte{0, 1})
+		require.False(t, canExprPushDown(pushCtx, cor, kv.TiKV, false))
+		require.True(t, canExprPushDown(pushCtx, col, kv.TiKV, false))
+		require.True(t, canExprPushDown(pushCtx, cor, kv.TiDB, false))
+		constant := &Constant{Value: data, RetType: col.RetType}
+		require.False(t, canExprPushDown(pushCtx, constant, kv.TiKV, false))
+		require.True(t, canExprPushDown(pushCtx, constant, kv.TiDB, false))
+		ctx.GetSessionVars().PlanCacheParams.Append(data)
+		param := &Constant{
+			ParamMarker: &ParamMarker{order: 0},
+			RetType:     types.NewFieldType(mysql.TypeString),
+		}
+		require.False(t, canExprPushDown(pushCtx, param, kv.TiKV, false))
+		require.True(t, canExprPushDown(pushCtx, param, kv.TiDB, false))
+	})
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
