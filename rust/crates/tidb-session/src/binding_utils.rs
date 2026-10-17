@@ -385,7 +385,7 @@ pub fn new_binding_from_storage(row: &[Datum]) -> Option<Binding> {
 /// The `source` column narrowed to this crate's `&'static str` set. Go keeps
 /// the raw column text; an unrecognised value falls back to `manual`, which is
 /// the source every binding this tier creates carries anyway.
-fn binding_source(source: &str) -> &'static str {
+pub(crate) fn binding_source(source: &str) -> &'static str {
     match source {
         "capture" => "capture",
         "evolve" => "evolve",

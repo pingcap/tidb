@@ -29,6 +29,31 @@ use crate::binding::{self, Binding, SOURCE_MANUAL, STATUS_ENABLED};
 use crate::{Session, StmtOutput};
 use tidb_util::stringutil::go_to_lower;
 
+/// Go's plain `errors.New`, which a client sees as 1105.
+fn plain_error(message: &str) -> DriverError {
+    DriverError::Mysql(tidb_executor::MysqlError::unknown(message))
+}
+
+/// Go `ParseOneStmt` over a recorded statement, failing as
+/// `binding failed: <parse error>. Plan Digest: <digest>`.
+fn parse_for_history(sql: &str, plan_digest: &str) -> Result<Stmt, DriverError> {
+    tidb_parser::parse(sql).map_err(|error| {
+        plain_error(&format!(
+            "binding failed: {}. Plan Digest: {plan_digest}",
+            error.compatibility_message(sql)
+        ))
+    })
+}
+
+/// Go's `\(len:\d+\)$` over a summary sample the length limit cut.
+fn truncated_sample_text(query: &str) -> bool {
+    let Some(open) = query.rfind("(len:") else {
+        return false;
+    };
+    let digits = &query[open + "(len:".len()..query.len() - 1];
+    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// Go `bindinfo.mayHaveSQLBinding`: INSERT/REPLACE value forms have no
 /// binding-capable SELECT source. Keep the filter at the matcher boundary so
 /// stored bindings remain visible to administrative operations while ordinary
@@ -141,14 +166,8 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         let target = match &create.source {
             CreateBindingSource::Statement { target } => target,
-            // `FROM HISTORY USING PLAN DIGEST` reads a captured plan out of
-            // `information_schema.statements_summary`, which this tier does
-            // not record. Refused rather than answered from nothing.
-            CreateBindingSource::History { .. } => {
-                return Err(DriverError::unsupported(
-                    "CREATE BINDING FROM HISTORY needs a recorded statement summary, \
-                     which this tier does not keep",
-                ))
+            CreateBindingSource::History { plan_digests } => {
+                return self.create_binding_from_history(create.scope, plan_digests);
             }
         };
         let Some(hinted) = &target.hinted else {
@@ -225,6 +244,202 @@ impl Session {
         Ok(StmtOutput::Affected(0))
     }
 
+    /// Go `buildCreateBindPlanFromPlanDigest` plus `SQLBindExec`'s create
+    /// half: each plan digest names a statement the summary recorded, whose
+    /// captured plan hint becomes the binding's hint.
+    fn create_binding_from_history(
+        &mut self,
+        scope: BindingScope,
+        plan_digests: &[tidb_ast::BindingValue],
+    ) -> Result<StmtOutput, DriverError> {
+        let digests = self.collect_plan_digests(plan_digests)?;
+        if digests.is_empty() {
+            return Err(plain_error("plan digest is empty"));
+        }
+        let mut handled_sql_digests = std::collections::HashSet::new();
+        let mut bindings = Vec::with_capacity(digests.len());
+        for plan_digest in &digests {
+            if let Some(binding) =
+                self.binding_from_plan_digest(plan_digest, &mut handled_sql_digests)?
+            {
+                bindings.push(binding);
+            }
+        }
+        // Go `bindingOperator.CreateBinding`'s `prepareHints`: every binding
+        // is validated before the first one is stored.
+        for binding in &bindings {
+            let hinted = tidb_parser::parse(&binding.bind_sql).map_err(|error| {
+                DriverError::Parse(error.compatibility_message(&binding.bind_sql))
+            })?;
+            let cross_db = binding::collect_table_names(&hinted)
+                .iter()
+                .any(|(schema, _)| schema == "*");
+            if !cross_db {
+                self.validate_binding_statement(&hinted)?;
+            }
+        }
+        if scope == BindingScope::Global {
+            self.with_global_binding_storage(|storage| {
+                for binding in &bindings {
+                    storage.create_global_binding(binding)?;
+                }
+                Ok(0)
+            })?;
+        } else {
+            for binding in bindings {
+                self.session_bindings.create(binding);
+            }
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
+    /// Go `collectStrOrUserVarList`: each value is a literal or a user
+    /// variable, split on commas with blanks dropped.
+    fn collect_plan_digests(
+        &self,
+        values: &[tidb_ast::BindingValue],
+    ) -> Result<Vec<String>, DriverError> {
+        let mut digests = Vec::with_capacity(values.len());
+        for value in values {
+            let text = match value {
+                tidb_ast::BindingValue::String(text) => text.clone(),
+                tidb_ast::BindingValue::UserVar(name) => {
+                    let found = self.user_vars.get_user_var_val(&go_to_lower(name));
+                    let Some(found) = found else {
+                        return Err(plain_error(&format!(
+                            "can't find specified user variable: {name}"
+                        )));
+                    };
+                    crate::datum_text(&found).unwrap_or_default()
+                }
+            };
+            digests.extend(
+                text.split(',')
+                    .map(str::trim)
+                    .filter(|digest| !digest.is_empty())
+                    .map(ToOwned::to_owned),
+            );
+        }
+        Ok(digests)
+    }
+
+    /// Go `fetchRecordFromClusterStmtSummary`: the first recorded statement of
+    /// a user (an empty sample user marks an internal query) of a bindable
+    /// kind, as `(schema, query, plan hint, charset, collation)`.
+    fn fetch_record_from_statement_summary(
+        &mut self,
+        plan_digest: &str,
+    ) -> Result<Option<(String, String, String, String, String)>, DriverError> {
+        let fields = "stmt_type, schema_name, digest_text, sample_user, prepared, \
+                      query_sample_text, charset, collation, plan_hint, plan_digest";
+        let literal = plan_digest.replace('\\', "\\\\").replace('\'', "\\'");
+        let sql = format!(
+            "select {fields} from information_schema.cluster_tidb_statements_stats \
+             where plan_digest = '{literal}' union distinct \
+             select {fields} from information_schema.cluster_statements_summary_history \
+             where plan_digest = '{literal}' order by length(plan_digest) desc"
+        );
+        let ctx = self.statement_context(false);
+        let rows = self.set_value_rows(&sql, &ctx)?;
+        for row in rows {
+            let text = |index: usize| {
+                row.get(index)
+                    .and_then(crate::datum_text)
+                    .unwrap_or_default()
+            };
+            let stmt_type = text(0);
+            if !text(3).is_empty()
+                && matches!(
+                    stmt_type.as_str(),
+                    "Select" | "Delete" | "Update" | "Insert" | "Replace"
+                )
+            {
+                let mut query = text(5);
+                // A prepared statement's sample carries its arguments.
+                let prepared = row.get(4).is_some_and(|value| {
+                    crate::datum_text(value).is_some_and(|flag| flag == "1")
+                });
+                if prepared {
+                    if let Some(index) = query.rfind("[arguments:") {
+                        query.truncate(index);
+                    }
+                }
+                return Ok(Some((text(1), query, text(8), text(6), text(7))));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Go `constructSQLBindOPFromPlanDigest` and the binding `SQLBindExec`
+    /// builds from it; `None` when another plan digest already covered this
+    /// statement.
+    fn binding_from_plan_digest(
+        &mut self,
+        plan_digest: &str,
+        handled_sql_digests: &mut std::collections::HashSet<String>,
+    ) -> Result<Option<Binding>, DriverError> {
+        let record = self.fetch_record_from_statement_summary(plan_digest)?;
+        let (schema, query, plan_hint, charset, collation) = match record {
+            Some(record) if !record.1.is_empty() => record,
+            _ => {
+                return Err(plain_error(&format!(
+                    "can't find any plans for '{plan_digest}'"
+                )))
+            }
+        };
+        if query.ends_with(')') && truncated_sample_text(&query) {
+            return Err(plain_error(&format!(
+                "binding failed: SQL query is truncated due to tidb_stmt_summary_max_sql_length \
+                 limit. Please increase tidb_stmt_summary_max_sql_length. Plan Digest: {plan_digest}"
+            )));
+        }
+        let origin = parse_for_history(&query, plan_digest)?;
+        let (complete, reason) =
+            tidb_hint::check_binding_from_history_complete(&origin, &plan_hint);
+        let bind_sql = crate::binding_utils::generate_binding_sql(&origin, &plan_hint, &schema);
+        let hinted = parse_for_history(&bind_sql, plan_digest)?;
+        let bind_sql = binding::restore_with_default_db(&hinted, &schema);
+        let db = binding::default_db_of(&origin, &schema);
+        let (original_sql, sql_digest) = binding::normalize_with_db(&origin, &schema);
+        if !handled_sql_digests.insert(sql_digest.clone()) {
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                format!(
+                    "{plan_digest} is ignored because it corresponds to the same SQL digest as \
+                     another Plan Digest"
+                ),
+            );
+            return Ok(None);
+        }
+        if !complete {
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                format!("{reason}. Plan Digest: {plan_digest}"),
+            );
+        }
+        let bound = parse_for_history(&bind_sql, plan_digest)?;
+        let now = self.binding_timestamp();
+        Ok(Some(Binding {
+            original_sql,
+            no_db_digest: binding::no_db_digest(&bound),
+            table_names: binding::collect_table_names(&bound),
+            hints: binding::collect_hints(&bound),
+            bind_sql,
+            db,
+            status: STATUS_ENABLED,
+            charset,
+            collation,
+            source: binding::SOURCE_HISTORY,
+            sql_digest,
+            plan_digest: plan_digest.to_owned(),
+            usage: Default::default(),
+            create_time: now.clone(),
+            update_time: now,
+        }))
+    }
+
     /// Go `preprocessor.checkBindGrammar`'s temporary-table pass
     /// (`pkg/planner/core/preprocess.go:598`).
     ///
@@ -287,8 +502,8 @@ impl Session {
         )?;
         self.bind_info_exec(
             &format!(
-                "INSERT INTO mysql.bind_info({BIND_INFO_COLUMNS}) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO mysql.bind_info({BIND_INFO_COLUMNS}, plan_digest) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             ),
             &[
                 Datum::new_string(binding.original_sql.clone()),
@@ -303,6 +518,12 @@ impl Session {
                 Datum::new_string(binding.collation.clone()),
                 Datum::new_string(binding.source.to_owned()),
                 Datum::new_string(binding.sql_digest.clone()),
+                // Go stores NULL for a binding without a plan digest.
+                if binding.plan_digest.is_empty() {
+                    Datum::Null
+                } else {
+                    Datum::new_string(binding.plan_digest.clone())
+                },
             ],
         )?;
         Ok(())
@@ -471,7 +692,7 @@ impl Session {
                     Datum::Bytes(binding.sql_digest.clone().into_bytes()),
                     // Go leaves `Plan_digest` empty for a manually created
                     // binding; only `FROM HISTORY` fills it.
-                    Datum::Bytes(Vec::new()),
+                    Datum::Bytes(binding.plan_digest.clone().into_bytes()),
                 ]
             })
             .collect();
@@ -748,7 +969,7 @@ impl Session {
         let ctx = self.statement_context(false);
         let (_, rows) = self.with_catalog_mut(|catalog| {
             tidb_executor::run_select_meta_in(
-                &format!("SELECT {BIND_INFO_COLUMNS} FROM mysql.bind_info"),
+                &format!("SELECT {BIND_INFO_COLUMNS}, plan_digest FROM mysql.bind_info"),
                 catalog,
                 "mysql",
                 &ctx,

@@ -1457,7 +1457,7 @@ impl Session {
     /// of information_schema plans its virtual tables as memory tables, as
     /// the statement itself would (Go plans the assignment's expression,
     /// subqueries included, like any other).
-    fn set_value_rows(
+    pub(crate) fn set_value_rows(
         &mut self,
         sql: &str,
         ctx: &tidb_executor::StmtContext,

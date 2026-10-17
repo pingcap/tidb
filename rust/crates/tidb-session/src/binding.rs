@@ -492,7 +492,9 @@ impl Binding {
             status,
             charset: text(6).unwrap_or_default(),
             collation: text(7).unwrap_or_default(),
-            source: SOURCE_MANUAL,
+            source: crate::binding_utils::binding_source(
+                text(8).unwrap_or_default().as_str(),
+            ),
             sql_digest: text(9)?,
             plan_digest: text(10).unwrap_or_default(),
             usage: Default::default(),
@@ -643,6 +645,8 @@ pub(crate) const STATUS_DELETED: &str = "deleted";
 pub(crate) const STATUS_USING: &str = "using";
 /// Go `bindinfo.SourceManual`.
 pub(crate) const SOURCE_MANUAL: &str = "manual";
+/// Go `bindinfo.SourceHistory`: a binding created `FROM HISTORY`.
+pub(crate) const SOURCE_HISTORY: &str = "history";
 
 /// Go `utilparser.GetDefaultDB`: the schema the FIRST table name in the
 /// statement carries, or the session's current database when it carries

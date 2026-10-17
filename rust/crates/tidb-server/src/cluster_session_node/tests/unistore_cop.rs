@@ -17138,6 +17138,115 @@ fn statement_summary_records_cop_task_details_like_go() {
     );
 }
 
+/// `CREATE BINDING FROM HISTORY USING PLAN DIGEST` builds each binding from the
+/// statement the summary recorded under that plan digest and the plan hint it
+/// captured (Go `constructSQLBindOPFromPlanDigest`). Expected rows: Go 1.27 on
+/// this branch (`TestZZ` probe `BH2`).
+#[test]
+fn create_binding_from_history_uses_the_recorded_plan_hint_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1134)).unwrap();
+    session
+        .execute_write("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+        .unwrap();
+    session.execute_write("CREATE DATABASE IF NOT EXISTS bh1").unwrap();
+    session.execute_write("USE bh1").unwrap();
+    for ddl in [
+        "CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, KEY ib (b), KEY ic (c))",
+        "CREATE TABLE u (a INT, b INT, KEY ia (a))",
+        "INSERT INTO t VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8)",
+        "INSERT INTO u VALUES (1,1),(2,2)",
+        "ANALYZE TABLE t, u",
+    ] {
+        session.execute_write(ddl).unwrap();
+    }
+    for query in [
+        "SELECT * FROM t WHERE b = 2",
+        "SELECT * FROM t WHERE c > 5",
+        "SELECT t.a FROM t JOIN u ON t.a = u.a WHERE t.b > 0",
+    ] {
+        rows(&mut session, query);
+    }
+    for (variable, pattern) in [
+        ("@pd1", "select * from `t` where `b`%"),
+        ("@pd2", "select * from `t` where `c`%"),
+        ("@pd3", "select `t` . `a` from `t` join%"),
+    ] {
+        session
+            .execute_write(&format!(
+                "SET {variable} = (SELECT plan_digest FROM information_schema.statements_summary \
+                 WHERE schema_name = 'bh1' AND digest_text LIKE '{pattern}' LIMIT 1)"
+            ))
+            .unwrap();
+    }
+    session
+        .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd1")
+        .unwrap();
+    // The second spelling covers the same statement, so Go skips it with a note.
+    session
+        .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd2, @pd2")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [["Warning", "1105", "37da0e4188d56394b943d77850b13c70ea2c8b962a72de5ce6700ff3a5d34d9f is ignored because it corresponds to the same SQL digest as another Plan Digest"]]
+    );
+    session
+        .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST @pd3")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT original_sql, bind_sql, default_db, status, charset, collation, source, \
+             sql_digest, plan_digest FROM mysql.bind_info WHERE source = 'history' \
+             ORDER BY original_sql",
+        )),
+        [
+            [
+                "select * from `bh1` . `t` where `b` = ?",
+                "SELECT /*+ use_index(@`sel_1` `bh1`.`t`) no_order_index(@`sel_1` `bh1`.`t` `primary`)*/ * FROM `bh1`.`t` WHERE `b` = 2",
+                "bh1", "enabled", "utf8mb4", "utf8mb4_general_ci", "history",
+                "859898f263e060dc0f7e3f98d6b1b676127b047c0e4bc332524fa75bdf1bb7aa",
+                "ddbd56d504e06fd3d48488e68ac58e7d084ddfd86eac943d609b4b70a9c6e575",
+            ],
+            [
+                "select * from `bh1` . `t` where `c` > ?",
+                "SELECT /*+ use_index(@`sel_1` `bh1`.`t`) no_order_index(@`sel_1` `bh1`.`t` `primary`)*/ * FROM `bh1`.`t` WHERE `c` > 5",
+                "bh1", "enabled", "utf8mb4", "utf8mb4_general_ci", "history",
+                "b6d21e1ea8c2ce350cdee0dce9d442878d9437ea491a5a3179894d1b39cfb5c6",
+                "37da0e4188d56394b943d77850b13c70ea2c8b962a72de5ce6700ff3a5d34d9f",
+            ],
+            [
+                "select `t` . `a` from `bh1` . `t` join `bh1` . `u` on `t` . `a` = `u` . `a` where `t` . `b` > ?",
+                "SELECT /*+ merge_join(`bh1`.`u`) use_index(@`sel_1` `bh1`.`u` `ia`) order_index(@`sel_1` `bh1`.`u` `ia`) use_index(@`sel_1` `bh1`.`t`) order_index(@`sel_1` `bh1`.`t` `primary`)*/ `t`.`a` FROM `bh1`.`t` JOIN `bh1`.`u` ON `t`.`a` = `u`.`a` WHERE `t`.`b` > 0",
+                "bh1", "enabled", "utf8mb4", "utf8mb4_general_ci", "history",
+                "28597854f0874fca45c632da580407490e8ba7ed63f267ab6449e5e2f06c5346",
+                "900f2884f174fbe7eef63c4e3e582e61db570e297feffbf7ec39994b8e6cc639",
+            ],
+        ]
+    );
+    assert_eq!(
+        session
+            .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'nosuchdigest'")
+            .err()
+            .unwrap()
+            .message,
+        "can't find any plans for 'nosuchdigest'"
+    );
+    assert_eq!(
+        session
+            .execute_write("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST ' , '")
+            .err()
+            .unwrap()
+            .message,
+        "plan digest is empty"
+    );
+    rows(&mut session, "SELECT * FROM t WHERE b = 2");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT @@last_plan_from_binding")),
+        [["1"]]
+    );
+}
+
 /// `exhaustPhysicalPlans4LogicalApply` builds the embedded hash join before
 /// the Apply itself, so the Apply's id is one past the hash join's. Expected
 /// ids: Go 1.27 on this branch (`TestZZ` probe `AP1`).
