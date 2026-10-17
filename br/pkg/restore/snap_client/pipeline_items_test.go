@@ -86,8 +86,8 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 	})
 	concurrency := uint(4)
 	handlerBuilder.RegisterPipelineTask("task2", concurrency, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
-		atomic.AddInt64(&count2, 1)
-		if ct.Table.ID > int64(concurrency) {
+		attempt := atomic.AddInt64(&count2, 1)
+		if attempt > int64(concurrency) {
 			return errors.Errorf("failed in task2")
 		}
 		return nil
