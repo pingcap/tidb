@@ -3706,6 +3706,11 @@ fn optimize_built_logical(
     // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
     // non-outermost CTE.
     tidb_planner::logical::cte::recheck_cte(&mut plan);
+    // Go `planner/optimize.go:525`: the result's field names are the logical
+    // plan's `OutputNames()` captured BEFORE optimization. A rule may replace
+    // the root (an always-false filter makes a TableDual) with a node that
+    // names nothing.
+    let built_names = plan.output_names().to_vec();
     // No CTE class is optimized here: Go's `LogicalCTE.DeriveStats` runs
     // `DoOptimize` the first time a reference's statistics are derived, which
     // `rule_context.cte_optimizer` does from inside the stats walk.
@@ -3718,6 +3723,13 @@ fn optimize_built_logical(
     optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
     if !ctx.static_partition_prune() {
         attach_dynamic_partition_access(&mut optimized, &partition_pruning)?;
+    }
+    if optimized.output_names().is_empty()
+        && optimized
+            .schema()
+            .is_some_and(|schema| schema.columns.len() == built_names.len())
+    {
+        optimized.set_output_names(built_names);
     }
     optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
     let logical = prepare_possible_properties(optimized).0;

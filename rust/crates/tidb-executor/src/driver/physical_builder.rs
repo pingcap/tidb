@@ -5811,8 +5811,22 @@ fn result_columns(
         .collect()
 }
 
+/// Go's `Plan.OutputNames`: a node that produces no names of its own (a
+/// `Sort`, `TopN`, `Limit` or `Selection` above a set operation) answers its
+/// first child's, so the result columns keep what the query wrote.
+fn forwarded_output_names(plan: &PhysicalPlan) -> &[tidb_datatype::FieldName] {
+    let mut node = plan;
+    loop {
+        let names = node.base().base.output_names();
+        match node.children().first() {
+            Some(child) if names.is_empty() => node = child,
+            _ => return names,
+        }
+    }
+}
+
 fn physical_result_columns(plan: &PhysicalPlan, schema: &Schema) -> Vec<(String, FieldType)> {
-    let names = plan.base().base.output_names();
+    let names = forwarded_output_names(plan);
     schema
         .columns
         .iter()
@@ -5888,10 +5902,7 @@ pub(super) fn open_query(
         tidb_ast::QueryStmt::SetOpr(_) => physical_result_columns(physical, root.schema()),
     };
     // Go `recordSet.Fields()` reads the names captured before optimization.
-    let output_names = physical
-        .base()
-        .base
-        .output_names()
+    let output_names = forwarded_output_names(physical)
         .iter()
         .map(|name| name.names.clone())
         .collect();

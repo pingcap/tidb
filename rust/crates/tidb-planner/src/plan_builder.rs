@@ -3657,9 +3657,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 };
                 if let Some(origin) = names.iter().find(|name| matches_path(name)) {
                     let mut name = origin.clone();
-                    if let Some(alias) = &field.alias {
-                        name.names.column = IdentifierMetadata::new(alias);
-                    }
+                    // Go `buildProjectionFieldNameFromColumns`: `ColName` is
+                    // the alias, else the column AS WRITTEN
+                    // (`colNameField.Name.Name`), not the declared spelling.
+                    name.names.column = IdentifierMetadata::new(
+                        field
+                            .alias
+                            .as_deref()
+                            .or_else(|| path.last().map(String::as_str))
+                            .unwrap_or_default(),
+                    );
                     name.redundant = false;
                     name.hidden = field.hidden;
                     return name;
@@ -3692,6 +3699,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let mut name = origin.clone();
                 if let Some(alias) = &field.alias {
                     name.names.column = IdentifierMetadata::new(alias);
+                } else if let Expr::Column(path) = &field.expr {
+                    if let Some(written) = path.last() {
+                        name.names.column = IdentifierMetadata::new(written);
+                    }
                 }
                 name.redundant = false;
                 name.hidden = field.hidden;

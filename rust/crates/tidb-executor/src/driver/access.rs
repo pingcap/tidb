@@ -1355,7 +1355,7 @@ pub fn build_prepared_point_get_plan(
     {
         (PreparedPointTarget::RowHandle, handle_offsets.clone())
     } else {
-        let index = table.plan_indexes().find(|index| {
+        let index = table.point_get_indexes().find(|index| {
             index.unique
                 && !index.has_prefix()
                 && !index.column_offsets.is_empty()
@@ -2542,7 +2542,7 @@ pub(crate) fn point_get_predicate_is_consumed(
         return true;
     }
     let matches_unique_index = table
-        .plan_indexes()
+        .point_get_indexes()
         .any(|index| index.unique && !index.has_prefix() && key_matches(&index.column_offsets));
     matches_unique_index
 }
@@ -2878,7 +2878,7 @@ pub(crate) fn try_batch_point_get_stmt(
                 ));
             }
         }
-        for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
+        for index in table.point_get_indexes().cloned().collect::<Vec<_>>() {
             if !index.unique || index.has_prefix() || index.column_offsets.len() != names.len() {
                 continue;
             }
@@ -2994,7 +2994,7 @@ pub(crate) fn try_batch_point_get_stmt(
     }
 
     // The unique-index path.
-    for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
+    for index in table.point_get_indexes().cloned().collect::<Vec<_>>() {
         if !index.unique || index.column_offsets.len() != 1 {
             continue;
         }
@@ -3591,7 +3591,7 @@ pub(crate) fn try_point_get(
     }
 
     // The unique-index path: every column of some unique index is pinned.
-    for index in table.plan_indexes() {
+    for index in table.point_get_indexes() {
         if !index.unique {
             continue;
         }

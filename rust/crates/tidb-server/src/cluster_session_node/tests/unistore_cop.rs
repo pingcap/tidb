@@ -14936,3 +14936,93 @@ fn temporary_table_refuses_rows_past_tmp_table_max_size() {
         [["1"]]
     );
 }
+
+/// Go's `tryPointGetPlan`/`tryBatchPointGetPlan` skip a unique index with a
+/// condition (`idxInfo.HasCondition()`): a partial index stores only the rows
+/// its predicate admits, so pinning `c = 1` through it misses a row that never
+/// entered it. The fast plan chose `unique index idx3(c) where b > 10` and the
+/// row with `b = 5` came back empty.
+#[test]
+fn point_get_never_pins_a_partial_unique_index() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1053)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE pidx (a INT, b INT, c INT, UNIQUE INDEX idx3 (c) WHERE b > 10)",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO pidx VALUES (1, 5, 1), (2, 20, 2)")
+        .unwrap();
+    for sql in [
+        "SELECT a, b, c FROM pidx WHERE c = 1",
+        "SELECT a, b, c FROM pidx WHERE c IN (1, 2) ORDER BY c",
+    ] {
+        let plan = displayed(rows(
+            &mut session,
+            &format!("EXPLAIN FORMAT = 'brief' {sql}"),
+        ));
+        assert!(
+            plan.iter().all(|row| !row[0].contains("Point_Get")),
+            "{sql}: {plan:?}"
+        );
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, b, c FROM pidx WHERE c = 1")),
+        [["1", "5", "1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT a, b, c FROM pidx WHERE c IN (1, 2) ORDER BY c"
+        )),
+        [["1", "5", "1"], ["2", "20", "2"]]
+    );
+}
+
+/// Go names a result column from the logical plan's `OutputNames` captured
+/// BEFORE optimization, and an unaliased column reference keeps the column AS
+/// WRITTEN (`buildProjectionFieldNameFromColumns`: `colNameField.Name.Name`),
+/// not the declared spelling. A set operation's names are its first branch's,
+/// also when the optimizer replaced its root (an always-false filter leaves a
+/// TableDual that names nothing, and the columns read `Column#1`).
+#[test]
+fn result_columns_keep_the_names_the_query_wrote() {
+    use crate::resultset_source::ResultSetSource;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1054)).unwrap();
+    session.execute_write("USE test").unwrap();
+    let names = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        let mut result = session.execute(sql).expect("the query runs");
+        let source = result.source();
+        let columns = source
+            .columns()
+            .expect("columns")
+            .into_iter()
+            .map(|column| column.name)
+            .collect();
+        let _ = source.next_batch(8);
+        columns
+    };
+    for (sql, expected) in [
+        (
+            "(SELECT table_name FROM information_schema.tables WHERE 1 = 0) \
+             UNION ALL (SELECT table_name FROM information_schema.tables WHERE 1 = 0)",
+            vec!["table_name"],
+        ),
+        (
+            "SELECT * FROM ((SELECT table_name FROM information_schema.tables WHERE 1 = 0) \
+             UNION ALL (SELECT table_name FROM information_schema.tables WHERE 1 = 0)) u",
+            vec!["table_name"],
+        ),
+        (
+            "(SELECT digest, digest_text FROM information_schema.statements_summary WHERE 1 = 0 \
+             UNION ALL SELECT digest, digest_text FROM information_schema.statements_summary_history \
+             WHERE 1 = 0) ORDER BY digest",
+            vec!["digest", "digest_text"],
+        ),
+    ] {
+        assert_eq!(names(&mut session, sql), expected, "{sql}");
+    }
+}

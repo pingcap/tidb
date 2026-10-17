@@ -4194,6 +4194,15 @@ impl KvTable {
         self.indexes.iter().filter(|index| index.visible)
     }
 
+    /// The indexes Go's `tryPointGetPlan`/`tryBatchPointGetPlan` may pin: a
+    /// planner-visible one that is not partial (`idxInfo.HasCondition()`),
+    /// since a partial index holds only the rows its predicate admits and
+    /// the fast plan has no residual to notice a row it never stored.
+    pub fn point_get_indexes(&self) -> impl Iterator<Item = &KvIndex> {
+        self.plan_indexes()
+            .filter(|index| !self.index_has_condition(index.id))
+    }
+
     /// Marks the column at `offset` as the table's handle column, which Go
     /// records as `TableInfo.PKIsHandle`.
     pub fn set_pk_handle_offset(&mut self, offset: usize) {
