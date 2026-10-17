@@ -796,6 +796,19 @@ pub(super) fn index_scan_schema(
                 .alloc();
             column
         };
+        // Go `indexCol2Col`: a column the index holds only a prefix of is
+        // flagged `IsPrefix` (a copy; the DataSource's own column stays
+        // whole), which keeps `canPushToIndexPlan` from sorting or cutting by
+        // a truncated key.
+        let mut column = column;
+        if index_column.length > 0
+            && column
+                .ret_type
+                .as_ref()
+                .is_some_and(|field_type| field_type.flen() > index_column.length)
+        {
+            column.is_prefix = true;
+        }
         // Go `InitSchema(path.FullIdxCols)`: an MV partial's ARRAY column is
         // its element type, which is what the index key holds.
         columns.push(crate::access_path::mv_index::unwrap_array_column(column));

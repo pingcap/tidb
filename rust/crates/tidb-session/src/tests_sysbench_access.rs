@@ -1042,8 +1042,18 @@ fn writes_read_only_the_records_inside_their_handle_range() {
             let mut session = sbtest1_with_rows();
             let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {statement}")));
             let scan = rows.last().expect("a write plan has a source row");
+            // Go prunes a DELETE's read to the handle and the indexes'
+            // columns (`pruneAndBuildColPositionInfoForDelete`), so
+            // `DELETE ... WHERE k > 5` scans the covering `k` index range --
+            // the eight entries it matches -- where the UPDATE, which needs
+            // the whole row, still reads the table.
+            let expected = if predicate == "k > 5" && statement.starts_with("DELETE") {
+                "8"
+            } else {
+                read
+            };
             assert_eq!(
-                scan[2], read,
+                scan[2], expected,
                 "records read changed for `{statement}` (source: {})",
                 scan[0]
             );

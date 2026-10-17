@@ -444,6 +444,20 @@ impl TopNChunkHeap {
         });
     }
 
+    /// Go's cop `topNHeap.tryToAddRow` while the heap is not yet full:
+    /// `heap.Push`, one row at a time (append, then sift up).
+    pub fn push_row(&mut self, row: Row<'_>, key: Vec<Datum>) {
+        let ptr = self.append_row(row, key);
+        self.row_ptrs.push(ptr);
+        self.is_row_ptrs_init = true;
+        let last = self.row_ptrs.len() - 1;
+        self.with_ptrs(|heap, ptrs| {
+            go_heap::up(ptrs, last, &mut |a, b| {
+                heap.key_columns_compare(*a, *b) == Ordering::Greater
+            });
+        });
+    }
+
     /// Go `heap.Init(h)`.
     pub fn heap_init(&mut self) {
         self.with_ptrs(|heap, ptrs| {
@@ -530,13 +544,17 @@ impl TopNChunkHeap {
         let keys: Vec<Vec<Datum>> = ptrs.iter().map(|&ptr| self.key_at(ptr)).collect();
         let by_items = &self.by_items;
         let mut sort_err: Option<ExecError> = None;
-        order.sort_by(|&a, &b| match less_by_items(by_items, &keys[a], &keys[b]) {
-            Ok(cmp) => cmp,
-            Err(err) => {
-                if sort_err.is_none() {
-                    sort_err = Some(err);
+        // Go `slices.SortFunc(rowPtrs, keyColumnsCompare)`: the unstable
+        // pdqsort, whose tie layout beyond 12 rows is its own.
+        tidb_stats::go_sort_func_by(&mut order, |&a, &b| {
+            match less_by_items(by_items, &keys[a], &keys[b]) {
+                Ok(cmp) => cmp,
+                Err(err) => {
+                    if sort_err.is_none() {
+                        sort_err = Some(err);
+                    }
+                    Ordering::Equal
                 }
-                Ordering::Equal
             }
         });
         if let Some(err) = sort_err {

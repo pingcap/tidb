@@ -545,6 +545,7 @@ pub(crate) fn run_multi_update(
         })
         .collect::<Result<_, _>>()?;
     let field_types = source.field_types();
+    let prune = prune_for_update(&source, &assignments, catalog);
     let rows = {
         let plan = physical_plan
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
@@ -555,6 +556,7 @@ pub(crate) fn run_multi_update(
             ctx,
             runtime,
             crate::mem_quota::label::UPDATE,
+            prune.as_ref(),
         )?
     };
 
@@ -960,6 +962,7 @@ pub(crate) fn run_multi_delete(
 ) -> Result<u64, DriverError> {
     let source = build_multi_layout(from, delete.with.as_ref(), catalog, current_db, ctx)?;
     let target_slots = resolve_delete_targets(targets, &source)?;
+    let prune = prune_for_delete(&source, &target_slots, catalog, ctx);
     let rows = {
         let plan = physical_plan
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
@@ -970,6 +973,7 @@ pub(crate) fn run_multi_delete(
             ctx,
             runtime,
             crate::mem_quota::label::DELETE,
+            prune.as_ref(),
         )?
     };
 
@@ -1130,6 +1134,7 @@ pub(crate) fn multi_dml_physical_plan(
             }
         }
     };
+    let mut dml_keep = None;
     let (operator, select) = match dml {
         MultiDmlRef::Update(update) => {
             let tidb_ast::UpdateKind::Multi { from, .. } = &update.kind else {
@@ -1142,6 +1147,12 @@ pub(crate) fn multi_dml_physical_plan(
             {
                 add_target(database, table, Some(column));
             }
+            // A resolution error is raised by the statement's execution; the
+            // plan simply keeps every column.
+            dml_keep = update_prune(update, from, catalog, current_db, ctx)
+                .ok()
+                .flatten()
+                .map(|prune| prune.keep);
             (
                 "Update",
                 multi_dml_select(
@@ -1163,6 +1174,10 @@ pub(crate) fn multi_dml_physical_plan(
             for (database, table) in delete_privilege_tables(delete, catalog, current_db, ctx)? {
                 add_target(database, table, None);
             }
+            dml_keep = delete_prune(delete, targets_of(delete), from, catalog, current_db, ctx)
+                .ok()
+                .flatten()
+                .map(|prune| prune.keep);
             (
                 "Delete",
                 multi_dml_select(
@@ -1177,7 +1192,204 @@ pub(crate) fn multi_dml_physical_plan(
         }
     };
     let specs: Vec<_> = specs.into_values().collect();
-    super::dml::physical_multi_dml_plan(operator, &select, catalog, current_db, ctx, &specs)
+    super::dml::physical_multi_dml_plan(
+        operator, &select, catalog, current_db, ctx, &specs, dml_keep,
+    )
+}
+
+/// What a multi-table write's read keeps (Go prunes the rest from the read:
+/// `buildUpdate`'s `used` set, `pruneAndBuildColPositionInfoForDelete`).
+pub(crate) struct MultiPrune {
+    /// Per source slot, per position of its part of a read row (the stored
+    /// columns, then a heap table's hidden handle), whether the read keeps it.
+    present: Vec<Vec<bool>>,
+    /// The `(table or alias, column)` pairs kept, in lower case, which is how
+    /// the planner recognizes its own columns.
+    pub(crate) keep: std::collections::BTreeSet<(String, String)>,
+}
+
+impl MultiPrune {
+    /// The width of a pruned read's row.
+    fn width(&self) -> usize {
+        self.present.iter().flatten().filter(|kept| **kept).count()
+    }
+
+    /// A full-width row, NULL where the read pruned a column.
+    fn expand(&self, row: Vec<Datum>) -> Vec<Datum> {
+        let mut values = row.into_iter();
+        self.present
+            .iter()
+            .flatten()
+            .map(|kept| {
+                if *kept {
+                    values.next().unwrap_or(Datum::Null)
+                } else {
+                    Datum::Null
+                }
+            })
+            .collect()
+    }
+}
+
+/// The columns of each source's part of a read row, in order.
+fn part_column_names(source: &MultiLayout, catalog: &Catalog) -> Vec<Vec<String>> {
+    source
+        .tables
+        .iter()
+        .map(|table| {
+            let entry = match &table.origin {
+                SourceOrigin::Base { database, name } => catalog.get_in(database, name),
+                SourceOrigin::Derived => None,
+            };
+            match entry {
+                Some(TableEntry::Kv(kv)) => {
+                    let mut names: Vec<String> = kv
+                        .columns()
+                        .iter()
+                        .map(|column| column.name.clone())
+                        .collect();
+                    if kv.pk_handle_offset().is_none() && kv.common_handle_offsets().is_empty() {
+                        names.push(tidb_model::column::EXTRA_HANDLE_NAME.to_owned());
+                    }
+                    names
+                }
+                _ => table.columns.iter().map(|(name, _)| name.clone()).collect(),
+            }
+        })
+        .collect()
+}
+
+/// [`MultiPrune`] for a decision `keep(slot, position, column name)`; `None`
+/// when it keeps everything.
+fn build_prune(
+    source: &MultiLayout,
+    catalog: &Catalog,
+    keep: impl Fn(usize, usize, &str) -> bool,
+) -> Option<MultiPrune> {
+    let names = part_column_names(source, catalog);
+    let mut present = Vec::with_capacity(names.len());
+    let mut pairs = std::collections::BTreeSet::new();
+    for (slot, columns) in names.iter().enumerate() {
+        let visible = source.tables[slot].visible.to_ascii_lowercase();
+        let mut flags = Vec::with_capacity(columns.len());
+        for (position, name) in columns.iter().enumerate() {
+            let kept = keep(slot, position, name);
+            if kept {
+                pairs.insert((visible.clone(), name.to_ascii_lowercase()));
+            }
+            flags.push(kept);
+        }
+        present.push(flags);
+    }
+    present
+        .iter()
+        .flatten()
+        .any(|kept| !kept)
+        .then_some(MultiPrune {
+            present,
+            keep: pairs,
+        })
+}
+
+/// Go `buildUpdate`: the read keeps every column of an updated alias and the
+/// columns the SET expressions read from the others.
+fn prune_for_update(
+    source: &MultiLayout,
+    assignments: &[MultiAssignment],
+    catalog: &Catalog,
+) -> Option<MultiPrune> {
+    let mut referenced = std::collections::BTreeSet::new();
+    for assignment in assignments {
+        for column in tidb_expr::simple_expr::extract_columns(&assignment.value) {
+            let Some(index) = usize::try_from(column.index).ok() else {
+                continue;
+            };
+            if let Some(slot) = source.table_of_column(index) {
+                let table = &source.tables[slot];
+                referenced.insert((
+                    slot,
+                    table.columns[index - table.offset].0.to_ascii_lowercase(),
+                ));
+            }
+        }
+    }
+    build_prune(source, catalog, |slot, _, name| {
+        assignments.iter().any(|assignment| assignment.slot == slot)
+            || referenced.contains(&(slot, name.to_ascii_lowercase()))
+    })
+}
+
+fn update_prune(
+    update: &tidb_ast::UpdateStmt,
+    from: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<MultiPrune>, DriverError> {
+    let source = build_multi_layout(from, update.with.as_ref(), catalog, current_db, ctx)?;
+    let scope = source.scope();
+    let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
+    Ok(prune_for_update(&source, &assignments, catalog))
+}
+
+/// Go `pruneAndBuildColPositionInfoForDelete`: each target table keeps the
+/// handle's and its indexes' columns; the other sources are read whole. Once
+/// any target is referenced by a foreign key no table is pruned.
+fn prune_for_delete(
+    source: &MultiLayout,
+    target_slots: &[usize],
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Option<MultiPrune> {
+    let base = |slot: usize| match &source.tables[slot].origin {
+        SourceOrigin::Base { database, name } => Some((database.clone(), name.clone())),
+        SourceOrigin::Derived => None,
+    };
+    if ctx.foreign_key_checks()
+        && target_slots.iter().any(|slot| {
+            base(*slot).is_some_and(|(database, name)| {
+                !crate::foreign_key::referring(catalog, &database, &name).is_empty()
+            })
+        })
+    {
+        return None;
+    }
+    build_prune(source, catalog, |slot, position, _| {
+        if !target_slots.contains(&slot) {
+            return true;
+        }
+        let Some((database, name)) = base(slot) else {
+            return true;
+        };
+        let Some(TableEntry::Kv(kv)) = catalog.get_in(&database, &name) else {
+            return true;
+        };
+        match super::dml::delete_keep_mask(kv) {
+            Some(mask) => mask.get(position).copied().unwrap_or(true),
+            None => true,
+        }
+    })
+}
+
+fn delete_prune(
+    delete: &tidb_ast::DeleteStmt,
+    targets: &[Vec<String>],
+    from: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<MultiPrune>, DriverError> {
+    let source = build_multi_layout(from, delete.with.as_ref(), catalog, current_db, ctx)?;
+    let target_slots = resolve_delete_targets(targets, &source)?;
+    Ok(prune_for_delete(&source, &target_slots, catalog, ctx))
+}
+
+/// The target names of a multi-table DELETE.
+fn targets_of(delete: &tidb_ast::DeleteStmt) -> &[Vec<String>] {
+    match &delete.kind {
+        tidb_ast::DeleteKind::Multi { targets, .. } => targets,
+        tidb_ast::DeleteKind::Single(_) => &[],
+    }
 }
 
 /// Runs the planned read (the `SelectPlan` under the DML root) of a
@@ -1197,6 +1409,7 @@ fn planned_source_rows(
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     memory_label: i64,
+    prune: Option<&MultiPrune>,
 ) -> Result<Vec<SourceRow>, DriverError> {
     struct Slot<'a> {
         width: usize,
@@ -1237,6 +1450,15 @@ fn planned_source_rows(
         ctx,
         runtime.is_some(),
         |row| {
+            // A pruned read carries only the columns the write needs; a plan
+            // cached before the decision changed carries them all, which the
+            // row width tells apart.
+            let row = match prune {
+                Some(prune) if row.len() == prune.width() && row.len() != expected => {
+                    prune.expand(row)
+                }
+                _ => row,
+            };
             if row.len() != expected {
                 return Err(DriverError::unsupported(format!(
                     "a multi-table read returned {} columns, expected {expected}",

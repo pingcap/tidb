@@ -772,6 +772,9 @@ where
     /// One segment. Returns `true` when the child is exhausted (no spill is
     /// pending), `false` when the segment stopped because a spill is needed.
     fn run_one_segment(&mut self) -> Result<bool, ExecError> {
+        if self.cop_heap {
+            return self.run_cop_segment();
+        }
         self.ensure_heap_init();
 
         // Go sortexec.TopNExec.loadChunksUntilTotalLimit reads full child
@@ -818,6 +821,44 @@ where
             let keys = self.eval_keys(&child_chunk)?;
             self.heap.process_chk(&child_chunk, keys);
             self.heap.take_cmp_err()?;
+            if self.heap.stored_len() > self.heap.len() * TOP_N_COMPACTION_FACTOR {
+                self.heap.do_compaction();
+            }
+            self.account()?;
+            if self.need_spill.load(SeqCst) {
+                return Ok(false);
+            }
+        }
+    }
+
+    /// A TopN that IS the coprocessor layer. Go's `topNProcessor.Process` hands
+    /// the heap ONE ROW at a time: `topNHeap.tryToAddRow` pushes until the heap
+    /// holds `limit` rows and afterwards admits a row only when it sorts
+    /// STRICTLY before the root, so among equal keys the earliest rows survive
+    /// and their layout is the push/fix layout. The root `TopNExec` instead
+    /// loads whole chunks, heapifies and pops down to the limit, which lays
+    /// ties out differently -- a child chunk larger than the limit made this
+    /// layer answer `[1, 8, 3]` where Go's coprocessor answers `[5, 1, 3]`.
+    fn run_cop_segment(&mut self) -> Result<bool, ExecError> {
+        self.ensure_heap_init();
+        let mut chunk = self.child.new_chunk();
+        loop {
+            self.child.next(&mut chunk)?;
+            if chunk.num_rows() == 0 {
+                return Ok(true);
+            }
+            let keys = self.eval_keys(&chunk)?;
+            for (index, key) in keys.into_iter().enumerate() {
+                if self.total_limit == 0 {
+                    continue;
+                }
+                if (self.heap.len() as u64) < self.total_limit {
+                    self.heap.push_row(chunk.get_row(index), key);
+                } else {
+                    self.heap.update(chunk.get_row(index), key);
+                }
+                self.heap.take_cmp_err()?;
+            }
             if self.heap.stored_len() > self.heap.len() * TOP_N_COMPACTION_FACTOR {
                 self.heap.do_compaction();
             }

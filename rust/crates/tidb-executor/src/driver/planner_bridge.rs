@@ -3358,6 +3358,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     operator: &str,
+    dml_keep: Option<std::collections::BTreeSet<(String, String)>>,
 ) -> Result<
     (
         PhysicalPlan,
@@ -3409,6 +3410,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
+    builder.dml_keep = dml_keep;
     // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
     // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
     // write locks the rows it writes instead.

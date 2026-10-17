@@ -719,6 +719,11 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// merged child schema of a `USING`/`NATURAL` join, so every target's
     /// columns and handle stay in the joined row (`buildUsingClause`).
     pub in_update_or_delete_stmt: bool,
+    /// The columns a DML read keeps, as `(table or alias, column)` pairs in
+    /// lower case (Go `pruneAndBuildColPositionInfoForDelete` for DELETE; the
+    /// `used` set of `buildUpdate` for a multi-table UPDATE): everything
+    /// else leaves the read. `None` keeps every column.
+    pub dml_keep: Option<BTreeSet<(String, String)>>,
 
     /// Go `SessionVars`, narrowed exactly as the rewriter narrows it.
     pub flags: RewriterSessionFlags,
@@ -1474,6 +1479,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             no_decorrelate: false,
             is_for_update_read: false,
             in_update_or_delete_stmt: false,
+            dml_keep: None,
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),
@@ -2944,7 +2950,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 false,
                 false,
             );
-            extra.orig_name = name.display_name();
+            // Go `NewExtraHandleSchemaCol`: `OrigName` is `db.table.col` with
+            // the ORIGINAL table name, as for every other base-table column.
+            let mut original_name = name.clone();
+            original_name.names.table = original_name.names.original_table.clone();
+            extra.orig_name = original_name.display_name();
             handle_cols = vec![extra.clone()];
             handle_is_int = true;
             columns.push(DataSourceColumn {
@@ -2979,7 +2989,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             false,
             false,
         );
-        commit_ts.orig_name = commit_ts_name.display_name();
+        let mut original_commit_ts_name = commit_ts_name.clone();
+        original_commit_ts_name.names.table = original_commit_ts_name.names.original_table.clone();
+        commit_ts.orig_name = original_commit_ts_name.display_name();
         columns.push(DataSourceColumn {
             id: EXTRA_COMMIT_TS_ID,
             name: EXTRA_COMMIT_TS_NAME.to_owned(),
@@ -4735,11 +4747,26 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // layout. Keep the original column identities so handle metadata and
         // physical access paths resolve against the same DataSource columns.
         self.opt_flag |= flags::ELIMINATE_PROJECTION;
+        // Go prunes what the write does not need: a DELETE's target tables
+        // keep the handle's and the indexes' columns
+        // (`pruneAndBuildColPositionInfoForDelete`), a multi-table UPDATE
+        // keeps the updated aliases and what its SET expressions read.
+        let keep = self.dml_keep.take();
         let kept = source_schema
             .columns
             .iter()
             .enumerate()
-            .filter(|(_, column)| column.id != EXTRA_COMMIT_TS_ID)
+            .filter(|(position, column)| {
+                column.id != EXTRA_COMMIT_TS_ID
+                    && keep.as_ref().is_none_or(|keep| {
+                        source_names.get(*position).is_some_and(|name| {
+                            keep.contains(&(
+                                name.names.table.lower.clone(),
+                                name.names.column.lower.clone(),
+                            ))
+                        })
+                    })
+            })
             .collect::<Vec<_>>();
         let expressions = kept
             .iter()

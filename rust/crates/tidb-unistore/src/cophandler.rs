@@ -1377,18 +1377,10 @@ fn go_topn_heap_finish(
     }
     // `topNProcessor.Finish`: `sort.Sort(&ctx.heap.topNSorter)` over the
     // survivors, ascending under the by-item order.
+    // Go's unstable pdqsort: insertion sort up to 12 rows, and beyond that its
+    // pivot and pattern schedule, which decides where equal keys end up.
     let mut sorted = heap;
-    if sorted.len() <= 12 {
-        for i in 1..sorted.len() {
-            let mut j = i;
-            while j > 0 && ordering(&sorted[j].1, &sorted[j - 1].1) == std::cmp::Ordering::Less {
-                sorted.swap(j, j - 1);
-                j -= 1;
-            }
-        }
-    } else {
-        sorted.sort_by(|a, b| ordering(&a.1, &b.1));
-    }
+    tidb_stats::go_sort_func_by(&mut sorted, |a, b| ordering(&a.1, &b.1));
     sorted
 }
 
@@ -6057,6 +6049,58 @@ mod tests {
             decoded,
             vec![Datum::Int(2), Datum::Int(10), Datum::Int(3), Datum::Int(20)]
         );
+    }
+
+    /// Go's heap never lets a tie evict (`tryToAddRow` admits a row only when
+    /// the root sorts STRICTLY after it), and `Finish` replays the survivors in
+    /// heap-array order through the insertion sort. Eight handles with the
+    /// order key `1, 2, 1, 2, 1, 1, 1, 1` and `LIMIT 3` leave the heap array
+    /// `[5, 1, 3]` -- the order Go's `ORDER BY a LIMIT 3` answers.
+    #[test]
+    fn top_n_ties_never_evict_and_keep_go_heap_array_order() {
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let mut store = MvccStore::new();
+        for (handle, b_value) in [
+            (1_i64, 1_i64),
+            (2, 2),
+            (3, 1),
+            (4, 2),
+            (5, 1),
+            (6, 1),
+            (7, 1),
+            (8, 1),
+        ] {
+            let key = encode_row_key_with_handle(73, &RecordHandle::Int(handle));
+            let value =
+                tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(b_value)]).expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+        let resp = handle_cop_request(&mut store, &top_n_request(73, 1, false, 3));
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_ref()).expect("decodes");
+        let mut decoded = Vec::new();
+        for chunk in &select.chunks {
+            decoded.extend(
+                tidb_codec::decode(chunk.rows_data.as_deref().expect("rows"), 2).expect("row"),
+            );
+        }
+        let handles: Vec<_> = decoded.chunks(2).map(|row| row[0].clone()).collect();
+        assert_eq!(handles, vec![Datum::Int(5), Datum::Int(1), Datum::Int(3)]);
     }
 
     #[test]

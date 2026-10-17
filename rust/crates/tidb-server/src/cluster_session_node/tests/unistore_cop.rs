@@ -15026,3 +15026,309 @@ fn result_columns_keep_the_names_the_query_wrote() {
         assert_eq!(names(&mut session, sql), expected, "{sql}");
     }
 }
+
+/// Go `pruneAndBuildColPositionInfoForDelete`: a single-table DELETE reads
+/// only the handle's and the indexes' columns, so `delete from t` scans the
+/// narrowest covering index and `delete ... where a = 1` projects the rest
+/// away. The rows it removes, and every index entry of them, are unchanged.
+#[test]
+fn single_table_delete_reads_only_the_columns_removal_needs() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1055)).unwrap();
+    session.execute_write("USE test").unwrap();
+    let plan = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
+            .into_iter()
+            .map(|row| format!("{} {}", row[0], row[3]))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    // A heap table: the handle is the hidden _tidb_rowid.
+    session
+        .execute_write("CREATE TABLE dp1 (a INT, b INT, c VARCHAR(20), INDEX ib (b))")
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO dp1 VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 20, 'z'), (4, 40, 'w')",
+        )
+        .unwrap();
+    let full = plan(&mut session, "DELETE FROM dp1");
+    assert!(
+        full.contains("IndexFullScan") && full.contains("index:ib(b)"),
+        "{full}"
+    );
+    let filtered = plan(&mut session, "DELETE FROM dp1 WHERE a = 1");
+    assert!(filtered.contains("Projection"), "{filtered}");
+    session
+        .execute_write("DELETE FROM dp1 WHERE a = 1")
+        .unwrap();
+    session
+        .execute_write("DELETE FROM dp1 WHERE b = 20 AND c = 'y'")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, b, c FROM dp1 ORDER BY a")),
+        [["3", "20", "z"], ["4", "40", "w"]]
+    );
+    // The index lost exactly the removed rows' entries.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b FROM dp1 USE INDEX (ib) ORDER BY b"
+        )),
+        [["20"], ["40"]]
+    );
+    session
+        .execute_write("DELETE FROM dp1 ORDER BY a LIMIT 1")
+        .unwrap();
+    assert_eq!(displayed(rows(&mut session, "SELECT a FROM dp1")), [["4"]]);
+    // A clustered integer key and a unique secondary index.
+    session
+        .execute_write(
+            "CREATE TABLE dp2 (id INT PRIMARY KEY CLUSTERED, u INT, pad VARCHAR(20), UNIQUE KEY uu (u))",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO dp2 VALUES (1, 100, 'p'), (2, 200, 'q'), (3, 300, 'r')")
+        .unwrap();
+    session
+        .execute_write("DELETE FROM dp2 WHERE pad = 'q'")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, u FROM dp2 USE INDEX (uu) ORDER BY u"
+        )),
+        [["1", "100"], ["3", "300"]]
+    );
+    // The freed unique value can be inserted again.
+    session
+        .execute_write("INSERT INTO dp2 VALUES (9, 200, 's')")
+        .unwrap();
+    // A common handle.
+    session
+        .execute_write(
+            "CREATE TABLE dp3 (k1 VARCHAR(10), k2 INT, v INT, w INT, PRIMARY KEY (k1, k2) CLUSTERED, KEY iv (v))",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO dp3 VALUES ('a', 1, 5, 0), ('b', 2, 6, 0), ('c', 3, 7, 0)")
+        .unwrap();
+    session
+        .execute_write("DELETE FROM dp3 WHERE w = 0 AND v = 6")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT k1, k2 FROM dp3 ORDER BY k1")),
+        [["a", "1"], ["c", "3"]]
+    );
+    // A referenced table keeps every column (its foreign keys read them).
+    session
+        .execute_write(
+            "CREATE TABLE dpp (id INT PRIMARY KEY, name VARCHAR(10), INDEX iname (name))",
+        )
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE dpc (id INT PRIMARY KEY, pid INT, CONSTRAINT fk_dp FOREIGN KEY (pid) REFERENCES dpp (id))",
+        )
+        .unwrap();
+    let referenced = plan(&mut session, "DELETE FROM dpp");
+    assert!(!referenced.contains("Projection"), "{referenced}");
+}
+
+/// Go prunes a multi-table write's read too: a multi-table UPDATE keeps every
+/// column of an updated alias and what its SET expressions read from the
+/// other sources (`buildUpdate`'s `used` set), so the source that only joins
+/// is scanned through its covering index; a multi-table DELETE keeps the
+/// handle's and the indexes' columns of each target. The rows written are
+/// unchanged.
+#[test]
+fn multi_table_writes_read_only_the_columns_they_need() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1056)).unwrap();
+    session.execute_write("USE test").unwrap();
+    let plan = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
+            .into_iter()
+            .map(|row| format!("{} {}", row[0], row[3]))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    session
+        .execute_write("CREATE TABLE mu1 (a INT, b INT, pad INT)")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE mu2 (a INT, b INT, other INT, INDEX ib (b))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO mu1 VALUES (1, 1, 0), (2, 2, 0), (3, 9, 0)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO mu2 VALUES (10, 1, 100), (20, 2, 200), (30, 7, 300)")
+        .unwrap();
+    // `mu2` is only joined: its read is the covering index.
+    let update = plan(
+        &mut session,
+        "UPDATE mu1, mu2 SET mu1.a = 99 WHERE mu1.b = mu2.b",
+    );
+    assert!(
+        update.contains("IndexFullScan") && update.contains("index:ib(b)"),
+        "{update}"
+    );
+    session
+        .execute_write("UPDATE mu1, mu2 SET mu1.a = 99 WHERE mu1.b = mu2.b")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT a, b FROM mu1 ORDER BY b")),
+        [["99", "1"], ["99", "2"], ["3", "9"]]
+    );
+    // A column of `mu2` the SET expression reads is kept.
+    session
+        .execute_write("UPDATE mu1, mu2 SET mu1.pad = mu2.other WHERE mu1.b = mu2.b AND mu2.a = 20")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT b, pad FROM mu1 ORDER BY b")),
+        [["1", "0"], ["2", "200"], ["9", "0"]]
+    );
+    // Updating both sources keeps both whole.
+    session
+        .execute_write("UPDATE mu1, mu2 SET mu1.pad = 5, mu2.other = mu1.b WHERE mu1.b = mu2.b")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT b, other FROM mu2 ORDER BY b")),
+        [["1", "1"], ["2", "2"], ["7", "300"]]
+    );
+    // A multi-table DELETE of one target keeps the other source whole and
+    // prunes the target to the index and handle.
+    session
+        .execute_write("DELETE mu1 FROM mu1, mu2 WHERE mu1.b = mu2.b AND mu2.other = 2")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT b FROM mu1 ORDER BY b")),
+        [["1"], ["9"]]
+    );
+    session
+        .execute_write("DELETE mu1, mu2 FROM mu1, mu2 WHERE mu1.b = mu2.b")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT b FROM mu2 ORDER BY b")),
+        [["2"], ["7"]]
+    );
+    // A multi-table DELETE over one aliased source behaves as its
+    // single-table form (this shape used to inherit the single-table prune).
+    session
+        .execute_write("DELETE m FROM mu2 AS m WHERE m.b = 2")
+        .unwrap();
+    assert_eq!(displayed(rows(&mut session, "SELECT b FROM mu2")), [["7"]]);
+}
+
+/// Go's coprocessor TopN admits rows ONE at a time (a tie never evicts, so the
+/// earliest rows survive), lays survivors out by heap push/fix, and orders
+/// them with its pdqsort. The cop-layer executor instead loaded the whole
+/// child chunk, heapified and popped, which kept different tied rows and
+/// printed them in a different order (`[1, 8, 3]` for Go's `[5, 1, 3]`); both
+/// final sorts were stable where Go's pdqsort is not beyond 12 rows.
+#[test]
+fn cop_top_n_ties_follow_go_heap_layout_and_pdqsort() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1057)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tn (a INT, b CHAR)")
+        .unwrap();
+    session
+        .execute_write(
+            "INSERT INTO tn VALUES (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a'),(1,'x'),(1,'y'),(1,'z')",
+        )
+        .unwrap();
+    let ids = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect()
+    };
+    // Expected: Go 1.27 on this branch (`TestZZ` probes).
+    for (sql, expected) in [
+        (
+            "SELECT _tidb_rowid FROM tn ORDER BY a LIMIT 3",
+            vec!["5", "1", "3"],
+        ),
+        (
+            "SELECT _tidb_rowid FROM tn ORDER BY a LIMIT 2",
+            vec!["3", "1"],
+        ),
+        (
+            "SELECT _tidb_rowid FROM tn ORDER BY a LIMIT 4",
+            vec!["6", "5", "3", "1"],
+        ),
+        (
+            "SELECT _tidb_rowid FROM tn ORDER BY a LIMIT 5",
+            vec!["7", "6", "3", "1", "5"],
+        ),
+        (
+            "SELECT _tidb_rowid FROM tn ORDER BY a LIMIT 6",
+            vec!["8", "7", "3", "1", "5", "6"],
+        ),
+        (
+            "SELECT _tidb_rowid FROM tn WHERE a = 1 ORDER BY a LIMIT 3",
+            vec!["1", "3", "5"],
+        ),
+    ] {
+        assert_eq!(ids(&mut session, sql), expected, "{sql}");
+    }
+    // Beyond twelve survivors the order is pdqsort's, not a stable sort's.
+    session
+        .execute_write("CREATE TABLE tm (a INT, b CHAR)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO tm VALUES (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a')")
+        .unwrap();
+    for _ in 0..3 {
+        session
+            .execute_write("INSERT INTO tm SELECT * FROM tm")
+            .unwrap();
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT b, COUNT(*) FROM (SELECT b FROM tm ORDER BY a LIMIT 20 OFFSET 2) s \
+             GROUP BY b ORDER BY b",
+        )),
+        [["a", "6"], ["c", "7"], ["s", "7"]]
+    );
+}
+
+/// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
+/// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
+/// and orders by the full value.
+#[test]
+fn top_n_over_a_prefix_index_column_stays_on_the_table_side() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1058)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE tpx (id INT PRIMARY KEY, name VARCHAR(50), INDEX ip (name(3)))",
+        )
+        .unwrap();
+    session
+        .execute_write("INSERT INTO tpx VALUES (1,'abcZ'),(2,'abcY'),(3,'abcA'),(4,'abcB')")
+        .unwrap();
+    let plan = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'brief' SELECT /*+ use_index(tpx, ip) */ id, name FROM tpx \
+         ORDER BY name LIMIT 2",
+    ));
+    let text = plan
+        .iter()
+        .map(|row| row[0].clone())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(text.contains("TopN(Probe)"), "{text}");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT /*+ use_index(tpx, ip) */ id, name FROM tpx ORDER BY name LIMIT 2",
+        )),
+        [["3", "abcA"], ["4", "abcB"]]
+    );
+}

@@ -215,6 +215,7 @@ pub(crate) fn physical_dml_plan(
         ctx,
         false,
         std::slice::from_ref(fk_spec),
+        DmlKeep::Auto,
     )
 }
 
@@ -227,6 +228,7 @@ pub(crate) fn physical_multi_dml_plan(
     current_db: &str,
     ctx: &crate::StmtContext,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
+    dml_keep: Option<std::collections::BTreeSet<(String, String)>>,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
     physical_dml_plan_with_cache_mode(
         operator,
@@ -237,6 +239,7 @@ pub(crate) fn physical_multi_dml_plan(
         ctx,
         false,
         fk_specs,
+        DmlKeep::Fixed(dml_keep),
     )
 }
 
@@ -265,6 +268,7 @@ fn physical_dml_plan_with_cache_mode(
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
+    keep: DmlKeep,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
     use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
@@ -342,6 +346,16 @@ fn physical_dml_plan_with_cache_mode(
                         update_assignment_values_for_plan(update, catalog, current_db, ctx)
                     })
                     .transpose()?;
+                // Go `buildDelete` prunes the read to what removing a record
+                // needs; a point plan above keeps every column.
+                let delete_prune = match keep {
+                    DmlKeep::Fixed(keep) => keep,
+                    DmlKeep::Auto => operator
+                        .eq_ignore_ascii_case("Delete")
+                        .then(|| delete_pruning(select, catalog, current_db, ctx))
+                        .flatten()
+                        .map(|pruning| pruning.keep_pairs()),
+                };
                 let (plan, expressions, root) =
                     super::planner_bridge::physical_dml_source_plan_with_allocators(
                         select,
@@ -353,6 +367,7 @@ fn physical_dml_plan_with_cache_mode(
                         &plan_ids,
                         &column_ids,
                         operator,
+                        delete_prune,
                     )
                     .map_err(super::planner_error_to_driver)?;
                 update_expressions = expressions;
@@ -2796,6 +2811,7 @@ fn cached_dml_physical_plan(
         ctx,
         true,
         std::slice::from_ref(&fk_spec),
+        DmlKeep::Auto,
     )
     .ok()?;
     // Keep a cached single-row UPDATE/DELETE source as a point access path.
@@ -3200,6 +3216,7 @@ fn run_update_with_physical(
         ctx,
         runtime,
         mem_quota::label::UPDATE,
+        None,
     )?;
     let mut matched = 0u64;
     let mut touched = 0u64;
@@ -3482,6 +3499,134 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     )
 }
 
+/// Go `pruneAndBuildColPositionInfoForDelete` for a single table: the
+/// columns DELETE reads are the handle's and every index's, because removing
+/// a record needs nothing else. The rest is pruned from the read, so
+/// `delete from t` scans the narrowest covering index.
+///
+/// Go declines for a partitioned table, a partial index, and a table other
+/// tables' foreign keys reference. This tier also declines where its delete
+/// path reads the whole row: generated or hidden (expression-index) columns,
+/// and temporary tables.
+pub(crate) struct DeletePruning {
+    /// The stored-column offsets the read keeps, in table order.
+    kept: Vec<usize>,
+    /// Whether the hidden `_tidb_rowid` follows them (a table whose handle
+    /// is neither an integer primary key nor a common handle).
+    extra_handle: bool,
+    /// The alias, else the table name, in lower case.
+    visible: String,
+    /// The stored columns' names in lower case, by offset.
+    names: Vec<String>,
+}
+
+impl DeletePruning {
+    /// The width of a pruned read's row.
+    fn width(&self) -> usize {
+        self.kept.len() + usize::from(self.extra_handle)
+    }
+
+    /// The `(table, column)` pairs the planner keeps in its read.
+    pub(crate) fn keep_pairs(&self) -> std::collections::BTreeSet<(String, String)> {
+        let mut keep: std::collections::BTreeSet<_> = self
+            .kept
+            .iter()
+            .map(|offset| (self.visible.clone(), self.names[*offset].clone()))
+            .collect();
+        if self.extra_handle {
+            keep.insert((
+                self.visible.clone(),
+                tidb_model::column::EXTRA_HANDLE_NAME.to_ascii_lowercase(),
+            ));
+        }
+        keep
+    }
+}
+
+/// How a DML read decides the columns it keeps (see [`DeletePruning`]).
+pub(crate) enum DmlKeep {
+    /// A single-table statement: DELETE prunes by [`delete_pruning`].
+    Auto,
+    /// The caller decided (a multi-table statement); `None` keeps everything.
+    Fixed(Option<std::collections::BTreeSet<(String, String)>>),
+}
+
+/// Which stored columns of `table` a DELETE of its records reads: the
+/// handle's and every index's. `None` where Go (or this tier) reads the whole
+/// row, or where nothing would be pruned.
+///
+/// Go skips a partitioned table, a partial index and (statement-wide) a
+/// table other tables' foreign keys reference -- the last is the caller's
+/// check. This tier also keeps the whole row where its delete path needs it:
+/// generated or hidden (expression-index) columns, and temporary tables.
+pub(crate) fn delete_keep_mask(table: &crate::kv_table::KvTable) -> Option<Vec<bool>> {
+    if table.partition().is_some()
+        || table.is_temporary()
+        || table.columns().len() != table.visible_columns().len()
+        || table
+            .columns()
+            .iter()
+            .any(|column| column.generated.is_some())
+        || table
+            .indexes()
+            .iter()
+            .any(|index| table.index_has_condition(index.id))
+    {
+        return None;
+    }
+    let mut keep = vec![false; table.columns().len()];
+    if let Some(offset) = table.pk_handle_offset() {
+        keep[offset] = true;
+    }
+    for offset in table.common_handle_offsets() {
+        keep[*offset] = true;
+    }
+    for index in table.indexes() {
+        for offset in &index.column_offsets {
+            keep[*offset] = true;
+        }
+    }
+    keep.iter().any(|kept| !kept).then_some(keep)
+}
+
+/// [`DeletePruning`]'s decision for the single-table read of a DELETE (the
+/// `SELECT` [`delete_source_query`] builds, which carries the `FROM`, the
+/// `WITH` and the hints).
+pub(crate) fn delete_pruning(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<DeletePruning> {
+    let table_ref = super::access::sole_table_ref(&select.from)?;
+    if super::planner_bridge::is_cte(select.with.as_ref(), table_ref) {
+        return None;
+    }
+    let (database, name) = single_table_name(table_ref, current_db).ok()?;
+    let Some(TableEntry::Kv(table)) = catalog.get_in(&database, &name) else {
+        return None;
+    };
+    if ctx.foreign_key_checks()
+        && !crate::foreign_key::referring(catalog, &database, &name).is_empty()
+    {
+        return None;
+    }
+    let keep = delete_keep_mask(table)?;
+    let kept: Vec<usize> = (0..keep.len()).filter(|offset| keep[*offset]).collect();
+    let extra_handle =
+        table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
+    Some(DeletePruning {
+        kept,
+        extra_handle,
+        visible: table_ref.alias.clone().unwrap_or(name).to_ascii_lowercase(),
+        names: table
+            .columns()
+            .iter()
+            .map(|column| column.name.to_ascii_lowercase())
+            .collect(),
+    })
+}
+
 pub(crate) fn delete_source_query(delete: &tidb_ast::DeleteStmt) -> Option<tidb_ast::QueryStmt> {
     match &delete.kind {
         tidb_ast::DeleteKind::Single(table_ref) => super::access::PointPlanStmt::of_write(
@@ -3541,6 +3686,12 @@ fn run_delete_with_physical(
     let physical = physical_source
         .as_deref_mut()
         .ok_or_else(|| DriverError::unsupported("DELETE has no retained physical child"))?;
+    let pruning = delete_source_query(delete)
+        .as_ref()
+        .and_then(|query| match query {
+            tidb_ast::QueryStmt::Select(select) => delete_pruning(select, catalog, current_db, ctx),
+            _ => None,
+        });
     let rows = execute_physical_write_rows(
         physical,
         catalog,
@@ -3549,6 +3700,7 @@ fn run_delete_with_physical(
         ctx,
         runtime,
         mem_quota::label::DELETE,
+        pruning.as_ref(),
     )?
     .rows;
     let mut records = DeleteRecords::new(fk_triggers);
@@ -3598,6 +3750,7 @@ fn execute_physical_write_rows(
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     memory_label: i64,
+    pruning: Option<&DeletePruning>,
 ) -> Result<PhysicalWriteRows, DriverError> {
     let field_types = physical
         .schema()
@@ -3624,7 +3777,25 @@ fn execute_physical_write_rows(
     let stored_width = table.columns().len();
     let has_extra_handle =
         table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
-    let expected_width = stored_width + usize::from(has_extra_handle);
+    // A pruned DELETE read carries only the kept columns (see
+    // [`DeletePruning`]); a plan cached before the decision changed carries
+    // them all, which the row width tells apart.
+    let pruning = pruning.filter(|pruning| field_types.len() == pruning.width());
+    let expected_width =
+        pruning.map_or(stored_width + usize::from(has_extra_handle), |p| p.width());
+    // Where `_tidb_rowid` sits in a row of this read.
+    let extra_position = pruning.map_or(stored_width, |p| p.kept.len());
+    // The cell holding the stored column at `offset`.
+    let cell = |row: &[Datum], offset: usize| -> Option<Datum> {
+        match pruning {
+            None => row.get(offset).cloned(),
+            Some(pruning) => pruning
+                .kept
+                .iter()
+                .position(|kept| *kept == offset)
+                .and_then(|position| row.get(position).cloned()),
+        }
+    };
     let accountant = ctx.statement_memory().write_accountant(memory_label);
     let mut rows = Vec::new();
     let collected = super::physical_builder::execute_dml_source(
@@ -3640,9 +3811,9 @@ fn execute_physical_write_rows(
                 )));
             }
             let id = if let Some(offset) = table.pk_handle_offset() {
-                match row.get(offset) {
-                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
-                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
+                match cell(&row, offset) {
+                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(value),
+                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(value as i64),
                     _ => {
                         return Err(DriverError::unsupported(
                             "a physical write child returned an invalid integer handle",
@@ -3653,13 +3824,19 @@ fn execute_physical_write_rows(
                 let values = table
                     .common_handle_offsets()
                     .iter()
-                    .map(|offset| row[*offset].clone())
-                    .collect::<Vec<_>>();
+                    .map(|offset| {
+                        cell(&row, *offset).ok_or_else(|| {
+                            DriverError::unsupported(
+                                "a physical write child dropped a common-handle column",
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 table
                     .common_handle_of_values(&values, &ctx.session_zone())
                     .map_err(kv_write_error)?
             } else {
-                match row.get(stored_width) {
+                match row.get(extra_position) {
                     Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
                     Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
                     _ => {
@@ -3669,7 +3846,18 @@ fn execute_physical_write_rows(
                     }
                 }
             };
-            let stored = row[..stored_width].to_vec();
+            // A pruned column is NULL here: removing a record reads only the
+            // handle's and the indexes' columns.
+            let stored = match pruning {
+                None => row[..stored_width].to_vec(),
+                Some(pruning) => {
+                    let mut stored = vec![Datum::Null; stored_width];
+                    for (position, offset) in pruning.kept.iter().enumerate() {
+                        stored[*offset] = row[position].clone();
+                    }
+                    stored
+                }
+            };
             // Both representations stay live until the write phase.
             accountant.account_row(&row).map_err(DriverError::from)?;
             accountant.account_row(&stored).map_err(DriverError::from)?;
