@@ -25,11 +25,11 @@ import (
 	"testing"
 	"time"
 
-	jwaRepo "github.com/lestrrat-go/jwx/v2/jwa"
-	jwkRepo "github.com/lestrrat-go/jwx/v2/jwk"
-	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
-	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
-	"github.com/lestrrat-go/jwx/v2/jwt/openid"
+	jwaRepo "github.com/lestrrat-go/jwx/v3/jwa"
+	jwkRepo "github.com/lestrrat-go/jwx/v3/jwk"
+	jwsRepo "github.com/lestrrat-go/jwx/v3/jws"
+	jwtRepo "github.com/lestrrat-go/jwx/v3/jwt"
+	"github.com/lestrrat-go/jwx/v3/jwt/openid"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
@@ -162,37 +162,34 @@ type pair struct {
 
 func init() {
 	for i := range publicKeyStrings {
-		v, rest, err := jwkRepo.DecodePEM(([]byte)(privateKeyStrings[i]))
+		key, err := jwkRepo.ParseKey(([]byte)(privateKeyStrings[i]), jwkRepo.WithPEM(true))
 		if err != nil {
 			log.Println(err.Error())
 			log.Fatal("Error in decode private key")
 		}
-		if len(rest) > 0 {
-			log.Fatal("Rest in decode private key")
-		}
-		priKey, ok := v.(*rsa.PrivateKey)
-		if !ok {
+		var priKey rsa.PrivateKey
+		if err = jwkRepo.Export(key, &priKey); err != nil {
+			log.Println(err.Error())
 			log.Fatal("Wrong type of private key")
 		}
-		priKeys = append(priKeys, priKey)
-		v, rest, err = jwkRepo.DecodePEM(([]byte)(publicKeyStrings[i]))
+		priKeys = append(priKeys, &priKey)
+		key, err = jwkRepo.ParseKey(([]byte)(publicKeyStrings[i]), jwkRepo.WithPEM(true))
 		if err != nil {
 			log.Println(err.Error())
 			log.Fatal("Error in decode public key")
-		} else if len(rest) > 0 {
-			log.Fatal("Rest in decode public key")
 		}
-		pubKey, ok := v.(*rsa.PublicKey)
-		if !ok {
+		var pubKey rsa.PublicKey
+		if err = jwkRepo.Export(key, &pubKey); err != nil {
+			log.Println(err.Error())
 			log.Fatal("Wrong type of public key")
 		}
-		pubKeys = append(pubKeys, pubKey)
-		jwk, err := jwkRepo.FromRaw(pubKey)
+		pubKeys = append(pubKeys, &pubKey)
+		jwk, err := jwkRepo.Import(&pubKey)
 		if err != nil {
 			log.Fatal("Error when generate jwk")
 		}
 		keyAttributes := []pair{
-			{jwkRepo.AlgorithmKey, jwaRepo.RS256},
+			{jwkRepo.AlgorithmKey, jwaRepo.RS256()},
 			{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
 			{jwkRepo.KeyUsageKey, "sig"},
 		}
@@ -235,7 +232,7 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]any) (string,
 	jwt := jwtRepo.New()
 	header := jwsRepo.NewHeaders()
 	headerPairs := []pair{
-		{jwsRepo.AlgorithmKey, jwaRepo.RS256},
+		{jwsRepo.AlgorithmKey, jwaRepo.RS256()},
 		{jwsRepo.TypeKey, "JWT"},
 	}
 	for _, pair := range headerPairs {
@@ -255,7 +252,7 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]any) (string,
 			}
 		}
 	}
-	bytes, err := jwtRepo.Sign(jwt, jwtRepo.WithKey(jwaRepo.RS256, priKey, jwsRepo.WithProtectedHeaders(header)))
+	bytes, err := jwtRepo.Sign(jwt, jwtRepo.WithKey(jwaRepo.RS256(), priKey, jwsRepo.WithProtectedHeaders(header)))
 	if err != nil {
 		return "", err
 	}
