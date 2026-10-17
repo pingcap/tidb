@@ -1803,7 +1803,7 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
-	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool, mutableGbyAliasCols map[int]*expression.Column) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
@@ -1842,15 +1842,22 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			newNames = append(newNames, name)
 			continue
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
-		if err != nil {
-			return nil, nil, 0, err
-		}
+		var newExpr expression.Expression
+		if col, ok := mutableGbyAliasCols[i]; ok {
+			newExpr = p.Schema().RetrieveColumn(col)
+		} else {
+			var np base.LogicalPlan
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			p = np
 
-		// for case: select a+1, b, sum(b), grouping(a) from t group by a, b with rollup.
-		// the column inside aggregate (only sum(b) here) should be resolved to original source column,
-		// while for others, just use expanded columns if exists: a'+ 1, b', group(gid)
-		newExpr = b.replaceGroupingFunc(newExpr)
+			// for case: select a+1, b, sum(b), grouping(a) from t group by a, b with rollup.
+			// the column inside aggregate (only sum(b) here) should be resolved to original source column,
+			// while for others, just use expanded columns if exists: a'+ 1, b', group(gid)
+			newExpr = b.replaceGroupingFunc(newExpr)
+		}
 
 		// For window functions in the order by clause, we will append an field for it.
 		// We need rewrite the window mapper here so order by clause could find the added field.
@@ -1860,7 +1867,6 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			}
 		}
 
-		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
 
 		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
@@ -3410,6 +3416,8 @@ type gbyResolver struct {
 	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
 	exprDepth int // exprDepth is the depth of current expression in expression tree.
+	// selectFieldIdx is set when the entire GROUP BY item resolves to a SELECT alias.
+	selectFieldIdx int
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
@@ -3427,7 +3435,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 		}
 		return n, true
-	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
+	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName, *ast.PositionExpr:
 	default:
 		g.inExpr = true
 	}
@@ -3460,6 +3468,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
 						isParam.UseAsValueInGbyByClause = true
 					}
+					if !g.inExpr {
+						g.selectFieldIdx = index
+					}
 					return ret, true
 				}
 			}
@@ -3487,6 +3498,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			}
 			g.err = plannererrors.ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
+		}
+		if !g.inExpr {
+			g.selectFieldIdx = pos - 1
 		}
 		return ret, true
 	case *ast.ValuesExpr:
@@ -4063,9 +4077,10 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 // The returned `[]ast.Node` may differ from the original `gby.Items` in the group by clause for params. For params, the
 // `gby.Items[].Expr` will not be overwritten. However, the resolved expression is still needed for further processing, so
 // it's returned out.
-func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, error) {
+func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, []int, error) {
 	b.curClause = groupByClause
 	exprs := make([]ast.ExprNode, 0, len(gby.Items))
+	aliasFieldIdx := make([]int, 0, len(gby.Items))
 	schema := p.Schema()
 	names := p.OutputNames()
 	// findJoinFullSchema walks through transparent wrappers (LogicalSelection)
@@ -4076,27 +4091,30 @@ func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause
 		names = fullNames
 	}
 	resolver := &gbyResolver{
-		ctx:        b.ctx,
-		fields:     fields,
-		schema:     schema,
-		names:      names,
-		skipAggMap: b.correlatedAggMapper,
+		ctx:            b.ctx,
+		fields:         fields,
+		schema:         schema,
+		names:          names,
+		skipAggMap:     b.correlatedAggMapper,
+		selectFieldIdx: -1,
 	}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
 		resolver.exprDepth = 0
 		resolver.isParam = false
+		resolver.selectFieldIdx = -1
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return exprs, errors.Trace(resolver.err)
+			return exprs, aliasFieldIdx, errors.Trace(resolver.err)
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
 		}
 
 		exprs = append(exprs, retExpr.(ast.ExprNode))
+		aliasFieldIdx = append(aliasFieldIdx, resolver.selectFieldIdx)
 	}
-	return exprs, nil
+	return exprs, aliasFieldIdx, nil
 }
 
 func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, items []ast.ExprNode) (base.LogicalPlan, []expression.Expression, bool, error) {
@@ -4112,6 +4130,44 @@ func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, g
 		p = np
 	}
 	return p, exprs, gby.Rollup, nil
+}
+
+// materializeMutableGbyAliases makes a mutable SELECT expression referenced by a top-level
+// GROUP BY alias a child column of the aggregation. The aggregation then groups by and preserves
+// the same evaluated value instead of letting the SELECT projection evaluate the expression again.
+func (b *PlanBuilder) materializeMutableGbyAliases(p base.LogicalPlan, gbyItems []expression.Expression, aliasFieldIdx []int) (base.LogicalPlan, []expression.Expression, map[int]*expression.Column) {
+	var proj *logicalop.LogicalProjection
+	var newGbyItems []expression.Expression
+	materializedCols := make(map[int]*expression.Column)
+	for i, fieldIdx := range aliasFieldIdx {
+		if fieldIdx < 0 || !expression.IsMutableEffectsExpr(gbyItems[i]) {
+			continue
+		}
+		if newGbyItems == nil {
+			newGbyItems = append([]expression.Expression(nil), gbyItems...)
+			proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(b.ctx, b.getSelectOffset())
+			proj.SetSchema(p.Schema().Clone())
+			proj.SetOutputNames(append(types.NameSlice(nil), p.OutputNames()...))
+			proj.SetChildren(p)
+		}
+		if col, ok := materializedCols[fieldIdx]; ok {
+			newGbyItems[i] = col
+			continue
+		}
+		col := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  gbyItems[i].GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+		proj.Exprs = append(proj.Exprs, gbyItems[i])
+		proj.Schema().Append(col)
+		proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
+		newGbyItems[i] = col
+		materializedCols[fieldIdx] = col
+	}
+	if proj == nil {
+		return p, gbyItems, nil
+	}
+	return proj, newGbyItems, materializedCols
 }
 
 func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField, err error) {
@@ -4328,6 +4384,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		windowAggMap                  map[*ast.AggregateFuncExpr]int
 		correlatedAggMap              map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
+		gbyAliasFieldIdx              []int
+		mutableGbyAliasCols           map[int]*expression.Column
 		projExprs                     []expression.Expression
 		rollup                        bool
 	)
@@ -4396,7 +4454,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	var gbyExprs []ast.ExprNode
 	if sel.GroupBy != nil {
-		gbyExprs, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
+		gbyExprs, gbyAliasFieldIdx, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
@@ -4544,6 +4602,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			p, gbyCols, mutableGbyAliasCols = b.materializeMutableGbyAliases(p, gbyCols, gbyAliasFieldIdx)
 		}
 		var aggIndexMap map[int]int
 		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
@@ -4558,7 +4618,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
+	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil, mutableGbyAliasCols)
 	if err != nil {
 		return nil, err
 	}
@@ -4596,7 +4656,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// In such case plan `p` is not changed, so we don't have to build another projection.
 		if hasWindowFuncField {
 			// Now we build the window function fields.
-			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false, nil)
 			if err != nil {
 				return nil, err
 			}
