@@ -827,3 +827,136 @@ func (b *builtinDurationIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 	}
 	return nil
 }
+
+func (*builtinIntIsNotNullSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinIntIsNotNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+	for i := range i64s {
+		if result.IsNull(i) {
+			i64s[i] = 0
+			result.SetNull(i, false)
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}
+
+func (*builtinRealIsNotNullSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRealIsNotNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	for i := range numRows {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}
+
+func (*builtinDecimalIsNotNullSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinDecimalIsNotNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	for i := range numRows {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}
+
+func (*builtinTimeIsNotNullSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTimeIsNotNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	for i := range numRows {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}
+
+func (*builtinDurationIsNotNullSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinDurationIsNotNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	if err := b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	for i := range numRows {
+		if buf.IsNull(i) {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}

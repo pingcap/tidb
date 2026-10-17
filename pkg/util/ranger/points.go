@@ -927,6 +927,11 @@ func (r *builder) buildFromNot(
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
 		return []*point{startPoint, endPoint}
+	case ast.IsNotNull:
+		// not(isnotnull(x)) is isnull(x), which only matches the null point.
+		startPoint := &point{start: true}
+		endPoint := &point{}
+		return []*point{startPoint, endPoint}
 	}
 	// TODO: currently we don't handle ast.LogicAnd, ast.LogicOr, ast.GT, ast.LT and so on. Most of those cases are eliminated
 	// by PushDownNot but they may happen. For now, we return full range for those unhandled cases in order to keep correctness.
@@ -969,6 +974,11 @@ func (r *builder) buildFromScalarFunc(
 	case ast.IsNull:
 		startPoint := &point{start: true}
 		endPoint := &point{}
+		return []*point{startPoint, endPoint}
+	case ast.IsNotNull:
+		// The same range the `not(isnull(x))` form produces through buildFromNot.
+		startPoint := &point{value: types.MinNotNullDatum(), start: true}
+		endPoint := &point{value: types.MaxValueDatum()}
 		return []*point{startPoint, endPoint}
 	case ast.UnaryNot:
 		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction), newTp, prefixLen, convertToSortKey)

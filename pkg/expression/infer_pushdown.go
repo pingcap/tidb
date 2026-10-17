@@ -91,6 +91,13 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 		ret = scalarExprSupportedByTiDB(ctx, sf) || scalarExprSupportedByTiKV(ctx, sf) || scalarExprSupportedByFlash(ctx, sf)
 	}
 
+	if ret && sf.FuncName.L == ast.IsNotNull {
+		// `isnotnull` has no coprocessor signature of its own, it is serialized as
+		// `not(isnull(x))`. Blacklisting either underlying function must therefore also
+		// stop `IS NOT NULL` from being pushed down.
+		ret = IsPushDownEnabled(ast.IsNull, storeType) && IsPushDownEnabled(ast.UnaryNot, storeType)
+	}
+
 	if ret {
 		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
 		if len(*defaultExprPushDownBlacklistMap) == 0 {
@@ -110,6 +117,13 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 
 func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
+	if pbCode <= tipb.ScalarFuncSig_Unspecified && scalarFunc.FuncName.L == ast.IsNotNull {
+		// `isnotnull` is pushed down decomposed into `not(isnull(x))`, so its pushability
+		// is decided by the paired ISNULL signature. See PbConverter.isNotNullToPBExpr.
+		if sig, ok := isNullPbSigOfIsNotNull(scalarFunc); ok {
+			pbCode = sig
+		}
+	}
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(ctx.EvalCtx(), scalarFunc, storeType) {
 		if unspecified {
@@ -177,6 +191,30 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 	return false
 }
 
+// isNullPbSigOfIsNotNull returns the coprocessor ISNULL signature paired with the given
+// `isnotnull` ScalarFunction. TiKV/TiFlash have no native ISNOTNULL signature yet
+// (https://github.com/pingcap/tidb/issues/9965), so `isnotnull(x)` travels the wire as
+// `not(isnull(x))` and borrows the pushability of that pair.
+func isNullPbSigOfIsNotNull(sf *ScalarFunction) (tipb.ScalarFuncSig, bool) {
+	switch sf.Function.(type) {
+	case *builtinIntIsNotNullSig:
+		return tipb.ScalarFuncSig_IntIsNull, true
+	case *builtinRealIsNotNullSig:
+		return tipb.ScalarFuncSig_RealIsNull, true
+	case *builtinDecimalIsNotNullSig:
+		return tipb.ScalarFuncSig_DecimalIsNull, true
+	case *builtinTimeIsNotNullSig:
+		return tipb.ScalarFuncSig_TimeIsNull, true
+	case *builtinDurationIsNotNullSig:
+		return tipb.ScalarFuncSig_DurationIsNull, true
+	case *builtinStringIsNotNullSig:
+		return tipb.ScalarFuncSig_StringIsNull, true
+	case *builtinVectorFloat32IsNotNullSig:
+		return tipb.ScalarFuncSig_VectorFloat32IsNull, true
+	}
+	return tipb.ScalarFuncSig_Unspecified, false
+}
+
 func scalarExprSupportedByTiDB(ctx EvalContext, function *ScalarFunction) bool {
 	// TiDB can support all functions, but TiPB may not include some functions.
 	return scalarExprSupportedByTiKV(ctx, function) || scalarExprSupportedByFlash(ctx, function)
@@ -190,7 +228,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot, ast.And, ast.Or, ast.Xor, ast.BitNeg, ast.LeftShift, ast.RightShift, ast.UnaryMinus,
 
 		// compare functions.
-		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
+		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.IsNotNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
 		// ast.Greatest, ast.Least, ast.Interval
 
 		// arithmetical functions.
@@ -300,7 +338,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		}
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.NullEQ, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Ilike, ast.Strcmp,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.NullEQ, ast.LT, ast.GT, ast.In, ast.IsNull, ast.IsNotNull, ast.Like, ast.Ilike, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
