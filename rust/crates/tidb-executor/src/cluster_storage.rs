@@ -129,6 +129,19 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError>;
 
+    /// [`scan`](Self::scan) over the committed snapshot alone: Go's
+    /// `GetSnapshot(startTS).Iter`, which has no membuffer. A snapshot that
+    /// overlays its transaction's staged writes (a read-your-own-writes view)
+    /// overrides this to skip the overlay; `TABLESAMPLE` reads through it.
+    fn scan_committed(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.scan(start, end, limit)
+    }
+
     /// The timestamp every read of this snapshot is served at.
     ///
     /// A remote scan has to name it: a coprocessor request that read at any
@@ -929,6 +942,15 @@ impl ClusterSnapshot for SwappableSnapshot {
         self.snapshot()?.scan(start, end, limit)
     }
 
+    fn scan_committed(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot()?.scan_committed(start, end, limit)
+    }
+
     fn start_ts(&self) -> u64 {
         self.bound
             .as_ref()
@@ -1246,7 +1268,7 @@ impl TableStorage for ClusterTableStorage {
         self.snapshot
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .scan(start, upper_bound, Some(1))
+            .scan_committed(start, upper_bound, Some(1))
             .map(|pairs| {
                 pairs
                     .into_iter()

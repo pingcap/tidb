@@ -40,6 +40,9 @@ pub struct ClientTransaction<C, L, T> {
     snapshot_stats: Arc<tikv_client::SnapshotRuntimeStats>,
     read_ts: u64,
     snapshot_read_options: Option<crate::SnapshotReadOptions>,
+    /// Shared with the committed-snapshot view of
+    /// [`Self::snapshot_scan_committed_at`].
+    lock_resolver_context: tikv_client::transaction::ResolveLocksContext,
     collect_snapshot_stats: bool,
     commit_mode: Arc<std::sync::Mutex<Option<CommittedProtocol>>>,
     schema_error: Arc<std::sync::Mutex<Option<super::SchemaLeaseError>>>,
@@ -141,7 +144,7 @@ where
             options,
             tikv_client::request::Keyspace::Disable,
         );
-        transaction.set_lock_resolver_context(lock_resolver_context);
+        transaction.set_lock_resolver_context(lock_resolver_context.clone());
         let snapshot_stats = Arc::new(tikv_client::SnapshotRuntimeStats::default());
         transaction.set_snapshot_runtime_stats(Some(snapshot_stats.clone()));
         let commit_mode = Arc::new(std::sync::Mutex::new(None));
@@ -175,6 +178,7 @@ where
             snapshot_stats,
             read_ts: start_ts,
             snapshot_read_options: None,
+            lock_resolver_context,
             collect_snapshot_stats: false,
             commit_mode,
             schema_error: Default::default(),
@@ -274,6 +278,14 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         if self.snapshot_read_options.as_ref() == Some(options) {
             return;
         }
+        Self::apply_snapshot_read_options(self.engine.transaction_mut().inner_mut(), options);
+        self.snapshot_read_options = Some(options.clone());
+    }
+
+    fn apply_snapshot_read_options(
+        transaction: &mut tikv_client::Transaction<ClientPd>,
+        options: &crate::SnapshotReadOptions,
+    ) {
         use tikv_client::{ReplicaReadAdjustment, ReplicaReadSelectorOption, ReplicaReadType};
         let mode = match options.replica_read.raw() {
             1 => ReplicaReadType::Follower,
@@ -282,7 +294,6 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             6 => ReplicaReadType::PreferLeader,
             _ => ReplicaReadType::Leader,
         };
-        let transaction = self.engine.transaction_mut().inner_mut();
         // set_replica_read replaces the entire native replica configuration,
         // clearing the previous statement's labels and stale flag first.
         transaction.set_replica_read(mode);
@@ -331,7 +342,6 @@ impl<C, L, T> ClientTransaction<C, L, T> {
                 ReplicaReadAdjustment::new(None, ReplicaReadType::Leader)
             }
         }));
-        self.snapshot_read_options = Some(options.clone());
     }
 
     fn prepare_read(&mut self, read_ts: u64, call: &UnaryCallContext) {
@@ -464,6 +474,65 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         );
         let values = self
             .engine
+            .transaction_mut()
+            .scan(
+                range,
+                limit.unwrap_or(u32::MAX as usize).min(u32::MAX as usize) as u32,
+            )
+            .map_err(Self::client_read_error)?
+            .map(|pair| (Vec::from(pair.0), pair.1))
+            .collect();
+        if self.client.take_read_trace().rpc_count > 0 {
+            self.gc_state
+                .check_visibility(read_ts)
+                .map_err(OptimisticCoordinatorError::Visibility)?;
+        }
+        Ok(values)
+    }
+    /// Go `KVTxn.GetSnapshot().Iter`: scans the committed snapshot at
+    /// `read_ts` WITHOUT this transaction's staged writes. The native
+    /// `Transaction::scan` always merges its buffer, so the committed view is
+    /// a read-only native transaction over the same client at that timestamp.
+    pub fn snapshot_scan_committed_at(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: Option<usize>,
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+        let scan_call = UnaryCallContext::with_optional_deadline(None, call.cancellation().clone())
+            .with_kv_exec_counter(
+                self.snapshot_read_options
+                    .as_ref()
+                    .map(|o| o.kv_exec_counter.clone()),
+            );
+        self.client.set_call(&scan_call);
+        self.client.take_read_trace();
+        let mut transaction = tikv_client::Transaction::new(
+            Timestamp::from_version(read_ts),
+            self.client.clone(),
+            TransactionOptions::new_optimistic()
+                .drop_check(tikv_client::CheckLevel::Warn)
+                .read_only(),
+            tikv_client::request::Keyspace::Disable,
+        );
+        transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
+        if let Some(options) = &self.snapshot_read_options {
+            Self::apply_snapshot_read_options(&mut transaction, options);
+        }
+        use std::ops::Bound::{Excluded, Included, Unbounded};
+        let range = (
+            Included(start.to_vec()),
+            if end.is_empty() {
+                Unbounded
+            } else {
+                Excluded(end.to_vec())
+            },
+        );
+        let mut committed =
+            TikvTransactionDriver::new_read_only(transaction, client_bridge::runtime());
+        let values = committed
             .transaction_mut()
             .scan(
                 range,

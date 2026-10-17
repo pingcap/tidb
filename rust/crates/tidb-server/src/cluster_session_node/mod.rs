@@ -6345,6 +6345,8 @@ impl ClusterServerSession {
         self.statistics_loading.attach(&mut built.catalog);
         let shared = self.session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+        // The region map is store metadata the schema rebuild does not own.
+        built.catalog.set_store_regions(catalog.store_regions());
         *catalog = built.catalog;
         drop(catalog);
         self.schema_version = loaded.schema_version;

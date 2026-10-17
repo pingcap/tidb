@@ -2865,6 +2865,19 @@ impl Session {
         }
         self.finish_submitted_ddl_jobs(sql, execution.is_ok());
         let mut execution = execution?;
+        // Go runs a statement without a result set through
+        // `handleNoDelayExecutor`, whose `TryNewCacheChunk` draws from the
+        // session's reusable allocator and so marks `useChunkAlloc` -- the
+        // value `@@last_sql_use_alloc` reports for the next statement.
+        if matches!(
+            execution,
+            PendingExecution::Complete(StmtOutput::Affected(_) | StmtOutput::Done(_))
+        ) {
+            self.use_chunk_alloc = self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        }
         if was_autocommit_statement && !self.in_transaction() {
             match &mut execution {
                 PendingExecution::Query(query) => {

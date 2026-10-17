@@ -460,6 +460,12 @@ fn last_sql_use_alloc_follows_the_readers_column_widths() {
     session
         .run("insert into t1 (id1,id2) values (1,1), (2,2), (3,3)")
         .unwrap();
+    // A statement without a result set still draws its chunk from the
+    // allocator (`handleNoDelayExecutor`), so an INSERT counts as a use.
+    assert_eq!(
+        rows(&mut session, "select @@last_sql_use_alloc"),
+        vec![vec!["1"]]
+    );
     for (sql, used) in [
         ("select id1 from t1 where id2 > '1'", "1"),
         ("select id1, id3 from t1 where id2 > '1'", "0"),

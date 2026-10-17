@@ -114,6 +114,10 @@ pub fn cluster_session_catalog(
 pub struct KvTableTemplates {
     schema_version: i64,
     tables: std::collections::HashMap<(String, String), KvTable>,
+    /// The node's region boundaries (see `Catalog::set_store_regions`): they
+    /// belong to the node, so they survive the schema-version change that
+    /// empties `tables`.
+    regions: std::sync::Arc<std::sync::RwLock<tidb_executor::region_map::RegionMap>>,
 }
 
 impl KvTableTemplates {
@@ -152,6 +156,9 @@ pub fn cluster_session_catalog_with_templates(
     // Go's label rules live in the node's `InfoSyncer`, not in the schema:
     // `information_schema.attributes` reads the node's manager.
     catalog.set_label_rule_manager(tidb_executor::label_manager::label_rule_manager());
+    if let Some(templates) = kv_templates.as_deref() {
+        catalog.set_store_regions(std::sync::Arc::clone(&templates.regions));
+    }
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.

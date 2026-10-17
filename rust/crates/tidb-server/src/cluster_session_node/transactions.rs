@@ -841,6 +841,15 @@ impl ClusterSnapshot for DeferredSnapshot {
         self.with_open(|snapshot| snapshot.scan(start, end, limit))
     }
 
+    fn scan_committed(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.with_open(|snapshot| snapshot.scan_committed(start, end, limit))
+    }
+
     fn start_ts(&self) -> u64 {
         // A remote pushdown scan names the timestamp before issuing its
         // request, so asking IS the statement's first read: opening here is

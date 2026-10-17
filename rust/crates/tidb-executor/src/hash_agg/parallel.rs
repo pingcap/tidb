@@ -730,12 +730,25 @@ fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), Exec
             count,
             sum,
             variance,
+            distinct,
             ..
         } => {
             writer.u8(12);
             writer.i64(*count);
             writer.f64(*sum);
             writer.f64(*variance);
+            match distinct {
+                Some(distinct) => {
+                    writer.u8(1);
+                    writer.u32(u32::try_from(distinct.values.len()).map_err(|_| {
+                        ExecError::SpillFailed("too many DISTINCT variance spill values".to_owned())
+                    })?);
+                    for value in &distinct.values {
+                        writer.f64(*value);
+                    }
+                }
+                None => writer.u8(0),
+            }
         }
         Partial::JsonArrayAgg(values, _) => {
             writer.u8(13);
@@ -922,6 +935,15 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
             variance: reader.f64()?,
             sample: *sample,
             sqrt: *sqrt,
+            distinct: if reader.u8()? == 1 {
+                let mut distinct = super::DistinctVariance::default();
+                for _ in 0..reader.u32()? {
+                    distinct.insert(reader.f64()?);
+                }
+                Some(Box::new(distinct))
+            } else {
+                None
+            },
         },
         (AggKind::JsonArrayAgg { value_type }, 13) => {
             let mut values = Vec::with_capacity(reader.u32()? as usize);

@@ -1426,6 +1426,24 @@ impl Catalog {
             .split(keys)
     }
 
+    /// This catalog's region map, for the catalog that replaces it to adopt
+    /// through [`Self::set_store_regions`].
+    #[must_use]
+    pub fn store_regions(&self) -> Arc<std::sync::RwLock<crate::region_map::RegionMap>> {
+        Arc::clone(&self.regions)
+    }
+
+    /// Hands this catalog the node's region map. The map is store metadata,
+    /// not schema, so a node that rebuilds its catalog from the stored schema
+    /// (every DDL does) must carry the splits `SPLIT TABLE` made across the
+    /// rebuild, as it carries the label-rule manager.
+    pub fn set_store_regions(
+        &mut self,
+        regions: Arc<std::sync::RwLock<crate::region_map::RegionMap>>,
+    ) {
+        self.regions = regions;
+    }
+
     /// The regions overlapping `[start, end)`, clipped to it.
     #[must_use]
     pub fn region_ranges_in(&self, start: &[u8], end: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {

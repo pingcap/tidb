@@ -15369,6 +15369,106 @@ fn analyze_skips_json_bases_of_stored_generated_index_columns() {
     assert_eq!(analyzed, ["a", "b"]);
 }
 
+/// Go's DISTINCT variance family keeps the distinct values and computes the
+/// variance in two passes (`calculateDistinctFloat64Variance`); the plain
+/// aggregate folds incrementally. The two round differently, and Rust fed the
+/// distinct values through the incremental fold (`0.25` for Go's
+/// `0.24999999999999956`).
+#[test]
+fn distinct_variance_is_computed_in_two_passes_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1101)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tv (a TINYINT, b SMALLINT, f FLOAT, g DOUBLE)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO tv VALUES (1, 2, 6.1, 7.2), (1, 3, 7.1, 8.2), (1, 2, 6.1, 7.2)")
+        .unwrap();
+    // Expected: Go 1.27 on this branch (`TestZZ` probe). The plain
+    // `var_pop` is left out: arm64 Go fuses its multiply-subtract (FMA) and
+    // prints a different last digit than amd64 Go and this port.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT var_pop(DISTINCT b), var_pop(DISTINCT g), var_pop(DISTINCT f), \
+             var_samp(DISTINCT g), stddev_pop(DISTINCT g) FROM tv GROUP BY a",
+        )),
+        [[
+            "0.25",
+            "0.24999999999999956",
+            "0.25",
+            "0.4999999999999991",
+            "0.49999999999999956"
+        ]]
+    );
+}
+
+/// Go's `TableSampleExec` samples `GetSnapshot(TxnCtx.StartTS)`: the open
+/// transaction's own pending writes are invisible to `TABLESAMPLE REGIONS`
+/// (`TestTableSampleUnionScanIgnorePendingKV`).
+#[test]
+fn table_sample_ignores_the_transactions_pending_writes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1102)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("SET @@global.tidb_scatter_region = 'table'")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE tsp (a INT PRIMARY KEY)")
+        .unwrap();
+    rows(
+        &mut session,
+        "SPLIT TABLE tsp BETWEEN (0) AND (40000) REGIONS 4",
+    );
+    session
+        .execute_write("INSERT INTO tsp VALUES (1), (1000), (10002)")
+        .unwrap();
+    let sampled = |session: &mut ClusterServerSession| -> Vec<String> {
+        displayed(rows(session, "SELECT * FROM tsp TABLESAMPLE REGIONS()"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect()
+    };
+    assert_eq!(sampled(&mut session), ["1", "10002"]);
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO tsp VALUES (20006), (50000)")
+        .unwrap();
+    assert_eq!(sampled(&mut session), ["1", "10002"]);
+    session
+        .execute_write("DELETE FROM tsp WHERE a = 1")
+        .unwrap();
+    assert_eq!(sampled(&mut session), ["1", "10002"]);
+    session.control_transaction("COMMIT").unwrap();
+    assert_eq!(sampled(&mut session), ["1000", "10002", "20006", "50000"]);
+    // The splits are store metadata: a DDL rebuilds the catalog from the
+    // stored schema (`TestTableSampleNotSupportedPlanWarning`) and must not
+    // forget them.
+    session
+        .execute_write("CREATE TABLE tsr (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    rows(
+        &mut session,
+        "SPLIT TABLE tsr BETWEEN (0) AND (10000) REGIONS 5",
+    );
+    session
+        .execute_write("INSERT INTO tsr VALUES (1000, 1), (1001, 1), (2100, 2), (4500, 3)")
+        .unwrap();
+    session
+        .execute_write("CREATE INDEX idx_0 ON tsr (b)")
+        .unwrap();
+    let rows_after_ddl: Vec<String> = displayed(rows(
+        &mut session,
+        "SELECT a FROM tsr TABLESAMPLE REGIONS() ORDER BY a",
+    ))
+    .into_iter()
+    .map(|row| row[0].clone())
+    .collect();
+    assert_eq!(rows_after_ddl, ["1000", "2100", "4500"]);
+}
+
 /// Go's `canPushToIndexPlan` refuses a TopN over a column the index holds only
 /// a prefix of (`IsPrefix`), so the TopN sits on the TABLE side of the lookup
 /// and orders by the full value.

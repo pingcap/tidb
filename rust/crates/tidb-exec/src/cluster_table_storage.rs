@@ -1395,6 +1395,15 @@ impl ClusterSnapshot for MutationOverlaySnapshot {
         Ok(rows.into_iter().take(limit.unwrap_or(usize::MAX)).collect())
     }
 
+    fn scan_committed(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot.scan_committed(start, end, limit)
+    }
+
     fn start_ts(&self) -> u64 {
         self.snapshot.start_ts()
     }
@@ -1810,6 +1819,37 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
             SessionTransactionState::Pessimistic { transaction, .. } => transaction
                 .snapshot()
                 .snapshot_scan_at(start.as_bytes(), end.as_bytes(), limit, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::Finished => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+        }
+    }
+
+    fn scan_committed(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.set_snapshot_read_options(&self.read_options);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::PessimisticPending { transaction, .. } => transaction
+                .snapshot_scan_committed_at(start.as_bytes(), end.as_bytes(), limit, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::Pessimistic { transaction, .. } => transaction
+                .snapshot()
+                .snapshot_scan_committed_at(start.as_bytes(), end.as_bytes(), limit, read_ts, &call)
                 .map_err(classify),
             SessionTransactionState::Finished => Err(StorageError::Backend(
                 "the transaction is already finished".to_owned(),

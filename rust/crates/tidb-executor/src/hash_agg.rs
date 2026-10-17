@@ -552,6 +552,10 @@ enum Partial {
         variance: f64,
         sample: bool,
         sqrt: bool,
+        /// A DISTINCT aggregate: Go's `partialResult4VarPopDistinctFloat64`
+        /// keeps the distinct values and computes the variance in two passes
+        /// at the end instead of folding incrementally.
+        distinct: Option<Box<DistinctVariance>>,
     },
     /// `JSON_ARRAYAGG`: the converted values in arrival order, plus the
     /// value argument's field type for `Opaque` type-code tagging.
@@ -583,6 +587,45 @@ enum Partial {
 /// value set encodes under the same collator). It is not the column's
 /// collation: a computed argument such as `UPPER(s)` derives its own, which
 /// is why the aggregate cannot re-read the datum and has to be told.
+/// Go `calculateDistinctFloat64Variance`'s input: the distinct values of one
+/// group (`set.Float64SetWithMemoryUsage`, equal by value, so `-0` and `0`
+/// are one) in arrival order.
+#[derive(Default)]
+struct DistinctVariance {
+    values: Vec<f64>,
+    seen: std::collections::HashSet<u64>,
+}
+
+impl DistinctVariance {
+    fn insert(&mut self, value: f64) {
+        // `-0.0 == 0.0` in Go's float64 map key.
+        let bits = if value == 0.0 { 0 } else { value.to_bits() };
+        if self.seen.insert(bits) {
+            self.values.push(value);
+        }
+    }
+
+    /// Go `calculateDistinctFloat64Variance`: the count and the sum of the
+    /// squared deviations from the mean, in two passes.
+    fn two_pass(&self) -> (i64, f64) {
+        let count = self.values.len() as i64;
+        if count == 0 {
+            return (0, 0.0);
+        }
+        let mut sum = 0.0;
+        for value in &self.values {
+            sum += value;
+        }
+        let mean = sum / count as f64;
+        let mut variance = 0.0;
+        for value in &self.values {
+            let diff = value - mean;
+            variance += diff * diff;
+        }
+        (count, variance)
+    }
+}
+
 struct AggState {
     partial: Partial,
     /// Boxed: only a DISTINCT aggregate owns a set, and every other state
@@ -1666,7 +1709,13 @@ impl Partial {
                 Int64SetWithMemoryUsage::new(std::iter::empty::<i64>()).0,
             );
         }
-        Partial::new(&func.kind)
+        let mut partial = Partial::new(&func.kind);
+        if func.distinct {
+            if let Partial::Variance { distinct, .. } = &mut partial {
+                *distinct = Some(Box::default());
+            }
+        }
+        partial
     }
 
     fn new(kind: &AggKind) -> Partial {
@@ -1718,6 +1767,7 @@ impl Partial {
                 variance: 0.0,
                 sample: *sample,
                 sqrt: *sqrt,
+                distinct: None,
             },
             AggKind::JsonArrayAgg { value_type } => {
                 Partial::JsonArrayAgg(Vec::new(), Box::new(value_type.clone()))
@@ -2274,6 +2324,7 @@ impl Partial {
                     count,
                     sum,
                     variance,
+                    distinct,
                     ..
                 },
                 Some(input),
@@ -2287,6 +2338,10 @@ impl Partial {
                         ExecError::unsupported("the variance/stddev family over this datum kind")
                     })?
                     .value;
+                if let Some(distinct) = distinct {
+                    distinct.insert(value);
+                    return Ok(());
+                }
                 *count += 1;
                 *sum += value;
                 if *count > 1 {
@@ -2537,8 +2592,14 @@ impl Partial {
                 variance,
                 sample,
                 sqrt,
+                distinct,
                 ..
             } => {
+                let (count, variance) = match distinct {
+                    Some(distinct) => distinct.two_pass(),
+                    None => (*count, *variance),
+                };
+                let (count, variance) = (&count, &variance);
                 let divisor = if *sample { *count - 1 } else { *count };
                 if divisor <= 0 {
                     Datum::Null
