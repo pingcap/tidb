@@ -2846,6 +2846,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
+		isMultiTable:              v.IsMultiTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
