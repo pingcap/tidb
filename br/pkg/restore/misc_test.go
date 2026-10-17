@@ -17,6 +17,8 @@ package restore_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"slices"
@@ -24,6 +26,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -42,6 +45,101 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/opt"
 )
+
+const (
+	blocklistFixtureRestoreCommitTs = 100
+	blocklistFixtureRangeTs         = 50
+	blocklistFixtureRewriteTs       = 30
+)
+
+// blocklistWireFixture is a test-only wire schema. Keep its protobuf field
+// numbers independent from restore.LogRestoreTableIDsBlocklistFile so that the
+// compatibility tests fail if the production schema accidentally changes.
+type blocklistWireFixture struct {
+	RestoreCommitTs  uint64  `protobuf:"varint,1,opt,name=restore_commit_ts,proto3"`
+	SnapshotBackupTs uint64  `protobuf:"varint,2,opt,name=snapshot_backup_ts,proto3"`
+	TableIds         []int64 `protobuf:"varint,3,rep,packed,name=table_ids,proto3"`
+	Checksum         []byte  `protobuf:"bytes,4,opt,name=checksum,proto3"`
+	DbIds            []int64 `protobuf:"varint,5,rep,packed,name=db_ids,proto3"`
+	RewriteTs        uint64  `protobuf:"varint,6,opt,name=rewrite_ts,proto3"`
+	RestoreStartTs   uint64  `protobuf:"varint,7,opt,name=restore_start_ts,proto3"`
+}
+
+func (m *blocklistWireFixture) Reset()         { *m = blocklistWireFixture{} }
+func (m *blocklistWireFixture) String() string { return proto.CompactTextString(m) }
+func (*blocklistWireFixture) ProtoMessage()    {}
+
+func blocklistFixtureChecksum(
+	restoreCommitTs, rangeTs, rewriteTs uint64,
+	tableIds, dbIds []int64,
+) []byte {
+	hasher := sha256.New()
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, restoreCommitTs))
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, rangeTs))
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, rewriteTs))
+	for _, tableId := range tableIds {
+		hasher.Write(binary.LittleEndian.AppendUint64(nil, uint64(tableId)))
+	}
+	for _, dbId := range dbIds {
+		hasher.Write(binary.LittleEndian.AppendUint64(nil, uint64(dbId)))
+	}
+	return hasher.Sum(nil)
+}
+
+func marshalBlocklistFixture(t *testing.T, legacy bool) (string, []byte) {
+	t.Helper()
+	tableIds := []int64{1, 2, 3}
+	dbIds := []int64{10}
+	fixture := &blocklistWireFixture{
+		RestoreCommitTs: blocklistFixtureRestoreCommitTs,
+		RewriteTs:       blocklistFixtureRewriteTs,
+		TableIds:        tableIds,
+		DbIds:           dbIds,
+	}
+	if legacy {
+		// This is the schema written before #64465: SnapshotBackupTs is field 2.
+		fixture.SnapshotBackupTs = blocklistFixtureRangeTs
+	} else {
+		// This is the current schema: RestoreStartTs is field 7.
+		fixture.RestoreStartTs = blocklistFixtureRangeTs
+	}
+	fixture.Checksum = blocklistFixtureChecksum(
+		fixture.RestoreCommitTs,
+		blocklistFixtureRangeTs,
+		fixture.RewriteTs,
+		fixture.TableIds,
+		fixture.DbIds,
+	)
+	data, err := proto.Marshal(fixture)
+	require.NoError(t, err)
+	filename := fmt.Sprintf(
+		"v1/log_restore_tables_blocklists/R%016X_S%016X.meta",
+		fixture.RestoreCommitTs,
+		blocklistFixtureRangeTs,
+	)
+	return filename, data
+}
+
+// legacyBlocklistFixture reproduces the blocklist writer at
+// 28f2f4b1bc6989bfc0212806fbbaa46b15b8a24e (the parent of #64465).
+func legacyBlocklistFixture(t *testing.T) (string, []byte) {
+	t.Helper()
+	return marshalBlocklistFixture(t, true)
+}
+
+// currentBlocklistFixture reproduces the blocklist writer at
+// cee586b7ac0577904c8073019644b8f8207a2d59 (the pre-fix master baseline).
+func currentBlocklistFixture(t *testing.T) (string, []byte) {
+	t.Helper()
+	return marshalBlocklistFixture(t, false)
+}
+
+func marshalBlocklistForTest(t *testing.T, blocklist *restore.LogRestoreTableIDsBlocklistFile) []byte {
+	t.Helper()
+	data, err := proto.Marshal(blocklist)
+	require.NoError(t, err)
+	return data
+}
 
 func TestTransferBoolToValue(t *testing.T) {
 	require.Equal(t, "ON", restore.TransferBoolToValue(true))
@@ -168,6 +266,9 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	base := t.TempDir()
 	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
+	legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
+	currentFixtureName, currentFixtureData := currentBlocklistFixture(t)
+	require.Equal(t, legacyFixtureName, currentFixtureName)
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, 0xFFFFFCCCFFFFF, []int64{1, 2, 3}, []int64{4})
 	require.NoError(t, err)
 	restoreCommitTs, restoreStartTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
@@ -185,6 +286,94 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	require.Equal(t, uint64(0xFFFFFCCCFFFFF), blocklist.RewriteTs)
 	require.Equal(t, []int64{1, 2, 3}, blocklist.TableIds)
 	require.Equal(t, []int64{4}, blocklist.DbIds)
+
+	t.Run("current writer remains byte compatible", func(t *testing.T) {
+		name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(
+			100, 50, 30, []int64{1, 2, 3}, []int64{10},
+		)
+		require.NoError(t, err)
+		require.Equal(t, currentFixtureName, name)
+		require.Equal(t, currentFixtureData, data)
+
+		blocklist, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(currentFixtureData)
+		require.NoError(t, err)
+		require.Zero(t, blocklist.SnapshotBackupTs)
+		require.Equal(t, uint64(50), blocklist.RestoreStartTs)
+	})
+
+	t.Run("legacy fixture", func(t *testing.T) {
+		blocklist, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(legacyFixtureData)
+		require.NoError(t, err)
+		require.Equal(t, uint64(100), blocklist.RestoreCommitTs)
+		require.Equal(t, uint64(50), blocklist.SnapshotBackupTs)
+		require.Zero(t, blocklist.RestoreStartTs)
+		require.Equal(t, uint64(30), blocklist.RewriteTs)
+		require.Equal(t, []int64{1, 2, 3}, blocklist.TableIds)
+		require.Equal(t, []int64{10}, blocklist.DbIds)
+	})
+
+	t.Run("wire-valid payload corruption", func(t *testing.T) {
+		fixtures := map[string][]byte{
+			"legacy":  legacyFixtureData,
+			"current": currentFixtureData,
+		}
+		for name, fixture := range fixtures {
+			t.Run(name, func(t *testing.T) {
+				blocklist := &restore.LogRestoreTableIDsBlocklistFile{}
+				require.NoError(t, proto.Unmarshal(fixture, blocklist))
+				blocklist.RewriteTs++
+				corruptedData := marshalBlocklistForTest(t, blocklist)
+
+				wireDecoded := &restore.LogRestoreTableIDsBlocklistFile{}
+				require.NoError(t, proto.Unmarshal(corruptedData, wireDecoded))
+				_, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(corruptedData)
+				require.ErrorContains(t, err, "checksum mismatch")
+			})
+		}
+	})
+
+	t.Run("wire-valid recorded checksum corruption", func(t *testing.T) {
+		blocklist := &restore.LogRestoreTableIDsBlocklistFile{}
+		require.NoError(t, proto.Unmarshal(legacyFixtureData, blocklist))
+		blocklist.Checksum[0] ^= 0xff
+		corruptedData := marshalBlocklistForTest(t, blocklist)
+
+		wireDecoded := &restore.LogRestoreTableIDsBlocklistFile{}
+		require.NoError(t, proto.Unmarshal(corruptedData, wireDecoded))
+		_, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(corruptedData)
+		require.ErrorContains(t, err, "checksum mismatch")
+	})
+
+	t.Run("both range fields are ambiguous", func(t *testing.T) {
+		testCases := map[string]struct {
+			fixture []byte
+			mutate  func(*restore.LogRestoreTableIDsBlocklistFile)
+		}{
+			"legacy checksum matches": {
+				fixture: legacyFixtureData,
+				mutate: func(blocklist *restore.LogRestoreTableIDsBlocklistFile) {
+					blocklist.RestoreStartTs = blocklist.SnapshotBackupTs + 1
+				},
+			},
+			"current checksum matches": {
+				fixture: currentFixtureData,
+				mutate: func(blocklist *restore.LogRestoreTableIDsBlocklistFile) {
+					blocklist.SnapshotBackupTs = blocklist.RestoreStartTs + 1
+				},
+			},
+		}
+		for name, testCase := range testCases {
+			t.Run(name, func(t *testing.T) {
+				blocklist := &restore.LogRestoreTableIDsBlocklistFile{}
+				require.NoError(t, proto.Unmarshal(testCase.fixture, blocklist))
+				testCase.mutate(blocklist)
+				_, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(
+					marshalBlocklistForTest(t, blocklist),
+				)
+				require.ErrorContains(t, err, "ambiguous")
+			})
+		}
+	})
 }
 
 func writeBlocklistFile(
@@ -195,6 +384,27 @@ func writeBlocklistFile(
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, name, data)
 	require.NoError(t, err)
+}
+
+func writeRawBlocklistFile(ctx context.Context, t *testing.T, s storeapi.Storage, filename string, data []byte) {
+	t.Helper()
+	require.NoError(t, s.WriteFile(ctx, filename, data))
+}
+
+func blocklistFileNames(ctx context.Context, t *testing.T, s storeapi.Storage) []string {
+	t.Helper()
+	filenames := make([]string, 0)
+	err := s.WalkDir(
+		ctx,
+		&storeapi.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix},
+		func(path string, _ int64) error {
+			filenames = append(filenames, path)
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	slices.Sort(filenames)
+	return filenames
 }
 
 func fakeTrackerID(tableIds []int64) *utils.PiTRIdTracker {
@@ -254,37 +464,108 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "table_100")
-}
 
-func filesCount(ctx context.Context, s storeapi.Storage) int {
-	count := 0
-	s.WalkDir(ctx, &storeapi.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
-		count += 1
-		return nil
+	t.Run("mixed legacy and current files use their own boundary", func(t *testing.T) {
+		base := t.TempDir()
+		stg, err := objstore.NewLocalStorage(base)
+		require.NoError(t, err)
+		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
+		writeRawBlocklistFile(
+			ctx,
+			t,
+			stg,
+			legacyFixtureName,
+			legacyFixtureData,
+		)
+		currentFilename, currentData, err := restore.MarshalLogRestoreTableIDsBlocklistFile(
+			200, 50, 60, []int64{4}, nil,
+		)
+		require.NoError(t, err)
+		writeRawBlocklistFile(ctx, t, stg, currentFilename, currentData)
+		require.Equal(t, []string{legacyFixtureName, currentFilename}, blocklistFileNames(ctx, t, stg))
+
+		err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+			ctx,
+			stg,
+			fakeTrackerID([]int64{1, 4}),
+			0,
+			50,
+			tableNameByTableId,
+			dbNameByDbId,
+			checkTableIDLost,
+			checkTableIDLost,
+			func(uint64) {},
+		)
+		require.ErrorContains(t, err, "table_4")
+		require.NotContains(t, err.Error(), "table_1")
 	})
-	return count
 }
 
 func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
-	base := t.TempDir()
-	stg, err := objstore.NewLocalStorage(base)
-	require.NoError(t, err)
-	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
-	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
-	writeBlocklistFile(ctx, t, stg, 300, 30, 70, []int64{300, 301, 302}, []int64{303})
 
-	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 50)
-	require.NoError(t, err)
-	require.Equal(t, 3, filesCount(ctx, stg))
+	t.Run("mixed legacy and current files", func(t *testing.T) {
+		base := t.TempDir()
+		stg, err := objstore.NewLocalStorage(base)
+		require.NoError(t, err)
+		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
+		writeRawBlocklistFile(
+			ctx,
+			t,
+			stg,
+			legacyFixtureName,
+			legacyFixtureData,
+		)
+		current200, data200, err := restore.MarshalLogRestoreTableIDsBlocklistFile(
+			200, 20, 60, []int64{200, 201, 202}, []int64{203},
+		)
+		require.NoError(t, err)
+		writeRawBlocklistFile(ctx, t, stg, current200, data200)
+		current300, data300, err := restore.MarshalLogRestoreTableIDsBlocklistFile(
+			300, 30, 70, []int64{300, 301, 302}, []int64{303},
+		)
+		require.NoError(t, err)
+		writeRawBlocklistFile(ctx, t, stg, current300, data300)
+		allFiles := []string{legacyFixtureName, current200, current300}
+		slices.Sort(allFiles)
 
-	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 250)
-	require.NoError(t, err)
-	require.Equal(t, 1, filesCount(ctx, stg))
+		err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 50)
+		require.NoError(t, err)
+		require.Equal(t, allFiles, blocklistFileNames(ctx, t, stg))
 
-	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 350)
-	require.NoError(t, err)
-	require.Equal(t, 0, filesCount(ctx, stg))
+		err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 100)
+		require.NoError(t, err)
+		require.Equal(t, []string{current200, current300}, blocklistFileNames(ctx, t, stg))
+
+		err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 250)
+		require.NoError(t, err)
+		require.Equal(t, []string{current300}, blocklistFileNames(ctx, t, stg))
+
+		err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 350)
+		require.NoError(t, err)
+		require.Empty(t, blocklistFileNames(ctx, t, stg))
+	})
+
+	t.Run("corrupted legacy file remains a hard error", func(t *testing.T) {
+		base := t.TempDir()
+		stg, err := objstore.NewLocalStorage(base)
+		require.NoError(t, err)
+		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
+		blocklist := &restore.LogRestoreTableIDsBlocklistFile{}
+		require.NoError(t, proto.Unmarshal(legacyFixtureData, blocklist))
+		blocklist.RewriteTs++
+		writeRawBlocklistFile(
+			ctx,
+			t,
+			stg,
+			legacyFixtureName,
+			marshalBlocklistForTest(t, blocklist),
+		)
+
+		err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 100)
+		require.ErrorContains(t, err, "checksum mismatch")
+		require.Equal(t, []string{legacyFixtureName}, blocklistFileNames(ctx, t, stg))
+	})
 }
 
 type fakeMetaClient struct {
@@ -574,6 +855,65 @@ func TestFilteringBoundaryConditions(t *testing.T) {
 		80, 49, // restoredTs == restoreStartTs - 1
 		tableNameByTableId, dbNameByDbId, checkIDLost, checkIDLost, cleanErr)
 	require.NoError(t, err, "should filter when restoredTs < restoreStartTs")
+
+	t.Run("legacy boundaries", func(t *testing.T) {
+		base := t.TempDir()
+		stg, err := objstore.NewLocalStorage(base)
+		require.NoError(t, err)
+		legacyFixtureName, legacyFixtureData := legacyBlocklistFixture(t)
+		writeRawBlocklistFile(
+			ctx,
+			t,
+			stg,
+			legacyFixtureName,
+			legacyFixtureData,
+		)
+		check := func(startTs, restoredTs uint64) error {
+			return restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+				ctx,
+				stg,
+				fakeTrackerID([]int64{1}),
+				startTs,
+				restoredTs,
+				tableNameByTableId,
+				dbNameByDbId,
+				checkIDLost,
+				checkIDLost,
+				cleanErr,
+			)
+		}
+
+		require.NoError(t, check(100, 51), "should filter legacy file when startTs == restoreCommitTs")
+		require.NoError(t, check(80, 49), "should filter legacy file when restoredTs < SnapshotBackupTs")
+		require.NoError(t, check(80, 50), "should filter legacy file when restoredTs == SnapshotBackupTs")
+		err = check(80, 51)
+		require.ErrorContains(t, err, "table_1")
+		require.ErrorContains(t, err, "legacy log restore blocklist")
+		require.ErrorContains(t, err, "snapshot backup at 50")
+		require.ErrorContains(t, err, "BackupTS >= 100")
+	})
+
+	t.Run("zero restore start ts remains current", func(t *testing.T) {
+		base := t.TempDir()
+		stg, err := objstore.NewLocalStorage(base)
+		require.NoError(t, err)
+		writeBlocklistFile(ctx, t, stg, 100, 0, 30, []int64{1}, nil)
+
+		err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+			ctx,
+			stg,
+			fakeTrackerID([]int64{1}),
+			80,
+			0,
+			tableNameByTableId,
+			dbNameByDbId,
+			checkIDLost,
+			checkIDLost,
+			cleanErr,
+		)
+		require.ErrorContains(t, err, "table_1")
+		require.NotContains(t, err.Error(), "legacy")
+	})
 }
 
 func TestBlocklistWithEmptyArrays(t *testing.T) {
