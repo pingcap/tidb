@@ -17,6 +17,7 @@ package syssession_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -30,6 +31,10 @@ import (
 
 func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 	_, do := testkit.CreateMockStoreAndDomain(t)
+	// Stop TTLJobManager to avoid unrelated job scheduling reusing the same domain session pool.
+	do.TTLJobManager().Stop()
+	require.NoError(t, do.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
 	p := do.AdvancedSysSessionPool()
 	require.NotNil(t, p)
 
