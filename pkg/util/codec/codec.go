@@ -618,6 +618,17 @@ func preAllocForSerializedKeyBuffer(
 
 				serializedKeyLens[j] += sizeByteNum + int(column.GetJSON(physicalRowindex).CalculateHashValueSize())
 			}
+		case mysql.TypeTiDBVectorFloat32:
+			sizeByteNum := 0
+			if serializeModes[i] == KeepVarColumnLength {
+				sizeByteNum = int(sizeUint32)
+			}
+			for j, physicalRowIndex := range usedRows {
+				if canSkip(physicalRowIndex) {
+					continue
+				}
+				serializedKeyLens[j] += sizeByteNum + column.GetVectorFloat32(physicalRowIndex).SerializedSize()
+			}
 		case mysql.TypeNull:
 			for _, physicalRowIndex := range usedRows {
 				canSkip(physicalRowIndex)
@@ -837,6 +848,29 @@ func serializeKeysImpl(
 					serializedKeys[logicalRowIndex] = append(serializedKeys[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)
 				}
 				serializedKeys[logicalRowIndex] = append(serializedKeys[logicalRowIndex], jsonHashBuffer...)
+			}
+		case mysql.TypeTiDBVectorFloat32:
+			for logicalRowIndex, physicalRowIndex := range usedRows {
+				if canSkip(physicalRowIndex) {
+					continue
+				}
+				vector := column.GetVectorFloat32(physicalRowIndex)
+				if serializeMode == KeepVarColumnLength {
+					size := uint32(vector.SerializedSize())
+					serializedKeys[logicalRowIndex] = append(serializedKeys[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint32)...)
+				}
+				key := serializedKeys[logicalRowIndex]
+				// Vector equality treats -0 and +0 alike. Normalize the copied
+				// float32 elements after the dimension header, without changing the chunk.
+				offset := len(key) + int(sizeUint32)
+				key = vector.SerializeTo(key)
+				for _, element := range vector.Elements() {
+					if element == 0 {
+						clear(key[offset : offset+int(sizeUint32)])
+					}
+					offset += int(sizeUint32)
+				}
+				serializedKeys[logicalRowIndex] = key
 			}
 		case mysql.TypeNull:
 			// TODO: NULL-safe equal joins need to serialize TypeNull as a valid join key.
