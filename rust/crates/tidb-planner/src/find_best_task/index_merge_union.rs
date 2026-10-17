@@ -482,6 +482,7 @@ pub(super) fn build_converged_union_index_merge_task(
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
                         db_name: ds.db_name.clone(),
+                        is_temporary: ds.is_temporary,
                         prop: None,
                         plan_part_info: None,
                         filter_condition: Vec::new(),
@@ -578,6 +579,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 table_scan_penalty: ds.table_scan_penalty,
                 tikv_pushdown: None,
                 db_name: ds.db_name.clone(),
+                is_temporary: ds.is_temporary,
                 prop: None,
                 plan_part_info: None,
                 filter_condition: Vec::new(),
@@ -727,6 +729,7 @@ fn push_index_partial(
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),
+        is_temporary: ds.is_temporary,
         // Go's partial scan keeps the data source's required property (the
         // default one for an unordered read) and the integer handle column.
         prop: Some(Box::new(crate::physical_property::PhysicalProperty::default())),

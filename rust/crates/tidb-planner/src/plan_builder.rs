@@ -3250,11 +3250,34 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         data_source.base.base.set_output_names(names);
         data_source.initialize_index_columns();
 
-        // boundary: `tableInfo.IsView()` / `IsSequence()` (`:5047`, `:5081`),
-        // `tableHasDirtyContent` and the `LogicalUnionScan` it wraps (`:5312`).
-        // Each needs a handle this crate does not hold; see the module
-        // boundaries.
-        Ok(LogicalPlan::DataSource(data_source))
+        // boundary: `tableInfo.IsView()` / `IsSequence()` (`:5047`, `:5081`)
+        // needs a handle this crate does not hold; see the module boundaries.
+
+        // `:5335` "dirty := tableHasDirtyContent(...)": a table the open
+        // transaction wrote, a local temporary table and a cached table are
+        // read through a `LogicalUnionScan`. A partitioned table is dirty when
+        // any partition is (Go checks each definition's id).
+        let table_ids: Vec<i64> = if table.partition_definition_ids.is_empty() {
+            vec![table.table_id]
+        } else {
+            table.partition_definition_ids.clone()
+        };
+        let dirty = self.source.table_has_dirty_content(&table_ids);
+        if !(dirty || table.is_local_temporary || table.is_cached) {
+            return Ok(LogicalPlan::DataSource(data_source));
+        }
+        let mut union_scan = crate::logical::LogicalUnionScan::new(
+            self.base(crate::logical::LogicalUnionScan::TYPE),
+            data_source.handle_cols.clone(),
+        );
+        union_scan
+            .base
+            .base
+            .set_schema(data_source.base.base.schema().cloned());
+        union_scan
+            .base
+            .set_children(vec![LogicalPlan::DataSource(data_source)]);
+        Ok(LogicalPlan::UnionScan(union_scan))
     }
 
     /// Go `setPreferredStoreType(ds, b.TableHints())`.

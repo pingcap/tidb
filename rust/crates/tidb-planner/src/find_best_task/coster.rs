@@ -228,7 +228,9 @@ impl Ver2Coster {
     fn child_can_provide_order_for_stream_agg(mut child: &PhysicalPlan) -> bool {
         loop {
             match child {
-                PhysicalPlan::Projection(_) | PhysicalPlan::Selection(_) => {
+                PhysicalPlan::Projection(_)
+                | PhysicalPlan::Selection(_)
+                | PhysicalPlan::UnionScan(_) => {
                     let [next] = child.children() else {
                         return false;
                     };
@@ -354,8 +356,12 @@ impl Ver2Coster {
                                 ),
                             penalty: scan.table_scan_penalty,
                         },
-                        self.factors
-                            .task_scan(false, scan.store_type, task_type, scan.desc),
+                        self.factors.task_scan(
+                            scan.is_temporary,
+                            scan.store_type,
+                            task_type,
+                            scan.desc,
+                        ),
                         &self.session_factors,
                     )
                 }
@@ -376,7 +382,7 @@ impl Ver2Coster {
                     )
                 },
                 self.factors.task_scan(
-                    false,
+                    scan.is_temporary,
                     crate::physical_table_reader::StoreType::TiKv,
                     task_type,
                     scan.desc,
@@ -420,7 +426,7 @@ impl Ver2Coster {
                             self.cost_option(),
                             child_rows,
                             Self::row_size(plan),
-                            self.factors.task_net(false, net_owner),
+                            self.factors.task_net(plan_is_temporary(plan), net_owner),
                         ),
                     ]),
                     self.session.distsql_scan_concurrency,
@@ -454,7 +460,8 @@ impl Ver2Coster {
                     self.cost_option(),
                     rows,
                     Self::row_size(plan),
-                    self.factors.task_net(false, NetOwner::TiFlashMpp),
+                    self.factors
+                        .task_net(plan_is_temporary(plan), NetOwner::TiFlashMpp),
                     is_broadcast,
                     &child_cost,
                 )
@@ -480,9 +487,10 @@ impl Ver2Coster {
                 }
                 let dist_concurrency = self.session.distsql_scan_concurrency;
                 let double_read_concurrency = self.session.index_lookup_concurrency;
-                let net_factor = self
-                    .factors
-                    .task_net(false, crate::plan_cost_ver2::NetOwner::TiDbToTiKv);
+                let net_factor = self.factors.task_net(
+                    plan_is_temporary(plan),
+                    crate::plan_cost_ver2::NetOwner::TiDbToTiKv,
+                );
 
                 let index_plan = reader.index_plan.as_deref();
                 let index_child = index_plan.map_or_else(
@@ -546,7 +554,7 @@ impl Ver2Coster {
                     crate::plan_cost_ver2::double_read_cost(
                         self.cost_option(),
                         double_read_tasks,
-                        self.factors.task_request(false),
+                        self.factors.task_request(plan_is_temporary(plan)),
                     ),
                 ]);
 
@@ -588,8 +596,10 @@ impl Ver2Coster {
                             self.cost_option(),
                             child_rows,
                             Self::row_size(plan),
-                            self.factors
-                                .task_net(false, crate::plan_cost_ver2::NetOwner::TiDbToTiKv),
+                            self.factors.task_net(
+                                plan_is_temporary(plan),
+                                crate::plan_cost_ver2::NetOwner::TiDbToTiKv,
+                            ),
                         ),
                     ]),
                     self.session.distsql_scan_concurrency,
@@ -1007,6 +1017,7 @@ impl Ver2Coster {
                 let cost = index_join_cost(
                     self.cost_option(),
                     IndexJoinInput {
+                        is_temporary: plan_is_temporary(plan),
                         build_rows: Self::rows(build),
                         build_row_size: Self::row_size(build),
                         probe_rows_one: Self::rows(probe),
@@ -1064,6 +1075,34 @@ fn number_of_ranges(plan: &PhysicalPlan) -> usize {
         PhysicalPlan::TableScan(scan) => scan.ranges.len(),
         PhysicalPlan::IndexScan(scan) => scan.ranges.len(),
         _ => plan.children().iter().map(number_of_ranges).sum(),
+    }
+}
+
+/// Go `getTableInfo(p)` + `isTemporaryTable`: whether the table a plan reads is
+/// a temporary table, found the way Go finds it -- through a reader's table
+/// side (an index reader's index side), an index merge's table side or first
+/// partial, a scan's own table, else the first child.
+fn plan_is_temporary(plan: &PhysicalPlan) -> bool {
+    match plan {
+        PhysicalPlan::TableReader(reader) => {
+            reader.table_plan.as_deref().is_some_and(plan_is_temporary)
+        }
+        PhysicalPlan::IndexReader(reader) => {
+            reader.index_plan.as_deref().is_some_and(plan_is_temporary)
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            reader.table_plan.as_deref().is_some_and(plan_is_temporary)
+        }
+        PhysicalPlan::IndexMergeReader(reader) => match reader.table_plan.as_deref() {
+            Some(table_plan) => plan_is_temporary(table_plan),
+            None => reader
+                .partial_plans_raw
+                .first()
+                .is_some_and(plan_is_temporary),
+        },
+        PhysicalPlan::TableScan(scan) => scan.is_temporary,
+        PhysicalPlan::IndexScan(scan) => scan.is_temporary,
+        other => other.children().first().is_some_and(plan_is_temporary),
     }
 }
 

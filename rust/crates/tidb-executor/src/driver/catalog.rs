@@ -475,9 +475,25 @@ pub(crate) struct PlannerCatalog {
     hypo_indexes: Option<Arc<crate::ddl::HypoIndexes>>,
     /// Go `SessionVars.HypoTiFlashReplicas`, present only for an `EXPLAIN`.
     hypo_tiflash_replicas: Option<Arc<crate::ddl::HypoTiFlashReplicas>>,
+    /// The table ids the open transaction has staged writes under, which Go
+    /// reads through `Context.HasDirtyContent` (`tableHasDirtyContent`).
+    dirty_tables: Vec<i64>,
 }
 
 impl PlannerCatalog {
+    /// The statement's transaction state: which tables it has already
+    /// written, so the planner reads them through a `UnionScan`.
+    ///
+    /// Go's `HasDirtyContent` reads the transaction's membuffer, so only a
+    /// statement inside an open transaction can see a table as dirty; an
+    /// autocommit statement starts from a clean one.
+    pub(crate) fn with_dirty_tables(mut self, ctx: &crate::StmtContext) -> Self {
+        if ctx.pessimistic_transaction() || ctx.optimistic_transaction() {
+            self.dirty_tables = ctx.staged_writes().dirty_table_ids();
+        }
+        self
+    }
+
     /// Go reads `SessionVars.HypoIndexes` and `HypoTiFlashReplicas` only
     /// under `StmtCtx.InExplainStmt` (`getPossibleAccessPaths`,
     /// `UsedHypoTiFlashReplicas`), so only an EXPLAIN's source carries them.
@@ -522,6 +538,10 @@ pub(crate) struct PlannerSchemaView {
 impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
     fn current_database(&self) -> &str {
         &self.current_database
+    }
+
+    fn table_has_dirty_content(&self, table_ids: &[i64]) -> bool {
+        table_ids.iter().any(|id| self.dirty_tables.contains(id))
     }
 
     fn find_table(
@@ -2060,6 +2080,7 @@ impl Catalog {
             latest_index_schema,
             hypo_indexes: None,
             hypo_tiflash_replicas: None,
+            dirty_tables: Vec::new(),
         }
     }
 

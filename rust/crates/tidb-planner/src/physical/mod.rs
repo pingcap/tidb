@@ -284,6 +284,82 @@ pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
         .collect()
 }
 
+/// Replaces every `PhysicalUnionScan` by its child (the reader below already
+/// merges the transaction's own rows, and a temporary table's).
+#[must_use]
+pub fn remove_union_scans(mut plan: PhysicalPlan) -> PhysicalPlan {
+    while let PhysicalPlan::UnionScan(_) = &plan {
+        let mut children = std::mem::take(plan.base_mut().children_mut());
+        let Some(child) = children.pop() else {
+            return plan;
+        };
+        plan = child;
+    }
+    let children = std::mem::take(plan.base_mut().children_mut());
+    plan.base_mut()
+        .set_children(children.into_iter().map(remove_union_scans).collect());
+    if let PhysicalPlan::Dml(root) = &mut plan {
+        if let Some(select) = root.select_plan.take() {
+            root.select_plan = Some(Box::new(remove_union_scans(*select)));
+        }
+    }
+    plan
+}
+
+/// Go `eliminateUnionScanAndLock` (`optimizer.go:1174`), its UnionScan half:
+/// when the single-child chain from the root reaches a `Point_Get` or a
+/// `Batch_Point_Get`, the `UnionScan` (a point get reads its own transaction's
+/// rows itself) disappears from the plan.
+#[must_use]
+pub fn eliminate_union_scan_over_point_get(plan: PhysicalPlan) -> PhysicalPlan {
+    let mut has_point_get = false;
+    let mut has_union_scan = false;
+    let mut stack = vec![&plan];
+    while let Some(node) = stack.pop() {
+        // Go stops at a node with several children without looking at it.
+        if node.children().len() > 1 {
+            continue;
+        }
+        match node {
+            PhysicalPlan::PointGet(_) | PhysicalPlan::BatchPointGet(_) => has_point_get = true,
+            PhysicalPlan::UnionScan(_) => has_union_scan = true,
+            _ => {}
+        }
+        stack.extend(node.children());
+    }
+    if has_point_get && has_union_scan {
+        remove_union_scans(plan)
+    } else {
+        plan
+    }
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalUnionScan` (`physical_union_scan.go:41`):
+/// one `PhysicalUnionScan` whose child is asked for the same property -- the
+/// keep-order requirement is passed straight down because the union-scan
+/// executor reads the underlying reader's order. A TiFlash property is
+/// refused (the caller raises Go's MPP warning).
+pub fn exhaust_physical_plans_4_logical_union_scan(
+    p: &crate::logical::LogicalUnionScan,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Vec<PhysicalPlan> {
+    let mut child_prop = prop.clone_essential_fields();
+    child_prop.index_join_prop = prop.index_join_prop.clone();
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalUnionScan::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(p.base.base.stats_info().cloned());
+    base.set_children_req_props(vec![Some(child_prop)]);
+    vec![PhysicalPlan::UnionScan(PhysicalUnionScan {
+        base,
+        conditions: p.conditions.clone(),
+        handle_cols: p.handle_cols.clone(),
+    })]
+}
+
 /// Go `physicalop.PhysicalProjection` (`physical_projection.go`, whole
 /// file).
 #[derive(Clone, Debug, Default)]
@@ -1170,6 +1246,23 @@ pub struct PhysicalTableScan {
     /// Go `Prop`: the property the scan was planned under (nil for a lookup's
     /// row-id side).
     pub prop: Option<Box<PhysicalProperty>>,
+    /// Go `isTemporaryTable(ts.Table)`: scans of a temporary table cost
+    /// `tidb_temp_table_factor` (0) instead of the TiKV factors.
+    pub is_temporary: bool,
+}
+
+/// Go `physicalop.PhysicalUnionScan` (`physical_union_scan.go:30`): the root
+/// operator that merges the open transaction's own rows (and a local temporary
+/// table's rows) into what the reader below returns. `Conditions` apply to the
+/// rows the transaction added, not to the snapshot rows the child filtered.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalUnionScan {
+    /// The shared physical base; the reader is the sole child.
+    pub base: BasePhysicalPlan,
+    /// Go `Conditions`.
+    pub conditions: Vec<Expression>,
+    /// Go `HandleCols`' columns.
+    pub handle_cols: Vec<Column>,
 }
 
 /// Go `physicalop.PhysicalTableSample`: a root leaf that returns the first
@@ -2373,6 +2466,8 @@ pub struct PhysicalIndexScan {
     pub prop: Option<Box<PhysicalProperty>>,
     /// Go `PkIsHandleCol`: the integer primary key that is the row handle.
     pub pk_is_handle_col: Option<Column>,
+    /// Go `isTemporaryTable(is.Table)`.
+    pub is_temporary: bool,
 }
 
 impl PhysicalIndexScan {
@@ -3806,6 +3901,8 @@ pub enum PhysicalPlan {
     StreamAgg(PhysicalStreamAgg),
     /// Go `physicalop.PhysicalWindow`.
     Window(PhysicalWindow),
+    /// Go `physicalop.PhysicalUnionScan`.
+    UnionScan(PhysicalUnionScan),
 }
 
 impl PhysicalPlan {
@@ -3852,6 +3949,7 @@ impl PhysicalPlan {
             Self::HashAgg(op) => &op.base,
             Self::StreamAgg(op) => &op.base,
             Self::Window(op) => &op.base,
+            Self::UnionScan(op) => &op.base,
         }
     }
 
@@ -3897,6 +3995,7 @@ impl PhysicalPlan {
             Self::HashAgg(op) => &mut op.base,
             Self::StreamAgg(op) => &mut op.base,
             Self::Window(op) => &mut op.base,
+            Self::UnionScan(op) => &mut op.base,
         }
     }
 
@@ -4511,6 +4610,7 @@ impl PhysicalPlan {
                 filter_condition: op.filter_condition.clone(),
                 db_name: op.db_name.clone(),
                 prop: op.prop.clone(),
+                is_temporary: op.is_temporary,
             }),
             Self::TableSample(op) => Self::TableSample(PhysicalTableSample {
                 base: base_of(&op.base),
@@ -4639,6 +4739,7 @@ impl PhysicalPlan {
                 db_name: op.db_name.clone(),
                 prop: op.prop.clone(),
                 pk_is_handle_col: op.pk_is_handle_col.clone(),
+                is_temporary: op.is_temporary,
             }),
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 output_columns: op.output_columns.clone(),
@@ -4743,6 +4844,11 @@ impl PhysicalPlan {
                 data_sources: op.data_sources.clone(),
                 splitter_type: op.splitter_type,
                 by_item_arrays: op.by_item_arrays.clone(),
+            }),
+            Self::UnionScan(op) => Self::UnionScan(PhysicalUnionScan {
+                base: base_of(&op.base),
+                conditions: op.conditions.clone(),
+                handle_cols: op.handle_cols.clone(),
             }),
             Self::Window(op) => Self::Window(PhysicalWindow {
                 base: base_of(&op.base),

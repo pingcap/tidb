@@ -1073,6 +1073,17 @@ impl StagedWrites {
             .or_default();
     }
 
+    /// Every table id this transaction has staged anything under, in order.
+    #[must_use]
+    pub fn dirty_table_ids(&self) -> Vec<i64> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .copied()
+            .collect()
+    }
+
     /// Go `session.HasDirtyContent(tid)`: has this transaction staged
     /// anything under `table_id`.
     #[must_use]

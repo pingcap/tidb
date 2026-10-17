@@ -879,6 +879,8 @@ pub struct IndexLookUpInput {
     pub pushed_limit: Option<u64>,
     /// `p.ExpectedCnt`, which decides the paging discount.
     pub expected_cnt: f64,
+    /// Go `isTemporaryTable(getTableInfo(p))`.
+    pub is_temporary: bool,
 }
 
 /// `getPlanCostVer24PhysicalIndexLookUpReader`.
@@ -903,8 +905,8 @@ pub fn index_lookup_reader_cost(
         table_rows = table_rows.min(limit as f64);
     }
     let cpu_factor = ver2.task_cpu(task_type);
-    let net_factor = ver2.task_net(false, NetOwner::TiDbToTiKv);
-    let request_factor = ver2.task_request(false);
+    let net_factor = ver2.task_net(input.is_temporary, NetOwner::TiDbToTiKv);
+    let request_factor = ver2.task_request(input.is_temporary);
     let dist_concurrency = session.distsql_scan_concurrency;
     let double_read_concurrency = session.index_lookup_concurrency;
 
@@ -1359,6 +1361,8 @@ pub struct IndexJoinInput {
     pub is_semi_join: bool,
     /// Which index-join executor is being costed.
     pub kind: IndexJoinKind,
+    /// Go `isTemporaryTable(getTableInfo(p))`.
+    pub is_temporary: bool,
 }
 
 /// The empirical batch ratio: an index join reads a BATCH of outer keys at a
@@ -1389,8 +1393,8 @@ pub fn index_join_cost(
     let probe_concurrency = session.index_lookup_join_concurrency;
     let cpu_factor = ver2.task_cpu(task_type);
     let mem_factor = ver2.task_mem(task_type);
-    let request_factor = ver2.task_request(false);
-    let scan_factor = ver2.task_scan(false, StoreType::TiKv, task_type, false);
+    let request_factor = ver2.task_request(input.is_temporary);
+    let scan_factor = ver2.task_scan(input.is_temporary, StoreType::TiKv, task_type, false);
 
     let build_filter = filter_cost(option, build_rows, build_filters, cpu_factor);
     let build_task = new_cost_ver2(

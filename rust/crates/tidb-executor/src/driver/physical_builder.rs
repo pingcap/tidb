@@ -2868,6 +2868,17 @@ fn build_index_inner_subtree(
                 ctx.clone(),
             )) as Box<dyn Executor>)
         }
+        // The union scan only has to stay in the plan: the reader below it
+        // merges the transaction's own rows (see `build_with_state`).
+        PhysicalPlan::UnionScan(_) => build_index_inner_subtree(
+            only_child(plan)?,
+            join,
+            probe_parts,
+            shared,
+            catalog,
+            ctx,
+            state,
+        ),
         PhysicalPlan::Selection(selection) => {
             let child = build_index_inner_subtree(
                 only_child(plan)?,
@@ -5698,6 +5709,11 @@ fn build_with_state(
             Ok(Box::new(MaxOneRowExec::new(executor_meta, child)) as Box<dyn Executor>)
         }
         PhysicalPlan::NominalSort(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
+        // Go builds a `UnionScanExec` over the reader here. This tier's readers
+        // merge the transaction's own rows (and a temporary table's) themselves
+        // (`enable_dirty_union_scan_merge`), so the operator only has to stay
+        // in the plan for EXPLAIN and the plan digest.
+        PhysicalPlan::UnionScan(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
         // Interim M1 seam: a PassThrough sender adds no local semantics, so
         // the fragment still executes in place. M2 replaces this with real
         // DispatchMPPTask routing to the TiFlash store.

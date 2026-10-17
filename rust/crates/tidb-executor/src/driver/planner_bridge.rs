@@ -876,7 +876,8 @@ pub(super) fn logical_from_plan(
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx);
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx);
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
@@ -2781,6 +2782,8 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     // nominal sorts) that the elimination pass removed.
     let mut physical =
         tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
+    // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
+    let mut physical = tidb_planner::physical::eliminate_union_scan_over_point_get(physical);
     tidb_planner::physical::shuffle::install_receivers(&mut physical, plan_ids)?;
     if ctx.enable_parallel_apply() {
         tidb_planner::physical::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
@@ -3252,7 +3255,8 @@ fn planner_optimized_query_with_allocators(
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx);
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx);
     let session_zone = ctx.session_zone();
     let evaluator = subquery_evaluator(
         catalog,
@@ -3320,7 +3324,8 @@ pub(crate) fn query_builds_correlated_columns(
 ) -> Result<bool, tidb_planner::plan_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx);
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx);
     let session_zone = ctx.session_zone();
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -3378,7 +3383,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
 > {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx);
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx);
     let session_zone = ctx.session_zone();
     let registry = ScalarSubqueryRegistry::default();
     let evaluator = subquery_evaluator(
@@ -4026,7 +4032,8 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let column_ids = ColumnIdAllocator::new();
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx);
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx);
     let session_zone = ctx.session_zone();
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());

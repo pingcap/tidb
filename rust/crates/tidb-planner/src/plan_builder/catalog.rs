@@ -346,6 +346,15 @@ pub trait TableSource {
     /// Go `SessionVars.CurrentDB`, used to qualify an unqualified table name.
     fn current_database(&self) -> &str;
 
+    /// Go `tableHasDirtyContent(ctx, tableInfo)` (`planner/core/util.go:156`):
+    /// whether the open transaction has staged a write under any of the given
+    /// physical table ids (a partitioned table passes every partition's id,
+    /// as Go checks each definition). A dirty table is read through a
+    /// `LogicalUnionScan`.
+    fn table_has_dirty_content(&self, _table_ids: &[i64]) -> bool {
+        false
+    }
+
     /// Go `is.TableByName(ctx, dbName, tblName)`, with the partition selection
     /// already made — see [`SourceTable`].
     ///

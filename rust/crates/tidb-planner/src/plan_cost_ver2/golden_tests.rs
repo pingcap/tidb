@@ -688,6 +688,7 @@ fn test_golden_index_lookup_reader() {
         let cost = index_lookup_reader_cost(
             None,
             IndexLookUpInput {
+                is_temporary: false,
                 index_rows: rows,
                 table_rows: rows,
                 index_row_size,
@@ -880,6 +881,7 @@ fn test_golden_index_join_and_its_double_read_penalty() {
     // `RightJoinKeys` empty -- only the hash and merge join constructors fill
     // them -- so the hash table pays no per-key cost.
     let input = IndexJoinInput {
+        is_temporary: false,
         build_rows: 9990.0,
         build_row_size: pseudo_row_size,
         probe_rows_one,
@@ -1153,6 +1155,7 @@ fn test_source_index_lookup_paging_discount_and_its_threshold() {
         index_lookup_reader_cost(
             None,
             IndexLookUpInput {
+                is_temporary: false,
                 index_rows: 10.0,
                 table_rows: 10.0,
                 index_row_size: 16.0,
@@ -1399,6 +1402,7 @@ fn test_source_index_join_kinds_differ_only_in_the_hash_table() {
     let zero = recorded_child(0.0);
     let session = CostSessionOpts::default();
     let input = IndexJoinInput {
+        is_temporary: false,
         build_rows: 10.0,
         build_row_size: 32.0,
         probe_rows_one: 4.0,
@@ -1443,6 +1447,7 @@ fn test_source_semi_index_join_pays_for_the_rows_it_cannot_stop_reading() {
     let probe_child = recorded_child(60.0);
     let zero = recorded_child(0.0);
     let input = |probe_rows_one, is_semi_join| IndexJoinInput {
+        is_temporary: false,
         build_rows: 10.0,
         build_row_size: 16.0,
         probe_rows_one,

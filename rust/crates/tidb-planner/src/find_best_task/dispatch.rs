@@ -668,6 +668,23 @@ fn exhaust_physical_plans(
             prop,
             ctx.allocator,
         ))),
+        // Go `ExhaustPhysicalPlans4LogicalUnionScan`: a TiFlash property cannot
+        // be met (the union scan is a root operator), and says so.
+        LogicalPlan::UnionScan(op) => {
+            if prop.is_flash_prop() {
+                if let Some(sink) = ctx.mpp_warning_sink {
+                    sink.raise_mpp_warning(
+                        "MPP mode may be blocked because operator `UnionScan` is not supported now.",
+                    );
+                }
+                return Ok((Vec::new(), true));
+            }
+            Ok(one(physical::exhaust_physical_plans_4_logical_union_scan(
+                op,
+                prop,
+                ctx.allocator,
+            )))
+        }
         LogicalPlan::Lock(op) => Ok(one(physical::exhaust_physical_plans_4_logical_lock(
             op,
             prop,
@@ -3380,6 +3397,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     },
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
+                    is_temporary: ds.is_temporary,
                     prop: Some(Box::new(prop.clone())),
                     resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
@@ -3483,6 +3501,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
+                    is_temporary: ds.is_temporary,
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: Vec::new(),
@@ -4176,6 +4195,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
+                    is_temporary: ds.is_temporary,
                     prop: Some(Box::new(prop.clone())),
                     pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
                 });
@@ -4268,6 +4288,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
                         db_name: ds.db_name.clone(),
+                        is_temporary: ds.is_temporary,
                         prop: None,
                         plan_part_info: None,
                         filter_condition: Vec::new(),

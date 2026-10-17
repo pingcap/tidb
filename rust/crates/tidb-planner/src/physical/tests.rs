@@ -2515,3 +2515,56 @@ fn snapshot_read_policy_point_sizes_follow_go_fast_and_optimizer_plans() {
         }
     }
 }
+
+fn union_scan(id: i32, child: PhysicalPlan) -> PhysicalPlan {
+    let mut base = BasePhysicalPlan::with_id(id, "UnionScan", 0);
+    base.set_children(vec![child]);
+    PhysicalPlan::UnionScan(PhysicalUnionScan {
+        base,
+        ..PhysicalUnionScan::default()
+    })
+}
+
+fn point_get(id: i32) -> PhysicalPlan {
+    PhysicalPlan::PointGet(PhysicalPointGet {
+        base: BasePhysicalPlan::with_id(id, "Point_Get", 0),
+        ..PhysicalPointGet::default()
+    })
+}
+
+#[test]
+fn union_scan_over_a_point_get_is_eliminated() {
+    // Go `eliminateUnionScanAndLock`: the point get reads the transaction's
+    // own rows, so the union scan above it (even through a selection) goes.
+    let plan = eliminate_union_scan_over_point_get(selection(3, union_scan(2, point_get(1))));
+    assert!(matches!(&plan, PhysicalPlan::Selection(_)));
+    assert!(matches!(plan.children()[0], PhysicalPlan::PointGet(_)));
+    plan.dismantle();
+}
+
+#[test]
+fn union_scan_over_a_reader_is_kept() {
+    let plan = eliminate_union_scan_over_point_get(union_scan(2, scan(1, &[1])));
+    assert!(matches!(&plan, PhysicalPlan::UnionScan(_)));
+    plan.dismantle();
+}
+
+#[test]
+fn union_scan_elimination_stops_at_a_multi_child_operator() {
+    // Go's walk does not look inside a node with several children, so a point
+    // get under a join does not strip the union scan above the join.
+    let plan = eliminate_union_scan_over_point_get(union_scan(
+        4,
+        hash_join(3, point_get(1), scan(2, &[2])),
+    ));
+    assert!(matches!(&plan, PhysicalPlan::UnionScan(_)));
+    plan.dismantle();
+}
+
+#[test]
+fn remove_union_scans_replaces_each_by_its_child() {
+    let plan = remove_union_scans(selection(4, union_scan(3, union_scan(2, scan(1, &[1])))));
+    assert!(matches!(&plan, PhysicalPlan::Selection(_)));
+    assert!(matches!(plan.children()[0], PhysicalPlan::TableScan(_)));
+    plan.dismantle();
+}

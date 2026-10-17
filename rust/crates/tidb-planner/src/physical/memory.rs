@@ -292,6 +292,14 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 // `PartialPlansRaw`.
                 + op.partial_plans_raw.iter().map(subtree_usage).sum::<i64>()
         }
+        // Go `PhysicalUnionScan.MemoryUsage`: the base, one slice, the handle
+        // columns and every condition.
+        PhysicalPlan::UnionScan(op) => {
+            op.base.go_memory_usage()
+                + SIZE_OF_SLICE
+                + columns_memory_usage(&op.handle_cols)
+                + exprs_memory_usage(&op.conditions)
+        }
         PhysicalPlan::Sort(op) => sort_memory_usage(op),
         PhysicalPlan::TopN(op) => {
             op.base.go_memory_usage()

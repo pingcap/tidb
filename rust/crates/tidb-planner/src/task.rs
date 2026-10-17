@@ -2543,6 +2543,45 @@ mod tests {
 // Go `Attach2Task`: how a physical operator composes onto a child task.
 // ---------------------------------------------------------------------------
 
+/// The body of Go's `attach2Task4PhysicalUnionScan` after the child became a
+/// root task: `unionScan -> selection -> projection` becomes `projection ->
+/// unionScan -> selection`, `unionScan -> projection` becomes `projection ->
+/// unionScan`, and anything else is attached as is.
+fn attach_union_scan(mut union_scan: PhysicalPlan, mut task: Task) -> Task {
+    let Task::Root(root) = &mut task else {
+        return attach_plan_to_task(union_scan, task);
+    };
+    let Some(mut child) = root.take_plan() else {
+        return attach_plan_to_task(union_scan, task);
+    };
+    let stats = child.base().base.stats_info().cloned();
+    let is_projection = |plan: &PhysicalPlan| matches!(plan, PhysicalPlan::Projection(_));
+    let selection_over_projection = matches!(&child, PhysicalPlan::Selection(_))
+        && child.children().first().is_some_and(is_projection);
+    if selection_over_projection {
+        // Convert unionScan->selection->projection to
+        // projection->unionScan->selection.
+        let mut projection = child.base_mut().children_mut().remove(0);
+        let projection_children = std::mem::take(projection.base_mut().children_mut());
+        child.base_mut().set_children(projection_children);
+        union_scan.base_mut().set_children(vec![child]);
+        union_scan.base_mut().base.set_stats(stats);
+        root.set_plan(union_scan);
+        return attach_plan_to_task(projection, task);
+    }
+    if is_projection(&child) {
+        // Convert unionScan->projection to projection->unionScan.
+        let projection_children = std::mem::take(child.base_mut().children_mut());
+        union_scan.base_mut().set_children(projection_children);
+        union_scan.base_mut().base.set_stats(stats);
+        root.set_plan(union_scan);
+        return attach_plan_to_task(child, task);
+    }
+    root.set_plan(child);
+    union_scan.base_mut().base.set_stats(stats);
+    attach_plan_to_task(union_scan, task)
+}
+
 /// Go `attachPlan2Task` (`core/task.go`): wrap the task's plan with `plan`.
 ///
 /// * a root task: `p.SetChildren(v.GetPlan()); v.SetPlan(p)`;
@@ -3708,6 +3747,13 @@ pub(crate) fn attach2_task_in(
                 }
             }
         },
+        // `attach2Task4PhysicalUnionScan` (`task.go:82`): a union scan always
+        // wants a root child; a projection the child carries is pulled above
+        // it, because the executor cannot build one underneath.
+        PhysicalPlan::UnionScan(_) => {
+            let converted = first.into_root_task_in(allocator, evaluate)?;
+            Ok(attach_union_scan(plan, converted))
+        }
         // `attach2Task4PhysicalWindow` (`task.go:2230`): convert the child to
         // a root task and attach. The TiFlash MPP arm is absent with that
         // tier.

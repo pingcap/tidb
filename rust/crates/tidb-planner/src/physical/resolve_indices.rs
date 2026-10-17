@@ -382,6 +382,20 @@ impl PhysicalPlan {
                     bind_exprs(level, input)?;
                 }
             }
+            // Go `resolveIndices4PhysicalUnionScan`: the conditions and the
+            // handle columns bind against the child's schema.
+            Self::UnionScan(op) => {
+                let input = child_schema(&op.base, 0)?;
+                bind_exprs(&mut op.conditions, input)?;
+                for handle in &mut op.handle_cols {
+                    let mut resolved = [Expression::Column(handle.clone())];
+                    bind_exprs(&mut resolved, input)?;
+                    let [Expression::Column(column)] = resolved else {
+                        unreachable!("binding a column yields a column")
+                    };
+                    *handle = column;
+                }
+            }
             Self::Projection(op) => {
                 let input = child_schema(&op.base, 0)?;
                 bind_exprs(&mut op.exprs, input)?;

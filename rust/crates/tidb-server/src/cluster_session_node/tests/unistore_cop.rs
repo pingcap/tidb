@@ -16353,3 +16353,124 @@ fn plan_cache_refuses_the_thirty_leg_union_by_default() {
         .unwrap();
     assert!(cached(&mut session, 30));
 }
+
+/// Go reads a table through a `LogicalUnionScan` when the open transaction has
+/// written it, and always for a local temporary table; the plan shows a
+/// `UnionScan` above the reader, a `Point_Get` loses it again
+/// (`eliminateUnionScanAndLock`), and a temporary table's scans cost nothing
+/// (`tidb_temp_table_factor`), so an ordered read prefers its index to a sort.
+/// Expected shapes: Go 1.27 on this branch (`TestZZ` probe, 26 statements).
+#[test]
+fn dirty_and_temporary_tables_are_read_through_a_union_scan() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1118)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tus (a INT PRIMARY KEY, b INT, c INT, KEY(b))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO tus VALUES (1,1,1),(2,2,2),(3,3,3)")
+        .unwrap();
+    let operators = |session: &mut ClusterServerSession, sql: &str| -> Vec<String> {
+        displayed(rows(session, &format!("EXPLAIN FORMAT = 'brief' {sql}")))
+            .into_iter()
+            .map(|row| {
+                row[0]
+                    .trim_start_matches(['├', '└', '─', '│', ' '])
+                    .split('_')
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    };
+    // A clean table has no union scan.
+    assert_eq!(
+        operators(&mut session, "SELECT * FROM tus WHERE b = 1")[0],
+        "IndexLookUp"
+    );
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO tus VALUES (4,4,4)")
+        .unwrap();
+    let dirty = operators(&mut session, "SELECT * FROM tus WHERE b = 1");
+    assert_eq!(&dirty[..2], ["UnionScan", "IndexLookUp"], "{dirty:?}");
+    // A point get reads its own transaction's rows and carries no union scan.
+    assert_eq!(
+        operators(&mut session, "SELECT * FROM tus WHERE a = 1"),
+        ["Point"]
+    );
+    let ordered = operators(&mut session, "SELECT * FROM tus ORDER BY b");
+    assert_eq!(&ordered[..2], ["Sort", "UnionScan"], "{ordered:?}");
+    let limited = operators(&mut session, "SELECT * FROM tus WHERE b > 1 LIMIT 1");
+    assert_eq!(&limited[..2], ["Limit", "UnionScan"], "{limited:?}");
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(
+        operators(&mut session, "SELECT * FROM tus WHERE b = 1")[0],
+        "IndexLookUp"
+    );
+
+    // A local temporary table is always read through a union scan, and its
+    // free scans make the index the cheaper way to deliver an order.
+    session
+        .execute_write("CREATE TEMPORARY TABLE ttus (a INT PRIMARY KEY, b INT, KEY(b))")
+        .unwrap();
+    let temp = operators(&mut session, "SELECT * FROM ttus WHERE b = 1");
+    assert_eq!(&temp[..2], ["UnionScan", "IndexReader"], "{temp:?}");
+    assert_eq!(
+        operators(&mut session, "SELECT * FROM ttus WHERE a = 1"),
+        ["Point"]
+    );
+    let temp_ordered = operators(&mut session, "SELECT * FROM ttus ORDER BY b");
+    assert_eq!(
+        &temp_ordered[..2],
+        ["UnionScan", "IndexReader"],
+        "{temp_ordered:?}"
+    );
+}
+
+/// `executor/union_scan` `TestUpdateScanningHandles`: the inner side of an
+/// index join over a table the transaction wrote is `UnionScan -> reader`, which
+/// has to be rebuilt per probe like any other inner plan. Go updates every
+/// row `a > 10` to `b = a - 10`.
+#[test]
+fn index_join_inner_side_under_a_union_scan_updates_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1119)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE tij (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    let values = (2..100)
+        .map(|i| format!("({i}, {i})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .execute_write(&format!("INSERT INTO tij VALUES {values}"))
+        .unwrap();
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO tij VALUES (1, 1)")
+        .unwrap();
+    session
+        .execute_write(
+            "UPDATE /*+ INL_JOIN(t1) */ tij t1, (SELECT a, b FROM tij) t2 \
+             SET t1.b = t2.b WHERE t1.a = t2.a + 10",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM tij WHERE a > 10 AND a - b != 10"
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT COUNT(*) FROM tij WHERE a > 10 AND a - b = 10"
+        )),
+        [["89"]]
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+}

@@ -684,6 +684,9 @@ fn bind_plan_expressions(
         PhysicalPlan::Selection(selection) => {
             bind_conditions(&mut selection.conditions, context)?;
         }
+        PhysicalPlan::UnionScan(union_scan) => {
+            bind_conditions(&mut union_scan.conditions, context)?;
+        }
         PhysicalPlan::Projection(projection) => {
             bind_conditions(&mut projection.exprs, context)?;
         }

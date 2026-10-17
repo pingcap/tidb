@@ -1269,6 +1269,10 @@ fn physical_operator_info(
             // regardless of the CNF extraction order.
             sorted_expressions_text(eval_ctx, &selection.conditions)
         }
+        // Go `PhysicalUnionScan.ExplainInfo`: the sorted conditions.
+        PhysicalPlan::UnionScan(union_scan) => {
+            sorted_expressions_text(eval_ctx, &union_scan.conditions)
+        }
         PhysicalPlan::Projection(projection) => {
             projection_text(eval_ctx, &projection.exprs, projection.base.base.schema())
         }

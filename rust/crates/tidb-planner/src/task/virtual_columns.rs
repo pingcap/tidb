@@ -75,6 +75,7 @@ pub(super) fn expand(plan: &mut PhysicalPlan) -> Result<(), PlanError> {
     } else if matches!(
         plan,
         PhysicalPlan::Selection(_)
+            | PhysicalPlan::UnionScan(_)
             | PhysicalPlan::Limit(_)
             | PhysicalPlan::TopN(_)
             | PhysicalPlan::Sort(_)
