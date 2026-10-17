@@ -20,10 +20,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -259,6 +261,32 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	require.Equal(t, sessVars.StmtCtx.ExecSuccess, items.Succ)
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogKVTotal)].Match(ctx.GetSessionVars(), items, time.Duration(tikvExecDetail.WaitKVRespDuration).Seconds()))
 	require.True(t, variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPDTotal)].Match(ctx.GetSessionVars(), items, time.Duration(tikvExecDetail.WaitPDRespDuration).Seconds()))
+
+	t.Run("plan recording switches", func(t *testing.T) {
+		ctx.Store = testkit.CreateMockStore(t)
+		cfg := config.GetGlobalConfig()
+		oldRecord := atomic.LoadUint32(&cfg.Instance.RecordPlanInSlowLog)
+		oldBinary := variable.GenerateBinaryPlan.Load()
+		defer atomic.StoreUint32(&cfg.Instance.RecordPlanInSlowLog, oldRecord)
+		defer variable.GenerateBinaryPlan.Store(oldBinary)
+		stmtNode, err := parser.New().ParseOneStmt("select 1", "", "")
+		require.NoError(t, err)
+		stmt := &executor.ExecStmt{Ctx: ctx, GoCtx: goCtx, StmtNode: stmtNode}
+		sessVars.StmtCtx.SetEncodedPlan("text-plan")
+		sessVars.StmtCtx.SetBinaryPlan("binary-plan")
+		for _, record := range []uint32{0, 1} {
+			for _, binary := range []bool{false, true} {
+				atomic.StoreUint32(&cfg.Instance.RecordPlanInSlowLog, record)
+				variable.GenerateBinaryPlan.Store(binary)
+				logItems := &variable.SlowQueryLogItems{}
+				executor.SetSlowLogItems(stmt, 0, false, logItems)
+				require.Equal(t, record != 0, logItems.Plan != "")
+				require.Equal(t, record != 0 && binary, logItems.BinaryPlan != "")
+				// Statement summaries retain their independent binary-plan switch.
+				require.Equal(t, binary, stmt.GetBinaryPlan() != "")
+			}
+		}
+	})
 }
 
 func TestShouldWriteSlowLog(t *testing.T) {
