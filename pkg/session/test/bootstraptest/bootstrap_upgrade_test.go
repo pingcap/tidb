@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -570,6 +571,11 @@ func checkDDLJobExecSucc(t *testing.T, se sessionapi.Session, jobID int64) {
 // TestUpgradeVersionForSystemPausedJob tests mock the first upgrade failed, and it has a mock system DDL in queue.
 // Then we do re-upgrade(This operation will pause all DDL jobs by the system).
 func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
+	resetMemUpgradeState(t)
+	t.Cleanup(func() {
+		resetMemUpgradeState(t)
+	})
+
 	// Mock a general and a reorg job in bootstrap.
 	mock := true
 	session.WithMockUpgrade = &mock
@@ -596,11 +602,16 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table mysql.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+	var pauseOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
-			se := session.CreateSessionAndSetID(t, store)
-			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
+			pauseOnce.Do(func() {
+				se := session.CreateSessionAndSetID(t, store)
+				session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
+			})
 		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if job.State == model.JobStatePaused && jobID == 0 {
 			// Mock pause the ddl job by system.
 			job.AdminOperator = model.AdminCommandBySystem
@@ -621,6 +632,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
@@ -749,6 +761,12 @@ func startUpgrade(store kv.Storage) {
 func finishUpgrade(store kv.Storage) {
 	upgradeHandler := handler.NewClusterUpgradeHandler(store)
 	upgradeHandler.FinishUpgrade()
+}
+
+func resetMemUpgradeState(t *testing.T) {
+	stateSyncer := serverstate.NewMemSyncer()
+	require.NoError(t, stateSyncer.Init(context.Background()))
+	require.NoError(t, stateSyncer.UpdateGlobalState(context.Background(), serverstate.NewStateInfo(serverstate.StateNormalRunning)))
 }
 
 // TestUpgradeWithPauseDDL adds a user and a system DB's DDL operations, before every test bootstrap(DDL operation). It tests:
