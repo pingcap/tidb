@@ -63,9 +63,10 @@ func TestFoundRows(t *testing.T) {
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
+	require.False(t, mysql.HasUnsignedFlag(f.getRetTp().GetFlag()))
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, uint64(2), d.GetUint64())
+	require.Equal(t, int64(2), d.GetInt64())
 }
 
 func TestUser(t *testing.T) {
