@@ -563,8 +563,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			}
 
 			var handleKeys [][]byte
-			var insertRows [][2][]byte
 			for start < end {
+				var insertRows [][2][]byte
 				indexKvRows, err := em.db.QueryContext(
 					indexGCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
 					tableName, start, end, rowLimit)
