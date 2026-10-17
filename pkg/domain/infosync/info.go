@@ -563,6 +563,10 @@ func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	if err != nil {
 		return err
 	}
+	failpoint.InjectCall("beforeModifyResourceGroup", group, &err)
+	if err != nil {
+		return err
+	}
 	_, err = is.resourceManagerClient.ModifyResourceGroup(ctx, group)
 	return err
 }

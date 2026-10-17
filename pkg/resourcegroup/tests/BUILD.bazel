@@ -8,6 +8,7 @@ go_test(
     race = "on",
     shard_count = 9,
     deps = [
+        "//pkg/ddl",
         "//pkg/ddl/resourcegroup",
         "//pkg/domain",
         "//pkg/domain/infosync",
