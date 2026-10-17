@@ -4502,13 +4502,15 @@ pub(super) fn prepare_modify_column(
     // Keeping it is the only combination that changes nothing.
     let was_auto_increment = table.auto_increment_offset() == Some(offset);
     let converting_auto_increment = was_auto_increment && new_auto_random.is_some();
+    // The default is refused while Go builds the new column, before
+    // `GetModifiableColumnJob` reaches the AUTO_INCREMENT comparison.
+    if wants_auto_increment && default_value.is_some() {
+        return Err(DriverError::InvalidDefault(def.name.clone()));
+    }
     if wants_auto_increment && !was_auto_increment {
         return Err(DriverError::UnsupportedModifyColumn(
             "can't set auto_increment",
         ));
-    }
-    if wants_auto_increment && default_value.is_some() {
-        return Err(DriverError::InvalidDefault(def.name.clone()));
     }
     if was_auto_increment
         && !wants_auto_increment

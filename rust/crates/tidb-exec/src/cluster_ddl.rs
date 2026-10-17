@@ -1322,6 +1322,19 @@ pub fn lower_ddl_with_context(
             }))
         }
         DdlStmt::AlterDatabase { name, options } => {
+            // Go `checkMultiSchemaSpecs`: only one SET TIFLASH REPLICA may
+            // appear among several specifications.
+            if options
+                .iter()
+                .filter(|option| matches!(option, DatabaseOption::SetTiFlashReplica { .. }))
+                .count()
+                > 1
+            {
+                return Err(DdlAdmissionError::with_code(
+                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    "Unsupported multi schema change for set tiflash replica",
+                ));
+            }
             let mut charset = None;
             let mut collate = None;
             let mut placement_policy = None;
@@ -1707,6 +1720,22 @@ fn lower_alter_table_catalog(
         // warning is raised only once an operation is known to run (see the
         // arm below).
         let mut pending_algorithm: Option<(&'static str, &'static str)> = None;
+        // Go `CheckStorageClassConflictInAlterTableSpecs`, before any
+        // specification runs.
+        let admission = |error: tidb_executor::DriverError| {
+            let error = error.to_mysql_error();
+            DdlAdmissionError::with_code(error.code, error.message)
+        };
+        tidb_executor::ddl::storage_class::check_storage_class_conflict_in_alter_specs(
+            alter
+                .actions
+                .iter()
+                .flat_map(|action| match action {
+                    tidb_ast::AlterTableAction::SetTableOptions { options } => options.as_slice(),
+                    _ => &[],
+                }),
+        )
+        .map_err(admission)?;
         for action in &alter.actions {
             match action {
                 tidb_ast::AlterTableAction::AddColumn {
@@ -1863,6 +1892,17 @@ fn lower_alter_table_catalog(
                             }
                             // Go `fillMultiSchemaInfo`'s default arm names the
                             // job type of a table option it has no sub-job for.
+                            // Each specification's attribute is validated as
+                            // Go builds its job (8270 / 8271); a valid one
+                            // has no multi-schema sub-job here yet.
+                            tidb_ast::TableOption::EngineAttribute(_)
+                            | tidb_ast::TableOption::StorageClass(_) => {
+                                tidb_executor::ddl::storage_class::engine_attribute_from_table_options(
+                                    options,
+                                )
+                                .map_err(admission)?;
+                                return Ok(None);
+                            }
                             tidb_ast::TableOption::AutoIdCache(_) => {
                                 return Err(DdlAdmissionError::with_code(
                                     tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
@@ -2193,6 +2233,31 @@ fn lower_alter_table_catalog(
             }))
         }
         tidb_ast::AlterTableAction::SetTableOptions { options } => {
+            // Go folds every ENGINE_ATTRIBUTE / STORAGE_CLASS written in one
+            // specification into a single job, validating each (8270 / 8271).
+            if options.len() > 1
+                && options.iter().all(|option| {
+                    matches!(
+                        option,
+                        tidb_ast::TableOption::EngineAttribute(_)
+                            | tidb_ast::TableOption::StorageClass(_)
+                    )
+                })
+            {
+                let engine_attribute =
+                    tidb_executor::ddl::storage_class::engine_attribute_from_table_options(options)
+                        .map_err(|error| {
+                            let error = error.to_mysql_error();
+                            DdlAdmissionError::with_code(error.code, error.message)
+                        })?
+                        .expect("the options are all storage-class options");
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::ModifyEngineAttribute {
+                    schema,
+                    table,
+                    engine_attribute,
+                }));
+            }
             let [option] = options.as_slice() else {
                 return Ok(None);
             };
@@ -3624,6 +3689,7 @@ fn prepare_cluster_columns(
     let mut add_indexes = Vec::new();
     let mut drop_indexes = Vec::new();
     let mut alter_indexes = Vec::new();
+    let mut deferred_position_error: Option<DdlPlanError> = None;
     for (offset, action) in actions.iter().enumerate() {
         let mut skipped = None;
         let mut column_job = None;
@@ -3677,7 +3743,7 @@ fn prepare_cluster_columns(
                 rename_from,
                 modify_column_type,
             } => {
-                let modified = prepare_modify_column(
+                let modified = match prepare_modify_column(
                     stored,
                     schema,
                     table,
@@ -3686,7 +3752,38 @@ fn prepare_cluster_columns(
                     context,
                     rename_from.as_deref(),
                     *modify_column_type,
-                )?;
+                ) {
+                    Ok(modified) => modified,
+                    // Go resolves an `AFTER` column while the job runs, which
+                    // is after `checkOperateSameColAndIdx` has looked at every
+                    // specification's names: a statement that also touches
+                    // that column is 8200 before it is 1054.
+                    Err(DdlPlanError::UnknownColumn { column: missing, table: in_table })
+                        if actions.len() > 1
+                            && matches!(
+                                position,
+                                tidb_ast::ColumnPosition::After(relative)
+                                    if relative.eq_ignore_ascii_case(&missing)
+                            ) =>
+                    {
+                        deferred_position_error.get_or_insert(DdlPlanError::UnknownColumn {
+                            column: missing,
+                            table: in_table,
+                        });
+                        let old_name = rename_from.as_deref().unwrap_or(&column.name);
+                        if column.name.eq_ignore_ascii_case(old_name) {
+                            modify_columns.push(CiString::new(column.name.clone()));
+                        } else {
+                            add_columns.push(CiString::new(column.name.clone()));
+                            drop_columns.push(CiString::new(old_name.to_owned()));
+                        }
+                        if let tidb_ast::ColumnPosition::After(relative) = position {
+                            position_columns.push(CiString::new(relative.clone()));
+                        }
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 prepared.modify_kinds.insert(
                     offset,
                     (modified.kind, modified.precheck, modified.check_value_range),
@@ -3931,6 +4028,9 @@ fn prepare_cluster_columns(
         let error = error.to_mysql_error();
         coded_refusal(error.code, error.message)
     })?;
+    if let Some(error) = deferred_position_error {
+        return Err(error);
+    }
     check_visible_column_cnt(stored, names.add_columns.len(), names.drop_columns.len())?;
     check_operate_drop_index_use_by_foreign_key(
         stored,

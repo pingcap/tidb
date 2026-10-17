@@ -17374,6 +17374,31 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
             "Found a row not matching the given partition set",
         ),
         (
+            "ALTER DATABASE test SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2",
+            8200,
+            "Unsupported multi schema change for set tiflash replica",
+        ),
+        (
+            "ALTER TABLE tv0 ENGINE_ATTRIBUTE = '{', ENGINE_ATTRIBUTE = '{\"storage_class\": \"STANDARD\"}'",
+            8270,
+            "Invalid engine attribute format: 'unexpected end of JSON input'",
+        ),
+        (
+            "ALTER TABLE tv0 ENGINE_ATTRIBUTE = '{\"storage_class\": \"STANDARD\"}', STORAGE_CLASS = 'IA'",
+            8271,
+            "Invalid storage class: can not specify 'ENGINE_ATTRIBUTE' and 'STORAGE_CLASS' together",
+        ),
+        (
+            "ALTER TABLE tv0 ADD INDEX i2 (b), MODIFY COLUMN b INT NULL DEFAULT 1 AFTER b",
+            8200,
+            "Unsupported operate same column 'b'",
+        ),
+        (
+            "ALTER TABLE tv0 MODIFY COLUMN b INT AUTO_INCREMENT DEFAULT (STR_TO_DATE('1980-01-01', '%Y-%m-%d'))",
+            1067,
+            "Invalid default value for 'b'",
+        ),
+        (
             "SET @@sql_mode = 'STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO'",
             0,
             "",
