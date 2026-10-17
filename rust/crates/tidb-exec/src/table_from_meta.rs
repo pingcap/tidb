@@ -442,9 +442,17 @@ pub fn cluster_table(
             let Some(tidb_ast::SelectField::Expr { expr, .. }) = select.fields.first() else {
                 return Err(format!("its column {name} has a non-expression default"));
             };
-            let rewritten = tidb_expr::rewriter::rewrite_expr(expr).map_err(|error| {
-                format!("its column {name} has an unresolvable default {error:?}")
-            })?;
+            // A default that names a column loads, and fails when a row needs
+            // it (Go answers 1054 at INSERT).
+            let rewritten = match tidb_expr::rewriter::rewrite_expr(expr) {
+                Ok(expression) => Ok(expression),
+                Err(error @ tidb_expr::EvalError::UnknownColumnInClause(..)) => Err(error),
+                Err(error) => {
+                    return Err(format!(
+                        "its column {name} has an unresolvable default {error:?}"
+                    ))
+                }
+            };
             Some(tidb_executor::column_default::ColumnDefault::Computed(
                 Box::new(tidb_executor::column_default::ComputedDefault {
                     text,

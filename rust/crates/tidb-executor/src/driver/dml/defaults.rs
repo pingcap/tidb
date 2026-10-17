@@ -227,7 +227,9 @@ pub(crate) fn materialize_column_default(
         Some(crate::column_default::ColumnDefault::Computed(computed)) if computed.is_expr() => {
             let value = computed
                 .expr
-                .eval(ctx, row)
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|expr| expr.eval(ctx, row))
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             crate::driver::write_cast::cast_table_value(
                 value,
@@ -582,10 +584,10 @@ mod source_tests {
             crate::column_default::ComputedDefault {
                 text: "1".to_owned(),
                 kind: crate::column_default::ComputedDefaultKind::Expression,
-                expr: Expression::Constant(tidb_expr::constant::Constant::new(
+                expr: Ok(Expression::Constant(tidb_expr::constant::Constant::new(
                     Datum::Int(1),
                     not_null_bigint.clone(),
-                )),
+                ))),
                 added_origin_safety: crate::column_default::AddedOriginSafety::Safe,
             },
         )));

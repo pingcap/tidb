@@ -85,8 +85,11 @@ pub struct ComputedDefault {
     /// branching on their persisted text.
     pub kind: ComputedDefaultKind,
     /// The evaluable form. It reads no column, so it evaluates over an empty
-    /// row.
-    pub expr: Expression,
+    /// row. An expression that names a column (`DEFAULT (JSON_ARRAY(id))`) is
+    /// accepted at DDL time -- Go only whitelists the function -- and fails
+    /// with the rewriter's own error (1054) when an INSERT needs the value, so
+    /// that failure is kept here rather than refused at CREATE.
+    pub expr: Result<Expression, tidb_expr::EvalError>,
     /// Whether ADD COLUMN may evaluate this once for pre-existing rows.
     pub added_origin_safety: AddedOriginSafety,
 }
@@ -302,7 +305,7 @@ fn computed_default(
     Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
         text: expr.restore_with_flags(default_restore_flags()),
         kind: ComputedDefaultKind::Expression,
-        expr: build_expression(expr)?,
+        expr: build_deferred_expression(expr)?,
         added_origin_safety,
     }))))
 }
@@ -425,7 +428,7 @@ fn func_call_default(
         return Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
             text: "CURRENT_DATE".to_owned(),
             kind: ComputedDefaultKind::CurrentDate,
-            expr: build_expression(expr)?,
+            expr: Ok(build_expression(expr)?),
             added_origin_safety: AddedOriginSafety::Safe,
         }))));
     }
@@ -457,7 +460,7 @@ fn func_call_default(
             // `DEFAULT now()` and `DEFAULT current_timestamp` are one table.
             text: "CURRENT_TIMESTAMP".to_owned(),
             kind: ComputedDefaultKind::CurrentTimestamp,
-            expr: build_expression(expr)?,
+            expr: Ok(build_expression(expr)?),
             added_origin_safety: AddedOriginSafety::Safe,
         }))));
     }
@@ -633,6 +636,21 @@ fn func_call_default(
             computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
         }
         _ => Err(DefaultError::FunctionNotAllowed(lower)),
+    }
+}
+
+/// [`build_expression`] for an expression default, which keeps the rewriter's
+/// unknown-column error to raise when a row needs the value (Go answers 1054
+/// at INSERT, not at CREATE) and refuses every other failure.
+fn build_deferred_expression(
+    expr: &Expr,
+) -> Result<Result<Expression, tidb_expr::EvalError>, DefaultError> {
+    match rewrite_expr_resolved(expr, &NoResolver) {
+        Ok(expression) => Ok(Ok(expression)),
+        Err(error @ tidb_expr::EvalError::UnknownColumnInClause(..)) => Ok(Err(error)),
+        Err(_) => Err(DefaultError::Unsupported(
+            "a DEFAULT expression this node cannot evaluate",
+        )),
     }
 }
 
@@ -864,7 +882,7 @@ pub fn evaluate(
         .map(|converted| converted.value)
         .map_err(|_| tidb_expr::EvalError::Unsupported("a stored DEFAULT the column cannot hold"));
     };
-    let value = computed.expr.eval(ctx, row)?;
+    let value = computed.expr.as_ref().map_err(Clone::clone)?.eval(ctx, row)?;
     if value.is_null() {
         return Ok(Datum::Null);
     }

@@ -183,8 +183,14 @@ pub fn resolve_view_definition(
     // not a self-referencing view: the name being defined is hidden from its
     // own body. Resolving against a catalog without it reproduces that, and
     // makes a directly recursive view impossible to build in the first place.
+    // Go only hides a VIEW (`renamingViewName`); a base table of that name is
+    // read like any other and the DDL then refuses it (1347).
+    let replacing_view = matches!(
+        catalog.table_in(&database, &name),
+        Some(crate::TableEntry::View(_))
+    );
     let mut hidden;
-    let resolving = if create.or_replace {
+    let resolving = if create.or_replace && replacing_view {
         hidden = catalog.clone();
         hidden.drop_table_in(&database, &name);
         &hidden

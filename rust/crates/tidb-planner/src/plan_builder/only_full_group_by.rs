@@ -253,16 +253,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // `:3843` the functional-dependency relaxation. Only built when
         // something actually needs justifying, as Go does.
-        let where_depend = select
-            .where_clause
-            .as_ref()
-            .map(|where_clause| build_where_func_depend(where_clause, names))
-            .unwrap_or_default();
-        let join_depend = select
-            .from
-            .as_ref()
-            .map(|from| build_join_func_depend(from, names))
-            .unwrap_or_default();
+        let where_depend = match &select.where_clause {
+            Some(where_clause) => build_where_func_depend(where_clause, names)?,
+            None => HashMap::new(),
+        };
+        let join_depend = match &select.from {
+            Some(from) => build_join_func_depend(from, names)?,
+            None => HashMap::new(),
+        };
         for offender in offenders {
             let Some(offset) = offender.offset else {
                 continue;
@@ -379,6 +377,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !has_aggregate {
             return Ok(());
         }
+        // Go `len(resolver.nonAggCols) == 0`: with no bare column to justify,
+        // neither the WHERE nor the join dependency map is ever built (and an
+        // outer column in an equality is not an error there).
+        if offenders.is_empty() {
+            return Ok(());
+        }
         // Go checks ORDER BY aggregates before applying the single-value
         // relaxation, so keep the 3029 check above independent of these pins.
         let pinned: HashSet<usize> = select
@@ -388,16 +392,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .flat_map(extract_single_value_col_names_from_where)
             .filter_map(|column| column_offset(column, names))
             .collect();
-        let where_depend = select
-            .where_clause
-            .as_ref()
-            .map(|expr| build_where_func_depend(expr, names))
-            .unwrap_or_default();
-        let join_depend = select
-            .from
-            .as_ref()
-            .map(|from| build_join_func_depend(from, names))
-            .unwrap_or_default();
+        let where_depend = match &select.where_clause {
+            Some(expr) => build_where_func_depend(expr, names)?,
+            None => HashMap::new(),
+        };
+        let join_depend = match &select.from {
+            Some(from) => build_join_func_depend(from, names)?,
+            None => HashMap::new(),
+        };
         for offender in offenders {
             // Go: `FindFieldName(p.OutputNames(), colName)` failing is itself
             // 8123 -- a USING join's redundant `t2.a` included.
@@ -652,16 +654,24 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
 /// Go `buildWhereFuncDepend(p, where)` (`logical_plan_builder.go:3521`): the
 /// `col = col` equalities in the top-level `AND` chain, in both directions.
-#[must_use]
-pub fn build_where_func_depend(where_clause: &Expr, names: &[FieldName]) -> HashMap<usize, usize> {
+///
+/// # Errors
+///
+/// An equality operand that names no column of the source is Go's
+/// `ErrUnknownColumn` for the `where clause`, and an ambiguous one its
+/// ambiguity error, whether or not the column would have mattered.
+pub fn build_where_func_depend(
+    where_clause: &Expr,
+    names: &[FieldName],
+) -> Result<HashMap<usize, usize>, PlanError> {
     let mut depend = HashMap::new();
     for cond in split_where(where_clause) {
-        if let Some((left, right)) = func_depend_col(cond, names) {
+        if let Some((left, right)) = func_depend_col(cond, names)? {
             depend.insert(left, right);
             depend.insert(right, left);
         }
     }
-    depend
+    Ok(depend)
 }
 
 /// Go `buildJoinFuncDepend(p, from)` (`logical_plan_builder.go:3538`).
@@ -671,14 +681,20 @@ pub fn build_where_func_depend(where_clause: &Expr, names: &[FieldName]) -> Hash
 /// because the preserved side's row may pair with an all-NULL other side. See
 /// this module's narrowing for how the sides are decided without
 /// `tblInfoFromCol`.
-#[must_use]
-pub fn build_join_func_depend(join: &Join, names: &[FieldName]) -> HashMap<usize, usize> {
+///
+/// # Errors
+///
+/// As [`build_where_func_depend`], for the `ON` equalities.
+pub fn build_join_func_depend(
+    join: &Join,
+    names: &[FieldName],
+) -> Result<HashMap<usize, usize>, PlanError> {
     let Some(on) = &join.on else {
-        return HashMap::new();
+        return Ok(HashMap::new());
     };
     let mut depend = HashMap::new();
     for cond in split_where(on) {
-        let Some((mut left, mut right)) = func_depend_col(cond, names) else {
+        let Some((mut left, mut right)) = func_depend_col(cond, names)? else {
             continue;
         };
         // Go swaps when `tblInfoFromCol(x.Left, lCol) == nil`, i.e. when the
@@ -705,7 +721,7 @@ pub fn build_join_func_depend(join: &Join, names: &[FieldName]) -> HashMap<usize
             }
         }
     }
-    depend
+    Ok(depend)
 }
 
 /// Whether the column at `offset` is written against the join's LEFT subtree
@@ -813,11 +829,40 @@ fn collect_table_names(node: &JoinNode, out: &mut Vec<String>) {
 }
 
 /// Go `buildFuncDependCol(p, cond)`: the two column offsets of a `col = col`.
-fn func_depend_col(cond: &Expr, names: &[FieldName]) -> Option<(usize, usize)> {
+///
+/// Go asserts the operands are `*ast.ColumnNameExpr` directly, so a
+/// parenthesized column is no dependency, and it then looks both up before
+/// reporting either as unknown (an ambiguous right operand wins over an
+/// unknown left one).
+fn func_depend_col(
+    cond: &Expr,
+    names: &[FieldName],
+) -> Result<Option<(usize, usize)>, PlanError> {
     let Expr::Binary(BinaryOp::Eq, left, right) = cond else {
-        return None;
+        return Ok(None);
     };
-    Some((column_offset(left, names)?, column_offset(right, names)?))
+    let (Expr::Column(left), Expr::Column(right)) = (&**left, &**right) else {
+        return Ok(None);
+    };
+    for path in [left, right] {
+        if let Some(column) = super::field_name_ambiguity(names, path) {
+            return Err(PlanError::ambiguous_column_in(column, "field list"));
+        }
+    }
+    let (Some(left_offset), Some(right_offset)) =
+        (find_field_name(names, left), find_field_name(names, right))
+    else {
+        let unknown = if find_field_name(names, left).is_none() {
+            left
+        } else {
+            right
+        };
+        return Err(PlanError::unknown_column_in_clause(
+            unknown.join("."),
+            "where clause",
+        ));
+    };
+    Ok(Some((left_offset, right_offset)))
 }
 
 /// Go `splitWhere(where)`: the top-level `AND` chain, parentheses transparent.

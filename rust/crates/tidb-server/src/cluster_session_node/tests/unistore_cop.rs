@@ -17299,6 +17299,7 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
         "CREATE TABLE dz (a INT) PARTITION BY RANGE (10 DIV a) \
          (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
         "ALTER TABLE tv0 MODIFY tv0.b BIGINT",
+        "CREATE TABLE jd8 (id INT PRIMARY KEY, j2 JSON DEFAULT (JSON_ARRAY(id, id * 2)))",
     ] {
         session.execute_write(ddl).unwrap_or_else(|error| panic!("{ddl}: {error:?}"));
     }
@@ -17379,6 +17380,16 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
             "Unsupported multi schema change for set tiflash replica",
         ),
         (
+            "INSERT INTO jd8 (id) VALUES (1)",
+            1054,
+            "Unknown column 'id' in 'expression'",
+        ),
+        (
+            "CREATE OR REPLACE VIEW tv0 AS SELECT * FROM tv0",
+            1347,
+            "'test.tv0' is not VIEW",
+        ),
+        (
             "ALTER TABLE tv0 ENGINE_ATTRIBUTE = '{', ENGINE_ATTRIBUTE = '{\"storage_class\": \"STANDARD\"}'",
             8270,
             "Invalid engine attribute format: 'unexpected end of JSON input'",
@@ -17444,6 +17455,11 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
             "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT SUM(n) + 1 FROM c WHERE n < 3) SELECT * FROM c",
             3575,
             "Recursive Common Table Expression 'c' can contain neither aggregation nor window functions in recursive query block",
+        ),
+        (
+            "SELECT CONCAT(b, GROUP_CONCAT(b)) FROM tv0 WHERE xxx = xxx",
+            1054,
+            "Unknown column 'xxx' in 'where clause'",
         ),
         (
             "SELECT 'a' COLLATE utf8mb4_bin UNION SELECT 'b' COLLATE utf8mb4_general_ci",

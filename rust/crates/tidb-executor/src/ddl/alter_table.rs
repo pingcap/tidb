@@ -3232,7 +3232,11 @@ fn prepare_alter_column_default(
                     origin: None,
                 });
             }
-            let value = tidb_expr::eval_expression_once(&body.expr, ctx)
+            let value = body
+                .expr
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|expr| tidb_expr::eval_expression_once(expr, ctx))
                 .map_err(|error| DriverError::Exec(crate::ExecError::Eval(error)))?;
             let origin =
                 prepare_computed_origin(value, field_type, column, column_info_version, ctx, zone)?;
