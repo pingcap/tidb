@@ -2340,3 +2340,17 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# Issue 63289: preserve MOD function argument boundaries in stored views.
+create table view_mod_t1(c1 int);
+create table view_mod_t3(c0 int);
+insert into view_mod_t1 values(10);
+insert into view_mod_t3 values(9);
+with view_mod_v as(select(select view_mod_t1.c1 from view_mod_t1 where mod(view_mod_t1.c1,view_mod_t3.c0+1)=0) c1 from view_mod_t3 join view_mod_t1 on true) select c1 from view_mod_v;
+create view view_mod_v as(select(select view_mod_t1.c1 from view_mod_t1 where mod(view_mod_t1.c1,view_mod_t3.c0+1)=0) c1 from view_mod_t3 join view_mod_t1 on true);
+select c1 from view_mod_v;
+create view view_mod_arithmetic as select mod(c1,c0+2) as a,-mod(c1,c0+2) as b,mod(c1+2,mod(c0,4)+1) as c,c1%(c0+2) as d from view_mod_t1,view_mod_t3;
+select * from view_mod_arithmetic;
+select mod(c1,c0+2),-mod(c1,c0+2),mod(c1+2,mod(c0,4)+1),c1%(c0+2) from view_mod_t1,view_mod_t3;
+drop view view_mod_arithmetic,view_mod_v;
+drop table view_mod_t1,view_mod_t3;
