@@ -17416,6 +17416,15 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
             "Incorrect datetime value: '2001-01-00 00:00:00'",
         ),
         (
+            format!(
+                "ALTER TABLE pt ADD PARTITION (PARTITION p5 VALUES LESS THAN (100) COMMENT '{}')",
+                "b".repeat(1100)
+            )
+            .as_str(),
+            1793,
+            "Comment for table partition 'p5' is too long (max = 1024)",
+        ),
+        (
             "INSERT INTO jd8 (id) VALUES (1)",
             1054,
             "Unknown column 'id' in 'expression'",

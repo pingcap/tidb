@@ -1867,6 +1867,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // ordinary missing dependencies instead invalidate the view.
             match error.kind() {
                 PlanErrorKind::Internal
+                | PlanErrorKind::InternalCoded { .. }
                 | PlanErrorKind::ViewRecursive
                 | PlanErrorKind::RenamingViewMissing(_)
                 | PlanErrorKind::FieldNotInGroupBy { .. }

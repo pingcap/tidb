@@ -1799,3 +1799,26 @@ fn qualified_statements_need_no_current_database() {
         1288
     );
 }
+
+/// `TestCreateViewIsolationRead`: a view body's `ErrInternal` (no access path
+/// under `tidb_isolation_read_engines`) passes through the view wrapper as
+/// 1815 instead of becoming `ErrViewInvalid` (1356).
+#[test]
+fn a_view_body_without_an_access_path_keeps_its_internal_error() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b int)").unwrap();
+    session
+        .run("set session tidb_isolation_read_engines = 'tiflash,tidb'")
+        .unwrap();
+    session
+        .run("create view v0 (a, avg_b) as select a, avg(b) from t group by a")
+        .unwrap();
+    assert_eq!(
+        session.run("select * from v0").unwrap_err().to_mysql_error().code,
+        1815
+    );
+    session
+        .run("set session tidb_isolation_read_engines = 'tikv,tiflash,tidb'")
+        .unwrap();
+    session.run("select * from v0").unwrap();
+}

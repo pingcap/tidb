@@ -1517,12 +1517,15 @@ fn add_partition_action(
             });
         }
     }
+    // Go reads a definition's comment and placement policy and ignores its
+    // other options (`ENGINE`, `DATA DIRECTORY`, ...); subpartitions are not
+    // ported.
     if definitions
         .iter()
-        .any(|definition| !definition.options.is_empty() || !definition.sub_partitions.is_empty())
+        .any(|definition| !definition.sub_partitions.is_empty())
     {
         return Err(DriverError::unsupported(
-            "ALTER TABLE ... ADD PARTITION options and subpartitions are not supported yet",
+            "ALTER TABLE ... ADD PARTITION subpartitions are not supported yet",
         ));
     }
 
@@ -1702,6 +1705,11 @@ fn add_partition_action(
                     super::table_partition::PartitionBuildMode::Create,
                     &mut |ordinal: usize| {
                         definitions.get(ordinal).map_or(Ok(()), |definition| {
+                            // Go's RANGE loop validates the comment length
+                            // (1793) before the name's.
+                            super::table_partition::partition_definition_comment(
+                                definition, ctx, true,
+                            )?;
                             super::table_partition::check_too_long_partition_name(&definition.name)
                         })
                     },
