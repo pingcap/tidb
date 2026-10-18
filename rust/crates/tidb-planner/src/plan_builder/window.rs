@@ -1098,6 +1098,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(frame) = &spec.def.spec.frame else {
             return Ok(());
         };
+        // Go `checkOriginWindowSpec`: the unit is parsed and refused first.
+        if frame.kind == FrameKind::Groups {
+            return Err(PlanError::not_supported_yet("GROUPS"));
+        }
         let start = &frame.start;
         let end = &frame.end;
         if matches!(start, AstFrameBound::UnboundedFollowing) {
@@ -1374,6 +1378,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             frame_type: match frame.kind {
                 FrameKind::Rows => FrameType::Rows,
                 FrameKind::Range => FrameType::Ranges,
+                // `check_origin_window_spec` refused GROUPS before any frame is built.
+                FrameKind::Groups => FrameType::Ranges,
             },
             start: Some(start),
             end: Some(end),

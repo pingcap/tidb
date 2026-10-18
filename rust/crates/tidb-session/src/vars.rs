@@ -4683,7 +4683,7 @@ mod tests {
         assert_eq!(vars.get_system("character_set_results").unwrap(), "");
         assert!(matches!(
             vars.set_system("character_set_connection", "not-a-charset".to_owned()),
-            Err(VarError::SqlError(error)) if error.code == 1115
+            Err(VarError::ValidationRefused(message)) if message == "Unknown charset not-a-charset"
         ));
         assert!(matches!(
             vars.set_system("collation_connection", "not-a-collation".to_owned()),

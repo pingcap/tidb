@@ -282,6 +282,9 @@ impl Parser {
         } else if self.is_kw("RANGE") {
             self.bump();
             Some(self.parse_window_frame(FrameKind::Range)?)
+        } else if self.is_kw("GROUPS") {
+            self.bump();
+            Some(self.parse_window_frame(FrameKind::Groups)?)
         } else {
             None
         };

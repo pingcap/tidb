@@ -1663,3 +1663,103 @@ fn show_forms_follow_go() {
     let table_status = row_text(session.run("SHOW TABLE STATUS LIKE 'shs'"));
     assert_eq!(table_status[0][4], "1");
 }
+
+/// Go parses a `GROUPS` window frame and the planner refuses it with 1235
+/// (`checkOriginWindowSpec`), before any other frame check.
+#[test]
+fn groups_window_frames_are_refused_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE wg (a INT)").unwrap();
+    for sql in [
+        "SELECT SUM(a) OVER (ORDER BY a GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM wg",
+        "SELECT SUM(a) OVER (ORDER BY a GROUPS BETWEEN CURRENT ROW AND 1 PRECEDING) FROM wg",
+        "SELECT SUM(a) OVER w FROM wg WINDOW w AS (ORDER BY a GROUPS 1 PRECEDING)",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1235, "{sql}");
+        assert!(
+            error.message.contains("'GROUPS'"),
+            "{sql}: {}",
+            error.message
+        );
+    }
+}
+
+/// Variable validations Go raises from `Validation`/`SetSession` hooks,
+/// captured from the oracle: every charset variable (the filesystem one
+/// too) is the plain `Unknown charset <name>` (1105) or, empty, 1231 naming
+/// `NULL`; `mpp_version` prints its value bare; the pipelined-DML policy
+/// admits `standard`, `conservative` and a well-formed `custom{...}`.
+#[test]
+fn variable_validations_follow_go() {
+    let mut session = Session::new();
+    for variable in [
+        "character_set_client",
+        "character_set_connection",
+        "character_set_database",
+        "character_set_filesystem",
+        "character_set_server",
+    ] {
+        let unknown = session
+            .run(&format!("SET @@session.{variable} = 'zzz'"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(
+            (unknown.code, unknown.message.as_str()),
+            (1105, "Unknown charset zzz"),
+            "{variable}"
+        );
+        let empty = session
+            .run(&format!("SET @@session.{variable} = ''"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(
+            (empty.code, empty.message),
+            (
+                1231,
+                format!("Variable '{variable}' can't be set to the value of 'NULL'")
+            ),
+            "{variable}"
+        );
+    }
+    let mpp = session
+        .run("SET @@session.mpp_version = 'zzz'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert!(
+        mpp.message
+            .starts_with("incorrect value: zzz. mpp_version options"),
+        "{}",
+        mpp.message
+    );
+    for good in [
+        "standard",
+        "Conservative",
+        "custom{concurrency=4, resolve_concurrency:8, write_throttle_ratio=0.5}",
+    ] {
+        session
+            .run(&format!(
+                "SET @@session.tidb_pipelined_dml_resource_policy = '{good}'"
+            ))
+            .unwrap();
+    }
+    for bad in [
+        "zzz",
+        "",
+        "custom",
+        "custom{}",
+        "custom{concurrency=0}",
+        "custom{concurrency=8193}",
+        "custom{write_throttle_ratio=1}",
+        "custom{unknown=1}",
+        "custom{concurrency=1,}",
+    ] {
+        let error = session
+            .run(&format!(
+                "SET @@session.tidb_pipelined_dml_resource_policy = '{bad}'"
+            ))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1231, "{bad}");
+    }
+}

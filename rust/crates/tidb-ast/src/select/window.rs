@@ -190,6 +190,7 @@ impl WindowFrame {
         out.push_str(match self.kind {
             FrameKind::Rows => "ROWS BETWEEN ",
             FrameKind::Range => "RANGE BETWEEN ",
+            FrameKind::Groups => "GROUPS BETWEEN ",
         });
         self.start.restore_into(out);
         out.push_str(" AND ");
@@ -215,6 +216,9 @@ pub enum FrameKind {
     /// Bounds measure the single `ORDER BY` key's own value distance from
     /// the current row's key.
     Range,
+    /// Bounds count peer groups. Go parses the unit and the planner refuses it
+    /// (`ErrNotSupportedYet("GROUPS")`).
+    Groups,
 }
 
 /// One frame boundary, shared by BOTH `ROWS` and `RANGE` (see
@@ -369,6 +373,7 @@ impl crate::Visitable for FrameKind {
         match self {
             Self::Rows => {}
             Self::Range => {}
+            Self::Groups => {}
         }
         visitor.leave(self)
     }

@@ -1158,7 +1158,7 @@ impl SysVarDef {
             });
         }
         let validated = self.normalize_by_type(value, scope)?;
-        self.run_validation_with_lookup(validated, value, lookup)
+        self.run_validation_with_lookup(validated, value, scope, lookup)
     }
 
     /// Go `ValidateFromType` ALONE, without the per-variable `Validation`
@@ -1207,6 +1207,7 @@ impl SysVarDef {
         &self,
         validated: Validated,
         original: &str,
+        scope: u8,
         lookup: Option<&dyn Fn(&str) -> Option<String>>,
     ) -> Result<Validated, ValidationError> {
         if self.name == "tiflash_compute_dispatch_policy" {
@@ -1863,17 +1864,19 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
-        // Go's `checkCharacterSet` (`varsutil.go:76`) covers every mutable
-        // character-set variable. An empty `character_set_results` is the
-        // sole exception (it means no result conversion); all other empty
-        // values are `ErrWrongValueForVar` (1231) with NULL. Unknown names
-        // are `ErrUnknownCharacterSet` (1115), and a hit stores the
-        // canonical charset name.
+        // Go's `checkCharacterSet` (`varsutil.go:76`) covers every
+        // character-set variable (`character_set_filesystem` included). An
+        // empty `character_set_results` is the sole exception (it means no
+        // result conversion); any other empty value is `ErrWrongValueForVar`
+        // (1231) naming the value `NULL`. An unknown name is the plain
+        // `Unknown charset <name>` (1105, `charset.GetCharsetInfo`), and a
+        // hit stores the canonical charset name.
         if matches!(
             self.name,
             "character_set_client"
                 | "character_set_connection"
                 | "character_set_database"
+                | "character_set_filesystem"
                 | "character_set_results"
                 | "character_set_server"
         ) {
@@ -1881,25 +1884,13 @@ impl SysVarDef {
                 return Ok(validated);
             }
             if validated.value.is_empty() {
-                return Err(ValidationError::WrongValue);
-            }
-            // go's `character_set_results` Validation alone answers the plain
-            // uncatalogued text `Unknown charset %s` (1105); the other
-            // charset variables answer 1115 with the catalogued message.
-            if self.name == "character_set_results" {
-                let charset = tidb_datatype::get_charset_info(&validated.value).map_err(|_| {
-                    ValidationError::Refused(format!("Unknown charset {}", validated.value))
-                })?;
-                return Ok(Validated {
-                    value: charset.name,
-                    truncated: validated.truncated,
-                });
+                return Err(ValidationError::SqlError(SqlError::new(
+                    tidb_error::mysql::errcode::ErrWrongValueForVar,
+                    &[FormatArg::from(self.name), FormatArg::from("NULL")],
+                )));
             }
             let charset = tidb_datatype::get_charset_info(&validated.value).map_err(|_| {
-                ValidationError::SqlError(SqlError::new(
-                    tidb_error::mysql::errcode::ErrUnknownCharacterSet,
-                    &[FormatArg::from(original)],
-                ))
+                ValidationError::Refused(format!("Unknown charset {}", validated.value))
             })?;
             return Ok(Validated {
                 value: charset.name,
@@ -1956,6 +1947,19 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's `setPipelinedDmlResourcePolicy` (`sysvar.go`), a SetSession
+        // hook: `standard`, `conservative`, or `custom{key=value, ...}` over
+        // `concurrency`, `resolve_concurrency` (1..=8192) and
+        // `write_throttle_ratio` (0 <= ratio < 1); anything else is
+        // `ErrWrongValueForVar`.
+        if self.name == tidb_vardef::tidb_vars::TIDB_PIPELINED_DML_RESOURCE_POLICY
+            && scope == SCOPE_SESSION
+        {
+            if !pipelined_dml_resource_policy_is_valid(&validated.value) {
+                return Err(ValidationError::WrongValue);
+            }
+            return Ok(validated);
+        }
         // Go's mpp_version Validation (`sysvar.go:3335`): the value must
         // parse (`ToMppVersion`); a miss is refused with the option list
         // `-1 (unspecified), 0, 1, 2, 3` (a bare errors.Errorf, so it
@@ -1963,7 +1967,7 @@ impl SysVarDef {
         if self.name == tidb_vardef::tidb_vars::MPP_VERSION {
             if tidb_vardef::modes::to_mpp_version(&validated.value).is_none() {
                 return Err(ValidationError::Refused(format!(
-                    "incorrect value: `{original}`. mpp_version options: -1 (unspecified), 0, 1, 2, 3",
+                    "incorrect value: {original}. mpp_version options: -1 (unspecified), 0, 1, 2, 3",
                 )));
             }
             return Ok(validated);
@@ -2545,6 +2549,50 @@ pub(crate) fn supported_collation(
             tidb_error::mysql::errcode::ErrUnknownCollation,
             &[FormatArg::from(original)],
         ),
+    })
+}
+
+/// Go `setPipelinedDmlResourcePolicy`'s validation half.
+fn pipelined_dml_resource_policy_is_valid(value: &str) -> bool {
+    let value = value.trim();
+    let lowered = value.to_lowercase();
+    if lowered == "standard" || lowered == "conservative" {
+        return true;
+    }
+    let Some(remaining) = lowered.strip_prefix("custom") else {
+        return false;
+    };
+    let remaining = remaining.trim();
+    if remaining.len() < 2 || !remaining.starts_with('{') || !remaining.ends_with('}') {
+        return false;
+    }
+    let content = remaining[1..remaining.len() - 1].trim();
+    if content.is_empty() {
+        return false;
+    }
+    content.split(',').all(|raw| {
+        let param = raw.trim();
+        if param.is_empty() {
+            return false;
+        }
+        // Go `strings.FieldsFunc(param, '=' or ':')`: empty fields vanish.
+        let parts = param
+            .split(['=', ':'])
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let [key, text] = parts.as_slice() else {
+            return false;
+        };
+        let (key, text) = (key.trim(), text.trim());
+        match key {
+            "concurrency" | "resolve_concurrency" => text
+                .parse::<i64>()
+                .is_ok_and(|concurrency| (1..=8192).contains(&concurrency)),
+            "write_throttle_ratio" => text
+                .parse::<f64>()
+                .is_ok_and(|ratio| (0.0..1.0).contains(&ratio)),
+            _ => false,
+        }
     })
 }
 
@@ -3495,7 +3543,7 @@ mod tests {
             Err(ValidationError::Refused(message)) => {
                 assert!(
                     message.contains(
-                        "incorrect value: `4`. mpp_version options: -1 (unspecified), 0, 1, 2, 3"
+                        "incorrect value: 4. mpp_version options: -1 (unspecified), 0, 1, 2, 3"
                     ),
                     "{message}"
                 );
@@ -3756,17 +3804,23 @@ mod tests {
 
 /// Go routes `character_set_database` and `collation_database` through
 /// `checkCharacterSet` (`varsutil.go:76`) and `checkCollation`
-/// (`varsutil.go:57`): canonical-name resolution with 1115/1273 refusals,
-/// and the empty charset value is `ErrWrongValueForVar` (1231).
+/// (`varsutil.go:57`): canonical-name resolution (the plain `Unknown charset`
+/// 1105 for a charset, 1273 for a collation), and the empty charset value is
+/// `ErrWrongValueForVar` (1231) naming `NULL`. Captured from the oracle.
 #[test]
 fn database_charset_and_collation_set_validation_matches_go() {
     let cs = get_sys_var("character_set_database").unwrap();
     assert_eq!(cs.validate("UTF8MB4").unwrap().value, "utf8mb4");
-    assert!(matches!(
+    assert_eq!(
         cs.validate("bogus_charset"),
+        Err(ValidationError::Refused(
+            "Unknown charset bogus_charset".to_owned()
+        ))
+    );
+    assert!(matches!(
+        cs.validate(""),
         Err(ValidationError::SqlError(_))
     ));
-    assert_eq!(cs.validate(""), Err(ValidationError::WrongValue));
 
     let coll = get_sys_var("collation_database").unwrap();
     assert_eq!(
