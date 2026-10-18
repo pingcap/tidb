@@ -396,7 +396,14 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
             "OFF".to_owned()
         }),
         "tidb_slow_log_threshold" => Some(instance.slow_threshold.to_string()),
-        "tidb_record_plan_in_slow_log" => Some(instance.record_plan_in_slow_log.to_string()),
+        "tidb_record_plan_in_slow_log" => Some(
+            if instance.record_plan_in_slow_log != 0 {
+                "ON"
+            } else {
+                "OFF"
+            }
+            .to_owned(),
+        ),
         "tidb_check_mb4_value_in_utf8" => Some(if instance.check_mb4_value_in_utf8.load() {
             "ON".to_owned()
         } else {

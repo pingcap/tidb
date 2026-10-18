@@ -1069,7 +1069,7 @@ impl Session {
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
             last_query_info: std::cell::RefCell::new(
-                "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0,\"ru_v2_consumption\":0}"
+                "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
                     .to_owned(),
             ),
             published_last_insert_id: Arc::default(),

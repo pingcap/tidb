@@ -270,7 +270,7 @@ pub fn resolve_view_definition(
         // captured, `information_schema.views.CHECK_OPTION` reads CASCADED
         // for a view written without one at all.
         check_option: create.check_option.sql().to_owned(),
-        update_ts: 0,
+        update_ts: current_tso(),
         id: 0,
     };
     Ok((database, name, view))
@@ -1022,4 +1022,14 @@ pub fn view_column_list(
         .zip(&body_columns)
         .map(|((name, _), field_type)| (name.clone(), field_type.clone()))
         .collect())
+}
+
+/// A TSO for "now" (physical milliseconds shifted over the logical bits), what
+/// an in-process creation records as `TableInfo.UpdateTS` where no timestamp
+/// oracle ran.
+pub(crate) fn current_tso() -> u64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    millis << 18
 }

@@ -1614,8 +1614,52 @@ fn partitions_views_and_default_group_follow_go() {
          WHERE table_schema = 'test' AND table_name = 'pv'",
     ));
     assert_eq!(view_columns, [["NULL", "NULL"]]);
-    let group = row_text(
-        session.run("SELECT background FROM information_schema.resource_groups WHERE name = 'default'"),
-    );
+    let group =
+        row_text(session.run(
+            "SELECT background FROM information_schema.resource_groups WHERE name = 'default'",
+        ));
     assert_eq!(group, [["TASK_TYPES='stats'"]]);
+}
+
+/// SHOW forms whose output Go defines and this tier lacked, captured from the
+/// oracle: the default resource group's DDL, `SHOW INDEX` over a view, the
+/// `Target|Placement|Scheduling_State` header, `SHOW EXTENDED COLUMNS`, the
+/// DDL/binding status rows and the `SHOW TABLE STATUS` row of a sequence.
+#[test]
+fn show_forms_follow_go() {
+    let mut session = Session::new();
+    let created = row_text(session.run("SHOW CREATE RESOURCE GROUP `default`"));
+    assert_eq!(created[0][0], "default");
+    assert_eq!(
+        created[0][1],
+        "CREATE RESOURCE GROUP `default` RU_PER_SEC=2147483647, PRIORITY=MEDIUM, \
+         BURSTABLE(UNLIMITED), BACKGROUND=(TASK_TYPES='stats')"
+    );
+    assert_eq!(
+        session
+            .run("SHOW CREATE RESOURCE GROUP nosuch")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        8249
+    );
+    session.run("CREATE TABLE sh (a INT, b INT)").unwrap();
+    session.run("CREATE VIEW shv AS SELECT a FROM sh").unwrap();
+    session.run("CREATE SEQUENCE shs").unwrap();
+    assert!(row_text(session.run("SHOW INDEX FROM shv")).is_empty());
+    assert!(row_text(session.run("SHOW INDEX FROM shs")).is_empty());
+    match session.run("SHOW PLACEMENT").unwrap() {
+        StmtResult::Rows(_) => {}
+        other => panic!("{other:?}"),
+    }
+    let extended = row_text(session.run("SHOW EXTENDED COLUMNS FROM sh"));
+    assert_eq!(extended.len(), 2);
+    let status = row_text(session.run(
+        "SHOW STATUS WHERE Variable_name IN ('ddl_schema_version', 'server_id', \
+         'last_plan_binding_update_time')",
+    ));
+    assert_eq!(status.len(), 3, "{status:?}");
+    assert_eq!(status[1][1], "0000-00-00 00:00:00");
+    let table_status = row_text(session.run("SHOW TABLE STATUS LIKE 'shs'"));
+    assert_eq!(table_status[0][4], "1");
 }

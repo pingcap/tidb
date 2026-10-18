@@ -487,10 +487,9 @@ const SHOW_COLLATION_COLUMNS: &[&str; 7] = &[
 /// The `session_only` flag mirrors Go's `vardef.ScopeSession`, which
 /// `fetchShowStatus` uses to drop rows from `SHOW GLOBAL STATUS`.
 ///
-/// NOT modelled (this tier has no metrics/server tier to read them from):
-/// the `Performance_schema_session_connect_attrs_*` counters,
-/// `ddl_schema_version`, `server_id` and `last_plan_binding_update_time`.
-/// `Uptime` and `tidb_keys_examined` are appended per statement.
+/// `Uptime`, `tidb_keys_examined`, `ddl_schema_version`, `server_id`,
+/// `last_plan_binding_update_time` and the connect-attrs counters are
+/// appended per statement.
 const SHOW_STATUS_VARS: &[(&str, &str, bool)] = &[
     ("Compression", "OFF", true),
     ("Compression_algorithm", "", true),
@@ -1004,6 +1003,7 @@ impl Session {
         table_path: &[String],
         column: Option<&str>,
         full: bool,
+        extended: bool,
     ) -> Result<StmtOutput, DriverError> {
         // A `db.tbl` path names its own schema, as everywhere else.
         let (database, table_name) = match table_path {
@@ -1065,8 +1065,14 @@ impl Session {
                     "SHOW COLUMNS needs a storage-backed table",
                 ));
             };
-            table
-                .visible_columns()
+            // `EXTENDED` adds the hidden columns MySQL keeps internally
+            // (`tb.Cols()` rather than `tb.VisibleCols()`).
+            let listed = if extended {
+                table.columns()
+            } else {
+                table.visible_columns()
+            };
+            listed
                 .iter()
                 .enumerate()
                 .filter(|(_, candidate)| {
@@ -1345,29 +1351,72 @@ impl Session {
             // go `fetchShowImportJobs` over the dist-task framework: this
             // tier runs no IMPORT jobs, so the answer is the empty set (the
             // oracle's own answer on the battery's table).
-            tidb_ast::AdminStmt::ShowImportJobs(_) => Ok(Some(StmtOutput::Rows {
-                columns: vec![
-                    ("Job_ID".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-                    ("Group_ID".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-                    ("Step".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long)),
-                    ("Processed_Keys".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-                    ("Total_Keys".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
-                    ("State".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("Start_Time".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("End_Time".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("Created_By".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                ],
-                rows: Vec::new(),
-            })),
+            tidb_ast::AdminStmt::ShowImportJobs(_) => {
+                use tidb_datatype::{FieldType, FieldTypeCode};
+                // Go `importIntoSchemaNames` / `ImportIntoSchemaFTypes`.
+                let string = || FieldType::new(FieldTypeCode::String);
+                let long = || FieldType::new(FieldTypeCode::LongLong);
+                let timestamp = || FieldType::new(FieldTypeCode::Timestamp);
+                Ok(Some(StmtOutput::Rows {
+                    columns: vec![
+                        ("Job_ID".to_owned(), long()),
+                        ("Group_Key".to_owned(), string()),
+                        ("Data_Source".to_owned(), string()),
+                        ("Target_Table".to_owned(), string()),
+                        ("Table_ID".to_owned(), long()),
+                        ("Phase".to_owned(), string()),
+                        ("Status".to_owned(), string()),
+                        ("Source_File_Size".to_owned(), string()),
+                        ("Imported_Rows".to_owned(), long()),
+                        ("Result_Message".to_owned(), string()),
+                        ("Create_Time".to_owned(), timestamp()),
+                        ("Start_Time".to_owned(), timestamp()),
+                        ("End_Time".to_owned(), timestamp()),
+                        ("Created_By".to_owned(), string()),
+                        ("Last_Update_Time".to_owned(), timestamp()),
+                        ("Cur_Step".to_owned(), string()),
+                        ("Cur_Step_Processed_Size".to_owned(), string()),
+                        ("Cur_Step_Total_Size".to_owned(), string()),
+                        ("Cur_Step_Progress_Pct".to_owned(), string()),
+                        ("Cur_Step_Speed".to_owned(), string()),
+                        ("Cur_Step_ETA".to_owned(), string()),
+                    ],
+                    rows: Vec::new(),
+                }))
+            }
+            // Go `buildShowSchema` for `ShowImportGroups`: the jobs are
+            // grouped by key; this tier runs no IMPORT jobs.
+            tidb_ast::AdminStmt::ShowImportGroups(_) => {
+                use tidb_datatype::{FieldType, FieldTypeCode};
+                let long = || FieldType::new(FieldTypeCode::LongLong);
+                let timestamp = || FieldType::new(FieldTypeCode::Timestamp);
+                Ok(Some(StmtOutput::Rows {
+                    columns: vec![
+                        ("Group_Key".to_owned(), FieldType::new(FieldTypeCode::String)),
+                        ("Total_Jobs".to_owned(), long()),
+                        ("Pending".to_owned(), long()),
+                        ("Running".to_owned(), long()),
+                        ("Completed".to_owned(), long()),
+                        ("Failed".to_owned(), long()),
+                        ("Cancelled".to_owned(), long()),
+                        ("First_Job_Create_Time".to_owned(), timestamp()),
+                        ("Last_Job_Update_Time".to_owned(), timestamp()),
+                    ],
+                    rows: Vec::new(),
+                }))
+            }
+            // Go `getTiProxyAddrs`: every TRAFFIC statement talks to a
+            // TiProxy, and this deployment has none.
+            tidb_ast::AdminStmt::Traffic(_) => Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                "no tiproxy server found",
+            ))),
             // go `ShowPlacementForTable`/`Target`: this tier carries no
             // placement rules, so every target answers the empty set (the
             // oracle's own answer for the battery's unplaced table).
             tidb_ast::AdminStmt::ShowPlacement(_) => Ok(Some(StmtOutput::Rows {
                 columns: vec![
-                    ("Database".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("Table".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
+                    ("Target".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
                     ("Placement".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("Scheduling_Constraints".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
                     ("Scheduling_State".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
                 ],
                 rows: Vec::new(),
@@ -1462,19 +1511,35 @@ impl Session {
                                 },
                                 crate::infoschema::update_time_datum(table.update_ts(), &zone),
                             ),
+                            Some(tidb_executor::TableEntry::Sequence(sequence)) => (
+                                None,
+                                tidb_executor::TableCharset::default(),
+                                "",
+                                "",
+                                crate::infoschema::update_time_datum(sequence.update_ts, &zone),
+                            ),
                             _ => (None, tidb_executor::TableCharset::default(), "", "", Datum::Null),
                         };
-                        let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
-                            crate::show_admin::show_table_status_view_row(&name)
+                        let row = if let Some(tidb_executor::TableEntry::View(view)) = entry {
+                            crate::show_admin::show_table_status_view_row(
+                                &name,
+                                crate::infoschema::update_time_datum(view.update_ts, &zone),
+                            )
                         } else {
-                            crate::show_admin::show_table_status_row(
+                            let mut row = crate::show_admin::show_table_status_row(
                                 &name,
                                 auto_increment,
                                 table_charset,
                                 comment,
                                 create_options,
                                 create_time,
-                            )
+                            );
+                            // Go stores a sequence as a table with no columns
+                            // and its estimate is one row.
+                            if matches!(entry, Some(tidb_executor::TableEntry::Sequence(_))) {
+                                row[4] = Datum::Int(1);
+                            }
+                            row
                         };
                         rows.push(row);
                     }
@@ -1537,10 +1602,17 @@ impl Session {
                             "{database}.{table_name}"
                         ))));
                     };
-                    let tidb_executor::TableEntry::Kv(table) = entry else {
-                        return Err(DriverError::unsupported(
-                            "SHOW INDEX needs a storage-backed table",
-                        ));
+                    let table = match entry {
+                        tidb_executor::TableEntry::Kv(table) => table,
+                        // A view's `TableInfo` carries no indexes (Go answers
+                        // the header and no rows).
+                        tidb_executor::TableEntry::View(_)
+                        | tidb_executor::TableEntry::Sequence(_) => return Ok(Vec::new()),
+                        _ => {
+                            return Err(DriverError::unsupported(
+                                "SHOW INDEX needs a storage-backed table",
+                            ));
+                        }
                     };
                     Ok(show_index_rows(&table_name, table))
                 })?;
@@ -1594,7 +1666,10 @@ impl Session {
                     {
                         continue;
                     }
-                    if self.sem_hides_sysvar(definition.name) {
+                    // Go `fetchShowVariables` also skips `InternalSessionVariable`.
+                    if self.sem_hides_sysvar(definition.name)
+                        || definition.is_internal_session_variable()
+                    {
                         continue;
                     }
                     let matches = match &pattern {
@@ -1684,12 +1759,46 @@ impl Session {
                 });
                 // `tidb_keys_examined` (`statusvar.go`), session scope.
                 let keys_examined = self.keys_examined().to_string();
-                let dynamic = uptime
+                // The DDL provider's rows (`pkg/ddl/stat.go`): the schema
+                // version and this node's DDL id, GLOBAL|SESSION scope.
+                let ddl_schema_version = self
+                    .cluster_schema_version
                     .as_ref()
-                    .map(|value| ("Uptime", value.as_str(), false))
-                    .into_iter()
-                    .chain([("tidb_keys_examined", keys_examined.as_str(), true)]);
-                for (name, value, session_only) in SHOW_STATUS_VARS.iter().copied().chain(dynamic) {
+                    .map_or_else(|| self.lock_catalog().map_or(0, |c| c.schema_version() as i64), |source| source())
+                    .to_string();
+                let server_id = self
+                    .server_info_syncer
+                    .as_ref()
+                    .map(|syncer| syncer.local_server_info().static_info.id.clone())
+                    .unwrap_or_default();
+                // The binding handle's row (`binding_handle.go`), session
+                // scope: `Time.String()` of the last update, zero until a
+                // binding was loaded.
+                let binding_update_time = self
+                    .global_binding_cache
+                    .as_ref()
+                    .map(|cache| cache.load().last_update_time())
+                    .filter(|time| !time.is_empty())
+                    .unwrap_or_else(|| "0000-00-00 00:00:00".to_owned());
+                let mut dynamic = vec![
+                    ("Performance_schema_session_connect_attrs_longest_seen", "0", false),
+                    ("Performance_schema_session_connect_attrs_lost", "0", false),
+                    ("ddl_schema_version", ddl_schema_version.as_str(), false),
+                    ("last_plan_binding_update_time", binding_update_time.as_str(), true),
+                    ("server_id", server_id.as_str(), false),
+                    ("tidb_keys_examined", keys_examined.as_str(), true),
+                ];
+                if let Some(value) = uptime.as_ref() {
+                    dynamic.push(("Uptime", value.as_str(), false));
+                }
+                // Go lists the collected statuses sorted by name.
+                let mut listed = SHOW_STATUS_VARS
+                    .iter()
+                    .copied()
+                    .chain(dynamic)
+                    .collect::<Vec<_>>();
+                listed.sort_by(|left, right| left.0.cmp(right.0));
+                for (name, value, session_only) in listed {
                     // Go fills these two per connection from the negotiated
                     // TLS state (`server.go:1329`); a plaintext connection
                     // keeps the table's empty strings.
@@ -2200,6 +2309,41 @@ impl Session {
                         self.vars.sql_mode().has_ansi_quotes_mode(),
                     )));
                 }
+                // Go `fetchShowCreateResourceGroup`: the group by name
+                // (`ErrResourceGroupNotExists` when absent), reported under
+                // the name as written beside `CREATE RESOURCE GROUP`
+                // followed by its settings.
+                if *kind == tidb_ast::ShowCreateKind::ResourceGroup {
+                    let [group_name] = name.as_slice() else {
+                        return Err(DriverError::unsupported("empty resource group name"));
+                    };
+                    let text = self.with_catalog_mut(|catalog| {
+                        let group = catalog.resource_group(group_name).ok_or_else(|| {
+                            crate::resource_group::resource_group_not_exists(group_name)
+                        })?;
+                        let settings = group
+                            .settings
+                            .as_ref()
+                            .map(|settings| settings.to_string())
+                            .unwrap_or_default();
+                        Ok(format!(
+                            "CREATE RESOURCE GROUP `{}` {settings}",
+                            group.name.original()
+                        ))
+                    })?;
+                    let field_type =
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
+                    return Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            ("Resource_Group".to_owned(), field_type.clone()),
+                            ("Create Resource Group".to_owned(), field_type),
+                        ],
+                        rows: vec![vec![
+                            Datum::Bytes(group_name.clone().into_bytes()),
+                            Datum::Bytes(text.into_bytes()),
+                        ]],
+                    }));
+                }
                 // Go `fetchShowCreatePlacementPolicy` (`executor/show.go:1774`)
                 // looks the policy up and reports `ErrPlacementPolicyNotExists`
                 // (8239) for a name that is not there. The row is the policy's
@@ -2414,11 +2558,6 @@ impl Session {
             }
             // Go `fetchShowColumns`.
             tidb_ast::AdminStmt::ShowColumns(show) => {
-                if show.extended {
-                    return Err(DriverError::unsupported(
-                        "SHOW EXTENDED COLUMNS is not supported yet",
-                    ));
-                }
                 let (like_pattern, where_clause) = match &show.filter {
                     None => (None, None),
                     Some(tidb_ast::ShowColumnsFilter::Like(expr)) => {
@@ -2428,7 +2567,7 @@ impl Session {
                     Some(tidb_ast::ShowColumnsFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let database = self.show_columns_database(show.database.as_deref(), &show.table)?;
-                let output = self.show_columns(&database, &show.table, None, show.full)?;
+                let output = self.show_columns(&database, &show.table, None, show.full, show.extended)?;
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
@@ -2442,6 +2581,7 @@ impl Session {
                     &database,
                     &describe.table,
                     column.map(String::as_str),
+                    false,
                     false,
                 )
                 .map(Some)

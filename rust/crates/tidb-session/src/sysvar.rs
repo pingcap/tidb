@@ -3275,7 +3275,12 @@ mod tests {
     fn compile_platform_sysvars_follow_the_target() {
         assert_eq!(
             get_sys_var("version_compile_os").unwrap().value,
-            std::env::consts::OS
+            // Go's GOOS spells macOS "darwin".
+            if cfg!(target_os = "macos") {
+                "darwin"
+            } else {
+                std::env::consts::OS
+            }
         );
         // go spells x86-64 `amd64` and arm64 `arm64` (`runtime.GOARCH`).
         let expected_machine = match std::env::consts::ARCH {

@@ -405,8 +405,9 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         name: "tidb_last_query_info",
         global_config_name: "",
         scope: 2,
-        value: "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"error_count\":0,\"kv_errors\":null,\"fall_back_actions\":null}",
-        // go marshals the fresh QueryInfo{TxnScope:"global", StartTS:0, ForUpdateTS:0, ErrorCount:0, KvErrors:nil, FallBackActions:nil} (queryinfo.go).
+        value: "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}",
+        // go marshals the fresh sessionstates.QueryInfo{TxnScope:"global"}
+        // (`pkg/sessionctx/sessionstates/session_states.go`).
         var_type: VarType::Str,
         read_only: true,
         allow_auto_value: false,

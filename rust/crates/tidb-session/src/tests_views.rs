@@ -1075,6 +1075,10 @@ fn a_view_reports_its_columns_and_status() {
     let (names, rows) = query_text(&mut session, "SHOW TABLE STATUS LIKE 'v'");
     assert_eq!(names[0], "Name");
     assert_eq!(names[names.len() - 1], "Comment");
+    // Create_time is the creating TSO (Go fills it for a view).
+    assert_ne!(rows[0][11], "<nil>");
+    let mut rows = rows;
+    rows[0][11] = "<nil>".to_owned();
     assert_eq!(
         rows,
         [[

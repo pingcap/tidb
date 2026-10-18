@@ -117,7 +117,7 @@ fn session_getter_functions_read_live_defaults() {
     assert_eq!(one(&mut session, "SELECT @@tidb_last_txn_info"), "");
     assert_eq!(
         one(&mut session, "SELECT @@tidb_last_query_info"),
-        "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0,\"ru_v2_consumption\":0}"
+        "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
     );
     assert_eq!(one(&mut session, "SELECT @@last_plan_from_cache"), "0");
     assert_eq!(one(&mut session, "SELECT @@last_plan_from_binding"), "0");
@@ -141,7 +141,7 @@ fn instance_scoped_getters_read_live_config_defaults() {
         ("plugin_dir", "/data/deploy/plugin"),
         ("plugin_load", ""),
         ("tidb_slow_log_threshold", "300"),
-        ("tidb_record_plan_in_slow_log", "1"),
+        ("tidb_record_plan_in_slow_log", "ON"),
         ("tidb_enable_slow_log", "ON"),
         ("tidb_check_mb4_value_in_utf8", "ON"),
         ("tidb_enable_collect_execution_info", "ON"),

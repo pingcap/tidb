@@ -186,14 +186,17 @@ pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<St
         }),
         tidb_ast::ShowInspectionKind::Backups | tidb_ast::ShowInspectionKind::Restores => {
             Some(StmtOutput::Rows {
+                // Go `buildShowSchema` for `ShowBackups`/`ShowRestores`.
                 columns: vec![
                     ("Id".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
                     ("Destination".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
                     ("State".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-                    ("Start_Time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
-                    ("End_Time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
-                    ("Size".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
                     ("Progress".to_owned(), FieldType::new(FieldTypeCode::Double)),
+                    ("Queue_time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
+                    ("Execution_time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
+                    ("Finish_time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
+                    ("Connection".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+                    ("Message".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
                 ],
                 rows: Vec::new(),
             })
@@ -230,11 +233,26 @@ fn routine_columns() -> Vec<(String, FieldType)> {
 }
 
 fn event_columns() -> Vec<(String, FieldType)> {
+    // Go `buildShowEventsSchema`.
     let varchar = || FieldType::new(FieldTypeCode::Varchar);
-    ["Db", "Name", "Time zone", "Definer", "Type", "Execute at", "Interval value", "Interval field", "Starts", "Ends", "Status", "Originator", "character_set_client", "collation_connection", "Database Collation"]
-        .into_iter()
-        .map(|name| (name.to_owned(), varchar()))
-        .collect()
+    let datetime = || FieldType::new(FieldTypeCode::Datetime);
+    vec![
+        ("Db".to_owned(), varchar()),
+        ("Name".to_owned(), varchar()),
+        ("Time zone".to_owned(), varchar()),
+        ("Definer".to_owned(), varchar()),
+        ("Type".to_owned(), varchar()),
+        ("Execute At".to_owned(), datetime()),
+        ("Interval Value".to_owned(), varchar()),
+        ("Interval Field".to_owned(), varchar()),
+        ("Starts".to_owned(), datetime()),
+        ("Ends".to_owned(), datetime()),
+        ("Status".to_owned(), varchar()),
+        ("Originator".to_owned(), FieldType::new(FieldTypeCode::Int24)),
+        ("character_set_client".to_owned(), varchar()),
+        ("collation_connection".to_owned(), varchar()),
+        ("Database Collation".to_owned(), varchar()),
+    ]
 }
 
 /// Go `ShowExec.fetchShowPrivileges`: the static MySQL privilege table
@@ -396,15 +414,15 @@ pub(crate) fn show_table_status_row(
 /// counts, sizes, collation and create options alike -- an empty `Checksum`,
 /// and the literal `VIEW` as its comment, which is how the two kinds of
 /// object are told apart in this output.
-pub(crate) fn show_table_status_view_row(name: &str) -> Vec<Datum> {
+pub(crate) fn show_table_status_view_row(name: &str, create_time: Datum) -> Vec<Datum> {
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     let mut row = vec![text(name)];
     // Engine through Auto_increment: ten cells a view has no value for.
     row.extend(std::iter::repeat_n(Datum::Null, 10));
-    // Create_time, which Go fills and this tier has no source for, then
-    // Update_time, Check_time and Collation, which are NULL for a view in Go
-    // too.
-    row.extend(std::iter::repeat_n(Datum::Null, 4));
+    // Create_time (the creating job's TSO), then Update_time, Check_time and
+    // Collation, which are NULL for a view in Go.
+    row.push(create_time);
+    row.extend(std::iter::repeat_n(Datum::Null, 3));
     row.push(text("")); // Checksum
     row.push(Datum::Null); // Create_options
     row.push(text("VIEW")); // Comment

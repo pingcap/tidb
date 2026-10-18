@@ -370,7 +370,12 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         scope: 0,
         // Go uses runtime.GOOS; this keeps platform variants out of the
         // captured registry and follows the active Rust target.
-        value: std::env::consts::OS,
+        // Go's GOOS spells macOS "darwin".
+        value: if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            std::env::consts::OS
+        },
         var_type: VarType::Str,
         read_only: false,
         allow_auto_value: false,
