@@ -21,3 +21,4 @@ const (
 
 //go:generate go run ./generator/ -- unicode_0900_ai_ci_data_generated.go
 //go:generate go run ./generator/ -- unicode_ci_data_generated.go
+//go:generate go run ./generator/ -- unicode_0900_as_cs_data_generated.go
