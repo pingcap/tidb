@@ -815,6 +815,9 @@ fn remap_pb_scalar(
                 remap_pb_scalar(argument, keep, null_only)?;
             }
         }
+        tidb_expr::pushdown_catalog::PbScalar::Cast { arg, .. } => {
+            remap_pb_scalar(arg, keep, null_only)?;
+        }
         tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_)
         | tidb_expr::pushdown_catalog::PbScalar::NullLiteral { .. }
         | tidb_expr::pushdown_catalog::PbScalar::UIntLiteral { .. }

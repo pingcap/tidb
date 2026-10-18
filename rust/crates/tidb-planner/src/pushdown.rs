@@ -203,6 +203,7 @@ fn can_expr_push_down_reported(
     // refusal warning, then each argument.
     let signature = match tidb_expr::pushdown_catalog::from_expression(expr) {
         Some(tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. }) => signature.sig,
+        Some(tidb_expr::pushdown_catalog::PbScalar::Cast { signature, .. }) => signature,
         _ => tidb_expr::pushdown_catalog::ScalarFuncSig::Unspecified,
     };
     if !scalar_function_can_be_pushed(expr, function, signature, store, blacklist) {
@@ -264,9 +265,29 @@ fn scalar_function_can_be_pushed(
                 | "regexp_substr"
                 | "regexp_instr"
                 | "regexp_replace"
+                // Go's `builtinPeriodAddSig`/`builtinPeriodDiffSig` never call
+                // `setPbCode`, so `canScalarFuncPushDown` refuses their
+                // unspecified signature although the name is listed.
+                | "period_add"
+                | "period_diff"
         )
     {
         return false;
+    }
+    // A cast between eval types with no `CastXAsY` signature (to or from a
+    // vector, say) has no pb code in Go and refuses itself and its parent.
+    if store == PushDownStore::TiKv && policy_name == "cast" {
+        if let (Some(from), Some(to)) = (
+            function.args.first().and_then(Expression::static_type),
+            expr.static_type(),
+        ) {
+            if !tidb_expr::pushdown_catalog::cast_pair_has_signature(
+                from.eval_type(),
+                to.eval_type(),
+            ) {
+                return false;
+            }
+        }
     }
     let mut policy = PushDownPolicy::new(policy_name, signature);
     if policy_name == "conv" {
@@ -421,7 +442,11 @@ mod tests {
     #[test]
     fn a_dedicated_cast_name_answers_like_go_cast() {
         let col = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::NewDecimal)));
-        let cast = func("cast_decimal", vec![col.clone()]);
+        let cast = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("cast_decimal"),
+            FieldType::new(FieldTypeCode::NewDecimal),
+            vec![col.clone()],
+        ));
         assert!(can_exprs_push_down_tikv(std::slice::from_ref(&cast)));
         assert!(can_exprs_push_down_tikv(&[func(
             "not",

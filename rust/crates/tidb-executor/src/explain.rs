@@ -1899,6 +1899,7 @@ fn physical_explain_operator(
                     ))),
                     operator_info: trigger.info.clone(),
                     children: Vec::new(),
+                    fixed_id: None,
                 });
             }
             children
@@ -2088,6 +2089,7 @@ fn cte_definitions(
                 ));
             }
             let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
+                .with_fixed_id(format!("CTE_{}", cte.id_for_storage))
                 .with_operator_info(if cte.recursive_plan.is_some() {
                     "Recursive CTE"
                 } else {

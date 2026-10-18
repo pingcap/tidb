@@ -493,7 +493,7 @@ fn cte_classes_are_optimized_from_derive_stats_like_go() {
             "│ └─CTEFullScan|1.80|data:CTE_0",
             "└─Selection(Probe)|1.44|gt(Column#6, 1), not(isnull(Column#6))",
             "  └─CTEFullScan|1.80|data:CTE_0",
-            "CTE|1.80|Recursive CTE",
+            "CTE_0|1.80|Recursive CTE",
             "├─Projection(Seed Part)|1.00|1->Column#2",
             "│ └─TableDual|1.00|rows:1",
             "└─Projection(Recursive Part)|0.80|cast(plus(Column#3, 1), bigint BINARY)->Column#5",
@@ -509,7 +509,7 @@ fn cte_classes_are_optimized_from_derive_stats_like_go() {
              FROM c c1 JOIN c c2 ON c1.id = c2.id WHERE c1.left_v = 10 AND c2.left_v > 5"
         )[5..],
         [
-            "CTE|3333.33|Non-Recursive CTE",
+            "CTE_0|3333.33|Non-Recursive CTE",
             "└─TableReader(Seed Part)|3333.33|data:Selection",
             "  └─Selection|3333.33|or(eq(test.uj1.left_v, 10), gt(test.uj1.left_v, 5))",
             "    └─TableFullScan|10000.00|keep order:false, stats:pseudo",

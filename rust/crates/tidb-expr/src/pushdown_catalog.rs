@@ -1968,6 +1968,31 @@ const fn string_signature(
     }
 }
 
+/// Whether Go has a `CastXAsY` signature for a cast between these eval types.
+#[must_use]
+pub fn cast_pair_has_signature(from: EvalType, to: EvalType) -> bool {
+    cast_node_signature(from, to).is_some()
+}
+
+/// The signature of a cast NODE: a cast between equal eval types is still a
+/// node (`CastIntAsInt` for `CAST(x AS SIGNED)` over an integer), unlike the
+/// implicit cast the catalog skips when the types already agree.
+fn cast_node_signature(from: EvalType, to: EvalType) -> Option<ScalarFuncSig> {
+    match cast_signature(from, to)? {
+        Some(signature) => Some(signature),
+        None => Some(match to {
+            EvalType::Int => ScalarFuncSig::CastIntAsInt,
+            EvalType::Real => ScalarFuncSig::CastRealAsReal,
+            EvalType::Decimal => ScalarFuncSig::CastDecimalAsDecimal,
+            EvalType::String => ScalarFuncSig::CastStringAsString,
+            EvalType::Datetime | EvalType::Timestamp => ScalarFuncSig::CastTimeAsTime,
+            EvalType::Duration => ScalarFuncSig::CastDurationAsDuration,
+            EvalType::Json => ScalarFuncSig::CastJsonAsJson,
+            _ => return None,
+        }),
+    }
+}
+
 /// The implicit cast Go's `newBaseBuiltinFuncWithTp` inserts to make an
 /// argument of evaluation type `from` readable as `to`.
 ///
@@ -2203,6 +2228,18 @@ pub enum PbScalar {
         /// which takes the catalog's result type.
         ret_type: Option<FieldType>,
     },
+    /// A cast node the planner built (Go's single `ast.Cast` function): its
+    /// signature is chosen by the argument's and the target's eval types and
+    /// it is sent with the target's exact field type, so an implicit cast
+    /// `newBaseBuiltinFuncWithTp` already placed is lowered as built.
+    Cast {
+        /// The `CastXAsY` signature.
+        signature: ScalarFuncSig,
+        /// The converted argument.
+        arg: Box<PbScalar>,
+        /// The cast's result type.
+        field_type: FieldType,
+    },
 }
 
 impl PbScalar {
@@ -2230,6 +2267,7 @@ impl PbScalar {
                 control: Some(control),
                 ..
             } => Some(&control.field_type),
+            Self::Cast { field_type, .. } => Some(field_type),
             Self::IntLiteral(_) | Self::Call { .. } => None,
         }
     }
@@ -2253,6 +2291,7 @@ impl PbScalar {
             Self::JsonLiteral { .. } => EvalType::Json,
             Self::VectorLiteral { .. } => EvalType::VectorFloat32,
             Self::Call { signature, .. } => signature.ret,
+            Self::Cast { field_type, .. } => field_type.eval_type(),
         }
     }
 
@@ -2292,6 +2331,7 @@ impl PbScalar {
                 signature.ret_unsigned_from_first_arg
                     && args.first().is_some_and(PbScalar::is_unsigned)
             }
+            Self::Cast { field_type, .. } => field_type.is_unsigned(),
         }
     }
 
@@ -2339,6 +2379,7 @@ impl PbScalar {
                     args.get(1).is_some_and(PbScalar::is_binary_string)
                 }
             },
+            Self::Cast { field_type, .. } => field_type.is_binary_string(),
         }
     }
 }
@@ -2354,6 +2395,21 @@ fn metadata_expression(scalar: &PbScalar) -> Option<Expression> {
             let mut column = Column::new(0, field_type.clone());
             column.index = i64::from(*offset);
             return Some(Expression::Column(column));
+        }
+        PbScalar::Cast {
+            arg, field_type, ..
+        } => {
+            let argument = metadata_expression(arg)?;
+            let collation =
+                crate::collation_derive::derive_collation("cast", &[argument.clone()], field_type.eval_type())
+                    .ok()?;
+            let mut expression = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("cast"),
+                field_type.clone(),
+                vec![argument],
+            ));
+            crate::collation_derive::apply_derived_collation(&mut expression, &collation);
+            return Some(expression);
         }
         PbScalar::Call {
             signature,
@@ -2667,6 +2723,21 @@ fn from_expression_with_context(
                     return Ok(None);
                 };
                 args.push(argument);
+            }
+            let name = function.func_name.lowercase();
+            if name.starts_with("cast_") && !name.ends_with("_in_union") && args.len() == 1 {
+                let Some(field) = expression.static_type() else {
+                    return Ok(None);
+                };
+                let Some(signature) = cast_node_signature(args[0].eval_type(), field.eval_type())
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some(PbScalar::Cast {
+                    signature,
+                    arg: Box::new(args.pop().expect("one argument")),
+                    field_type: field.clone(),
+                }));
             }
             let mut described = build_call(function.func_name.lowercase(), args);
             if let Some(PbScalar::Call {
@@ -3067,6 +3138,17 @@ pub fn to_pb_in(
             value.serialize(),
             field_type_to_pb(field_type)?,
         )),
+        PbScalar::Cast {
+            signature,
+            arg,
+            field_type,
+        } => Some(Expr {
+            tp: Some(ExprType::ScalarFunc as i32),
+            sig: Some(*signature as i32),
+            children: vec![to_pb_in(arg, columns, zone)?],
+            field_type: Some(field_type_to_pb(field_type)?),
+            ..Default::default()
+        }),
         PbScalar::Call {
             signature,
             args,
@@ -3777,6 +3859,7 @@ mod tests {
             | PbScalar::JsonLiteral { .. }
             | PbScalar::VectorLiteral { .. } => {}
             PbScalar::Call { args, .. } => args.iter().for_each(|arg| collect(arg, out)),
+            PbScalar::Cast { arg, .. } => collect(arg, out),
         }
     }
 

@@ -17753,3 +17753,52 @@ fn dnf_over_an_index_prefers_the_range_scan_and_keeps_go_or_shape() {
         "{chain}"
     );
 }
+
+/// A CTE definition keeps its storage id in every format
+/// (`CTEDefinition.ExplainID`), and the implicit casts a builtin's arguments
+/// carry no longer decide push-down: `round(dt)` and `conv(int, ...)` read a
+/// cast the catalog now lowers natively, while `period_add` has no pb code in
+/// Go and stays above the reader. Each outcome was captured from the oracle.
+#[test]
+fn cte_ids_and_cast_wrapped_pushdown_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1136)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE pc (i INT NOT NULL, s VARCHAR(20) NOT NULL, dt DATETIME NOT NULL)",
+        )
+        .unwrap();
+    let plan = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let cte = plan(
+        &mut session,
+        "explain format='plan_tree' with c as (select i from pc where i < 10 order by i limit 1) \
+         select * from c where c.i < 18 union select * from c where c.i > 0",
+    );
+    assert!(
+        cte.lines()
+            .any(|line| line.starts_with("CTE_0 root") && line.contains("Non-Recursive CTE")),
+        "{cte}"
+    );
+    for (sql, store) in [
+        ("round(dt)", "cop[tikv]"),
+        ("conv(i, i, i)", "cop[tikv]"),
+        ("period_add(i, i)", "root"),
+    ] {
+        let text = plan(
+            &mut session,
+            &format!("explain format='brief' select i from pc where {sql}"),
+        );
+        let selection = text
+            .lines()
+            .find(|line| line.contains("Selection ") && line.contains(store))
+            .is_some();
+        assert!(selection, "{sql}\n{text}");
+    }
+}

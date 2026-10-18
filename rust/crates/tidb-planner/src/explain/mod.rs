@@ -219,6 +219,9 @@ pub struct ExplainOperator {
     pub operator_info: String,
     /// Child operators in display order.
     pub children: Vec<ExplainOperator>,
+    /// An identifier that overrides `operator_id` in every format, Go's
+    /// `CTEDefinition.ExplainID` (`CTE_<IDForStorage>`, never suffix-stripped).
+    pub fixed_id: Option<String>,
 }
 
 impl ExplainOperator {
@@ -238,7 +241,15 @@ impl ExplainOperator {
             access_object: None,
             operator_info: String::new(),
             children: Vec::new(),
+            fixed_id: None,
         }
+    }
+
+    /// Pins the displayed identifier regardless of the format.
+    #[must_use]
+    pub fn with_fixed_id(mut self, id: impl Into<String>) -> Self {
+        self.fixed_id = Some(id.into());
+        self
     }
 
     /// Sets the optimizer-estimated output row count.
@@ -291,6 +302,9 @@ impl ExplainOperator {
     }
 
     fn explain_id(&self, brief: bool) -> String {
+        if let Some(id) = &self.fixed_id {
+            return format!("{id}{}", self.label);
+        }
         let id = if brief {
             self.operator.clone()
         } else {
