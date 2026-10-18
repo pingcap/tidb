@@ -966,6 +966,23 @@ fn exhaust_physical_plans(
                         }
                     }
                 }
+                if let JoinStrategy::Hash(shape) = &strategy {
+                    // Go `getHashJoin`'s `adjustStatsAndGetJoin`: a parent that
+                    // wants fewer rows than the join estimates asks the OUTER
+                    // child for the same fraction of its own rows.
+                    let join_rows = op.base.base.stats_info().map_or(
+                        0.0, crate::stats_info::StatsInfo::row_count,
+                    );
+                    if prop.expected_cnt < join_rows {
+                        let outer_rows = plan
+                            .children()
+                            .get(1 - shape.inner_idx)
+                            .and_then(LogicalPlan::stats_info)
+                            .map_or(0.0, crate::stats_info::StatsInfo::row_count);
+                        child_props[1 - shape.inner_idx].expected_cnt =
+                            outer_rows * (prop.expected_cnt / join_rows);
+                    }
+                }
                 if let JoinStrategy::Index {
                     outer_idx,
                     table_range_scan,

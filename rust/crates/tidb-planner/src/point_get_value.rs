@@ -62,6 +62,29 @@ pub fn point_get_value(column: &FieldType, value: &Datum) -> Option<Datum> {
     if !can_convert_in_point_get(column, value) {
         return None;
     }
+    // "As in buildFromBinOp in util/ranger ... we should set the collation of
+    // the string datum to collation of the column": a string or binary-literal
+    // constant against a string column is read as a string of the column's
+    // collation, so bytes that are not valid in the column's charset (`0xC4E3`
+    // against a `gbk` column, read as text) abandon the point plan.
+    let reread;
+    let value = match value {
+        Datum::BinaryLiteral(literal) if column.eval_type() == tidb_datatype::EvalType::String => {
+            reread = Datum::String(tidb_datatype::StringDatum::new(
+                literal.as_bytes().to_vec(),
+                column.collation(),
+            ));
+            &reread
+        }
+        Datum::String(text) if column.eval_type() == tidb_datatype::EvalType::String => {
+            reread = Datum::String(tidb_datatype::StringDatum::new(
+                text.bytes().to_vec(),
+                column.collation(),
+            ));
+            &reread
+        }
+        other => other,
+    };
     let converted = value
         .convert_to(column, tidb_datatype::STRICT_FLAGS)
         .ok()?

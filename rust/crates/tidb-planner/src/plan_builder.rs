@@ -2121,6 +2121,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             plan: Option<LogicalPlan>,
             error: Option<PlanError>,
             changed: bool,
+            /// Go `er.astNodeStack`, reduced to whether each expression on
+            /// the way down is a parenthesis or an `AND`/`OR`.
+            connectives: Vec<bool>,
         }
 
         impl<S: TableSource, C: Columns> tidb_ast::Visitor for Lowerer<'_, '_, S, C> {
@@ -2131,6 +2134,10 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 let Some(expr) = node.downcast_mut::<Expr>() else {
                     return false;
                 };
+                self.connectives.push(matches!(
+                    expr,
+                    Expr::Paren(_) | Expr::Binary(tidb_ast::BinaryOp::LogicAnd | tidb_ast::BinaryOp::LogicOr, ..)
+                ));
                 // Go's `expressionRewriter` lowers a direct subquery, a
                 // quantified comparison, an IN, and an EXISTS into an Apply or
                 // semi-join. A SELECT field reaches all four here; the filter
@@ -2292,8 +2299,25 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     Form::In { not, .. } => {
                         let left = rewritten_left.expect("IN left rewritten");
                         rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                        // Go `canTreatInSubqueryAsExistsForFilter`: in a
+                        // WHERE/HAVING chain of only `AND`/`OR`/parentheses the
+                        // `IN` behaves like `EXISTS` for the filter.
+                        let treat_as_exists = matches!(
+                            self.builder.cur_clause,
+                            ClauseCode::Where | ClauseCode::Having
+                        ) && self
+                            .connectives
+                            .split_last()
+                            .is_some_and(|(_, ancestors)| ancestors.iter().all(|c| *c));
                         match rewriter.handle_in_subquery(
-                            outer, &left, inner, not, true, hint_flags, true, false,
+                            outer,
+                            &left,
+                            inner,
+                            not,
+                            true,
+                            hint_flags,
+                            true,
+                            treat_as_exists,
                         ) {
                             Ok(plan) => Lowered::Applied(plan),
                             Err(error) => {
@@ -2398,7 +2422,10 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 true
             }
 
-            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            fn leave(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if node.is::<Expr>() {
+                    self.connectives.pop();
+                }
                 true
             }
         }
@@ -2408,6 +2435,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             plan: Some(plan),
             error: None,
             changed: false,
+            connectives: Vec::new(),
         };
         use tidb_ast::Visitable as _;
         expr.accept(&mut lowerer);

@@ -259,6 +259,32 @@ fn a_join_reproduces_gos_equal_cond_out_cnt() {
 }
 
 #[test]
+fn an_anti_semi_converted_from_an_outer_join_keeps_the_outer_joins_estimate() {
+    // `rule_outer_join_to_semi_join.go` flips the join type without
+    // re-deriving: the cached LEFT OUTER estimate (full-join count floored at
+    // the preserved side) survives, neither scaled by SelectionFactor nor
+    // reduced to the left row count.
+    let allocator = PlanIdAllocator::new();
+    let left = stated_source(&allocator, &[1], 100.0, &[(1, 10.0)]);
+    let right = stated_source(&allocator, &[11], 200.0, &[(11, 20.0)]);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1]))),
+        LogicalJoinType::AntiSemi,
+    );
+    join.preserved_side_unscaled = true;
+    join.equal_conditions = vec![eq_condition(1, 11)];
+    let mut join = LogicalPlan::Join(join);
+    join.set_children(vec![left, right]);
+
+    let (stats, _) = derive(&mut join).expect("a converted anti-semi derives");
+    assert!(
+        (stats.row_count() - 1000.0).abs() < f64::EPSILON,
+        "the outer join's 1000 rows survive, got {}",
+        stats.row_count()
+    );
+}
+
+#[test]
 fn a_join_uses_the_session_group_ndv_skew_ratio() {
     // Go passes RiskGroupNDVSkewRatio through EstimateFullJoinRowCount to
     // EstimateColsNDVWithMatchedLen. With columns at NDV 1000 and 500, the

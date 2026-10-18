@@ -1134,12 +1134,18 @@ impl LogicalJoin {
         //   (MergeJoin 71637785.35 = the left's row count). The conversion
         //   rule stamps `preserved_side_unscaled` for this branch.
         let stats = match self.join_type {
-            LogicalJoinType::AntiSemi if self.preserved_side_unscaled => StatsInfo::new(
-                left.row_count(),
-                left.col_ndvs()
-                    .iter()
-                    .map(|(id, ndv)| (*id, *ndv)),
-            ),
+            LogicalJoinType::AntiSemi if self.preserved_side_unscaled => {
+                // The cached estimate is the LEFT-OUTER one: the full-join
+                // count floored at the preserved side, NDVs capped at it.
+                let count = equal_cond_out_cnt.max(left.row_count());
+                StatsInfo::new(
+                    count,
+                    left.col_ndvs()
+                        .iter()
+                        .chain(right.col_ndvs())
+                        .map(|(id, ndv)| (*id, ndv.min(count))),
+                )
+            }
             LogicalJoinType::Semi | LogicalJoinType::AntiSemi => StatsInfo::new(
                 left.row_count() * SELECTION_FACTOR,
                 left.col_ndvs()
