@@ -31,7 +31,7 @@ use tidb_txnkv::transaction::{
     RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
 };
 
-use crate::cluster_catalog::load_cluster_catalog;
+use crate::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use crate::cluster_load_stats::{
     load_cluster_stats_target, resolve_cluster_load_stats, ClusterLoadStatsTarget,
     LoadedStatsTable, ResolvedClusterLoadStats,
@@ -110,7 +110,11 @@ pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
     item_history_initialized: impl Fn(i64) -> bool + Sync,
     concurrency_for_partition: usize,
 ) -> Result<ClusterLoadStatsReport, ClusterLoadStatsCommitError> {
-    let resolved = resolve_tables(opener, json, timeout)?;
+    // One catalog for the whole statement, as Go plans every item against the
+    // session's infoschema: the items only locate the `mysql.stats_*` tables,
+    // and reloading every table definition per item made LOAD STATS
+    // quadratic (the `imdbload` topic spent minutes parsing table JSON).
+    let (resolved, catalog) = resolve_tables(opener, json, timeout)?;
     let physical_ids = resolved
         .targets
         .iter()
@@ -120,6 +124,7 @@ pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
         let table = load_cluster_stats_target(&resolved.schema, target).map_err(other)?;
         commit_loaded_table(
             opener,
+            &catalog,
             &table,
             timeout,
             historical_stats_enabled,
@@ -159,6 +164,7 @@ pub fn commit_cluster_drop_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
 
 fn commit_loaded_table<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
+    catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
     historical_stats_enabled: bool,
@@ -166,14 +172,14 @@ fn commit_loaded_table<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapab
 ) -> Result<usize, ClusterLoadStatsCommitError> {
     let mut item_count = 0;
     for item in table.columns.iter().chain(&table.indexes) {
-        let version = commit_item(opener, table, item, timeout)?;
+        let version = commit_item(opener, catalog, table, item, timeout)?;
         item_count += 1;
         if historical_stats_enabled && item_history_initialized(table.physical_id) {
             record_history(opener, table.physical_id, version, timeout);
         }
     }
-    commit_usage(opener, table, timeout)?;
-    let version = commit_final_meta(opener, table, timeout)?;
+    commit_usage(opener, catalog, table, timeout)?;
+    let version = commit_final_meta(opener, catalog, table, timeout)?;
     if historical_stats_enabled {
         record_history(opener, table.physical_id, version, timeout);
     }
@@ -200,37 +206,53 @@ fn run_load_workers<T: Sync>(
     let workers = partition_load_concurrency(requested);
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                if first_error
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_some()
-                {
-                    return;
-                }
-                let position = next.fetch_add(1, Ordering::Relaxed);
-                let Some(task) = tasks.get(position) else {
-                    return;
-                };
-                let result =
-                    catch_unwind(AssertUnwindSafe(|| load(task))).unwrap_or_else(|panic| {
-                        Err(ClusterLoadStatsCommitError::Other(panic_text(panic)))
-                    });
-                match result {
-                    Ok(count) => {
-                        loaded_items.fetch_add(count, Ordering::Relaxed);
-                    }
-                    Err(error) => {
-                        let mut first = first_error
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if first.is_none() {
-                            *first = Some(error);
-                        }
+            // Each worker commits transactions, which Go runs on a pool
+            // goroutine; the default thread stack does not hold that path.
+            let spawned = std::thread::Builder::new()
+                .name("load-stats-partition".to_owned())
+                .stack_size(tidb_util::worker_stack::WORKER_STACK_BYTES)
+                .spawn_scoped(scope, || loop {
+                    if first_error
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .is_some()
+                    {
                         return;
                     }
+                    let position = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(task) = tasks.get(position) else {
+                        return;
+                    };
+                    let result =
+                        catch_unwind(AssertUnwindSafe(|| load(task))).unwrap_or_else(|panic| {
+                            Err(ClusterLoadStatsCommitError::Other(panic_text(panic)))
+                        });
+                    match result {
+                        Ok(count) => {
+                            loaded_items.fetch_add(count, Ordering::Relaxed);
+                        }
+                        Err(error) => {
+                            let mut first = first_error
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if first.is_none() {
+                                *first = Some(error);
+                            }
+                            return;
+                        }
+                    }
+                });
+            if let Err(error) = spawned {
+                let mut first = first_error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if first.is_none() {
+                    *first = Some(ClusterLoadStatsCommitError::Other(format!(
+                        "spawn partition load worker: {error}"
+                    )));
                 }
-            });
+                break;
+            }
         }
     });
     if let Some(error) = first_error
@@ -256,19 +278,23 @@ fn resolve_tables<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     json: &JsonTable,
     timeout: Duration,
-) -> Result<ResolvedClusterLoadStats, ClusterLoadStatsCommitError> {
+) -> Result<(ResolvedClusterLoadStats, ClusterCatalog), ClusterLoadStatsCommitError> {
     let mut transaction = opener.begin_read_only().map_err(other)?;
-    let tables = {
+    let (tables, catalog) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot).map_err(other)?;
-        resolve_cluster_load_stats(&catalog, json).map_err(other)?
+        (
+            resolve_cluster_load_stats(&catalog, json).map_err(other)?,
+            catalog,
+        )
     };
     transaction.finish_without_writes().map_err(other)?;
-    Ok(tables)
+    Ok((tables, catalog))
 }
 
 fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
+    catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     item: &ClusterStatsItem,
     timeout: Duration,
@@ -284,10 +310,9 @@ fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     for statement in loaded_stats_item_statements(table.physical_id, item).map_err(other)? {
         lock_pessimistic_statement(&transaction, &staged, |snapshot, start_ts| {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
             let plan = plan_loaded_stats_item_statement(
                 &mut snapshot,
-                &catalog,
+                catalog,
                 table.physical_id,
                 table.count,
                 item,
@@ -309,6 +334,7 @@ fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
 
 fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
+    catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
 ) -> Result<(), ClusterLoadStatsCommitError> {
@@ -325,10 +351,9 @@ fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         }
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
             let plan = plan_loaded_stats_usage_write(
                 &mut snapshot,
-                &catalog,
+                catalog,
                 table.physical_id,
                 std::slice::from_ref(column),
                 utc_now_timestamp(),
@@ -346,15 +371,15 @@ fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
 
 fn commit_final_meta<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
+    catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_loaded_stats_meta_write(
             &mut snapshot,
-            &catalog,
+            catalog,
             table.physical_id,
             table.count,
             table.modify_count,

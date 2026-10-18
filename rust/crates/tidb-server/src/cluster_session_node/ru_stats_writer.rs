@@ -270,8 +270,7 @@ impl RuStatsWriterWorker {
         });
         let weak: Weak<ClusterSessionFactory> = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = std::thread::Builder::new()
-            .name("ru-stats-writer".to_owned())
+        let thread = crate::sql_node::sql_worker_thread("ru-stats-writer")
             .spawn(move || {
                 let local = chrono::Local;
                 let mut writer = RuStatsWriter::new(deps, chrono::Local::now(), local);

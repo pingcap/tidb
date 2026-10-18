@@ -3695,6 +3695,16 @@ fn read_rows_with_keys<S: MetaSnapshot>(
 ) -> Result<Vec<(Vec<u8>, RowValues)>, StatsWriteError> {
     let view = full_view(table);
     let pairs = match table_id {
+        // A `_tidb_rowid` table's record keys do not start with `table_id`,
+        // so a record prefix names the whole table; Go reaches one table's
+        // rows (`... WHERE table_id = %?`) through the `tbl` index instead.
+        // Scanning the whole of `mysql.stats_top_n` per item made LOAD STATS
+        // quadratic in the number of loaded items.
+        Some(id)
+            if matches!(HandleLayout::of(table), HandleLayout::RowId) && view.has_index("tbl") =>
+        {
+            scan_system_table_index_prefixed(snapshot, &view, "tbl", &[Datum::Int(id)])?
+        }
         Some(id) => scan_system_table_prefixed(snapshot, &view, &[Datum::Int(id)])?,
         None => scan_system_table(snapshot, &view)?,
     };
@@ -3768,6 +3778,14 @@ fn first_free_row_id<S: MetaSnapshot>(
         })?,
         None => 0,
     };
+    // A `_tidb_rowid` is only ever taken from this allocator (Go's
+    // `alloc.Alloc` reserves from the same meta key, and an explicit row id
+    // rebases it), so the stored handles never pass it and the key alone is
+    // authoritative, as it is for Go. An integer primary key can hold
+    // explicitly written ids, so those tables still count the stored rows.
+    if matches!(HandleLayout::of(table), HandleLayout::RowId) {
+        return Ok(current + 1);
+    }
     let highest = read_rows_with_keys(snapshot, table, None)?
         .iter()
         .map(|(key, _)| row_id_of(key))

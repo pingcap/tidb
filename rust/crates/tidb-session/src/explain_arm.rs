@@ -59,6 +59,18 @@ impl Session {
                  'explain analyze format=true_card_cost'"
             )));
         }
+        // Go's preprocessor admits `ru` (reserved for RU output), and
+        // `Explain.prepareSchema` has no arm for it, so it fails there.
+        if explain.format.eq_ignore_ascii_case("ru") {
+            return Err(DriverError::unsupported(if explain.analyze {
+                format!(
+                    "explain format '{}' with analyze is not supported now",
+                    explain.format
+                )
+            } else {
+                format!("explain format '{}' is not supported now", explain.format)
+            }));
+        }
         let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
             // go `plannererrors.ErrUnknownExplainFormat` (1791) names the
             // format it could not match (oracle: `EXPLAIN FORMAT='tree'`

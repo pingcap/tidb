@@ -114,8 +114,7 @@ impl StatsMaintenanceWorker {
             wake: Condvar::new(),
         });
         let running = Arc::clone(&stop);
-        let thread = std::thread::Builder::new()
-            .name("statistics-maintenance".to_owned())
+        let thread = crate::sql_node::sql_worker_thread("statistics-maintenance")
             .spawn(move || {
                 while !initialized() {
                     // Shutdown remains independent of a blocked statistics read.

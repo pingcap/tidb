@@ -6021,3 +6021,87 @@ fn keyless_correlated_lateral_apply_divides_by_the_outer_ndv() {
     ));
     assert_eq!(rows[0][1], "6.25");
 }
+
+/// Go's preprocessor admits every name in `types.ExplainFormats`; captured
+/// from the oracle: `traditional` is `row`, `ru` fails in `prepareSchema`,
+/// `tidb_json` is one indented JSON array cell, `binary` one encoded cell.
+#[test]
+fn explain_formats_follow_go_format_list() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT)")
+        .expect("create table");
+    let rows = |session: &mut Session, sql: &str| row_text(session.run(sql));
+    assert_eq!(
+        rows(
+            &mut session,
+            "EXPLAIN FORMAT = TRADITIONAL SELECT * FROM t WHERE a = 1"
+        ),
+        rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'row' SELECT * FROM t WHERE a = 1"
+        ),
+    );
+    let error = |session: &mut Session, sql: &str| {
+        session
+            .run(sql)
+            .expect_err("format refused")
+            .to_mysql_error()
+            .message
+    };
+    assert_eq!(
+        error(&mut session, "EXPLAIN FORMAT = 'ru' SELECT * FROM t"),
+        "explain format 'ru' is not supported now"
+    );
+    assert_eq!(
+        error(
+            &mut session,
+            "EXPLAIN ANALYZE FORMAT = 'ru' SELECT * FROM t"
+        ),
+        "explain format 'ru' with analyze is not supported now"
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "EXPLAIN FORMAT = 'tidb_json' SELECT * FROM t WHERE a = 1"
+        ),
+        [[r#"[
+    {
+        "id": "TableReader_7",
+        "estRows": "10.00",
+        "taskType": "root",
+        "operatorInfo": "data:Selection_6",
+        "subOperators": [
+            {
+                "id": "Selection_6",
+                "estRows": "10.00",
+                "taskType": "cop[tikv]",
+                "operatorInfo": "eq(test.t.a, 1)",
+                "subOperators": [
+                    {
+                        "id": "TableFullScan_5",
+                        "estRows": "10000.00",
+                        "taskType": "cop[tikv]",
+                        "accessObject": "table:t",
+                        "operatorInfo": "keep order:false, stats:pseudo"
+                    }
+                ]
+            }
+        ]
+    }
+]
+"#]]
+    );
+    let binary = rows(
+        &mut session,
+        "EXPLAIN FORMAT = 'binary' SELECT * FROM t WHERE a = 1",
+    );
+    let decoded = rows(
+        &mut session,
+        &format!("SELECT tidb_decode_binary_plan('{}')", binary[0][0]),
+    );
+    assert!(
+        decoded[0][0].contains("TableFullScan_5") && decoded[0][0].contains("loops:0"),
+        "{decoded:?}"
+    );
+}

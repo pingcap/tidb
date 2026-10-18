@@ -69,6 +69,12 @@ pub enum ExplainFormat {
     /// non-prepared plan cache gives the statement, with the reason it
     /// skipped the cache as a warning.
     PlanCache,
+    /// Go `ExplainFormatTiDBJSON`: every root's operator tree as one JSON
+    /// array in a single `TiDB_JSON` cell (`explainFlatPlanInJSONFormat`).
+    TidbJson,
+    /// Go `ExplainFormatBinary`: the compressed `tipb.ExplainData` of the
+    /// plan in plan order (`BinaryPlanStrFromFlatPlan(flat, false)`).
+    Binary,
 }
 
 impl ExplainFormat {
@@ -77,7 +83,8 @@ impl ExplainFormat {
     /// -- the caller reports Go's own "Unknown EXPLAIN format name" error
     /// (captured verbatim from `explain format = 'bogus' ...`).
     pub fn parse(format: &str) -> Option<Self> {
-        if format.eq_ignore_ascii_case("row") {
+        // Go `Explain.prepareSchema` rewrites `traditional` to `row`.
+        if format.eq_ignore_ascii_case("row") || format.eq_ignore_ascii_case("traditional") {
             Some(Self::Row)
         } else if format.eq_ignore_ascii_case("verbose") {
             Some(Self::Verbose)
@@ -95,6 +102,10 @@ impl ExplainFormat {
             Some(Self::Json)
         } else if format.eq_ignore_ascii_case("plan_cache") {
             Some(Self::PlanCache)
+        } else if format.eq_ignore_ascii_case("tidb_json") {
+            Some(Self::TidbJson)
+        } else if format.eq_ignore_ascii_case("binary") {
+            Some(Self::Binary)
         } else {
             None
         }
@@ -115,6 +126,8 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
         ExplainFormat::CostTrace => PlannerExplainFormat::CostTrace,
         ExplainFormat::Json => PlannerExplainFormat::Json,
         ExplainFormat::PlanCache => PlannerExplainFormat::Row,
+        // Both render through their own encoders in `render_physical_plan`.
+        ExplainFormat::TidbJson | ExplainFormat::Binary => PlannerExplainFormat::Row,
     }
 }
 
@@ -1996,6 +2009,7 @@ fn physical_explain_operator(
                     operator_info: trigger.info.clone(),
                     children: Vec::new(),
                     fixed_id: None,
+                    build_side_swapped: false,
                 });
             }
             children
@@ -2081,11 +2095,13 @@ fn physical_explain_operator(
         PhysicalPlan::LocalIndexLookUp(_) => Some(0),
         _ => None,
     };
+    let mut build_side_swapped = false;
     if let Some(build) = labels.filter(|_| children.len() == 2) {
         children[build].label = "(Build)".to_owned();
         children[1 - build].label = "(Probe)".to_owned();
         if build == 1 {
             children.swap(0, 1);
+            build_side_swapped = true;
         }
     }
 
@@ -2112,6 +2128,7 @@ fn physical_explain_operator(
     operator.estimated_cost = estimated_cost;
     operator.cost_formula = cost_formula;
     operator.label = label.to_owned();
+    operator.build_side_swapped = build_side_swapped;
     if let Some(rows) = plan
         .stats_info()
         .map(tidb_planner::stats_info::StatsInfo::row_count)
@@ -3424,6 +3441,35 @@ fn render_physical_plan(
     if matches!(format, ExplainFormat::Dot) {
         return Ok(explain_dot_rows(physical));
     }
+    if matches!(format, ExplainFormat::TidbJson | ExplainFormat::Binary) {
+        // Go's binary operator carries `getPlanCost` (cost model ver2).
+        let coster = matches!(format, ExplainFormat::Binary).then(|| {
+            Ver2Coster::from_env(statement_context.optimizer_cost_env()).with_explain_cache()
+        });
+        let roots = physical_explain_roots(
+            coster.as_ref(),
+            eval_ctx,
+            statement_context,
+            false,
+            physical,
+            catalog,
+            runtime,
+            false,
+            scalar_subqueries,
+        );
+        let field_type = FieldType::new(FieldTypeCode::VarString);
+        return Ok(if matches!(format, ExplainFormat::TidbJson) {
+            (
+                vec![("TiDB_JSON".to_owned(), field_type)],
+                vec![vec![text(&explain_tidb_json(&roots, analyze))]],
+            )
+        } else {
+            (
+                vec![("binary plan".to_owned(), field_type)],
+                vec![vec![text(&explain_binary_plan(roots, analyze))]],
+            )
+        });
+    }
     if matches!(format, ExplainFormat::Hint) {
         // Go `ExplainFormatHint`: the hints that reproduce the plan, then the
         // hints the statement itself wrote.
@@ -3497,6 +3543,160 @@ fn render_physical_plan(
         );
     }
     Ok((columns, rows))
+}
+
+/// Go `ExplainInfoForEncode`: the fields in Go's declaration order, with its
+/// `omitempty` tags (`estRows` and `taskType` are always present).
+#[derive(serde::Serialize)]
+struct ExplainInfoForEncode {
+    id: String,
+    #[serde(rename = "estRows")]
+    est_rows: String,
+    #[serde(rename = "actRows", skip_serializing_if = "String::is_empty")]
+    act_rows: String,
+    #[serde(rename = "taskType")]
+    task_type: String,
+    #[serde(rename = "accessObject", skip_serializing_if = "String::is_empty")]
+    access_object: String,
+    #[serde(rename = "executeInfo", skip_serializing_if = "String::is_empty")]
+    execute_info: String,
+    #[serde(rename = "operatorInfo", skip_serializing_if = "String::is_empty")]
+    operator_info: String,
+    #[serde(rename = "memoryInfo", skip_serializing_if = "String::is_empty")]
+    memory_info: String,
+    #[serde(rename = "diskInfo", skip_serializing_if = "String::is_empty")]
+    disk_info: String,
+    #[serde(rename = "subOperators", skip_serializing_if = "Vec::is_empty")]
+    sub_operators: Vec<ExplainInfoForEncode>,
+}
+
+/// Go `Explain.explainOpRecursivelyInJSONFormat` over one operator: the
+/// full (suffixed) explain id plus its label, and the runtime columns only
+/// under ANALYZE (`prepareOperatorInfoForJSONFormat`).
+fn explain_info_for_encode(operator: &ExplainOperator, analyze: bool) -> ExplainInfoForEncode {
+    let (act_rows, execute_info, memory_info, disk_info) = if analyze {
+        (
+            operator
+                .actual_rows
+                .map_or_else(|| "N/A".to_owned(), |rows| rows.to_string()),
+            operator
+                .execution_info
+                .clone()
+                .unwrap_or_else(|| "N/A".to_owned()),
+            "N/A".to_owned(),
+            "N/A".to_owned(),
+        )
+    } else {
+        Default::default()
+    };
+    ExplainInfoForEncode {
+        id: operator.explain_id(false),
+        est_rows: operator
+            .estimated_rows
+            .map_or_else(|| "N/A".to_owned(), |rows| format!("{rows:.2}")),
+        act_rows,
+        task_type: operator.task.to_string(),
+        access_object: operator
+            .access_object
+            .as_ref()
+            .map_or_else(String::new, ToString::to_string),
+        execute_info,
+        operator_info: operator.operator_info.clone(),
+        memory_info,
+        disk_info,
+        sub_operators: operator
+            .children
+            .iter()
+            .map(|child| explain_info_for_encode(child, analyze))
+            .collect(),
+    }
+}
+
+/// Go `JSONToString`: `json.Encoder` with a four-space indent and HTML
+/// escaping off, so the text ends in the encoder's newline. Go also escapes
+/// U+2028 and U+2029, which `serde_json` leaves raw.
+fn explain_tidb_json(roots: &[ExplainOperator], analyze: bool) -> String {
+    use serde::Serialize;
+    let encodes: Vec<ExplainInfoForEncode> = roots
+        .iter()
+        .map(|root| explain_info_for_encode(root, analyze))
+        .collect();
+    let mut buffer = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut serializer = serde_json::Serializer::with_formatter(&mut buffer, formatter);
+    encodes
+        .serialize(&mut serializer)
+        .expect("explain operators serialize to JSON");
+    let mut text = String::from_utf8(buffer).expect("serde_json writes UTF-8");
+    text = text
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    text.push('\n');
+    text
+}
+
+/// Undoes the build-side-first swap, giving Go's `FlattenPhysicalPlan(plan,
+/// false)` child order, which the binary format encodes.
+fn into_plan_order(mut operator: ExplainOperator) -> ExplainOperator {
+    if operator.build_side_swapped && operator.children.len() == 2 {
+        operator.children.swap(0, 1);
+    }
+    operator.children = operator.children.into_iter().map(into_plan_order).collect();
+    operator
+}
+
+/// Go `BinaryPlanStrFromFlatPlan(flat, false)`: the main tree and its CTEs
+/// in plan order, each operator with its ver2 cost and no brief fields.
+///
+/// Go builds the target's executors even for a plain EXPLAIN ("to get
+/// partition pruning", `buildExplain`), and each registers an empty basic
+/// runtime record, so every root operator encodes `time:0s, open:0s,
+/// close:0s, loops:0` with zero actual rows and the data says it carries
+/// runtime stats. Under ANALYZE the operators carry what the run measured.
+fn explain_binary_plan(roots: Vec<ExplainOperator>, analyze: bool) -> String {
+    let mut roots = roots.into_iter().map(into_plan_order);
+    let Some(main) = roots.next() else {
+        return String::new();
+    };
+    let encode = |operator: ExplainOperator| {
+        let mut encoded = binary_operator(operator.clone(), operator.clone());
+        fill_binary_operator(&mut encoded, &operator, analyze);
+        encoded
+    };
+    let data = ExplainData {
+        main: Some(encode(main)),
+        ctes: roots.map(encode).collect(),
+        with_runtime_stats: true,
+        ..Default::default()
+    };
+    tidb_util::plancodec::compress(&data.encode_to_vec())
+}
+
+const EMPTY_ROOT_BASIC_EXEC_INFO: &str = "time:0s, open:0s, close:0s, loops:0";
+
+fn fill_binary_operator(
+    encoded: &mut PbExplainOperator,
+    operator: &ExplainOperator,
+    analyze: bool,
+) {
+    encoded.brief_name = String::new();
+    encoded.brief_operator_info = String::new();
+    encoded.cost = operator.estimated_cost.unwrap_or_default();
+    let root = matches!(operator.task, ExplainTask::Root);
+    if analyze {
+        encoded.act_rows = operator.actual_rows.unwrap_or_default();
+        let info = operator.execution_info.clone().unwrap_or_default();
+        if root {
+            encoded.root_basic_exec_info = info;
+        } else {
+            encoded.cop_exec_info = info;
+        }
+    } else if root {
+        encoded.root_basic_exec_info = EMPTY_ROOT_BASIC_EXEC_INFO.to_owned();
+    }
+    for (child, operator) in encoded.children.iter_mut().zip(&operator.children) {
+        fill_binary_operator(child, operator, analyze);
+    }
 }
 
 /// go `Explain.prepareDotInfo` (`pkg/planner/core/common_plans.go:1341`): the

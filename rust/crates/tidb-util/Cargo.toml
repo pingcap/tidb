@@ -157,3 +157,8 @@ path = "tests/printer_contract.rs"
 [[test]]
 name = "systimemon_source"
 path = "tests/systimemon_source.rs"
+
+[[test]]
+name = "default_thread_stack"
+path = "tests/default_thread_stack.rs"
+harness = false

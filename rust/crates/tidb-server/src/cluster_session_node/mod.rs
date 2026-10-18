@@ -2228,8 +2228,7 @@ impl AutoAnalyzeWorker {
         });
         let weak = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = std::thread::Builder::new()
-            .name("auto-analyze".to_owned())
+        let thread = crate::sql_node::sql_worker_thread("auto-analyze")
             .spawn(move || loop {
                 if running.wait(stats_lease) {
                     return;
@@ -2272,8 +2271,7 @@ impl AnalyzeJobsCleanupWorker {
         });
         let weak = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = std::thread::Builder::new()
-            .name("analyze-jobs-cleanup".to_owned())
+        let thread = crate::sql_node::sql_worker_thread("analyze-jobs-cleanup")
             .spawn(move || {
                 let gc_interval = Duration::from_secs(60 * 60);
                 let cleanup_interval = stats_lease.saturating_mul(100);
@@ -3152,8 +3150,7 @@ impl HistoricalStatsRuntime {
         handle: Arc<ClusterHistoricalStatsHandle>,
     ) -> Self {
         let running = Arc::clone(&worker);
-        let thread = std::thread::Builder::new()
-            .name("historical-stats-worker".to_owned())
+        let thread = crate::sql_node::sql_worker_thread("historical-stats-worker")
             .spawn(move || {
                 while let Some(table_id) = running.recv_historical_stats_table() {
                     if let Err(error) = running.dump_historical_stats(
@@ -3193,8 +3190,7 @@ fn spawn_usage_worker(
 ) -> std::thread::JoinHandle<()> {
     let worker_name = name.to_owned();
     let log_name = worker_name.clone();
-    std::thread::Builder::new()
-        .name(worker_name)
+    crate::sql_node::sql_worker_thread(worker_name)
         .spawn(move || {
             while !stop.wait(interval) {
                 let Some(factory) = factory.upgrade() else {

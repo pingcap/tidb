@@ -367,8 +367,7 @@ impl PrivilegeReloader {
         let stats = Arc::new(PrivilegeReloadCounters::default());
         let worker_signal = Arc::clone(&signal);
         let worker_stats = Arc::clone(&stats);
-        let worker = std::thread::Builder::new()
-            .name("privilege-reloader".to_owned())
+        let worker = crate::sql_node::sql_worker_thread("privilege-reloader")
             .spawn(move || {
                 let (lock, condvar) = &*worker_signal;
                 loop {

@@ -18198,3 +18198,58 @@ fn cte_ids_and_cast_wrapped_pushdown_follow_go() {
         assert!(selection, "{sql}\n{text}");
     }
 }
+
+/// The binding maintenance loop commits its GC through a session on its own
+/// thread, waiting out a conflicting lock. On a default 2 MB thread stack that
+/// commit overflowed at the first GC tick (300 s) of the `imdbload` corpus
+/// topic, whose region-retry nesting this test does not reproduce; the topic
+/// is the reproducer, and this pins the GC path end to end on the worker.
+#[test]
+fn binding_gc_commits_on_the_maintenance_thread() {
+    if crate::isolate_process_globals() {
+        return;
+    }
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(131)).unwrap();
+    rows(
+        &mut session,
+        "INSERT INTO mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, \
+         update_time, charset, collation, source) VALUES ('select 1', 'select 1', 'test', \
+         'deleted', '2000-01-01 00:00:00', '2000-01-01 00:00:00', 'utf8mb4', 'utf8mb4_bin', \
+         'manual')",
+    );
+    // A second transaction holds the row's lock, so the GC's prewrite meets
+    // it and runs the client's lock-resolution path, where the overflow was.
+    let mut holder = stack.factory.open_session(session_context(133)).unwrap();
+    holder.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    rows(
+        &mut holder,
+        "SELECT * FROM mysql.bind_info WHERE status = 'deleted' FOR UPDATE",
+    );
+    let bindings = Arc::clone(stack.factory.bindings.as_ref().expect("binding cache"));
+    let long = Duration::from_secs(3600);
+    let worker = crate::cluster_binding_seam::BindingReloader::spawn(
+        bindings,
+        [long, Duration::from_millis(1), long],
+        move || long,
+    )
+    .expect("binding worker");
+    std::thread::sleep(Duration::from_millis(300));
+    holder.control_transaction("COMMIT").unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let left = rows(
+            &mut session,
+            "SELECT count(*) FROM mysql.bind_info WHERE status = 'deleted'",
+        );
+        if left == vec![vec![Datum::Int(0)]] {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the maintenance thread never collected the deleted binding: {left:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(worker);
+}

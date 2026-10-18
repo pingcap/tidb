@@ -285,8 +285,7 @@ impl SchemaSyncAck {
         }));
         let syncer_context = SchemaVersionContext::background();
         syncer.init(&syncer_context)?;
-        let syncer_thread = match std::thread::Builder::new()
-            .name("schema-version-mirror".to_owned())
+        let syncer_thread = match crate::sql_node::sql_worker_thread("schema-version-mirror")
             .spawn({
                 let syncer = Arc::clone(&syncer);
                 let context = syncer_context.clone();
@@ -308,8 +307,7 @@ impl SchemaSyncAck {
         let global_watch_syncer = Arc::clone(&syncer);
         let global_watch_context = syncer_context.clone();
         let global_watch_waker = reload_waker.clone();
-        let global_watch_thread = match std::thread::Builder::new()
-            .name("schema-global-reload-watch".to_owned())
+        let global_watch_thread = match crate::sql_node::sql_worker_thread("schema-global-reload-watch")
             .spawn(move || {
                 run_global_version_watch_loop(
                     global_watch_syncer.as_ref(),
@@ -333,8 +331,7 @@ impl SchemaSyncAck {
         let tick = tick.max(MDL_CHECK_LOOK_DURATION);
         let ack_syncer = Arc::clone(&syncer);
         let ack_context = syncer_context.clone();
-        let thread = match std::thread::Builder::new()
-            .name("schema-sync-ack".to_owned())
+        let thread = match crate::sql_node::sql_worker_thread("schema-sync-ack")
             .spawn(move || {
                 run_ack_loop(
                     &catalog,

@@ -222,6 +222,10 @@ pub struct ExplainOperator {
     /// An identifier that overrides `operator_id` in every format, Go's
     /// `CTEDefinition.ExplainID` (`CTE_<IDForStorage>`, never suffix-stripped).
     pub fixed_id: Option<String>,
+    /// Whether `children` were swapped to put the build side first. Go's
+    /// `FlattenPhysicalPlan(plan, buildSideFirst)` does that for the row and
+    /// `tidb_json` formats but not for `binary`, which keeps plan order.
+    pub build_side_swapped: bool,
 }
 
 impl ExplainOperator {
@@ -242,6 +246,7 @@ impl ExplainOperator {
             operator_info: String::new(),
             children: Vec::new(),
             fixed_id: None,
+            build_side_swapped: false,
         }
     }
 
@@ -301,7 +306,10 @@ impl ExplainOperator {
         self
     }
 
-    fn explain_id(&self, brief: bool) -> String {
+    /// Go `ExplainID().String()` plus the flat operator's label: the brief
+    /// form drops the `_N` suffix.
+    #[must_use]
+    pub fn explain_id(&self, brief: bool) -> String {
         if let Some(id) = &self.fixed_id {
             return format!("{id}{}", self.label);
         }

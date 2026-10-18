@@ -36,6 +36,9 @@ fn runtime_exit_code<E: std::fmt::Display>(result: Result<(), E>) -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    // First, before any thread exists: Go's background work runs on growable
+    // goroutine stacks, and this gives every thread the same headroom.
+    tidb_util::worker_stack::install_as_default_thread_stack();
     let arguments = std::env::args().collect::<Vec<_>>();
     if arguments
         .iter()

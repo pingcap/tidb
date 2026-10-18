@@ -287,6 +287,12 @@ impl SystemTableView {
         }
     }
 
+    /// Whether the table has the named public secondary index.
+    #[must_use]
+    pub fn has_index(&self, index_name: &str) -> bool {
+        self.indexes.contains_key(&index_name.to_ascii_lowercase())
+    }
+
     /// Projects one already-located `TableInfo` under the given display name.
     #[must_use]
     pub fn project(name: &str, table: &TableInfo, columns: &[&str]) -> Self {

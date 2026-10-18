@@ -189,8 +189,7 @@ fn detect_and_update_job_version(
     }
     let (stop, stopped) = channel::<()>();
     let server_info = Arc::clone(server_info);
-    let worker = std::thread::Builder::new()
-        .name("ddl-detect-job-version".to_owned())
+    let worker = crate::sql_node::sql_worker_thread("ddl-detect-job-version")
         .spawn(move || loop {
             match stopped.recv_timeout(DETECT_JOB_VER_INTERVAL) {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -634,8 +633,7 @@ where
             .map_err(|error| error.to_string())?;
         let opener = Arc::new(opener);
         let (min_job_id_stop, min_job_id_stopped) = channel();
-        let min_job_id_worker = std::thread::Builder::new()
-            .name("ddl-min-job-id-refresher".to_owned())
+        let min_job_id_worker = crate::sql_node::sql_worker_thread("ddl-min-job-id-refresher")
             .spawn({
                 let refresher = Arc::clone(&min_job_id_refresher);
                 let opener = Arc::clone(&opener);

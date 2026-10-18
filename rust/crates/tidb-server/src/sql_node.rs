@@ -60,7 +60,18 @@ const STANDALONE_SERVER_ID: u64 = tidb_util::globalconn::SERVER_ID_FOR_STANDALON
 // large reserved stack is that semantics for a dedicated thread (reserved
 // address space, committed only as touched), leaving `maybe_grow` as the
 // safety net for genuinely deep plans.
-pub(crate) const SQL_WORKER_STACK_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const SQL_WORKER_STACK_BYTES: usize = tidb_util::worker_stack::WORKER_STACK_BYTES;
+
+/// A named thread with the SQL worker's stack, for every background worker
+/// that runs a session, a transaction or a catalog reload. Go runs these on
+/// goroutines whose stacks grow; a debug build's commit path alone (the
+/// client's prewrite futures) outgrows the default 2 MB thread stack, which
+/// aborted the whole process from `tidb-binding-maintenance`'s GC commit.
+pub(crate) fn sql_worker_thread(name: impl Into<String>) -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name(name.into())
+        .stack_size(SQL_WORKER_STACK_BYTES)
+}
 
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]

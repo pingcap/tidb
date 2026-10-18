@@ -675,8 +675,7 @@ impl SysvarReloader {
         let stats = Arc::new(SysvarReloadCounters::default());
         let worker_signal = Arc::clone(&signal);
         let worker_stats = Arc::clone(&stats);
-        let worker = std::thread::Builder::new()
-            .name("sysvar-reloader".to_owned())
+        let worker = crate::sql_node::sql_worker_thread("sysvar-reloader")
             .spawn(move || {
                 let (lock, condvar) = &*worker_signal;
                 loop {

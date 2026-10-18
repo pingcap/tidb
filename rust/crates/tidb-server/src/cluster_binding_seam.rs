@@ -261,15 +261,14 @@ where
 }
 
 impl BindingReloader {
-    fn spawn(
+    pub(crate) fn spawn(
         target: Arc<dyn ClusterBindings>,
         intervals: [Duration; 3],
         next_usage: impl Fn() -> Duration + Send + 'static,
     ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel();
         let cleanup = Arc::clone(&target);
-        let worker = std::thread::Builder::new()
-            .name("tidb-binding-maintenance".to_owned())
+        let worker = crate::sql_node::sql_worker_thread("tidb-binding-maintenance")
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut deadlines = intervals.map(|interval| Instant::now() + interval);

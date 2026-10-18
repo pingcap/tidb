@@ -516,8 +516,126 @@ fn replay_corpus_topics_on_unistore() {
                 if std::env::var_os("INTEGRATION_SHOW_DIVERGENCES").is_some() {
                     eprintln!("{}", report.divergences.join(""));
                 }
+                // One tab-separated line per topic and per divergence for
+                // `production_replay_stays_within_budget`, which runs this
+                // test as its shards.
+                eprintln!(
+                    "REPLAY-TOPIC\t{topic}\t{}\t{}\t{}",
+                    report.matched_total(),
+                    report.divergences.len(),
+                    report.skipped.get("OutOfDomain").copied().unwrap_or(0),
+                );
+                for divergence in &report.divergences {
+                    let headline = divergence
+                        .lines()
+                        .find(|line| line.starts_with("--- "))
+                        .unwrap_or("--- <no headline>");
+                    eprintln!("REPLAY-DIVERGENCE\t{topic}\t{headline}");
+                }
             }
             Err(reason) => eprintln!("UNALIGNED {topic}: {reason}"),
         }
     }
+}
+
+/// The corpus replayed on the production engine, as a gate: every enrolled
+/// topic must run to its end, and the divergence and out-of-domain counts may
+/// only go down. The topics run in child processes of this test binary, eight
+/// shards of [`replay_corpus_topics_on_unistore`], because each topic boots
+/// its own embedded store over process-wide state (`isolate_process_globals`),
+/// so two topics cannot share one process.
+///
+///     cargo test -p tidb-server --lib production_replay_stays_within_budget \
+///         -- --ignored --nocapture
+#[test]
+#[ignore = "about seven minutes; the gate script runs it"]
+fn production_replay_stays_within_budget() {
+    // Measured 2026-10-18 after the worker-stack and LOAD STATS fixes: the
+    // nine plan texts the in-process replay also budgets, plus its three
+    // known stale recordings (`session/nontransactional`'s USE_INDEX spacing).
+    // Lower these when a divergence is fixed; never raise them.
+    const DIVERGENCE_BUDGET: usize = 12;
+    const OUT_OF_DOMAIN_BUDGET: usize = 6;
+    const SHARDS: usize = 8;
+
+    let topics = difftest_result_tests::enrolled_topics::TOPICS;
+    let mut shards = vec![Vec::new(); SHARDS];
+    for (index, topic) in topics.iter().enumerate() {
+        shards[index % SHARDS].push(*topic);
+    }
+    let executable = std::env::current_exe().expect("test binary");
+    let children = shards
+        .iter()
+        .map(|shard| {
+            std::process::Command::new(&executable)
+                .args([
+                    "cluster_session_node::tests::corpus_unistore::replay_corpus_topics_on_unistore",
+                    "--ignored",
+                    "--nocapture",
+                    "--exact",
+                ])
+                .env("INTEGRATION_TOPIC", shard.join(","))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn replay shard")
+        })
+        .collect::<Vec<_>>();
+
+    let mut reported = BTreeMap::new();
+    let mut divergences = Vec::new();
+    let mut failures = Vec::new();
+    for (index, child) in children.into_iter().enumerate() {
+        let output = child.wait_with_output().expect("replay shard output");
+        let text = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            let tail: Vec<&str> = text.lines().rev().take(5).collect();
+            failures.push(format!("shard {index} exited {}: {tail:?}", output.status));
+        }
+        for line in text.lines() {
+            let fields: Vec<&str> = line.split('\t').collect();
+            match fields.as_slice() {
+                ["REPLAY-TOPIC", topic, _matched, diverged, out_of_domain] => {
+                    reported.insert(
+                        (*topic).to_owned(),
+                        (
+                            diverged.parse::<usize>().unwrap(),
+                            out_of_domain.parse::<usize>().unwrap(),
+                        ),
+                    );
+                }
+                ["REPLAY-DIVERGENCE", topic, headline] => {
+                    divergences.push(format!("[{topic}] {headline}"));
+                }
+                _ if line.starts_with("UNALIGNED ") => failures.push(line.to_owned()),
+                _ => {}
+            }
+        }
+    }
+    let missing: Vec<&str> = topics
+        .iter()
+        .copied()
+        .filter(|topic| !reported.contains_key(*topic))
+        .collect();
+    assert!(
+        failures.is_empty() && missing.is_empty(),
+        "production replay did not finish every topic: {failures:#?}\nmissing: {missing:?}"
+    );
+    let diverged: usize = reported.values().map(|(diverged, _)| diverged).sum();
+    let out_of_domain: usize = reported.values().map(|(_, skipped)| skipped).sum();
+    eprintln!(
+        "production replay: {} topics, {diverged} diverged, {out_of_domain} out of domain\n  {}",
+        reported.len(),
+        divergences.join("\n  ")
+    );
+    assert!(
+        diverged <= DIVERGENCE_BUDGET,
+        "production replay diverged in {diverged} statements (budget {DIVERGENCE_BUDGET}):\n  {}",
+        divergences.join("\n  ")
+    );
+    assert!(
+        out_of_domain <= OUT_OF_DOMAIN_BUDGET,
+        "{out_of_domain} statements Go answered were refused (budget {OUT_OF_DOMAIN_BUDGET}); \
+         rerun the topics with INTEGRATION_SHOW_OUT_OF_DOMAIN"
+    );
 }
