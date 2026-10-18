@@ -695,6 +695,13 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 
 		cancelAtFallbackCh := make(chan struct{})
 		releaseCancelFallbackCh := make(chan struct{})
+		var releaseCancelFallbackOnce sync.Once
+		releaseCancelFallback := func() {
+			releaseCancelFallbackOnce.Do(func() {
+				close(releaseCancelFallbackCh)
+			})
+		}
+		t.Cleanup(releaseCancelFallback)
 		var (
 			cancelAtFallbackOnce sync.Once
 			cancelJobID          atomic.Int64
@@ -709,15 +716,22 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 			},
 		)
 
-		sortStartedCh := make(chan struct{})
-		releaseSortCh := make(chan struct{})
-		var sortStartedOnce sync.Once
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeSortChunk",
+		jobStartedCh := make(chan struct{})
+		releaseJobStartedCh := make(chan struct{})
+		var releaseJobStartedOnce sync.Once
+		releaseJobStarted := func() {
+			releaseJobStartedOnce.Do(func() {
+				close(releaseJobStartedCh)
+			})
+		}
+		t.Cleanup(releaseJobStarted)
+		var jobStartedOnce sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/syncAfterJobStarted",
 			func() {
-				sortStartedOnce.Do(func() {
-					close(sortStartedCh)
+				jobStartedOnce.Do(func() {
+					close(jobStartedCh)
 				})
-				<-releaseSortCh
+				<-releaseJobStartedCh
 			},
 		)
 
@@ -739,10 +753,9 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 		require.EqualValues(t, jobID, cancelJobID.Load())
 
 		taskKey := importinto.TaskKey(jobID)
-		waitForCancelTestSignal(t, sortStartedCh, "timeout waiting for import subtask to start")
-		requireTaskRunningBizStep(t, sysKSTK, taskKey)
+		waitForCancelTestSignal(t, jobStartedCh, "timeout waiting for import job to start")
 
-		close(releaseCancelFallbackCh)
+		releaseCancelFallback()
 		select {
 		case err := <-cancelErrCh:
 			require.ErrorContains(t, err, "job state changed during cancel, please try again later")
@@ -752,7 +765,8 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 		userTK.MustQuery("select status from mysql.tidb_import_jobs where id = ?", jobID).
 			Check(testkit.Rows(importer.JobStatusRunning))
 
-		close(releaseSortCh)
+		releaseJobStarted()
+		requireTaskRunningBizStep(t, sysKSTK, taskKey)
 		waitTerminalState(t, sysKSTK, taskKey, proto.TaskStateSucceed)
 		userTK.MustQuery("select count(*) from " + tableName).Check(testkit.Rows("2"))
 	})
