@@ -858,3 +858,36 @@ fn desc_of_a_qualified_table_without_a_current_database_checks_privileges() {
         )
     );
 }
+
+/// An `SQL SECURITY INVOKER` view asks nothing of a definer: its body's
+/// privileges are the invoker's own (Go keeps the body's visit info for the
+/// invoker), so `SELECT` on the view alone is not enough.
+#[test]
+fn an_invoker_view_needs_the_invokers_own_privileges_on_its_body() {
+    let (_, mut boot, mut bob) = scoped();
+    boot.run("CREATE SQL SECURITY INVOKER VIEW iv AS SELECT a FROM t")
+        .unwrap();
+    boot.run("GRANT SELECT ON test.iv TO 'bob'@'%'").unwrap();
+    assert_eq!(denied(&mut bob, "SELECT * FROM iv"), table_denied("SELECT", "t"));
+    boot.run("GRANT SELECT ON test.t TO 'bob'@'%'").unwrap();
+    bob.run("SELECT * FROM iv").unwrap();
+}
+
+/// Go `preprocessor.tableByName`: a missing table is reported as missing only
+/// to an account that would hold some privilege on it; any other account is
+/// denied, so existence cannot be probed (`TestTableNotExistNoPermissions`).
+#[test]
+fn a_missing_table_is_denied_not_reported_to_an_account_without_privileges() {
+    let (privs, mut boot, _) = scoped();
+    boot.run("CREATE USER 'nobody'@'%'").unwrap();
+    let mut nobody = session_as(&privs, boot.shared_catalog(), "nobody", "%");
+    assert_eq!(
+        denied(&mut nobody, "SELECT * FROM test.nosuchtable"),
+        (
+            1142,
+            "SELECT command denied to user 'nobody'@'%' for table 'nosuchtable'".to_owned()
+        )
+    );
+    boot.run("GRANT SELECT ON test.* TO 'nobody'@'%'").unwrap();
+    assert_eq!(denied(&mut nobody, "SELECT * FROM test.nosuchtable").0, 1146);
+}

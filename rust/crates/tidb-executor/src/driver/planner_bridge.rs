@@ -881,7 +881,8 @@ pub(super) fn logical_from_plan(
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx);
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
@@ -2802,7 +2803,8 @@ fn planner_optimized_query_with_allocators(
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx);
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
     let session_zone = ctx.session_zone();
     let evaluator = subquery_evaluator(
         catalog,
@@ -2859,6 +2861,70 @@ fn planner_optimized_query_with_allocators(
     )
 }
 
+/// Go's `visitInfo` for a query: the privileges its plan needs, collected by
+/// the plan builder while it resolves names and expands views (a DEFINER view's
+/// body already verified against its definer, an INVOKER view's appended).
+///
+/// The query is only planned logically; nothing runs.
+pub fn query_visit_info(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
+    // Planning raises warnings (a folded cast, a hint); this pass plans the
+    // statement a second time, so its warnings must not reach the statement's.
+    let _no_folding = tidb_expr::constant_fold::suspend_constant_folding();
+    let warning_bookmark = ctx.warning_count();
+    let planned = query_visit_info_inner(query, catalog, current_database, ctx);
+    ctx.truncate_warnings(warning_bookmark);
+    planned
+}
+
+fn query_visit_info_inner(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
+    let session_zone = ctx.session_zone();
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    // The plan is discarded, so an uncorrelated subquery is not RUN (the
+    // catalog planned against is not the statement's execution image, whose
+    // virtual tables are materialised per statement): the builder has
+    // already visited its tables by the time it asks for a value, and a row of
+    // NULLs lets the outer plan finish building.
+    let evaluator = |inner: &LogicalPlan,
+                     _kind: tidb_planner::plan_builder::SubqueryKind,
+                     _opt_flag: u64| {
+        let width = inner.schema().map_or(0, |schema| schema.len());
+        Ok(tidb_planner::plan_builder::EvaluatedSubquery {
+            column_ids: (0..width).map(|_| column_ids.alloc()).collect(),
+            row: vec![tidb_datatype::Datum::Null; width],
+            has_row: false,
+        })
+    };
+    let defaults = default_evaluator(catalog, ctx);
+    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone())
+        .with_subquery_evaluator(&evaluator)
+        .with_default_evaluator(&defaults);
+    builder.only_full_group_by = ctx.only_full_group_by();
+    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
+    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
+    let node = tidb_resolve::NodeW::new(query.clone());
+    builder
+        .build_query_node(&node, false)
+        .map_err(super::planner_error_to_driver)?;
+    Ok(std::mem::take(&mut builder.visit_info))
+}
+
 /// Whether `query`, built as Go's `buildSubquery` builds it (before any
 /// optimization), carries a correlated column anywhere in its tree: Go's
 /// `len(ExtractCorrelatedCols4LogicalPlan(np)) > 0`, which makes the
@@ -2872,7 +2938,8 @@ pub(crate) fn query_builds_correlated_columns(
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx);
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
     let session_zone = ctx.session_zone();
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
@@ -2931,7 +2998,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx);
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
     let session_zone = ctx.session_zone();
     let registry = ScalarSubqueryRegistry::default();
     let evaluator = subquery_evaluator(
@@ -3600,7 +3668,8 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx);
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
     let session_zone = ctx.session_zone();
     let prune_fallback = dynamic_prune_fallback(catalog, ctx);
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());

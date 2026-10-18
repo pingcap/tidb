@@ -388,84 +388,140 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
     ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
-        let requests = self.collect_table_privileges_without_views(stmt, preparing)?;
-        self.apply_view_security(requests)
-    }
-
-    /// Go `BuildDataSourceFromView`'s `SQL SECURITY` handling, which runs while
-    /// the statement is PLANNED and so before any of the statement's own
-    /// privileges are checked: a DEFINER view's body must be readable by its
-    /// definer (`ErrViewInvalid` otherwise) and then asks nothing of the
-    /// invoker beyond the view itself, while an INVOKER view's body privileges
-    /// are the invoker's to hold.
-    fn apply_view_security(
-        &self,
-        requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
-    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
-        let Some((registry, _, _)) = self.privilege_context() else {
-            return Ok(requests);
-        };
-        let catalog = self.lock_catalog()?;
-        let mut out = Vec::with_capacity(requests.len());
-        for request in requests {
-            let is_select = request.privilege == privilege::GlobalPriv::Select;
-            let (database, table) = (request.database.clone(), request.table.clone());
-            out.push(request);
-            if !is_select {
-                continue;
-            }
-            for (database, table) in
-                view_body_visits(registry, &catalog, &database, &table, 0)?
-            {
-                out.push(crate::table_privilege::TablePrivilegeRequest::new(
-                    &database,
-                    &table,
-                    privilege::GlobalPriv::Select,
-                ));
-            }
-        }
-        Ok(out)
-    }
-
-    fn collect_table_privileges_without_views(
-        &self,
-        stmt: &tidb_ast::Stmt,
-        preparing: bool,
-    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
         self.validate_ddl_preprocess(stmt)?;
-        crate::table_privilege::required_table_privileges(stmt, &self.current_db, |dml| {
-            let mut ctx = self.statement_context_for_stmt(stmt, false);
-            if preparing {
-                // Go initializes each PREPARE marker to NULL before building
-                // its plan. EXECUTE uses the actual bound statement values.
-                ctx = ctx.with_prepared_params(
-                    vec![tidb_datatype::Datum::Null; tidb_executor::parsed_parameter_count(stmt)]
-                        .into(),
-                );
-            }
-            let resolve = |catalog: &tidb_executor::Catalog| {
-                if self.local_temporary_tables.is_empty() {
-                    return tidb_executor::driver::write_privilege_tables(
+        self.deny_missing_tables_without_privileges(stmt)?;
+        // Both resolvers plan against the same catalog image the executor will
+        // use, under the statement's own context.
+        let mut ctx = self.statement_context_for_stmt(stmt, false);
+        if preparing {
+            // Go initializes each PREPARE marker to NULL before building
+            // its plan. EXECUTE uses the actual bound statement values.
+            ctx = ctx.with_prepared_params(
+                vec![tidb_datatype::Datum::Null; tidb_executor::parsed_parameter_count(stmt)]
+                    .into(),
+            );
+        }
+        crate::table_privilege::required_table_privileges(
+            stmt,
+            &self.current_db,
+            |dml| {
+                self.with_planning_catalog(|catalog| {
+                    tidb_executor::driver::write_privilege_tables(
                         dml,
                         catalog,
                         &self.current_db,
                         &ctx,
-                    );
-                }
-                // Name resolution must see the same session overlay as the
-                // executor, including a temporary table shadowing a base table.
-                let mut catalog = catalog.clone();
-                catalog.attach_local_temporary_tables(self.local_temporary_tables.clone());
-                tidb_executor::driver::write_privilege_tables(dml, &catalog, &self.current_db, &ctx)
-            };
-            match &self.txn {
-                Some(txn) => resolve(&txn.working),
-                None => {
-                    let catalog = self.lock_catalog()?;
-                    resolve(&catalog)
-                }
+                    )
+                })
+            },
+            |query| {
+                self.with_planning_catalog(|catalog| {
+                    tidb_executor::driver::query_visit_info(query, catalog, &self.current_db, &ctx)
+                })
+            },
+        )
+    }
+
+    /// Go `preprocessor.tableByName`: a table that does not exist is never
+    /// reported as missing to an account that would have no privilege on it
+    /// even if it did -- that account is denied (`ErrTableaccessDenied`, 1142),
+    /// so existence cannot be probed. Run for every statement the preprocessor
+    /// resolves tables of, before planning.
+    fn deny_missing_tables_without_privileges(
+        &self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(), DriverError> {
+        let Some((_, user, host)) = self.privilege_context() else {
+            return Ok(());
+        };
+        let command = match stmt {
+            tidb_ast::Stmt::Query(_) => "SELECT",
+            tidb_ast::Stmt::Dml(dml) => match &**dml {
+                tidb_ast::DmlStmt::Insert(_) => "INSERT",
+                tidb_ast::DmlStmt::Update(_) => "UPDATE",
+                tidb_ast::DmlStmt::Delete(_) => "DELETE",
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        let (user, host) = (user.to_owned(), host.to_owned());
+        let missing: Vec<(String, String)> = {
+            let catalog = self.lock_catalog()?;
+            crate::table_privilege::read_tables(stmt, &self.current_db)
+                .into_iter()
+                .filter(|(schema, table)| {
+                    catalog.table_in(schema, table).is_none()
+                        && !self.is_local_temporary_table(schema, table)
+                })
+                .collect()
+        };
+        for (schema, table) in missing {
+            if !self.has_any_scoped_privilege(&schema, &table, u64::MAX) {
+                return Err(DriverError::TableAccessDenied {
+                    privilege: command,
+                    user,
+                    host,
+                    table,
+                });
             }
-        })
+        }
+        Ok(())
+    }
+
+    /// Runs `plan` against the catalog image the executor will use: the open
+    /// transaction's working copy, else the shared catalog, with the session's
+    /// local temporary tables overlaid (a temporary table shadows a base table
+    /// of the same name for name resolution too).
+    fn with_planning_catalog<T>(
+        &self,
+        plan: impl FnOnce(&tidb_executor::Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        let overlay = |catalog: &tidb_executor::Catalog| {
+            if self.local_temporary_tables.is_empty() {
+                return plan(catalog);
+            }
+            let mut catalog = catalog.clone();
+            catalog.attach_local_temporary_tables(self.local_temporary_tables.clone());
+            plan(&catalog)
+        };
+        match &self.txn {
+            Some(txn) => overlay(&txn.working),
+            None => {
+                let catalog = self.lock_catalog()?;
+                overlay(&catalog)
+            }
+        }
+    }
+
+    /// Go `privilege.Manager.RequestVerificationWithUser` for the planner's
+    /// view expansion: whether an account -- matched against the stored ones by
+    /// host pattern, with its default roles -- holds a privilege. `None` is a
+    /// session that enforces no privileges (Go's nil manager).
+    pub(crate) fn view_definer_privilege_check(
+        &self,
+    ) -> Option<tidb_executor::ViewDefinerPrivilegeCheck> {
+        let (registry, _, _) = self.privilege_context()?;
+        let registry = registry.clone();
+        Some(Arc::new(
+            move |user: &str,
+                  host: &str,
+                  database: &str,
+                  table: &str,
+                  _column: &str,
+                  privilege: tidb_mysql::PrivilegeType| {
+                let account = registry
+                    .matching_account(user, host)
+                    .unwrap_or_else(|| (user.to_owned(), host.to_owned()));
+                let roles = registry.default_roles(&account);
+                crate::table_privilege::global_privileges_of(privilege)
+                    .into_iter()
+                    .any(|global| {
+                        scoped_privilege(
+                            &registry, &account.0, &account.1, &roles, database, table, global,
+                        )
+                    })
+            },
+        ))
     }
 
     /// Preprocessor errors precede both grant checking and implicit commits.
@@ -1100,63 +1156,6 @@ impl Session {
 }
 
 /// Go `RequestVerification(activeRoles, database, table, "", priv)` for an
-/// What the view `database`.`name` adds to the statement's privilege list, as
-/// Go's `BuildDataSourceFromView` leaves it: nothing for a table, and for a view
-/// the `SELECT` visits of its body (nested views expanded in turn) -- cleared
-/// once checked against the definer for a `DEFINER` view, whose failure is
-/// `ErrViewInvalid`, and kept for the invoker for an `INVOKER` one.
-fn view_body_visits(
-    registry: &privilege::PrivilegeRegistry,
-    catalog: &tidb_executor::Catalog,
-    database: &str,
-    name: &str,
-    depth: usize,
-) -> Result<Vec<(String, String)>, DriverError> {
-    // A recursive definition is the planner's own error; the check only
-    // follows a bounded chain.
-    if depth > 32 {
-        return Ok(Vec::new());
-    }
-    let Some(tidb_executor::TableEntry::View(view)) = catalog.table_in(database, name) else {
-        return Ok(Vec::new());
-    };
-    let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(&view.select_sql) else {
-        return Ok(Vec::new());
-    };
-    let body = tidb_ast::Stmt::Query(query);
-    let mut visits = Vec::new();
-    for (body_db, body_table) in crate::table_privilege::read_tables(&body, database) {
-        let nested = view_body_visits(registry, catalog, &body_db, &body_table, depth + 1)?;
-        visits.push((body_db, body_table));
-        visits.extend(nested);
-    }
-    if !view.security.eq_ignore_ascii_case("DEFINER") {
-        return Ok(visits);
-    }
-    // Go `RequestVerificationWithUser` matches the definer's identity against
-    // the stored accounts by host pattern (`root`@`localhost` is `root`@`%`).
-    let definer = registry
-        .matching_account(&view.definer_user, &view.definer_host)
-        .unwrap_or_else(|| (view.definer_user.clone(), view.definer_host.clone()));
-    let roles = registry.default_roles(&definer);
-    for (body_db, body_table) in &visits {
-        if !scoped_privilege(
-            registry,
-            &definer.0,
-            &definer.1,
-            &roles,
-            body_db,
-            body_table,
-            privilege::GlobalPriv::Select,
-        ) {
-            return Err(DriverError::Schema(tidb_executor::SchemaErrorKind::ViewInvalid(format!(
-                "{database}.{name}"
-            ))));
-        }
-    }
-    Ok(Vec::new())
-}
-
 /// identity: the SEM table verdict, the virtual schemas, then the grants
 /// (own or through `roles`).
 fn scoped_privilege(

@@ -815,7 +815,6 @@ pub trait Columns {
     fn truncate_level(&self) -> ErrorLevel {
         ErrorLevel::Warn
     }
-
     /// Datatype flags for evaluation. Sessionless resolvers use SELECT's
     /// flags; statement contexts supply their own statement-class policy.
     fn type_flags(&self) -> tidb_datatype::ConversionFlags {

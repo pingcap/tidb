@@ -242,43 +242,6 @@ pub(crate) fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)
         .collect()
 }
 
-/// The tables a locking read locks: its `FOR UPDATE OF` list, or Go
-/// `ExtractTableList(sel.From)` -- every table its FROM clause names,
-/// through joins and derived tables, CTE names excepted.
-fn locking_read_tables(
-    select: &tidb_ast::SelectStmt,
-    lock: &tidb_ast::SelectLock,
-    current_db: &str,
-) -> Vec<(String, String)> {
-    if !lock.of.is_empty() {
-        return lock
-            .of
-            .iter()
-            .filter_map(|path| split_path(path, current_db))
-            .collect();
-    }
-    let Some(from) = &select.from else {
-        return Vec::new();
-    };
-    // The statement's own FROM clause alone, under its WITH clause so the
-    // CTE scope still hides CTE names.
-    let mut from_only = select.clone();
-    from_only.fields = tidb_ast::SelectFieldList::default();
-    from_only.from = Some(from.clone());
-    from_only.where_clause = None;
-    from_only.group_by.clear();
-    from_only.having = None;
-    from_only.windows.clear();
-    from_only.order_by.clear();
-    from_only.lock = None;
-    read_tables(
-        &Stmt::Query(tidb_ast::NodeBox::new(tidb_ast::QueryStmt::Select(
-            Box::new(from_only),
-        ))),
-        current_db,
-    )
-}
-
 /// Go's `visitInfo` for one statement, in the order its builder appends it.
 ///
 /// An empty list means the statement demands no TABLE-scope privilege here:
@@ -291,33 +254,27 @@ pub(crate) fn required_table_privileges(
     resolve_write: impl FnOnce(
         &tidb_ast::DmlStmt,
     ) -> Result<Vec<(String, String)>, tidb_executor::DriverError>,
+    resolve_read: impl FnOnce(
+        &tidb_ast::QueryStmt,
+    ) -> Result<
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+        tidb_executor::DriverError,
+    >,
 ) -> Result<Vec<TablePrivilegeRequest>, tidb_executor::DriverError> {
     let mut requests = Vec::new();
     match stmt {
-        // `buildDataSource` (`logical_plan_builder.go` around line 4972)
-        // appends `SelectPriv` for every table the query reads.
+        // A query's visit info is what Go's plan builder appends while it
+        // resolves names (`buildDataSource`, a locking read's tables, a
+        // view's body), so it is read off the plan, not off the syntax.
         Stmt::Query(query) => {
-            for (schema, table) in read_tables(stmt, current_db) {
-                requests.push(TablePrivilegeRequest::new(
-                    &schema,
-                    &table,
-                    GlobalPriv::Select,
-                ));
-            }
-            // Go `buildSelect`: a locking read also needs DELETE, UPDATE or
-            // LOCK TABLES on each table it locks -- the `OF` list, or every
-            // table of its FROM clause.
-            if let tidb_ast::QueryStmt::Select(select) = &**query {
-                if let Some(lock) = &select.lock {
-                    for (schema, table) in locking_read_tables(select, lock, current_db) {
-                        let mut request =
-                            TablePrivilegeRequest::new(&schema, &table, GlobalPriv::Delete);
-                        request.also_granted_by = &[GlobalPriv::Update, GlobalPriv::LockTables];
-                        request.table_error_override =
-                            Some(("SELECT with locking clause", table.clone()));
-                        requests.push(request);
-                    }
-                }
+            // Go plans first and checks privileges after, so a statement whose
+            // PLAN fails reports that failure, not a privilege error. This pass
+            // plans with constant folding suspended and cannot reproduce a
+            // failure that depends on it (`get_lock(..), no_such_fn()` folds the
+            // first call before the error), so a failed pass contributes no
+            // visits and the statement's own planning raises the error.
+            for visit in resolve_read(query).unwrap_or_default() {
+                requests.push(request_of_visit(&visit));
             }
             // Go `buildSelectInto` appends FILE after planning the query.
             if matches!(&**query, tidb_ast::QueryStmt::Select(select) if select.into_outfile.is_some())
@@ -731,4 +688,52 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
         DdlStmt::CreateSequence(create) => one(&create.name, GlobalPriv::Create),
         _ => Vec::new(),
     }
+}
+
+/// The static privileges a `mysql.PrivilegeType` mask names; any one of them
+/// grants the visit, as `RequestVerification` asks `priv & mask > 0`.
+pub(crate) fn global_privileges_of(privilege: tidb_mysql::PrivilegeType) -> Vec<GlobalPriv> {
+    [
+        (tidb_mysql::SelectPriv, GlobalPriv::Select),
+        (tidb_mysql::InsertPriv, GlobalPriv::Insert),
+        (tidb_mysql::UpdatePriv, GlobalPriv::Update),
+        (tidb_mysql::DeletePriv, GlobalPriv::Delete),
+        (tidb_mysql::LockTablesPriv, GlobalPriv::LockTables),
+        (tidb_mysql::ShowViewPriv, GlobalPriv::ShowView),
+    ]
+    .into_iter()
+    .filter(|(mask, _)| privilege.0 & mask.0 != 0)
+    .map(|(_, global)| global)
+    .collect()
+}
+
+/// One plan-time [`tidb_planner::plan_builder::visit_info::VisitInfo`] as the
+/// request the session checks.
+fn request_of_visit(
+    visit: &tidb_planner::plan_builder::visit_info::VisitInfo,
+) -> TablePrivilegeRequest {
+    use tidb_planner::plan_builder::visit_info::VisitAuthError;
+    let alternatives = global_privileges_of(visit.privilege);
+    // The only combined mask the planner asks for is a locking read's
+    // `DELETE|UPDATE|LOCK TABLES`; DELETE leads and the others also grant it.
+    let locking = alternatives.contains(&GlobalPriv::Delete)
+        && alternatives.contains(&GlobalPriv::Update)
+        && alternatives.contains(&GlobalPriv::LockTables);
+    let primary = if locking {
+        GlobalPriv::Delete
+    } else {
+        alternatives.first().copied().unwrap_or(GlobalPriv::Select)
+    };
+    let mut request = TablePrivilegeRequest::new(&visit.database, &visit.table, primary);
+    if locking {
+        request.also_granted_by = &[GlobalPriv::Update, GlobalPriv::LockTables];
+    }
+    match &visit.error {
+        VisitAuthError::TableAccessDenied { command, table } if *command != "SELECT" => {
+            request.table_error_override = Some((command, table.clone()));
+        }
+        VisitAuthError::None => request.table_named_in_error = false,
+        _ => {}
+    }
+    request
 }

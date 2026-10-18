@@ -415,6 +415,13 @@ pub trait TableSource {
             .filter(|table| !table.is_local_temporary)
     }
 
+    /// Go `privilege.GetPrivilegeManager(b.ctx)`, which the planner asks for a
+    /// `SQL SECURITY DEFINER` view's definer. `None` is Go's nil manager: no
+    /// privilege is enforced, so nothing is verified.
+    fn privilege_verifier(&self) -> Option<&dyn super::visit_info::PrivilegeVerifier> {
+        None
+    }
+
     /// Go `PlanBuilder.renamingViewName`: the view a `CREATE OR REPLACE VIEW`
     /// is redefining, which no view body may read while it is being rebuilt.
     /// The default is no such statement.
@@ -453,6 +460,12 @@ pub struct SourceView {
     /// Go `TableInfo.Cols()`: the view's own columns, whose names the
     /// projection presents.
     pub columns: Vec<SourceColumn>,
+    /// Go `TableInfo.View.Definer`: the account a `DEFINER` view is verified as.
+    pub definer_user: String,
+    /// The definer's host.
+    pub definer_host: String,
+    /// Go `TableInfo.View.Security == ast.SecurityDefiner`.
+    pub security_definer: bool,
 }
 
 #[cfg(test)]

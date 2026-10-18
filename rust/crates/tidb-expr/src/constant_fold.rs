@@ -45,7 +45,36 @@ pub enum ConstantFoldMode {
 /// `CREATE VIEW v AS SELECT CAST('' AS CHAR(32))` reports `NO` for a column no
 /// base table declared NOT NULL.
 pub fn derive_constant_null_flag(expr: &mut Expression) {
+    if folding_suspended() {
+        return;
+    }
     let _ = fold_value(expr);
+}
+
+thread_local! {
+    static FOLDING_SUSPENDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn folding_suspended() -> bool {
+    FOLDING_SUSPENDED.with(std::cell::Cell::get)
+}
+
+/// Restores constant folding when dropped; see [`suspend_constant_folding`].
+#[must_use = "folding resumes when the guard is dropped"]
+pub struct FoldingSuspended(bool);
+
+impl Drop for FoldingSuspended {
+    fn drop(&mut self) {
+        FOLDING_SUSPENDED.with(|flag| flag.set(self.0));
+    }
+}
+
+/// Turns constant folding off on this thread until the guard drops. A pass
+/// that only reads a plan's SHAPE (privilege collection plans a statement a
+/// second time) must not run builtins: some have effects
+/// (`RELEASE_ALL_LOCKS()`), and they happen once, in the statement's own plan.
+pub fn suspend_constant_folding() -> FoldingSuspended {
+    FoldingSuspended(FOLDING_SUSPENDED.with(|flag| flag.replace(true)))
 }
 
 /// Folds exactly the function just built, under Go's selected construction
@@ -80,6 +109,9 @@ fn fold_constant_in_mode_inner(
     mode: ConstantFoldMode,
     preserve_warning_casts: bool,
 ) {
+    if folding_suspended() {
+        return;
+    }
     if mode == ConstantFoldMode::Disabled {
         return;
     }

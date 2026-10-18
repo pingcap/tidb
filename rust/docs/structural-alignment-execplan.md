@@ -51,7 +51,8 @@ Each milestone lands as its own commit through the pre-commit hook, so any one c
 ## Progress
 
 - [x] (2026-10-17) Milestone 0: the replay compares error codes by default, `KNOWN_STALE_RECORDINGS` is exact, and the `OutOfDomain` budget is 5. Making the code comparison default exposed one more real divergence (an ENUM default from an expression, 1265), fixed in the same change.
-- [ ] Milestone 1: privileges at plan time (scout first).
+- [x] (2026-10-17) Milestone 1a, reads: a query's privileges come from the plan builder's visit info (`plan_builder/visit_info.rs`): SELECT per resolved table, the locking-read visit, and Go's view handling (a DEFINER view's body verified against the definer by host-pattern match and then cleared, an INVOKER view's body appended). The session collects them through `driver::query_visit_info`; the syntactic read collector and the definer emulation are deleted. Go's preprocessor rule that a missing table is 1142 for an account with no privilege on it is ported (`deny_missing_tables_without_privileges`).
+- [ ] Milestone 1b, writes: INSERT / UPDATE / DELETE still use the syntactic collector plus `resolve_write`; move them onto the same visit info, then delete the CTE-ordering patch in `update_privilege_tables`.
 - [ ] Milestone 2: one view-body code path.
 - [ ] Milestone 3: DDL duplication (scout first, then a recorded design decision).
 - [ ] Milestone 4: execution details.
@@ -60,6 +61,8 @@ Each milestone lands as its own commit through the pre-commit hook, so any one c
 ## Surprises and discoveries
 
 The first replay with the harness change reported 56 fewer compared statements than the run before it. The cause was a new view-definer check that did not match the definer's host pattern (`root`@`localhost` against the stored `root`@`%`), so views created by that definer became unreadable and their statements fell into `OutOfDomain`. Only the compared-count drop and the skip-class totals showed it, which is why the budget assertion exists.
+
+The visit-info pass plans a statement a second time, which is not free of effects. Three had to be neutralised: planning raises warnings (truncated afterwards), constant folding evaluates builtins (`RELEASE_ALL_LOCKS()` ran twice; folding is suspended on the thread for the pass, null-flag derivation included), and an uncorrelated subquery is run at plan time (the pass answers with a row of NULLs instead, because the catalog it plans against is not the statement's execution image, whose virtual tables are materialised per statement). A pass that fails for any reason contributes no visits and the statement's own planning raises the error, which also keeps Go's observable `get_lock(..), no_such_fn()` folding order. Double planning is the temporary price of Milestone 1a; the plan's end state plans once and checks after planning.
 
 ## Decision log
 

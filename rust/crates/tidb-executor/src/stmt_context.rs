@@ -454,6 +454,10 @@ pub struct StmtContextSessionState {
     /// The session's privilege answer for the sequence builtins; `None` is an
     /// unrestricted session.
     pub sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// Go `RequestVerificationWithUser`, which the planner asks for a
+    /// `SQL SECURITY DEFINER` view's definer; `None` is a session that
+    /// enforces no privileges.
+    pub view_definer_privilege: Option<ViewDefinerPrivilegeCheck>,
     /// Go `RequestVerification("", "", "", mysql.ProcessPriv)` as
     /// `TIDB_DECODE_SQL_DIGESTS` asks it: whether the session holds PROCESS.
     pub process_privilege: bool,
@@ -492,6 +496,7 @@ impl Default for StmtContextSessionState {
             connection_collation: "utf8mb4_bin".to_owned(),
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
             sequence_privilege: None,
+            view_definer_privilege: None,
             process_privilege: true,
             sql_digest_text_retriever: None,
             fk_cascade_table_lock: None,
@@ -505,6 +510,12 @@ impl Default for StmtContextSessionState {
 /// while evaluating: `(schema, sequence, insert)` answers whether the session
 /// holds INSERT (`insert`) or SELECT on the sequence.
 pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
+
+/// The session's answer to "does this account hold this privilege": `(user,
+/// host, database, table, column, privilege)`, the account matched against the
+/// stored ones by host pattern.
+pub type ViewDefinerPrivilegeCheck =
+    Arc<dyn Fn(&str, &str, &str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
 
 /// Go `SQLDigestTextRetriever.RetrieveGlobal` as `TIDB_DECODE_SQL_DIGESTS`
 /// runs it while evaluating in `StmtContext`: each requested digest's
@@ -681,6 +692,8 @@ pub struct StmtContextData {
     default_collation_for_utf8mb4: String,
     /// See [`StmtContextSessionState::sequence_privilege`].
     sequence_privilege: Option<SequencePrivilegeCheck>,
+    /// See [`StmtContextSessionState::view_definer_privilege`].
+    view_definer_privilege: Option<ViewDefinerPrivilegeCheck>,
     /// See [`StmtContextSessionState::process_privilege`].
     process_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
@@ -2343,6 +2356,7 @@ impl StmtContext {
             connection_collation: session.connection_collation,
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
             sequence_privilege: session.sequence_privilege,
+            view_definer_privilege: session.view_definer_privilege,
             process_privilege: session.process_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
             fk_cascade_table_lock: session.fk_cascade_table_lock,
@@ -3326,6 +3340,11 @@ impl StmtContext {
     /// See [`StmtContextSessionState::fk_cascade_table_lock`].
     pub(crate) fn fk_cascade_table_lock(&self) -> Option<&ForeignKeyCascadeLockCheck> {
         self.fk_cascade_table_lock.as_ref()
+    }
+
+    /// The privilege answer the planner asks for a DEFINER view's definer.
+    pub(crate) fn view_definer_privilege(&self) -> Option<&ViewDefinerPrivilegeCheck> {
+        self.view_definer_privilege.as_ref()
     }
 
     fn check_sequence_privilege(

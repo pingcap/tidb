@@ -483,6 +483,26 @@ pub(crate) struct PlannerCatalog {
     dirty_tables: Vec<i64>,
     /// See [`Catalog::set_renaming_view`].
     renaming_view: Option<(String, String)>,
+    /// Go's privilege manager as the planner sees it (`pm.RequestVerificationWithUser`).
+    privilege_verifier: Option<DefinerVerifier>,
+}
+
+/// [`tidb_planner::plan_builder::visit_info::PrivilegeVerifier`] over the
+/// session's privilege closure.
+pub(crate) struct DefinerVerifier(crate::ViewDefinerPrivilegeCheck);
+
+impl tidb_planner::plan_builder::visit_info::PrivilegeVerifier for DefinerVerifier {
+    fn verify_with_user(
+        &self,
+        user: &str,
+        host: &str,
+        database: &str,
+        table: &str,
+        column: &str,
+        privilege: tidb_mysql::PrivilegeType,
+    ) -> bool {
+        (self.0)(user, host, database, table, column, privilege)
+    }
 }
 
 impl PlannerCatalog {
@@ -496,6 +516,16 @@ impl PlannerCatalog {
         if ctx.pessimistic_transaction() || ctx.optimistic_transaction() {
             self.dirty_tables = ctx.staged_writes().dirty_table_ids();
         }
+        self
+    }
+
+    /// Go asks `privilege.GetPrivilegeManager(b.ctx)` while it expands a
+    /// `SQL SECURITY DEFINER` view; a session that enforces no privileges has
+    /// no manager and verifies nothing.
+    pub(crate) fn with_privilege_verifier(mut self, ctx: &crate::StmtContext) -> Self {
+        self.privilege_verifier = ctx
+            .view_definer_privilege()
+            .map(|check| DefinerVerifier(check.clone()));
         self
     }
 
@@ -650,6 +680,14 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         self.view
             .views
             .get(&CatalogTableKey::new(db_name, view_name))
+    }
+
+    fn privilege_verifier(
+        &self,
+    ) -> Option<&dyn tidb_planner::plan_builder::visit_info::PrivilegeVerifier> {
+        self.privilege_verifier
+            .as_ref()
+            .map(|verifier| verifier as &dyn tidb_planner::plan_builder::visit_info::PrivilegeVerifier)
     }
 
     fn renaming_view(&self) -> Option<(&str, &str)> {
@@ -2095,6 +2133,7 @@ impl Catalog {
             hypo_tiflash_replicas: None,
             dirty_tables: Vec::new(),
             renaming_view: self.renaming_view.clone(),
+            privilege_verifier: None,
         }
     }
 
@@ -2415,6 +2454,9 @@ impl Catalog {
                                         ..SourceColumn::default()
                                     })
                                     .collect(),
+                                definer_user: view.definer_user.clone(),
+                                definer_host: view.definer_host.clone(),
+                                security_definer: view.security.eq_ignore_ascii_case("DEFINER"),
                                 ..SourceView::default()
                             },
                         );

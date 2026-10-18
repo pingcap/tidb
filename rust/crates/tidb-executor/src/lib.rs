@@ -286,7 +286,7 @@ pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
     ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo,
-    RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot,
+    RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck,
     SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState,
 };
 pub use table_access::TableAccess;

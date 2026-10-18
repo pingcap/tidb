@@ -1783,10 +1783,33 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &mut self.ignore_truncate_err_for_view_predicate_folding,
             true,
         );
+        // Go keeps the view body's visit info apart (`originalVisitInfo`): a
+        // DEFINER view's is checked against its definer and then dropped,
+        // an INVOKER view's is appended for the invoker to hold.
+        let original_visit_info = std::mem::take(&mut self.visit_info);
         let built = self.build_view_body(view, inherited_hints);
         self.ignore_truncate_err_for_view_predicate_folding = outer_ignore_truncate;
         guard.release(self);
+        let body_visit_info = std::mem::replace(&mut self.visit_info, original_visit_info);
         let mut plan = built?;
+        if view.security_definer {
+            if let Some(verifier) = self.source.privilege_verifier() {
+                for visit in &body_visit_info {
+                    if !verifier.verify_with_user(
+                        &view.definer_user,
+                        &view.definer_host,
+                        &visit.database,
+                        &visit.table,
+                        &visit.column,
+                        visit.privilege,
+                    ) {
+                        return Err(PlanError::view_invalid(&view.db_name, &view.view_name));
+                    }
+                }
+            }
+        } else {
+            self.visit_info.extend(body_visit_info);
+        }
         if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {
             let mut names = plan.output_names().to_vec();
             for name in &mut names {

@@ -179,6 +179,7 @@ pub mod set_opr;
 #[cfg(test)]
 mod set_opr_tests;
 mod summary_time_range;
+pub mod visit_info;
 pub mod window;
 #[cfg(test)]
 mod window_tests;
@@ -716,6 +717,8 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub alloc_id_for_cte_storage: i32,
     /// Go `buildingViewStack`, the recursive-view guard.
     pub building_view_stack: BTreeSet<SchemaTableKey>,
+    /// Go `b.visitInfo`: the privileges the plan being built needs.
+    pub visit_info: Vec<visit_info::VisitInfo>,
 
     /// Go `subQueryCtx`.
     pub sub_query_ctx: SubQueryCtx,
@@ -1491,6 +1494,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             name_map_cte: BTreeSet::new(),
             alloc_id_for_cte_storage: 0,
             building_view_stack: BTreeSet::new(),
+            visit_info: Vec::new(),
             sub_query_ctx: SubQueryCtx::NotHandlingSubquery,
             sub_query_hint_flags: 0,
             no_decorrelate: false,
@@ -2652,6 +2656,75 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         Some(table)
     }
 
+    /// Go `b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L,
+    /// tableInfo.Name.L, "", authErr)` (`buildDataSource`), with the
+    /// `ErrTableaccessDenied` error Go attaches when the session has a user.
+    fn append_select_visit(&mut self, db_name: &str, table_name: &str) {
+        let table = tidb_mysql::to_lowercase(table_name);
+        self.visit_info.push(visit_info::VisitInfo {
+            privilege: tidb_mysql::SelectPriv,
+            database: tidb_mysql::to_lowercase(db_name),
+            table: table.clone(),
+            column: String::new(),
+            error: visit_info::VisitAuthError::TableAccessDenied {
+                command: "SELECT",
+                table,
+            },
+        });
+    }
+
+    /// Go's locking-read visit (`buildSelect`): `DELETE|UPDATE|LOCK TABLES` on
+    /// each locked table, whichever one the account holds being enough, with
+    /// the `SELECT with locking clause` denial.
+    fn append_lock_visit(&mut self, database: &str, table: &str) {
+        self.visit_info.push(visit_info::VisitInfo {
+            privilege: tidb_mysql::DeletePriv | tidb_mysql::UpdatePriv | tidb_mysql::LockTablesPriv,
+            database: database.to_owned(),
+            table: table.to_owned(),
+            column: String::new(),
+            error: visit_info::VisitAuthError::TableAccessDenied {
+                command: "SELECT with locking clause",
+                table: table.to_owned(),
+            },
+        });
+    }
+
+    /// Go `ExtractTableList(sel.From, false)` for a locking read without `OF`:
+    /// every table name in the FROM clause, derived tables' inner ones
+    /// included, in source order. A name that resolved to no stored table (a
+    /// CTE reference) has no entry in the resolve context and is skipped, as
+    /// Go skips `tNameW == nil`.
+    fn append_lock_visits_for_from(&mut self, from: &tidb_ast::Join) {
+        struct Collector(Vec<TableRef>);
+        impl tidb_ast::Visitor for Collector {
+            fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                if let Some(table) = node.downcast_ref::<TableRef>() {
+                    self.0.push(table.clone());
+                }
+                false
+            }
+            fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                true
+            }
+        }
+        let mut collector = Collector(Vec::new());
+        let mut from = from.clone();
+        tidb_ast::Visitable::accept(&mut from, &mut collector);
+        for table in collector.0 {
+            let resolved = {
+                let context = self.resolve_ctx.read();
+                context.table_name(&table).and_then(|named| {
+                    let database = named.db_info.as_ref()?.read().name.lowercase().to_owned();
+                    let table = named.table_info.as_ref()?.read().name.lowercase().to_owned();
+                    Some((database, table))
+                })
+            };
+            if let Some((database, table)) = resolved {
+                self.append_lock_visit(&database, &table);
+            }
+        }
+    }
+
     pub fn build_data_source(&mut self, table_ref: &TableRef) -> Result<LogicalPlan, PlanError> {
         if table_ref
             .sample
@@ -2692,6 +2765,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.source.find_view(&db_name, &table_name)
         };
         if let Some(view) = found_view.cloned() {
+            // Go `buildDataSource` appends the SELECT visit before it looks at
+            // what kind of object the name is.
+            self.append_select_visit(&db_name, &view.view_name);
             // Go `getPossibleAccessPaths` runs before the view branch, and a
             // view has no index: an SQL index hint naming one is an error.
             if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
@@ -2725,10 +2801,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(table) = found else {
             if let Some(sequence_name) = self.source.find_sequence(&db_name, &table_name) {
                 let sequence_name = sequence_name.to_owned();
+                self.append_select_visit(&db_name, &sequence_name);
                 return self.build_sequence_data_source(table_ref, sequence_name);
             }
             return Err(PlanError::unknown_table(format!("{db_name}.{table_name}")));
         };
+        self.append_select_visit(&db_name, &table.table_name);
 
         if self.resolve_ctx.read().table_name(table_ref).is_none() {
             self.resolve_ctx
@@ -5151,6 +5229,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             };
             let (schema, names) = snapshot_schema_and_names(&plan);
             plan = self.build_select_lock(plan, lock_type, wait_sec)?;
+            if lock.of.is_empty() {
+                if let Some(from) = &select.from {
+                    self.append_lock_visits_for_from(from);
+                }
+            }
             if !lock.of.is_empty() {
                 let LogicalPlan::Lock(operator) = &mut plan else {
                     unreachable!()
@@ -5212,6 +5295,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         ));
                     };
                     table_ids.insert(table_id);
+                    self.append_lock_visit(
+                        &name.names.database.lower,
+                        &name.names.original_table.lower,
+                    );
                     if compatibility
                         && warned.insert((target.clone(), name.names.table.lower.clone()))
                     {
