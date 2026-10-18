@@ -233,15 +233,17 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
         "batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;",
     ];
     // EXPLAIN text is compared whole, and some plans still differ from Go's in
-    // id allocation, estimates or operator choice (measured 2026-10-17: 247,
-    // mostly index-merge paths, LIKE range scans, partition boundaries and
-    // grouped-range ordered scans). They are budgeted apart: the number may
-    // only go down, and lowering the constant records a fixed plan.
-    const PLAN_TEXT_BUDGET: usize = 247;
+    // id allocation, estimates or operator choice (measured 2026-10-17: 192 after
+    // the JSON argument casts, mostly index-merge paths, LIKE range scans,
+    // partition boundaries and grouped-range ordered scans). They are
+    // budgeted apart: the number may only go down, and lowering the constant
+    // records a fixed plan.
+    const PLAN_TEXT_BUDGET: usize = 192;
     let (plan_text, other): (Vec<&String>, Vec<&String>) = total
         .divergences
         .iter()
         .partition(|d| d.contains(difftest_result_tests::replay::PLAN_TEXT_TAG));
+    eprintln!("EXPLAIN texts differing from TiDB's: {}", plan_text.len());
     assert!(
         plan_text.len() <= PLAN_TEXT_BUDGET,
         "{} EXPLAIN texts differ from TiDB's (budget {PLAN_TEXT_BUDGET}); new ones:{}",

@@ -17515,3 +17515,55 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
         assert_eq!(query_error(&mut session, sql), (code, message.to_owned()), "{sql}");
     }
 }
+
+/// Go's JSON builtin classes wrap their arguments in implicit casts
+/// (`newBaseBuiltinFuncWithTp`), and `isnull` tests a JSON argument as its
+/// string form. A cast whose result is JSON is never folded, so the constant
+/// operands stay `cast(1, json BINARY)` in the plan. Each operator info below
+/// is the Go oracle's text (database `pl17`/`pl18` renamed to `test`).
+#[test]
+fn json_function_arguments_carry_go_implicit_casts() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1131)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE jt (a INT, j JSON, k JSON, s VARCHAR(10))")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "select * from jt where 1 member of (j)",
+            "json_memberof(cast(1, json BINARY), test.jt.j)",
+        ),
+        (
+            "select * from jt where json_overlaps(j, '[1,2]')",
+            "json_overlaps(test.jt.j, cast(\"[1,2]\", json BINARY))",
+        ),
+        (
+            "select * from jt where json_contains(j, '1')",
+            "json_contains(test.jt.j, cast(\"1\", json BINARY))",
+        ),
+        (
+            "select * from jt where json_set(j, '$.a', 1) = k",
+            "eq(json_set(test.jt.j, \"$.a\", cast(1, json BINARY)), test.jt.k)",
+        ),
+        (
+            "select * from jt where json_array_append(j, '$', 1) is not null",
+            "not(isnull(cast(json_array_append(test.jt.j, \"$\", cast(1, json BINARY)), var_string(16777216))))",
+        ),
+        (
+            "select * from jt where j is null",
+            "isnull(cast(test.jt.j, var_string(4294967295)))",
+        ),
+        (
+            "select * from jt where json_unquote(j) = 'a'",
+            "eq(json_unquote(cast(test.jt.j, var_string(4294967295))), \"a\")",
+        ),
+    ] {
+        let text = displayed(rows(&mut session, &format!("explain format='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains(expected), "{sql}\n{text}");
+    }
+}

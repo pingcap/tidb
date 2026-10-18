@@ -39,6 +39,7 @@ const DEFAULT_DECIMAL_LITERAL: &str =
 
 pub(crate) mod control_type;
 mod fold_mode;
+mod json_arguments;
 pub(crate) mod result_type;
 
 pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
@@ -980,11 +981,19 @@ fn wrap_declared_string_args(
     ))
 }
 
+/// Whether `expression` is a cast `BuildCastFunctionWithCheck` just built and
+/// closed with its `FoldConstant`. Go leaves a cast whose eval type is JSON
+/// unfolded ("we may reset the flag of the field type of CastAsJson later"),
+/// so `json_contains(j, cast("1", json BINARY))` keeps the cast in a plan.
 fn is_newly_built_cast(expression: &Expression) -> bool {
     matches!(
         expression,
         Expression::ScalarFunction(function)
             if function.func_name.lowercase().starts_with("cast_")
+                && function
+                    .ret_type
+                    .as_ref()
+                    .is_none_or(|tp| tp.eval_type() != EvalType::Json)
     )
 }
 
@@ -2787,6 +2796,12 @@ fn rewrite_leaf_compound(
             // which EXPLAIN prints and TiKV push-down recognises.
             let ret_type =
                 builtin_return_type("json_memberof", &args).expect("JSON_MEMBEROF is registered");
+            let args = json_arguments::wrap_json_function_arguments(
+                "json_memberof",
+                args,
+                resolver.connection_charset_info(),
+                &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+            )?;
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("json_memberof"),
                 ret_type,
@@ -2811,10 +2826,16 @@ fn rewrite_leaf_compound(
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
             ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+            let args = json_arguments::wrap_json_function_arguments(
+                name,
+                vec![arg],
+                resolver.connection_charset_info(),
+                &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+            )?;
             let mut call = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(name),
                 ret_type.clone(),
-                vec![arg],
+                args,
             ));
             if *not {
                 // Go's `notToExpression` builds the operator through
@@ -3282,6 +3303,12 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewritten,
                 |expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
             );
+            let rewritten = json_arguments::wrap_json_function_arguments(
+                &lowered,
+                rewritten,
+                resolver.connection_charset_info(),
+                &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+            )?;
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(&lowered),
                 ret_type,
