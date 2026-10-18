@@ -98,7 +98,24 @@ fn build_logical_join_schema(
             for schema in children {
                 merged.extend(schema.columns.iter().cloned());
             }
-            Schema::new(merged)
+            let mut schema = Schema::new(merged);
+            // Go resets the NOT NULL flag of the null-supplying side: its
+            // columns can be NULL in the join's output whatever the table
+            // declares, which is what lets a parent join derive
+            // `IS NOT NULL` for them and a null-rejecting predicate turn
+            // the outer join into an inner one.
+            let left_len = left.columns.len();
+            let end = schema.columns.len();
+            match join_type {
+                LogicalJoinType::LeftOuter => {
+                    crate::plan_builder::from::reset_not_null_flag(&mut schema, left_len, end);
+                }
+                LogicalJoinType::RightOuter => {
+                    crate::plan_builder::from::reset_not_null_flag(&mut schema, 0, left_len);
+                }
+                _ => {}
+            }
+            schema
         }
     }
 }
