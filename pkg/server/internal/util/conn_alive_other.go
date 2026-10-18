@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memo
+//go:build !linux && !darwin && !freebsd
 
-// GroupID is the unique id for a group.
-type GroupID uint64
+package util
 
-// GroupIDGenerator is used to generate group id.
-type GroupIDGenerator struct {
-	id uint64
-}
+import "syscall"
 
-// NextGroupID generates the next group id.
-// It is not thread-safe, since memo optimizing is also in one thread.
-func (gi *GroupIDGenerator) NextGroupID() GroupID {
-	gi.id++
-	return GroupID(gi.id)
+// probeConnAlive is a fallback for platforms without a supported raw-socket
+// peek implementation (for example Windows). It reports "unknown" so callers
+// treat the connection as alive and never kill a running statement based on an
+// unavailable check. The probe still never touches the shared bufio.Reader, so
+// it cannot corrupt the connection read loop on these platforms either.
+func probeConnAlive(_ syscall.Conn) int {
+	return -1
 }
