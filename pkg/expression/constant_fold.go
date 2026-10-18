@@ -29,10 +29,11 @@ var specialFoldHandler = map[string]func(BuildContext, *ScalarFunction) (Express
 
 func init() {
 	specialFoldHandler = map[string]func(BuildContext, *ScalarFunction) (Expression, bool){
-		ast.If:     ifFoldHandler,
-		ast.Ifnull: ifNullFoldHandler,
-		ast.Case:   caseWhenHandler,
-		ast.IsNull: isNullHandler,
+		ast.If:        ifFoldHandler,
+		ast.Ifnull:    ifNullFoldHandler,
+		ast.Case:      caseWhenHandler,
+		ast.IsNull:    isNullHandler,
+		ast.IsNotNull: isNotNullHandler,
 	}
 }
 
@@ -68,6 +69,32 @@ func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	}
 	if mysql.HasNotNullFlag(arg0.GetType(ctx.GetEvalCtx()).GetFlag()) {
 		return NewZero(), false
+	}
+	return expr, false
+}
+
+// isNotNullHandler mirrors isNullHandler for the `isnotnull` ScalarFunction: a
+// constant argument is evaluated eagerly, and an argument that is already known to
+// be NOT NULL makes the whole test constantly true.
+func isNotNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
+	arg0 := expr.GetArgs()[0]
+	if constArg, isConst := arg0.(*Constant); isConst {
+		isDeferredConst := constArg.DeferredExpr != nil || constArg.ParamMarker != nil
+		value, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			// Failed to fold this expr to a constant, print the DEBUG log and
+			// return the original expression to let the error to be evaluated
+			// again, in that time, the error is returned to the client.
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo(ctx.GetEvalCtx())), zap.Error(err))
+			return expr, isDeferredConst
+		}
+		if isDeferredConst {
+			return &Constant{Value: value, RetType: expr.RetType, DeferredExpr: expr}, true
+		}
+		return &Constant{Value: value, RetType: expr.RetType}, false
+	}
+	if mysql.HasNotNullFlag(arg0.GetType(ctx.GetEvalCtx()).GetFlag()) {
+		return NewOne(), false
 	}
 	return expr, false
 }

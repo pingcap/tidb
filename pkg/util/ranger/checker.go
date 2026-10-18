@@ -107,6 +107,17 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			return true, isNullReserve
 		}
 		return false, true
+	case ast.IsNotNull:
+		// Same as the `not(isnull(col))` form handled through the ast.UnaryNot case
+		// below: a prefix column of any length already tells whether the value is null.
+		if c.matchColumn(scalar.GetArgs()[0]) {
+			var isNullReserve bool
+			if !c.optPrefixIndexSingleScan {
+				isNullReserve = !c.isFullLengthColumn()
+			}
+			return true, isNullReserve
+		}
+		return false, true
 	case ast.IsTruthWithoutNull, ast.IsFalsity, ast.IsTruthWithNull:
 		if s, ok := scalar.GetArgs()[0].(*expression.Column); ok {
 			if s.RetType.EvalType() == types.ETString {

@@ -261,6 +261,11 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
+	// `isnotnull` has no coprocessor signature of its own and is serialized separately.
+	if isNullSig, ok := isNullPbSigOfIsNotNull(expr); ok {
+		return pc.isNotNullToPBExpr(expr, isNullSig)
+	}
+
 	// Check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {
@@ -309,6 +314,42 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(&tp),
+	}
+}
+
+// isNotNullToPBExpr serializes `isnotnull(x)` as the coprocessor form of `not(isnull(x))`.
+// TiKV/TiFlash have no native ISNOTNULL signature yet
+// (https://github.com/pingcap/tidb/issues/9965), so the single ScalarFunction is
+// decomposed on the wire only. This keeps `IS NOT NULL` filters exactly as pushable as
+// before, and the decomposition can be dropped once the coprocessors gain the signature.
+func (pc PbConverter) isNotNullToPBExpr(expr *ScalarFunction, isNullSig tipb.ScalarFuncSig) *tipb.Expr {
+	if !canFuncBePushed(pc.ctx, expr, kv.UnSpecified) {
+		return nil
+	}
+
+	pbArg := pc.ExprToPB(expr.GetArgs()[0])
+	if pbArg == nil {
+		return nil
+	}
+
+	// Both `isnull(x)` and the enclosing `not(...)` return the same tinyint(1) as
+	// `isnotnull(x)` itself, so they all carry its return type.
+	retTp := *expr.RetType
+	if collate.NewCollationEnabled() {
+		_, collation := expr.CharsetAndCollation()
+		retTp.SetCollate(collation)
+	}
+	isNull := &tipb.Expr{
+		Tp:        tipb.ExprType_ScalarFunc,
+		Sig:       isNullSig,
+		Children:  []*tipb.Expr{pbArg},
+		FieldType: ToPBFieldType(&retTp),
+	}
+	return &tipb.Expr{
+		Tp:        tipb.ExprType_ScalarFunc,
+		Sig:       tipb.ScalarFuncSig_UnaryNotInt,
+		Children:  []*tipb.Expr{isNull},
+		FieldType: ToPBFieldType(&retTp),
 	}
 }
 

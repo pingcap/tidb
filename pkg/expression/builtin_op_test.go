@@ -17,6 +17,7 @@ package expression
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -703,4 +704,100 @@ func TestLogicXor(t *testing.T) {
 
 	_, err = funcs[ast.LogicXor].getFunction(ctx, []Expression{NewZero(), NewZero()})
 	require.NoError(t, err)
+}
+
+func TestIsNotNull(t *testing.T) {
+	ctx := createContext(t)
+	sc := ctx.GetSessionVars().StmtCtx
+	oldTypeFlags := sc.TypeFlags()
+	defer func() {
+		sc.SetTypeFlags(oldTypeFlags)
+	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+
+	// One value per evaluation type the function has a signature for, plus the NULL of
+	// that type. ISNOTNULL() itself never returns NULL.
+	cases := []struct {
+		arg      any
+		expected int64
+	}{
+		{nil, 0},
+		{int64(0), 1},
+		{int64(123), 1},
+		{uint64(123), 1},
+		{float64(0), 1},
+		{float64(1.5), 1},
+		{"", 1},
+		{"abc", 1},
+		{types.NewDecFromFloatForTest(0.3), 1},
+		{types.CreateBinaryJSON(int64(0)), 1},
+		{types.CreateBinaryJSON(map[string]any{"test": "test"}), 1},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, types.DefaultFsp), 1},
+		{types.Duration{Duration: 12 * time.Hour, Fsp: types.DefaultFsp}, 1},
+	}
+
+	for _, c := range cases {
+		args := primitiveValsToConstants(ctx, []any{c.arg})
+		f, err := newFunctionForTest(ctx, ast.IsNotNull, args...)
+		require.NoError(t, err)
+		require.Equal(t, 1, f.GetType(ctx).GetFlen())
+		d, err := f.Eval(ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, types.KindInt64, d.Kind(), "arg: %v", c.arg)
+		require.Equal(t, c.expected, d.GetInt64(), "arg: %v", c.arg)
+
+		// `isnotnull(x)` must agree with the historical `not(isnull(x))` composition.
+		composed, err := newFunctionForTest(ctx, ast.UnaryNot,
+			NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), args[0]))
+		require.NoError(t, err)
+		cd, err := composed.Eval(ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, cd.GetInt64(), d.GetInt64(), "arg: %v", c.arg)
+	}
+
+	// Test incorrect parameter count.
+	_, err := newFunctionForTest(ctx, ast.IsNotNull, NewZero(), NewZero())
+	require.Error(t, err)
+}
+
+func TestIsNotNullFoldConstant(t *testing.T) {
+	ctx := createContext(t)
+
+	// A NOT NULL column folds to the constant 1, the mirror of `isnull` folding to 0.
+	notNullCol := &Column{
+		RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.NotNullFlag).BuildP(),
+		Index:   0,
+	}
+	folded := NewFunctionInternal(ctx, ast.IsNotNull, types.NewFieldType(mysql.TypeTiny), notNullCol)
+	con, ok := folded.(*Constant)
+	require.True(t, ok)
+	require.Equal(t, int64(1), con.Value.GetInt64())
+
+	nullableCol := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
+	notFolded := NewFunctionInternal(ctx, ast.IsNotNull, types.NewFieldType(mysql.TypeTiny), nullableCol)
+	sf, ok := notFolded.(*ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, ast.IsNotNull, sf.FuncName.L)
+}
+
+func TestExtractIsNotNullArg(t *testing.T) {
+	ctx := createContext(t)
+	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
+
+	// Both forms of `IS NOT NULL` must be recognized by optimizer rules.
+	single := NewFunctionInternal(ctx, ast.IsNotNull, types.NewFieldType(mysql.TypeTiny), col)
+	arg, ok := ExtractIsNotNullArg(single)
+	require.True(t, ok)
+	require.Equal(t, col, arg)
+
+	composed := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny),
+		NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), col))
+	arg, ok = ExtractIsNotNullArg(composed)
+	require.True(t, ok)
+	require.Equal(t, col, arg)
+
+	_, ok = ExtractIsNotNullArg(NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), col))
+	require.False(t, ok)
+	_, ok = ExtractIsNotNullArg(col)
+	require.False(t, ok)
 }

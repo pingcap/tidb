@@ -136,6 +136,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"is_ipv6",
 		"is_uuid",
 		"isfalse",
+		"isnotnull", // the single ScalarFunction form of `IS NOT NULL`, legal like "isnull"
 		"isnull",
 		"istrue",
 		"json_array",

@@ -2124,7 +2124,16 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
-	function := er.notToExpression(v.Not, ast.IsNull, v.Type.DeepCopy(), er.ctxStack[stkLen-1])
+	var function expression.Expression
+	if v.Not && er.sctx.IsNotNullScalarFuncEnabled() {
+		// Build the single `isnotnull` ScalarFunction instead of `not(isnull(x))`.
+		function, er.err = er.newFunction(ast.IsNotNull, v.Type.DeepCopy(), er.ctxStack[stkLen-1])
+		if er.err != nil {
+			return
+		}
+	} else {
+		function = er.notToExpression(v.Not, ast.IsNull, v.Type.DeepCopy(), er.ctxStack[stkLen-1])
+	}
 	er.ctxStackPop(1)
 	er.ctxStackAppend(function, types.EmptyName)
 }
