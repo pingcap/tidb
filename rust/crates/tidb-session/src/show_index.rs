@@ -110,7 +110,9 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                 index.unique,
                 clustered,
                 position + 1,
-                expression.is_none().then_some(column.name.as_str()),
+                // Go `fetchShowIndex`: a hidden expression-index column is
+                // named by the STRING "NULL" (not SQL NULL).
+                Some(if expression.is_none() { column.name.as_str() } else { "NULL" }),
                 expression,
                 nullable,
                 &index.comment,

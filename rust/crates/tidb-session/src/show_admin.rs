@@ -358,6 +358,7 @@ pub(crate) fn show_table_status_row(
     charset: tidb_executor::TableCharset,
     comment: &str,
     create_options: &str,
+    create_time: Datum,
 ) -> Vec<Datum> {
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     vec![
@@ -375,7 +376,7 @@ pub(crate) fn show_table_status_row(
             Some(next) => Datum::Int(next),
             None => Datum::Null,
         },
-        Datum::Null, // Create_time: no per-table creation timestamp here.
+        create_time, // Create_time: the creating job's TSO, as information_schema.tables
         Datum::Null, // Update_time
         Datum::Null, // Check_time
         text(charset.collation.name()),

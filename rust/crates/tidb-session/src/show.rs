@@ -1417,6 +1417,7 @@ impl Session {
                     }
                     Some(tidb_ast::ShowTableStatusFilter::Where(expr)) => (None, Some(expr)),
                 };
+                let zone = self.session_time_zone();
                 let rows = self.with_catalog_mut(|catalog| {
                     let mut rows = Vec::new();
                     let names = catalog.table_names(&database).ok_or_else(|| {
@@ -1424,7 +1425,7 @@ impl Session {
                     })?;
                     for name in names {
                         let entry = catalog.table_in(&database, &name);
-                        let (auto_increment, table_charset, comment, create_options) = match entry {
+                        let (auto_increment, table_charset, comment, create_options, create_time) = match entry {
                             Some(tidb_executor::TableEntry::Kv(table)) => (
                                 // Go `getAutoIncrementID`, as
                                 // information_schema.TABLES reads it.
@@ -1441,8 +1442,9 @@ impl Session {
                                 } else {
                                     ""
                                 },
+                                crate::infoschema::update_time_datum(table.update_ts(), &zone),
                             ),
-                            _ => (None, tidb_executor::TableCharset::default(), "", ""),
+                            _ => (None, tidb_executor::TableCharset::default(), "", "", Datum::Null),
                         };
                         let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
                             crate::show_admin::show_table_status_view_row(&name)
@@ -1453,6 +1455,7 @@ impl Session {
                                 table_charset,
                                 comment,
                                 create_options,
+                                create_time,
                             )
                         };
                         rows.push(row);
@@ -1466,7 +1469,16 @@ impl Session {
                 let columns = crate::show_admin::SHOW_TABLE_STATUS_COLUMNS
                     .iter()
                     .map(|(name, numeric)| {
-                        ((*name).to_owned(), if *numeric { number() } else { text() })
+                        // Go declares the three timestamps DATETIME.
+                        let field_type = if matches!(*name, "Create_time" | "Update_time" | "Check_time")
+                        {
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime)
+                        } else if *numeric {
+                            number()
+                        } else {
+                            text()
+                        };
+                        ((*name).to_owned(), field_type)
                     })
                     .collect();
                 let output = StmtOutput::Rows { columns, rows };

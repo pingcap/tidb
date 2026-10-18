@@ -3993,6 +3993,18 @@ fn prepare_cluster_columns(
                 drop_indexes.push(CiString::new(to.clone()));
             }
             AlterColumnAction::IndexVisibility { name, .. } => {
+                // Go `AlterIndexVisibility` validates each spec against the
+                // table as it is when the statement is submitted, not the
+                // evolving one: an index an earlier spec adds is still
+                // `ErrKeyDoesNotExist` here.
+                let exists = find_index(stored, name)
+                    .is_some_and(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);
+                if !exists {
+                    return Err(DdlPlanError::KeyNotExists {
+                        index: name.clone(),
+                        table: table.to_owned(),
+                    });
+                }
                 alter_indexes.push(CiString::new(name.clone()));
             }
             AlterColumnAction::SetDefault { column, .. } => {

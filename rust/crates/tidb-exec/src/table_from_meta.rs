@@ -581,6 +581,7 @@ pub fn cluster_table(
     // both the DDL that wrote it and the printer that renders it were
     // right.
     kv_table.set_comment(table.comment.clone());
+    kv_table.set_update_ts(table.update_ts);
     // Go `TableInfo.PlacementPolicyRef`. A table a Go cluster wrote can name
     // a policy; dropping it here would mean this node stores the table back
     // WITHOUT the reference, erasing a policy binding Go put there -- the

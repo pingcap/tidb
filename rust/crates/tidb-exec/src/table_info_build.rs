@@ -1271,6 +1271,14 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         | IndexConstraintKind::UniqueKey
         | IndexConstraintKind::UniqueIndex => ConstraintKind::Unique,
         IndexConstraintKind::Key | IndexConstraintKind::Index => ConstraintKind::Key,
+        // Go `checkFullTextSupportedInStarter`: a classic deployment refuses
+        // a FULLTEXT key outright, with its own wording and the 8200 code.
+        IndexConstraintKind::Fulltext => {
+            return Err(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                "FULLTEXT index is only supported in starter deployment mode",
+            ))
+        }
         other => {
             return Err(DdlAdmissionError::with_code(
                 GENERIC_ERROR_CODE,

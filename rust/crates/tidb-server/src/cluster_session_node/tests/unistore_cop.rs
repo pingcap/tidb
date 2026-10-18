@@ -17939,6 +17939,43 @@ fn decorrelated_defaults_dual_limits_and_frames_follow_go() {
     assert!(frame.contains("range between 1 preceding and 1 following"), "{frame}");
 }
 
+/// Metadata answers captured from the oracle: a table reports the creating
+/// job's time as `CREATE_TIME` (`TableInfo.UpdateTS`), an expression index
+/// names its key part by the string `NULL`, a FULLTEXT key is refused with
+/// 8200, and `ALTER INDEX` validates against the table as submitted.
+#[test]
+fn table_metadata_answers_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1139)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE md (a INT, b INT, KEY ((a + b)))")
+        .unwrap();
+    let created = displayed(rows(
+        &mut session,
+        "select create_time is null, create_time > now() - interval 1 hour \
+         from information_schema.tables where table_schema = 'test' and table_name = 'md'",
+    ));
+    assert_eq!(created, [["0", "1"]], "{created:?}");
+    let status = displayed(rows(&mut session, "show table status like 'md'"));
+    assert_ne!(status[0][11], "NULL", "{status:?}");
+    let index = displayed(rows(&mut session, "show index from md"));
+    assert_eq!(index[0][4], "NULL", "{index:?}");
+    let fulltext = session
+        .execute_write("CREATE TABLE ft (a TEXT, FULLTEXT KEY k (a))")
+        .unwrap_err();
+    let fulltext = format!("{fulltext:?}");
+    assert!(
+        fulltext.contains("FULLTEXT index is only supported in starter deployment mode"),
+        "{fulltext}"
+    );
+    let invisible = session
+        .execute_write("ALTER TABLE md ADD INDEX kb (b), ALTER INDEX kb INVISIBLE")
+        .unwrap_err();
+    let invisible = format!("{invisible:?}");
+    assert!(invisible.contains("Key 'kb' doesn't exist in table 'md'"), "{invisible}");
+}
+
 /// A CTE definition keeps its storage id in every format
 /// (`CTEDefinition.ExplainID`), and the implicit casts a builtin's arguments
 /// carry no longer decide push-down: `round(dt)` and `conv(int, ...)` read a

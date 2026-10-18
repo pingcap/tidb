@@ -304,7 +304,7 @@ pub fn table_rows(
         return Some(schemata_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("TABLES") {
-        return Some(tables_rows(catalog, visibility));
+        return Some(tables_rows(catalog, visibility, &ctx.session_zone()));
     }
     if name.eq_ignore_ascii_case("PARTITIONS") {
         return Some(partitions_rows(catalog, visibility));
@@ -2131,7 +2131,40 @@ fn table_or_partition_not_exist(
 
 pub const SYS_TABLES: &[(&str, i64)] = &[("schema_unused_indexes", 122)];
 
-fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+/// A `DATETIME` for a table's `UpdateTS` TSO in the session zone (Go
+/// `types.FromGoTime(table.GetUpdateTime().In(loc))`), NULL for a table whose
+/// creating tier recorded no TSO.
+pub(crate) fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZone) -> Datum {
+    use chrono::{Datelike, TimeZone, Timelike};
+    if update_ts == 0 {
+        return Datum::Null;
+    }
+    let Some(moment) = zone
+        .timestamp_millis_opt((update_ts >> 18) as i64)
+        .single()
+        .map(|moment| moment.naive_local())
+    else {
+        return Datum::Null;
+    };
+    tidb_datatype::Time::from_date_checked(
+        moment.year(),
+        moment.month() as i32,
+        moment.day() as i32,
+        moment.hour() as i32,
+        moment.minute() as i32,
+        moment.second() as i32,
+        0,
+        tidb_datatype::TimeType::DateTime,
+        0,
+    )
+    .map_or(Datum::Null, Datum::Time)
+}
+
+fn tables_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    zone: &tidb_expr::SessionTimeZone,
+) -> Vec<Vec<Datum>> {
     // go's TABLES output lists the USER schemas first (the ci-alphabetical
     // order), then information_schema's own tables, then the
     // metrics/performance/sys views -- the oracle's first row is `d10.e1`,
@@ -2217,8 +2250,9 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             // Go `getAutoIncrementID`: the allocator's `Base() + 1`, 0 while
             // it has drawn nothing; NULL without an auto-increment column.
             table.allocated_auto_increment().map_or(Datum::Null, Datum::Int),
-            // CREATE_TIME is NULL rather than a fabricated timestamp.
-            Datum::Null,
+            // Go `table.GetUpdateTime().In(loc)`: the creating job's TSO in
+            // the session's zone; NULL where the creating tier recorded none.
+            update_time_datum(table.update_ts(), zone),
             Datum::Null,
             Datum::Null,
             // Go reads `TableInfo.Collate`, which the table was created with;

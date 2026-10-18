@@ -550,6 +550,10 @@ pub struct KvTable {
     /// Go `TableInfo.Comment`, persisted by CREATE/ALTER TABLE and served by
     /// metadata statements.
     comment: String,
+    /// Go `TableInfo.UpdateTS`: the TSO of the DDL job that created the
+    /// table, which `information_schema.TABLES.CREATE_TIME` and `SHOW TABLE
+    /// STATUS` report. Zero when the creating tier recorded none.
+    update_ts: u64,
     /// Go `TableInfo.Compression`, persisted by CREATE/ALTER TABLE and
     /// printed by `SHOW CREATE TABLE` when non-empty. Unvalidated, exactly
     /// like Go (`create_table.go:964-965` stores whatever string arrives).
@@ -1392,6 +1396,7 @@ impl KvTable {
             auto_random_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
             comment: String::new(),
+            update_ts: 0,
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
             lock: None,
             affinity: None,
@@ -2444,6 +2449,17 @@ impl KvTable {
     #[must_use]
     pub const fn pre_split_regions(&self) -> u64 {
         self.pre_split_regions
+    }
+
+    /// Go `TableInfo.UpdateTS`.
+    #[must_use]
+    pub const fn update_ts(&self) -> u64 {
+        self.update_ts
+    }
+
+    /// Records the creating DDL job's TSO.
+    pub fn set_update_ts(&mut self, update_ts: u64) {
+        self.update_ts = update_ts;
     }
 
     /// Replaces the table-level comment.
