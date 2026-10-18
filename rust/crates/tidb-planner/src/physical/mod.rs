@@ -1270,6 +1270,13 @@ pub struct PhysicalTableScan {
     /// Go `Ranges`: the scan's key ranges (`ranger.Ranges`). Empty means
     /// the builder predates range filling and reads as the full scan.
     pub ranges: crate::ranger::types::Ranges,
+    /// Go `GroupByColIdxs`: the range columns each range holds one constant
+    /// of. Non-empty means the reader splits `ranges` into groups that agree
+    /// on those columns (`GroupRangesByCols`), reads each group in order and
+    /// merge-sorts the groups by the scan property's items. The groups are
+    /// derived from the (possibly cache-rebuilt) ranges at execution, as Go's
+    /// plan-cache rebuild does.
+    pub group_by_col_idxs: Vec<usize>,
     /// Access conditions and handle metadata retained for execute-time plan
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
@@ -2503,6 +2510,8 @@ pub struct PhysicalIndexScan {
     pub desc: bool,
     /// Go `Ranges` (`ranger.Ranges`); empty reads as the full range.
     pub ranges: crate::ranger::types::Ranges,
+    /// Go `GroupByColIdxs`; see [`PhysicalTableScan::group_by_col_idxs`].
+    pub group_by_col_idxs: Vec<usize>,
     /// Access conditions and index metadata retained for execute-time plan
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::IndexRangeRebuild>,
@@ -4654,6 +4663,7 @@ impl PhysicalPlan {
                 prefix_len: op.prefix_len,
             }),
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
+                group_by_col_idxs: op.group_by_col_idxs.clone(),
                 base: base_of(&op.base),
                 keep_order: op.keep_order,
                 desc: op.desc,
@@ -4783,6 +4793,7 @@ impl PhysicalPlan {
                 tasks: op.tasks.clone(),
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
+                group_by_col_idxs: op.group_by_col_idxs.clone(),
                 data_source_schema: op.data_source_schema.clone(),
                 base: base_of(&op.base),
                 table_id: op.table_id,

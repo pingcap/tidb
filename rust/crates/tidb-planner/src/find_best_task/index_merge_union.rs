@@ -43,17 +43,23 @@ pub fn build_union_index_merge_task(
         .transpose()
 }
 
+/// Go `matchProperty` over one partial path: `None` when it cannot deliver
+/// the order, else the group-by columns of its merge sort (empty when the
+/// path is ordered outright).
 fn partial_matches_order(
     ds: &DataSource,
     partial: &Partial,
     items: &[crate::physical_property::SortItem],
-) -> bool {
-    let Some(first) = items.first() else {
-        return false;
-    };
+) -> Option<Vec<usize>> {
+    let first = items.first()?;
     if items.iter().any(|item| item.desc != first.desc) {
-        return false;
+        return None;
     }
+    // A correlated access condition's ranges are rebuilt per outer row, so
+    // plan-time range groups would be stale; such a partial keeps its order
+    // only outright.
+    let allow_groups =
+        !tidb_expr::expr_util::predicates::contain_correlated_column(&ds.pushed_down_conds);
     match partial {
         // Go `isMatchPropForIndexMerge`: every MV partial path must match,
         // its equality on the array value fixing that key position.
@@ -61,25 +67,34 @@ fn partial_matches_order(
             index_pos, paths, ..
         } => paths
             .iter()
-            .all(|path| index_partial_matches_order(ds, *index_pos, path.filled(), items)),
+            .all(|path| {
+                index_partial_matches_order(ds, *index_pos, path.filled(), items, false)
+                    .is_some()
+            })
+            .then(Vec::new),
         // Go `matchProperty` over a table path: the integer handle alone, or
         // a clustered common handle's key columns (its `IdxCols`) after the
         // prefix its ranges pin.
-        Partial::Table { .. } if ds.handle_is_int => {
-            items.len() == 1
-                && ds
-                    .handle_cols
-                    .first()
-                    .is_some_and(|column| column.unique_id == first.col.unique_id)
-        }
+        Partial::Table { .. } if ds.handle_is_int => (items.len() == 1
+            && ds
+                .handle_cols
+                .first()
+                .is_some_and(|column| column.unique_id == first.col.unique_id))
+        .then(Vec::new),
         Partial::Table { filled, .. } => {
-            ds.is_common_handle
-                && !ds.force_no_keep_order_table_path
-                && key_columns_match_order(&filled.common_columns, &filled.detached.ranges, items)
+            if !ds.is_common_handle || ds.force_no_keep_order_table_path {
+                return None;
+            }
+            key_columns_match_order(
+                &filled.common_columns,
+                &filled.detached.ranges,
+                items,
+                allow_groups,
+            )
         }
         Partial::Index {
             index_pos, filled, ..
-        } => index_partial_matches_order(ds, *index_pos, filled, items),
+        } => index_partial_matches_order(ds, *index_pos, filled, items, allow_groups),
     }
 }
 
@@ -90,25 +105,29 @@ fn index_partial_matches_order(
     index_pos: usize,
     filled: &crate::access_path::ordinary::FilledIndexPath,
     items: &[crate::physical_property::SortItem],
-) -> bool {
+    allow_groups: bool,
+) -> Option<Vec<usize>> {
     let index = &ds.indexes[index_pos];
     if ds.force_no_keep_order_index_ids.contains(&index.id) {
-        return false;
+        return None;
     }
     // Match the same normalized key layout used by ordinary ranges,
     // including eligible appended handles after fixed declared keys.
-    key_columns_match_order(&filled.columns, &filled.detached.ranges, items)
+    key_columns_match_order(&filled.columns, &filled.detached.ranges, items, allow_groups)
 }
 
 /// Go `isMatchProp` over one partial path's key columns: each sort column
 /// is a full-length key column reached after columns every range pins to a
-/// single value.
+/// single value (Case 2) or to one value per range (Case 3, the group-by
+/// columns of a merge sort over the range groups).
 fn key_columns_match_order(
     columns: &[(tidb_expr::column::Column, i64)],
     ranges: &[crate::ranger::types::Range],
     items: &[crate::physical_property::SortItem],
-) -> bool {
+    allow_groups: bool,
+) -> Option<Vec<usize>> {
     let mut offset = 0;
+    let mut group_by_col_idxs = Vec::new();
     for item in items {
         let mut found = false;
         while let Some((column, length)) = columns.get(offset) {
@@ -124,20 +143,37 @@ fn key_columns_match_order(
                 break;
             }
             let fixed = ranges.first().and_then(|range| range.low_val.get(position));
-            if !fixed.is_some_and(|value| {
+            if fixed.is_some_and(|value| {
                 ranges.iter().all(|range| {
                     range.low_val.get(position) == Some(value)
                         && range.high_val.get(position) == Some(value)
                 })
             }) {
-                return false;
+                continue;
             }
+            let point_per_range = !ranges.is_empty()
+                && ranges.iter().all(|range| {
+                    range.low_val.len() > position
+                        && range.high_val.len() > position
+                        && range.low_val[position]
+                            .compare(&range.high_val[position], range.collators[position])
+                            .is_ok_and(|order| order == std::cmp::Ordering::Equal)
+                });
+            if !(allow_groups && point_per_range) {
+                return None;
+            }
+            group_by_col_idxs.push(position);
         }
         if !found {
-            return false;
+            return None;
         }
     }
-    true
+    if !group_by_col_idxs.is_empty()
+        && super::dispatch::range_group_count(ranges, &group_by_col_idxs)? == 0
+    {
+        group_by_col_idxs.clear();
+    }
+    Some(group_by_col_idxs)
 }
 
 #[cfg(test)]
@@ -173,13 +209,21 @@ pub(super) fn converge_union_index_merge_path<'a>(
     };
     let mut partials = Vec::with_capacity(path.alternatives.len());
     let mut partial_matches = Vec::with_capacity(path.alternatives.len());
+    let mut partial_groups = Vec::with_capacity(path.alternatives.len());
     for branch in &path.alternatives {
         let matched = branch
             .iter()
-            .filter(|partial| partial_matches_order(ds, partial, sort_items))
-            .min_by(|left, right| compare_alternatives(ds, left, right, true));
-        let (partial, matches) = if let Some(partial) = matched {
-            (partial, true)
+            .filter_map(|partial| {
+                partial_matches_order(ds, partial, sort_items).map(|groups| (partial, groups))
+            })
+            .min_by(|left, right| compare_alternatives(ds, left.0, right.0, true));
+        let (partial, result, groups) = if let Some((partial, groups)) = matched {
+            let result = if groups.is_empty() {
+                PhysicalPropMatchResult::Matched
+            } else {
+                PhysicalPropMatchResult::MatchedNeedMergeSort
+            };
+            (partial, result, groups)
         } else {
             if !prop.sort_items.is_empty() {
                 return None;
@@ -189,15 +233,13 @@ pub(super) fn converge_union_index_merge_path<'a>(
                     .iter()
                     .min_by(|left, right| compare_alternatives(ds, left, right, true))
                     .expect("prepared branches are nonempty"),
-                false,
+                PhysicalPropMatchResult::NotMatched,
+                Vec::new(),
             )
         };
         partials.push(partial);
-        partial_matches.push(if matches {
-            PhysicalPropMatchResult::Matched
-        } else {
-            PhysicalPropMatchResult::NotMatched
-        });
+        partial_matches.push(result);
+        partial_groups.push(groups);
     }
     let desc = sort_items.first().is_some_and(|item| item.desc);
     let total_rows = crate::access_path::index_merge::estimate_union_access(
@@ -285,6 +327,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
     Some(ConvergedUnionPath {
         partials,
         partial_matches,
+        partial_groups,
         advisory,
         desc,
         total_rows,
@@ -318,6 +361,9 @@ impl<'a> ConvergedUnionPath<'a> {
 pub(super) struct ConvergedUnionPath<'a> {
     partials: Vec<&'a Partial>,
     partial_matches: Vec<crate::physical_property::PhysicalPropMatchResult>,
+    /// Go `GroupByColIdxs` of each partial path, empty when it is ordered
+    /// outright or unordered.
+    partial_groups: Vec<Vec<usize>>,
     advisory: bool,
     desc: bool,
     total_rows: f64,
@@ -348,6 +394,7 @@ pub(super) fn build_converged_union_index_merge_task(
     let ConvergedUnionPath {
         partials,
         partial_matches,
+        partial_groups,
         advisory,
         desc,
         total_rows,
@@ -396,7 +443,12 @@ pub(super) fn build_converged_union_index_merge_task(
         adjusted
     };
     let mut partial_plans_raw = Vec::with_capacity(partials.len());
-    for (partial, matched) in partials.iter().copied().zip(partial_matches) {
+    for ((partial, matched), groups) in partials
+        .iter()
+        .copied()
+        .zip(partial_matches)
+        .zip(partial_groups)
+    {
         match partial {
             Partial::Index {
                 index_pos,
@@ -415,6 +467,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     scan_rows,
                     matched.matched(),
                     desc,
+                    groups,
                     &mut partial_plans_raw,
                 )?;
             }
@@ -439,6 +492,7 @@ pub(super) fn build_converged_union_index_merge_task(
                         scan_rows,
                         matched.matched(),
                         desc,
+                        &[],
                         &mut partial_plans_raw,
                     )?;
                 }
@@ -446,7 +500,12 @@ pub(super) fn build_converged_union_index_merge_task(
             Partial::Table { filled, rows, .. } => {
                 let detached = &filled.detached;
                 let ranges = &detached.ranges;
-                let schema_columns = partial_handle_columns(ds, ctx)?;
+                let mut schema_columns = partial_handle_columns(ds, ctx)?;
+                // Go `convertToPartialTableScan`: the partition id rides
+                // along an ordered partial of a dynamically pruned table.
+                if matched.matched() && keeps_phys_tbl_id(ds) {
+                    super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
+                }
                 // Go PhysicalTableScan.TP: IsFullScan holds for no ranges too.
                 let unsigned_int_handle = ds.pk_is_handle && filled.handle_type.is_unsigned();
                 let scan_kind = if ranges
@@ -476,6 +535,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
                 partial_plans_raw.push(PhysicalPlan::TableScan(
                     crate::physical::PhysicalTableScan {
+                        group_by_col_idxs: groups.clone(),
                         base,
                         table_id: ds.physical_table_id,
                         table_as_name: ds.table_as_name.clone(),
@@ -573,6 +633,7 @@ pub(super) fn build_converged_union_index_merge_task(
         )));
         Box::new(PhysicalPlan::TableScan(
             crate::physical::PhysicalTableScan {
+                group_by_col_idxs: Vec::new(),
                 base,
                 table_id: ds.physical_table_id,
                 table_as_name: ds.table_as_name.clone(),
@@ -604,6 +665,14 @@ pub(super) fn build_converged_union_index_merge_task(
         table_filters.clone(),
         &ctx.expr_pushdown_blacklist,
     );
+    let mut table_plan = table_plan;
+    // Go `BuildIndexMergeTableScan`: an ordered merge reads the row handle
+    // (and the partition id of a dynamically pruned table) the merge sorts
+    // and routes by; any column it appends is projected away above the
+    // reader (`NeedExtraProj`). A residual root filter returns before this.
+    let extra_columns_added = !by_items.is_empty()
+        && root_task_conds.is_empty()
+        && append_index_merge_scan_columns(ds, ctx, table_plan.as_deref_mut());
     let mut table_plan = table_plan;
     let index_plan_finished = !pushed_filters.is_empty();
     if !pushed_filters.is_empty() {
@@ -638,6 +707,10 @@ pub(super) fn build_converged_union_index_merge_task(
         table_plan,
         idx_merge_part_plans: partial_plans_raw,
         keep_order: !by_items.is_empty(),
+        need_extra_proj: extra_columns_added,
+        origin_schema: extra_columns_added
+            .then(|| ds.base.base.schema().cloned())
+            .flatten(),
         idx_merge_order: Some(crate::task::IndexMergeOrder {
             advisory,
             partial_matches: partial_matches.clone(),
@@ -649,6 +722,67 @@ pub(super) fn build_converged_union_index_merge_task(
         common_handle_cols: ds.common_handle_cols.clone(),
         ..Default::default()
     }))
+}
+
+/// Go `BuildIndexMergeTableScan`'s ordered-scan columns: the handle the merge
+/// orders by (absent from the schema when column pruning dropped it) and the
+/// partition id. Reports whether any column was added.
+fn append_index_merge_scan_columns(
+    ds: &DataSource,
+    ctx: &DispatchContext<'_>,
+    scan: Option<&mut PhysicalPlan>,
+) -> bool {
+    let Some(scan) = scan else {
+        return false;
+    };
+    let Some(shared) = scan.base_mut().base.schema_shared() else {
+        return false;
+    };
+    let mut schema = shared.as_ref().clone();
+    let mut added = false;
+    let contains = |schema: &tidb_expr::schema::Schema, column: &tidb_expr::column::Column| {
+        schema
+            .columns
+            .iter()
+            .any(|existing| existing.unique_id == column.unique_id)
+    };
+    if ds.pk_is_handle {
+        if let Some(pk) = ds.handle_cols.first() {
+            if !contains(&schema, pk) {
+                schema.columns.push(pk.clone());
+                added = true;
+            }
+        }
+    } else if !ds.common_handle_cols.is_empty() {
+        for column in &ds.common_handle_cols {
+            if !contains(&schema, column) {
+                schema.columns.push(column.clone());
+                added = true;
+            }
+        }
+    } else {
+        let mut extra = tidb_expr::column::Column::new(
+            ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                .with_flags(
+                    tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::PRI_KEY,
+                ),
+        );
+        extra.id = crate::logical::data_source::EXTRA_HANDLE_ID;
+        extra.orig_name = "_tidb_rowid".to_owned();
+        schema.columns.push(extra);
+        added = true;
+    }
+    if keeps_phys_tbl_id(ds) {
+        added |= super::dispatch::add_extra_phys_tbl_id_column(&mut schema.columns, ctx);
+    }
+    scan.base_mut().base.set_schema(Some(schema));
+    added
+}
+
+/// Go `ts.Table.GetPartitionInfo() != nil && UseDynamicPartitionPrune()`.
+fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
+    !ds.partition_definition_ids.is_empty() && ds.dynamic_partition_access.is_some()
 }
 
 /// Go `PhysicalIndexScan.AccessCondition` / `IdxCols` / `IdxColLens` of a
@@ -705,11 +839,18 @@ fn push_index_partial(
     scan_rows: f64,
     matched: bool,
     desc: bool,
+    group_by_col_idxs: &[usize],
     partial_plans_raw: &mut Vec<PhysicalPlan>,
 ) -> Result<(), PlanError> {
     let ranges = &filled.detached.ranges;
     let source_index = &ds.indexes[index_pos];
-    let schema_columns = partial_index_schema(ds, source_index, ctx)?;
+    let mut schema_columns = partial_index_schema(ds, source_index, ctx)?;
+    // Go `ConvertToPartialIndexScan`: an ordered partial of a dynamically
+    // pruned partitioned table also reads each entry's partition id, unless
+    // a global index already carries it.
+    if matched && keeps_phys_tbl_id(ds) && !source_index.global {
+        super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
+    }
     // Go GetScanRowSize prices the physical index schema once.
     let cost_columns = schema_columns.clone();
     let mut base = crate::physical::BasePhysicalPlan::new(
@@ -721,6 +862,7 @@ fn push_index_partial(
     base.base
         .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
     partial_plans_raw.push(PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+        group_by_col_idxs: group_by_col_idxs.to_vec(),
         base,
         table_id: ds.physical_table_id,
         table_as_name: ds.table_as_name.clone(),

@@ -1756,56 +1756,179 @@ fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<
     Task::Root(root)
 }
 
-/// Whether the table handle columns deliver the required order. Go
-/// `matchProperty` checks integer handles directly and common-handle prefixes
-/// through the schema columns retained after pruning.
-pub(super) fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
-    if ds.handle_is_int {
-        let Some(pk_col) = ds.handle_cols.first() else {
-            return false;
-        };
-        let [item] = prop.sort_items.as_slice() else {
-            return false;
-        };
-        return item.col.unique_id == pk_col.unique_id;
+/// Go `matchProperty`'s verdict for one access path: whether it delivers the
+/// required order, and the index columns whose per-range constants force the
+/// reader to merge-sort the range groups (`AccessPath.GroupByColIdxs`).
+pub(super) struct OrderMatch {
+    pub result: crate::physical_property::PhysicalPropMatchResult,
+    pub group_by_col_idxs: Vec<usize>,
+}
+
+impl OrderMatch {
+    pub(super) const NOT_MATCHED: Self = Self {
+        result: crate::physical_property::PhysicalPropMatchResult::NotMatched,
+        group_by_col_idxs: Vec::new(),
+    };
+
+    pub(super) fn matched(&self) -> bool {
+        self.result.matched()
     }
-    let (all_same, _) = prop.all_same_order();
-    if !all_same || prop.sort_items.is_empty() {
-        return false;
+}
+
+/// Go `matchProperty`'s sort-item walk over `idxCols` (Cases 1-4) and the
+/// `GroupRangesByCols` group cap. `columns` carries each column with its
+/// prefix length, `fixed` the columns an equality condition pins (Go
+/// `ConstCols`).
+fn match_sort_items(
+    columns: &[(tidb_expr::column::Column, i64)],
+    fixed: &[i64],
+    prop: &PhysicalProperty,
+    ranges: Option<&crate::ranger::types::Ranges>,
+) -> OrderMatch {
+    if columns.len() < prop.sort_items.len() {
+        return OrderMatch::NOT_MATCHED;
     }
-    let fixed = equality_fixed_ids(ds);
-    let mut handle_offset = 0;
+    let mut group_by_col_idxs = Vec::new();
+    let mut col_idx = 0;
     for item in &prop.sort_items {
         let mut found = false;
-        while let Some(column) = ds.common_handle_cols.get(handle_offset) {
-            let length = ds.common_handle_lens.get(handle_offset).copied();
-            handle_offset += 1;
-            if length == Some(tidb_datatype::UNSPECIFIED_LENGTH)
+        while let Some((column, length)) = columns.get(col_idx) {
+            // Case 1: the index column satisfies this sort item.
+            if *length == tidb_datatype::UNSPECIFIED_LENGTH
                 && column.unique_id == item.col.unique_id
             {
                 found = true;
+                col_idx += 1;
                 break;
             }
+            // Case 2: a single constant on this column; skip it.
             if fixed.contains(&column.unique_id) {
+                col_idx += 1;
                 continue;
             }
-            return false;
+            // Case 3: a constant in each range respectively; skip the column
+            // but record it, because the ranges must be read as groups and
+            // merge-sorted.
+            let all_ranges_point = ranges.is_some_and(|ranges| ranges.iter().all(|range| {
+                range.low_val.len() > col_idx
+                    && range.high_val.len() > col_idx
+                    && range.low_val[col_idx]
+                        .compare(&range.high_val[col_idx], range.collators[col_idx])
+                        .is_ok_and(|order| order == std::cmp::Ordering::Equal)
+            }));
+            if all_ranges_point {
+                group_by_col_idxs.push(col_idx);
+                col_idx += 1;
+                continue;
+            }
+            // Case 4: this path cannot satisfy the sort item.
+            return OrderMatch::NOT_MATCHED;
         }
         if !found {
-            return false;
+            return OrderMatch::NOT_MATCHED;
         }
     }
-    true
+    let matched = || OrderMatch {
+        result: crate::physical_property::PhysicalPropMatchResult::Matched,
+        group_by_col_idxs: Vec::new(),
+    };
+    if group_by_col_idxs.is_empty() {
+        return matched();
+    }
+    match range_group_count(ranges.into_iter().flatten(), &group_by_col_idxs) {
+        None => OrderMatch::NOT_MATCHED,
+        Some(0) => matched(),
+        Some(_) => OrderMatch {
+            result: crate::physical_property::PhysicalPropMatchResult::MatchedNeedMergeSort,
+            group_by_col_idxs,
+        },
+    }
+}
+
+/// Go `GroupRangesByCols` plus `matchProperty`'s `maxGroupCount`: the number
+/// of range groups the ranges form on the group-by columns (ranges that agree
+/// on them are one group, keyed by the value encoding with collation
+/// ignored). `None` means the path cannot take the merge sort -- the
+/// encoding failed, or Go's cap is exceeded. Multiple ranges fit one cop
+/// task but groups are forced apart, so the cap bounds that overhead.
+pub(super) fn range_group_count<'a>(
+    ranges: impl IntoIterator<Item = &'a crate::ranger::types::Range>,
+    group_by_col_idxs: &[usize],
+) -> Option<usize> {
+    const MAX_GROUP_COUNT: usize = 2048;
+    let mut groups = std::collections::HashSet::new();
+    for range in ranges {
+        let datums = group_by_col_idxs
+            .iter()
+            .map(|index| range.low_val.get(*index).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        groups.insert(tidb_codec::encode_value(&datums).ok()?);
+    }
+    (groups.len() <= MAX_GROUP_COUNT).then_some(groups.len())
+}
+
+/// The ranges Case 3 may group. A correlated access condition's ranges are
+/// rebuilt per outer row at execution, so the plan-time groups would be stale;
+/// such a path keeps the Sort instead.
+fn grouping_ranges<'a>(
+    ds: &crate::logical::DataSource,
+    ranges: Option<&'a crate::ranger::types::Ranges>,
+) -> Option<&'a crate::ranger::types::Ranges> {
+    ranges.filter(|_| {
+        !tidb_expr::expr_util::predicates::contain_correlated_column(&ds.pushed_down_conds)
+    })
+}
+
+/// Whether the table handle columns deliver the required order. Go
+/// `matchProperty` checks integer handles directly and common-handle prefixes
+/// through the schema columns retained after pruning.
+pub(super) fn table_path_matches_order(
+    ds: &crate::logical::DataSource,
+    prop: &PhysicalProperty,
+    ranges: Option<&crate::ranger::types::Ranges>,
+) -> OrderMatch {
+    if ds.handle_is_int {
+        let Some(pk_col) = ds.handle_cols.first() else {
+            return OrderMatch::NOT_MATCHED;
+        };
+        let [item] = prop.sort_items.as_slice() else {
+            return OrderMatch::NOT_MATCHED;
+        };
+        if item.col.unique_id != pk_col.unique_id {
+            return OrderMatch::NOT_MATCHED;
+        }
+        return OrderMatch {
+            result: crate::physical_property::PhysicalPropMatchResult::Matched,
+            group_by_col_idxs: Vec::new(),
+        };
+    }
+    let (all_same, _) = prop.all_same_order();
+    if !all_same || prop.sort_items.is_empty() {
+        return OrderMatch::NOT_MATCHED;
+    }
+    let columns = ds
+        .common_handle_cols
+        .iter()
+        .zip(&ds.common_handle_lens)
+        .map(|(column, length)| (column.clone(), *length))
+        .collect::<Vec<_>>();
+    match_sort_items(
+        &columns,
+        &equality_fixed_ids(ds),
+        prop,
+        grouping_ranges(ds, ranges),
+    )
 }
 
 pub(super) fn index_path_matches_order(
     ds: &crate::logical::DataSource,
     index: &crate::plan_builder::catalog::SourceIndex,
     prop: &PhysicalProperty,
-) -> bool {
+    ranges: Option<&crate::ranger::types::Ranges>,
+) -> OrderMatch {
     let (all_same, _) = prop.all_same_order();
     if prop.is_sort_item_empty() || !all_same {
-        return false;
+        return OrderMatch::NOT_MATCHED;
     }
     // Go's `idxCols`: the leading resolved index columns plus the integer
     // handle `fillIndexPath` appends to a non-unique index, whose entries
@@ -1830,30 +1953,34 @@ pub(super) fn index_path_matches_order(
             }
         }
     }
-    if columns.len() < prop.sort_items.len() {
+    match_sort_items(
+        &columns,
+        &equality_fixed_ids(ds),
+        prop,
+        grouping_ranges(ds, ranges),
+    )
+}
+
+/// Go `AddExtraPhysTblIDColumn`: appends the partition id an index entry or
+/// row belongs to, unless the schema already carries it. Reports whether a
+/// column was added.
+pub(super) fn add_extra_phys_tbl_id_column(
+    columns: &mut Vec<tidb_expr::column::Column>,
+    ctx: &DispatchContext<'_>,
+) -> bool {
+    if columns
+        .iter()
+        .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
+    {
         return false;
     }
-    let fixed = equality_fixed_ids(ds);
-    let mut index_offset = 0;
-    for item in &prop.sort_items {
-        let mut found = false;
-        while let Some((column, length)) = columns.get(index_offset) {
-            index_offset += 1;
-            if *length == tidb_datatype::UNSPECIFIED_LENGTH
-                && column.unique_id == item.col.unique_id
-            {
-                found = true;
-                break;
-            }
-            if fixed.contains(&column.unique_id) {
-                continue;
-            }
-            return false;
-        }
-        if !found {
-            return false;
-        }
-    }
+    let mut column = tidb_expr::column::Column::new(
+        ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    );
+    column.id = tidb_model::column::EXTRA_PHYS_TBL_ID;
+    column.orig_name = "_tidb_tid".to_owned();
+    columns.push(column);
     true
 }
 
@@ -2953,9 +3080,21 @@ fn find_best_task_4_logical_data_source_paths(
                 // takes part in the pruning and the preferRange filter.
                 let read_type_refused = cop_multi_read && prop.index_join_prop.is_none();
                 let keep_order = ordered;
-                if keep_order && !table_path_matches_order(ds, prop) {
-                    continue 'paths;
-                }
+                let order_match = if keep_order {
+                    let ranges = ds
+                        .derived_access_paths
+                        .as_ref()
+                        .and_then(|paths| paths.table_path.as_ref())
+                        .filter(|_| prop.index_join_prop.is_none())
+                        .map(|path| &path.detached.ranges);
+                    let order_match = table_path_matches_order(ds, prop, ranges);
+                    if !order_match.matched() {
+                        continue 'paths;
+                    }
+                    order_match
+                } else {
+                    OrderMatch::NOT_MATCHED
+                };
                 // Go `constructDS2TableScanTask`: "If the inner task need to
                 // keep order, the partition table reader can't satisfy it."
                 if keep_order
@@ -3427,6 +3566,7 @@ fn find_best_task_4_logical_data_source_paths(
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
+                    group_by_col_idxs: order_match.group_by_col_idxs.clone(),
                     // Go's index-join inner table scan carries no
                     // `AccessCondition`; the join owns its ranges.
                     range_rebuild: if prop.index_join_prop.is_some() {
@@ -3528,7 +3668,7 @@ fn find_best_task_4_logical_data_source_paths(
                     continue 'paths;
                 }
                 let keep_order = ordered;
-                if keep_order && !table_path_matches_order(ds, prop) {
+                if keep_order && !table_path_matches_order(ds, prop, None).matched() {
                     continue 'paths;
                 }
                 let mut base = crate::physical::BasePhysicalPlan::new(
@@ -3544,6 +3684,7 @@ fn find_best_task_4_logical_data_source_paths(
                 );
                 let ranges = crate::ranger::points::full_int_range(false);
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                    group_by_col_idxs: Vec::new(),
                     base,
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
@@ -3725,9 +3866,20 @@ fn find_best_task_4_logical_data_source_paths(
                 {
                     continue 'paths;
                 }
-                if ordered && !index_path_matches_order(ds, source_index, prop) {
-                    continue 'paths;
-                }
+                let order_match = if ordered {
+                    let order_match = index_path_matches_order(
+                        ds,
+                        source_index,
+                        prop,
+                        index_join_probe.is_none().then_some(&ranges),
+                    );
+                    if !order_match.matched() {
+                        continue 'paths;
+                    }
+                    order_match
+                } else {
+                    OrderMatch::NOT_MATCHED
+                };
                 // `convertToIndexScan`: a path that is NOT a single scan
                 // reads the table rows back through an IndexLookUp double
                 // read (`BuildIndexLookUpTask` at conversion) — the cop task
@@ -3816,9 +3968,22 @@ fn find_best_task_4_logical_data_source_paths(
                     "IndexScan",
                     ds.base.base.query_block_offset(),
                 );
-                let index_schema = super::index_merge_union::index_scan_schema(
+                let mut index_schema = super::index_merge_union::index_scan_schema(
                     ds, source_index, ctx, !single_scan,
                 )?;
+                // Go `convertToIndexScan` (`find_best_task.go:2692`): a
+                // keep-order lookup on a dynamically pruned partitioned table
+                // reads each index entry's partition id too
+                // (`AddExtraPhysTblIDColumn`), on both halves of the lookup,
+                // so the reader can route the handles and merge the
+                // partitions; a global index already carries it.
+                let keeps_phys_tbl_id = keep_order
+                    && !single_scan
+                    && !ds.partition_definition_ids.is_empty()
+                    && ds.dynamic_partition_access.is_some();
+                if keeps_phys_tbl_id && !source_index.global {
+                    add_extra_phys_tbl_id_column(&mut index_schema, ctx);
+                }
                 if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
                     base.base
                         .set_noncacheable_reason("IndexScan of partial index is uncacheable");
@@ -4180,6 +4345,7 @@ fn find_best_task_4_logical_data_source_paths(
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
+                    group_by_col_idxs: order_match.group_by_col_idxs.clone(),
                     // Go's index-join inner scan (`constructDS2IndexScanTask`)
                     // carries no `AccessCondition`; the join owns its ranges.
                     range_rebuild: if prop.index_join_prop.is_some() {
@@ -4268,6 +4434,7 @@ fn find_best_task_4_logical_data_source_paths(
                         }));
                     table_base.base.set_schema(ds.base.base.schema().cloned());
                     let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                        group_by_col_idxs: Vec::new(),
                         base: table_base,
                         table_id: ds.physical_table_id,
                         table_as_name: ds.table_as_name.clone(),
@@ -4397,6 +4564,17 @@ fn find_best_task_4_logical_data_source_paths(
                 let extra_handle_proj =
                     keep_order && table_side.is_some() && ds.common_handle_cols.is_empty()
                         && ds.handle_cols.is_empty();
+                let mut extra_phys_tbl_id_proj = false;
+                if keeps_phys_tbl_id {
+                    if let Some(table_plan) = table_side.as_deref_mut() {
+                        if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
+                            let mut schema = schema_shared.as_ref().clone();
+                            extra_phys_tbl_id_proj =
+                                add_extra_phys_tbl_id_column(&mut schema.columns, ctx);
+                            table_plan.base_mut().base.set_schema(Some(schema));
+                        }
+                    }
+                }
                 if extra_handle_proj {
                     if let Some(table_plan) = table_side.as_deref_mut() {
                         if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
@@ -4429,8 +4607,8 @@ fn find_best_task_4_logical_data_source_paths(
                     phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
-                    need_extra_proj: extra_handle_proj,
-                    origin_schema: extra_handle_proj
+                    need_extra_proj: extra_handle_proj || extra_phys_tbl_id_proj,
+                    origin_schema: (extra_handle_proj || extra_phys_tbl_id_proj)
                         .then(|| ds.base.base.schema().cloned())
                         .flatten(),
                     common_handle_cols: ds.common_handle_cols.clone(),
@@ -6541,11 +6719,7 @@ mod tests {
         };
         let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
 
-        assert!(index_path_matches_order(
-            &source,
-            &source.indexes[0],
-            &order_by_b
-        ));
+        assert!(index_path_matches_order(&source, &source.indexes[0], &order_by_b, None).matched());
     }
 
     #[test]
@@ -6583,7 +6757,7 @@ mod tests {
         let order_by_district =
             PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
 
-        assert!(table_path_matches_order(&source, &order_by_district));
+        assert!(table_path_matches_order(&source, &order_by_district, None).matched());
     }
 
     #[test]

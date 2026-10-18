@@ -77,7 +77,8 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     table_path: true,
                     single_scan: true,
                     pseudo: table_pseudo,
-                    matches_property: table_path_matches_order(ds, prop),
+                    matches_property: table_path_matches_order(ds, prop, Some(&table.detached.ranges))
+                        .matched(),
                     eq_or_in_count: super::candidate::equality_facts(&table.detached).0,
                     count_after_access: access,
                     count_after_index: 0.0,
@@ -150,7 +151,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     index,
                     state,
                     single_scan,
-                    index_path_matches_order(ds, index, prop),
+                    index_path_matches_order(ds, index, prop, Some(&filled.detached.ranges)).matched(),
                 );
                 let heuristic = if empty_ranges {
                     Some(HeuristicPath::default())

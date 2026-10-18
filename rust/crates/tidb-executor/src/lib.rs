@@ -169,6 +169,7 @@ mod tests_table_part1_source;
 #[cfg(test)]
 mod tests_table_part2_source;
 mod tidb_decode_key;
+pub mod range_group_merge;
 pub mod union_all;
 pub mod used_stats;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};

@@ -17754,6 +17754,127 @@ fn dnf_over_an_index_prefers_the_range_scan_and_keeps_go_or_shape() {
     );
 }
 
+/// Go `matchProperty` Case 3: ranges that each pin an index column to one
+/// constant (`a = 3 AND b IN (1, 3, 5) ORDER BY c`) satisfy the order by
+/// reading every range group in order and merge-sorting the groups, so no
+/// Sort sits above the reader. The merge covers a clustered table scan, a
+/// covering index and an index lookup, ascending and descending, and the
+/// 2048-group cap falls back to the Sort.
+#[test]
+fn grouped_range_reads_merge_sort_instead_of_sorting() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1137)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE gc (a INT, b INT, c INT, d INT, PRIMARY KEY (a, b, c) CLUSTERED)",
+        )
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE gi (a INT, b INT, c INT, d INT, KEY iabc (a, b, c))")
+        .unwrap();
+    for table in ["gc", "gi"] {
+        let values = (1..=3)
+            .flat_map(|b| (1..=4).map(move |c| format!("(1, {b}, {}, {})", 10 - c * b, b * 100 + c)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        session
+            .execute_write(&format!("INSERT INTO {table} VALUES {values}"))
+            .unwrap();
+    }
+    let text = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let plan = |session: &mut ClusterServerSession, sql: &str| {
+        text(session, &format!("explain format='brief' {sql}"))
+    };
+    for (sql, reader) in [
+        (
+            "select c from gc where a = 1 and b in (1, 3, 2) order by c",
+            "TableRangeScan",
+        ),
+        (
+            "select c from gi where a = 1 and b in (1, 3, 2) order by c",
+            "IndexRangeScan",
+        ),
+        (
+            "select /*+ order_index(gi, iabc) */ c, d from gi where a = 1 and b in (3, 1, 2) order by c desc",
+            "IndexRangeScan",
+        ),
+    ] {
+        let explained = plan(&mut session, sql);
+        assert!(
+            !explained.contains("Sort") && explained.contains(reader),
+            "{sql}\n{explained}"
+        );
+        let answer = rows(&mut session, sql);
+        let keys = displayed(answer)
+            .into_iter()
+            .map(|row| row[0].parse::<i64>().unwrap())
+            .collect::<Vec<_>>();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        if sql.ends_with("desc") {
+            expected.reverse();
+        }
+        assert_eq!(keys.len(), 12, "{sql}");
+        assert_eq!(keys, expected, "{sql}");
+    }
+    // Both columns of the order are pinned per range or ordered by the
+    // index: the merge key is the second sort item.
+    let two = text(
+        &mut session,
+        "select b, c from gi where a = 1 and b in (3, 1) order by b, c",
+    );
+    let pairs = two.lines().map(str::to_owned).collect::<Vec<_>>();
+    let mut sorted = pairs.clone();
+    sorted.sort_by_key(|line| {
+        let mut fields = line.split(' ').map(|field| field.parse::<i64>().unwrap());
+        (fields.next(), fields.next())
+    });
+    assert_eq!(pairs, sorted, "{two}");
+    // A keep-order lookup on a dynamically pruned partitioned table also reads
+    // each entry's partition id (`AddExtraPhysTblIDColumn`), which prices the
+    // ordered scan above the plain one: Go sorts the unordered lookup, and
+    // the hinted ordered plan keeps the order under a trimming Projection.
+    session
+        .execute_write(
+            "CREATE TABLE gp (a INT, b INT, c INT, d INT, KEY iabc (a, b, c)) \
+             PARTITION BY RANGE (d) (PARTITION p0 VALUES LESS THAN (100), \
+             PARTITION p1 VALUES LESS THAN (200), PARTITION p2 VALUES LESS THAN (300))",
+        )
+        .unwrap();
+    let priced = plan(
+        &mut session,
+        "select a, c from gp where a = 2 and b = 3 and d < 200 order by a, c",
+    );
+    assert!(
+        priced.contains("Sort") && priced.contains("keep order:false"),
+        "{priced}"
+    );
+    let hinted = plan(
+        &mut session,
+        "select /*+ order_index(gp, iabc) */ a, c from gp where a = 2 and b in (1, 3, 5) \
+         and d < 200 order by a, c",
+    );
+    assert!(
+        !hinted.contains("Sort") && hinted.contains("keep order:true"),
+        "{hinted}"
+    );
+    // More than 2048 groups keep the Sort.
+    let many_a = (1..=50).map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+    let many_b = (1..=50).map(|v| (v * 2).to_string()).collect::<Vec<_>>().join(", ");
+    let capped = plan(
+        &mut session,
+        &format!("select c from gi where a in ({many_a}) and b in ({many_b}) order by c"),
+    );
+    assert!(capped.contains("Sort"), "{capped}");
+}
+
 /// A CTE definition keeps its storage id in every format
 /// (`CTEDefinition.ExplainID`), and the implicit casts a builtin's arguments
 /// carry no longer decide push-down: `round(dt)` and `conv(int, ...)` read a

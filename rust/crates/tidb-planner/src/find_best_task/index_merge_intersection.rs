@@ -58,6 +58,7 @@ pub(super) fn build_prepared_index_merge_task(
             base.base.set_noncacheable_reason(reason);
         }
         let mut partial_plan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+            group_by_col_idxs: Vec::new(),
             base,
             table_id: ds.physical_table_id,
             table_as_name: ds.table_as_name.clone(),
@@ -115,6 +116,7 @@ pub(super) fn build_prepared_index_merge_task(
         .set_stats(Some(merge_scan_stats(ds, output_rows, ctx)));
     table_scan_base.base.set_schema(Some(schema.clone()));
     let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+        group_by_col_idxs: Vec::new(),
         base: table_scan_base,
         table_id: ds.physical_table_id,
         table_as_name: ds.table_as_name.clone(),

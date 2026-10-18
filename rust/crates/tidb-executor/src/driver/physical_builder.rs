@@ -102,6 +102,10 @@ struct BuildState {
     /// those statements write the membuffer the workers would race).
     projection_workers_allowed: bool,
     merge_scan_counters: bool,
+    /// The range group a grouped-range reader is being built for (Go
+    /// `GroupedRanges`): the one scan carrying `group_by_col_idxs` reads
+    /// these ranges instead of its own.
+    range_group: Option<tidb_planner::ranger::types::Ranges>,
     /// Go `executorBuilder.hasLock`: a `SELECT ... FOR UPDATE` below keeps the
     /// projections above it serial for the same reason.
     has_lock: bool,
@@ -826,6 +830,7 @@ fn build_table_scan(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     net_bytes: Option<f64>,
+    range_group: Option<&tidb_planner::ranger::types::Ranges>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
         .physical_kv_table_by_id(scan.table_id)
@@ -911,8 +916,11 @@ fn build_table_scan(
     // A scan built from access conditions always plans a non-empty range; it
     // is empty only after a cached plan rebuilt it for parameters that admit
     // no handle (`c1 > 9223372036854775807`), and Go then reads nothing.
-    if !scan.ranges.is_empty() || scan.range_rebuild.is_some() {
-        let ranges = executor_ranges(&scan.ranges);
+    let scan_ranges = range_group
+        .filter(|_| !scan.group_by_col_idxs.is_empty())
+        .unwrap_or(&scan.ranges);
+    if !scan_ranges.is_empty() || scan.range_rebuild.is_some() {
+        let ranges = executor_ranges(scan_ranges);
         if !source.accept_handle_ranges(&ranges) {
             return Err(DriverError::unsupported(
                 "the physical table scan cannot apply its ranges",
@@ -1979,6 +1987,7 @@ fn build_index_reader(
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
     net_bytes: Option<f64>,
+    range_group: Option<&tidb_planner::ranger::types::Ranges>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -2034,10 +2043,13 @@ fn build_index_reader(
         .cloned();
     let offset_schema = cop_row_schema.as_ref().unwrap_or(&schema);
     let (source_schema, keep, extra_handle) = reader_output_offsets(offset_schema, scan, &table)?;
-    let ranges = if scan.ranges.is_empty() {
+    let scan_ranges = range_group
+        .filter(|_| !scan.group_by_col_idxs.is_empty())
+        .unwrap_or(&scan.ranges);
+    let ranges = if scan_ranges.is_empty() {
         vec![IndexRange::full()]
     } else {
-        executor_ranges(&scan.ranges)
+        executor_ranges(scan_ranges)
     };
     let prefix_limit = embedded_index_prefix_limit(index_plan);
     let prefix_index_offset = prefix_limit
@@ -4879,9 +4891,28 @@ fn build_index_merge_reader(
         let reads_no_keys = embedded_index_scan(partial).is_none()
             && embedded_table_scan(partial).is_some_and(|scan| scan.ranges.is_empty());
         let selected = if reads_no_keys { Vec::new() } else { selected };
-        for partition_index in selected {
+        // Go `buildPartialWorkerKVRanges`: a partial whose ranges pin the
+        // group-by columns reads every (range group, partition) pair as its
+        // own ordered stream, merged below like the partitions are.
+        let range_groups: Vec<Option<tidb_planner::ranger::types::Ranges>> =
+            match partial_range_groups(partial)? {
+                Some(groups) => groups.into_iter().map(Some).collect(),
+                None => vec![None],
+            };
+        let streams = selected
+            .into_iter()
+            .flat_map(|partition_index| {
+                range_groups
+                    .iter()
+                    .map(move |group| (partition_index, group))
+            })
+            .collect::<Vec<_>>();
+        for (partition_index, group) in streams {
             let mut partition_plan = partial.clone();
             set_index_merge_partition(&mut partition_plan, physical_ids[partition_index]);
+            if let Some(group) = group {
+                narrow_scan_ranges(&mut partition_plan, group);
+            }
             let executor = build_with_state(&partition_plan, catalog, ctx, state)?;
             if executor.schema().len() != partial_schema.len() {
                 return Err(DriverError::unsupported(
@@ -4999,6 +5030,41 @@ fn build_index_merge_reader(
         });
     }
     Ok(Box::new(executor))
+}
+
+/// The range groups of a merge partial whose scan carries Go's
+/// `GroupByColIdxs`, or `None` when it reads its ranges as one stream.
+fn partial_range_groups(
+    partial: &PhysicalPlan,
+) -> Result<Option<Vec<tidb_planner::ranger::types::Ranges>>, DriverError> {
+    let grouped = embedded_index_scan(partial)
+        .map(|scan| (&scan.group_by_col_idxs, &scan.ranges))
+        .or_else(|| embedded_table_scan(partial).map(|scan| (&scan.group_by_col_idxs, &scan.ranges)));
+    match grouped {
+        Some((idxs, ranges)) if !idxs.is_empty() => {
+            Ok(Some(group_ranges_by_cols(ranges, idxs)?))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Points the grouped scan of a cloned plan at one range group.
+fn narrow_scan_ranges(plan: &mut PhysicalPlan, ranges: &tidb_planner::ranger::types::Ranges) {
+    match plan {
+        PhysicalPlan::TableScan(scan) if !scan.group_by_col_idxs.is_empty() => {
+            scan.ranges = ranges.clone();
+            scan.group_by_col_idxs.clear();
+        }
+        PhysicalPlan::IndexScan(scan) if !scan.group_by_col_idxs.is_empty() => {
+            scan.ranges = ranges.clone();
+            scan.group_by_col_idxs.clear();
+        }
+        _ => {
+            for child in plan.base_mut().children_mut() {
+                narrow_scan_ranges(child, ranges);
+            }
+        }
+    }
 }
 
 fn index_merge_partition_indexes(
@@ -5350,50 +5416,15 @@ fn build_shuffle(
     )))
 }
 
-fn build_with_state(
+/// Builds one reader (or index scan lookup) as the plan describes it, without
+/// the per-node metering [`build_with_state`] adds.
+fn build_reader_node(
     plan: &PhysicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    if matches!(plan, PhysicalPlan::TableScan(_))
-        && state
-            .table_task_source
-            .as_ref()
-            .is_some_and(|(id, _)| *id == plan.id())
-    {
-        return Ok(state.table_task_source.take().unwrap().1);
-    }
-    if state.executor_runtime_stats_source.is_none() {
-        state.executor_runtime_stats_source = ctx.executor_runtime_stats_source().cloned();
-    }
-    if let Some(receiver) = state.shuffle_receivers.remove(&plan.id()) {
-        return Ok(state.meter(plan, receiver, ctx.statement_memory()));
-    }
-    let executor: Box<dyn Executor> = match plan {
-        PhysicalPlan::Shuffle(shuffle) => build_shuffle(plan, shuffle, catalog, ctx, state),
-        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported(
-            "shuffle receiver has no owning worker",
-        )),
-        PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
-        PhysicalPlan::TableScan(scan) => {
-            build_table_scan(plan, scan, catalog, ctx, state.reader_net_bytes)
-        }
-        PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
-        PhysicalPlan::IndexScan(scan) => build_index_reader(
-            plan,
-            plan,
-            None,
-            true,
-            scan.keep_order,
-            None,
-            None,
-            false,
-            state.index_scan_limit.take(),
-            state.reader_net_bytes,
-            catalog,
-            ctx,
-        ),
+    match plan {
         PhysicalPlan::TableReader(reader) => {
             let executor = build_reader(reader.table_plan.as_deref(), catalog, ctx, state)?;
             ctx.mark_physical_table_reader();
@@ -5454,12 +5485,197 @@ fn build_with_state(
                 reader.index_lookup_push_down,
                 None,
                 None,
+                state.range_group.as_ref(),
                 catalog,
                 ctx,
             )?;
             ctx.mark_physical_table_reader();
             Ok(executor)
         }
+        _ => Err(DriverError::unsupported(
+            "a reader node was expected",
+        )),
+    }
+}
+
+/// Go `GroupRangesByCols`: ranges that agree on the group-by columns form one
+/// group. Go collects a map's values, so its group order is unspecified; the
+/// first-appearance order used here is one valid order.
+fn group_ranges_by_cols(
+    ranges: &tidb_planner::ranger::types::Ranges,
+    group_by_col_idxs: &[usize],
+) -> Result<Vec<tidb_planner::ranger::types::Ranges>, DriverError> {
+    let mut positions: HashMap<Vec<u8>, usize> = HashMap::new();
+    let mut groups: Vec<tidb_planner::ranger::types::Ranges> = Vec::new();
+    for range in ranges {
+        let datums = group_by_col_idxs
+            .iter()
+            .map(|index| {
+                range.low_val.get(*index).cloned().ok_or_else(|| {
+                    DriverError::unsupported("a grouped range is narrower than its group columns")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let key = tidb_codec::encode_value(&datums)
+            .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
+        let position = *positions.entry(key).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[position].push(range.clone());
+    }
+    Ok(groups)
+}
+
+/// The scan of a reader that carries Go's `GroupByColIdxs`, with the property
+/// the planner built it under.
+fn range_grouped_scan(
+    plan: &PhysicalPlan,
+) -> Option<(&[usize], &tidb_planner::ranger::types::Ranges, Option<&tidb_planner::physical_property::PhysicalProperty>)> {
+    let leaf = match plan {
+        PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().and_then(|plan| {
+            embedded_table_scan(plan).map(|scan| {
+                (&scan.group_by_col_idxs[..], &scan.ranges, scan.prop.as_deref())
+            })
+        }),
+        PhysicalPlan::IndexReader(reader) => reader.index_plan.as_deref().and_then(|plan| {
+            embedded_index_scan(plan).map(|scan| {
+                (&scan.group_by_col_idxs[..], &scan.ranges, scan.prop.as_deref())
+            })
+        }),
+        PhysicalPlan::IndexLookUpReader(reader) => reader.index_plan.as_deref().and_then(|plan| {
+            embedded_index_scan(plan).map(|scan| {
+                (&scan.group_by_col_idxs[..], &scan.ranges, scan.prop.as_deref())
+            })
+        }),
+        _ => None,
+    }?;
+    (!leaf.0.is_empty()).then_some(leaf)
+}
+
+/// Go `TableReaderExecutor.buildRespForGroupedRanges` and the index readers'
+/// equivalents: a reader whose ranges pin the group-by columns reads each
+/// range group as its own request, and the group results merge-sort by the
+/// scan property's items (`NewSortedSelectResults`).
+fn build_range_grouped_reader(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let Some((group_by_col_idxs, ranges, prop)) = range_grouped_scan(plan) else {
+        return build_reader_node(plan, catalog, ctx, state);
+    };
+    let groups = group_ranges_by_cols(ranges, group_by_col_idxs)?;
+    if groups.len() <= 1 {
+        // One group is read in range order, which is already the property's.
+        return build_reader_node(plan, catalog, ctx, state);
+    }
+    let sort_items = prop
+        .map(|prop| prop.sort_items.clone())
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| {
+            DriverError::unsupported("a grouped-range reader has no order to merge by")
+        })?;
+    let previous = state.range_group.take();
+    let mut children = Vec::with_capacity(groups.len());
+    let mut result = Ok(());
+    for group in groups {
+        state.range_group = Some(group);
+        match build_reader_node(plan, catalog, ctx, state) {
+            Ok(child) => children.push(child),
+            Err(error) => {
+                result = Err(error);
+                break;
+            }
+        }
+    }
+    state.range_group = previous;
+    result?;
+    let schema = unary_schema(plan, children[0].as_ref());
+    let by_items = sort_items
+        .iter()
+        .map(|item| {
+            // The property's column carries identity only; the merge reads
+            // the reader's own typed output column.
+            let schema = children[0].schema();
+            let position = usize::try_from(schema.column_index(&item.col)).map_err(|_| {
+                DriverError::unsupported("a grouped-range sort column is absent from its reader")
+            })?;
+            let mut column = schema.columns[position].clone();
+            column.index = i64::try_from(position).unwrap_or(i64::MAX);
+            Ok::<SortByItem, DriverError>(SortByItem {
+                expr: Expression::Column(column),
+                desc: item.desc,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Box::new(
+        crate::range_group_merge::RangeGroupMergeExec::new(
+            meta(ctx, plan, schema),
+            by_items,
+            children,
+            ctx.clone(),
+        )
+        .map_err(|error| DriverError::unsupported(format!("{error:?}")))?,
+    ))
+}
+
+fn build_with_state(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    if matches!(plan, PhysicalPlan::TableScan(_))
+        && state
+            .table_task_source
+            .as_ref()
+            .is_some_and(|(id, _)| *id == plan.id())
+    {
+        return Ok(state.table_task_source.take().unwrap().1);
+    }
+    if state.executor_runtime_stats_source.is_none() {
+        state.executor_runtime_stats_source = ctx.executor_runtime_stats_source().cloned();
+    }
+    if let Some(receiver) = state.shuffle_receivers.remove(&plan.id()) {
+        return Ok(state.meter(plan, receiver, ctx.statement_memory()));
+    }
+    let executor: Box<dyn Executor> = match plan {
+        PhysicalPlan::Shuffle(shuffle) => build_shuffle(plan, shuffle, catalog, ctx, state),
+        PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported(
+            "shuffle receiver has no owning worker",
+        )),
+        PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
+        PhysicalPlan::TableScan(scan) => {
+            build_table_scan(
+                plan,
+                scan,
+                catalog,
+                ctx,
+                state.reader_net_bytes,
+                state.range_group.as_ref(),
+            )
+        }
+        PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
+        PhysicalPlan::IndexScan(scan) => build_index_reader(
+            plan,
+            plan,
+            None,
+            true,
+            scan.keep_order,
+            None,
+            None,
+            false,
+            state.index_scan_limit.take(),
+            state.reader_net_bytes,
+            state.range_group.as_ref(),
+            catalog,
+            ctx,
+        ),
+        PhysicalPlan::TableReader(_)
+        | PhysicalPlan::IndexReader(_)
+        | PhysicalPlan::IndexLookUpReader(_) => build_range_grouped_reader(plan, catalog, ctx, state),
         PhysicalPlan::IndexMergeReader(reader) => {
             let executor = build_index_merge_reader(plan, reader, catalog, ctx, state)?;
             ctx.mark_physical_table_reader();
