@@ -1079,7 +1079,7 @@ use tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA_TABLE_IDS;
 /// `TIDB_TABLE_ID` comes from `tableIDMap`. Emitted for EVERY table Go
 /// registers, served here or not -- the id and the name are the table's
 /// METADATA, from Go's own source; only QUERYING an unserved one refuses.
-fn information_schema_tables_rows() -> Vec<Vec<Datum>> {
+fn information_schema_tables_rows(zone: &tidb_expr::SessionTimeZone) -> Vec<Vec<Datum>> {
     INFORMATION_SCHEMA_TABLE_IDS
         .iter()
         .map(|(offset, name)| {
@@ -1092,12 +1092,15 @@ fn information_schema_tables_rows() -> Vec<Vec<Datum>> {
                 Datum::Int(10),
                 text("Compact"),
             ];
-            // TABLE_ROWS through AUTO_INCREMENT: zero, as Go's
-            // `EstimateDataLength` answers for a memory table -- the same
-            // seven cells the base-table row above carries.
-            row.extend(std::iter::repeat_n(Datum::Int(0), 7));
-            // CREATE_TIME, UPDATE_TIME, CHECK_TIME.
-            row.extend(std::iter::repeat_n(Datum::Null, 3));
+            // TABLE_ROWS through DATA_FREE: zero, as Go's `EstimateDataLength`
+            // answers for a memory table. AUTO_INCREMENT is NULL (no
+            // auto-increment column), and CREATE_TIME is `GetUpdateTime()` of
+            // a table that never recorded a TSO: the epoch in the session
+            // zone. UPDATE_TIME and CHECK_TIME are NULL.
+            row.extend(std::iter::repeat_n(Datum::Int(0), 6));
+            row.push(Datum::Null);
+            row.push(update_time_datum(0, zone));
+            row.extend(std::iter::repeat_n(Datum::Null, 2));
             row.push(text("utf8mb4_bin"));
             row.push(Datum::Null);
             row.push(text(""));
@@ -2283,7 +2286,7 @@ fn tables_rows(
         ]);
     }
     // go lists information_schema's own tables after the user schemas.
-    rows.extend(information_schema_tables_rows());
+    rows.extend(information_schema_tables_rows(zone));
     // go seeds metrics_schema and sys with their own SYSTEM VIEW / VIEW rows
     // (the oracle cells: the epoch CREATE_TIME for the metrics tables; the
     // view's own creation time for sys; the TIDB_TABLE_ID blocks the
@@ -2298,17 +2301,23 @@ fn tables_rows(
         ),
         ("sys", SYS_TABLES, "2026-09-24 18:05:56", true),
     ] {
-        let created = tidb_datatype::parse_time(
-            created,
-            tidb_datatype::TimeType::DateTime,
-            0,
-            false,
-            true,
-            false,
-            &tidb_datatype::SessionTimeZone::utc(),
-        )
-        .map(|parsed| tidb_datatype::Datum::Time(parsed.time))
-        .unwrap_or(tidb_datatype::Datum::Null);
+        let created = if schema_upper == "METRICS_SCHEMA" {
+            // These tables never recorded a TSO: the epoch, in the session
+            // zone, exactly as the memory tables above.
+            update_time_datum(0, zone)
+        } else {
+            tidb_datatype::parse_time(
+                created,
+                tidb_datatype::TimeType::DateTime,
+                0,
+                false,
+                true,
+                false,
+                &tidb_datatype::SessionTimeZone::utc(),
+            )
+            .map(|parsed| tidb_datatype::Datum::Time(parsed.time))
+            .unwrap_or(tidb_datatype::Datum::Null)
+        };
         for (table_name, table_id) in tables {
             let mut row = vec![
                 text(CATALOG),
