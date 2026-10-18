@@ -679,6 +679,7 @@ impl Session {
         };
         let mut scanned = stmt.clone();
         let has_as_of = crate::binding::scan_statement_tables(&mut scanned).has_as_of;
+        self.check_noop_functions(&create.query)?;
         self.refuse_stale_view_body(create, has_as_of)?;
         let create = create.clone();
         let current_db = self.current_db.clone();

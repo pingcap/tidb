@@ -1528,7 +1528,17 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         "tidb_bounded_staleness" if args.len() == 2 => datetime_return_type(3, false)?,
         "tidb_current_tso" if args.is_empty() => int(),
         "get_format" if args.len() == 2 => ft_with_flen(text(), 17),
-        "monthname" | "dayname" | "date_format" => text(),
+        // Go `monthNameFunctionClass` / `dayNameFunctionClass` fix the width at 10.
+        "monthname" | "dayname" => ft_with_flen(text(), 10),
+        // Go `dateFormatFunctionClass`: the worst case is a format of `%r%r...`,
+        // each pair of format characters expanding to 11.
+        "date_format" if args.len() == 2 => {
+            let format_flen = args[1]
+                .static_type()
+                .map_or(tidb_datatype::UNSPECIFIED_LENGTH, string_cast_flen);
+            ft_with_flen(text(), (format_flen + 1) / 2 * 11)
+        }
+        "date_format" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
         "timestamp" => timestamp_return_type(args)?,
         "sysdate" => clock_datetime_return_type(args, true)?,

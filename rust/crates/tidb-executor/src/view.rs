@@ -413,9 +413,12 @@ fn combine_join_output(
 
 /// One `FROM` table of a view body, after qualification.
 struct BodyTable {
-    /// The path a column reference to this table is written with: the alias
-    /// when one was written, otherwise `db`.`table`.
+    /// The path a column reference to this table is written with: for a
+    /// stored table `db`.`name-or-alias`, for a derived table or a CTE the
+    /// alias alone (Go's `FieldName` keeps `DBName` for a real table only).
     qualifier: Vec<String>,
+    /// The table's database; empty for a derived table or a CTE.
+    database: String,
     columns: Vec<String>,
 }
 
@@ -704,6 +707,10 @@ fn canonical_select_in_scope(
         };
     }
 
+    // The select list AS WRITTEN: Go's GROUP BY / HAVING / ORDER BY resolvers
+    // substitute these expressions into the clauses before the list is
+    // aliased and expanded.
+    let written_fields: Vec<SelectField> = select.fields.fields().to_vec();
     let mut fields = Vec::new();
     // Go `addAliasName`'s anonymous fields: neither a column reference nor
     // aliased by the user.
@@ -777,6 +784,14 @@ fn canonical_select_in_scope(
         rename_duplicated_anonymous_fields(&mut fields, &anonymous);
     }
     select.fields = SelectFieldList::from(fields);
+    // Go's resolvers rewrite these clauses in the AST the body is stored from.
+    for item in &mut select.group_by {
+        resolve_group_by_item(&mut item.expr, &tables, &written_fields);
+    }
+    qualify_aggregate_columns(select.having.as_mut(), &tables, &written_fields);
+    for item in &mut select.order_by {
+        qualify_aggregate_columns(Some(&mut item.expr), &tables, &written_fields);
+    }
     // Go builds every subquery of the body with the same AST expansion.
     for field in select.fields.fields_mut() {
         if let SelectField::Expr { expr, .. } = field {
@@ -786,6 +801,166 @@ fn canonical_select_in_scope(
     canonical_expr_subqueries(select.where_clause.as_mut(), catalog, current_db, ctes)?;
     canonical_expr_subqueries(select.having.as_mut(), catalog, current_db, ctes)?;
     Ok(())
+}
+
+/// Go `ColumnName.Match(b)`: `n` (as written) matches `b` when each qualifier
+/// `n` carries equals `b`'s and the names agree. `b` is `[db?, table?, column]`.
+fn written_name_matches(written: &[String], resolved: &[String]) -> bool {
+    let (rd, rt, rc) = match resolved {
+        [c] => ("", "", c.as_str()),
+        [t, c] => ("", t.as_str(), c.as_str()),
+        [d, t, c] => (d.as_str(), t.as_str(), c.as_str()),
+        _ => return false,
+    };
+    let (wd, wt, wc) = match written {
+        [c] => ("", "", c.as_str()),
+        [t, c] => ("", t.as_str(), c.as_str()),
+        [d, t, c] => (d.as_str(), t.as_str(), c.as_str()),
+        _ => return false,
+    };
+    (wd.is_empty() || wd.eq_ignore_ascii_case(rd))
+        && (wt.is_empty() || wt.eq_ignore_ascii_case(rt))
+        && wc.eq_ignore_ascii_case(rc)
+}
+
+/// Go `resolveFromPlan`'s name: the column as the FROM tables name it, original
+/// case, `[db?, table-or-alias, column]` -- a derived table or a CTE has no db.
+fn resolve_body_column(path: &[String], tables: &[BodyTable]) -> Option<Vec<String>> {
+    let (column, table, database) = match path {
+        [c] => (c, None, None),
+        [t, c] => (c, Some(t), None),
+        [d, t, c] => (c, Some(t), Some(d)),
+        _ => return None,
+    };
+    for body_table in tables {
+        let visible = body_table.qualifier.last()?;
+        if table.is_some_and(|table| !visible.eq_ignore_ascii_case(table)) {
+            continue;
+        }
+        if database.is_some_and(|database| {
+            body_table.database.is_empty() || !body_table.database.eq_ignore_ascii_case(database)
+        }) {
+            continue;
+        }
+        if let Some(name) = body_table
+            .columns
+            .iter()
+            .find(|name| name.eq_ignore_ascii_case(column))
+        {
+            let mut resolved = Vec::with_capacity(3);
+            if !body_table.database.is_empty() {
+                resolved.push(body_table.database.clone());
+            }
+            resolved.push(visible.clone());
+            resolved.push(name.clone());
+            return Some(resolved);
+        }
+    }
+    None
+}
+
+/// Go `resolveFromSelectFields(v, fields, false)`: the select field a name
+/// refers to, by alias or as the same column; a non-column expression that
+/// carries the alias answers at once and two different columns of the same
+/// name are ambiguous.
+fn select_field_for_name<'a>(path: &[String], fields: &'a [SelectField]) -> Option<&'a Expr> {
+    let mut matched: Option<(&'a Expr, &'a Vec<String>)> = None;
+    for field in fields {
+        let SelectField::Expr { expr, alias } = field else {
+            continue;
+        };
+        let hit = match alias {
+            Some(alias) => path.len() == 1 && alias.eq_ignore_ascii_case(&path[0]),
+            None => matches!(expr, Expr::Column(own) if written_name_matches(own, path)
+                || written_name_matches(path, own)),
+        };
+        if !hit {
+            continue;
+        }
+        let Expr::Column(own) = expr else {
+            return Some(expr);
+        };
+        match matched {
+            None => matched = Some((expr, own)),
+            Some((_, first))
+                if !written_name_matches(first, own) && !written_name_matches(own, first) =>
+            {
+                return None;
+            }
+            Some(_) => {}
+        }
+    }
+    matched.map(|(expr, _)| expr)
+}
+
+/// Go `gbyResolver` (`logical_plan_builder.go:3982`): a positional integer and
+/// a name that is a select alias but not a source column are replaced by the
+/// select field's expression, in the AST the body is stored from.
+fn resolve_group_by_item(expr: &mut Expr, tables: &[BodyTable], fields: &[SelectField]) {
+    if let Expr::Int(digits) = expr {
+        if let Some(SelectField::Expr { expr: field_expr, .. }) = digits
+            .parse::<usize>()
+            .ok()
+            .and_then(|position| position.checked_sub(1))
+            .and_then(|index| fields.get(index))
+        {
+            *expr = field_expr.clone();
+        }
+        return;
+    }
+    tidb_planner::plan_builder::aggregation::visit_exprs(expr, &mut |node| {
+        let Expr::Column(path) = node else {
+            return false;
+        };
+        if resolve_body_column(path, tables).is_some() {
+            return true;
+        }
+        if let Some(replacement) = select_field_for_name(path, fields) {
+            if !tidb_planner::plan_builder::aggregation::aggregate_anywhere(replacement) {
+                *node = replacement.clone();
+            }
+        }
+        true
+    });
+}
+
+/// Go `havingWindowAndOrderbyExprResolver`'s `inAggFunc` arm: a column inside
+/// an aggregate of HAVING or ORDER BY is replaced by the matching select
+/// field's expression, or else by the fully qualified source column (the
+/// auxiliary field `resolveFromPlan` appends), so `HAVING SUM(a)` is stored as
+/// `HAVING SUM(`db`.`t`.`a`)`.
+fn qualify_aggregate_columns(
+    expr: Option<&mut Expr>,
+    tables: &[BodyTable],
+    fields: &[SelectField],
+) {
+    let Some(expr) = expr else {
+        return;
+    };
+    tidb_planner::plan_builder::aggregation::visit_exprs(expr, &mut |node| {
+        if !tidb_planner::plan_builder::aggregation::is_aggregate_call(node) {
+            return false;
+        }
+        tidb_planner::plan_builder::aggregation::visit_exprs(node, &mut |inner| {
+            let Expr::Column(path) = inner else {
+                return false;
+            };
+            if let Some(resolved) = resolve_body_column(path, tables) {
+                let replacement = fields.iter().find_map(|field| match field {
+                    SelectField::Expr {
+                        expr: Expr::Column(own),
+                        ..
+                    } if written_name_matches(own, &resolved) => Some(Expr::Column(own.clone())),
+                    _ => None,
+                });
+                *inner = replacement.unwrap_or(Expr::Column(resolved));
+            } else if let Some(replacement) = select_field_for_name(path, fields) {
+                *inner = replacement.clone();
+            }
+            true
+        });
+        true
+    });
 }
 
 /// Go `addAliasName` for the view's schema SELECT (`AsViewSchema`, issue
@@ -912,6 +1087,7 @@ fn qualify_join_node(
             let out = columns_of(&qualifier, &cte.columns);
             tables.push(BodyTable {
                 qualifier,
+                database: String::new(),
                 columns: cte.columns.clone(),
             });
             Ok(out)
@@ -928,13 +1104,19 @@ fn qualify_join_node(
                 .into_iter()
                 .map(|(name, _)| name)
                 .collect();
+            // Go keeps the database on the field name of an aliased table
+            // too: `SELECT `db`.`x`.`a` AS `a` FROM `db`.`t` AS `x``.
             let qualifier = match &table_ref.alias {
-                Some(alias) => vec![alias.clone()],
+                Some(alias) => vec![database.clone(), alias.clone()],
                 None => vec![database.clone(), name.clone()],
             };
-            table_ref.name = vec![database, name];
+            table_ref.name = vec![database.clone(), name];
             let out = columns_of(&qualifier, &columns);
-            tables.push(BodyTable { qualifier, columns });
+            tables.push(BodyTable {
+                qualifier,
+                database,
+                columns,
+            });
             Ok(out)
         }
         JoinNode::Join(join) => {
@@ -975,6 +1157,7 @@ fn qualify_join_node(
             let out = columns_of(&qualifier, &columns);
             tables.push(BodyTable {
                 qualifier,
+                database: String::new(),
                 columns,
             });
             Ok(out)

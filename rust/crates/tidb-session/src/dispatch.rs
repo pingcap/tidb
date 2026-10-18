@@ -2807,6 +2807,10 @@ impl Session {
         // a stale read there: a table read `AS OF`, or `tidb_read_staleness`.
         if let Stmt::Ddl(ddl) = &stmt {
             if let tidb_ast::DdlStmt::CreateView(create) = ddl.as_ref() {
+                // The preprocessor walks the whole CREATE VIEW statement at
+                // compile time, so a gated clause in the body is refused
+                // before the executor ever looks at the view.
+                self.check_noop_functions(&create.query)?;
                 self.refuse_stale_view_body(create, scan.has_as_of)?;
             }
         }

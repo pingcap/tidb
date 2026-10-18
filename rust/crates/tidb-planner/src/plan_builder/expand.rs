@@ -300,22 +300,34 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let new_gby_items = restore_gby_expression(&distinct_gby_cols, &ref_positions);
         let grouping_sets = rollup_grouping_sets(&new_gby_items);
 
-        // `:196` the Expand's own schema is the projection's, with the
-        // grouping columns made NULLABLE — the `AdjustNullabilityFromGroupingSets`
-        // narrowing named in this module's header.
+        // `:196` `AdjustNullabilityFromGroupingSets`. Go's `Schema.Clone` is
+        // shallow about `RetType`, so narrowing the Expand schema's grouping
+        // columns also narrows the very columns the projection below, the
+        // grouping sets, and every later reader (the aggregation's group-by
+        // items, the select fields, a view's column types) hold: they all
+        // see the NULLABLE type, not just the Expand's own schema.
         let grouping_col_ids: BTreeSet<i64> = grouping_sets
             .iter()
             .flat_map(|set| set.col_ids.iter().copied())
             .collect();
-        let mut expand_columns = proj_columns;
-        for column in &mut expand_columns {
+        let make_nullable = |column: &mut Column| {
             if !grouping_col_ids.contains(&column.unique_id) {
-                continue;
+                return;
             }
             if let Some(ret_type) = column.ret_type.as_mut() {
                 ret_type.set_flags(ret_type.flags() & !FieldTypeFlags::NOT_NULL);
             }
-        }
+        };
+        let mut expand_columns = proj_columns;
+        expand_columns.iter_mut().for_each(make_nullable);
+        distinct_gby_cols.iter_mut().for_each(make_nullable);
+        // Rebuild what cloned the columns before they were narrowed.
+        let new_gby_items = restore_gby_expression(&distinct_gby_cols, &ref_positions);
+        let grouping_sets = rollup_grouping_sets(&new_gby_items);
+        projection
+            .base
+            .base
+            .set_schema(Some(Schema::new(expand_columns.clone())));
 
         let mut expand = LogicalExpand::new(self.base(LogicalExpand::TYPE));
         // `:210` "if we want to use bitAnd for the quick computation of

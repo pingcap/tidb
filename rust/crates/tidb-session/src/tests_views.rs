@@ -1897,3 +1897,86 @@ fn using_join_star_and_no_default_columns_follow_go() {
     ));
     assert_eq!(defaults, [["a", "NULL"], ["b", "NULL"]]);
 }
+
+/// Go's preprocessor walks the whole `CREATE VIEW`, so a clause TiDB only
+/// implements as a no-op is refused in the view body too (error 1235), and no
+/// view is left behind.
+#[test]
+fn create_view_refuses_noop_clauses_in_its_body() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY)").unwrap();
+    let error = session
+        .run("CREATE VIEW v AS SELECT SQL_CALC_FOUND_ROWS a FROM t")
+        .expect_err("the gated clause is refused");
+    assert!(
+        error.to_string().contains("SQL_CALC_FOUND_ROWS has only noop implementation"),
+        "{error}"
+    );
+    assert!(session.run("SHOW CREATE VIEW v").is_err());
+    session.run("SET tidb_enable_noop_functions = ON").unwrap();
+    session
+        .run("CREATE VIEW v AS SELECT SQL_CALC_FOUND_ROWS a FROM t")
+        .unwrap();
+}
+
+/// Stored view text and column types captured from Go for bodies whose
+/// canonical form differs from the source: a table-qualified star, GROUP BY
+/// and HAVING resolved through select aliases, aggregates in HAVING and
+/// ORDER BY re-qualified, ROLLUP making the grouping column nullable, and
+/// DATE_FORMAT's worst-case width.
+#[test]
+fn view_bodies_store_go_s_canonical_text_and_types() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE DATABASE vs",
+        "USE vs",
+        "CREATE TABLE t1 (a INT PRIMARY KEY, B INT, c VARCHAR(20), d DECIMAL(10,2), e DATETIME)",
+        "CREATE VIEW w2 AS SELECT t1.* FROM t1",
+        "CREATE VIEW w9 AS SELECT a x, SUM(b) s FROM t1 GROUP BY x HAVING s > 3",
+        "CREATE VIEW w10 AS SELECT a, SUM(b) s FROM t1 GROUP BY a HAVING SUM(b) > 3 \
+         ORDER BY SUM(b) DESC, a LIMIT 2 OFFSET 1",
+        "CREATE VIEW w11 AS SELECT a, count(*) FROM t1 GROUP BY 1",
+        "CREATE VIEW w55 AS SELECT a, SUM(b) AS s2 FROM t1 GROUP BY a ORDER BY s2, SUM(b)",
+        "CREATE VIEW w43 AS SELECT a FROM t1 GROUP BY a WITH ROLLUP",
+        "CREATE VIEW w17 AS SELECT date_format(e,'%Y') FROM t1",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let text = |session: &mut Session, view: &str| {
+        let shown = row_text(session.run(&format!("SHOW CREATE VIEW {view}")));
+        let create = shown[0][1].clone();
+        let body = create.split(" AS SELECT ").nth(1).unwrap().to_owned();
+        format!("SELECT {body}")
+    };
+    assert_eq!(
+        text(&mut session, "w2"),
+        "SELECT `vs`.`t1`.`a` AS `a`,`vs`.`t1`.`B` AS `B`,`vs`.`t1`.`c` AS `c`,\
+         `vs`.`t1`.`d` AS `d`,`vs`.`t1`.`e` AS `e` FROM `vs`.`t1`"
+    );
+    assert_eq!(
+        text(&mut session, "w9"),
+        "SELECT `a` AS `x`,SUM(`b`) AS `s` FROM `vs`.`t1` GROUP BY `a` HAVING `s`>3"
+    );
+    assert_eq!(
+        text(&mut session, "w10"),
+        "SELECT `a` AS `a`,SUM(`b`) AS `s` FROM `vs`.`t1` GROUP BY `a` \
+         HAVING SUM(`vs`.`t1`.`B`)>3 ORDER BY SUM(`vs`.`t1`.`B`) DESC,`a` LIMIT 1,2"
+    );
+    assert_eq!(
+        text(&mut session, "w11"),
+        "SELECT `a` AS `a`,COUNT(1) AS `count(*)` FROM `vs`.`t1` GROUP BY `a`"
+    );
+    assert_eq!(
+        text(&mut session, "w55"),
+        "SELECT `a` AS `a`,SUM(`b`) AS `s2` FROM `vs`.`t1` GROUP BY `a` \
+         ORDER BY `s2`,SUM(`vs`.`t1`.`B`)"
+    );
+    let desc = |session: &mut Session, view: &str| {
+        row_text(session.run(&format!("DESC {view}")))
+            .into_iter()
+            .map(|row| format!("{} {} {} {}", row[0], row[1], row[2], row[3]))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(desc(&mut session, "w43"), ["a int YES PRI"]);
+    assert_eq!(desc(&mut session, "w17"), ["date_format(e,'%Y') varchar(11) YES "]);
+}
