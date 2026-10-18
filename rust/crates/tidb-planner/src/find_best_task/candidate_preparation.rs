@@ -278,8 +278,11 @@ fn range_scan_flags(
                     )
                 })
                 .count();
+            // Go `c.eqOrInCount`: the candidate's own count, which a DNF
+            // condition derives from its minimum access conditions.
+            let (eq_or_in_count, _) = super::candidate::equality_facts(&filled.detached);
             let index_filters =
-                filled.detached.eq_or_in_count > 0 || remained.len() - index_filter_count < index_filter_count;
+                eq_or_in_count > 0 || remained.len() - index_filter_count < index_filter_count;
             (
                 (prefer_merge
                     || ((single_scan || index_filters)

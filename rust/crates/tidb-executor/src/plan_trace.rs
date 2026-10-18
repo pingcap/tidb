@@ -23,17 +23,6 @@ use tidb_expr::expression::Expression;
 /// Go `statistics.PseudoRowCount` (`pkg/statistics/table.go`).
 pub(crate) const PSEUDO_ROW_COUNT: f64 = 10_000.0;
 
-fn collect_physical_or<'a>(expression: &'a Expression, out: &mut Vec<&'a Expression>) {
-    if let Expression::ScalarFunction(function) = expression {
-        if function.func_name.lowercase() == "or" && function.args.len() == 2 {
-            collect_physical_or(&function.args[0], out);
-            collect_physical_or(&function.args[1], out);
-            return;
-        }
-    }
-    out.push(expression);
-}
-
 /// Which of Go's two expression renderers a caller needs.
 ///
 /// Go renders a physical plan's operator text through `Expression.ExplainInfo`
@@ -89,30 +78,6 @@ pub(crate) fn physical_expression_text_with_columns(
             Some(column_text(ctx, column))
         }
         Expression::ScalarFunction(function) => {
-            if function.func_name.lowercase() == "or" && function.args.len() == 2 {
-                let mut parts = Vec::new();
-                collect_physical_or(expression, &mut parts);
-                // The LEFT-FOLD variant of this render (the forward
-                // or(or(a, b), c) rebuild) was tried for TPC-DS q84's ||-chain
-                // display parity and REVERTED: the full capture dropped to
-                // 64/83 (q13/15/28/47/48/57/61/85/88 flipped) across three
-                // warm passes with an unexplained estimate-level regression
-                // this display-only module should not cause. The reverse
-                // prepend-fold is the empirically load-bearing shape.
-                let mut rendered = physical_expression_text_with_columns(
-                    ctx,
-                    parts.pop().expect("OR has an operand"),
-                    column_names,
-                    style,
-                )?;
-                for part in parts.into_iter().rev() {
-                    rendered = format!(
-                        "or({}, {rendered})",
-                        physical_expression_text_with_columns(ctx, part, column_names, style)?
-                    );
-                }
-                return Some(rendered);
-            }
             let arguments = function
                 .args
                 .iter()

@@ -17714,3 +17714,42 @@ fn builtin_arguments_carry_go_signature_casts() {
         assert!(text.contains(expected), "{expression}\n{text}");
     }
 }
+
+/// Go's prefer-range-scan pruning reads the candidate's own eq/in count, which
+/// a DNF derives from its minimum access conditions, so `a = 1 OR a = 2` over
+/// a pseudo-statistics table reads the index (the same range as
+/// `a >= 1 AND a <= 2` loses on cost). An OR over an unindexed column keeps
+/// the OR tree as Go's `ComposeDNFCondition` shaped it: balanced, not a chain.
+#[test]
+fn dnf_over_an_index_prefers_the_range_scan_and_keeps_go_or_shape() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1135)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE dn (a INT, b INT, KEY (a))")
+        .unwrap();
+    let plan = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, &format!("explain format='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let index = plan(&mut session, "select * from dn where a = 1 or a = 2");
+    assert!(
+        index.contains("IndexLookUp") && index.contains("range:[1,2]"),
+        "{index}"
+    );
+    let range = plan(&mut session, "select * from dn where a >= 1 and a <= 2");
+    assert!(range.contains("TableFullScan"), "{range}");
+    let chain = plan(
+        &mut session,
+        "select * from dn where b = 1 or b = 2 or b = 3 or b = 4",
+    );
+    assert!(
+        chain.contains(
+            "or(or(eq(test.dn.b, 1), eq(test.dn.b, 2)), or(eq(test.dn.b, 3), eq(test.dn.b, 4)))"
+        ),
+        "{chain}"
+    );
+}
