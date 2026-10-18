@@ -15,7 +15,6 @@
 package importer_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -27,11 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -103,15 +100,7 @@ func newKVEncoderTestTable(t *testing.T, createSQL string) table.Table {
 }
 
 func TestKVEncoderCastErrorMessage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(c1 tinyint)")
-
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
+	table := newKVEncoderTestTable(t, "create table t(c1 tinyint)")
 
 	encodeCfg := &encode.EncodingConfig{
 		Table:  table,
@@ -136,15 +125,7 @@ func TestKVEncoderCastErrorMessage(t *testing.T) {
 }
 
 func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(c1 enum('a','b'))")
-
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
+	table := newKVEncoderTestTable(t, "create table t(c1 enum('a','b'))")
 
 	encodeCfg := &encode.EncodingConfig{
 		Table:  table,
