@@ -15,8 +15,10 @@
 package stmtsummary
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,4 +79,45 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.RUWaitDuration()*2, record2.SumRUWaitDuration)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
+
+	b, err := marshalStmtRecord(record2)
+	require.NoError(t, err)
+	items := make(map[string]any)
+	require.NoError(t, json.Unmarshal(b, &items))
+	require.Equal(t, record2.Digest, items["digest"])
+
+	b, err = marshalEvictedStmtRecord(record2)
+	require.NoError(t, err)
+	items = make(map[string]any)
+	require.NoError(t, json.Unmarshal(b, &items))
+	require.Equal(t, true, items["evicted"])
+	require.Equal(t, record2.Digest, items["digest"])
+}
+
+func TestStmtRecordTableNamesSkipEmptyTables(t *testing.T) {
+	info := GenerateStmtExecInfo4Test("digest1")
+	info.StmtCtx.Tables = []stmtctx.TableEntry{
+		{DB: "db0"},
+		{DB: "db1", Table: "table1"},
+		{DB: "db2"},
+	}
+
+	record := NewStmtRecord(info)
+	require.Equal(t, "db1.table1", record.TableNames)
+}
+
+func TestStmtRecordFormatsDigestText(t *testing.T) {
+	oldSummary := GlobalStmtSummary
+	testSummary := NewStmtSummary4Test(10)
+	GlobalStmtSummary = testSummary
+	defer func() {
+		testSummary.Close()
+		GlobalStmtSummary = oldSummary
+	}()
+	require.NoError(t, testSummary.SetMaxSQLLength(4))
+
+	info := GenerateStmtExecInfo4Test("digest1")
+	info.NormalizedSQL = "select"
+	record := NewStmtRecord(info)
+	require.Equal(t, "sele(len:6)", record.NormalizedSQL)
 }

@@ -350,7 +350,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 }
 
 func TestPartialIndexWithPlanCache(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(t, func(t *testing.T, tk *testkit.TestKit) {
 		tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -358,9 +358,6 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
 
 		stmt := "select * from t where a = ?"
-		if cascades == "on" {
-			stmt = "select a from t where a = ?"
-		}
 		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", stmt))
 		tk.MustExec("set @a = 123")
 
@@ -376,9 +373,6 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 
 		// Normal pre condition can not use plan cache.
 		stmt = "select * from t where b = ?"
-		if cascades == "on" {
-			stmt = "select b from t where b = ?"
-		}
 		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", stmt))
 		tk.MustExec("set @a = 20")
 		tk.MustExec("execute stmt using @a")
@@ -393,15 +387,12 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 }
 
 func TestPartialIndexWithIndexPrune(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(t, func(t *testing.T, tk *testkit.TestKit) {
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
 		query := "explain select * from t use index(idx1) where a > 1"
-		if cascades == "on" {
-			query = "explain select a from t use index(idx1) where a > 1"
-		}
 		tk.MustQuery(query).CheckContain("idx1")
 
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
