@@ -133,15 +133,12 @@ func TestSchemaImporter(t *testing.T) {
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).
 				AddRow("test01").AddRow("test02").AddRow("test03").
 				AddRow("test04").AddRow("test05"))
-		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
-			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t1", "CREATE TABLE `t1` (a int);"))
 		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`T2`").
 			WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
 		fileName := "t2-invalid-schema.sql"
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte("CREATE table t2 whatever;"), 0o644))
 		dbMetas := []*MDDatabaseMeta{
 			{Name: "test01", Tables: []*MDTableMeta{
-				{DB: "test01", Name: "t1"},
 				{DB: "test01", Name: "T2", charSet: "auto",
 					SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
 			}},
@@ -154,8 +151,6 @@ func TestSchemaImporter(t *testing.T) {
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).
 				AddRow("test01").AddRow("test02").AddRow("test03").
 				AddRow("test04").AddRow("test05"))
-		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
-			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t1", "CREATE TABLE `t1` (a int);"))
 		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`T2`").
 			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("T2", "CREATE TABLE `t2` (a int);"))
 		require.NoError(t, importer.Run(ctx, dbMetas))
