@@ -761,7 +761,7 @@ fn fold_insert_subqueries(
 }
 
 /// The subqueries `expr` contains, outermost only.
-fn outermost_subqueries(expr: &tidb_ast::Expr) -> Vec<tidb_ast::QueryStmt> {
+pub(crate) fn outermost_subqueries(expr: &tidb_ast::Expr) -> Vec<tidb_ast::QueryStmt> {
     struct Collector(Vec<tidb_ast::QueryStmt>);
     impl tidb_ast::Visitor for Collector {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {

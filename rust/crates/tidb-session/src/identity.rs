@@ -419,6 +419,17 @@ impl Session {
                     tidb_executor::driver::query_visit_info(query, catalog, &self.current_db, &ctx)
                 })
             },
+            |dml| {
+                self.with_planning_catalog(|catalog| {
+                    Ok(tidb_executor::driver::dml_visit_info(
+                        dml,
+                        catalog,
+                        &self.current_db,
+                        &ctx,
+                    ))
+                })
+                .unwrap_or_default()
+            },
         )
     }
 

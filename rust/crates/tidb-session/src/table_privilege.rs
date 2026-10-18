@@ -260,6 +260,9 @@ pub(crate) fn required_table_privileges(
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
         tidb_executor::DriverError,
     >,
+    resolve_dml_read: impl FnOnce(
+        &tidb_ast::DmlStmt,
+    ) -> Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
 ) -> Result<Vec<TablePrivilegeRequest>, tidb_executor::DriverError> {
     let mut requests = Vec::new();
     match stmt {
@@ -309,12 +312,8 @@ pub(crate) fn required_table_privileges(
                         ));
                     }
                 }
-                for (schema, table) in read_tables(stmt, current_db) {
-                    requests.push(TablePrivilegeRequest::new(
-                        &schema,
-                        &table,
-                        GlobalPriv::Select,
-                    ));
+                for visit in resolve_dml_read(dml) {
+                    requests.push(request_of_visit(&visit));
                 }
             }
             // An `UPDATE` READS its sources before it writes them, so Go's
@@ -324,12 +323,8 @@ pub(crate) fn required_table_privileges(
             // with no `authErr`, which is why a denied `UPDATE` reports 8121
             // rather than 1142.
             DmlStmt::Update(_) => {
-                for (schema, table) in read_tables(stmt, current_db) {
-                    requests.push(TablePrivilegeRequest::new(
-                        &schema,
-                        &table,
-                        GlobalPriv::Select,
-                    ));
+                for visit in resolve_dml_read(dml) {
+                    requests.push(request_of_visit(&visit));
                 }
                 for (schema, table) in resolve_write(dml)? {
                     requests.push(TablePrivilegeRequest::unnamed(
@@ -343,18 +338,11 @@ pub(crate) fn required_table_privileges(
             // `SelectPriv` on every source through `buildDataSource`, then
             // `DeletePriv` on each named target, this time WITH the 1142
             // `authErr`.
-            DmlStmt::Delete(delete) => {
-                for (schema, table) in read_tables(stmt, current_db) {
-                    requests.push(TablePrivilegeRequest::new(
-                        &schema,
-                        &table,
-                        GlobalPriv::Select,
-                    ));
-                }
-                // Go buildDelete removes its final source SELECT visit
-                // when neither a WHERE nor ORDER clause needs it.
-                if delete.where_clause.is_none() && delete.order_by.is_empty() {
-                    requests.pop();
+            DmlStmt::Delete(_) => {
+                // The source visits already drop the last one for a
+                // non-qualified delete, as Go's `popVisitInfo` does.
+                for visit in resolve_dml_read(dml) {
+                    requests.push(request_of_visit(&visit));
                 }
                 for (schema, table) in resolve_write(dml)? {
                     requests.push(TablePrivilegeRequest::new(
@@ -410,15 +398,11 @@ pub(crate) fn required_table_privileges(
                 )),
                 _ => {}
             }
-            if let DdlStmt::CreateView(_) = ddl.as_ref() {
+            if let DdlStmt::CreateView(create) = ddl.as_ref() {
                 // Go builds the query before appending CREATE VIEW and DROP
-                // visits. Reuse scoped read collection, including subqueries.
-                for (schema, table) in read_tables(stmt, current_db) {
-                    requests.push(TablePrivilegeRequest::new(
-                        &schema,
-                        &table,
-                        GlobalPriv::Select,
-                    ));
+                // visits, so the body's own visit info comes first.
+                for visit in resolve_read(&create.query).unwrap_or_default() {
+                    requests.push(request_of_visit(&visit));
                 }
             }
             requests.extend(ddl_table_privileges(ddl, current_db));

@@ -891,3 +891,33 @@ fn a_missing_table_is_denied_not_reported_to_an_account_without_privileges() {
     boot.run("GRANT SELECT ON test.* TO 'nobody'@'%'").unwrap();
     assert_eq!(denied(&mut nobody, "SELECT * FROM test.nosuchtable").0, 1146);
 }
+
+/// Writes read their sources through the same plan-time visit info: an
+/// `INSERT .. SELECT` over a DEFINER view whose definer lost the base table is
+/// `ErrViewInvalid` (1356) raised while planning, before the invoker's own
+/// privileges are looked at.
+#[test]
+fn an_insert_select_over_an_invalid_definer_view_is_1356() {
+    let (privs, mut boot, mut bob) = scoped();
+    boot.run("CREATE TABLE base1 (c INT)").unwrap();
+    boot.run("CREATE TABLE sink (c INT)").unwrap();
+    boot.run("CREATE USER 'owner'@'localhost'").unwrap();
+    boot.run("GRANT CREATE VIEW ON test.* TO 'owner'@'localhost'")
+        .unwrap();
+    boot.run("GRANT SELECT ON test.base1 TO 'owner'@'localhost'")
+        .unwrap();
+    let mut owner = session_as(&privs, boot.shared_catalog(), "owner", "localhost");
+    owner
+        .run("CREATE SQL SECURITY DEFINER VIEW test.dv AS SELECT * FROM test.base1")
+        .unwrap();
+    boot.run("GRANT SELECT ON test.dv TO 'bob'@'%'").unwrap();
+    boot.run("GRANT INSERT ON test.sink TO 'bob'@'%'").unwrap();
+    bob.run("INSERT INTO sink SELECT * FROM dv").unwrap();
+    boot.run("REVOKE SELECT ON test.base1 FROM 'owner'@'localhost'")
+        .unwrap();
+    assert_eq!(denied(&mut bob, "INSERT INTO sink SELECT * FROM dv").0, 1356);
+    assert_eq!(
+        denied(&mut bob, "UPDATE sink JOIN dv ON sink.c = dv.c SET sink.c = 1").0,
+        1356
+    );
+}

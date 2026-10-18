@@ -80,7 +80,7 @@ pub fn write_privilege_tables(
     }
 }
 
-pub use planner_bridge::{query_visit_info, update_privilege_tables};
+pub use planner_bridge::{dml_visit_info, query_visit_info, update_privilege_tables};
 mod record_set;
 pub use record_set::QueryRecordSet;
 pub(crate) mod fk_trigger_plan;

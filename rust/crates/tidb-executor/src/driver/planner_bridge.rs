@@ -2925,6 +2925,102 @@ fn query_visit_info_inner(
     Ok(std::mem::take(&mut builder.visit_info))
 }
 
+/// Go's `visitInfo` for the READ side of an INSERT / UPDATE / DELETE: what the
+/// plan builder appends while it resolves the statement's sources and the
+/// subqueries inside it, in Go's order.
+///
+/// The write privileges themselves (`INSERT`, `UPDATE`, `DELETE` on the
+/// targets) are the caller's; they follow these, as Go appends them after the
+/// source is built. A pass that cannot plan a piece contributes nothing for
+/// it, and the statement's own planning raises the error.
+pub fn dml_visit_info(
+    statement: &tidb_ast::DmlStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Vec<tidb_planner::plan_builder::visit_info::VisitInfo> {
+    use tidb_ast::{DeleteKind, DmlStmt, JoinNode, UpdateKind};
+    fn one_table_join(table: &tidb_ast::TableRef) -> tidb_ast::Join {
+        tidb_ast::Join {
+            left: JoinNode::Table(table.clone()),
+            right: None,
+            tp: tidb_ast::JoinType::Cross,
+            straight: false,
+            on: None,
+            using: Vec::new(),
+            natural: false,
+            explicit_parens: false,
+        }
+    }
+    let plan = |query: &tidb_ast::QueryStmt| {
+        query_visit_info(query, catalog, current_database, ctx).unwrap_or_default()
+    };
+    let subqueries = |exprs: &mut dyn Iterator<Item = &tidb_ast::Expr>| {
+        exprs
+            .flat_map(super::outermost_subqueries)
+            .flat_map(|query| plan(&query))
+            .collect::<Vec<_>>()
+    };
+    match statement {
+        DmlStmt::Insert(insert) => {
+            let mut visits = insert
+                .source
+                .as_deref()
+                .map(|query| plan(query))
+                .unwrap_or_default();
+            visits.extend(subqueries(
+                &mut insert
+                    .rows
+                    .iter()
+                    .flatten()
+                    .chain(insert.on_duplicate.iter().map(|assignment| &assignment.value)),
+            ));
+            visits
+        }
+        DmlStmt::Update(update) => {
+            let from = match &update.kind {
+                UpdateKind::Single(table) => one_table_join(table),
+                UpdateKind::Multi { from, .. } => (**from).clone(),
+            };
+            let source = super::multi_dml::multi_dml_select(
+                update.with.as_ref(),
+                &update.hints,
+                &from,
+                update.where_clause.as_ref(),
+                &update.order_by,
+                update.limit.as_ref(),
+            );
+            let mut visits = plan(&source);
+            visits.extend(subqueries(
+                &mut update.assignments.iter().map(|assignment| &assignment.value),
+            ));
+            visits
+        }
+        DmlStmt::Delete(delete) => {
+            let from = match &delete.kind {
+                DeleteKind::Single(table) => one_table_join(table),
+                DeleteKind::Multi { from, .. } => (**from).clone(),
+            };
+            let source = super::multi_dml::multi_dml_select(
+                delete.with.as_ref(),
+                &delete.hints,
+                &from,
+                delete.where_clause.as_ref(),
+                &delete.order_by,
+                delete.limit.as_ref(),
+            );
+            let mut visits = plan(&source);
+            // Go `buildDelete`: "If the delete is non-qualified it does not
+            // require Select Priv" -- the last source visit is popped.
+            if delete.where_clause.is_none() && delete.order_by.is_empty() {
+                visits.pop();
+            }
+            visits
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Whether `query`, built as Go's `buildSubquery` builds it (before any
 /// optimization), carries a correlated column anywhere in its tree: Go's
 /// `len(ExtractCorrelatedCols4LogicalPlan(np)) > 0`, which makes the
