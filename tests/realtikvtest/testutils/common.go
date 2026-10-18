@@ -95,6 +95,7 @@ func InitTest(t *testing.T) *SuiteContext {
 	if kerneltype.IsClassic() {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 
 	ctx := newSuiteContext(t, tk, store)
 	createTable(tk)

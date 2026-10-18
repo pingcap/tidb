@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -382,6 +383,10 @@ func loadExternalWorkloadGCLifeTime(ctx context.Context, storage kv.Storage) (ti
 }
 
 func initializeExternalWorkloadGCV2(ctx context.Context, storage kv.Storage, mgr extworkload.Manager) {
+	if diagnosticmode.Enabled() {
+		logutil.BgLogger().Info("don't initialize external workload GCV2", zap.String("reason", "diagnostic mode"))
+		return
+	}
 	if !extworkload.IsMaster(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
 		return
 	}
@@ -664,6 +669,9 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
+	if deploymode.IsStarter() && storage.GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
+		metricsutil.SetKeyspaceID(uint32(storage.GetCodec().GetKeyspaceID()))
+	}
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.

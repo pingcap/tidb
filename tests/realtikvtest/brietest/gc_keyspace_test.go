@@ -44,7 +44,7 @@ func TestKeyspaceBackupUsesGCBarrier(t *testing.T) {
 
 	cfg := config.GetGlobalConfig()
 	cfg.Store = config.StoreTypeTiKV
-	cfg.Path = realtikvtest.PDAddr
+	cfg.Path = realtikvtest.CurrentPDAddr()
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)
@@ -74,6 +74,7 @@ func TestKeyspaceBackupUsesGCBarrier(t *testing.T) {
 	enableReturnPath("github.com/pingcap/tidb/br/pkg/gc/hint-gc-keyspace-delete-barrier", sigKSDel)
 
 	backupCfg := task.DefaultBackupConfig(task.DefaultConfig())
+	task.ApplyTiDBRuntimeConfig(&backupCfg.Config)
 	backupCfg.Storage = "local://" + filepath.Join(tmpDir, "backup")
 	backupCfg.KeyspaceName = keyspaceName
 	backupCfg.CheckRequirements = false

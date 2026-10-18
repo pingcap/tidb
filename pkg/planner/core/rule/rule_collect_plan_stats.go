@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -45,14 +46,20 @@ const skipPlanCacheReasonSyncLoadFallback = "sync-load timed out and fell back t
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
-		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL), "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
+		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL),
+		"CollectPredicateColumnsPoint should not be called in restricted SQL mode unless it scans user tables")
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	syncLoadEnabled := syncWait > 0
 	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
 	// opNum is collected via the common stats load rule, some operators may be cleaned like proj for later rule.
 	// so opNum is not that accurate, but it's enough for the memo hashmap's init capacity.
 	plan.SCtx().GetSessionVars().StmtCtx.OperatorNum = opNum
-	if len(predicateColumns) > 0 {
+	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
+	// Ordinary read-only SELECT statements must still record predicate usage.
+	// Only the read-only RECOMMEND INDEX analysis is excluded because it does
+	// not represent an executed workload.
+	isRecommendIndexAnalysis := stmtCtx.IsReadOnly && stmtCtx.StmtType == ast.RecommendIndexStmtLabel
+	if len(predicateColumns) > 0 && !isRecommendIndexAnalysis {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
 

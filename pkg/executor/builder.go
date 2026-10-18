@@ -216,6 +216,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildAdminPlugins(v)
 	case *plannercore.DDL:
 		return b.buildDDL(v)
+	case *plannercore.PurgeMaterializedViewLog:
+		return b.buildPurgeMaterializedViewLog(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *physicalop.Delete:
@@ -858,6 +860,7 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
+	b.attachAdaptiveLimitController(v, e, childExec)
 
 	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
@@ -870,6 +873,146 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
+}
+
+func (b *executorBuilder) attachAdaptiveLimitController(
+	limitPlan *physicalop.PhysicalLimit, limitExec *LimitExec, childExec exec.Executor,
+) {
+	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
+		return
+	}
+	// V1 recognizes two roots. Unsupported reader modes retain the existing path:
+	//
+	//	Limit -> Projection* -> ordered IndexLookUpJoin
+	//	Limit -> Projection* -> keep-order IndexLookUp
+	indexJoin := findAdaptiveLimitIndexJoin(childExec)
+	if indexJoin != nil {
+		if !indexJoin.AdaptiveLimitEligible {
+			return
+		}
+		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(indexJoin.Children(0))
+		if outerIndexLookup == nil {
+			return
+		}
+		demandRows := limitPlan.Offset + limitPlan.Count
+		config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
+		config.InitialOuterWindow = adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexJoinBatchSize)
+		config.MaxOuterWindow = uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) *
+			uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
+		controller := exec.NewAdaptiveLimitController(config)
+		outerIndexLookup.adaptiveLimitController = controller
+		indexJoin.AdaptiveLimitController = controller
+		limitExec.adaptiveLimitController = controller
+		return
+	}
+
+	indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec)
+	if indexLookup == nil {
+		return
+	}
+	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
+		limitPlan.Offset+limitPlan.Count,
+		indexLookup,
+	))
+	indexLookup.adaptiveLimitController = controller
+	indexLookup.reportAdaptiveLimitStats = true
+	limitExec.adaptiveLimitController = controller
+}
+
+func (b *executorBuilder) buildAdaptiveLimitConfig(
+	demandRows uint64, indexLookup *IndexLookUpExecutor,
+) exec.AdaptiveLimitConfig {
+	sessionVars := b.sctx.GetSessionVars()
+	initialLookupWindow := adaptiveLimitInitialWindow(demandRows, sessionVars.IndexLookupSize)
+	return exec.AdaptiveLimitConfig{
+		DemandRows:          demandRows,
+		InitialLookupWindow: initialLookupWindow,
+		MaxLookupWindow: uint64(sessionVars.IndexLookupSize) *
+			uint64(sessionVars.IndexLookupConcurrency()),
+		InitialLookupBatchSize: adaptiveLimitInitialLookupBatchSize(
+			initialLookupWindow,
+			indexLookup.indexPaging,
+			sessionVars.MaxChunkSize,
+			sessionVars.IndexLookupSize,
+		),
+		MaxLookupBatchSize: uint64(sessionVars.IndexLookupSize),
+	}
+}
+
+func adaptiveLimitInitialWindow(demandRows uint64, ceiling int) uint64 {
+	if demandRows == 0 || ceiling <= 1 {
+		return 1
+	}
+	return min(demandRows, uint64(ceiling))
+}
+
+// adaptiveLimitInitialLookupBatchSize keeps paging tasks aligned with the
+// initial logical window. Without paging, it preserves at least one chunk of
+// execution granularity while respecting the configured lookup batch limit.
+func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool, maxChunkSize, maxBatchSize int) uint64 {
+	if indexPaging {
+		return initialWindow
+	}
+	return min(max(initialWindow, uint64(maxChunkSize)), uint64(maxBatchSize))
+}
+
+func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
+	if indexJoin, ok := executor.(*join.IndexLookUpJoin); ok {
+		return indexJoin
+	}
+	if _, ok := executor.(*ProjectionExec); !ok {
+		return nil
+	}
+	children := executor.AllChildren()
+	if len(children) != 1 {
+		return nil
+	}
+	return findAdaptiveLimitIndexJoin(children[0])
+}
+
+func findAdaptiveLimitIndexLookupCandidate(executor exec.Executor) *IndexLookUpExecutor {
+	for {
+		switch e := executor.(type) {
+		case *IndexLookUpExecutor:
+			if e.adaptiveLimitController != nil || !adaptiveLimitIndexLookupEligible(e) {
+				return nil
+			}
+			return e
+		case *ProjectionExec:
+			children := e.AllChildren()
+			if len(children) != 1 {
+				return nil
+			}
+			executor = children[0]
+		default:
+			return nil
+		}
+	}
+}
+
+func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
+	// Merge-sort double reads create all SelectResults before rolling handle
+	// admission. PushedLimit already applies its own index-side offset/count
+	// boundary, and pushed-down lookup does not preserve order. Concurrency 1
+	// cannot run the index and table workers at the same time in the shared pool.
+	// Keep these paths unchanged in v1.
+	return indexLookup.PushedLimit == nil && indexLookup.keepOrder && indexLookup.indexLookupConcurrency > 1 &&
+		!adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) && !indexLookup.indexLookUpPushDown
+}
+
+func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) bool {
+	if indexLookup.partitionTableMode || len(indexLookup.groupedRanges) > 0 {
+		return true
+	}
+	if len(indexLookup.byItems) == 0 {
+		return false
+	}
+	if len(indexLookup.idxPlans) == 0 {
+		return true
+	}
+	// Correlated access can rebuild groupedRanges from GroupByColIdxs in Open.
+	indexScan, ok := indexLookup.idxPlans[0].(*physicalop.PhysicalIndexScan)
+	return !ok || len(indexScan.GroupByColIdxs) > 0
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) exec.Executor {
@@ -997,6 +1140,11 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
 			jobID:        uint64(s.JobID),
 		}
+	case *ast.CancelMaterializedViewJobStmt:
+		return &CancelMaterializedViewJobExec{
+			BaseExecutor: exec.NewBaseExecutor(b.sctx, nil, 0),
+			stmt:         s,
+		}
 	}
 	base := exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
@@ -1019,6 +1167,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) exec.Executor {
 		vars:         v.VarAssigns,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildPurgeMaterializedViewLog(v *plannercore.PurgeMaterializedViewLog) exec.Executor {
+	return &PurgeMaterializedViewLogExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }
 
 func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) exec.Executor {
@@ -3110,6 +3265,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
+		isMultiTable:              v.IsMultiTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
@@ -3393,6 +3549,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
+	// A rate raised to 1 is still sent, so the job shows it and NDVRATE does not
+	// look unused. TiKV reads every row at 1.
+	if rate, raised := b.chooseNDVRate(task, opts, count, *sampleRate); rate < 1 || raised {
+		e.analyzePB.ColReq.NdvRate = &rate
+	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		if task.TblInfo.IsCommonHandle {
@@ -3401,6 +3562,54 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.sctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// minNDVRate is the lowest rate the row-count rule picks. Below it, scanning every
+// row dominates ANALYZE, so a lower rate saves little time while the NDV error
+// keeps growing.
+const minNDVRate = 0.05
+
+// chooseNDVRate returns the fraction of rows that TiKV processes for NDV. While
+// tidb_analyze_sampled_ndv_threshold is not 0, a table or partition with more
+// rows than it uses its NDVRATE option or, without one, max(minNDVRate,
+// threshold / rows). Others use full input. TiKV draws the TopN and histogram
+// rows from the rows selected for NDV, so the rate covers sampleRate, or with
+// a fixed sample size that many rows. It also reports whether it raised the rate.
+func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, count int64, sampleRate float64) (float64, bool) {
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
+	// 1 NDVRATE reads every row whatever the row count, so skip the PD lookup.
+	if threshold == 0 || rate >= 1 {
+		return 1, false
+	}
+	rows := float64(count)
+	// Like getAdjustedSampleRate, trust PD when stats_meta is far behind.
+	if approx, _ := b.getApproximateTableCountFromStorage(b.ctx, task.TableID.GetStatisticsID(), task); statsCountFarBehindPD(rows, approx) {
+		rows = approx
+	}
+	if rows <= float64(threshold) {
+		return 1, false
+	}
+	if rate <= 0 {
+		rate = max(minNDVRate, float64(threshold)/rows)
+	}
+	needed := sampleRate
+	if samples := opts[ast.AnalyzeOptNumSamples]; samples > 0 {
+		needed = min(1, float64(samples)/rows)
+	}
+	if rate >= needed {
+		return rate, false
+	}
+	// Raise instead of failing: the low rate can come from saved options or an
+	// adjusted SAMPLERATE, and Auto Analyze has no user to fix it.
+	table := task.DBName + "." + task.TableName
+	if task.PartitionName != "" {
+		table += "'s partition " + task.PartitionName
+	}
+	b.sctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackErrorf(
+		"Analyze raised the NDV rate from %g to %g for table %s, because TopN and histograms sample only the rows selected for NDV",
+		rate, needed, table))
+	return needed, true
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
@@ -3441,7 +3650,7 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.RealtimeCount*5) < approxiCount {
+	if statsCountFarBehindPD(float64(statsTbl.RealtimeCount), approxiCount) {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		sampleRate = math.Min(1, 150000/approxiCount)
@@ -3455,6 +3664,13 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
 	sampleRate = math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
 	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
+}
+
+// statsCountFarBehindPD reports whether the stats_meta count is so far below the
+// PD approximate count that PD is more reliable, for example right after a
+// physical import (https://github.com/pingcap/tidb/issues/29216).
+func statsCountFarBehindPD(statsCount, pdCount float64) bool {
+	return statsCount*5 < pdCount
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
@@ -3755,12 +3971,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 			ColLens:       v.IdxColLens,
 			HasPrefixCol:  hasPrefixCol,
 		},
-		WorkerWg:      new(sync.WaitGroup),
-		IsOuterJoin:   v.JoinType.IsOuterJoin(),
-		IndexRanges:   v.Ranges,
-		KeyOff2IdxOff: v.KeyOff2IdxOff,
-		LastColHelper: v.CompareFilters,
-		Finished:      &atomic.Value{},
+		WorkerWg:              new(sync.WaitGroup),
+		IsOuterJoin:           v.JoinType.IsOuterJoin(),
+		IndexRanges:           v.Ranges,
+		KeyOff2IdxOff:         v.KeyOff2IdxOff,
+		LastColHelper:         v.CompareFilters,
+		Finished:              &atomic.Value{},
+		AdaptiveLimitEligible: v.GetChildReqProps(1 - v.InnerChildIdx).NeedKeepOrder(),
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {

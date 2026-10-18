@@ -74,6 +74,12 @@ type blockParser struct {
 
 	checkRowLen bool
 	rowStartPos int64
+	// maxRowSize is the maximum size, in source-text bytes, that a single row
+	// may occupy before the parser rejects it. The CSV parser sets it to the
+	// entry size limit, while the SQL parser allows up to twice that because
+	// binary values may be written as hex literals or escaped strings. A
+	// non-positive value disables the check.
+	maxRowSize int64
 }
 
 func makeBlockParser(
@@ -82,18 +88,20 @@ func makeBlockParser(
 	ioWorkers *worker.Pool,
 	metrics *metric.Metrics,
 	logger log.Logger,
+	maxRowSize int64,
 ) blockParser {
 	pool := zeropool.New[[]types.Datum](func() []types.Datum {
 		return make([]types.Datum, 0, 16)
 	})
 	return blockParser{
-		reader:    MakePooledReader(reader, ioWorkers),
-		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
-		remainBuf: &bytes.Buffer{},
-		appendBuf: &bytes.Buffer{},
-		Logger:    logger,
-		rowPool:   &pool,
-		metrics:   metrics,
+		reader:     MakePooledReader(reader, ioWorkers),
+		blockBuf:   make([]byte, blockBufSize*config.BufferSizeScale),
+		remainBuf:  &bytes.Buffer{},
+		appendBuf:  &bytes.Buffer{},
+		Logger:     logger,
+		rowPool:    &pool,
+		metrics:    metrics,
+		maxRowSize: maxRowSize,
 	}
 }
 
@@ -159,6 +167,13 @@ type Parser interface {
 	SetRowID(rowID int64)
 }
 
+// sqlRowTextLenRatio is the maximum ratio between the source text length of an
+// SQL row and the size of the encoded values. A binary/blob value is usually
+// written as a hex literal (0x..., x'...') or an escaped string, so the source
+// text of a row can be up to twice the size of the underlying value. Enforce
+// the source text limit accordingly, else valid data would be rejected.
+const sqlRowTextLenRatio = 2
+
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(
 	ctx context.Context,
@@ -173,8 +188,11 @@ func NewChunkParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
-		escFlavor:   escFlavor,
+		blockParser: makeBlockParser(
+			reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx)),
+			int64(LargestEntryLimit)*sqlRowTextLenRatio,
+		),
+		escFlavor: escFlavor,
 	}
 }
 
@@ -185,6 +203,13 @@ func (parser *blockParser) beginRowLenCheck() {
 
 func (parser *blockParser) endRowLenCheck() {
 	parser.checkRowLen = false
+}
+
+func (parser *blockParser) rowLenExceedsLimit(rowBytes int64) error {
+	if parser.maxRowSize > 0 && parser.checkRowLen && rowBytes > parser.maxRowSize {
+		return parsedef.ErrRowTooLarge
+	}
+	return nil
 }
 
 // SetPos changes the reported position and row ID.
@@ -325,6 +350,9 @@ func (parser *blockParser) readBlock() error {
 		}
 		parser.appendBuf.Write(blockData)
 		parser.buf = parser.appendBuf.Bytes()
+		if err := parser.rowLenExceedsLimit(parser.pos - parser.rowStartPos + int64(len(parser.buf))); err != nil {
+			return err
+		}
 		if parser.metrics != nil {
 			parser.metrics.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())
 		}
@@ -514,6 +542,8 @@ func (parser *ChunkParser) ReadRow() error {
 	row := &parser.lastRow
 	st := stateValues
 	row.Length = 0
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 
 	for {
 		tok, content, err := parser.lex()

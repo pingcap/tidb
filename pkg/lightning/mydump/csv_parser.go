@@ -153,7 +153,10 @@ func NewCSVParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &CSVParser{
-		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
+		blockParser: makeBlockParser(
+			reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx)),
+			int64(LargestEntryLimit),
+		),
 		cfg:               cfg,
 		charsetConvertor:  charsetConvertor,
 		comma:             []byte(fieldTerminator),
@@ -391,8 +394,8 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
-		if parser.checkRowLen && parser.pos-parser.rowStartPos+int64(len(buf)) > int64(LargestEntryLimit) {
-			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
+		if err := parser.rowLenExceedsLimit(parser.pos - parser.rowStartPos + int64(len(buf))); err != nil {
+			return buf, 0, err
 		}
 		parser.buf = nil
 		if err := parser.readBlock(); err != nil || len(parser.buf) == 0 {

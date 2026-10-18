@@ -24,6 +24,7 @@ import (
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -51,6 +52,13 @@ import (
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+func TestDiagnosticModeDisallowsSwitchMDL(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(true))
+
+	d := &ddl{}
+	require.ErrorIs(t, d.SwitchMDL(true), diagnosticmode.ErrDDLNotAllowed)
+}
 
 // DDLForTest exports for testing.
 type DDLForTest interface {
@@ -277,7 +285,7 @@ func ReconcileStorageClassTransitionTopologyForTest(
 	if len(operations) != 1 {
 		return fmt.Errorf("expected one running storage class transition, got %d", len(operations))
 	}
-	return reconcileStorageClassTransitionTopology(ctx, se, tblInfo, operations[0], operations[0].schemaVersion)
+	return reconcileStorageClassTransitionTopology(ctx, se, nil, tblInfo, operations[0], operations[0].schemaVersion)
 }
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
@@ -812,6 +820,14 @@ func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
 	val, changed = getJobCheckInterval(model.ActionCreateMaterializedView, len(slowDDLIntervalPolicy))
 	require.Equal(t, slowDDLIntervalPolicy[len(slowDDLIntervalPolicy)-1], val)
 	require.False(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedViewShadow, 0)
+	require.Equal(t, fastDDLIntervalPolicy[0], val)
+	require.True(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedViewShadow, len(fastDDLIntervalPolicy))
+	require.Equal(t, fastDDLIntervalPolicy[len(fastDDLIntervalPolicy)-1], val)
+	require.False(t, changed)
 }
 
 func TestIsCreateMaterializedViewBaseCheckCancelledErr(t *testing.T) {
@@ -903,4 +919,56 @@ func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, sql, "READ_FROM_STORAGE(TIFLASH[`test`.`src`])")
 	require.Contains(t, sql, "HASH_JOIN_PROBE(`test`.`src`)")
+}
+
+func TestReplaceMaterializedViewID(t *testing.T) {
+	ids, replaced := replaceMaterializedViewID([]int64{10, 20}, 30, 40)
+	require.False(t, replaced)
+	require.Equal(t, []int64{10, 20}, ids)
+
+	ids, replaced = replaceMaterializedViewID([]int64{10, 20, 10}, 10, 30)
+	require.True(t, replaced)
+	require.Equal(t, []int64{30, 20}, ids)
+}
+
+func TestCheckHistoryJobStmtType(t *testing.T) {
+	p := parser.New()
+	parseStmt := func(sql string) ast.StmtNode {
+		stmt, _, err := p.ParseSQL(sql)
+		require.NoError(t, err)
+		require.Len(t, stmt, 1)
+		return stmt[0]
+	}
+
+	createTableStmt := parseStmt("create table t (a int)")
+	createMViewStmt := parseStmt("create materialized view mv (a, c) as select a, count(1) from t group by a")
+	createMLogStmt := parseStmt("create materialized view log on t (a)")
+	refreshMViewStmt := parseStmt("refresh materialized view mv complete out of place")
+	dropTableStmt := parseStmt("drop table t")
+	createDBStmt := parseStmt("create database test")
+	createPolicyStmt := parseStmt("create placement policy p followers=1")
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTable, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMViewStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, refreshMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, createTableStmt))
+	require.True(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, dropTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateSchema, createDBStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateSchema, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createPolicyStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
 }

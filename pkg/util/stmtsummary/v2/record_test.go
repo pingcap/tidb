@@ -108,7 +108,8 @@ func TestStmtRecord(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &items))
 	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, record2.Digest, items["digest"])
-	require.Equal(t, float64(2), items["ia_remote_exec_count"])
+	require.Equal(t, float64(2), items["ia_exec_count"])
+	require.NotContains(t, items, "ia_remote_exec_count")
 	require.Contains(t, items, "sum_ia_remote_read_segment_count")
 	require.Contains(t, items, "max_ia_remote_read_segment_count")
 	require.NotContains(t, items, "sum_ia_read_segment_count")
@@ -121,7 +122,8 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, true, items["evicted"])
 	require.Equal(t, record2.Digest, items["digest"])
-	require.Equal(t, float64(2), items["ia_remote_exec_count"])
+	require.Equal(t, float64(2), items["ia_exec_count"])
+	require.NotContains(t, items, "ia_remote_exec_count")
 }
 
 func TestStmtRecordTableNamesSkipEmptyTables(t *testing.T) {

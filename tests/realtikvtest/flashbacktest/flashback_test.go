@@ -140,6 +140,7 @@ func TestFlashbackAddDropIndex(t *testing.T) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 
 		tk := testkit.NewTestKit(t, store)
+		realtikvtest.SetupNextGenGlobalSort(t, tk)
 
 		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 		defer resetGC()
@@ -183,6 +184,7 @@ func TestFlashbackAddDropModifyColumn(t *testing.T) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 
 		tk := testkit.NewTestKit(t, store)
+		realtikvtest.SetupNextGenGlobalSort(t, tk)
 
 		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 		defer resetGC()
@@ -534,6 +536,7 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
 
 		tk := testkit.NewTestKit(t, store)
+		realtikvtest.SetupNextGenGlobalSort(t, tk)
 		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 		defer resetGC()
 
