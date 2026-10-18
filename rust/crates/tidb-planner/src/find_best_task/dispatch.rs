@@ -1524,6 +1524,46 @@ fn burn_index_join_candidate_ids(
     let _ = physical::BasePhysicalPlan::new(ctx.allocator, join.base.base.tp(), query_block_offset);
 }
 
+/// Go `logicalop.CanSelfBeingPushedToCopImpl(lp, storeTp)` for the operators
+/// that reach the generic `findBestTask` (a `DataSource` answers for itself).
+/// `tiflash` is `storeTp == kv.TiFlash`; TiKV pushes none of these. An operator
+/// outside the list raises the enforced-MPP warning, whatever the store.
+fn can_self_be_pushed_to_cop(
+    plan: &LogicalPlan,
+    tiflash: bool,
+    ctx: &DispatchContext<'_>,
+) -> bool {
+    match plan {
+        LogicalPlan::UnionAll(_)
+        | LogicalPlan::Sort(_)
+        | LogicalPlan::Projection(_)
+        | LogicalPlan::Sequence(_)
+        | LogicalPlan::Expand(_)
+        | LogicalPlan::Selection(_)
+        | LogicalPlan::Join(_)
+        | LogicalPlan::Window(_) => tiflash,
+        LogicalPlan::Aggregation(aggregation) => tiflash && !aggregation.no_cop_push_down,
+        // "currently logicalLimit and logicalTopN can not be fully pushed
+        // down to tiFlash" (issues/61961).
+        LogicalPlan::Limit(_) | LogicalPlan::TopN(_) => false,
+        LogicalPlan::CTE(cte) => {
+            tiflash
+                && cte.cte.as_ref().is_none_or(|class| {
+                    class.borrow().recursive_part_logical_plan.is_none()
+                })
+        }
+        other => {
+            if let Some(sink) = ctx.mpp_warning_sink {
+                sink.raise_mpp_warning(&format!(
+                    "MPP mode may be blocked because operator `{}` is not supported now.",
+                    other.tp()
+                ));
+            }
+            false
+        }
+    }
+}
+
 fn find_best_task_uncached(
     plan: &LogicalPlan,
     prop: &PhysicalProperty,
@@ -1589,28 +1629,25 @@ fn find_best_task_uncached(
         }
     }
 
-    // Go checks whether the operator itself can satisfy a coprocessor or MPP
-    // property before applying the generic non-root refusal. `LogicalMaxOneRow`
-    // fails that check and raises its enforced-MPP warning even though no
-    // physical plan is enumerated. Keep that side effect before the same
-    // invalid-task result; otherwise the warning disappears at this early
-    // return.
+    // Go `checkOpSelfSatisfyPropTaskTypeRequirement`: before anything else, an
+    // operator asked for a coprocessor or MPP task must itself be pushable
+    // (`CanSelfBeingPushedToCopImpl`). An operator it does not list raises the
+    // enforced-MPP warning and the search answers the invalid task.
     if matches!(
         prop.task_tp,
         TaskType::CopSingleRead | TaskType::CopMultiRead | TaskType::Mpp
-    ) && matches!(plan, LogicalPlan::MaxOneRow(_))
+    ) && !can_self_be_pushed_to_cop(plan, prop.task_tp == TaskType::Mpp, ctx)
     {
-        if let Some(sink) = ctx.mpp_warning_sink {
-            sink.raise_mpp_warning(
-                "MPP mode may be blocked because operator `MaxOneRow` is not supported now.",
-            );
-        }
+        return Ok(Task::invalid_task());
     }
 
-    // `prop.TaskTp != RootTaskType && !IsFlashProp()` — with no TiFlash
-    // tier: any non-root requirement is the invalid task, Go's own early
-    // answer ("Currently all plan cannot totally push down to TiKV").
-    if prop.task_tp != TaskType::Root {
+    // `prop.TaskTp != RootTaskType && !IsFlashProp()`: a cop requirement is
+    // the invalid task, Go's own early answer ("Currently all plan cannot
+    // totally push down to TiKV"). A flash (MPP) requirement is NOT refused
+    // here: `LogicalExpand` hands its child an MPP property whenever the
+    // session allows MPP, and Go enumerates that child's physical candidates
+    // (allocating their plan ids) before the source finds no replica.
+    if prop.task_tp != TaskType::Root && !prop.is_flash_prop() {
         return Ok(Task::invalid_task());
     }
 

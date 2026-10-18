@@ -1091,11 +1091,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         canonical.push(name.names.table.original.clone());
                     }
                     canonical.push(name.names.column.original.clone());
-                    let canonical = Expr::Column(canonical);
-                    let index = match fields
-                        .iter()
-                        .position(|field| field.hidden && field.expr == canonical)
-                    {
+                    let canonical_path = canonical;
+                    let canonical = Expr::Column(canonical_path.clone());
+                    // Go `resolveFromPlan`'s final loop: ANY select field (the
+                    // list's own or an auxiliary one appended earlier) that is
+                    // this column is reused; only a column nothing selects
+                    // gets a new auxiliary field.
+                    let index = match fields.iter().position(|field| {
+                        matches!(&field.expr, Expr::Column(candidate)
+                            if column_paths_match(candidate, &canonical_path))
+                    }) {
                         Some(position) => position,
                         None => {
                             fields.push(ProjectionField {
