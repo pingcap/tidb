@@ -544,6 +544,9 @@ impl CopTask {
             // Go calls FinishIndexPlan before datasource table filters are
             // attached. Other task transformations may retain a wrapper;
             // index output stats still belong to the bottom row-ID scan.
+            fn bottom(plan: &PhysicalPlan) -> &PhysicalPlan {
+                plan.children().first().map_or(plan, bottom)
+            }
             fn set_bottom_stats(
                 plan: &mut PhysicalPlan,
                 stats: Option<crate::stats_info::StatsInfo>,
@@ -554,6 +557,18 @@ impl CopTask {
                 };
                 set_bottom_stats(child, stats);
             }
+            // Go "keep the original stats version": the row-ID scan takes the
+            // index plan's profile but keeps the version it was created with
+            // (the table's), through the profile object the two share.
+            let origin_version = bottom(table)
+                .base()
+                .base
+                .stats_info()
+                .map(crate::stats_info::StatsInfo::stats_version);
+            let index_stats = match (index_stats, origin_version) {
+                (Some(stats), Some(version)) => Some(stats.with_stats_version(version)),
+                (stats, _) => stats,
+            };
             set_bottom_stats(table, index_stats);
         }
     }

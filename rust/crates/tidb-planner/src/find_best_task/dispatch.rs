@@ -2114,8 +2114,11 @@ fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
             continue;
         };
         let id = match function.get_args() {
-            [Expression::Column(column), Expression::Constant(_)]
-            | [Expression::Constant(_), Expression::Column(column)]
+            // A correlated column is as constant as a literal for one run of
+            // the inner plan, which is how Go's ranger records it in
+            // `ColumnValues`.
+            [Expression::Column(column), Expression::Constant(_) | Expression::CorrelatedColumn(_)]
+            | [Expression::Constant(_) | Expression::CorrelatedColumn(_), Expression::Column(column)]
                 if function.func_name.lowercase() == "eq" =>
             {
                 Some(column.unique_id)
