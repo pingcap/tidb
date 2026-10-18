@@ -3281,7 +3281,7 @@ impl ScalarFunction {
                     None,
                 ),
                 Some(tidb_datatype::FieldTypeCode::Duration) => {
-                    crate::cast::parse_computed_duration(&result, ctx)
+                    crate::cast::parse_computed_duration(&result, ctx, None)
                 }
                 _ => Ok(result),
             };
@@ -3370,7 +3370,11 @@ impl ScalarFunction {
                     Some(0),
                 ),
                 Some(tidb_datatype::FieldTypeCode::Duration) => {
-                    crate::cast::parse_computed_duration(&result, ctx)
+                    crate::cast::parse_computed_duration(
+                        &result,
+                        ctx,
+                        self.get_static_type().map(FieldType::decimal),
+                    )
                 }
                 _ => Ok(result),
             };

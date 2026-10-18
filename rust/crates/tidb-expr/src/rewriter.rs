@@ -39,7 +39,7 @@ const DEFAULT_DECIMAL_LITERAL: &str =
 
 pub(crate) mod control_type;
 mod fold_mode;
-mod json_arguments;
+mod signature_args;
 pub(crate) mod result_type;
 
 pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
@@ -1016,11 +1016,43 @@ fn binary_expression(
     match ret_type {
         Some(mut ret_type) => {
             let mut args = vec![left, right];
+            // `intdiv` keeps its virtual operand casts (see
+            // `numeric_operand_domain`) until its diagnostics read real ones.
+            if matches!(
+                name,
+                "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift"
+            ) {
+                args = signature_args::wrap_builtin_arguments(
+                    name,
+                    args,
+                    resolver.connection_charset_info(),
+                    &|argument| resolver.fold_constant(argument, ConstantFoldMode::Normal),
+                    Some(&ret_type),
+                )?;
+            }
             if matches!(name, "plus" | "minus" | "mul" | "div" | "mod") {
                 match ret_type.eval_type() {
                     tidb_datatype::EvalType::Decimal => {
                         for argument in &mut args {
                             crate::builtin_compare::wrap_integer_operand_as_decimal(argument);
+                            // Go `WrapWithCastAsDecimal` also casts a temporal
+                            // or string operand: `d + dt` plans as
+                            // `plus(d, cast(dt, decimal(19,0)))`.
+                            if !is_hybrid_argument(argument)
+                                && argument.static_type().map(FieldType::eval_type)
+                                    != Some(EvalType::Decimal)
+                            {
+                                *argument =
+                                    crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(
+                                        std::mem::replace(
+                                            argument,
+                                            Expression::Constant(Constant::new_null()),
+                                        ),
+                                    )?;
+                                if is_newly_built_cast(argument) {
+                                    resolver.fold_constant(argument, ConstantFoldMode::Normal);
+                                }
+                            }
                         }
                     }
                     // GO's arithmeticFunctionClass.getFunction coerces BOTH
@@ -1123,10 +1155,8 @@ fn binary_expression(
                         // eagerly), so `istrue_with_null(cast(', ', double))`
                         // collapses to `0`. Fold the cast first: the wrapper
                         // fold requires all-constant arguments.
-                        let mut cast = crate::simple_expr::build_cast_function(
+                        let mut cast = crate::aggregation::wrap_cast::wrap_with_cast_as_real(
                             std::mem::replace(argument, Expression::Constant(Constant::new_null())),
-                            crate::expr_util::builder::double_field_type(),
-                            false,
                         )?;
                         resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
                         cast
@@ -2796,17 +2826,13 @@ fn rewrite_leaf_compound(
             // which EXPLAIN prints and TiKV push-down recognises.
             let ret_type =
                 builtin_return_type("json_memberof", &args).expect("JSON_MEMBEROF is registered");
-            let args = json_arguments::wrap_json_function_arguments(
+            signature_args::build_call(
                 "json_memberof",
+                ret_type,
                 args,
                 resolver.connection_charset_info(),
                 &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-            )?;
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("json_memberof"),
-                ret_type,
-                args,
-            )))
+            )
         }
         // Go rewrites `x IS <target>` into the isnull/istrue/isfalse builtin,
         // wrapping `IS NOT` in a unary NOT. These return 0/1 and never NULL,
@@ -2826,17 +2852,13 @@ fn rewrite_leaf_compound(
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
             ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
-            let args = json_arguments::wrap_json_function_arguments(
+            let mut call = signature_args::build_call(
                 name,
+                ret_type.clone(),
                 vec![arg],
                 resolver.connection_charset_info(),
                 &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
             )?;
-            let mut call = Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
-                ret_type.clone(),
-                args,
-            ));
             if *not {
                 // Go's `notToExpression` builds the operator through
                 // `newFunction` first, which folds it BEFORE the `not` is
@@ -2870,11 +2892,13 @@ fn rewrite_leaf_compound(
             // builtin_op function classes; anything uncovered (the deferred
             // unaryminus arms) keeps the LongLong placeholder.
             if let Some(ret_type) = crate::builtin_op::infer_unary_op_type(name, &arg) {
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(name),
+                return signature_args::build_call(
+                    name,
                     ret_type,
                     vec![arg],
-                )));
+                    resolver.connection_charset_info(),
+                    &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+                );
             }
             Ok(scalar(name, vec![arg]))
         }
@@ -3303,17 +3327,13 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewritten,
                 |expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
             );
-            let rewritten = json_arguments::wrap_json_function_arguments(
+            signature_args::build_call(
                 &lowered,
+                ret_type,
                 rewritten,
                 resolver.connection_charset_info(),
                 &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-            )?;
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(&lowered),
-                ret_type,
-                rewritten,
-            )))
+            )
         }
         // Go builds one `builtinCast*As*Sig` per target type, so the cast
         // node becomes a one-argument function whose RESULT type carries the

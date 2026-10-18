@@ -1956,14 +1956,21 @@ pub(crate) fn parse_computed_time(
     Ok(cast_to_time_value(value, None, ctx, kind, fsp)?.map_or(Datum::Null, Datum::Time))
 }
 
+/// `result_fsp` is the function's declared fractional precision (Go's
+/// `bf.tp.GetDecimal()` that `ParseDuration` receives); without one the text's
+/// own fraction width decides.
 pub(crate) fn parse_computed_duration(
     value: &Datum,
     ctx: &dyn crate::Columns,
+    result_fsp: Option<i64>,
 ) -> Result<Datum, EvalError> {
-    let fsp = value.sql_string().ok().map_or(0, |text| {
-        text.rsplit_once('.')
-            .map_or(0, |(_, fraction)| fraction.len().min(6) as i64)
-    });
+    let fsp = match result_fsp {
+        Some(fsp) if (0..=6).contains(&fsp) => fsp,
+        _ => value.sql_string().ok().map_or(0, |text| {
+            text.rsplit_once('.')
+                .map_or(0, |(_, fraction)| fraction.len().min(6) as i64)
+        }),
+    };
     cast_to_duration(value, None, ctx, fsp)
 }
 
@@ -2281,22 +2288,34 @@ fn parse_time_by_source(
             .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
             .map_err(Some)
         }
+        // Go `builtinCastDecimalAsTimeSig`: the decimal's text goes through
+        // `ParseTimeFromFloatString`, so a fraction wider than `fsp` ROUNDS
+        // (`cast(151113102019.1234567 as datetime(6))` is `.123457`), unlike
+        // the write path's `ParseTimeFromDecimal`, which truncates.
         Datum::Decimal(value) => {
-            let mut time = tidb_datatype::parse_time_from_decimal(
-                value,
+            let text = value.to_string();
+            if text.starts_with("0.0") {
+                // MySQL compatibility: 0.0 is the zero time, not NULL.
+                let mut zero = tidb_datatype::Time::new(
+                    tidb_datatype::CoreTime::default(),
+                    kind,
+                    0,
+                )
+                .map_err(Some)?;
+                zero.set_kind(kind);
+                return Ok((zero, false, false));
+            }
+            tidb_datatype::parse_time(
+                &text,
+                kind,
+                fsp.unwrap_or_else(|| i64::from(tidb_datatype::get_fsp(&text))),
+                true,
                 flags.ignore_zero_in_date_err(),
                 flags.ignore_invalid_date_err(),
                 zone,
             )
-            .map_err(Some)?;
-            time.set_kind(kind);
-            match fsp {
-                Some(fsp) => time
-                    .round_frac(fsp, zone)
-                    .map(|time| (time, false, false))
-                    .map_err(Some),
-                None => Ok((time, false, false)),
-            }
+            .map(|parsed| (parsed.time, parsed.truncated, parsed.dst_adjusted))
+            .map_err(Some)
         }
         Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), flags, zone)
             .map(|time| (time, false, false))

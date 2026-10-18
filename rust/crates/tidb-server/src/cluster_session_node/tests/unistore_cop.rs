@@ -17659,3 +17659,44 @@ fn scalar_subquery_null_reference_and_derived_topn_follow_go() {
     );
     assert!(no_order.contains("Limit") && no_order.contains("count:3"), "{no_order}");
 }
+
+/// Go's builtin classes wrap each argument in the cast their `argTps` ask for
+/// (`newBaseBuiltinFuncWithTp`), so the plan shows the implicit casts. Each
+/// expected text is the Go oracle's, under the real server's integer display
+/// width (`bigint`, not `bigint(20)`).
+#[test]
+fn builtin_arguments_carry_go_signature_casts() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1134)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE sa (i INT, s VARCHAR(20), d DECIMAL(10,2), dt DATETIME)")
+        .unwrap();
+    for (expression, expected) in [
+        ("length(i)", "length(cast(test.sa.i, var_string(20)))"),
+        ("abs(s)", "abs(cast(test.sa.s, double BINARY))"),
+        ("year(s)", "year(cast(test.sa.s, datetime(6) BINARY))"),
+        (
+            "concat(i, s)",
+            "concat(cast(test.sa.i, var_string(20)), test.sa.s)",
+        ),
+        ("i & s", "bitand(test.sa.i, cast(test.sa.s, bigint BINARY))"),
+        ("not s", "not(cast(test.sa.s, double BINARY))"),
+        ("hex(dt)", "hex(cast(test.sa.dt, var_string(19)))"),
+        ("format(s, 2)", "format(cast(test.sa.s, double BINARY), 2)"),
+        (
+            "greatest(i, s)",
+            "greatest(cast(test.sa.i, var_string(20)), test.sa.s)",
+        ),
+    ] {
+        let text = displayed(rows(
+            &mut session,
+            &format!("explain format='brief' select {expression} from sa"),
+        ))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(text.contains(expected), "{expression}\n{text}");
+    }
+}
