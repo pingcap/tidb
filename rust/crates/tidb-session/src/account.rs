@@ -819,6 +819,7 @@ impl Session {
                     false,
                 );
                 options.apply(&registry, user, host);
+                registry.set_max_user_connections(user, host, max_user_connections);
                 self.maintain_password_history(
                     &registry,
                     user,

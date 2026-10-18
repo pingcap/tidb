@@ -316,6 +316,7 @@ impl Session {
                     return Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()));
                 }
                 mirror_fields.push(format!("max_user_connections={count}"));
+                registry.set_max_user_connections(&user, &host, count);
             }
             let mut plugin_changed = false;
             if let Some(auth) = spec.auth.as_ref() {

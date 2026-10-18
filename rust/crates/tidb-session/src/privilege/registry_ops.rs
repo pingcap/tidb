@@ -385,14 +385,15 @@ impl PrivilegeRegistry {
             "",
             tidb_mysql::consts::AuthNativePassword,
             true,
-            None,
+            Some("{}".to_owned()),
         )
     }
 
     /// [`Self::create_role`] recording the account's plugin, which Go
     /// resolves from `default_authentication_plugin` for a role too.
     pub fn create_role_with_plugin(&self, role: &str, host: &str, plugin: &str) -> bool {
-        self.create_account(role, host, "", plugin, true, None)
+        // Go writes the role's `{}` policy row into `mysql.global_priv` too.
+        self.create_account(role, host, "", plugin, true, Some("{}".to_owned()))
     }
 
     fn create_account(
@@ -431,6 +432,7 @@ impl PrivilegeRegistry {
                 // a display difference, but it is the row Go writes.
                 password_expired: is_role,
                 password_lifetime: None,
+                max_user_connections: 0,
                 password_last_changed: Some(password_change_timestamp(created_at)),
             },
         );
@@ -641,12 +643,9 @@ impl PrivilegeRegistry {
             })
             .collect();
         drop(table_guard);
-        for row in self.lock_column().iter_mut() {
-            if row.user == old_user && row.host == old_host {
-                row.user = new_user.to_owned();
-                row.host = new_host.to_owned();
-            }
-        }
+        // Go's `executeRenameUser` leaves `mysql.columns_priv` alone, so the
+        // column grants stay under the OLD name and the renamed account has
+        // none (captured: `SHOW GRANTS` after the rename omits them).
         let mut dynamic_guard = self.lock_dynamic();
         if let Some(privs) = dynamic_guard.remove(&(old_user.to_owned(), old_host.to_owned())) {
             dynamic_guard.insert((new_user.to_owned(), new_host.to_owned()), privs);
@@ -680,6 +679,13 @@ impl PrivilegeRegistry {
             }
         }
         true
+    }
+
+    /// `WITH MAX_USER_CONNECTIONS n` (`mysql.user.max_user_connections`).
+    pub fn set_max_user_connections(&self, user: &str, host: &str, count: i64) {
+        if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            record.max_user_connections = count;
+        }
     }
 
     /// `ALTER USER ... ACCOUNT LOCK` / `ACCOUNT UNLOCK`: flips
@@ -2196,6 +2202,7 @@ impl PrivilegeRegistry {
                 account_locked: record.is_role,
                 password_expired: record.password_expired,
                 password_lifetime: record.password_lifetime,
+                max_user_connections: record.max_user_connections,
                 password_last_changed: record
                     .password_last_changed
                     .map(tidb_datatype::Time::go_raw),

@@ -18002,6 +18002,52 @@ fn bootstrap_views_and_column_defaults_follow_go() {
     assert_eq!(defaults, [["a", "NULL"], ["b", "NULL"], ["c", "5"]], "{defaults:?}");
 }
 
+/// Account statements follow Go's stored rows, captured from the oracle:
+/// `WITH MAX_USER_CONNECTIONS n` is stored and printed by `SHOW CREATE USER`,
+/// `CREATE ROLE` writes the role's `{}` row into `mysql.global_priv`, and
+/// `RENAME USER` leaves `mysql.columns_priv` (and so the column grants) under
+/// the old name.
+#[test]
+fn account_rows_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1141)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE USER cu1 WITH MAX_USER_CONNECTIONS 3")
+        .unwrap();
+    session.execute_write("CREATE ROLE cr1").unwrap();
+    session.execute_write("CREATE TABLE ct (a INT, b INT)").unwrap();
+    session
+        .execute_write("GRANT SELECT (a) ON test.ct TO cu1")
+        .unwrap();
+    let limit = displayed(rows(
+        &mut session,
+        "select max_user_connections from mysql.user where user = 'cu1'",
+    ));
+    assert_eq!(limit, [["3"]], "{limit:?}");
+    let created = displayed(rows(&mut session, "show create user cu1"));
+    assert!(
+        created[0][0].contains("REQUIRE NONE WITH MAX_USER_CONNECTIONS 3 PASSWORD EXPIRE"),
+        "{created:?}"
+    );
+    let roles = displayed(rows(
+        &mut session,
+        "select user, priv from mysql.global_priv where user = 'cr1'",
+    ));
+    assert_eq!(roles, [["cr1", "{}"]], "{roles:?}");
+    session.execute_write("RENAME USER cu1 TO cu2").unwrap();
+    let grants = displayed(rows(&mut session, "show grants for cu2"));
+    assert!(
+        grants.iter().all(|row| !row[0].contains("SELECT(a)")),
+        "{grants:?}"
+    );
+    let columns = displayed(rows(
+        &mut session,
+        "select user from mysql.columns_priv where table_name = 'ct'",
+    ));
+    assert_eq!(columns, [["cu1"]], "{columns:?}");
+}
+
 /// A CTE definition keeps its storage id in every format
 /// (`CTEDefinition.ExplainID`), and the implicit casts a builtin's arguments
 /// carry no longer decide push-down: `round(dt)` and `conv(int, ...)` read a

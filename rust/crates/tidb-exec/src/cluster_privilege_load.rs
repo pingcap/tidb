@@ -120,6 +120,7 @@ const USER_COLUMNS: &[&str] = &[
     "account_locked",
     "password_expired",
     "password_lifetime",
+    "max_user_connections",
     "password_last_changed",
     "password_reuse_history",
     "password_reuse_time",
@@ -203,6 +204,8 @@ pub struct LoadedUser {
     pub password_expired: bool,
     /// Nullable per-account expiry interval; NULL means the live global default.
     pub password_lifetime: Option<i64>,
+    /// `max_user_connections` (zero means no per-account limit).
+    pub max_user_connections: i64,
     /// Stored UTC TIMESTAMP, retained without replacing its epoch on reload.
     pub password_last_changed: Option<tidb_datatype::Time>,
     /// NULL selects the live global count/time policy; zero disables it.
@@ -570,6 +573,11 @@ pub fn load_privileges(
                 row.i64("password_lifetime")?
             } else {
                 None
+            },
+            max_user_connections: if row.has_column("max_user_connections") {
+                row.i64("max_user_connections")?.unwrap_or(0)
+            } else {
+                0
             },
             password_last_changed: if row.has_column("password_last_changed") {
                 match row.datum("password_last_changed")? {

@@ -206,6 +206,7 @@ fn create_account(registry: &PrivilegeRegistry, user: &LoadedUser) {
         user.user_attributes.clone(),
         user.password_locking,
     );
+    registry.set_max_user_connections(&user.user, &user.host, user.max_user_connections);
     registry.restore_password_expiry(
         &user.user,
         &user.host,

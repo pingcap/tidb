@@ -51,6 +51,8 @@ pub struct ExportedUser {
     pub password_expired: bool,
     /// Nullable per-user expiry interval, preserving DEFAULT versus NEVER.
     pub password_lifetime: Option<i64>,
+    /// `max_user_connections`.
+    pub max_user_connections: i64,
     /// Packed Go temporal representation, retaining NULL and the original epoch.
     pub password_last_changed: Option<u64>,
     /// Nullable count and time limits; NULL selects the live global default.

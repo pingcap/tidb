@@ -247,6 +247,10 @@ pub fn plan_account_write_with_hints<S: MetaSnapshot>(
                         nullable_unsigned(user.password_lifetime)?,
                     ),
                     (
+                        "max_user_connections",
+                        Datum::UInt(u64::try_from(user.max_user_connections).unwrap_or(0)),
+                    ),
+                    (
                         "password_last_changed",
                         user.password_last_changed.map_or(Datum::Null, Datum::Time),
                     ),

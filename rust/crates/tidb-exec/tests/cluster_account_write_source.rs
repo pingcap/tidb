@@ -168,6 +168,7 @@ fn user(name: &str, host: &str, privileges: &[&'static str]) -> LoadedUser {
         account_locked: false,
         password_expired: false,
         password_lifetime: None,
+        max_user_connections: 0,
         password_last_changed: None,
         password_reuse_history: None,
         password_reuse_time: None,

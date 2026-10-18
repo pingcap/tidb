@@ -105,6 +105,7 @@ pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivi
                 account_locked: user.account_locked,
                 password_expired: user.password_expired,
                 password_lifetime: user.password_lifetime,
+                max_user_connections: user.max_user_connections,
                 password_last_changed: user
                     .password_last_changed
                     .map(tidb_datatype::Time::from_go_raw_like_go),
@@ -511,6 +512,7 @@ mod tests {
             account_locked: locked,
             password_expired: false,
             password_lifetime: None,
+            max_user_connections: 0,
             password_last_changed: None,
             password_reuse_history: None,
             password_reuse_time: None,
