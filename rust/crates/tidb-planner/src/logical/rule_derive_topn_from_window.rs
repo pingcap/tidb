@@ -208,7 +208,11 @@ impl OwnedRewrite for DeriveTopN<'_, '_> {
         let mut derived = LogicalTopN::new(base, by_items, 0, count);
         derived.partition_by = partition_by
             .iter()
-            .map(|item| crate::physical_property::SortItem::new(item.col.unique_id, item.desc))
+            .map(|item| crate::physical_property::SortItem {
+                // Go keeps the window's own column object, so EXPLAIN names it.
+                col: item.col.clone(),
+                desc: item.desc,
+            })
             .collect();
         let mut topn = LogicalPlan::TopN(derived);
         topn.set_children(vec![grand_child]);

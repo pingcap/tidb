@@ -4632,6 +4632,30 @@ fn find_best_task_4_logical_data_source_paths(
                         }
                     }
                 }
+                // Go `convertToIndexScan` (`find_best_task.go:2652`): on a
+                // double read over a common-handle table, every handle
+                // column the DataSource schema lacks is appended to the table
+                // scan's schema and `cop.NeedExtraProj` is set, so the reader
+                // returns the handle too and a Projection above it restores
+                // `ds.Schema()`.
+                let mut common_handle_proj = false;
+                if !ds.common_handle_cols.is_empty() {
+                    if let Some(table_plan) = table_side.as_deref_mut() {
+                        if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
+                            let mut schema = schema_shared.as_ref().clone();
+                            let ds_schema = ds.base.base.schema().cloned().unwrap_or_default();
+                            for column in &ds.common_handle_cols {
+                                if ds_schema.column_index(column) < 0 {
+                                    schema.columns.push(column.clone());
+                                    common_handle_proj = true;
+                                }
+                            }
+                            if common_handle_proj {
+                                table_plan.base_mut().base.set_schema(Some(schema));
+                            }
+                        }
+                    }
+                }
                 if extra_handle_proj {
                     if let Some(table_plan) = table_side.as_deref_mut() {
                         if let Some(schema_shared) = table_plan.base_mut().base.schema_shared() {
@@ -4664,8 +4688,12 @@ fn find_best_task_4_logical_data_source_paths(
                     phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
-                    need_extra_proj: extra_handle_proj || extra_phys_tbl_id_proj,
-                    origin_schema: (extra_handle_proj || extra_phys_tbl_id_proj)
+                    need_extra_proj: extra_handle_proj
+                        || extra_phys_tbl_id_proj
+                        || common_handle_proj,
+                    origin_schema: (extra_handle_proj
+                        || extra_phys_tbl_id_proj
+                        || common_handle_proj)
                         .then(|| ds.base.base.schema().cloned())
                         .flatten(),
                     common_handle_cols: ds.common_handle_cols.clone(),

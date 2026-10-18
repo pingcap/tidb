@@ -340,7 +340,10 @@ fn json_unquote_benefits_from_pushed_down(
     let Some(Expression::ScalarFunction(child)) = function.get_args().first() else {
         return false;
     };
-    if child.func_name.lowercase() != "cast" {
+    // The parser's CAST is one function in Go; here each cast target is its
+    // own `cast_*` function.
+    let child_name = child.func_name.lowercase();
+    if child_name != "cast" && !child_name.starts_with("cast_") {
         return false;
     }
     matches!(

@@ -2450,6 +2450,26 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         ))
     }
 
+    /// Go `buildSelection`'s "If there is condition which is always false,
+    /// return dual plan directly." The dual carries the plan's own schema,
+    /// except over a plain `LogicalJoin`, whose `FullSchema` and `FullNames`
+    /// it takes instead: for `a LEFT JOIN b RIGHT JOIN c` that is the OUTER
+    /// side first, so a select list in written order keeps its Projection.
+    fn always_false_dual(&self, plan: &LogicalPlan) -> LogicalTableDual {
+        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+        match plan {
+            LogicalPlan::Join(join) if join.full_schema.is_some() => {
+                dual.base.base.set_schema(join.full_schema.clone());
+                dual.base.base.set_output_names(join.full_names.clone());
+            }
+            _ => {
+                dual.base.base.set_schema(plan.schema().cloned());
+                dual.base.base.set_output_names(plan.output_names().to_vec());
+            }
+        }
+        dual
+    }
+
     fn build_expression_subquery(
         &mut self,
         outer: &LogicalPlan,
@@ -2598,12 +2618,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                         };
                         match constant_is_always_false(constant, self.ctx, false)? {
                             Some(true) => {
-                                let mut dual =
-                                    LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
-                                dual.base.base.set_schema(outer.schema().cloned());
-                                dual.base
-                                    .base
-                                    .set_output_names(outer.output_names().to_vec());
+                                let dual = self.always_false_dual(&outer);
                                 Ok((LogicalPlan::TableDual(dual), true))
                             }
                             Some(false) => Ok((outer, true)),
@@ -3672,13 +3687,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // "If there is condition which is always false, return
                     // dual plan directly." (`:1381`)
                     Some(true) => {
-                        let (schema, _) = snapshot_schema_and_names(&plan);
-                        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
-                        dual.base.base.set_schema(Some(schema));
-                        dual.base
-                            .base
-                            .set_output_names(plan.output_names().to_vec());
-                        return Ok(LogicalPlan::TableDual(dual));
+                        return Ok(LogicalPlan::TableDual(self.always_false_dual(&plan)));
                     }
                     // An always-true conjunct is dropped.
                     Some(false) => continue,
