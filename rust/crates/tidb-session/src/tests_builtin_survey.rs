@@ -141,3 +141,110 @@ fn regexp_failures_are_go_err_regexp_and_stray_braces_are_literals() {
         ["0", "1", "1"]
     );
 }
+
+#[test]
+fn operator_and_cast_survey_findings() {
+    let mut session = Session::new();
+    // MIN % u64::MAX negated the remainder and panicked in debug builds; Go's
+    // `-int64(uint64(-a) % uint64(b))` wraps to MIN.
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT -9223372036854775808 % 18446744073709551615, \
+             18446744073709551615 % -9223372036854775808"
+        ),
+        ["-9223372036854775808", "9223372036854775807"]
+    );
+    // CASE v WHEN x is `v = x`, the ordinary comparison with its coercions: a
+    // string that is not a JSON document compares as a JSON string.
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT CASE CAST('{\"a\":1}' AS JSON) WHEN 'abc' THEN 1 ELSE 2 END, \
+             CASE CAST('{\"a\":1}' AS JSON) WHEN 1 THEN 'a' WHEN 'abc' THEN 'b' ELSE 'c' END"
+        ),
+        ["2", "c"]
+    );
+    // A negative number is never a date, however small (Go parses the text).
+    assert_eq!(
+        one(&mut session, "SELECT CAST(-1e-320 AS DATE), CAST(-0.0 AS DATE)"),
+        ["NULL", "0000-00-00"]
+    );
+}
+
+#[test]
+fn round_with_an_extreme_scale_answers_at_once() {
+    let mut session = Session::new();
+    // A scale deeper than the integer digits is the zero decimal (Go
+    // `MyDecimal.Round`); building the digits first never finished.
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT ROUND(12.345, -100), ROUND(12.345, -100000000), \
+             ROUND(12.345, -9223372036854775808), ROUND(12345, -2)"
+        ),
+        ["0", "0", "0", "12300"]
+    );
+}
+
+#[test]
+fn binary_column_values_reach_the_time_and_string_builtins_as_bytes() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE tb (id INT PRIMARY KEY, b VARBINARY(20), i BIGINT, s VARCHAR(20))").expect("setup statement");
+    session.run("INSERT INTO tb VALUES (1, x'ff', -9223372036854775808, 'a')").expect("setup statement");
+    // Go strings are byte strings: an invalid UTF-8 value fails to parse as a
+    // date (NULL) instead of aborting the statement.
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT date(b), month(b), to_days(b), str_to_date(b, '%Y'), inet_aton(b), is_ipv4(b) FROM tb"
+        ),
+        ["NULL", "NULL", "NULL", "NULL", "NULL", "0"]
+    );
+    // `conv` negates its bases with Go's wrapping `-`, `locate` decrements a
+    // huge position the same way; neither may overflow.
+    assert_eq!(
+        one(&mut session, "SELECT conv(s, i, 10), locate('a', s, i) FROM tb"),
+        ["NULL", "0"]
+    );
+    assert_eq!(
+        error_text(&mut session, "SELECT abs(i) FROM tb"),
+        "BIGINT value is out of range in 'abs(-9223372036854775808)'"
+    );
+}
+
+#[test]
+fn regexp_argument_failures_are_go_err_regexp() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE tr (b VARBINARY(20))").expect("setup statement");
+    session.run("INSERT INTO tr VALUES (x'ff')").expect("setup statement");
+    assert_eq!(
+        error_text(&mut session, "SELECT regexp_like('a', b) FROM tr"),
+        "Got error 'error parsing regexp: invalid UTF-8: `\u{fffd}`' from regexp"
+    );
+    // Only the INSTR and REPLACE classes wrap the arity failure in ErrRegexp.
+    assert_eq!(
+        error_text(&mut session, "SELECT regexp_instr(1)"),
+        "Got error '[expression:1582]Incorrect parameter count in the call to native function 'regexp_instr'' from regexp"
+    );
+}
+
+#[test]
+fn date_format_mask_zero_and_zero_in_date_follow_go() {
+    let mut session = Session::new();
+    // MySQL compatibility (#11203): the mask "0" answers "0" before the
+    // zero-date check, but any other mask on a zero-in-date value is NULL
+    // with a 1292 warning naming the time.
+    assert_eq!(
+        one(&mut session, "SELECT date_format(0, '0'), date_format('2020-00-00', '0')"),
+        ["0", "0"]
+    );
+    assert_eq!(
+        one(&mut session, "SELECT date_format('2020-00-00', '%Y')"),
+        ["NULL"]
+    );
+    assert_eq!(
+        one(&mut session, "SHOW WARNINGS"),
+        ["Warning", "1292", "Incorrect datetime value: '2020-00-00 00:00:00.000000'"]
+    );
+}

@@ -333,7 +333,7 @@ pub(crate) fn locate_with_position(
         return Ok(Datum::Null);
     };
     // Transfer the 1-based argument to a 0-based index.
-    let start = position - 1;
+    let start = position.wrapping_sub(1);
 
     if binary {
         if start < 0 || start > hay.len() as i64 - needle.len() as i64 {
@@ -362,10 +362,9 @@ pub(crate) fn locate_with_position(
     } else {
         (needle, hay)
     };
-    let needle = String::from_utf8(needle)
-        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LOCATE needle"))?;
-    let hay = String::from_utf8(hay)
-        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LOCATE haystack"))?;
+    // Go converts to `[]rune`, which turns each invalid byte into U+FFFD.
+    let needle = String::from_utf8_lossy(&needle).into_owned();
+    let hay = String::from_utf8_lossy(&hay).into_owned();
     let needle: Vec<char> = needle.chars().collect();
     let hay: Vec<char> = hay.chars().collect();
     if start < 0 || start > hay.len() as i64 - needle.len() as i64 {

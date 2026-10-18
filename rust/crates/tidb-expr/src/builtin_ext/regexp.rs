@@ -119,7 +119,7 @@ fn integer(value: &Datum) -> Result<Option<i64>, EvalError> {
 /// to character positions for `REGEXP_INSTR`.
 fn trim_at(text: &str, pos: i64) -> Result<(usize, &str), EvalError> {
     if pos < 1 {
-        return Err(EvalError::Unsupported(INVALID_INDEX));
+        return Err(crate::regexp::err_regexp(INVALID_INDEX));
     }
     // Go's signatures accept the one-indexed start of an empty string.  The
     // regex then still gets to see the empty input (for example `^$` matches
@@ -129,7 +129,7 @@ fn trim_at(text: &str, pos: i64) -> Result<(usize, &str), EvalError> {
     }
     let chars = text.chars().count() as i64;
     if pos > chars {
-        return Err(EvalError::Unsupported(INVALID_INDEX));
+        return Err(crate::regexp::err_regexp(INVALID_INDEX));
     }
     let byte = text
         .char_indices()

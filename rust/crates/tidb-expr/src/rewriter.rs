@@ -2766,15 +2766,12 @@ fn rewrite_leaf_compound(
             for (condition, result) in when_clauses {
                 let condition = rewrite_expr_resolved(condition, &child_resolver)?;
                 let condition = match &compare_value {
+                    // Go `caseToExpression` builds each WHEN with
+                    // `constructBinaryOpFunction(value, when, EQ)`: the
+                    // ordinary comparison, with its argument coercion (a
+                    // JSON operand against a string, for one).
                     Some(value) => {
-                        let name = binary_op_name(BinaryOp::Eq);
-                        let ret_type = crate::builtin_compare::infer_compare_type(name)
-                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-                        Expression::ScalarFunction(ScalarFunction::new(
-                            CiString::new(name),
-                            ret_type,
-                            vec![value.clone(), condition],
-                        ))
+                        binary_expression(BinaryOp::Eq, value.clone(), condition, &child_resolver)?
                     }
                     None => condition,
                 };

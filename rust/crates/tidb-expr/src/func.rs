@@ -810,7 +810,9 @@ pub(crate) fn eval_func_values(
             }
         }),
         "MAKE_SET" if !vals.is_empty() => make_set(vals),
-        "DATE_FORMAT" if vals.len() == 2 => date_format(&vals[0], &vals[1]),
+        "DATE_FORMAT" if vals.len() == 2 => {
+            crate::time_fn::calendar::date_format_in(&vals[0], &vals[1], Some(ctx))
+        }
         "ORD" if vals.len() == 1 => ord(vals),
         "QUOTE" if vals.len() == 1 => quote(vals),
         "BIT_COUNT" if vals.len() == 1 => bit_count(vals, ctx),

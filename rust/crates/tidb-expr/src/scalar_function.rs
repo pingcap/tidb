@@ -1912,8 +1912,18 @@ impl ScalarFunction {
                     tidb_datatype::GoString::from(bytes).to_utf8_lossy_go(),
                 ))
             } else {
-                String::from_utf8(bytes).map(Some).map_err(|_| {
-                    EvalError::Unsupported("invalid UTF-8 REGEXP_LIKE pattern or flags")
+                // Go hands the raw bytes to `regexp.Compile`, which refuses
+                // invalid UTF-8 in a pattern; a match type outside `cimsu`
+                // (any invalid byte is) is `Invalid match type`.
+                String::from_utf8(bytes).map(Some).map_err(|error| {
+                    if index == 1 {
+                        crate::regexp::err_regexp(&format!(
+                            "error parsing regexp: invalid UTF-8: `{}`",
+                            String::from_utf8_lossy(error.as_bytes())
+                        ))
+                    } else {
+                        crate::regexp::err_regexp("Invalid match type")
+                    }
                 })
             }
         };

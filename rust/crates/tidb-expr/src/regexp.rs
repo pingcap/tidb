@@ -97,6 +97,23 @@ pub(crate) fn err_regexp(message: &str) -> EvalError {
     EvalError::Conversion(ERR_REGEXP.generate_with_stack_by_args(&[FormatArg::from(message)]))
 }
 
+/// [`err_regexp`] for an argument that is itself a TiDB `*errors.Error`
+/// (the `verifyArgs` failure `regexp_instr`/`regexp_replace` wrap): that type
+/// implements `fmt.Formatter` and ignores the template's `%-.64s` precision,
+/// so the wrapped text is never cut.
+pub(crate) fn err_regexp_wrapping_error(message: &str) -> EvalError {
+    use tidb_error::mysql::FormatArg;
+    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
+        TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1139))
+    });
+    EvalError::Conversion(ERR_REGEXP.generate_with_stack_by_args(&[FormatArg::new(
+        message,
+        message,
+        "*errors.Error",
+    )]))
+}
+
 /// Go `binaryCollateErr`: the positional regexp builtins refuse a
 /// `binary` charset and collation at build time, in `getFunction`.
 pub(crate) const BINARY_COLLATE_ERR: &str = "Not support binary collation so far";

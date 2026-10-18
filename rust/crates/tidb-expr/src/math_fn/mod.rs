@@ -248,10 +248,10 @@ fn conv_text(n: &str, mut from: i64, mut to: i64) -> Result<Option<String>, Eval
     let signed = from < 0;
     let ignore_sign = to < 0;
     if signed {
-        from = -from;
+        from = from.wrapping_neg();
     }
     if ignore_sign {
-        to = -to;
+        to = to.wrapping_neg();
     }
     if !(2..=36).contains(&from) || !(2..=36).contains(&to) {
         return Ok(None);
@@ -386,10 +386,14 @@ fn abs(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
         // one signed value that cannot be represented by its positive
         // counterpart.  Do not use `wrapping_abs`: that would silently turn
         // ABS(MININT) back into MININT and diverge from the source contract.
+        // The message quotes the evaluated value (`abs(%d)`), not the source.
         Datum::Int(value) => value
             .checked_abs()
             .map(Datum::Int)
-            .ok_or(EvalError::IntOverflow)?,
+            .ok_or_else(|| EvalError::DataOutOfRange {
+                value: "BIGINT",
+                expression: format!("abs({value})"),
+            })?,
         Datum::UInt(value) => Datum::UInt(*value),
         Datum::Decimal(value) => Datum::Decimal(value.abs()),
         Datum::Real(value) => Datum::Real(value.abs()),

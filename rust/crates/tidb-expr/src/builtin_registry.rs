@@ -429,6 +429,14 @@ pub fn verify_args_by_count(name: &str, count: usize) -> Result<(), crate::EvalE
     if arity.accepts(count) {
         return Ok(());
     }
+    // Go's `regexpInStrFunctionClass` and `regexpReplaceFunctionClass` wrap
+    // the verification failure in `ErrRegexp`; the other regexp classes
+    // return it bare.
+    if matches!(key, "regexp_instr" | "regexp_replace") {
+        return Err(crate::regexp::err_regexp_wrapping_error(&format!(
+            "[expression:1582]Incorrect parameter count in the call to native function '{key}'"
+        )));
+    }
     Err(crate::EvalError::WrongParameterCount(key))
 }
 

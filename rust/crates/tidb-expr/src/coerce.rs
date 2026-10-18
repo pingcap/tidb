@@ -193,21 +193,24 @@ pub(crate) fn string_text(value: &StringDatum) -> Result<&str, EvalError> {
         .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))
 }
 
-/// Coerces a scalar to text, preserving NULL and rejecting invalid UTF-8.
+/// Coerces a scalar to text, preserving NULL. Go strings are byte strings:
+/// an invalid UTF-8 value reaches the parsing builtins unchanged and simply
+/// fails to parse, so invalid bytes become U+FFFD here (which no parser
+/// accepts) instead of aborting the statement.
 pub(crate) fn coerce_str(value: &Datum) -> Result<Option<String>, EvalError> {
     match value {
-        Datum::String(value) => Ok(Some(string_text(value)?.to_string())),
-        Datum::Bytes(value) => std::str::from_utf8(value)
-            .map(|text| Some(text.to_string()))
-            .map_err(|_| EvalError::Unsupported("invalid UTF-8 byte datum")),
+        Datum::String(value) => Ok(Some(
+            String::from_utf8_lossy(value.bytes()).into_owned(),
+        )),
+        Datum::Bytes(value) => Ok(Some(String::from_utf8_lossy(value).into_owned())),
         Datum::Int(value) => Ok(Some(value.to_string())),
         Datum::UInt(value) => Ok(Some(value.to_string())),
         Datum::Decimal(value) => Ok(Some(value.to_string())),
         Datum::Real(value) => Ok(Some(value.to_string())),
         Datum::Float32(value) => Ok(Some((*value as f32).to_string())),
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => std::str::from_utf8(value.as_bytes())
-            .map(|text| Some(text.to_owned()))
-            .map_err(|_| EvalError::Unsupported("invalid UTF-8 binary literal")),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(Some(
+            String::from_utf8_lossy(value.as_bytes()).into_owned(),
+        )),
         Datum::Duration(value) => Ok(Some(value.to_string())),
         Datum::Enum(value, _) => value
             .name()

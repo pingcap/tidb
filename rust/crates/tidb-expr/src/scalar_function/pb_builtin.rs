@@ -252,11 +252,11 @@ impl PbBuiltin {
             RoundInt | RoundReal | RoundDec => Kernel::Round,
             Date => Kernel::Values(crate::time_fn::date),
             DateDiff => Kernel::Values(|values, _| crate::time_fn::calendar::date_diff(values)),
-            DateFormatSig => Kernel::Values(|values, _| {
+            DateFormatSig => Kernel::Values(|values, cols| {
                 let [date, format] = values else {
                     return Err(EvalError::WrongParameterCount("date_format"));
                 };
-                crate::time_fn::calendar::date_format(date, format)
+                crate::time_fn::calendar::date_format_in(date, format, Some(cols))
             }),
             Hour => Kernel::Values(|values, _| {
                 crate::time_fn::calendar::time_part(values, |time| i64::from(time.0))

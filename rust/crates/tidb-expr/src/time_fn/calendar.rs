@@ -2350,14 +2350,58 @@ pub(crate) fn format_ymd_result(y: i64, m: u32, d: u32, time_suffix: Option<&str
 /// `%D` day-with-ordinal-suffix, and `%%` a literal `%`. An unknown `%X`
 /// emits `X` verbatim (matching MySQL).
 pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError> {
+    date_format_in(date, fmt, None)
+}
+
+/// [`date_format`] with the statement context Go's `builtinDateFormatSig`
+/// reports its invalid-time warning through.
+pub(crate) fn date_format_in(
+    date: &Datum,
+    fmt: &Datum,
+    cols: Option<&dyn Columns>,
+) -> Result<Datum, EvalError> {
     let (Some(s), Some(fmt)) = (coerce_str(date)?, coerce_str(fmt)?) else {
         return Ok(Datum::Null);
     };
+    // Go (MySQL compatibility, #11203): the format mask "0" answers "0" for
+    // any time that evaluated, before the zero-date check below.
+    if fmt == "0" {
+        return Ok(Datum::new_string("0"));
+    }
+    if let Datum::Time(time) = date {
+        let core = time.core_time();
+        if core.month() == 0 || core.day() == 0 {
+            // `InvalidZero`: a zero month or day. An integer/decimal zero
+            // (all fields zero, no fractional digits) is NULL without a
+            // warning; any other zero-in-date value warns 1292.
+            let all_zero = core.year() == 0
+                && core.hour() == 0
+                && core.minute() == 0
+                && core.second() == 0
+                && core.microsecond() == 0;
+            if !(all_zero && time.fsp() == 0) {
+                if let Some(cols) = cols {
+                    handle_invalid_time(
+                        cols,
+                        1292,
+                        format!("Incorrect datetime value: '{s}'"),
+                    )?;
+                }
+            }
+            return Ok(Datum::Null);
+        }
+    }
     // Split off an optional time-of-day component.
     let (date_part, time_part) = match s.split_once(' ') {
         Some((d, t)) => (d, Some(t)),
         None => (s.as_str(), None),
     };
+    // Go `builtinDateFormatSig` (MySQL compatibility, #11203): the format
+    // mask "0" answers "0" for any time that evaluated, the zero time
+    // included, before the zero-date check can turn the row into NULL.
+    if fmt == "0" && (date_part == "0000-00-00" || parse_date_ymd(date_part).is_some()) {
+        return Ok(Datum::new_string("0"));
+    }
     let Some((y, m, d)) = parse_date_ymd(date_part) else {
         return Ok(Datum::Null);
     };

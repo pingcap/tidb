@@ -872,16 +872,14 @@ fn int_arg(value: &Datum) -> Result<Option<i64>, EvalError> {
         // 00:58:00 and MAKETIME(0, "59.5", 1) answers 00:59:01 -- both
         // TRUNCATED -- while the REAL 59.5 rounds to 60 and refuses).
         Datum::String(v) => Ok(Some(
-            v.as_utf8()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 string datum"))?
+            String::from_utf8_lossy(v.bytes())
                 .trim()
                 .parse::<f64>()
                 .map(|value| value.trunc() as i64)
                 .unwrap_or(0),
         )),
         Datum::Bytes(v) => Ok(Some(
-            std::str::from_utf8(v)
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 byte datum"))?
+            String::from_utf8_lossy(v)
                 .trim()
                 .parse::<f64>()
                 .map(|value| value.trunc() as i64)

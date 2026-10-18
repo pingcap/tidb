@@ -2363,6 +2363,11 @@ fn real_to_time(
     flags: ConversionFlags,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<tidb_datatype::Time, ()> {
+    // Go parses the float's decimal text, `-0.00..1` included, and a leading
+    // minus sign is never a date: only an exact `-0.0` reads as zero.
+    if value < 0.0 && value > -1.0 {
+        return Err(());
+    }
     let mut time = tidb_datatype::parse_time_from_float64(
         value,
         flags.ignore_zero_in_date_err(),

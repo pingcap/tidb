@@ -1133,6 +1133,11 @@ fn unicode_integer(argument: &FormatArg, spec: FormatSpec) -> String {
 fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
     match verb {
         b's' => match argument.kind {
+            // `*errors.Error` implements `fmt.Formatter` and prints its own
+            // text for `%s`, ignoring the template's width and precision.
+            FormatKind::Custom if argument.type_name == "*errors.Error" => {
+                argument.display.clone()
+            }
             FormatKind::String | FormatKind::Custom => {
                 pad_width(truncate(&argument.display, spec.precision), spec, false)
             }

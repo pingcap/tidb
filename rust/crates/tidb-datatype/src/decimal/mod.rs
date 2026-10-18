@@ -1652,6 +1652,14 @@ impl Decimal {
     ) -> Decimal {
         let result_scale = target_scale.max(0) as u32;
         let storage_scale = storage_scale.max(result_scale);
+        // Go `MyDecimal.Round`: `int(d.digitsInt)+frac < 0` is the zero
+        // decimal at once. Without it a huge negative scale (`ROUND(d,
+        // -8385959)`) would build millions of zero digits.
+        let int_len = self.digits.len().saturating_sub(self.storage_scale as usize);
+        let significant_int = self.digits[..int_len].trim_start_matches('0').len().max(1);
+        if (significant_int as i64) + i64::from(target_scale) < 0 {
+            return Decimal::new(false, "0".to_owned(), 0);
+        }
         let shift = self.storage_scale as i32 - target_scale;
         if shift <= 0 {
             let digits = pad_scale(&self.digits, self.storage_scale, storage_scale);

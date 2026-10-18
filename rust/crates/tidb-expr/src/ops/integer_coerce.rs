@@ -187,7 +187,7 @@ pub(crate) fn integer_binary(
                     }
                     (Integer::Signed(lhs), Integer::Unsigned(rhs)) => {
                         let remainder = if lhs < 0 {
-                            -((lhs.unsigned_abs() % rhs) as i64)
+                            ((lhs.unsigned_abs() % rhs) as i64).wrapping_neg()
                         } else {
                             (lhs as u64 % rhs) as i64
                         };
