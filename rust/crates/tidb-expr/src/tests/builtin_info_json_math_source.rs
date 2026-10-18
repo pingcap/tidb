@@ -1712,7 +1712,7 @@ fn regexp() {
             assert!(
                 matches!(
                     regexp_match(input, pattern),
-                    Err(EvalError::Unsupported("invalid regular expression pattern"))
+                    Err(EvalError::Conversion(_))
                 ),
                 "pattern {pattern:?}"
             );
@@ -2042,9 +2042,11 @@ fn pow() {
         .unwrap(),
         Datum::Real(1.0)
     );
+    // Go `builtinPowSig.evalReal` words the overflow itself, from the
+    // evaluated operands.
     assert!(matches!(
         math_call("POW", &[Datum::Int(10), Datum::Int(700)]),
-        Err(EvalError::FloatOverflow)
+        Err(EvalError::DataOutOfRange { value: "DOUBLE", ref expression }) if expression == "pow(10, 700)"
     ));
 }
 

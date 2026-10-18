@@ -871,7 +871,7 @@ mod tests {
     fn regexp_source_helpers_keep_capture_replacement_contract() {
         assert!(matches!(
             regexp_substr(&[string("a"), string("(")]),
-            Err(EvalError::Unsupported("invalid regular expression pattern"))
+            Err(EvalError::Conversion(_))
         ));
         assert!(matches!(
             regexp_instr(&[

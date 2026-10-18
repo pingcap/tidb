@@ -411,7 +411,12 @@ fn cot_zero_overflows_as_double_error() {
     );
     let ctx = WarnCountCtx::new();
     let got = math_dispatch_values("COT", &[Datum::Real(0.0)], &ctx).unwrap();
-    assert!(matches!(got, Err(EvalError::FloatOverflow)));
+    // The kernel itself words the overflow with the evaluated argument
+    // (Go formats it as `FormatFloat(val, 'f', -1, 64)`).
+    assert!(matches!(
+        got,
+        Err(EvalError::DataOutOfRange { value: "DOUBLE", ref expression }) if expression == "cot(0)"
+    ));
 }
 
 /// The live scalar-function path retains Go's function-specific 1690 text,

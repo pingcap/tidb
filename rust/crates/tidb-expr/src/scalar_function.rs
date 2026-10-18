@@ -698,7 +698,7 @@ fn math_overflow_error(
     let name = function.func_name.lowercase();
     let value = match (name, &error) {
         ("abs", EvalError::IntOverflow) => "BIGINT",
-        ("cot" | "exp" | "pow" | "power", EvalError::FloatOverflow) => "DOUBLE",
+        ("exp", EvalError::FloatOverflow) => "DOUBLE",
         _ => return error,
     };
     let Some(expression) = math_overflow_expression(function, ctx) else {

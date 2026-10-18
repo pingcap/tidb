@@ -28,7 +28,7 @@ pub(crate) struct CachedRegexp {
 
 fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
     if pattern.is_empty() {
-        return Err(EvalError::Unsupported("empty regular expression pattern"));
+        return Err(err_regexp("Empty pattern is invalid"));
     }
 
     // Reduce Go's rightmost-flag-wins rule deterministically before building
@@ -42,7 +42,7 @@ fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
             b'c' => case_insensitive = false,
             b'm' => multi_line = true,
             b's' => dot_matches_new_line = true,
-            _ => return Err(EvalError::Unsupported("Invalid match type")),
+            _ => return Err(err_regexp("Invalid match type")),
         }
     }
 
@@ -52,7 +52,30 @@ fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
         multi_line,
         dot_matches_new_line,
     )
-    .map_err(|_| EvalError::Unsupported("invalid regular expression pattern"))
+    .map_err(|error| err_regexp(&go_compile_error_text(pattern, &error)))
+}
+
+/// Go's `regexp.Compile` error text (`error parsing regexp: <code>: `<arg>``)
+/// for the failures this compatibility layer can name; anything else keeps the
+/// underlying reason after Go's prefix.
+fn go_compile_error_text(pattern: &str, reason: &str) -> String {
+    let code = if reason.contains("unclosed group") {
+        format!("missing closing ): `{pattern}`")
+    } else if reason.contains("unopened group") {
+        format!("unexpected ): `{pattern}`")
+    } else if reason.contains("incomplete escape sequence") || reason == "trailing backslash" {
+        "trailing backslash at end of expression: ``".to_owned()
+    } else if reason.contains("unclosed character class") {
+        let tail = pattern.rfind('[').map_or(pattern, |at| &pattern[at..]);
+        format!("missing closing ]: `{tail}`")
+    } else if reason.contains("repetition operator missing expression") {
+        "missing argument to repetition operator".to_owned()
+    } else if reason.contains("invalid repeat count") || reason.contains("repetition quantifier exceeds") {
+        "invalid repeat count".to_owned()
+    } else {
+        reason.lines().last().unwrap_or(reason).trim().to_owned()
+    };
+    format!("error parsing regexp: {code}")
 }
 
 /// Compiles one of TiDB's RE2-compatible regular expressions for the scalar
@@ -229,7 +252,7 @@ mod tests {
             assert!(
                 matches!(
                     regexp_match("", pattern),
-                    Err(EvalError::Unsupported("invalid regular expression pattern"))
+                    Err(EvalError::Conversion(_))
                 ),
                 "pattern {pattern:?}"
             );
@@ -240,25 +263,25 @@ mod tests {
     fn regexp_like_rejects_empty_invalid_pattern_and_match_type() {
         assert!(matches!(
             regexp_like("a", "", ""),
-            Err(EvalError::Unsupported("empty regular expression pattern"))
+            Err(EvalError::Conversion(_))
         ));
         assert!(matches!(
             regexp_like("a", "[a", ""),
-            Err(EvalError::Unsupported("invalid regular expression pattern"))
+            Err(EvalError::Conversion(_))
         ));
         for pattern in ["(", "(*", "\\"] {
             assert!(matches!(
                 regexp_like("", pattern, ""),
-                Err(EvalError::Unsupported("invalid regular expression pattern"))
+                Err(EvalError::Conversion(_))
             ));
         }
         assert!(matches!(
             regexp_like("abc", "abc", "p"),
-            Err(EvalError::Unsupported("Invalid match type"))
+            Err(EvalError::Conversion(_))
         ));
         assert!(matches!(
             regexp_like("abc", "abc", "cpi"),
-            Err(EvalError::Unsupported("Invalid match type"))
+            Err(EvalError::Conversion(_))
         ));
     }
 }

@@ -207,6 +207,15 @@ fn normalize_pattern(pattern: &str) -> Result<String, String> {
                 }
                 output.push('\\');
                 output.push(escaped);
+                // `\p{Greek}`, `\x{61}`: the braces belong to the escape.
+                if matches!(escaped, 'p' | 'P' | 'x') && chars.peek() == Some(&'{') {
+                    for part in chars.by_ref() {
+                        output.push(part);
+                        if part == '}' {
+                            break;
+                        }
+                    }
+                }
             }
             first = false;
         } else if in_class {
@@ -249,10 +258,36 @@ fn normalize_pattern(pattern: &str) -> Result<String, String> {
                 first = true;
                 negated = false;
             }
+            // Go `regexp/syntax.parseRepeat`: a `{` that does not open a valid
+            // `{n}`, `{n,}` or `{n,m}` is an ordinary literal, where the Rust
+            // `regex` crate rejects it.
+            if ch == '{' && !is_counted_repeat(chars.clone()) {
+                output.push('\\');
+            }
             output.push(ch);
         }
     }
     Ok(output)
+}
+
+/// Whether the text after a `{` is `digits [, [digits]] }`, the only shape
+/// Go reads as a counted repetition.
+fn is_counted_repeat(mut rest: std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    let mut digits = 0;
+    while rest.peek().is_some_and(char::is_ascii_digit) {
+        rest.next();
+        digits += 1;
+    }
+    if digits == 0 {
+        return false;
+    }
+    if rest.peek() == Some(&',') {
+        rest.next();
+        while rest.peek().is_some_and(char::is_ascii_digit) {
+            rest.next();
+        }
+    }
+    rest.next() == Some('}')
 }
 
 /// Compile using Go's character classes and syntax boundary, with options
@@ -297,6 +332,10 @@ mod tests {
             (r"\141", "a", true),
             (r"(?i:a)", "A", true),
             (r"\p{Greek}", "Σ", true),
+            (r#"{"a": [1, 2]}"#, r#"{"a": 1}"#, true),
+            (r#"{"a": [1, 2]}"#, r#"{"a": 1"#, false),
+            (r"a{,2}", "a{,2}", true),
+            (r"a{2", "a{2", true),
         ] {
             assert_eq!(
                 compile(pattern, true).unwrap().is_match(text),

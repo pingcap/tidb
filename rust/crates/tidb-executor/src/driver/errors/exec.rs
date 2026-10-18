@@ -187,7 +187,14 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             function,
         } => MysqlError::new(
             1411,
-            format!("Incorrect {value_class} value: '{value}' for function {function}"),
+            // The template is "Incorrect %-.32s value: '%-.128s' for function
+            // %-.32s": each operand is cut to that many characters.
+            format!(
+                "Incorrect {} value: '{}' for function {}",
+                value_class.chars().take(32).collect::<String>(),
+                value.chars().take(128).collect::<String>(),
+                function.chars().take(32).collect::<String>()
+            ),
         ),
         EvalError::Json(json) => {
             let error = MysqlError::coded(json.code(), json.message());
@@ -290,7 +297,14 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             function,
         } => MysqlError::new(
             1411,
-            format!("Incorrect {value_class} value: '{value}' for function {function}"),
+            // The template is "Incorrect %-.32s value: '%-.128s' for function
+            // %-.32s": each operand is cut to that many characters.
+            format!(
+                "Incorrect {} value: '{}' for function {}",
+                value_class.chars().take(32).collect::<String>(),
+                value.chars().take(128).collect::<String>(),
+                function.chars().take(32).collect::<String>()
+            ),
         ),
         // Go `ErrBadField` with `clauseMsg[expressionClause]` — the clause a
         // resolution site without its own clause name reports.

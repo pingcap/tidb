@@ -325,16 +325,34 @@ fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     let fsp = duration_parse::get_fsp(&value);
-    match duration_parse::parse_duration(&value, fsp) {
-        Ok(duration) => Ok(Datum::new_string(duration.format())),
-        Err(_) => {
-            cols.handle_truncate(&format!(
-                "Truncated incorrect time value: '{}'",
-                tidb_datatype::warning_subject_byte_cap(&value)
-            ))?;
-            Ok(Datum::new_string("00:00:00".to_owned()))
-        }
+    if let Ok(duration) = duration_parse::parse_duration(&value, fsp) {
+        return Ok(Datum::new_string(duration.format()));
     }
+    // Go `builtinTimeSig.evalDuration`: when the text cannot be a datetime
+    // `ParseDuration` still answers the value `matchDuration` managed to read,
+    // together with `ErrTruncatedWrongVal`, which `tc.HandleTruncate` turns
+    // into a warning: `TIME('12abc')` is `00:00:12` and an out-of-range number
+    // is the clamped `838:59:59`. Text that could be a datetime, but is not
+    // one, is the zero duration.
+    let partial = if duration_parse::can_fall_back_to_datetime(value.trim()) {
+        None
+    } else {
+        tidb_datatype::parse_duration_with_flags(
+            &value,
+            i64::from(fsp),
+            cols.type_flags(),
+            &cols.time_zone(),
+        )
+        .ok()
+        .map(|parsed| parsed.value.to_string())
+    };
+    cols.handle_truncate(&format!(
+        "Truncated incorrect time value: '{}'",
+        tidb_datatype::warning_subject_byte_cap(&value)
+    ))?;
+    Ok(Datum::new_string(
+        partial.unwrap_or_else(|| "00:00:00".to_owned()),
+    ))
 }
 
 fn no_clock_err() -> EvalError {
@@ -1134,7 +1152,18 @@ fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
     } else if year < 100 {
         year += 1900;
     }
-    let (result_y, result_m, result_d) = civil_from_days(days_from_civil(year, 1, 1) + day - 1);
+    // Go adds in `int`, which wraps: a day count past the int range lands
+    // negative, and `TimeFromDays` turns a negative number into the zero
+    // date, which MAKEDATE answers with NULL. Anything past 9999-12-31 is
+    // NULL as well, so the civil conversion only sees days it can hold.
+    const DAYS_FROM_YEAR_ZERO_TO_EPOCH: i64 = 719_528;
+    let day_number = (days_from_civil(year, 1, 1) + DAYS_FROM_YEAR_ZERO_TO_EPOCH)
+        .wrapping_add(day)
+        .wrapping_sub(1);
+    if !(0..=3_652_424).contains(&day_number) {
+        return Ok(Datum::Null);
+    }
+    let (result_y, result_m, result_d) = civil_from_days(day_number - DAYS_FROM_YEAR_ZERO_TO_EPOCH);
     if !(1..=9999).contains(&result_y) {
         return Ok(Datum::Null);
     }

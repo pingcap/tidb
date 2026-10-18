@@ -1034,6 +1034,18 @@ fn cast_and_convert() {
     for (expr, want) in cases {
         assert_eq!(&e(expr), want, "expr: {expr}");
     }
+    // Go `ErrRegexp` (1139): a bad or empty pattern is a `Got error '...' from regexp`.
+    for (expr, text) in [
+        (
+            "'abc' regexp '['",
+            "Got error 'error parsing regexp: missing closing ]: `[`' from regexp",
+        ),
+        ("'abc' regexp ''", "Got error 'Empty pattern is invalid' from regexp"),
+    ] {
+        let got = e(expr);
+        assert!(got.starts_with("Conversion("), "expr: {expr}: {got}");
+        assert!(got.contains(text), "expr: {expr}: {got}");
+    }
 }
 
 /// `expr COLLATE name` is a pure passthrough — the value is unaffected,
@@ -1077,14 +1089,6 @@ fn regexp_expr_eval() {
         ("'abc123' regexp '[0-9]+'", "INT:1"), // substring match, no anchors needed
         ("'hello world' regexp '^hello'", "INT:1"),
         ("'hello world' regexp 'world$'", "INT:1"),
-        (
-            "'abc' regexp '['",
-            "Unsupported(\"invalid regular expression pattern\")",
-        ),
-        (
-            "'abc' regexp ''",
-            "Unsupported(\"empty regular expression pattern\")",
-        ),
     ];
     for (expr, want) in cases {
         assert_eq!(&e(expr), want, "expr: {expr}");

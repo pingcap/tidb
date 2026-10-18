@@ -3248,6 +3248,8 @@ mod tests_views;
 #[cfg(test)]
 mod tests_ddl_service;
 #[cfg(test)]
+mod tests_builtin_survey;
+#[cfg(test)]
 mod tests_window;
 #[cfg(test)]
 mod tests_write_conversion;

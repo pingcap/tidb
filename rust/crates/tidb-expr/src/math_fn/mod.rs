@@ -60,7 +60,7 @@ pub(crate) fn dispatch(
 fn ast_math_overflow_error(name: &str, args: &[Expr], error: EvalError) -> EvalError {
     let value = match (name, &error) {
         ("ABS", EvalError::IntOverflow) => "BIGINT",
-        ("COT" | "EXP" | "POW" | "POWER", EvalError::FloatOverflow) => "DOUBLE",
+        ("EXP", EvalError::FloatOverflow) => "DOUBLE",
         _ => return error,
     };
     let args = args
@@ -542,7 +542,20 @@ pub(crate) fn pow(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
     let (Some(b), Some(e)) = (numeric_arg(base, ctx)?, numeric_arg(exp, ctx)?) else {
         return Ok(Datum::Null);
     };
-    finite_float(b.powf(e))
+    let power = go_exp_log::go_pow(b, e);
+    if power.is_finite() {
+        return Ok(Datum::Real(power));
+    }
+    // Go `builtinPowSig.evalReal`: the message always names `pow` (also for
+    // POWER) and prints both operands as `FormatFloat(v, 'f', -1, 64)`.
+    Err(EvalError::DataOutOfRange {
+        value: "DOUBLE",
+        expression: format!(
+            "pow({}, {})",
+            tidb_datatype::go_strconv::format_float(b, b'f', -1, 64),
+            tidb_datatype::go_strconv::format_float(e, b'f', -1, 64)
+        ),
+    })
 }
 
 fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
@@ -558,7 +571,7 @@ fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
             // is out of range in 'exp(2020)'`).
             _ => Err(EvalError::DataOutOfRange {
                 value: "DOUBLE",
-                expression: format!("exp({x})"),
+                expression: format!("exp({})", tidb_datatype::format_float_g_shortest(x)),
             }),
         },
         None => Ok(Datum::Null),
@@ -602,16 +615,53 @@ fn tan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     unary_finite(vals, ctx, go_trig::go_tan)
 }
 
+/// Go `builtinCotSig.evalReal`: a zero tangent or a non-finite cotangent is
+/// `ErrOverflow` quoting the EVALUATED argument as `FormatFloat(x, 'f', -1, 64)`.
 pub(crate) fn cot(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, |x| 1.0 / go_trig::go_tan(x))
+    let [v] = vals else {
+        return Err(EvalError::Unsupported("bad function arity"));
+    };
+    let Some(x) = numeric_arg(v, ctx)? else {
+        return Ok(Datum::Null);
+    };
+    let tan = go_trig::go_tan(x);
+    if tan != 0.0 {
+        let cot = 1.0 / tan;
+        if cot.is_finite() {
+            return Ok(Datum::Real(cot));
+        }
+    }
+    Err(EvalError::DataOutOfRange {
+        value: "DOUBLE",
+        expression: format!(
+            "cot({})",
+            tidb_datatype::go_strconv::format_float(x, b'f', -1, 64)
+        ),
+    })
 }
 
+/// Go `builtinRadiansSig.evalReal`: `x * (math.Pi / 180)`, with no range check.
 fn radians(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, f64::to_radians)
+    let [v] = vals else {
+        return Err(EvalError::Unsupported("bad function arity"));
+    };
+    Ok(match numeric_arg(v, ctx)? {
+        Some(x) => Datum::Real(x * (std::f64::consts::PI / 180.0)),
+        None => Datum::Null,
+    })
 }
 
+/// Go `builtinDegreesSig.evalReal`: `val * 180 / math.Pi` (that association,
+/// which differs from `val * (180 / Pi)` in the last place), with no range
+/// check: `DEGREES(1e308)` is `+Inf`.
 fn degrees(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, f64::to_degrees)
+    let [v] = vals else {
+        return Err(EvalError::Unsupported("bad function arity"));
+    };
+    Ok(match numeric_arg(v, ctx)? {
+        Some(x) => Datum::Real(x * 180.0 / std::f64::consts::PI),
+        None => Datum::Null,
+    })
 }
 
 /// `NULL` if `x` isn't in `[-1, 1]` (MySQL's own domain check for
@@ -1239,7 +1289,10 @@ mod tests {
     fn cot_preserves_go_overflow_after_string_coercion() {
         assert_eq!(
             cot(&[Datum::new_string("tidb".to_owned())], &crate::NoColumns),
-            Err(EvalError::FloatOverflow)
+            Err(EvalError::DataOutOfRange {
+                value: "DOUBLE",
+                expression: "cot(0)".to_owned(),
+            })
         );
     }
 }

@@ -305,9 +305,7 @@ fn regexp_cache_identity_by_statement_context() {
     let error = get_cached_regexp(&cache, 9, true, "(", "");
     assert!(matches!(
         error,
-        Err(crate::EvalError::Unsupported(
-            "invalid regular expression pattern"
-        ))
+        Err(crate::EvalError::Conversion(_))
     ));
     let cached_error = cache.get_cache(9).expect("compile error is memoized");
     assert!(cached_error.result.is_err());

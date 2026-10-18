@@ -420,7 +420,7 @@ fn match_duration(value: &str, fsp: i32) -> Result<GoDuration, Truncated> {
 }
 
 /// Go `canFallbackToDateTime`.
-fn can_fall_back_to_datetime(value: &str) -> bool {
+pub(crate) fn can_fall_back_to_datetime(value: &str) -> bool {
     let Some((_, rest)) = number(value) else {
         return false;
     };

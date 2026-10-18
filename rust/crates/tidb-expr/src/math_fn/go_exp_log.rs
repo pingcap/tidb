@@ -97,7 +97,7 @@ pub(crate) fn go_exp(x: f64) -> f64 {
 
 /// Go `math.Frexp` (src/math/frexp.go), bit-exact: `(frac, exp)` with
 /// `f = frac × 2**exp`, `0.5 <= |frac| < 1`.
-fn go_frexp(f: f64) -> (f64, i32) {
+pub(crate) fn go_frexp(f: f64) -> (f64, i32) {
     if f == 0.0 || f.is_infinite() || f.is_nan() {
         return (f, 0);
     }
@@ -115,7 +115,7 @@ fn go_frexp(f: f64) -> (f64, i32) {
 }
 
 /// Go `math.Log` (src/math/log.go), bit-exact.
-fn go_log(x: f64) -> f64 {
+pub(crate) fn go_log(x: f64) -> f64 {
     const LN2_HI: f64 = 6.931_471_803_691_238_164_90e-1; /* 3fe62e42 fee00000 */
     const LN2_LO: f64 = 1.908_214_929_270_587_700_02e-10; /* 3dea39ef 35793c76 */
     const L1: f64 = 6.666_666_666_666_735_130e-1; /* 3FE55555 55555593 */
@@ -167,4 +167,164 @@ pub(crate) fn go_log10(x: f64) -> f64 {
     // via `go run` against math.Log10). The literal below is the
     // correctly rounded reciprocal.
     go_log(x) * 0.434_294_481_903_251_827_651_128_918_916_605_082_294_167_230_997_174_2
+}
+
+/// Go `math.Ldexp` (src/math/ldexp.go): `frac * 2**exp`, with the same
+/// denormal and overflow handling.
+pub(crate) fn go_ldexp(frac: f64, exp: i32) -> f64 {
+    const SHIFT: u32 = 52;
+    const MASK: u64 = 0x7ff;
+    const BIAS: i32 = 1023;
+    if frac == 0.0 || frac.is_infinite() || frac.is_nan() {
+        return frac;
+    }
+    // Go `normalize`.
+    let (frac, extra) = if frac.abs() < f64::from_bits(1) * 4_503_599_627_370_496.0 {
+        (frac * 4_503_599_627_370_496.0, -52)
+    } else {
+        (frac, 0)
+    };
+    let mut exp = exp.saturating_add(extra);
+    let mut x = frac.to_bits();
+    exp = exp.saturating_add(((x >> SHIFT) & MASK) as i32 - BIAS);
+    if exp < -1075 {
+        return 0.0_f64.copysign(frac);
+    }
+    if exp > 1023 {
+        return if frac < 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    let mut m = 1.0_f64;
+    if exp < -1022 {
+        // denormal
+        exp += 53;
+        m = 1.0 / 9_007_199_254_740_992.0; // 2**-53
+    }
+    x &= !(MASK << SHIFT);
+    x |= ((exp + BIAS) as u64) << SHIFT;
+    m * f64::from_bits(x)
+}
+
+/// Go `isOddInt` (src/math/pow.go).
+fn go_is_odd_int(x: f64) -> bool {
+    if x.abs() >= 9_007_199_254_740_992.0 {
+        return false;
+    }
+    let xi = x.trunc();
+    let xf = x - xi;
+    xf == 0.0 && (xi as i64) & 1 == 1
+}
+
+/// Go `math.Pow` (src/math/pow.go), bit-exact. Rust's `powf` is libm's and
+/// disagrees in the last digit for many ordinary arguments
+/// (`POW(1.5, 1.5)` is `1.8371173070873834` in Go).
+pub(crate) fn go_pow(x: f64, y: f64) -> f64 {
+    if y == 0.0 || x == 1.0 {
+        return 1.0;
+    }
+    if y == 1.0 {
+        return x;
+    }
+    if x.is_nan() || y.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        if y < 0.0 {
+            if x.is_sign_negative() && go_is_odd_int(y) {
+                return f64::INFINITY.copysign(x);
+            }
+            return f64::INFINITY;
+        }
+        if y > 0.0 {
+            if x.is_sign_negative() && go_is_odd_int(y) {
+                return x;
+            }
+            return 0.0;
+        }
+    } else if y.is_infinite() {
+        if x == -1.0 {
+            return 1.0;
+        }
+        if (x.abs() < 1.0) == (y > 0.0) {
+            return 0.0;
+        }
+        return f64::INFINITY;
+    } else if x.is_infinite() {
+        if x < 0.0 {
+            return go_pow(1.0 / x, -y); // Pow(-0, -y)
+        }
+        if y < 0.0 {
+            return 0.0;
+        }
+        if y > 0.0 {
+            return f64::INFINITY;
+        }
+    } else if y == 0.5 {
+        return x.sqrt();
+    } else if y == -0.5 {
+        return 1.0 / x.sqrt();
+    }
+
+    let abs_y = y.abs();
+    let mut yi = abs_y.trunc();
+    let mut yf = abs_y - yi;
+    if yf != 0.0 && x < 0.0 {
+        return f64::NAN;
+    }
+    if yi >= 9_223_372_036_854_775_808.0 {
+        // yi is a large even int that overflows (or underflows to 0) for
+        // every x except -1 (x == 1 was handled above).
+        if x == -1.0 {
+            return 1.0;
+        }
+        if (x.abs() < 1.0) == (y > 0.0) {
+            return 0.0;
+        }
+        return f64::INFINITY;
+    }
+
+    // ans = a1 * 2**ae (= 1 for now).
+    let mut a1 = 1.0_f64;
+    let mut ae: i32 = 0;
+
+    // ans *= x**yf
+    if yf != 0.0 {
+        if yf > 0.5 {
+            yf -= 1.0;
+            yi += 1.0;
+        }
+        a1 = go_exp(yf * go_log(x));
+    }
+
+    // ans *= x**yi
+    let (mut x1, mut xe) = go_frexp(x);
+    let mut i = yi as i64;
+    while i != 0 {
+        if xe < -(1 << 12) || (1 << 12) < xe {
+            // catastrophic overflow: ae += xe*i would overflow
+            ae += xe;
+            break;
+        }
+        if i & 1 == 1 {
+            a1 *= x1;
+            ae += xe;
+        }
+        x1 *= x1;
+        xe <<= 1;
+        if x1 < 0.5 {
+            x1 += x1;
+            xe -= 1;
+        }
+        i >>= 1;
+    }
+
+    // ans = a1 * 2**ae; if y < 0 { ans = 1 / ans }, but in the opposite order
+    if y < 0.0 {
+        a1 = 1.0 / a1;
+        ae = -ae;
+    }
+    go_ldexp(a1, ae)
 }
