@@ -6285,6 +6285,8 @@ fn view_statement(schema: &str, name: &str, or_replace: bool) -> DdlStatement {
         algorithm: "UNDEFINED".to_owned(),
         security: "DEFINER".to_owned(),
         check_option: "CASCADED".to_owned(),
+        update_ts: 0,
+        id: 0,
     };
     DdlStatement::CreateView {
         schema: schema.to_owned(),

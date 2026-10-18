@@ -475,6 +475,8 @@ fn view_over_partitioned_table_matches_regular() {
                 algorithm: "UNDEFINED".to_owned(),
                 security: "DEFINER".to_owned(),
                 check_option: "CASCADED".to_owned(),
+                update_ts: 0,
+                id: 0,
             },
         )
         .unwrap();
@@ -493,6 +495,8 @@ fn view_over_partitioned_table_matches_regular() {
                 algorithm: "UNDEFINED".to_owned(),
                 security: "DEFINER".to_owned(),
                 check_option: "CASCADED".to_owned(),
+                update_ts: 0,
+                id: 0,
             },
         )
         .unwrap();

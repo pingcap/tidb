@@ -270,6 +270,8 @@ pub fn resolve_view_definition(
         // captured, `information_schema.views.CHECK_OPTION` reads CASCADED
         // for a view written without one at all.
         check_option: create.check_option.sql().to_owned(),
+        update_ts: 0,
+        id: 0,
     };
     Ok((database, name, view))
 }

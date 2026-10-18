@@ -342,6 +342,7 @@ pub fn run_create_sequence_in(
             name: name.clone(),
             comment,
             allocator: SequenceAllocator::new(info),
+            update_ts: 0,
         },
     )?;
     Ok(true)

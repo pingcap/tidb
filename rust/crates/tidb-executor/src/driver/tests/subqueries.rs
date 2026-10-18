@@ -550,6 +550,8 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
                 algorithm: "UNDEFINED".to_owned(),
                 security: "DEFINER".to_owned(),
                 check_option: "CASCADED".to_owned(),
+                update_ts: 0,
+                id: 0,
             },
         )
         .unwrap();
@@ -579,6 +581,8 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
                 algorithm: "UNDEFINED".to_owned(),
                 security: "DEFINER".to_owned(),
                 check_option: "CASCADED".to_owned(),
+                update_ts: 0,
+                id: 0,
             },
         )
         .unwrap();

@@ -312,6 +312,8 @@ fn cluster_view(table: &TableInfo) -> Result<ViewDef, String> {
         algorithm: view.algorithm.sql().to_owned(),
         security: view.security.sql().to_owned(),
         check_option: view.check_option.sql().to_owned(),
+        update_ts: table.update_ts,
+        id: table.id,
     })
 }
 

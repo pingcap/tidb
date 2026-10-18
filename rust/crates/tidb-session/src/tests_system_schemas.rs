@@ -1581,3 +1581,41 @@ fn metrics_schema_tables_describe_and_show_like_go() {
         .unwrap_err();
     assert!(error.to_string().contains("pd unavailable"), "{error}");
 }
+
+/// Go lists a view and a sequence in `information_schema.partitions` as
+/// unpartitioned tables (all partition cells NULL, a CREATE_TIME), a
+/// partition definition's MAX_DATA_LENGTH and DATA_FREE are 0 rather than
+/// NULL, a view's COLUMNS rows carry no charset or collation, and the default
+/// resource group is bootstrapped with `BACKGROUND=(TASK_TYPES='stats')`.
+/// Captured from the oracle.
+#[test]
+fn partitions_views_and_default_group_follow_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE pt (a INT, b VARCHAR(5)) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    session.run("CREATE VIEW pv AS SELECT b FROM pt").unwrap();
+    session.run("CREATE SEQUENCE ps").unwrap();
+    let rows = row_text(session.run(
+        "SELECT table_name, partition_name, max_data_length, data_free, create_time IS NULL \
+         FROM information_schema.partitions WHERE table_schema = 'test' ORDER BY 1, 2",
+    ));
+    assert_eq!(
+        rows,
+        [
+            ["ps", "NULL", "NULL", "NULL", "0"],
+            ["pt", "p0", "0", "0", "0"],
+            ["pt", "p1", "0", "0", "0"],
+            ["pv", "NULL", "NULL", "NULL", "0"],
+        ]
+    );
+    let view_columns = row_text(session.run(
+        "SELECT character_set_name, collation_name FROM information_schema.columns \
+         WHERE table_schema = 'test' AND table_name = 'pv'",
+    ));
+    assert_eq!(view_columns, [["NULL", "NULL"]]);
+    let group = row_text(
+        session.run("SELECT background FROM information_schema.resource_groups WHERE name = 'default'"),
+    );
+    assert_eq!(group, [["TASK_TYPES='stats'"]]);
+}

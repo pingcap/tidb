@@ -150,6 +150,7 @@ where
             name: table.name.original().to_owned(),
             comment: stored_sequence.comment,
             allocator: SequenceAllocator::over_counter(info, counter.shared()),
+            update_ts: table.update_ts,
         };
         sequences.insert(table.id, (table.update_ts, def.clone()));
         def

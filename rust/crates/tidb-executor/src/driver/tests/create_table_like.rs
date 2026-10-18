@@ -164,6 +164,8 @@ fn like_a_view_is_wrong_object() {
                 algorithm: "UNDEFINED".to_owned(),
                 security: "DEFINER".to_owned(),
                 check_option: "CASCADED".to_owned(),
+                update_ts: 0,
+                id: 0,
             },
         )
         .unwrap();

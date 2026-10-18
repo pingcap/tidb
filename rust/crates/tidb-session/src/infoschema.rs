@@ -307,7 +307,7 @@ pub fn table_rows(
         return Some(tables_rows(catalog, visibility, &ctx.session_zone()));
     }
     if name.eq_ignore_ascii_case("PARTITIONS") {
-        return Some(partitions_rows(catalog, visibility));
+        return Some(partitions_rows(catalog, visibility, &ctx.session_zone()));
     }
     if name.eq_ignore_ascii_case("VIEWS") {
         return Some(views_rows(catalog, visibility));
@@ -888,49 +888,78 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
 /// single row whose partition columns are all NULL -- not zero rows -- so a
 /// client joining against this table still sees it. Reporting nothing for
 /// unpartitioned tables would make them look absent rather than unpartitioned.
-fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn partitions_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    zone: &tidb_expr::SessionTimeZone,
+) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
+    // One row of an object with no partitions: every partition cell NULL, the
+    // storage cells at the counts given, CREATE_TIME the creating TSO.
+    let unpartitioned_row = |schema: &str,
+                             table_name: &str,
+                             stats: (u64, u64, u64, u64),
+                             update_ts: u64,
+                             affinity: Datum| {
+        let (row_count, average_row_length, data_length, index_length) = stats;
+        vec![
+            Datum::Bytes(b"def".to_vec()),
+            Datum::Bytes(schema.as_bytes().to_vec()),
+            Datum::Bytes(table_name.as_bytes().to_vec()),
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::UInt(row_count),
+            Datum::UInt(average_row_length),
+            Datum::UInt(data_length),
+            Datum::Null,
+            Datum::UInt(index_length),
+            Datum::Null,
+            update_time_datum(update_ts, zone),
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            affinity,
+            Datum::Null,
+        ]
+    };
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
-        // Go's partition reader lists VIEWS as one all-NULL partition row of
-        // zero stats (oracle: d17.v beside d17.base) -- every partition cell
-        // NULL, the four stat cells at their zero/NULL defaults.
-        if matches!(
-            catalog.table_in(&schema, &table_name),
-            Some(TableEntry::View(_))
-        ) {
-            rows.push(vec![
-                Datum::Bytes(b"def".to_vec()),
-                Datum::Bytes(schema.clone().into_bytes()),
-                Datum::Bytes(table_name.clone().into_bytes()),
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::UInt(0),
-                Datum::UInt(0),
-                Datum::UInt(0),
-                Datum::Null,
-                Datum::UInt(0),
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-            ]);
-            continue;
+        // Go's partition reader lists views and sequences like any
+        // unpartitioned table: every partition cell NULL, zero storage
+        // statistics, the creating TSO as CREATE_TIME.
+        match catalog.table_in(&schema, &table_name) {
+            Some(TableEntry::View(view)) => {
+                rows.push(unpartitioned_row(
+                    &schema,
+                    &table_name,
+                    (0, 0, 0, 0),
+                    view.update_ts,
+                    Datum::Null,
+                ));
+                continue;
+            }
+            Some(TableEntry::Sequence(sequence)) => {
+                rows.push(unpartitioned_row(
+                    &schema,
+                    &table_name,
+                    (0, 0, 0, 0),
+                    sequence.update_ts,
+                    Datum::Null,
+                ));
+                continue;
+            }
+            _ => {}
         }
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
@@ -943,40 +972,13 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
             })
         };
         let Some(partition) = table.partition() else {
-            let (row_count, average_row_length, data_length, index_length) =
-                table.storage_statistics();
-            rows.push(vec![
-                catalog_value(),
-                Datum::Bytes(schema.clone().into_bytes()),
-                Datum::Bytes(table_name.clone().into_bytes()),
-                // Every partition column is NULL for an unpartitioned table.
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::UInt(row_count),
-                Datum::UInt(average_row_length),
-                Datum::UInt(data_length),
-                Datum::Null,
-                Datum::UInt(index_length),
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
+            rows.push(unpartitioned_row(
+                &schema,
+                &table_name,
+                table.storage_statistics(),
+                table.update_ts(),
                 affinity(),
-                Datum::Null,
-            ]);
+            ));
             continue;
         };
         // Go names the COLUMNS forms differently from the expression forms and
@@ -1044,10 +1046,12 @@ fn partitions_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 Datum::UInt(row_count),
                 Datum::UInt(average_row_length),
                 Datum::UInt(data_length),
-                Datum::Null,
+                // Go: `uint64(0)` for MAX_DATA_LENGTH and DATA_FREE of a
+                // partition definition (NULL for an unpartitioned table).
+                Datum::UInt(0),
                 Datum::UInt(index_length),
-                Datum::Null,
-                Datum::Null,
+                Datum::UInt(0),
+                update_time_datum(table.update_ts(), zone),
                 Datum::Null,
                 Datum::Null,
                 Datum::Null,
@@ -2226,12 +2230,12 @@ fn tables_rows(
         }
         let table = match catalog.table_in(&schema, &table_name) {
             Some(TableEntry::Kv(table)) => table,
-            Some(TableEntry::View(_)) => {
-                rows.push(view_tables_row(&schema, &table_name));
+            Some(TableEntry::View(view)) => {
+                rows.push(view_tables_row(&schema, &table_name, view, zone));
                 continue;
             }
             Some(TableEntry::Sequence(sequence)) => {
-                rows.push(sequence_tables_row(&schema, sequence));
+                rows.push(sequence_tables_row(&schema, sequence, zone));
                 continue;
             }
             _ => continue,
@@ -2371,13 +2375,24 @@ fn tables_rows(
 /// allocates no id for a view; Go reports the view's own table id.
 /// `CREATE_TIME` is NULL for the same reason it is NULL for a base table --
 /// nothing records one.
-fn view_tables_row(schema: &str, table_name: &str) -> Vec<Datum> {
+fn view_tables_row(
+    schema: &str,
+    table_name: &str,
+    view: &tidb_executor::ViewDef,
+    zone: &tidb_expr::SessionTimeZone,
+) -> Vec<Datum> {
     let mut row = vec![text(CATALOG), text(schema), text(table_name), text("VIEW")];
     // ENGINE through CREATE_OPTIONS: sixteen columns a view has no value for.
     row.extend(std::iter::repeat_n(Datum::Null, 16));
+    // CREATE_TIME is the creating job's TSO.
+    row[14] = update_time_datum(view.update_ts, zone);
     // TABLE_COMMENT, TIDB_TABLE_ID, TIDB_ROW_ID_SHARDING_INFO, TIDB_PK_TYPE.
     row.push(text("VIEW"));
-    row.push(Datum::Null);
+    row.push(if view.id == 0 {
+        Datum::Null
+    } else {
+        Datum::Int(view.id)
+    });
     row.push(Datum::Null);
     row.push(text("NONCLUSTERED"));
     // The four trailing TiDB placement/mode columns.
@@ -2389,7 +2404,11 @@ fn view_tables_row(schema: &str, table_name: &str) -> Vec<Datum> {
 /// columns and no collation (`CreateSequence` calls `BuildTableInfo` with
 /// neither), so `EstimateDataLength` reports one row and no data, and the
 /// collation falls back to the server default.
-fn sequence_tables_row(schema: &str, sequence: &tidb_executor::driver::SequenceDef) -> Vec<Datum> {
+fn sequence_tables_row(
+    schema: &str,
+    sequence: &tidb_executor::driver::SequenceDef,
+    zone: &tidb_expr::SessionTimeZone,
+) -> Vec<Datum> {
     vec![
         text(CATALOG),
         text(schema),
@@ -2405,8 +2424,7 @@ fn sequence_tables_row(schema: &str, sequence: &tidb_executor::driver::SequenceD
         Datum::UInt(0),
         Datum::Int(0),
         Datum::Null,
-        // CREATE_TIME is NULL here as it is for a base table.
-        Datum::Null,
+        update_time_datum(sequence.update_ts, zone),
         Datum::Null,
         Datum::Null,
         text(tidb_mysql::DefaultCollationName),
@@ -2774,8 +2792,7 @@ fn view_column_row(
         numeric_precision,
         numeric_scale,
         datetime_precision,
-        charset_name,
-        collation_name,
+        ..
     } = type_cells(field_type);
     vec![
         text(CATALOG),
@@ -2791,8 +2808,10 @@ fn view_column_row(
         numeric_precision,
         numeric_scale,
         datetime_precision,
-        charset_name,
-        collation_name,
+        // Go `NewColDesc(table.ToColumn(col))` reads the view's STORED
+        // column, which carries no charset or collation.
+        Datum::Null,
+        Datum::Null,
         text(&field_type.info_schema_str(STRICT_INTEGER_DISPLAY_WIDTH)),
         text(""),
         text(""),

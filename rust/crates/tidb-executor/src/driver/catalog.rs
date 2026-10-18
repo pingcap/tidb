@@ -1056,6 +1056,11 @@ pub struct ViewDef {
     /// `information_schema.views.CHECK_OPTION`; `SHOW CREATE VIEW` never
     /// prints it.
     pub check_option: String,
+    /// Go `TableInfo.UpdateTS`, the TSO of the job that created it (0 when
+    /// none was recorded).
+    pub update_ts: u64,
+    /// Go `TableInfo.ID` (0 when the tier allocated none).
+    pub id: i64,
 }
 
 /// A catalog table's backing store.
@@ -1104,6 +1109,9 @@ pub struct SequenceDef {
     pub comment: String,
     /// The value source. See [`crate::sequence`].
     pub allocator: crate::sequence::SequenceAllocator,
+    /// Go `TableInfo.UpdateTS`, the TSO of the job that created it (0 when
+    /// none was recorded).
+    pub update_ts: u64,
 }
 
 impl TableEntry {
