@@ -7566,85 +7566,16 @@ impl ClusterServerSession {
         // executor boundary. Do the same while this connection's transaction
         // is still intact: a denial must neither publish staged writes nor
         // reach the cluster catalog authority.
-        self.session
-            .validate_snapshot_statement(parsed)
-            .map_err(map_error)?;
-        self.session
-            .require_statement_table_privileges(parsed)
-            .map_err(map_error)?;
+        self.session.begin_ddl_statement(parsed).map_err(map_error)?;
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        // The session owns the rest of the DDL path; this node supplies the
+        // service that publishes to the cluster.
+        let service = ClusterDdlService(Arc::clone(&self.ddl));
         self.session
-            .validate_cached_table_ddl(parsed)
+            .run_ddl_statement(sql, parsed, statement, &service)
             .map_err(map_error)?;
-        self.session
-            .validate_persistent_ddl_references(statement)
-            .map_err(map_error)?;
-        let lock_effect = self.session.cluster_ddl_lock_effect(statement);
-        self.session.begin_cluster_lock_job(statement);
-        // Go `Job.Query` is the statement's original text.
-        let job_context = self.session.ddl_statement_context().with_ddl_query(sql);
-        let report = self.ddl.execute(statement, &job_context);
-        // Go appends plan-time warnings to the session's statement context
-        // before it submits the job, so they precede the job's own.
-        if let Some(context) = statement.statement_context() {
-            self.session.drain_context_warnings(context);
-        }
-        let report = report?;
-        self.session.finish_cluster_lock_job(statement);
-        let created_id = match &report {
-            ClusterDdlReport::Applied { created_id, .. } => *created_id,
-            ClusterDdlReport::AlreadySatisfied { .. } => None,
-        };
-        // Go `recordLastDDLInfo`: a statement that ran a job leaves its query
-        // and the job's sequence number on the session.
-        if matches!(report, ClusterDdlReport::Applied { .. }) {
-            self.session.record_last_ddl_info(sql);
-        }
-        self.session
-            .finish_cluster_ddl_lock_effect(lock_effect, created_id);
-        // Go raises `job.Warning` on the session's own statement context, so
-        // `SHOW WARNINGS` reports what the change did differently from what
-        // was written. `toTError` gives a plain `fmt.Errorf` the generic
-        // 1105 code.
-        // go raises an applied job's `job.Warning` via `AppendWarning` and an
-        // `IF [NOT] EXISTS` suppression via `AppendNote`; the level follows
-        // the variant.
-        match report {
-            ClusterDdlReport::Applied { warnings, .. } => {
-                for (level, code, warning) in warnings {
-                    match level {
-                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note => {
-                            self.session.append_routed_note(code, warning)
-                        }
-                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning => {
-                            self.session.append_routed_warning(code, warning)
-                        }
-                    }
-                }
-            }
-            ClusterDdlReport::AlreadySatisfied { warnings, .. } => {
-                for (level, code, warning) in warnings {
-                    match level {
-                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note => {
-                            self.session.append_routed_note(code, warning)
-                        }
-                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning => {
-                            self.session.append_routed_warning(code, warning)
-                        }
-                    }
-                }
-            }
-        }
-        // Go `dropSchema` invalidates the session's current database when the
-        // DROP removes it: the next unqualified statement answers 1046
-        // (`ErrNoDB`) until a fresh `USE`.
-        if let DdlStatement::DropDatabase { name, .. } = statement {
-            if self.session.current_database().eq_ignore_ascii_case(name) {
-                self.session.deselect_database();
-            }
-        }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
         Ok(WriteOutcome {
@@ -8622,6 +8553,27 @@ fn global_lock_wait_timeout(vars: &GlobalSysvars) -> Duration {
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(tidb_vardef::defaults::DEF_INNODB_LOCK_WAIT_TIMEOUT as u64);
     Duration::from_secs(seconds)
+}
+
+/// The cluster's [`ClusterDdl`] as the session's [`tidb_session::ddl_service::DdlService`]:
+/// the same publish-and-refresh call, with its client error carried across the
+/// crate boundary as the already-classified `(code, state, message)` triple.
+struct ClusterDdlService(Arc<dyn ClusterDdl>);
+
+impl tidb_session::ddl_service::DdlService for ClusterDdlService {
+    fn execute(
+        &self,
+        statement: &DdlStatement,
+        job_context: &tidb_executor::StmtContext,
+    ) -> Result<tidb_exec::real_tikv_ddl::ClusterDdlReport, tidb_executor::DriverError> {
+        self.0.execute(statement, job_context).map_err(|error| {
+            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
+                error.code,
+                error.state,
+                error.message,
+            ))
+        })
+    }
 }
 
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {

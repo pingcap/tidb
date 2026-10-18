@@ -1270,6 +1270,7 @@ mod bootstrap;
 mod classify;
 pub mod cursor;
 mod ddl_jobs;
+pub mod ddl_service;
 mod dispatch;
 mod explain_arm;
 mod gcutil;
@@ -3244,6 +3245,8 @@ mod tests_union_scan;
 mod tests_user_vars;
 #[cfg(test)]
 mod tests_views;
+#[cfg(test)]
+mod tests_ddl_service;
 #[cfg(test)]
 mod tests_window;
 #[cfg(test)]
