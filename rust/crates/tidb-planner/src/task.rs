@@ -3376,6 +3376,131 @@ fn can_push_to_index_plan(
     })
 }
 
+/// Go `pushLimitDownToTiDBCop` (`core/task.go`, tidb#51723): for
+/// `CLUSTER_SLOW_QUERY` only, `TopN -> TableReader -> TableFullScan[cop]`
+/// becomes `TopN -> TableReader -> Limit[cop] -> scan[cop] + keepOrder`, when
+/// the TopN sorts by exactly the table's handle column. Returns the finished
+/// task, or the untouched cop task back when the shape does not apply.
+fn push_limit_down_to_tidb_cop(
+    topn: &crate::physical::PhysicalTopN,
+    mut cop: CopTask,
+    allocator: &crate::plan_base::PlanIdAllocator,
+    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+) -> Result<Result<Task, CopTask>, PlanError> {
+    if cop.index_plan.is_some() || cop.table_plan.is_none() {
+        return Ok(Err(cop));
+    }
+    // Walk to the leaf, remembering whether a Selection sits right above it.
+    let mut selectivity_source: Option<f64> = None;
+    let (scan_rows, desc) = {
+        let Some(table_plan) = cop.table_plan.as_deref() else {
+            return Ok(Err(cop));
+        };
+        let mut node = table_plan;
+        let mut selection_rows = None;
+        while let Some(child) = node.children().first() {
+            selection_rows = matches!(node, PhysicalPlan::Selection(_))
+                .then(|| node.stats_info().map(crate::stats_info::StatsInfo::row_count))
+                .flatten();
+            node = child;
+        }
+        let PhysicalPlan::TableScan(scan) = node else {
+            return Ok(Err(cop));
+        };
+        if scan.table_name != "CLUSTER_SLOW_QUERY" {
+            return Ok(Err(cop));
+        }
+        let Some(sort_items) = crate::physical::get_prop_by_order_by_items(&topn.by_items) else {
+            return Ok(Err(cop));
+        };
+        // "For cluster tables, HandleCols may be nil."
+        let Some(handle) = scan.handle_col_unique_id else {
+            return Ok(Err(cop));
+        };
+        let [item] = sort_items.as_slice() else {
+            return Ok(Err(cop));
+        };
+        if item.col.unique_id != handle {
+            return Ok(Err(cop));
+        }
+        let scan_rows = node.stats_info().map_or(0.0, crate::stats_info::StatsInfo::row_count);
+        if let Some(rows) = selection_rows {
+            if scan_rows > 0.0 {
+                selectivity_source = Some(rows / scan_rows);
+            }
+        }
+        (scan_rows, item.desc)
+    };
+    let _ = scan_rows;
+    let skew_ratio = cop.stats_context.scale_ndv_skew_ratio;
+    // The scan keeps the handle order, descending when the TopN is.
+    fn mark_scan(plan: &mut PhysicalPlan, desc: bool) {
+        match plan {
+            PhysicalPlan::TableScan(scan) => {
+                scan.desc = desc;
+                scan.keep_order = true;
+            }
+            other => {
+                if let Some(child) = other.base_mut().children_mut().first_mut() {
+                    mark_scan(child, desc);
+                }
+            }
+        }
+    }
+    let mut table_plan = *cop.table_plan.take().expect("the table plan was checked above");
+    mark_scan(&mut table_plan, desc);
+    let new_count = topn.offset.wrapping_add(topn.count);
+    let child_profile = table_plan.stats_info().cloned();
+    let mut base =
+        crate::physical::BasePhysicalPlan::new(allocator, "Limit", topn.base.base.query_block_offset());
+    base.base.set_stats(
+        child_profile
+            .as_ref()
+            .map(|profile| profile.derive_limit_stats(new_count as f64)),
+    );
+    base.base.set_schema(table_plan.schema().cloned());
+    // The limit's child is the (cloned) table plan: scale its top node's
+    // statistics to the pushed row count, then the scan's back up by the
+    // selection's selectivity.
+    let scaled = table_plan
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(new_count as f64, skew_ratio));
+    table_plan.base_mut().base.set_stats(scaled);
+    if let Some(selectivity) = selectivity_source.filter(|s| *s > 0.0 && *s < 1.0) {
+        let scaled_row_count = table_plan
+            .stats_info()
+            .map_or(0.0, crate::stats_info::StatsInfo::row_count)
+            / selectivity;
+        fn rescale_scan(plan: &mut PhysicalPlan, expect: f64, skew_ratio: f64) {
+            match plan {
+                PhysicalPlan::TableScan(_) => {
+                    let scaled = plan
+                        .stats_info()
+                        .map(|stats| stats.scale_by_expect_cnt(expect, skew_ratio));
+                    plan.base_mut().base.set_stats(scaled);
+                }
+                other => {
+                    if let Some(child) = other.base_mut().children_mut().first_mut() {
+                        rescale_scan(child, expect, skew_ratio);
+                    }
+                }
+            }
+        }
+        rescale_scan(&mut table_plan, scaled_row_count, skew_ratio);
+    }
+    base.set_children(vec![table_plan]);
+    cop.table_plan = Some(Box::new(PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+        base,
+        partition_by: Vec::new(),
+        offset: 0,
+        count: new_count,
+        prefix_col: None,
+        prefix_len: 0,
+    })));
+    let root = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
+    Ok(Ok(attach_plan_to_task(PhysicalPlan::TopN(topn.clone()), root)))
+}
+
 /// The shared cop body of Go `attach2Task4PhysicalStreamAgg` and
 /// `...HashAgg` after their gates: split via `NewPartialAggregate`, hang the
 /// partial half on the cop task's live side, convert, and attach the final
@@ -3397,8 +3522,12 @@ fn attach_agg_over_cop(
     // the split's TypeInfer; a column-free context is exact for that.
     let ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
     let query_block_offset = plan.query_block_offset();
-    let (partial, final_plan) =
-        crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist)?;
+    // Go `NewPartialAggregate(cop.GetStoreType(), false)`.
+    let (partial, final_plan) = if cop.get_store_type() == StoreType::TiDb {
+        crate::final_mode_agg::new_partial_aggregate_tidb(&ctx, column_ids, plan, allocator, blacklist)?
+    } else {
+        crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist)?
+    };
     let Some(mut partial) = partial else {
         // Go `NewPartialAggregate` answers `(nil, p.Self)` when the split is
         // impossible (an aggregate TiKV cannot run, DISTINCT with
@@ -4205,6 +4334,15 @@ pub(crate) fn attach2_task_in(
                     let columns =
                         tidb_expr::simple_expr::extract_columns_from_expressions(&by_exprs, None);
                     let need_push_down = !columns.is_empty();
+                    if need_push_down
+                        && cop.get_store_type() == StoreType::TiDb
+                        && cop.root_task_conds.is_empty()
+                    {
+                        match push_limit_down_to_tidb_cop(topn, cop, allocator, evaluate)? {
+                            Ok(task) => return Ok(task),
+                            Err(untouched) => cop = untouched,
+                        }
+                    }
                     let pushable = need_push_down
                         && crate::pushdown::can_exprs_push_down(&by_exprs, tidb_expr::infer_pushdown::PushDownStore::TiKv, blacklist)
                         && cop.root_task_conds.is_empty();

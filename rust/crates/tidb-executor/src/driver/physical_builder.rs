@@ -5621,6 +5621,62 @@ fn build_range_grouped_reader(
     ))
 }
 
+/// A cluster table's scan (`PhysicalTableScan` on the TiDB store): Go sends a
+/// coprocessor request to every TiDB, each of which answers from its own
+/// memory table. This node materializes the same rows the session generated
+/// for the statement and the operators the planner pushed into the reader
+/// run above it as ordinary executors, which is what the cop handler does.
+fn build_cluster_table_scan(
+    plan: &PhysicalPlan,
+    scan: &PhysicalTableScan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let super::TableEntry::Mem(table) = catalog
+        .table_in(&scan.db_name, &scan.table_name)
+        .ok_or_else(|| {
+            DriverError::unsupported("a cluster table scan is absent from the catalog")
+        })?
+    else {
+        return Err(DriverError::unsupported(
+            "a cluster table scan resolved to a non-memory catalog table",
+        ));
+    };
+    let schema = plan_schema(plan)?;
+    // Memory-table column ids are offset + 1 (`planner_schema_view`).
+    let offsets = schema
+        .columns
+        .iter()
+        .map(|column| {
+            usize::try_from(column.id - 1)
+                .ok()
+                .filter(|offset| *offset < table.columns.len())
+                .ok_or_else(|| {
+                    DriverError::unsupported(
+                        "a cluster table scan column is absent from its table",
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let rows = table
+        .rows
+        .iter()
+        .map(|row| {
+            offsets
+                .iter()
+                .map(|offset| {
+                    row.get(*offset).cloned().ok_or_else(|| {
+                        DriverError::unsupported(
+                            "a memory-table row is shorter than its declared schema",
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Box::new(MemTableSourceExec::new(meta(ctx, plan, schema), rows)))
+}
+
 fn build_with_state(
     plan: &PhysicalPlan,
     catalog: &Catalog,
@@ -5647,6 +5703,21 @@ fn build_with_state(
             "shuffle receiver has no owning worker",
         )),
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
+        PhysicalPlan::TableScan(scan)
+            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+        {
+            build_cluster_table_scan(plan, scan, catalog, ctx)
+        }
+        // A reader on the TiDB store has no coprocessor to push to: its pushed
+        // operators are the executors themselves.
+        PhysicalPlan::TableReader(reader)
+            if reader.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+        {
+            let child = reader.table_plan.as_deref().ok_or_else(|| {
+                DriverError::unsupported("a TiDB-store reader has no pushed plan")
+            })?;
+            build_with_state(child, catalog, ctx, state)
+        }
         PhysicalPlan::TableScan(scan) => {
             build_table_scan(
                 plan,

@@ -430,6 +430,10 @@ fn cached_dml_plan<'a>(
 #[derive(Default)]
 pub(crate) struct InformationSchemaReads {
     columns: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// The columns a cluster table's TiDB-store scan reads, by catalog column
+    /// id (memory-table column ids are offset + 1): Go plans these tables as
+    /// ordinary scans, so they carry ids rather than a `MemTable`'s names.
+    cluster_column_ids: std::collections::HashMap<String, std::collections::HashSet<i64>>,
     needs_storage_stats: bool,
     needs_column_lengths: bool,
     cluster_config_filters: Vec<tidb_planner::memtable_predicate_extractor::ClusterTableFilter>,
@@ -442,11 +446,21 @@ pub(crate) struct InformationSchemaReads {
 
 impl InformationSchemaReads {
     fn of(plans: &[&tidb_planner::physical::PhysicalPlan]) -> Self {
-        fn visit(
-            plan: &tidb_planner::physical::PhysicalPlan,
-            columns: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
-        ) {
+        type Names = std::collections::HashMap<String, std::collections::HashSet<String>>;
+        type Ids = std::collections::HashMap<String, std::collections::HashSet<i64>>;
+        fn visit(plan: &tidb_planner::physical::PhysicalPlan, columns: &mut Names, ids: &mut Ids) {
             use tidb_planner::physical::PhysicalPlan;
+            if let PhysicalPlan::TableScan(scan) = plan {
+                if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb {
+                    ids.entry(scan.table_name.to_ascii_uppercase())
+                        .or_default()
+                        .extend(
+                            plan.schema()
+                                .into_iter()
+                                .flat_map(|schema| schema.columns.iter().map(|column| column.id)),
+                        );
+                }
+            }
             if let PhysicalPlan::MemTable(scan) = plan {
                 columns
                     .entry(scan.table_name.to_ascii_uppercase())
@@ -458,18 +472,23 @@ impl InformationSchemaReads {
                     );
             }
             if let PhysicalPlan::CTE(cte) = plan {
-                visit(&cte.seed_plan, columns);
+                visit(&cte.seed_plan, columns, ids);
                 if let Some(recursive) = &cte.recursive_plan {
-                    visit(recursive, columns);
+                    visit(recursive, columns, ids);
+                }
+            }
+            if let PhysicalPlan::TableReader(reader) = plan {
+                if let Some(inner) = reader.table_plan.as_deref() {
+                    visit(inner, columns, ids);
                 }
             }
             for child in plan.children() {
-                visit(child, columns);
+                visit(child, columns, ids);
             }
         }
         let mut reads = Self::default();
         for plan in plans {
-            visit(plan, &mut reads.columns);
+            visit(plan, &mut reads.columns, &mut reads.cluster_column_ids);
             reads.needs_storage_stats |=
                 tidb_executor::physical_plan_needs_table_storage_statistics(plan);
             reads.needs_column_lengths |=
@@ -506,6 +525,10 @@ impl InformationSchemaReads {
             self.columns
                 .get(table)
                 .is_some_and(|have| columns.is_subset(have))
+        }) && reads.cluster_column_ids.iter().all(|(table, ids)| {
+            self.cluster_column_ids
+                .get(table)
+                .is_some_and(|have| ids.is_subset(have))
         }) && (self.needs_storage_stats || !reads.needs_storage_stats)
             && (self.needs_column_lengths || !reads.needs_column_lengths)
             && {
@@ -529,6 +552,9 @@ impl InformationSchemaReads {
     fn extend(&mut self, reads: Self) {
         for (table, columns) in reads.columns {
             self.columns.entry(table).or_default().extend(columns);
+        }
+        for (table, ids) in reads.cluster_column_ids {
+            self.cluster_column_ids.entry(table).or_default().extend(ids);
         }
         self.needs_storage_stats |= reads.needs_storage_stats;
         self.needs_column_lengths |= reads.needs_column_lengths;
@@ -995,6 +1021,7 @@ impl Session {
     ) -> Result<Catalog, DriverError> {
         let InformationSchemaReads {
             columns: required_columns,
+            cluster_column_ids,
             needs_storage_stats,
             needs_column_lengths,
             cluster_config_filters,
@@ -1078,12 +1105,19 @@ impl Session {
                     table_name
                 ))));
             };
-            let empty = std::collections::HashSet::new();
-            let required = Some(
-                required_columns
-                    .get(&table_name.to_ascii_uppercase())
-                    .unwrap_or(&empty),
-            );
+            let mut required_names = required_columns
+                .get(&table_name.to_ascii_uppercase())
+                .cloned()
+                .unwrap_or_default();
+            if let Some(ids) = cluster_column_ids.get(&table_name.to_ascii_uppercase()) {
+                required_names.extend(ids.iter().filter_map(|id| {
+                    let offset = usize::try_from(id - 1).ok()?;
+                    columns
+                        .get(offset)
+                        .map(|(name, _)| name.to_ascii_uppercase())
+                }));
+            }
+            let required = Some(&required_names);
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
             } else if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
@@ -4322,21 +4356,32 @@ pub(crate) fn statement_summary_rows(
         if !has_process {
             return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
         }
-        return Ok(
-            if tidb_config::config_tree::config::get_global_config()
-                .instance
-                .stmt_summary_enable_persistent
-            {
-                tidb_stmtsummary::v2::stmtsummary::global_stmt_summary()
-                    .map(|summary| summary.evicted())
-                    .filter(|row| !row.is_empty())
-                    .into_iter()
-                    .collect()
-            } else {
-                tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP
-                    .to_evicted_count_datum()
-            },
-        );
+        let full: Vec<Vec<tidb_datatype::Datum>> = if tidb_config::config_tree::config::get_global_config()
+            .instance
+            .stmt_summary_enable_persistent
+        {
+            tidb_stmtsummary::v2::stmtsummary::global_stmt_summary()
+                .map(|summary| summary.evicted())
+                .filter(|row| !row.is_empty())
+                .into_iter()
+                .collect()
+        } else {
+            tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.to_evicted_count_datum()
+        };
+        // The caller asks for `columns` (a pruned scan reads only some of the
+        // table's); the evicted row is produced at full width.
+        let schema = infoschema::table_schema("STATEMENTS_SUMMARY_EVICTED").unwrap_or_default();
+        let positions: Vec<usize> = columns
+            .iter()
+            .filter_map(|(name, _)| schema.iter().position(|(have, _)| have.eq_ignore_ascii_case(name)))
+            .collect();
+        if positions.len() != columns.len() || positions.len() == schema.len() {
+            return Ok(full);
+        }
+        return Ok(full
+            .into_iter()
+            .map(|row| positions.iter().map(|position| row[*position].clone()).collect())
+            .collect());
     }
 
     let columns: Vec<ColumnInfo> = columns

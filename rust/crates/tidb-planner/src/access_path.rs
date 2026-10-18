@@ -527,6 +527,8 @@ pub enum AccessPathStore {
     TiKv,
     /// TiFlash columnar-store access.
     TiFlash,
+    /// Go `kv.TiDB`: the table path of a cluster table.
+    TiDb,
 }
 
 /// Source-resolved table-scan kind returned by Go's

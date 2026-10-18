@@ -8572,6 +8572,12 @@ pub const CLUSTER_TABLES: &[(&str, &str)] = &[
     ("CLUSTER_TIDB_STATEMENTS_STATS", "TIDB_STATEMENTS_STATS"),
 ];
 
+/// Go `infoschema.IsClusterTableByName`: the CLUSTER_* tables plus
+/// `TIFLASH_REPLICA`, whose cop request goes to the DDL owner.
+pub fn is_cluster_table_name(name: &str) -> bool {
+    cluster_table_source(name).is_some() || name.eq_ignore_ascii_case("TIFLASH_REPLICA")
+}
+
 /// The local source of a composed cluster memory table.
 pub fn cluster_table_source(name: &str) -> Option<&'static str> {
     CLUSTER_TABLES

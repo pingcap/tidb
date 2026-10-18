@@ -1420,6 +1420,23 @@ pub fn check_agg_can_push_cop_tikv(
     group_by_items: &[Expression],
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
+    check_agg_can_push_cop(
+        agg_funcs,
+        group_by_items,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        blacklist,
+    )
+}
+
+/// Go `CheckAggCanPushCop` for a cop task served by `store` (TiKV, or TiDB
+/// for a cluster table's scan).
+#[must_use]
+pub fn check_agg_can_push_cop(
+    agg_funcs: &[AggFuncDesc],
+    group_by_items: &[Expression],
+    store: tidb_expr::infer_pushdown::PushDownStore,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> bool {
     for agg_func in agg_funcs {
         if contain_virtual_column(&agg_func.base.args)
             || contain_correlated_column(&agg_func.base.args)
@@ -1428,7 +1445,7 @@ pub fn check_agg_can_push_cop_tikv(
         }
         if !tidb_expr::aggregation::check_agg_push_down(
             agg_func,
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            store,
             blacklist,
         ) {
             return false;
@@ -1438,7 +1455,7 @@ pub fn check_agg_can_push_cop_tikv(
         // plain check is the same function.
         if !crate::pushdown::can_exprs_push_down(
             &agg_func.base.args,
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            store,
             blacklist,
         ) {
             return false;
@@ -1451,7 +1468,7 @@ pub fn check_agg_can_push_cop_tikv(
                 .collect();
             if !crate::pushdown::can_exprs_push_down(
                 &exprs,
-                tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                store,
                 blacklist,
             ) {
                 return false;
@@ -1484,7 +1501,7 @@ pub fn check_agg_can_push_cop_tikv(
     }
     crate::pushdown::can_exprs_push_down(
         group_by_items,
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        store,
         blacklist,
     )
 }
@@ -1588,7 +1605,25 @@ pub fn new_partial_aggregate_mpp(
     ),
     crate::plan_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, true, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiFlash, true, blacklist)
+}
+
+/// Go `BasePhysicalAgg.NewPartialAggregate(kv.TiDB, false)` for a cop task
+/// served by TiDB (a cluster table's scan).
+pub fn new_partial_aggregate_tidb(
+    ctx: &impl Columns,
+    alloc: &ColumnIdAllocator,
+    plan: crate::physical::PhysicalPlan,
+    plan_ids: &crate::plan_base::PlanIdAllocator,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> Result<
+    (
+        Option<crate::physical::PhysicalPlan>,
+        crate::physical::PhysicalPlan,
+    ),
+    crate::plan_base::PlanError,
+> {
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiDb, false, blacklist)
 }
 
 /// Go `NewPartialAggregate(kv.TiFlash, false)` for the MPP-TiDB mode: the
@@ -1607,7 +1642,7 @@ pub fn new_partial_aggregate_mpp_tidb(
     ),
     crate::plan_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, true, false, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiFlash, false, blacklist)
 }
 
 fn new_partial_aggregate_with_mode(
@@ -1624,7 +1659,7 @@ fn new_partial_aggregate_with_mode(
     ),
     crate::plan_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, false, is_mpp, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiKv, is_mpp, blacklist)
 }
 
 fn new_partial_aggregate_for_store(
@@ -1632,7 +1667,7 @@ fn new_partial_aggregate_for_store(
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
     plan_ids: &crate::plan_base::PlanIdAllocator,
-    is_tiflash: bool,
+    store: tidb_expr::infer_pushdown::PushDownStore,
     is_mpp: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
@@ -1657,10 +1692,11 @@ fn new_partial_aggregate_for_store(
             ))
         }
     };
+    let is_tiflash = store == tidb_expr::infer_pushdown::PushDownStore::TiFlash;
     let can_push = if is_tiflash {
         check_agg_can_push_mpp(agg_funcs, group_by_items, blacklist)
     } else {
-        check_agg_can_push_cop_tikv(agg_funcs, group_by_items, blacklist)
+        check_agg_can_push_cop(agg_funcs, group_by_items, store, blacklist)
     };
     if !can_push {
         return Ok((None, plan));
@@ -1697,6 +1733,16 @@ fn new_partial_aggregate_for_store(
         &mut split.partial.schema,
         &split.first_row_func_map,
     );
+    if store == tidb_expr::infer_pushdown::PushDownStore::TiDb {
+        // Go: "since TiDB coprocessor reuse the TiDB executor, and TiDB
+        // aggregation executor won't output the group by value, so we need
+        // add `firstrow` aggregation function to output the group by value."
+        let Ok(first_rows) = gen_first_row_agg_for_group_by(ctx, &split.partial.group_by_items)
+        else {
+            return Ok((None, plan));
+        };
+        split.partial.agg_funcs.extend(first_rows);
+    }
     // Go mutates `p` into the partial half (same plan id, same stats) and
     // Init's a NEW final of the same kind above it, with
     // `ExpectedCnt: math.MaxFloat64` and `p`'s stats.

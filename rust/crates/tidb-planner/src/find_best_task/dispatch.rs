@@ -1941,6 +1941,10 @@ pub(super) fn table_path_matches_order(
     prop: &PhysicalProperty,
     ranges: Option<&crate::ranger::types::Ranges>,
 ) -> OrderMatch {
+    // Go `matchProperty`: "TableScan with cluster table can't keep order."
+    if ds.is_cluster_table && !prop.sort_items.is_empty() {
+        return OrderMatch::NOT_MATCHED;
+    }
     if ds.handle_is_int {
         let Some(pk_col) = ds.handle_cols.first() else {
             return OrderMatch::NOT_MATCHED;
@@ -3619,7 +3623,13 @@ fn find_best_task_4_logical_data_source_paths(
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
                     cost_columns: ds.table_columns.clone(),
-                    store_type: crate::physical_table_reader::StoreType::TiKv,
+                    // Go `getPossibleAccessPaths`: a cluster table's table
+                    // path is served by TiDB.
+                    store_type: if ds.is_cluster_table {
+                        crate::physical_table_reader::StoreType::TiDb
+                    } else {
+                        crate::physical_table_reader::StoreType::TiKv
+                    },
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
@@ -3650,6 +3660,8 @@ fn find_best_task_4_logical_data_source_paths(
                     },
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
+                    table_name: ds.table_name.clone(),
+                    handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
                     is_temporary: ds.is_temporary,
                     prop: Some(Box::new(prop.clone())),
                     resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
@@ -3755,6 +3767,8 @@ fn find_best_task_4_logical_data_source_paths(
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
+                    table_name: ds.table_name.clone(),
+                    handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
                     is_temporary: ds.is_temporary,
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
@@ -4507,6 +4521,8 @@ fn find_best_task_4_logical_data_source_paths(
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
                         db_name: ds.db_name.clone(),
+                        table_name: ds.table_name.clone(),
+                        handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
                         is_temporary: ds.is_temporary,
                         prop: None,
                         plan_part_info: None,

@@ -1083,6 +1083,13 @@ fn physical_operator_name(
     index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     match plan {
+        // Go `PhysicalTableScan.TP`: a cluster table's scan is a memory
+        // table scan whatever its ranges.
+        PhysicalPlan::TableScan(scan)
+            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+        {
+            "MemTableScan".to_owned()
+        }
         PhysicalPlan::TableScan(scan) => {
             if is_index_join_table_range(plan, index_join_context)
                 || correlated_access_conditions(plan).is_some()
@@ -1152,6 +1159,22 @@ fn physical_access(
             .table_plan
             .as_deref()
             .and_then(dynamic_partition_access),
+        // Go `PhysicalTableScan.AccessObject` names the scan's own `Table.Name.O`
+        // (or its alias); a cluster table has no stored table to look up.
+        PhysicalPlan::TableScan(scan)
+            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+        {
+            Some(AccessObject::Scan(ScanAccessObject {
+                database: scan.db_name.clone(),
+                table: scan
+                    .table_as_name
+                    .as_deref()
+                    .filter(|alias| !alias.is_empty())
+                    .unwrap_or(&scan.table_name)
+                    .to_owned(),
+                ..ScanAccessObject::default()
+            }))
+        }
         PhysicalPlan::TableScan(scan) => Some(AccessObject::Scan(table_access(
             catalog,
             scan.table_id,
@@ -1491,6 +1514,12 @@ fn physical_operator_info(
         }
         PhysicalPlan::Sort(sort) => by_items_text(eval_ctx, &sort.by_items),
         PhysicalPlan::Limit(limit) => limit.explain_info(RedactMode::Disable),
+        // Go `PhysicalTableScan.OperatorInfo`: nothing for a cluster table.
+        PhysicalPlan::TableScan(scan)
+            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+        {
+            String::new()
+        }
         PhysicalPlan::TableScan(scan) => {
             let mut parts = Vec::new();
             if is_index_join_table_range(plan, index_join_context) {
@@ -1825,6 +1854,9 @@ fn physical_explain_operator(
                             store: match reader.store_type {
                                 tidb_planner::physical_table_reader::StoreType::TiFlash => {
                                     "tiflash".to_owned()
+                                }
+                                tidb_planner::physical_table_reader::StoreType::TiDb => {
+                                    "tidb".to_owned()
                                 }
                                 tidb_planner::physical_table_reader::StoreType::TiKv
                                 | tidb_planner::physical_table_reader::StoreType::Unknown(_) => {
@@ -2741,6 +2773,7 @@ fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &m
 fn reader_store_code(store: tidb_planner::physical_table_reader::StoreType) -> u8 {
     match store {
         tidb_planner::physical_table_reader::StoreType::TiFlash => 1,
+        tidb_planner::physical_table_reader::StoreType::TiDb => 2,
         tidb_planner::physical_table_reader::StoreType::TiKv
         | tidb_planner::physical_table_reader::StoreType::Unknown(_) => 0,
     }

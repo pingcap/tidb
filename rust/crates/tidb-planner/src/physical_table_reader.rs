@@ -26,6 +26,8 @@ pub enum StoreType {
     TiKv,
     /// TiFlash storage.
     TiFlash,
+    /// Go `kv.TiDB`: the scan of a cluster (memory) table, served by TiDB.
+    TiDb,
     /// Unknown storage values remain opaque.
     Unknown(u8),
 }

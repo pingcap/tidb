@@ -3077,7 +3077,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // `:5221` "We append an extra handle column to the schema when the
         // handle column is not the primary key."
-        if table.handle_col_offsets.is_empty() {
+        if table.handle_col_offsets.is_empty() && table.is_cluster_table {
+            // "Cluster tables are memory tables that don't support
+            // ExtraHandleID": `ds.HandleCols` stays nil.
+            handle_cols = Vec::new();
+            handle_is_int = true;
+        } else if table.handle_col_offsets.is_empty() {
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type
                 .set_flags(ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY);
@@ -3118,29 +3123,32 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:5244` the extra commit-ts column, appended for every non-cluster
         // table. `unfoldWildStar` (`:4115`) excludes it by column ID, which
         // [`Self::unfold_wild_star`] reproduces.
-        let mut commit_ts_type = FieldType::new(FieldTypeCode::LongLong);
-        commit_ts_type.set_flags(commit_ts_type.flags() | FieldTypeFlags::UNSIGNED);
-        let mut commit_ts = Column::new(self.column_ids.alloc(), commit_ts_type);
-        commit_ts.id = EXTRA_COMMIT_TS_ID;
-        let commit_ts_name = self.table_field_name(
-            &db_name,
-            &table.table_name,
-            &visible_table,
-            EXTRA_COMMIT_TS_NAME,
-            false,
-            false,
-        );
-        let mut original_commit_ts_name = commit_ts_name.clone();
-        original_commit_ts_name.names.table = original_commit_ts_name.names.original_table.clone();
-        commit_ts.orig_name = original_commit_ts_name.display_name();
-        columns.push(DataSourceColumn {
-            id: EXTRA_COMMIT_TS_ID,
-            name: EXTRA_COMMIT_TS_NAME.to_owned(),
-            is_primary_key: false,
-            is_not_null: false,
-        });
-        schema_columns.push(commit_ts);
-        names.push(commit_ts_name);
+        if !table.is_cluster_table {
+            let mut commit_ts_type = FieldType::new(FieldTypeCode::LongLong);
+            commit_ts_type.set_flags(commit_ts_type.flags() | FieldTypeFlags::UNSIGNED);
+            let mut commit_ts = Column::new(self.column_ids.alloc(), commit_ts_type);
+            commit_ts.id = EXTRA_COMMIT_TS_ID;
+            let commit_ts_name = self.table_field_name(
+                &db_name,
+                &table.table_name,
+                &visible_table,
+                EXTRA_COMMIT_TS_NAME,
+                false,
+                false,
+            );
+            let mut original_commit_ts_name = commit_ts_name.clone();
+            original_commit_ts_name.names.table =
+                original_commit_ts_name.names.original_table.clone();
+            commit_ts.orig_name = original_commit_ts_name.display_name();
+            columns.push(DataSourceColumn {
+                id: EXTRA_COMMIT_TS_ID,
+                name: EXTRA_COMMIT_TS_NAME.to_owned(),
+                is_primary_key: false,
+                is_not_null: false,
+            });
+            schema_columns.push(commit_ts);
+            names.push(commit_ts_name);
+        }
 
         // Go keeps `DataSource.TblCols` unchanged when `PruneColumns`
         // narrows `Schema`/`Columns`; physical table-scan cost is based on
@@ -3198,6 +3206,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             table_columns,
             pk_is_handle: table.pk_is_handle,
             is_common_handle: table.is_common_handle,
+            is_cluster_table: table.is_cluster_table,
             common_handle_version: table.common_handle_version,
             is_temporary: table.is_temporary,
             is_local_temporary: table.is_local_temporary,

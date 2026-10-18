@@ -544,6 +544,51 @@ impl PlannerCatalog {
 /// Whether `database`.`name` is one of the virtual tables Go serves as a
 /// memory table: every `information_schema` table and the predefined
 /// `performance_schema` ones.
+/// Go `infoschema.IsClusterTableByName` and `buildTableMeta`: a CLUSTER_*
+/// table (and `tiflash_replica`, which reads from the DDL owner) is not a
+/// `LogicalMemTable`; `buildDataSource` plans it as a table whose scan runs
+/// on the TiDB store. Only `CLUSTER_SLOW_QUERY` has a primary key, and
+/// because its `time` column is not an integer, Go makes it a COMMON handle.
+fn mark_cluster_table(table: &mut tidb_planner::plan_builder::catalog::SourceTable, database: &str, name: &str) {
+    if !database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+        || !crate::driver::infoschema_meta::is_cluster_table_name(name)
+    {
+        return;
+    }
+    table.is_memory_table = false;
+    table.is_cluster_table = true;
+    if !table.table_name.eq_ignore_ascii_case("CLUSTER_SLOW_QUERY") {
+        return;
+    }
+    let Some(offset) = table.columns.iter().position(|column| {
+        column
+            .ret_type
+            .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+    }) else {
+        return;
+    };
+    table.columns[offset].is_primary_key = true;
+    table.is_common_handle = true;
+    table.common_handle_version = 1;
+    table.handle_col_offsets = vec![offset];
+    table.common_handle_col_offsets = vec![offset];
+    table.common_handle_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
+    table.indexes = vec![tidb_planner::plan_builder::catalog::SourceIndex {
+        id: 0,
+        name: "primary".to_owned(),
+        columns: vec![tidb_planner::plan_builder::catalog::SourceIndexColumn {
+            name: table.columns[offset].name.clone(),
+            offset,
+            length: tidb_datatype::UNSPECIFIED_LENGTH,
+        }],
+        unique: true,
+        primary: true,
+        is_public: true,
+        is_visible: true,
+        ..tidb_planner::plan_builder::catalog::SourceIndex::default()
+    }];
+}
+
 fn is_virtual_schema_table(database: &str, name: &str) -> bool {
     database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
         || database.eq_ignore_ascii_case(crate::driver::metricsschema::METRICS_SCHEMA)
@@ -2282,6 +2327,7 @@ impl Catalog {
                                 .collect(),
                             ..SourceTable::default()
                         };
+                        mark_cluster_table(&mut source_table, &database.name, entry_name);
                         source_table.attach_resolve_metadata(resolve_db_info.clone());
                         tables.insert(key(), source_table);
                     }
@@ -2462,6 +2508,7 @@ impl Catalog {
                                 .collect(),
                             ..SourceTable::default()
                         };
+                        mark_cluster_table(&mut source_table, &database.name, entry_name);
                         source_table.attach_resolve_metadata(resolve_db_info.clone());
                         tables.insert(key(), source_table);
                     }

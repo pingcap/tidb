@@ -179,6 +179,8 @@ pub struct DataSource {
     pub fd_latest_index_lookup_failed: bool,
     /// Go `TableInfo.IsCommonHandle`.
     pub is_common_handle: bool,
+    /// Go `ds.Table.Type().IsClusterTable()`: the scan reads the TiDB store.
+    pub is_cluster_table: bool,
     /// Go `TableInfo.CommonHandleVersion`.
     pub common_handle_version: u16,
     /// Go `TableInfo.TempTableType != model.TempTableNone`.
@@ -1105,6 +1107,7 @@ impl DataSource {
             fd_latest_public_index_ids: self.fd_latest_public_index_ids.clone(),
             fd_latest_index_lookup_failed: self.fd_latest_index_lookup_failed,
             is_common_handle: self.is_common_handle,
+            is_cluster_table: self.is_cluster_table,
             common_handle_version: self.common_handle_version,
             is_temporary: self.is_temporary,
             is_local_temporary: self.is_local_temporary,

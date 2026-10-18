@@ -1296,6 +1296,13 @@ pub struct PhysicalTableScan {
     pub filter_condition: Vec<Expression>,
     /// Go `DBName`.
     pub db_name: String,
+    /// Go `Table.Name.O`: the scan's own table spelling, which a cluster
+    /// (TiDB-store) scan prints as its access object.
+    pub table_name: String,
+    /// Go `HandleCols.GetCol(0)`, by unique id: `pushLimitDownToTiDBCop`
+    /// compares the TopN's sort column to it. `None` when the table has no
+    /// handle (a cluster table without a primary key).
+    pub handle_col_unique_id: Option<i64>,
     /// Go `Prop`: the property the scan was planned under (nil for a lookup's
     /// row-id side).
     pub prop: Option<Box<PhysicalProperty>>,
@@ -4680,6 +4687,8 @@ impl PhysicalPlan {
                 plan_part_info: op.plan_part_info.clone(),
                 filter_condition: op.filter_condition.clone(),
                 db_name: op.db_name.clone(),
+                table_name: op.table_name.clone(),
+                handle_col_unique_id: op.handle_col_unique_id,
                 prop: op.prop.clone(),
                 is_temporary: op.is_temporary,
             }),

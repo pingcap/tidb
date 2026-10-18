@@ -185,6 +185,10 @@ pub struct SourceTable {
     /// Go `table.Type().IsVirtualTable()`: this table is planned through
     /// `buildMemTable`, not `buildDataSource`.
     pub is_memory_table: bool,
+    /// Go `table.Type().IsClusterTable()`: a CLUSTER_* table is planned as a
+    /// table whose scan reads from the TiDB store, with no extra handle or
+    /// commit-ts column.
+    pub is_cluster_table: bool,
     /// Go `TableInfo.ID`.
     pub table_id: i64,
     /// Go `TableInfo.Name.O`.

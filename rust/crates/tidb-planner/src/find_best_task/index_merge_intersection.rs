@@ -130,6 +130,8 @@ pub(super) fn build_prepared_index_merge_task(
         table_scan_penalty: ds.table_scan_penalty,
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),
+        table_name: ds.table_name.clone(),
+        handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
         is_temporary: ds.is_temporary,
         prop: None,
         plan_part_info: None,
