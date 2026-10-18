@@ -115,6 +115,22 @@ pub(crate) fn verify_json_function_args(
     name: &str,
     args: &[crate::expression::Expression],
 ) -> Result<(), EvalError> {
+    // Go's modifying classes also check the argument parity in `getFunction`
+    // (`json_set(j, p)` has an even count): `ErrIncorrectParameterCount`.
+    let parity_name: Option<(&'static str, bool)> = match name {
+        "json_set" => Some(("json_set", true)),
+        "json_insert" => Some(("json_insert", true)),
+        "json_replace" => Some(("json_replace", true)),
+        "json_array_append" => Some(("json_array_append", true)),
+        "json_array_insert" => Some(("json_array_insert", true)),
+        "json_object" => Some(("json_object", false)),
+        _ => None,
+    };
+    if let Some((function, odd)) = parity_name {
+        if (args.len() % 2 == 1) != odd {
+            return Err(EvalError::WrongParameterCount(function));
+        }
+    }
     let (function, use_json_err, indexes): (&'static str, bool, Option<&[usize]>) = match name {
         "json_type" => ("json_type", true, Some(&[0])),
         "json_extract" => ("json_extract", true, Some(&[0])),

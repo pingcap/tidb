@@ -916,19 +916,53 @@ fn scalar(name: &str, args: Vec<Expression>) -> Expression {
     ))
 }
 
-/// GO's hybrid-typed operands (hex/bit BinaryLiterals, Enum/Set) keep their
-/// raw-bytes arithmetic semantics; WrapWithCastAs* early-returns for them.
-/// Hex/bit literals are typed VarString (not IsHybrid), but GO's
-/// `expression.IsBinaryLiteral` still preserves the BinaryLiteral datum in
-/// these paths -- coercing one saturates instead of wrapping the raw bytes
-/// (`b'1111...' + 0` must stay INT:-1).
-fn is_hybrid_argument(expression: &Expression) -> bool {
-    if expression
+/// Go `wrapWithIsTrue(ctx, true, arg, false)`: an integer argument passes
+/// through, anything else is wrapped in `istrue_with_null`, whose
+/// `getFunction` reads a string, time or JSON argument as a double (the cast
+/// is built, and folded over a constant, like any `WrapWithCastAsReal`).
+fn wrap_with_is_true_with_null(
+    argument: Expression,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    let eval_type = argument
         .static_type()
-        .is_some_and(|field_type| field_type.is_hybrid())
-    {
-        return true;
+        .map_or(EvalType::Int, FieldType::eval_type);
+    if eval_type == EvalType::Int {
+        return Ok(argument);
     }
+    let wrapped = if matches!(
+        eval_type,
+        EvalType::String
+            | EvalType::Timestamp
+            | EvalType::Datetime
+            | EvalType::Duration
+            | EvalType::Json
+    ) {
+        // GO folds the wrap-time cast bottom-up (WrapWithCastAsReal evaluates
+        // a constant argument eagerly), so `istrue_with_null(cast(', ',
+        // double))` collapses to `0`. Fold the cast first: the wrapper fold
+        // requires all-constant arguments.
+        let mut cast = crate::aggregation::wrap_cast::wrap_with_cast_as_real(argument)?;
+        resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
+        cast
+    } else {
+        argument
+    };
+    let mut call = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("istrue_with_null"),
+        crate::expr_util::builder::tiny_int_type(),
+        vec![wrapped],
+    ));
+    resolver.fold_constant(&mut call, ConstantFoldMode::Normal);
+    Ok(call)
+}
+
+/// A hex/bit literal keeps its raw-bytes semantics in arithmetic: Go's
+/// `numericContextResultType` reads `IsBinaryLiteral` as an integer, so the
+/// operand gets no cast and `b'1111...' + 0` must stay INT:-1. ENUM and SET
+/// columns are NOT exempt: `WrapWithCastAsReal` casts them like any other
+/// operand (`e + i` plans as `plus(cast(e, double), cast(i, double))`).
+fn is_hybrid_argument(expression: &Expression) -> bool {
     matches!(
         expression,
         Expression::Constant(constant)
@@ -1135,40 +1169,8 @@ fn binary_expression(
             // `or(istrue_with_null(cast(coalesce(..), double BINARY)), 0)`).
             if matches!(name, "and" | "or" | "xor") {
                 for argument in &mut args {
-                    let eval_type = argument
-                        .static_type()
-                        .map(|t| t.eval_type())
-                        .unwrap_or(tidb_datatype::EvalType::Int);
-                    if eval_type == tidb_datatype::EvalType::Int {
-                        continue;
-                    }
-                    let wrapped = if matches!(
-                        eval_type,
-                        tidb_datatype::EvalType::String
-                            | tidb_datatype::EvalType::Timestamp
-                            | tidb_datatype::EvalType::Datetime
-                            | tidb_datatype::EvalType::Duration
-                            | tidb_datatype::EvalType::Json
-                    ) {
-                        // GO folds the wrap-time cast bottom-up
-                        // (WrapWithCastAsReal evaluates a constant argument
-                        // eagerly), so `istrue_with_null(cast(', ', double))`
-                        // collapses to `0`. Fold the cast first: the wrapper
-                        // fold requires all-constant arguments.
-                        let mut cast = crate::aggregation::wrap_cast::wrap_with_cast_as_real(
-                            std::mem::replace(argument, Expression::Constant(Constant::new_null())),
-                        )?;
-                        resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
-                        cast
-                    } else {
-                        std::mem::replace(argument, Expression::Constant(Constant::new_null()))
-                    };
-                    *argument = Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new("istrue_with_null"),
-                        crate::expr_util::builder::tiny_int_type(),
-                        vec![wrapped],
-                    ));
-                    resolver.fold_constant(argument, ConstantFoldMode::Normal);
+                    let operand = std::mem::replace(argument, Expression::Constant(Constant::new_null()));
+                    *argument = wrap_with_is_true_with_null(operand, resolver)?;
                 }
             }
             // Go `adjustNullFlagForReturnType` runs on the arguments AFTER the
@@ -2759,7 +2761,9 @@ fn rewrite_leaf_compound(
                     }
                     None => condition,
                 };
-                args.push(condition);
+                // Go `caseWhenFunctionClass.getFunction`: every WHEN
+                // condition runs through `wrapWithIsTrue(ctx, true, arg, false)`.
+                args.push(wrap_with_is_true_with_null(condition, &child_resolver)?);
                 args.push(rewrite_expr_resolved(result, &child_resolver)?);
             }
             if let Some(else_clause) = else_clause {
@@ -2904,6 +2908,176 @@ fn rewrite_leaf_compound(
         }
         _ => unreachable!("dispatched by rewrite_leaf"),
     }
+}
+
+/// Go `setExprRetType`: overwrites the result type of a node (the caller
+/// owns a clone, so a shared column definition is not touched).
+fn set_expression_ret_type(expression: &mut Expression, ret_type: FieldType) {
+    match expression {
+        Expression::Column(column) => column.ret_type = Some(ret_type),
+        Expression::CorrelatedColumn(column) => column.column.ret_type = Some(ret_type),
+        Expression::Constant(constant) => constant.ret_type = Some(ret_type),
+        Expression::ScalarFunction(function) => function.ret_type = Some(ret_type),
+    }
+}
+
+/// Go `newFunctionImpl` for an already-built argument list: the build-time
+/// argument handling, the result type, and the signature casts of the builtin
+/// `lowered`. NULLIF re-enters here to build the `if` it is rewritten to.
+fn finish_function_call(
+    lowered: &str,
+    mut rewritten: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    let lowered = lowered.to_owned();
+    // Go's rewriter turns `NULLIF(a, b)` into `IF(a = b, NULL, a)` before any
+    // function class sees it (`expression_rewriter.go`'s `ast.Nullif` arm):
+    // the comparison is built over clones, the NULL keeps TypeNull so the IF
+    // takes its type from the value branch, and that branch loses
+    // NotNullFlag (and its charset when it is not a string).
+    if lowered == "nullif" && rewritten.len() == 2 {
+        let second = rewritten.pop().expect("two arguments");
+        let first = rewritten.pop().expect("two arguments");
+        let condition = binary_expression(BinaryOp::Eq, first.clone(), second, resolver)?;
+        let mut value = first;
+        if let Some(mut value_type) = value.static_type().cloned() {
+            value_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            if !value_type.eval_type().is_string_kind() {
+                value_type.set_charset_name("binary");
+                value_type.set_collation_name("binary");
+            }
+            set_expression_ret_type(&mut value, value_type);
+        }
+        let null = Expression::Constant(Constant::new(
+            Datum::Null,
+            FieldType::new(FieldTypeCode::Null),
+        ));
+        return finish_function_call("if", vec![condition, null, value], resolver);
+    }
+    // Go `newFunctionImpl`: an untyped NULL argument takes the last
+    // typed argument's type before the function class sees it
+    // (control functions and ROW infer their own).
+    if !matches!(lowered.as_str(), "if" | "ifnull" | "nullif" | "row") {
+        crate::new_function::type_infer_for_null(&mut rewritten);
+    }
+    let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
+    let rewritten = wrap_time_format_arguments(&lowered, rewritten, resolver)?;
+    let rewritten = wrap_clock_fsp_argument(&lowered, rewritten, resolver)?;
+    // Go's JSON function classes check their arguments' TYPES in
+    // `verifyArgs`; a malformed constant path is only an evaluation
+    // error (`EXPLAIN` succeeds, an unevaluated call never fails).
+    crate::builtin_ext::json::verify_json_function_args(&lowered, &rewritten)?;
+    let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
+        crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
+    })?;
+    // Go `ifFunctionClass` / `ifNullFunctionClass` build with
+    // `newBaseBuiltinFuncWithFieldTypes`, the merged type as each
+    // value argument's expected type: the values are cast to it
+    // exactly as CASE's branches are (`wrap_case_branch`).
+    let rewritten = if matches!(lowered.as_str(), "if" | "ifnull") {
+        let first_value = usize::from(lowered == "if");
+        let connection = resolver.connection_charset_info();
+        rewritten
+            .into_iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                if index < first_value {
+                    // Go `ifFunctionClass.getFunction`:
+                    // `wrapWithIsTrue(ctx, true, args[0], false)`.
+                    return wrap_with_is_true_with_null(arg, resolver);
+                }
+                let (mut wrapped, built) = wrap_case_branch(arg, &ret_type, connection)?;
+                if let (true, Some(context)) = (built, resolver.comparison_context()) {
+                    crate::constant_fold::fold_constant_in_mode(
+                        &mut wrapped,
+                        context,
+                        ConstantFoldMode::Normal,
+                    );
+                }
+                Ok(wrapped)
+            })
+            .collect::<Result<Vec<_>, EvalError>>()?
+    } else if lowered == "coalesce" {
+        // Go `coalesceFunctionClass` builds with
+        // `newBaseBuiltinFuncWithTp`: every argument is cast to the
+        // merged EVAL type only, keeping its own length and scale, so
+        // an unfolded COALESCE answers the chosen argument as it is
+        // (a folded one is padded by the constant's `adjustDecimal`).
+        let connection = resolver.connection_charset_info();
+        rewritten
+            .into_iter()
+            .map(|arg| {
+                let was_cast = is_newly_built_cast(&arg);
+                let mut wrapped = match ret_type.eval_type() {
+                    EvalType::Int => wrap_with_cast_as_int(arg, None)?,
+                    EvalType::Real => wrap_with_cast_as_real(arg)?,
+                    EvalType::Decimal => wrap_with_cast_as_decimal(arg)?,
+                    EvalType::String => wrap_with_cast_as_string(arg, connection)?,
+                    EvalType::Datetime => {
+                        crate::aggregation::wrap_cast::wrap_with_cast_as_time(
+                            arg,
+                            FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
+                        )?
+                    }
+                    EvalType::Timestamp => {
+                        crate::aggregation::wrap_cast::wrap_with_cast_as_time(
+                            arg,
+                            FieldType::new(tidb_datatype::FieldTypeCode::Timestamp),
+                        )?
+                    }
+                    EvalType::Duration => wrap_with_cast_as_duration(arg)?,
+                    EvalType::Json => wrap_with_cast_as_json(arg)?,
+                    EvalType::VectorFloat32 => arg,
+                };
+                if is_newly_built_cast(&wrapped) && !was_cast {
+                    if let Some(context) = resolver.comparison_context() {
+                        crate::constant_fold::fold_constant_in_mode(
+                            &mut wrapped,
+                            context,
+                            ConstantFoldMode::Normal,
+                        );
+                    }
+                }
+                Ok(wrapped)
+            })
+            .collect::<Result<Vec<_>, EvalError>>()?
+    } else {
+        rewritten
+    };
+    if lowered == "tidb_version" {
+        ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
+    }
+    // Go derives the function collation before applying
+    // `HandleBinaryLiteral`. In particular, CONCAT with a binary
+    // operand has a binary result, so a non-legacy argument such as
+    // GBK must be wrapped with `to_binary` before the node is built.
+    // The tree-level derivation below still stamps the complete
+    // `ExprCollation` (including coercibility and repertoire), but
+    // this early charset/collation result is needed for the
+    // construction-time conversion decision itself.
+    let derived = crate::collation_derive::derive_collation_with_connection(
+        &lowered,
+        &rewritten,
+        ret_type.eval_type(),
+        resolver.connection_charset_info(),
+    )?;
+    ret_type.set_charset_name(derived.charset.clone());
+    ret_type.set_collation_name(derived.collation.clone());
+    let rewritten = wrap_binary_literals(
+        &lowered,
+        &derived.charset,
+        &derived.collation,
+        ret_type.eval_type(),
+        rewritten,
+        |expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+    );
+    signature_args::build_call(
+        &lowered,
+        ret_type,
+        rewritten,
+        resolver.connection_charset_info(),
+        &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+    )
 }
 
 /// [`rewrite_leaf`]'s arms for CALLS and casts -- and the catch-all, in a function of their own.
@@ -3202,138 +3376,19 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
                     EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
                 )?;
-                return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(&lowered),
+                return signature_args::build_call(
+                    &lowered,
                     ret_type,
                     rewritten,
-                )));
+                    resolver.connection_charset_info(),
+                    &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
+                );
             }
-            let mut rewritten: Vec<Expression> = args
+            let rewritten: Vec<Expression> = args
                 .iter()
                 .map(|arg| rewrite_expr_resolved(arg, &child_resolver))
                 .collect::<Result<_, _>>()?;
-            // Go `newFunctionImpl`: an untyped NULL argument takes the last
-            // typed argument's type before the function class sees it
-            // (control functions and ROW infer their own).
-            if !matches!(lowered.as_str(), "if" | "ifnull" | "nullif" | "row") {
-                crate::new_function::type_infer_for_null(&mut rewritten);
-            }
-            let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
-            let rewritten = wrap_time_format_arguments(&lowered, rewritten, resolver)?;
-            let rewritten = wrap_clock_fsp_argument(&lowered, rewritten, resolver)?;
-            // Go's JSON function classes check their arguments' TYPES in
-            // `verifyArgs`; a malformed constant path is only an evaluation
-            // error (`EXPLAIN` succeeds, an unevaluated call never fails).
-            crate::builtin_ext::json::verify_json_function_args(&lowered, &rewritten)?;
-            let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
-                crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
-            })?;
-            // Go `ifFunctionClass` / `ifNullFunctionClass` build with
-            // `newBaseBuiltinFuncWithFieldTypes`, the merged type as each
-            // value argument's expected type: the values are cast to it
-            // exactly as CASE's branches are (`wrap_case_branch`).
-            let rewritten = if matches!(lowered.as_str(), "if" | "ifnull") {
-                let first_value = usize::from(lowered == "if");
-                let connection = resolver.connection_charset_info();
-                rewritten
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, arg)| {
-                        if index < first_value {
-                            return Ok(arg);
-                        }
-                        let (mut wrapped, built) = wrap_case_branch(arg, &ret_type, connection)?;
-                        if let (true, Some(context)) = (built, resolver.comparison_context()) {
-                            crate::constant_fold::fold_constant_in_mode(
-                                &mut wrapped,
-                                context,
-                                ConstantFoldMode::Normal,
-                            );
-                        }
-                        Ok(wrapped)
-                    })
-                    .collect::<Result<Vec<_>, EvalError>>()?
-            } else if lowered == "coalesce" {
-                // Go `coalesceFunctionClass` builds with
-                // `newBaseBuiltinFuncWithTp`: every argument is cast to the
-                // merged EVAL type only, keeping its own length and scale, so
-                // an unfolded COALESCE answers the chosen argument as it is
-                // (a folded one is padded by the constant's `adjustDecimal`).
-                let connection = resolver.connection_charset_info();
-                rewritten
-                    .into_iter()
-                    .map(|arg| {
-                        let was_cast = is_newly_built_cast(&arg);
-                        let mut wrapped = match ret_type.eval_type() {
-                            EvalType::Int => wrap_with_cast_as_int(arg, None)?,
-                            EvalType::Real => wrap_with_cast_as_real(arg)?,
-                            EvalType::Decimal => wrap_with_cast_as_decimal(arg)?,
-                            EvalType::String => wrap_with_cast_as_string(arg, connection)?,
-                            EvalType::Datetime => {
-                                crate::aggregation::wrap_cast::wrap_with_cast_as_time(
-                                    arg,
-                                    FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
-                                )?
-                            }
-                            EvalType::Timestamp => {
-                                crate::aggregation::wrap_cast::wrap_with_cast_as_time(
-                                    arg,
-                                    FieldType::new(tidb_datatype::FieldTypeCode::Timestamp),
-                                )?
-                            }
-                            EvalType::Duration => wrap_with_cast_as_duration(arg)?,
-                            EvalType::Json => wrap_with_cast_as_json(arg)?,
-                            EvalType::VectorFloat32 => arg,
-                        };
-                        if is_newly_built_cast(&wrapped) && !was_cast {
-                            if let Some(context) = resolver.comparison_context() {
-                                crate::constant_fold::fold_constant_in_mode(
-                                    &mut wrapped,
-                                    context,
-                                    ConstantFoldMode::Normal,
-                                );
-                            }
-                        }
-                        Ok(wrapped)
-                    })
-                    .collect::<Result<Vec<_>, EvalError>>()?
-            } else {
-                rewritten
-            };
-            if lowered == "tidb_version" {
-                ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
-            }
-            // Go derives the function collation before applying
-            // `HandleBinaryLiteral`. In particular, CONCAT with a binary
-            // operand has a binary result, so a non-legacy argument such as
-            // GBK must be wrapped with `to_binary` before the node is built.
-            // The tree-level derivation below still stamps the complete
-            // `ExprCollation` (including coercibility and repertoire), but
-            // this early charset/collation result is needed for the
-            // construction-time conversion decision itself.
-            let derived = crate::collation_derive::derive_collation_with_connection(
-                &lowered,
-                &rewritten,
-                ret_type.eval_type(),
-                resolver.connection_charset_info(),
-            )?;
-            ret_type.set_charset_name(derived.charset.clone());
-            ret_type.set_collation_name(derived.collation.clone());
-            let rewritten = wrap_binary_literals(
-                &lowered,
-                &derived.charset,
-                &derived.collation,
-                ret_type.eval_type(),
-                rewritten,
-                |expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-            );
-            signature_args::build_call(
-                &lowered,
-                ret_type,
-                rewritten,
-                resolver.connection_charset_info(),
-                &|expression| resolver.fold_constant(expression, ConstantFoldMode::Normal),
-            )
+            finish_function_call(&lowered, rewritten, resolver)
         }
         // Go builds one `builtinCast*As*Sig` per target type, so the cast
         // node becomes a one-argument function whose RESULT type carries the
@@ -3544,30 +3599,35 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 args,
             )))
         }
-        // Go `trimFunctionClass`: the direction picks one of the three
-        // signatures, and a bare `TRIM(x)` strips spaces from both ends.
+        // Go's parser builds `trim(str)`, `trim(str, remstr)` or
+        // `trim(str, remstr, direction)` (`parseTrimFunc`): the direction is
+        // an integer constant (`TrimBothDefault` 0, `TrimBoth` 1,
+        // `TrimLeading` 2, `TrimTrailing` 3), the removal string defaults to
+        // a space when only a direction is written, and `trimFunctionClass`
+        // picks the signature by argument count.
         Expr::Trim {
             expr,
             remstr,
             direction,
         } => {
-            let name = match direction.unwrap_or(tidb_ast::TrimDirection::Both) {
-                tidb_ast::TrimDirection::Both => "trim",
-                tidb_ast::TrimDirection::Leading => "ltrim_with",
-                tidb_ast::TrimDirection::Trailing => "rtrim_with",
-            };
             let mut args = vec![rewrite_expr_resolved(expr, resolver)?];
-            match remstr {
-                Some(remstr) => args.push(rewrite_expr_resolved(remstr, resolver)?),
-                None => args.push(constant_string(" ")),
+            match (remstr, direction) {
+                (Some(remstr), _) => args.push(rewrite_expr_resolved(remstr, resolver)?),
+                (None, Some(_)) => args.push(constant_string(" ")),
+                (None, None) => {}
             }
-            let mut ret_type = FieldType::new(FieldTypeCode::VarString);
-            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new(name),
-                ret_type,
-                args,
-            )))
+            if let Some(direction) = direction {
+                let code = match direction {
+                    tidb_ast::TrimDirection::Both => 1,
+                    tidb_ast::TrimDirection::Leading => 2,
+                    tidb_ast::TrimDirection::Trailing => 3,
+                };
+                args.push(Expression::Constant(Constant::new(
+                    Datum::Int(code),
+                    FieldType::new(FieldTypeCode::Tiny),
+                )));
+            }
+            finish_function_call("trim", args, resolver)
         }
         Expr::Row(items) => {
             let args = items

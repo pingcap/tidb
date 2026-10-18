@@ -2649,16 +2649,35 @@ impl ScalarFunction {
             ctx.set_last_insert_id(recorded);
             return Ok(Datum::Int(recorded as i64));
         }
-        // Go `builtinTrim*Sig`: the name carries the direction and the second
-        // argument is the string to remove.
-        if let Some(direction) = match name {
-            "trim" if self.args.len() == 2 => Some(tidb_ast::TrimDirection::Both),
-            "ltrim_with" => Some(tidb_ast::TrimDirection::Leading),
-            "rtrim_with" => Some(tidb_ast::TrimDirection::Trailing),
-            _ => None,
-        } {
+        // Go `builtinTrim1ArgSig`/`builtinTrim2ArgsSig`/`builtinTrim3ArgsSig`:
+        // the optional second argument is the string to remove (a space by
+        // default) and the optional third an `ast.TrimDirectionType` integer.
+        if name == "trim" && (1..=3).contains(&self.args.len()) {
             let value = self.args[0].eval(ctx, row)?;
-            let remstr = self.args[1].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            let remstr = match self.args.get(1) {
+                Some(argument) => argument.eval(ctx, row)?,
+                None => Datum::new_string(" "),
+            };
+            if remstr.is_null() {
+                return Ok(Datum::Null);
+            }
+            let direction = match self.args.get(2) {
+                Some(argument) => {
+                    let direction = argument.eval(ctx, row)?;
+                    if direction.is_null() {
+                        return Ok(Datum::Null);
+                    }
+                    match direction.get_int64() {
+                        2 => tidb_ast::TrimDirection::Leading,
+                        3 => tidb_ast::TrimDirection::Trailing,
+                        _ => tidb_ast::TrimDirection::Both,
+                    }
+                }
+                None => tidb_ast::TrimDirection::Both,
+            };
             let binary = matches!(value, Datum::Bytes(_));
             let text = crate::coerce::coerce_str_bytes(&value)?;
             let remove = crate::coerce::coerce_str_bytes(&remstr)?;

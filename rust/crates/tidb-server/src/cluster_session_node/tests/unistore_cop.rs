@@ -17688,6 +17688,20 @@ fn builtin_arguments_carry_go_signature_casts() {
             "greatest(i, s)",
             "greatest(cast(test.sa.i, var_string(20)), test.sa.s)",
         ),
+        ("nullif(i, 1)", "if(eq(test.sa.i, 1), <nil>, test.sa.i)"),
+        ("trim(i)", "trim(cast(test.sa.i, var_string(20)))"),
+        (
+            "trim(leading 'x' from s)",
+            "trim(test.sa.s, x, 2)",
+        ),
+        (
+            "if(s, 1, 2)",
+            "if(istrue_with_null(cast(test.sa.s, double BINARY)), 1, 2)",
+        ),
+        (
+            "case when s then 1 end",
+            "case(istrue_with_null(cast(test.sa.s, double BINARY)), 1)",
+        ),
     ] {
         let text = displayed(rows(
             &mut session,

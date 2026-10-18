@@ -33,7 +33,7 @@ use tidb_datatype::{EvalType, FieldType, FieldTypeCode};
 use crate::aggregation::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
-    wrap_with_cast_as_time,
+    wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,
 };
 use crate::expr_util::predicates::disable_parse_json_flag_4_expr;
 use crate::expression::Expression;
@@ -58,6 +58,8 @@ enum ArgKind {
     Document,
     /// `ETJson` followed by `DisableParseJSONFlag4Expr`.
     Value,
+    /// `ETVectorFloat32`.
+    Vector,
     /// The class passes the argument's own type (`argTp` copied from it).
     Skip,
 }
@@ -84,7 +86,9 @@ fn argument_kinds(
     args: &[Expression],
     ret_type: Option<&FieldType>,
 ) -> Option<Vec<ArgKind>> {
-    use ArgKind::{Datetime, Decimal, Document, Duration, Int, Real, Skip, Text, Timestamp, Value};
+    use ArgKind::{
+        Datetime, Decimal, Document, Duration, Int, Real, Skip, Text, Timestamp, Value, Vector,
+    };
     let count = args.len();
     let first = args.first();
     let document_then_text = || {
@@ -319,6 +323,10 @@ fn argument_kinds(
             })
             .collect(),
         "benchmark" => vec![Int, Skip],
+        "vec_dims" | "vec_l2_norm" | "vec_as_text" => vec![Vector],
+        "vec_l1_distance" | "vec_l2_distance" | "vec_negative_inner_product"
+        | "vec_cosine_distance" => vec![Vector, Vector],
+        "vec_from_text" | "tidb_encode_sql_digest" => vec![Text],
         "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift" => vec![Int, Int],
         "bitneg" => vec![Int],
         // Go `arithmeticIntDivideFunctionClass`: two integers divide as
@@ -581,6 +589,7 @@ pub(super) fn wrap_builtin_arguments(
                     wrap_with_cast_as_time(arg, FieldType::new(FieldTypeCode::Timestamp))?
                 }
                 ArgKind::Duration => wrap_with_cast_as_duration(arg)?,
+                ArgKind::Vector => wrap_with_cast_as_vector_float32(arg)?,
                 ArgKind::Document => return wrap_with_cast_as_json(arg),
                 ArgKind::Value => {
                     let mut wrapped = wrap_with_cast_as_json(arg)?;
