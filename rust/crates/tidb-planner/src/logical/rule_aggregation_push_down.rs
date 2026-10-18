@@ -953,15 +953,26 @@ fn push_down_over_join(
         }
         _ => {}
     }
-    join.build_key_info(&mut schema, &[l_schema_after, r_schema_after]);
+    let _ = (l_schema_after, r_schema_after);
     join.base.base.set_schema(Some(schema));
     join.base.set_children(vec![new_l, new_r]);
-    let mut join_plan = LogicalPlan::Join(join);
+    // Go `ruleutil.BuildKeyInfoPortal(join)` is recursive: the pushed
+    // aggregations' own key info (their group-by columns are unique) is what
+    // lets the join keep the other side's key, and with it the outer
+    // aggregation's elimination below.
+    let mut join_plan = super::rewrite::build_key_info_portal_with_allocator(
+        LogicalPlan::Join(join),
+        ctx.column_allocator,
+    );
 
     // count(a) -> ifnull(col#x, 0, 1) in rewriteExpr of agg function, since
     // col#x is already the final pushed-down aggregation's result, we don't
     // need to take every row as count 1 — Go re-checks the outer aggregation
     // with the STRICTER elimination gate here.
+    // Go rewrites the old aggregation's functions in place while pushing
+    // (their arguments become the pushed partial results), so the
+    // elimination check and its projection read the rewritten list.
+    agg.agg_funcs = funcs;
     let outer_eliminated = try_to_eliminate_aggregation(ctx, &agg, &join_plan, true)?;
 
     // Combine the aggregation elimination logic below since the pushed aggs'
@@ -991,23 +1002,18 @@ fn push_down_over_join(
             changed = true;
         }
     }
+    join_plan.set_children(vec![new_l, new_r]);
     if changed {
         // Go: join.SetChildren(lChild, rChild); BuildKeyInfoPortal(join).
-        let l_schema_after = new_l.schema_or_empty();
-        let r_schema_after = new_r.schema_or_empty();
-        let LogicalPlan::Join(join) = &mut join_plan else {
-            return Err(PlanError::internal("join pushdown lost its join"));
-        };
-        let mut schema = join.base.base.schema().cloned().unwrap_or_default();
-        join.build_key_info(&mut schema, &[l_schema_after, r_schema_after]);
-        join.base.base.set_schema(Some(schema));
+        join_plan = super::rewrite::build_key_info_portal_with_allocator(
+            join_plan,
+            ctx.column_allocator,
+        );
     }
-    join_plan.set_children(vec![new_l, new_r]);
 
     if let Some(expressions) = outer_eliminated {
         Ok(elimination_projection(ctx, &agg, expressions, join_plan))
     } else {
-        agg.agg_funcs = funcs;
         agg.base.set_children(vec![join_plan]);
         Ok(LogicalPlan::Aggregation(agg))
     }

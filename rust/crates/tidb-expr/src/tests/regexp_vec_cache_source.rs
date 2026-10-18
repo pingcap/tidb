@@ -328,6 +328,7 @@ fn regexp_cache_identity_by_statement_context() {
         11,
         true,
         true,
+        tidb_datatype::Collation::from_name("utf8mb4_bin").expect("utf8mb4_bin"),
         &regexp_cache,
         &replacement_cache,
     )
@@ -344,6 +345,7 @@ fn regexp_cache_identity_by_statement_context() {
         11,
         true,
         true,
+        tidb_datatype::Collation::from_name("utf8mb4_bin").expect("utf8mb4_bin"),
         &regexp_cache,
         &replacement_cache,
     )
@@ -360,6 +362,7 @@ fn regexp_cache_identity_by_statement_context() {
         12,
         true,
         true,
+        tidb_datatype::Collation::from_name("utf8mb4_bin").expect("utf8mb4_bin"),
         &regexp_cache,
         &replacement_cache,
     )

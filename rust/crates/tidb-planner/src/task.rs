@@ -3400,18 +3400,15 @@ fn attach_agg_over_cop(
     let (partial, final_plan) =
         crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist)?;
     let Some(mut partial) = partial else {
-        // Go `attach2Task4PhysicalHashAgg`: a TiKV cop aggregate whose split
-        // is impossible (e.g. DISTINCT with tidb_opt_distinct_agg_push_down
-        // off) is an INVALID task — the Root-task candidate wins instead of
-        // a cop candidate being re-labelled as a root aggregate. The attach
-        // still consumes two ids: the inlined NewPartialAggregate's rejected
-        // cop aggregate node (go R33 receipt alloc 11) and the
-        // ConvertToRootTask's reader (alloc 12) for the fallback root
-        // aggregate that competes and loses.
-        let _ = crate::physical::BasePhysicalPlan::new(allocator, "HashAgg", query_block_offset);
-        let _ =
-            crate::physical::BasePhysicalPlan::new(allocator, "TableReader", query_block_offset);
-        return Ok(Task::invalid_task());
+        // Go `NewPartialAggregate` answers `(nil, p.Self)` when the split is
+        // impossible (an aggregate TiKV cannot run, DISTINCT with
+        // `tidb_opt_distinct_agg_push_down` off), and `attach2Task4PhysicalHashAgg`
+        // / `...StreamAgg` still convert the cop task to root and attach the
+        // whole aggregate: the task is valid, so the first candidate (the
+        // cop-single-read one, whose id the plan then shows) wins a cost tie
+        // against the root-task candidate.
+        let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
+        return Ok(attach_plan_to_task(final_plan, t));
     };
     {
         if let Some(table_plan) = cop.table_plan.take() {

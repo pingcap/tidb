@@ -63,6 +63,21 @@ pub(crate) fn compile_regexp(pattern: &str, match_type: &str) -> Result<Regex, E
     build_regexp(pattern, match_type)
 }
 
+/// Go `ErrRegexp` (`ClassExpression.NewStd(mysql.ErrRegexp)`, 1139):
+/// `Got error '%-.64s' from regexp`.
+pub(crate) fn err_regexp(message: &str) -> EvalError {
+    use tidb_error::mysql::FormatArg;
+    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
+        TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1139))
+    });
+    EvalError::Conversion(ERR_REGEXP.generate_with_stack_by_args(&[FormatArg::from(message)]))
+}
+
+/// Go `binaryCollateErr`: the positional regexp builtins refuse a
+/// `binary` charset and collation at build time, in `getFunction`.
+pub(crate) const BINARY_COLLATE_ERR: &str = "Not support binary collation so far";
+
 /// Go `getRegexpMatchType`'s collation-derived initial flag. Explicit match
 /// type flags are appended so the rightmost user flag keeps precedence.
 pub(crate) fn regexp_match_type_with_collation(

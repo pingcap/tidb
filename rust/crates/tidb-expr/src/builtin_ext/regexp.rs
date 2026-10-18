@@ -55,10 +55,14 @@ pub(crate) fn dispatch_with_cache(
     context_id: u64,
     cache_pattern: bool,
     cache_replacement: bool,
+    collation: tidb_datatype::Collation,
     regexp_cache: &BuiltinFuncCache<CachedRegexp>,
     replacement_cache: &BuiltinFuncCache<Vec<ReplacementPart>>,
 ) -> Option<Result<Datum, EvalError>> {
     let compile = |pattern: &str, match_type: &str| {
+        // Go `getRegexpMatchType`: the derived collation seeds the flags.
+        let match_type = crate::regexp::regexp_match_type_with_collation(match_type, collation);
+        let match_type = match_type.as_str();
         if !cache_pattern {
             return compile_regexp(pattern, match_type);
         }

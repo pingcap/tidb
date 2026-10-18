@@ -918,6 +918,78 @@ fn resolve_unix_timestamp(args: &[PbScalar]) -> Option<&'static BuiltinSignature
     })
 }
 
+const STR: ArgPattern = ArgPattern::eval(EvalType::String);
+const INT: ArgPattern = ArgPattern::eval(EvalType::Int);
+const REGEXP_LIKE_SELECTOR_2: &[ArgPattern] = &[STR, STR];
+const REGEXP_LIKE_SELECTOR_3: &[ArgPattern] = &[STR, STR, STR];
+const REGEXP_LIKE_TYPES_2: &[EvalType] = &[EvalType::String, EvalType::String];
+const REGEXP_LIKE_TYPES_3: &[EvalType] = &[EvalType::String, EvalType::String, EvalType::String];
+const REGEXP_INSTR_SELECTOR_2: &[ArgPattern] = &[STR, STR];
+const REGEXP_INSTR_SELECTOR_3: &[ArgPattern] = &[STR, STR, INT];
+const REGEXP_INSTR_SELECTOR_4: &[ArgPattern] = &[STR, STR, INT, INT];
+const REGEXP_INSTR_SELECTOR_5: &[ArgPattern] = &[STR, STR, INT, INT, INT];
+const REGEXP_INSTR_SELECTOR_6: &[ArgPattern] = &[STR, STR, INT, INT, INT, STR];
+const REGEXP_INSTR_TYPES_2: &[EvalType] = &[EvalType::String, EvalType::String];
+const REGEXP_INSTR_TYPES_3: &[EvalType] = &[EvalType::String, EvalType::String, EvalType::Int];
+const REGEXP_INSTR_TYPES_4: &[EvalType] =
+    &[EvalType::String, EvalType::String, EvalType::Int, EvalType::Int];
+const REGEXP_INSTR_TYPES_5: &[EvalType] = &[
+    EvalType::String,
+    EvalType::String,
+    EvalType::Int,
+    EvalType::Int,
+    EvalType::Int,
+];
+const REGEXP_INSTR_TYPES_6: &[EvalType] = &[
+    EvalType::String,
+    EvalType::String,
+    EvalType::Int,
+    EvalType::Int,
+    EvalType::Int,
+    EvalType::String,
+];
+const REGEXP_SUBSTR_SELECTOR_2: &[ArgPattern] = &[STR, STR];
+const REGEXP_SUBSTR_SELECTOR_3: &[ArgPattern] = &[STR, STR, INT];
+const REGEXP_SUBSTR_SELECTOR_4: &[ArgPattern] = &[STR, STR, INT, INT];
+const REGEXP_SUBSTR_SELECTOR_5: &[ArgPattern] = &[STR, STR, INT, INT, STR];
+const REGEXP_SUBSTR_TYPES_2: &[EvalType] = &[EvalType::String, EvalType::String];
+const REGEXP_SUBSTR_TYPES_3: &[EvalType] = &[EvalType::String, EvalType::String, EvalType::Int];
+const REGEXP_SUBSTR_TYPES_4: &[EvalType] =
+    &[EvalType::String, EvalType::String, EvalType::Int, EvalType::Int];
+const REGEXP_SUBSTR_TYPES_5: &[EvalType] = &[
+    EvalType::String,
+    EvalType::String,
+    EvalType::Int,
+    EvalType::Int,
+    EvalType::String,
+];
+const REGEXP_REPLACE_SELECTOR_3: &[ArgPattern] = &[STR, STR, STR];
+const REGEXP_REPLACE_SELECTOR_4: &[ArgPattern] = &[STR, STR, STR, INT];
+const REGEXP_REPLACE_SELECTOR_5: &[ArgPattern] = &[STR, STR, STR, INT, INT];
+const REGEXP_REPLACE_SELECTOR_6: &[ArgPattern] = &[STR, STR, STR, INT, INT, STR];
+const REGEXP_REPLACE_TYPES_3: &[EvalType] = &[EvalType::String, EvalType::String, EvalType::String];
+const REGEXP_REPLACE_TYPES_4: &[EvalType] = &[
+    EvalType::String,
+    EvalType::String,
+    EvalType::String,
+    EvalType::Int,
+];
+const REGEXP_REPLACE_TYPES_5: &[EvalType] = &[
+    EvalType::String,
+    EvalType::String,
+    EvalType::String,
+    EvalType::Int,
+    EvalType::Int,
+];
+const REGEXP_REPLACE_TYPES_6: &[EvalType] = &[
+    EvalType::String,
+    EvalType::String,
+    EvalType::String,
+    EvalType::Int,
+    EvalType::Int,
+    EvalType::String,
+];
+
 /// The catalog, in Go's own per-family order.
 ///
 /// Only signatures `infer_pushdown.go`'s `scalarExprSupportedByTiKV` admits are
@@ -939,6 +1011,128 @@ pub const CATALOG: &[BuiltinSignature] = &[
         EvalType::Int,
         ScalarFuncSig::RegexpLikeSig,
         false,
+    ),
+    // Go `regexpLikeFunctionClass.getFunction`: `(expr, pat[, match_type])`,
+    // every operand an `ETString`, one signature for both arities.
+    signature(
+        "regexp_like",
+        REGEXP_LIKE_SELECTOR_2,
+        REGEXP_LIKE_TYPES_2,
+        EvalType::Int,
+        ScalarFuncSig::RegexpLikeSig,
+        false,
+    ),
+    signature(
+        "regexp_like",
+        REGEXP_LIKE_SELECTOR_3,
+        REGEXP_LIKE_TYPES_3,
+        EvalType::Int,
+        ScalarFuncSig::RegexpLikeSig,
+        false,
+    ),
+    // Go `regexpInStrFunctionClass.getFunction`: `argTp` is the prefix of
+    // `(ETString, ETString, ETInt, ETInt, ETInt, ETString)` as long as the
+    // call, and every arity resolves `RegexpInStrSig`.
+    signature(
+        "regexp_instr",
+        REGEXP_INSTR_SELECTOR_2,
+        REGEXP_INSTR_TYPES_2,
+        EvalType::Int,
+        ScalarFuncSig::RegexpInStrSig,
+        false,
+    ),
+    signature(
+        "regexp_instr",
+        REGEXP_INSTR_SELECTOR_3,
+        REGEXP_INSTR_TYPES_3,
+        EvalType::Int,
+        ScalarFuncSig::RegexpInStrSig,
+        false,
+    ),
+    signature(
+        "regexp_instr",
+        REGEXP_INSTR_SELECTOR_4,
+        REGEXP_INSTR_TYPES_4,
+        EvalType::Int,
+        ScalarFuncSig::RegexpInStrSig,
+        false,
+    ),
+    signature(
+        "regexp_instr",
+        REGEXP_INSTR_SELECTOR_5,
+        REGEXP_INSTR_TYPES_5,
+        EvalType::Int,
+        ScalarFuncSig::RegexpInStrSig,
+        false,
+    ),
+    signature(
+        "regexp_instr",
+        REGEXP_INSTR_SELECTOR_6,
+        REGEXP_INSTR_TYPES_6,
+        EvalType::Int,
+        ScalarFuncSig::RegexpInStrSig,
+        false,
+    ),
+    // Go `regexpSubstrFunctionClass.getFunction`: the prefix of
+    // `(ETString, ETString, ETInt, ETInt, ETString)`, an `ETString` result
+    // whose `flen` is the first argument's.
+    string_signature(
+        "regexp_substr",
+        REGEXP_SUBSTR_SELECTOR_2,
+        REGEXP_SUBSTR_TYPES_2,
+        ScalarFuncSig::RegexpSubstrSig,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "regexp_substr",
+        REGEXP_SUBSTR_SELECTOR_3,
+        REGEXP_SUBSTR_TYPES_3,
+        ScalarFuncSig::RegexpSubstrSig,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "regexp_substr",
+        REGEXP_SUBSTR_SELECTOR_4,
+        REGEXP_SUBSTR_TYPES_4,
+        ScalarFuncSig::RegexpSubstrSig,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "regexp_substr",
+        REGEXP_SUBSTR_SELECTOR_5,
+        REGEXP_SUBSTR_TYPES_5,
+        ScalarFuncSig::RegexpSubstrSig,
+        RetCollation::FirstArgString,
+    ),
+    // Go `regexpReplaceFunctionClass.getFunction`: the prefix of
+    // `(ETString, ETString, ETString, ETInt, ETInt, ETString)`.
+    string_signature(
+        "regexp_replace",
+        REGEXP_REPLACE_SELECTOR_3,
+        REGEXP_REPLACE_TYPES_3,
+        ScalarFuncSig::RegexpReplaceSig,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "regexp_replace",
+        REGEXP_REPLACE_SELECTOR_4,
+        REGEXP_REPLACE_TYPES_4,
+        ScalarFuncSig::RegexpReplaceSig,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "regexp_replace",
+        REGEXP_REPLACE_SELECTOR_5,
+        REGEXP_REPLACE_TYPES_5,
+        ScalarFuncSig::RegexpReplaceSig,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "regexp_replace",
+        REGEXP_REPLACE_SELECTOR_6,
+        REGEXP_REPLACE_TYPES_6,
+        ScalarFuncSig::RegexpReplaceSig,
+        RetCollation::FirstArgString,
     ),
     // Go isNullFunctionClass: Timestamp uses Time, JSON is cast to String.
     signature(
@@ -4507,6 +4701,54 @@ mod tests {
             to_pb(&call, &binary_descriptor).is_none(),
             "the UTF-8 signature must not travel against a binary column"
         );
+    }
+
+    /// Go resolves one signature per regexp builtin whatever the arity, with
+    /// `argTp` the prefix of the family's declared operand types.
+    #[test]
+    fn the_regexp_family_resolves_one_signature_per_arity() {
+        let string = || PbScalar::StringLiteral {
+            value: b"x".to_vec(),
+            field_type: FieldType::new(FieldTypeCode::VarString),
+        };
+        let int = || PbScalar::IntLiteral(1);
+        let cases: &[(&str, Vec<PbScalar>, ScalarFuncSig)] = &[
+            ("regexp_like", vec![string(), string()], ScalarFuncSig::RegexpLikeSig),
+            (
+                "regexp_like",
+                vec![string(), string(), string()],
+                ScalarFuncSig::RegexpLikeSig,
+            ),
+            ("regexp_instr", vec![string(), string()], ScalarFuncSig::RegexpInStrSig),
+            (
+                "regexp_instr",
+                vec![string(), string(), int(), int(), int(), string()],
+                ScalarFuncSig::RegexpInStrSig,
+            ),
+            (
+                "regexp_substr",
+                vec![string(), string(), int(), int(), string()],
+                ScalarFuncSig::RegexpSubstrSig,
+            ),
+            (
+                "regexp_replace",
+                vec![string(), string(), string()],
+                ScalarFuncSig::RegexpReplaceSig,
+            ),
+            (
+                "regexp_replace",
+                vec![string(), string(), string(), int(), int(), string()],
+                ScalarFuncSig::RegexpReplaceSig,
+            ),
+        ];
+        for (name, args, expected) in cases {
+            let row = resolve(name, args)
+                .unwrap_or_else(|| panic!("{name}/{} is a catalog row", args.len()));
+            assert_eq!(row.sig, *expected, "{name}/{}", args.len());
+        }
+        // A miss in the positional slots is a refusal, never a guess.
+        assert!(resolve("regexp_substr", &[string(), string(), string()]).is_none());
+        assert!(resolve("regexp_replace", &[string(), string()]).is_none());
     }
 
     /// Every row of the table is well-formed: the selector and the coerced

@@ -465,15 +465,14 @@ fn exec_index_scan(
             }
             // Go `indexScanExec.rowCnt`: every entry the scan produced.
             *scanned_rows += 1;
-            match conditions
-                .iter()
-                .map(|condition| {
-                    eval_expr(condition, &row, context.div_precision_increment, &timezone)
-                })
-                .collect::<Result<Vec<_>, String>>()
-            {
-                Ok(values) if values.iter().all(|v| v.is_some_and(|v| v != 0)) => {}
-                Ok(_) => continue,
+            match conditions_hold(
+                conditions,
+                &row,
+                context.div_precision_increment,
+                &timezone,
+            ) {
+                Ok(true) => {}
+                Ok(false) => continue,
                 Err(message) => {
                     if context.flags & 2 != 0 {
                         eval_warnings.push(tipb::Error {
@@ -811,20 +810,14 @@ fn exec_table_scan(
             *scanned_rows += 1;
             // Go `selectionProcessor`: a row survives only when EVERY
             // condition evaluates non-null and non-zero.
-            match conditions
-                .iter()
-                .map(|condition| {
-                    eval_expr(
-                        condition,
-                        &row_datums,
-                        context.div_precision_increment,
-                        &timezone,
-                    )
-                })
-                .collect::<Result<Vec<_>, String>>()
-            {
-                Ok(values) if values.iter().all(|v| v.is_some_and(|v| v != 0)) => {}
-                Ok(_) => continue,
+            match conditions_hold(
+                conditions,
+                &row_datums,
+                context.div_precision_increment,
+                &timezone,
+            ) {
+                Ok(true) => {}
+                Ok(false) => continue,
                 Err(message) => return other_error(&message),
             }
             // A partial aggregation consumes the surviving row instead of
@@ -3826,6 +3819,26 @@ fn collation_of(expr: &tipb::Expr) -> i32 {
     tidb_datatype::restore_collation_id_if_needed(protocol)
 }
 
+/// Go `closureExecutor.processSelection`: the conditions run in order and the
+/// first one that is NULL or zero rejects the row WITHOUT evaluating the rest,
+/// so `b <> '(' AND regexp_like(a, b)` never compiles the pattern of a row the
+/// first condition already dropped.
+fn conditions_hold(
+    conditions: &[SimpleExpr],
+    row: &[tidb_datatype::Datum],
+    div_precision_increment: i64,
+    time_zone: &tidb_datatype::SessionTimeZone,
+) -> Result<bool, String> {
+    for condition in conditions {
+        if !eval_expr(condition, row, div_precision_increment, time_zone)?
+            .is_some_and(|value| value != 0)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Evaluates one pushed-down expression against a scanned row: MySQL's
 /// three-valued int (`Some(0/1/n)`) or NULL, beside Go's expression-level
 /// error -- the 1690 overflow terror the request-level answer carries.
@@ -6145,6 +6158,25 @@ mod tests {
             .expect("evals"),
             None
         );
+    }
+
+    /// Go `processSelection` breaks at the first condition that rejects the
+    /// row: a later condition that would error (here an `i64` overflow) is
+    /// never evaluated for it.
+    #[test]
+    fn selection_conditions_short_circuit_on_the_first_rejection() {
+        use tidb_datatype::Datum;
+        let rejects = SimpleExpr::Int(0);
+        let overflows = SimpleExpr::Func(
+            SimpleSig::PlusInt,
+            vec![SimpleExpr::Column(0), SimpleExpr::Column(1)],
+        );
+        let row = [Datum::Int(i64::MAX), Datum::Int(1)];
+        assert_eq!(
+            conditions_hold(&[rejects.clone(), overflows.clone()], &row, 4, &zone()),
+            Ok(false)
+        );
+        assert!(conditions_hold(&[overflows, rejects], &row, 4, &zone()).is_err());
     }
 
     #[test]

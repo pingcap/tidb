@@ -1857,6 +1857,17 @@ fn derive_tree_collation_with_connection(
         &name, &func.args, ret_type, connection,
     )?;
     crate::collation_derive::apply_derived_collation(expr, &ec);
+    // Go `regexpSubstr/InStr/ReplaceFunctionClass.getFunction`: a call whose
+    // derived charset and collation are both `binary` is refused when it is
+    // built (`regexp_like` is not).
+    if matches!(
+        name.as_str(),
+        "regexp_substr" | "regexp_instr" | "regexp_replace"
+    ) && ec.charset == "binary"
+        && ec.collation == "binary"
+    {
+        return Err(crate::regexp::err_regexp(crate::regexp::BINARY_COLLATE_ERR));
+    }
     // Some getFunction implementations overwrite generic derivation with a
     // fixed result charset. Reapply those source-owned result rules last.
     restore_function_result_charset(expr)?;

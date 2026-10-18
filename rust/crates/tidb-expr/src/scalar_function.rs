@@ -1852,6 +1852,47 @@ impl ScalarFunction {
         )
     }
 
+    /// Go `regexpBaseFuncSig`'s positional family (`REGEXP_SUBSTR`,
+    /// `REGEXP_INSTR`, `REGEXP_REPLACE`) over already-evaluated operands. The
+    /// derived collation seeds the match type (`_ci` compiles case
+    /// insensitively unless a later `c` flag says otherwise), and a pattern or
+    /// replacement constant for the statement is compiled once.
+    pub(crate) fn eval_regexp_family(
+        &self,
+        upper: &str,
+        vals: &[Datum],
+        ctx: &dyn Columns,
+    ) -> Result<Datum, EvalError> {
+        let cache_pattern = self
+            .args
+            .get(1)
+            .is_some_and(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT);
+        let match_type_index = match upper {
+            "REGEXP_SUBSTR" if self.args.len() == 5 => Some(4),
+            "REGEXP_INSTR" if self.args.len() == 6 => Some(5),
+            "REGEXP_REPLACE" if self.args.len() == 6 => Some(5),
+            _ => None,
+        };
+        let cache_match_type = match_type_index
+            .is_none_or(|index| self.args[index].const_level() >= ConstLevel::ONLY_IN_CONTEXT);
+        let cache_replacement = upper == "REGEXP_REPLACE"
+            && self
+                .args
+                .get(2)
+                .is_some_and(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT);
+        crate::builtin_ext::regexp::dispatch_with_cache(
+            upper,
+            vals,
+            ctx.context_id(),
+            cache_pattern && cache_match_type,
+            cache_replacement,
+            self.derived_collation(),
+            &self.regexp_cache,
+            &self.regexp_replace_instruction_cache,
+        )
+        .expect("the native regexp family is registered")
+    }
+
     fn eval_regexp_like(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         if !matches!(self.args.len(), 2 | 3) {
             return Err(EvalError::WrongParameterCount("regexp_like"));
@@ -3180,33 +3221,7 @@ impl ScalarFunction {
             upper.as_str(),
             "REGEXP_SUBSTR" | "REGEXP_INSTR" | "REGEXP_REPLACE"
         ) {
-            let cache_pattern = self
-                .args
-                .get(1)
-                .is_some_and(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT);
-            let match_type_index = match upper.as_str() {
-                "REGEXP_SUBSTR" if self.args.len() == 5 => Some(4),
-                "REGEXP_INSTR" if self.args.len() == 6 => Some(5),
-                "REGEXP_REPLACE" if self.args.len() == 6 => Some(5),
-                _ => None,
-            };
-            let cache_match_type = match_type_index
-                .is_none_or(|index| self.args[index].const_level() >= ConstLevel::ONLY_IN_CONTEXT);
-            let cache_replacement = upper == "REGEXP_REPLACE"
-                && self
-                    .args
-                    .get(2)
-                    .is_some_and(|argument| argument.const_level() >= ConstLevel::ONLY_IN_CONTEXT);
-            return crate::builtin_ext::regexp::dispatch_with_cache(
-                &upper,
-                &vals,
-                ctx.context_id(),
-                cache_pattern && cache_match_type,
-                cache_replacement,
-                &self.regexp_cache,
-                &self.regexp_replace_instruction_cache,
-            )
-            .expect("the native regexp family is registered");
+            return self.eval_regexp_family(&upper, &vals, ctx);
         }
         if upper == "ORD" {
             return crate::string_fn::ord_with_type(

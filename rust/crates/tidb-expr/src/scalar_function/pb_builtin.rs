@@ -68,6 +68,9 @@ enum Kernel {
     },
     FromUnixTime,
     Regexp,
+    /// The positional regexp builtins, evaluated by the same method the
+    /// root tier uses so the derived collation seeds the match type.
+    RegexpFamily(&'static str),
     Json,
     Values(ValuesKernel),
 }
@@ -277,6 +280,9 @@ impl PbBuiltin {
             }
             FromUnixTime1Arg | FromUnixTime2Arg => Kernel::FromUnixTime,
             RegexpLikeSig => Kernel::Regexp,
+            RegexpSubstrSig => Kernel::RegexpFamily("REGEXP_SUBSTR"),
+            RegexpInStrSig => Kernel::RegexpFamily("REGEXP_INSTR"),
+            RegexpReplaceSig => Kernel::RegexpFamily("REGEXP_REPLACE"),
             JsonMemberOfSig | JsonReplaceSig | JsonArrayAppendSig | JsonMergePatchSig => {
                 Kernel::Json
             }
@@ -627,6 +633,7 @@ impl PbBuiltin {
                 }
                 match kernel {
                     Kernel::Values(eval) => eval(&values, ctx),
+                    Kernel::RegexpFamily(name) => function.eval_regexp_family(name, &values, ctx),
                     Kernel::ConvertCharset { from_binary } => {
                         let [value] = values.as_slice() else {
                             return Err(EvalError::Unsupported("protobuf charset builtin arity"));
