@@ -424,6 +424,9 @@ enum StatementRoute {    /// Changes nothing stored outside this process.
     Ordinary,
     /// One catalog change this node can express.
     Ddl(DdlStatement),
+    /// Go `AlterTable`'s table-option loop: one job per option, in order,
+    /// stopping at the first failure (`cluster_ddl::split_table_option_alter`).
+    DdlSequence(Vec<DdlStatement>),
     /// DDL owned by this connection's LOCAL temporary-table namespace.
     LocalTemporaryDdl,
     /// Only persistent targets reach cluster metadata; local targets follow success.
@@ -6764,6 +6767,11 @@ impl ClusterServerSession {
                         Ok(StatementRoute::Ddl(statement))
                     }
                     Ok(None) => {
+                        if let Some(parts) = self.lower_table_option_sequence(stmt, &context)? {
+                            self.session.begin_routed_statement_warnings();
+                            self.session.drain_context_warnings(&context);
+                            return Ok(StatementRoute::DdlSequence(parts));
+                        }
                         // A missing cluster executor must not bypass Go's
                         // shared DDL privilege admission. Keep the capability
                         // refusal for callers that hold the required grants.
@@ -7552,6 +7560,61 @@ impl ClusterServerSession {
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
     }
 
+    /// The single-option statements a multi-option `ALTER TABLE ... <table
+    /// options>` runs as, each lowered by the ordinary path; `None` unless
+    /// every part lowers, so a shape the node cannot run keeps its refusal.
+    fn lower_table_option_sequence(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        context: &tidb_executor::StmtContext,
+    ) -> Result<Option<Vec<DdlStatement>>, SqlQueryError> {
+        let tidb_ast::Stmt::Ddl(ddl) = stmt else {
+            return Ok(None);
+        };
+        let tidb_ast::DdlStmt::AlterTable(alter) = &**ddl else {
+            return Ok(None);
+        };
+        let Some(parts) = tidb_exec::cluster_ddl::split_table_option_alter(alter) else {
+            return Ok(None);
+        };
+        let mut lowered = Vec::with_capacity(parts.len());
+        for part in parts {
+            let part = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(
+                tidb_ast::DdlStmt::AlterTable(Box::new(part)),
+            ));
+            match prepare_cluster_ddl_parsed(&part, self.session.current_database(), context) {
+                Ok(Some(statement)) => lowered.push(statement),
+                Ok(None) => return Ok(None),
+                // Lowering refuses before any part runs, where Go's loop
+                // would already have applied the earlier options.
+                Err(refusal) => {
+                    return Err(SqlQueryError::new(
+                        refusal.code,
+                        refusal.sql_state(),
+                        refusal.to_string(),
+                    ))
+                }
+            }
+        }
+        Ok(Some(lowered))
+    }
+
+    /// Runs a [`StatementRoute::DdlSequence`] the way Go's loop does: each
+    /// part is its own DDL, and the first failure ends the statement with
+    /// the earlier parts already applied.
+    fn run_ddl_sequence(
+        &mut self,
+        sql: &str,
+        parsed: &tidb_ast::Stmt,
+        statements: &[DdlStatement],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let mut outcome = None;
+        for statement in statements {
+            outcome = Some(self.run_ddl(sql, parsed, statement)?);
+        }
+        Ok(outcome.expect("a table-option sequence has at least one part"))
+    }
+
     fn run_ddl(
         &mut self,
         sql: &str,
@@ -7900,6 +7963,13 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Ddl(statement) => {
                 return self
                     .observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))
+                    .map(Some)
+            }
+            StatementRoute::DdlSequence(statements) => {
+                return self
+                    .observe_routed_write(sql, stmt, |node| {
+                        node.run_ddl_sequence(sql, stmt, &statements)
+                    })
                     .map(Some)
             }
             StatementRoute::MixedTemporaryDrop { statement, local } => {
@@ -8456,6 +8526,14 @@ impl QuerySession for ClusterServerSession {
         match self.schema_route(stmt)? {
             StatementRoute::Ddl(statement) => {
                 self.observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::DdlSequence(statements) => {
+                self.observe_routed_write(sql, stmt, |node| {
+                    node.run_ddl_sequence(sql, stmt, &statements)
+                })?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

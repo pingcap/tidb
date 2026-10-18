@@ -1922,6 +1922,8 @@ fn lower_alter_table_catalog(
                                     "Unsupported multi schema change for rebase auto_random ID",
                                 ));
                             }
+                            // Go's loop has empty cases for these: no sub-job.
+                            option if is_noop_table_option(option) => {}
                             _ => return Ok(None),
                         }
                     }
@@ -2056,6 +2058,10 @@ fn lower_alter_table_catalog(
                     | tidb_ast::AlterTableAction::Lock(_)
                     | tidb_ast::AlterTableAction::WithValidation
                     | tidb_ast::AlterTableAction::WithoutValidation
+            ) || matches!(
+                action,
+                tidb_ast::AlterTableAction::SetTableOptions { options }
+                    if options.iter().all(is_noop_table_option)
             )
         }) {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -8758,6 +8764,84 @@ impl tidb_executor::ddl::ReorgHost for ClusterReorgHost<'_> {
 }
 
 /// Whether a table option is one of Go's TTL family.
+/// Go `AlterTable`'s `ast.AlterTableOption` loop over one specification's
+/// options, as the single-option `ALTER TABLE` statements it runs, in order:
+/// each option is its own job; every CHARSET/COLLATE option is handled once,
+/// at the first, and likewise every TTL option; ENGINE and ROW_FORMAT do
+/// nothing; the ENGINE_ATTRIBUTE / STORAGE_CLASS options become one job after
+/// the loop, and the last PLACEMENT POLICY another after that. `None` when the
+/// statement is not one multi-option table-option specification.
+#[must_use]
+pub fn split_table_option_alter(alter: &tidb_ast::AlterTableStmt) -> Option<Vec<tidb_ast::AlterTableStmt>> {
+    use tidb_ast::TableOption;
+    let [tidb_ast::AlterTableAction::SetTableOptions { options }] = alter.actions.as_slice() else {
+        return None;
+    };
+    if options.len() < 2 {
+        return None;
+    }
+    let single = |options: Vec<TableOption>| tidb_ast::AlterTableStmt {
+        name: alter.name.clone(),
+        actions: vec![tidb_ast::AlterTableAction::SetTableOptions { options }],
+    };
+    let mut statements = Vec::new();
+    let (mut charset_done, mut ttl_done) = (false, false);
+    let mut storage_class = Vec::new();
+    let mut placement = None;
+    for option in options {
+        match option {
+            TableOption::CharacterSet(_) | TableOption::Collate(_) => {
+                if !charset_done {
+                    charset_done = true;
+                    statements.push(single(
+                        options
+                            .iter()
+                            .filter(|option| {
+                                matches!(option, TableOption::CharacterSet(_) | TableOption::Collate(_))
+                            })
+                            .cloned()
+                            .collect(),
+                    ));
+                }
+            }
+            option if is_ttl_table_option(option) => {
+                if !ttl_done {
+                    ttl_done = true;
+                    statements.push(single(
+                        options.iter().filter(|option| is_ttl_table_option(option)).cloned().collect(),
+                    ));
+                }
+            }
+            TableOption::Engine(_) | TableOption::RowFormat(_) => {}
+            TableOption::EngineAttribute(_) | TableOption::StorageClass(_) => {
+                storage_class.push(option.clone());
+            }
+            TableOption::PlacementPolicy(_) => placement = Some(option.clone()),
+            other => statements.push(single(vec![other.clone()])),
+        }
+    }
+    if !storage_class.is_empty() {
+        statements.push(single(storage_class));
+    }
+    if let Some(placement) = placement {
+        statements.push(single(vec![placement]));
+    }
+    if statements.is_empty() {
+        // Only no-op options: one of them still resolves the table, as Go
+        // does before its loop.
+        statements.push(single(vec![options[0].clone()]));
+    }
+    Some(statements)
+}
+
+/// The table options Go's `AlterTableOption` loop accepts with an empty case.
+fn is_noop_table_option(option: &tidb_ast::TableOption) -> bool {
+    matches!(
+        option,
+        tidb_ast::TableOption::Engine(_) | tidb_ast::TableOption::RowFormat(_)
+    )
+}
+
 fn is_ttl_table_option(option: &tidb_ast::TableOption) -> bool {
     matches!(
         option,
@@ -12510,6 +12594,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             table,
             warning,
         } => {
+            // Go `AlterTable` resolves the table before any specification
+            // runs, so a no-op ALTER of a missing table is 1146.
+            if !table.is_empty() {
+                locate_table(&catalog, schema, table)?;
+            }
             let warnings = warning
                 .as_ref()
                 .map(|(code, message)| {

@@ -745,13 +745,34 @@ pub fn fts_columns_are_strings(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> bool {
-    let scope = subquery::select_outer_scope(select, catalog, current_db, ctx);
+    // The scope is the FROM clause's schema, which no ON condition changes;
+    // an ON may still hold the very MATCH being asked about, and planning it
+    // before the rewrite fails, which left an empty scope and refused every
+    // `MATCH` in a join's ON as a non-string column.
+    let mut without_on = select.clone();
+    if let Some(join) = without_on.from.as_mut() {
+        drop_join_conditions(join);
+    }
+    let scope = subquery::select_outer_scope(&without_on, catalog, current_db, ctx);
     let resolver = from::ScopeResolver { scope: &scope };
     columns.iter().all(|path| {
         resolver.resolve(path).is_some_and(|(_, field_type, _)| {
             field_type.eval_type() == tidb_datatype::EvalType::String
         })
     })
+}
+
+/// Clears every `ON` in a join tree; `USING` stays, as it shapes the schema.
+fn drop_join_conditions(join: &mut tidb_ast::Join) {
+    join.on = None;
+    for node in [Some(&mut join.left), join.right.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        if let tidb_ast::JoinNode::Join(inner) = node {
+            drop_join_conditions(inner);
+        }
+    }
 }
 
 /// Plans one parsed `SELECT` and returns only its result-column metadata.

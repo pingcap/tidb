@@ -268,14 +268,43 @@ pub fn cluster_session_catalog_with_templates(
                         .register_kv_in(&schema, table.name.original(), kv_table)
                         .expect("the schema was created just above this loop");
                 }
-                Err(reason) => skipped.push(SkippedTable {
-                    name: format!("{schema}.{}", table.name.original()),
-                    reason,
-                }),
+                Err(reason) => {
+                    report_unbuildable_table(&schema, table, &reason);
+                    skipped.push(SkippedTable {
+                        name: format!("{schema}.{}", table.name.original()),
+                        reason,
+                    });
+                }
             }
         }
     }
     ClusterSessionCatalog { catalog, skipped }
+}
+
+/// A stored table this node cannot build is a gap in the port, not a state
+/// Go has: Go loads every stored table, so here the table silently does not
+/// exist for the session ("DDL succeeded but the table is invisible"). Each
+/// table version is reported once per process, as a structured warning the
+/// production replay gate fails on.
+fn report_unbuildable_table(schema: &str, table: &TableInfo, reason: &str) {
+    // METRICS_SCHEMA's tables are served from Go's `genColumnInfos` shapes
+    // (`driver/metricsschema.rs`), not built from these column-less entries.
+    if schema.eq_ignore_ascii_case("METRICS_SCHEMA") {
+        return;
+    }
+    static REPORTED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<(i64, u64)>>> =
+        std::sync::LazyLock::new(Default::default);
+    let first = REPORTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert((table.id, table.update_ts));
+    if first {
+        eprintln!(
+            "{{\"level\":\"warning\",\"event\":\"table_skipped\",\"table\":{:?},\"reason\":{:?}}}",
+            format!("{schema}.{}", table.name.original()),
+            reason
+        );
+    }
 }
 
 /// Translates Go's persisted `TableInfo.View` into the driver's metadata-only

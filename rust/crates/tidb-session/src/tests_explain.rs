@@ -6105,3 +6105,26 @@ fn explain_formats_follow_go_format_list() {
         "{decoded:?}"
     );
 }
+
+/// `planner/core/fulltext_search`: a `MATCH` in a join's ON resolves its
+/// columns against the FROM schema like one in WHERE. The resolver used to
+/// plan the FROM with that ON still holding the unrewritten MATCH, which
+/// failed and left no columns to resolve, so the ON form was refused.
+#[test]
+fn match_against_in_a_join_on_resolves_like_where() {
+    let mut session = Session::new();
+    for sql in [
+        "create table articles (id int primary key, title varchar(200), body text)",
+        "insert into articles values (5, 'MySQL Security', 'x'), (4, 'MySQL vs. PostgreSQL', 'y')",
+        "set tidb_opt_enable_alternative_logical_plans = on",
+    ] {
+        session.run(sql).expect(sql);
+    }
+    assert_eq!(
+        row_text(session.run(
+            "select a.id, a.title from articles a inner join articles a2 \
+             on a.id = a2.id and match(a.title) against('Security')"
+        )),
+        [["5", "MySQL Security"]]
+    );
+}

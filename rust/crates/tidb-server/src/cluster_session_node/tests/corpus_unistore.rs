@@ -555,7 +555,7 @@ fn production_replay_stays_within_budget() {
     // known stale recordings (`session/nontransactional`'s USE_INDEX spacing).
     // Lower these when a divergence is fixed; never raise them.
     const DIVERGENCE_BUDGET: usize = 12;
-    const OUT_OF_DOMAIN_BUDGET: usize = 6;
+    const OUT_OF_DOMAIN_BUDGET: usize = 2;
     const SHARDS: usize = 8;
 
     let topics = difftest_result_tests::enrolled_topics::TOPICS;
@@ -608,6 +608,11 @@ fn production_replay_stays_within_budget() {
                     divergences.push(format!("[{topic}] {headline}"));
                 }
                 _ if line.starts_with("UNALIGNED ") => failures.push(line.to_owned()),
+                // A stored table the session could not build: Go has no such
+                // state, and the topic's later statements would fail on it.
+                _ if line.contains("\"event\":\"table_skipped\"") => {
+                    failures.push(format!("shard {index}: {line}"));
+                }
                 _ => {}
             }
         }

@@ -993,14 +993,17 @@ fn materialise(
                 | FieldTypeCode::LongLong
                 | FieldTypeCode::Year => {
                     let printed = std::str::from_utf8(bytes.as_bytes()).map_err(|_| refuse())?;
-                    let parsed = printed.trim().parse::<i64>().map_err(|_| refuse())?;
+                    // An unsigned default reads in the unsigned domain: a
+                    // `BIGINT UNSIGNED DEFAULT '12818995484625953384'` is past
+                    // `i64::MAX`, and refusing it made the session skip the
+                    // whole table, which then did not exist for it.
                     if column
                         .field_type
                         .has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
                     {
-                        Datum::UInt(u64::try_from(parsed).map_err(|_| refuse())?)
+                        Datum::UInt(printed.trim().parse::<u64>().map_err(|_| refuse())?)
                     } else {
-                        Datum::Int(parsed)
+                        Datum::Int(printed.trim().parse::<i64>().map_err(|_| refuse())?)
                     }
                 }
                 _ => typed_value(&text, &column.field_type)?,
@@ -1489,6 +1492,26 @@ mod tests {
         assert_eq!(
             literal_default(&column, "t").expect("the nil interface materialises"),
             Datum::Null
+        );
+    }
+
+    /// Captured from `planner/core/indexjoin`: Go stores and loads a
+    /// `BIGINT UNSIGNED DEFAULT '12818995484625953384'`, past `i64::MAX`.
+    #[test]
+    fn unsigned_integer_defaults_read_past_the_signed_range() {
+        let mut column = ColumnInfo::default();
+        column.set_type(FieldTypeCode::LongLong);
+        column
+            .field_type
+            .add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        column
+            .set_default_value(tidb_model::ColumnDefaultValue::string_bytes(
+                b"12818995484625953384".to_vec(),
+            ))
+            .expect("a printed unsigned default is valid");
+        assert_eq!(
+            literal_default(&column, "t").expect("the unsigned default materialises"),
+            Datum::UInt(12_818_995_484_625_953_384)
         );
     }
 

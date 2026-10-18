@@ -1229,3 +1229,52 @@ fn schema_placement_is_stored_inherited_and_removed() {
         serde_json::Value::Null
     );
 }
+
+/// `util/admin`: Go's `AlterTableOption` loop has empty cases for ENGINE and
+/// ROW_FORMAT, so specifications made only of them add no sub-job and the
+/// statement resolves the table and changes nothing.
+#[test]
+fn engine_and_row_format_specifications_are_no_ops() {
+    for sql in ["ALTER TABLE u6.t engine=innodb, ROW_FORMAT=DYNAMIC"] {
+        let parsed = tidb_parser::parse(sql).expect("parses");
+        let lowered = lower_ddl(&parsed, "u6").expect("admitted");
+        assert!(
+            matches!(
+                lowered,
+                Some(
+                    tidb_exec::cluster_ddl::DdlStatement::AcceptedNoOp { .. }
+                        | tidb_exec::cluster_ddl::DdlStatement::IgnoredTableOption { .. }
+                )
+            ),
+            "{sql}: {lowered:?}"
+        );
+    }
+}
+
+/// Go runs one specification's options as its loop does: one job per option,
+/// CHARSET/COLLATE together at the first, ENGINE / ROW_FORMAT as nothing,
+/// storage class and placement after the loop.
+#[test]
+fn one_specification_splits_into_go_option_loop_jobs() {
+    use tidb_exec::cluster_ddl::split_table_option_alter;
+    let split = |sql: &str| {
+        let parsed = tidb_parser::parse(sql).expect("parses");
+        let tidb_ast::Stmt::Ddl(ddl) = &parsed else { panic!("{sql}") };
+        let tidb_ast::DdlStmt::AlterTable(alter) = &**ddl else { panic!("{sql}") };
+        split_table_option_alter(alter).map(|parts| {
+            parts
+                .iter()
+                .map(|part| match part.actions.as_slice() {
+                    [tidb_ast::AlterTableAction::SetTableOptions { options }] => options.len(),
+                    other => panic!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(split("ALTER TABLE t engine=innodb row_format=dynamic"), Some(vec![1]));
+    assert_eq!(
+        split("ALTER TABLE t comment='x' charset=utf8mb4 engine=innodb collate=utf8mb4_bin"),
+        Some(vec![1, 2])
+    );
+    assert_eq!(split("ALTER TABLE t comment='x'"), None);
+}
