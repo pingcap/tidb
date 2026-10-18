@@ -470,6 +470,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		WithPlacementPolicy:      "STRICT",
 		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
+		ProtectTables:            true,
 		AllowPITRFromIncremental: true,
 	}
 }

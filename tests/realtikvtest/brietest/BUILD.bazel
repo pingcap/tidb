@@ -38,6 +38,7 @@ go_test(
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
+        "//pkg/errno",
         "//pkg/executor",
         "//pkg/kv",
         "//pkg/meta/model",

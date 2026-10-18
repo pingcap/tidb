@@ -45,6 +45,7 @@ if [ $restore_fail -ne 1 ]; then
     echo 'expect restore to fail on file lost but succeed'
     exit 1
 fi
+run_br --pd $PD_ADDR abort restore full -s "local://$TEST_DIR/$DB"
 run_sql "DROP DATABASE IF EXISTS $DB;"
 
 # file corruption
@@ -61,6 +62,7 @@ if [ $restore_fail -ne 1 ]; then
     echo 'expect restore to fail on file corruption but succeed'
     exit 1
 fi
+run_br --pd $PD_ADDR abort restore full -s "local://$TEST_DIR/$DB"
 run_sql "DROP DATABASE IF EXISTS $DB;"
 
 # verify validating checksum is still performed even backup didn't enable it
@@ -76,6 +78,7 @@ if [ $restore_fail -ne 1 ]; then
     echo 'expect restore to fail on checksum mismatch but succeed'
     exit 1
 fi
+run_br --pd $PD_ADDR abort restore full -s "local://$TEST_DIR/$DB"
 run_sql "DROP DATABASE IF EXISTS $DB;"
 
 # sanity check restore can succeed
