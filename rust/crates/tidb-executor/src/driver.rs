@@ -184,6 +184,27 @@ pub fn plan_select_meta_in(
     physical_builder::planned_query_result_columns(query, &physical)
 }
 
+/// [`plan_select_meta_in`]'s types read from the BUILT logical plan, the way
+/// Go's `tryFillViewColumnType` does: nothing is optimized, so a CTE inlined or
+/// a projection folded by the optimizer cannot change a column's nullability.
+pub fn plan_select_types_in(
+    sql: &str,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    building_view: Option<(&str, &str)>,
+) -> Result<Vec<FieldType>, DriverError> {
+    let stmt = ctx.parse(sql)?;
+    let query = match &stmt {
+        Stmt::Query(query) => query.as_ref(),
+        _ => return Err(DriverError::unsupported("only SELECT is supported")),
+    };
+    validate_query_sequence_names(query, ctx)?;
+    set_opr::validate_query_usage(query, ctx)?;
+    planner_bridge::built_query_column_types(query, catalog, current_db, ctx, building_view)
+        .map_err(planner_error_to_driver)
+}
+
 /// Go's expression builder resolves the name argument of every sequence
 /// builtin before it constructs a physical executor. Keep that ordering for
 /// Rust's row/chunk evaluators: a later invalid projection item must not allow

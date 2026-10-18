@@ -277,25 +277,59 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
     };
     rows::seed(&created_tables, &seed_environment, &mut mutations)?;
 
-    // Go `bootstrap.go:418`: `CREATE DATABASE IF NOT EXISTS test`, run as
-    // ordinary DDL inside the bootstrap session. Being ordinary DDL, its id
-    // comes from `NextGlobalID` -- the plan bumps the max-used key exactly as
-    // `cluster_ddl`'s allocator does, so the first user object continues
-    // after it instead of colliding with it.
-    let test_db_id = {
-        let current = match snapshot.get(&key::next_global_id_kv_key())? {
-            Some(stored) => value::parse_int_value(&stored)
-                .map_err(|error| BootstrapError::Encode(format!("NextGlobalID: {error}")))?,
-            // Go's `Inc` treats a missing key as zero.
-            None => 0,
+    // Go `doDDLWorks`' ordinary DDL, each object's id drawn from
+    // `NextGlobalID` exactly as `cluster_ddl`'s allocator does, so the first
+    // user object continues after them instead of colliding: the `sys`
+    // database's views (`CreateTiDBMDLView`, `CreateSchemaUnusedIndexesView`)
+    // and then `CREATE DATABASE IF NOT EXISTS test` (`bootstrap.go:418`).
+    let mut allocate_global_id = |mutations: &mut Vec<BufferMutation>,
+                                  snapshot: &mut S,
+                                  allocated_before: &mut Option<i64>|
+     -> Result<i64, BootstrapError> {
+        let current = match allocated_before {
+            Some(current) => *current,
+            None => match snapshot.get(&key::next_global_id_kv_key())? {
+                Some(stored) => value::parse_int_value(&stored)
+                    .map_err(|error| BootstrapError::Encode(format!("NextGlobalID: {error}")))?,
+                // Go's `Inc` treats a missing key as zero.
+                None => 0,
+            },
         };
         let allocated = current + 1;
+        *allocated_before = Some(allocated);
         mutations.push(BufferMutation::set(
             key::next_global_id_kv_key(),
             value::encode_int_value(allocated),
         )?);
-        allocated
+        Ok(allocated)
     };
+    let mut allocated_before = None;
+    let sys_database = DBInfo {
+        id: tidb_metadef::system::SYS_DATABASE_ID,
+        name: CiString::new(SYS_DB),
+        charset: SYSTEM_DB_CHARSET.to_owned(),
+        collate: SYSTEM_DB_COLLATION.to_owned(),
+        state: SchemaState::PUBLIC,
+        ..DBInfo::default()
+    };
+    mutations.push(BufferMutation::set(
+        key::database_kv_key(sys_database.id),
+        value::serialize_db_info(&sys_database).map_err(encode_error)?,
+    )?);
+    for view in BOOTSTRAP_VIEWS {
+        let id = allocate_global_id(&mut mutations, snapshot, &mut allocated_before)?;
+        let info = build_bootstrap_view(view, id, start_ts);
+        mutations.push(BufferMutation::set(
+            key::table_kv_key(view.database_id, info.id),
+            value::serialize_table_info(&info).map_err(encode_error)?,
+        )?);
+        affected.push(AffectedOption {
+            schema_id: view.database_id,
+            table_id: info.id,
+            ..AffectedOption::default()
+        });
+    }
+    let test_db_id = allocate_global_id(&mut mutations, snapshot, &mut allocated_before)?;
     let test_database = DBInfo {
         id: test_db_id,
         name: CiString::new("test"),
@@ -392,6 +426,97 @@ pub fn read_schema_cache_size<S: MetaSnapshot>(
 
 fn schema_cache_size_kv_key() -> Vec<u8> {
     tidb_meta::structure::encode_string_data_key(key::SCHEMA_CACHE_SIZE)
+}
+
+/// One view Go's bootstrap session creates with `CREATE OR REPLACE VIEW`
+/// (`doDDLWorks`: `metadef.CreateTiDBMDLView`, then
+/// `metadef.CreateSchemaUnusedIndexesView`). A view stores no column types --
+/// Go's `buildViewInfo` leaves every `ColumnInfo.FieldType` zero and the
+/// planner derives them when the view is used -- so this is the whole
+/// `TableInfo` the oracle holds, captured with its restored SELECT text.
+struct BootstrapView {
+    database_id: i64,
+    name: &'static str,
+    columns: &'static [&'static str],
+    /// `ViewInfo.Security`: 1 is `SQL SECURITY INVOKER`.
+    security: i64,
+    select_stmt: &'static str,
+}
+
+const BOOTSTRAP_VIEWS: &[BootstrapView] = &[
+    BootstrapView {
+        database_id: SYSTEM_DATABASE_ID,
+        name: "tidb_mdl_view",
+        columns: &[
+            "job_id",
+            "db_name",
+            "table_name",
+            "query",
+            "session_id",
+            "start_time",
+            "SQL_DIGESTS",
+        ],
+        security: 1,
+        select_stmt: r#"(SELECT `tidb_mdl_info`.`job_id` AS `job_id`,JSON_UNQUOTE(JSON_EXTRACT(CAST(CAST(`job_meta` AS CHAR) AS JSON), _UTF8MB4'$.schema_name')) AS `db_name`,JSON_UNQUOTE(JSON_EXTRACT(CAST(CAST(`job_meta` AS CHAR) AS JSON), _UTF8MB4'$.table_name')) AS `table_name`,JSON_UNQUOTE(JSON_EXTRACT(CAST(CAST(`job_meta` AS CHAR) AS JSON), _UTF8MB4'$.query')) AS `query`,`session_id` AS `session_id`,`cluster_tidb_trx`.`start_time` AS `start_time`,TIDB_DECODE_SQL_DIGESTS(`all_sql_digests`, 4096) AS `SQL_DIGESTS` FROM ((`mysql`.`tidb_ddl_job`) JOIN `mysql`.`tidb_mdl_info`) JOIN `information_schema`.`cluster_tidb_trx` WHERE `tidb_ddl_job`.`job_id`=`tidb_mdl_info`.`job_id` AND CONCAT(_UTF8MB4',', `tidb_mdl_info`.`table_ids`, _UTF8MB4',') REGEXP CONCAT(_UTF8MB4',(', REPLACE(`cluster_tidb_trx`.`related_table_ids`, _UTF8MB4',', _UTF8MB4'|'), _UTF8MB4'),')!=0)"#,
+    },
+    BootstrapView {
+        database_id: tidb_metadef::system::SYS_DATABASE_ID,
+        name: "schema_unused_indexes",
+        columns: &["object_schema", "object_name", "index_name"],
+        security: 0,
+        select_stmt: r#"SELECT `table_schema` AS `object_schema`,`table_name` AS `object_name`,`index_name` AS `index_name` FROM `information_schema`.`cluster_tidb_index_usage` WHERE `table_schema` NOT IN (_UTF8MB4'sys',_UTF8MB4'mysql',_UTF8MB4'INFORMATION_SCHEMA',_UTF8MB4'PERFORMANCE_SCHEMA') AND `index_name`!=_UTF8MB4'PRIMARY' GROUP BY `table_schema`,`table_name`,`index_name` HAVING SUM(`information_schema`.`CLUSTER_TIDB_INDEX_USAGE`.`LAST_ACCESS_TIME`) IS NULL"#,
+    },
+];
+
+/// How many views the fresh bootstrap creates beside its tables; each is named
+/// in the bootstrap's one schema diff.
+pub const BOOTSTRAP_VIEW_COUNT: usize = BOOTSTRAP_VIEWS.len();
+
+/// Go `bootstrapSchemas`' `sys` database (`SysDatabaseID`), which holds the
+/// views above.
+const SYS_DB: &str = "sys";
+
+fn build_bootstrap_view(
+    view: &BootstrapView,
+    table_id: i64,
+    start_ts: u64,
+) -> TableInfo {
+    use tidb_model::table::ViewInfo;
+    let columns = view
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(offset, name)| tidb_model::ColumnInfo {
+            id: i64::try_from(offset).expect("a column offset fits in i64") + 1,
+            name: CiString::new(*name),
+            offset: i64::try_from(offset).expect("a column offset fits in i64"),
+            state: SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        })
+        .collect::<Vec<_>>();
+    TableInfo {
+        id: table_id,
+        name: CiString::new(view.name),
+        charset: SYSTEM_DB_CHARSET.to_owned(),
+        collate: SYSTEM_DB_COLLATION.to_owned(),
+        max_column_id: i64::try_from(view.columns.len()).expect("a column count fits in i64"),
+        columns: columns.into(),
+        state: SchemaState::PUBLIC,
+        version: tidb_model::table_info::TABLE_INFO_VERSION5,
+        update_ts: start_ts,
+        view: Some(tidb_model::GoShared::new(ViewInfo {
+            algorithm: tidb_ast::ViewAlgorithm(0),
+            definer: Some(Box::new(tidb_parser::auth::UserIdentity {
+                current_user: true,
+                ..tidb_parser::auth::UserIdentity::default()
+            })),
+            security: tidb_ast::ViewSecurity(view.security),
+            select_stmt: view.select_stmt.to_owned(),
+            check_option: tidb_ast::ViewCheckOption(1),
+            ..ViewInfo::default()
+        })),
+        ..TableInfo::default()
+    }
 }
 
 /// Builds one `mysql.*` table at its reserved ID.

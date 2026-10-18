@@ -2240,7 +2240,13 @@ fn rewrite_leaf_literal(
             ft.set_flen(value.len() as i64);
             ft.set_charset_name(charset);
             ft.set_collation_name(collation_name);
-            ft.add_flags(tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET);
+            // Go `DefaultTypeForValue` adds NotNull for every non-nil value,
+            // an introduced literal included: a view body is stored with its
+            // strings as `_UTF8MB4'..'`, and its columns stay NOT NULL.
+            ft.add_flags(
+                tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET
+                    | tidb_datatype::FieldTypeFlags::NOT_NULL,
+            );
             let datum = if collation == tidb_datatype::Collation::Binary {
                 ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
                 Datum::Bytes(value.as_bytes().to_vec())
@@ -3412,18 +3418,23 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             let zone = resolver.time_zone();
             let modes = resolver.date_modes();
             if cast.style == tidb_ast::CastStyle::TimeLiteral {
-                let (duration, ret_type) = crate::time_literal::time_literal(&text, &zone, modes)?;
+                let (duration, mut ret_type) =
+                    crate::time_literal::time_literal(&text, &zone, modes)?;
+                // Go folds the literal call (`foldConstant`), and a non-null
+                // folded value carries the NotNull flag.
+                ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
                 return Ok(Expression::Constant(Constant::new(
                     Datum::Duration(duration),
                     ret_type,
                 )));
             }
-            let (time, ret_type) = match cast.style {
+            let (time, mut ret_type) = match cast.style {
                 tidb_ast::CastStyle::DateLiteral => {
                     crate::time_literal::date_literal(&text, &zone, modes)?
                 }
                 _ => crate::time_literal::timestamp_literal(&text, &zone, modes)?,
             };
+            ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
             // The folded constant carries Go's OWN result type -- `TypeDate`
             // or `TypeDatetime` with the literal's fsp -- over the same
             // `Datum::Time` cell a `date`/`datetime` COLUMN reads out of a
@@ -3535,6 +3546,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             }
             let mut ret_type = FieldType::new(FieldTypeCode::VarString);
             ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            // Go `convertFunctionClass.getFunction`: `bf.tp.SetFlen(mysql.MaxBlobWidth)`.
+            ret_type.set_flen(16_777_216);
+            result_type::promote_wide_string_result(&mut ret_type);
             if charset == "binary" {
                 set_binary_charset(&mut ret_type);
             } else {

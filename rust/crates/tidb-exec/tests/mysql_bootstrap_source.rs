@@ -32,6 +32,7 @@ use tidb_exec::cluster_privilege_load::{
 };
 use tidb_exec::mysql_bootstrap::{
     plan_mysql_bootstrap, BootstrapEnvironment, BootstrapError, BootstrapWrite,
+    BOOTSTRAP_VIEW_COUNT,
 };
 use tidb_meta::key;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
@@ -262,7 +263,7 @@ fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
     assert!(affected.is_allocated());
     assert_eq!(
         affected.len(),
-        BOOTSTRAP_TABLES.len() + ddl_table_count,
+        BOOTSTRAP_TABLES.len() + ddl_table_count + BOOTSTRAP_VIEW_COUNT,
         "the diff names every mysql.* table the fresh bootstrap created"
     );
     assert!(affected.iter_handles().all(|affected| affected.is_some()));

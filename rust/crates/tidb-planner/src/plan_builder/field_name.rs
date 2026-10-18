@@ -60,10 +60,24 @@ pub fn default_field_display_name(
     // `(a)` rewrites to `a`, and `unaryOpToExpression`'s `opcode.Plus` arm
     // returns without touching the stack ("expression (+ a) is equal to a").
     // So `select (a)` and `select +a` are named `a`, like `select a`.
-    let inner = inner_field_expr(expr);
-    if let tidb_ast::Expr::Column(path) = inner {
+    if let tidb_ast::Expr::Column(path) = inner_field_expr(expr) {
         return path.last().cloned().unwrap_or_default();
     }
+    expression_field_display_name(fields, index, expr)
+}
+
+/// Go `buildProjectionFieldNameFromExpressions`: the name of a field that is
+/// not taken from a column. `CREATE VIEW`'s `addAliasName` asks it of EVERY
+/// field that is not a bare column, with no rewritten expression to hand
+/// (`buildProjectionField(.., nil)`), so a parenthesised or unary-plus column
+/// is named by its source text there: `select +x` names the view column `+x`
+/// although the same select names its result column `x`.
+pub fn expression_field_display_name(
+    fields: &SelectFieldList,
+    index: usize,
+    expr: &tidb_ast::Expr,
+) -> String {
+    let inner = inner_field_expr(expr);
     let text = || {
         fields
             .text(index)

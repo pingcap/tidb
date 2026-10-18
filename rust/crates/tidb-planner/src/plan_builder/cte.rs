@@ -448,7 +448,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
         let mut ctes = Vec::with_capacity(with.ctes.len());
+        // Go counts a CTE's consumers in `preprocess`, which never visits the
+        // body of a view: that body is parsed and built when the view is read
+        // (`BuildDataSourceFromView`), so every CTE in it keeps consumerCount 0
+        // and is never inlined by default (issue #56582).
+        let in_view_body = !self.building_view_stack.is_empty();
         for (consumer_count, cte) in consumer_counts.iter().copied().zip(&with.ctes) {
+            let consumer_count = if in_view_body { 0 } else { consumer_count };
             let index = self.outer_ctes.len();
             self.outer_ctes.push(super::OuterCte {
                 name: go_to_lower(&cte.name),

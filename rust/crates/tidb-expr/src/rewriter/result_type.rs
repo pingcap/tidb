@@ -601,7 +601,7 @@ pub(crate) fn stamp_builtin_return_flags(name: &str, args: &[Expression], ft: &m
 ///
 /// Both thresholds are `>=`, and both are Go's own constants:
 /// `mysql.MaxBlobWidth` and the bare 65536 `getRetTp` spells out.
-fn promote_wide_string_result(ft: &mut FieldType) {
+pub(crate) fn promote_wide_string_result(ft: &mut FieldType) {
     /// Go's literal `65536` in `getRetTp` -- one past `mysql.MaxBlobSize`.
     const MEDIUM_BLOB_BOUNDARY: i64 = 65536;
     if ft.eval_type() != tidb_datatype::EvalType::String {

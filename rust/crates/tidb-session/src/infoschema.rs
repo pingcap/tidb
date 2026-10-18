@@ -2586,6 +2586,10 @@ fn column_row(
         text(&column.name),
         Datum::Int((offset + 1) as i64),
         match &column.default_value {
+            // Go `NewColDesc`: `NoDefaultValueFlag` reports no default.
+            _ if field_type.has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE) => {
+                Datum::Null
+            }
             Some(tidb_executor::column_default::ColumnDefault::Value(Datum::Null)) | None => {
                 Datum::Null
             }

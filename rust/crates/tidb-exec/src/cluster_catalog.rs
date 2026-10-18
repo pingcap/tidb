@@ -291,66 +291,6 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
         });
     }
 
-    // go's bootstrap runs `CreateMDLView` (`session/bootstrap.go:2385`):
-    // mysql.tidb_mdl_view is a VIEW over tidb_ddl_job / tidb_mdl_info /
-    // information_schema.cluster_tidb_trx, so SHOW TABLES lists it and
-    // SHOW FULL TABLES types it VIEW.
-    if let Some(mysql) = databases
-        .iter_mut()
-        .find(|database| database.info.name.lowercase() == "mysql")
-    {
-        if !mysql
-            .tables
-            .iter()
-            .any(|table| table.name.lowercase() == "tidb_mdl_view")
-        {
-            const VIEW_TABLE_ID: i64 = -900_500;
-            let mut columns = GoSharedPointerSlice::<ColumnInfo>::default();
-            for (offset, (name, code)) in [
-                ("job_id", FieldTypeCode::LongLong),
-                ("db_name", FieldTypeCode::VarString),
-                ("table_name", FieldTypeCode::VarString),
-                ("query", FieldTypeCode::VarString),
-                ("session_id", FieldTypeCode::LongLong),
-                ("start_time", FieldTypeCode::Datetime),
-                ("SQL_DIGESTS", FieldTypeCode::VarString),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                columns.push_go(ColumnInfo {
-                    id: VIEW_TABLE_ID * 10 + offset as i64,
-                    name: CiString::new(name),
-                    offset: offset as i64,
-                    field_type: FieldType::new(code),
-                    ..Default::default()
-                });
-            }
-            let select_stmt = tidb_metadef::system_tables_def::CREATE_TI_DBMDLVIEW
-                .split(" as (")
-                .nth(1)
-                .map_or_else(
-                    || tidb_metadef::system_tables_def::CREATE_TI_DBMDLVIEW.to_owned(),
-                    |body| body.trim_end().trim_end_matches(';').to_owned(),
-                );
-            mysql.tables.push(TableInfo {
-                id: VIEW_TABLE_ID,
-                name: CiString::new("tidb_mdl_view"),
-                state: SchemaState::PUBLIC,
-                columns,
-                // go's `CREATE OR REPLACE VIEW` carries no ALGORITHM and no
-                // SQL SECURITY clause: UNDEFINED + DEFINER, CASCADED check.
-                view: Some(GoShared::new(ViewInfo {
-                    security: ViewSecurity::DEFINER,
-                    check_option: ViewCheckOption::CASCADED,
-                    select_stmt,
-                    ..ViewInfo::default()
-                })),
-                ..TableInfo::default()
-            });
-        }
-    }
-
     Ok(ClusterCatalog {
         resource_groups,
         schema_version,

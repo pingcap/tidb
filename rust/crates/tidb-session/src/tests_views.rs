@@ -1822,3 +1822,74 @@ fn a_view_body_without_an_access_path_keeps_its_internal_error() {
         .unwrap();
     session.run("select * from v0").unwrap();
 }
+
+/// What `DESC`, `SHOW CREATE VIEW` and the stored text say about view bodies
+/// whose names or nullability Go derives from its LOGICAL plan, captured from
+/// Go: a literal is NOT NULL, a CTE's columns are nullable (but keep the base
+/// column's key flag), `FOR UPDATE` is stripped from the stored body, and a
+/// parenthesised or unary-plus column is named by its source text.
+#[test]
+fn view_columns_follow_go_plan_nullability_and_names() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT PRIMARY KEY, x INT, y VARCHAR(10))")
+        .unwrap();
+    for sql in [
+        "CREATE VIEW w_lit AS SELECT 'a', 'bc' AS c, DATE '2020-01-01', +'q'",
+        "CREATE VIEW w_cte AS WITH c AS (SELECT id FROM t) SELECT * FROM c",
+        "CREATE VIEW w_union AS SELECT id FROM t UNION ALL SELECT 'zz'",
+        "CREATE VIEW w_plus AS SELECT +x, (x), +(x), +id FROM t",
+        "CREATE VIEW w_lock AS SELECT id, x FROM t FOR UPDATE",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let desc = |session: &mut Session, view: &str| {
+        row_text(session.run(&format!("DESC {view}")))
+            .into_iter()
+            .map(|row| format!("{} {} {} {}", row[0], row[1], row[2], row[3]))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        desc(&mut session, "w_lit"),
+        ["a varchar(1) NO ", "c varchar(2) NO ", "DATE '2020-01-01' date NO ", "q varchar(1) NO "]
+    );
+    assert_eq!(desc(&mut session, "w_cte"), ["id int YES PRI"]);
+    assert_eq!(desc(&mut session, "w_union"), ["id varchar(20) NO PRI"]);
+    assert_eq!(
+        desc(&mut session, "w_plus"),
+        ["+x int YES ", "(x) int YES ", "+(x) int YES ", "+id int NO PRI"]
+    );
+    let shown = row_text(session.run("SHOW CREATE VIEW w_lock"));
+    // Go leaves the clause's separating space behind (captured).
+    assert!(shown[0][1].ends_with("FROM `test`.`t` "), "{shown:?}");
+}
+
+/// `*` over a `USING` join lists the joined column once and first (Go
+/// `coalesceCommonColumns`), and a view column's key flag comes from the base
+/// column's type flags.
+#[test]
+fn using_join_star_and_no_default_columns_follow_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ja (id INT PRIMARY KEY, x INT)")
+        .unwrap();
+    session.run("CREATE TABLE jb (id INT, y INT)").unwrap();
+    session
+        .run("CREATE VIEW ju AS SELECT * FROM ja JOIN jb USING (id)")
+        .unwrap();
+    let names = |session: &mut Session, view: &str| {
+        row_text(session.run(&format!("DESC {view}")))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&mut session, "ju"), ["id", "x", "y"]);
+    session
+        .run("CREATE TABLE nd (a INT NOT NULL, b TEXT NOT NULL)")
+        .unwrap();
+    let defaults = row_text(session.run(
+        "SELECT column_name, column_default FROM information_schema.columns \
+         WHERE table_schema = 'test' AND table_name = 'nd' ORDER BY ordinal_position",
+    ));
+    assert_eq!(defaults, [["a", "NULL"], ["b", "NULL"]]);
+}

@@ -180,7 +180,14 @@ fn column_description(
             .is_some_and(tidb_executor::column_default::ColumnDefault::is_default_generated),
     );
     let key_flag = column_key_flag(table, offset);
+    // Go `NewColDesc`: a column carrying `NoDefaultValueFlag` reports no
+    // default, whatever value its metadata still stores (a NOT NULL TEXT/BLOB
+    // given `DEFAULT ''` under a non-strict sql_mode).
+    let no_default = column
+        .field_type
+        .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
     let default = match &column.default_value {
+        _ if no_default => Datum::Null,
         Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
             match literal_column_default_text(
                 value,
@@ -294,12 +301,23 @@ fn view_column_description(
     } else {
         "YES"
     };
+    // Go `NewColDesc`: the key column reads the type's own flags, which a
+    // view column inherits from the base column it projects.
+    let key_flag = if field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
+        "PRI"
+    } else if field_type.has_flag(tidb_datatype::FieldTypeFlags::UNIQUE_KEY) {
+        "UNI"
+    } else if field_type.has_flag(tidb_datatype::FieldTypeFlags::MULTIPLE_KEY) {
+        "MUL"
+    } else {
+        ""
+    };
     if !full {
         return vec![
             Datum::Bytes(name.as_bytes().to_vec()),
             type_desc_cell(field_type),
             Datum::Bytes(null_flag.as_bytes().to_vec()),
-            Datum::Bytes(Vec::new()),
+            Datum::Bytes(key_flag.as_bytes().to_vec()),
             Datum::Null,
             Datum::Bytes(Vec::new()),
         ];
@@ -310,7 +328,7 @@ fn view_column_description(
         type_desc_cell(field_type),
         collation,
         Datum::Bytes(null_flag.as_bytes().to_vec()),
-        Datum::Bytes(Vec::new()),
+        Datum::Bytes(key_flag.as_bytes().to_vec()),
         Datum::Null,
         Datum::Bytes(Vec::new()),
         Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),

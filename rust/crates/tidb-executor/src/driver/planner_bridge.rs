@@ -2816,6 +2816,45 @@ fn planner_optimized_query_with_allocators(
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
+    let (plan, opt_flag) = planner_built_query_with_allocators(
+        query,
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache,
+        plan_ids,
+        column_ids,
+        registry,
+        None,
+    )?;
+    optimize_built_logical(
+        plan,
+        opt_flag,
+        select_hint,
+        catalog,
+        ctx,
+        use_plan_cache,
+        plan_ids,
+        column_ids,
+        &ctx.session_zone(),
+    )
+}
+
+/// Go `PlanBuilder.Build` for a query: the logical plan before any
+/// optimization, with the optimizer flags the build collected.
+/// `building_view` names the view whose stored body this is, which Go builds
+/// from `BuildDataSourceFromView` with the view on its building stack.
+fn planner_built_query_with_allocators(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    use_plan_cache: bool,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+    registry: &ScalarSubqueryRegistry,
+    building_view: Option<(&str, &str)>,
+) -> Result<(LogicalPlan, u64), tidb_planner::plan_base::PlanError> {
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_explain_hypo_state(ctx)
@@ -2851,6 +2890,12 @@ fn planner_optimized_query_with_allocators(
         ctx.static_partition_prune() && !static_global_index_point_lookup(query, &source, ctx),
     );
     builder.set_dynamic_prune_fallback(&prune_fallback);
+    if let Some((database, view)) = building_view {
+        builder.building_view_stack.insert((
+            tidb_mysql::to_lowercase(database),
+            tidb_mysql::to_lowercase(view),
+        ));
+    }
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
@@ -2864,17 +2909,49 @@ fn planner_optimized_query_with_allocators(
     let node = tidb_resolve::NodeW::new(query.clone());
     let plan = builder.build_query_node(&node, false)?;
     ctx.set_block_as_names(builder.statement_block_as_names());
-    optimize_built_logical(
-        plan,
-        builder.get_opt_flag(),
-        select_hint,
+    Ok((plan, builder.get_opt_flag()))
+}
+
+/// The types of a query's output columns as Go's `PlanBuilder` derives them:
+/// from the built logical plan's schema, before optimization can inline a CTE
+/// or fold a projection away (a CTE's columns are nullable, a literal's are
+/// not). This is what `tryFillViewColumnType` reads for a view.
+pub(crate) fn built_query_column_types(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    building_view: Option<(&str, &str)>,
+) -> Result<Vec<tidb_datatype::FieldType>, tidb_planner::plan_base::PlanError> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let (plan, _) = planner_built_query_with_allocators(
+        query,
         catalog,
+        current_database,
         ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        &session_zone,
-    )
+        false,
+        &plan_ids,
+        &column_ids,
+        &registry,
+        building_view,
+    )?;
+    Ok(plan
+        .schema()
+        .map(|schema| {
+            schema
+                .columns
+                .iter()
+                .map(|column| {
+                    column
+                        .ret_type
+                        .clone()
+                        .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong))
+                })
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// Go's `visitInfo` for a query: the privileges its plan needs, collected by

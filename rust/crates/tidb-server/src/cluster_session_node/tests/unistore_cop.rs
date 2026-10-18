@@ -17976,6 +17976,32 @@ fn table_metadata_answers_follow_go() {
     assert!(invisible.contains("Key 'kb' doesn't exist in table 'md'"), "{invisible}");
 }
 
+/// Bootstrap creates Go's `sys` schema with `schema_unused_indexes` and the
+/// `mysql.tidb_mdl_view` by executing their `CREATE VIEW`s, a view column
+/// takes its key flag from the base column, and a NOT NULL column without a
+/// default reports a NULL `COLUMN_DEFAULT`. Each was captured from the oracle.
+#[test]
+fn bootstrap_views_and_column_defaults_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1140)).unwrap();
+    session.execute_write("USE test").unwrap();
+    for view in ["sys.schema_unused_indexes", "mysql.tidb_mdl_view"] {
+        let result = rows(&mut session, &format!("select * from {view} limit 0"));
+        assert!(result.is_empty(), "{view}: {result:?}");
+    }
+    let described = displayed(rows(&mut session, "desc mysql.tidb_mdl_view"));
+    assert!(!described.is_empty(), "{described:?}");
+    session
+        .execute_write("CREATE TABLE nd (a INT NOT NULL, b TEXT NOT NULL, c INT NOT NULL DEFAULT 5)")
+        .unwrap();
+    let defaults = displayed(rows(
+        &mut session,
+        "select column_name, column_default from information_schema.columns \
+         where table_schema = 'test' and table_name = 'nd' order by ordinal_position",
+    ));
+    assert_eq!(defaults, [["a", "NULL"], ["b", "NULL"], ["c", "5"]], "{defaults:?}");
+}
+
 /// A CTE definition keeps its storage id in every format
 /// (`CTEDefinition.ExplainID`), and the implicit casts a builtin's arguments
 /// carry no longer decide push-down: `round(dt)` and `conv(int, ...)` read a

@@ -350,6 +350,65 @@ pub fn run_drop_view_in(
     })
 }
 
+/// One column a `FROM` clause exposes to an unqualified `*`, with the path a
+/// reference to it is written with.
+#[derive(Clone)]
+struct OutColumn {
+    qualifier: Vec<String>,
+    name: String,
+}
+
+/// Go `coalesceCommonColumns`: the columns a join exposes to `*`. A
+/// `USING (..)`/`NATURAL` join shows each common column once, ahead of the
+/// rest -- taken from the left operand, from the right for a RIGHT join,
+/// which then lists its own columns before the left's. Any other join is the
+/// two operands side by side.
+fn combine_join_output(
+    join: &tidb_ast::Join,
+    left: Vec<OutColumn>,
+    right: Vec<OutColumn>,
+) -> Vec<OutColumn> {
+    let names: Vec<String> = if !join.using.is_empty() {
+        join.using.clone()
+    } else if join.natural {
+        let mut common = Vec::new();
+        for column in &left {
+            if right.iter().any(|other| other.name.eq_ignore_ascii_case(&column.name))
+                && !common
+                    .iter()
+                    .any(|seen: &String| seen.eq_ignore_ascii_case(&column.name))
+            {
+                common.push(column.name.clone());
+            }
+        }
+        common
+    } else {
+        Vec::new()
+    };
+    if names.is_empty() {
+        return left.into_iter().chain(right).collect();
+    }
+    let is_common =
+        |column: &OutColumn| names.iter().any(|name| name.eq_ignore_ascii_case(&column.name));
+    let source = if join.tp == tidb_ast::JoinType::Right { &right } else { &left };
+    let mut output: Vec<OutColumn> = Vec::new();
+    for name in &names {
+        match source.iter().find(|column| column.name.eq_ignore_ascii_case(name)) {
+            Some(column) => output.push(column.clone()),
+            // A name the planner will reject; keep the operands whole.
+            None => return left.into_iter().chain(right).collect(),
+        }
+    }
+    let left_rest = left.iter().filter(|column| !is_common(column)).cloned();
+    let right_rest = right.iter().filter(|column| !is_common(column)).cloned();
+    if join.tp == tidb_ast::JoinType::Right {
+        output.extend(right_rest.chain(left_rest));
+    } else {
+        output.extend(left_rest.chain(right_rest));
+    }
+    output
+}
+
 /// One `FROM` table of a view body, after qualification.
 struct BodyTable {
     /// The path a column reference to this table is written with: the alias
@@ -368,8 +427,53 @@ fn canonical_view_query(
     catalog: &Catalog,
     current_db: &str,
 ) -> Result<String, DriverError> {
-    let canonical = canonical_query_with(query, catalog, current_db, &mut Vec::new(), true)?;
-    Ok(Stmt::Query(tidb_ast::NodeBox::new(canonical)).restore())
+    // Go `checkCreateViewWithSelect` sets the lock of the body's SELECT, or of
+    // each term of a set operation, to `SelectLockNone` before the text is
+    // stored. A SelectStmt restores a non-nil lock info as a space followed by
+    // nothing, so the stored text keeps a trailing space where the clause was.
+    let mut query = query.clone();
+    let mut locked_terms = Vec::new();
+    match &mut query {
+        QueryStmt::Select(select) => locked_terms.push(select.lock.take().is_some()),
+        QueryStmt::SetOpr(set_opr) => {
+            for term in &mut set_opr.terms {
+                locked_terms.push(match &mut term.body {
+                    SetOprTermBody::Select(select) => select.lock.take().is_some(),
+                    SetOprTermBody::Nested(_) => false,
+                });
+            }
+        }
+    }
+    let canonical = canonical_query_with(&query, catalog, current_db, &mut Vec::new(), true)?;
+    let mut text = Stmt::Query(tidb_ast::NodeBox::new(canonical.clone())).restore();
+    match &canonical {
+        QueryStmt::Select(_) => {
+            if locked_terms[0] {
+                text.push(' ');
+            }
+        }
+        QueryStmt::SetOpr(set_opr) => {
+            let mut cursor = 0;
+            for (term, locked) in set_opr.terms.iter().zip(&locked_terms) {
+                let SetOprTermBody::Select(select) = &term.body else {
+                    continue;
+                };
+                let term_text = Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(
+                    select.clone(),
+                )))
+                .restore();
+                let Some(found) = text[cursor..].find(&term_text) else {
+                    continue;
+                };
+                cursor += found + term_text.len();
+                if *locked {
+                    text.insert(cursor, ' ');
+                    cursor += 1;
+                }
+            }
+        }
+    }
+    Ok(text)
 }
 
 /// One CTE visible to a view body. Go `tryBuildCTE` resolves an unqualified
@@ -582,12 +686,20 @@ fn canonical_select_in_scope(
 ) -> Result<(), DriverError> {
     canonical_with(select.with.as_mut(), catalog, current_db, ctes)?;
     let mut tables = Vec::new();
+    // What an unqualified `*` expands to, in Go's order (see
+    // [`combine_join_output`]).
+    let mut star_columns = Vec::new();
     if let Some(join) = &mut select.from {
-        qualify_join_node(&mut join.left, catalog, current_db, ctes, &mut tables)?;
-        if let Some(right) = &mut join.right {
-            qualify_join_node(right, catalog, current_db, ctes, &mut tables)?;
-        }
+        let left = qualify_join_node(&mut join.left, catalog, current_db, ctes, &mut tables)?;
+        let right = match &mut join.right {
+            Some(right) => Some(qualify_join_node(right, catalog, current_db, ctes, &mut tables)?),
+            None => None,
+        };
         canonical_expr_subqueries(join.on.as_mut(), catalog, current_db, ctes)?;
+        star_columns = match right {
+            Some(right) => combine_join_output(join, left, right),
+            None => left,
+        };
     }
 
     let mut fields = Vec::new();
@@ -596,6 +708,17 @@ fn canonical_select_in_scope(
     let mut anonymous = Vec::new();
     for (index, field) in select.fields.fields().iter().enumerate() {
         match field {
+            SelectField::Wildcard(path) if path.is_empty() => {
+                for column in &star_columns {
+                    let mut path = column.qualifier.clone();
+                    path.push(column.name.clone());
+                    fields.push(SelectField::Expr {
+                        expr: Expr::Column(path),
+                        alias: Some(column.name.clone()),
+                    });
+                    anonymous.push(false);
+                }
+            }
             SelectField::Wildcard(path) => {
                 let qualifier = path.last();
                 let mut matched = false;
@@ -629,10 +752,13 @@ fn canonical_select_in_scope(
             SelectField::Expr { expr, alias } => {
                 anonymous.push(alias.is_none() && !matches!(expr, Expr::Column(_)));
                 let alias = alias.clone().unwrap_or_else(|| {
+                    if let Expr::Column(path) = expr {
+                        return path.last().cloned().unwrap_or_default();
+                    }
                     // Go names the column as the body's plan does
                     // (`buildProjectionFieldNameFromExpressions`): a string
                     // literal by its content, anything else by its text.
-                    tidb_planner::plan_builder::field_name::default_field_display_name(
+                    tidb_planner::plan_builder::field_name::expression_field_display_name(
                         &select.fields,
                         index,
                         expr,
@@ -755,7 +881,16 @@ fn qualify_join_node(
     current_db: &str,
     ctes: &mut Vec<BodyCte>,
     tables: &mut Vec<BodyTable>,
-) -> Result<(), DriverError> {
+) -> Result<Vec<OutColumn>, DriverError> {
+    let columns_of = |qualifier: &[String], columns: &[String]| -> Vec<OutColumn> {
+        columns
+            .iter()
+            .map(|name| OutColumn {
+                qualifier: qualifier.to_vec(),
+                name: name.clone(),
+            })
+            .collect()
+    };
     match node {
         JoinNode::Table(table_ref)
             if table_ref.name.len() == 1
@@ -768,14 +903,16 @@ fn qualify_join_node(
                 .rev()
                 .find(|cte| cte.name.to_lowercase() == table_ref.name[0].to_lowercase())
                 .expect("matched above");
+            let qualifier = vec![table_ref
+                .alias
+                .clone()
+                .unwrap_or_else(|| table_ref.name[0].clone())];
+            let out = columns_of(&qualifier, &cte.columns);
             tables.push(BodyTable {
-                qualifier: vec![table_ref
-                    .alias
-                    .clone()
-                    .unwrap_or_else(|| table_ref.name[0].clone())],
+                qualifier,
                 columns: cte.columns.clone(),
             });
-            Ok(())
+            Ok(out)
         }
         JoinNode::Table(table_ref) => {
             let (database, name) =
@@ -784,7 +921,7 @@ fn qualify_join_node(
             let entry = catalog.table_in(&database, &name).ok_or_else(|| {
                 DriverError::Schema(SchemaErrorKind::UnknownTable(format!("{database}.{name}")))
             })?;
-            let columns = entry
+            let columns: Vec<String> = entry
                 .column_list()
                 .into_iter()
                 .map(|(name, _)| name)
@@ -794,15 +931,21 @@ fn qualify_join_node(
                 None => vec![database.clone(), name.clone()],
             };
             table_ref.name = vec![database, name];
+            let out = columns_of(&qualifier, &columns);
             tables.push(BodyTable { qualifier, columns });
-            Ok(())
+            Ok(out)
         }
         JoinNode::Join(join) => {
-            qualify_join_node(&mut join.left, catalog, current_db, ctes, tables)?;
-            if let Some(right) = &mut join.right {
-                qualify_join_node(right, catalog, current_db, ctes, tables)?;
-            }
-            canonical_expr_subqueries(join.on.as_mut(), catalog, current_db, ctes)
+            let left = qualify_join_node(&mut join.left, catalog, current_db, ctes, tables)?;
+            let right = match &mut join.right {
+                Some(right) => Some(qualify_join_node(right, catalog, current_db, ctes, tables)?),
+                None => None,
+            };
+            canonical_expr_subqueries(join.on.as_mut(), catalog, current_db, ctes)?;
+            Ok(match right {
+                Some(right) => combine_join_output(join, left, right),
+                None => left,
+            })
         }
         JoinNode::Derived {
             subquery,
@@ -826,11 +969,13 @@ fn qualify_join_node(
             let canonical = canonical_query(subquery, catalog, current_db, ctes)?;
             let columns = query_output_names(&canonical);
             **subquery = canonical;
+            let qualifier = vec![alias];
+            let out = columns_of(&qualifier, &columns);
             tables.push(BodyTable {
-                qualifier: vec![alias],
+                qualifier,
                 columns,
             });
-            Ok(())
+            Ok(out)
         }
     }
 }
@@ -856,7 +1001,13 @@ pub fn view_column_list(
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
     // Go builds the body's plan and reads its schema; the body never runs.
     let body_columns =
-        crate::driver::plan_select_meta_in(&view.select_sql, catalog, database, ctx)?;
+        crate::driver::plan_select_types_in(
+            &view.select_sql,
+            catalog,
+            database,
+            ctx,
+            Some((database, &view.name)),
+        )?;
     if body_columns.len() != view.columns.len() {
         return Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(format!(
             "{database}.{}",
@@ -867,6 +1018,6 @@ pub fn view_column_list(
         .columns
         .iter()
         .zip(&body_columns)
-        .map(|((name, _), (_, field_type))| (name.clone(), field_type.clone()))
+        .map(|((name, _), field_type)| (name.clone(), field_type.clone()))
         .collect())
 }
