@@ -654,6 +654,14 @@ fn compare_output(
     // A plan statement runs as this tier's own default EXPLAIN whatever format
     // the recording asked for -- see `PlanStatement::RunDefaultExplain`.
     let plan = plan_statement(stmt_sql);
+    // An EXPLAIN is compared as the WHOLE recorded text -- ids, estimates,
+    // operator info, in the recorded format -- not by each table's access
+    // property alone, which hid hundreds of plan divergences. A mismatch is
+    // tagged so the suite can budget plan-text divergences apart from the rest
+    // (`INTEGRATION_LOOSE_PLANS` restores the access-property reading).
+    let strict_plan = matches!(plan, Some(PlanStatement::RunDefaultExplain(_)))
+        && std::env::var_os("INTEGRATION_LOOSE_PLANS").is_none();
+    let plan = if strict_plan { None } else { plan };
     let sql = match &plan {
         Some(PlanStatement::NotComparable(reason)) if !recorded_error => {
             report.skip(SkipClass::PlanFormatNotComparable(reason));
@@ -797,7 +805,8 @@ fn compare_output(
                 Ok(MatchKind::Rows)
             } else {
                 Err(Some(format!(
-                    "  tidb: {}\n  rust: {}",
+                    "{}  tidb: {}\n  rust: {}",
+                    if strict_plan { PLAN_TEXT_TAG } else { "" },
                     display_block(&theirs),
                     display_block(&ours)
                 )))
@@ -811,6 +820,10 @@ fn compare_output(
         ))),
     }
 }
+
+/// Marks a divergence of an EXPLAIN's full text, so a suite can budget those
+/// separately from every other kind.
+pub const PLAN_TEXT_TAG: &str = "  [plan text]\n";
 
 /// Replays one topic against a fresh session.
 ///
