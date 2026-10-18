@@ -2008,8 +2008,12 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 			config.UpdateGlobal(func(c *config.Config) { c.RUV2.ReportMode = mode })
 			var observed atomic.Int64
 			var frontendBytes float64
-			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(_ uint64, _ string,
+			connectionID := tk.Session().GetSessionVars().ConnectionID
+			testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(observedConnectionID uint64, _ string,
 				_, _, _, frontendCompileBytes, _, _, _, _, _, _, _ float64) {
+				if observedConnectionID != connectionID {
+					return
+				}
 				observed.Add(1)
 				frontendBytes = frontendCompileBytes
 			})
