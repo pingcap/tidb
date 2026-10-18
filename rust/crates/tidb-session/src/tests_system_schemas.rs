@@ -1763,3 +1763,40 @@ fn variable_validations_follow_go() {
         assert_eq!(error.code, 1231, "{bad}");
     }
 }
+
+/// Administrative statements Go answers with a fixed error or header,
+/// captured from the oracle.
+#[test]
+fn admin_statement_answers_follow_go() {
+    let mut session = Session::new();
+    for (sql, code, message) in [
+        ("RESTART", 8108, "Unsupported type *ast.RestartStmt"),
+        ("HELP 'x'", 8108, "Unsupported type *ast.HelpStmt"),
+        (
+            "ADMIN RELOAD STATS_EXTENDED",
+            1105,
+            "Extended statistics feature has been removed",
+        ),
+        (
+            "ADMIN PLUGINS ENABLE nosuch",
+            1105,
+            "plugin 'nosuch' not found",
+        ),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    session.run("CREATE TABLE aq1 (a INT)").unwrap();
+    let checksum = session.run("ADMIN CHECKSUM TABLE aq1").unwrap();
+    match checksum {
+        StmtResult::Rows(rows) => assert_eq!(rows.len(), 1),
+        other => panic!("{other:?}"),
+    }
+    let queries = row_text(session.run("ADMIN SHOW DDL JOB QUERIES LIMIT 1"));
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0][1], "CREATE TABLE aq1 (a INT)");
+}

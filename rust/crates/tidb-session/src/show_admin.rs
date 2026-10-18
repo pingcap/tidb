@@ -582,7 +582,7 @@ impl crate::Session {
             columns: vec![
                 ("Db_name".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
                 ("Table_name".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-                ("Checksum".to_owned(), longlong()),
+                ("Checksum_crc64_xor".to_owned(), longlong()),
                 ("Total_kvs".to_owned(), longlong()),
                 ("Total_bytes".to_owned(), longlong()),
             ],
@@ -673,9 +673,6 @@ impl crate::Session {
                     Datum::Int(0),
                     Datum::Bytes(record.digest.into_bytes()),
                     Datum::Bytes(Vec::new()),
-                    Datum::Int(0),
-                    Datum::Int(0),
-                    Datum::Int(0),
                 ]
             })
             .collect();
@@ -701,21 +698,78 @@ impl crate::Session {
                 ("INTERNAL".to_owned(), FieldType::new(FieldTypeCode::Tiny)),
                 ("DIGEST".to_owned(), varchar()),
                 ("SESSION_ALIAS".to_owned(), varchar()),
-                (
-                    "IA_REMOTE_READ_SEGMENT_COUNT".to_owned(),
-                    FieldType::new(FieldTypeCode::LongLong),
-                ),
-                (
-                    "IA_REMOTE_READ_SEGMENT_SIZE".to_owned(),
-                    FieldType::new(FieldTypeCode::LongLong),
-                ),
-                (
-                    "IA_REMOTE_READ_SEGMENT_WAIT_TIME".to_owned(),
-                    FieldType::new(FieldTypeCode::LongLong),
-                ),
             ],
             rows,
         })
+    }
+
+    /// Go `ShowDDLJobQueriesExec` / `ShowDDLJobQueriesWithRangeExec`: the
+    /// queries of the named jobs, searched in the running jobs and the newest
+    /// ten history jobs (the range form: the newest `offset + count`).
+    pub(crate) fn admin_show_ddl_job_queries_stmt(
+        &mut self,
+        show: &tidb_ast::AdminShowDdlJobQueriesStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        /// Go `ddl.DefNumHistoryJobs`.
+        const DEF_NUM_HISTORY_JOBS: usize = 10;
+        let history_limit = match show {
+            tidb_ast::AdminShowDdlJobQueriesStmt::JobIds(_) => DEF_NUM_HISTORY_JOBS,
+            tidb_ast::AdminShowDdlJobQueriesStmt::Limit { offset, count } => {
+                usize::try_from(offset.saturating_add(*count)).unwrap_or(usize::MAX)
+            }
+        };
+        let (running, history) = self.all_ddl_jobs()?;
+        // Deduplicated by job id, running jobs first.
+        let mut seen = std::collections::BTreeSet::new();
+        let jobs = running
+            .iter()
+            .chain(history.iter().take(history_limit))
+            .filter(|job| seen.insert(job.id))
+            .collect::<Vec<_>>();
+        let varchar = || FieldType::new(FieldTypeCode::Varchar);
+        let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
+        match show {
+            tidb_ast::AdminShowDdlJobQueriesStmt::JobIds(ids) => {
+                // Go's executor answers nothing once the named ids are at
+                // least as many as the jobs it found.
+                let rows = if ids.len() >= jobs.len() {
+                    Vec::new()
+                } else {
+                    ids.iter()
+                        .flat_map(|id| {
+                            jobs.iter()
+                                .filter(move |job| job.id == *id)
+                                .map(|job| vec![text(&job.query.to_utf8_lossy_go())])
+                        })
+                        .collect()
+                };
+                Ok(StmtOutput::Rows {
+                    columns: vec![("QUERY".to_owned(), varchar())],
+                    rows,
+                })
+            }
+            tidb_ast::AdminShowDdlJobQueriesStmt::Limit { offset, count } => {
+                let offset = usize::try_from(*offset).unwrap_or(usize::MAX);
+                let end = offset.saturating_add(usize::try_from(*count).unwrap_or(usize::MAX));
+                let rows = if offset > jobs.len() {
+                    Vec::new()
+                } else {
+                    jobs.iter()
+                        .enumerate()
+                        .skip(offset)
+                        .take_while(|(index, _)| *index < end)
+                        .map(|(_, job)| vec![text(&job.id.to_string()), text(&job.query.to_utf8_lossy_go())])
+                        .collect()
+                };
+                Ok(StmtOutput::Rows {
+                    columns: vec![
+                        ("JOB_ID".to_owned(), varchar()),
+                        ("QUERY".to_owned(), varchar()),
+                    ],
+                    rows,
+                })
+            }
+        }
     }
 
     /// Go `ShowDDLJobsExec`: the newest `job_number` jobs of the DDL history

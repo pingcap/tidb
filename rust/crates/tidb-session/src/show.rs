@@ -1269,6 +1269,20 @@ impl Session {
             tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Bindings) => {
                 Ok(Some(StmtOutput::Done(true)))
             }
+            // Go `executeAdminReloadStatistics`.
+            tidb_ast::AdminStmt::Reload(tidb_ast::AdminReloadKind::Statistics) => Err(
+                DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                    "Extended statistics feature has been removed",
+                )),
+            ),
+            // Go `plugin.ChangeDisableFlagAndFlush`: no plugin is loaded
+            // here, so the first named plugin is unknown.
+            tidb_ast::AdminStmt::Plugins { plugins, .. } => match plugins.first() {
+                Some(name) => Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                    format!("plugin '{name}' not found"),
+                ))),
+                None => Ok(Some(StmtOutput::Done(true))),
+            },
             // go `SimpleExec.executeAdminBindingControl` (`pkg/executor/simple.go`):
             // `ADMIN FLUSH BINDINGS` publishes the cache and answers OK;
             // `CAPTURE`/`EVOLVE` refuse with the two messages Go's own
@@ -1299,6 +1313,10 @@ impl Session {
             // go `fetchShowDDLJobs` over the finished-job history.
             tidb_ast::AdminStmt::ShowDdlJobs(show) => {
                 Ok(Some(self.admin_show_ddl_jobs_stmt(show)?))
+            }
+            // go `ShowDDLJobQueriesExec` / `...WithRangeExec`.
+            tidb_ast::AdminStmt::ShowDdlJobQueries(show) => {
+                Ok(Some(self.admin_show_ddl_job_queries_stmt(show)?))
             }
             // go `SimpleExec.executeExplainFor` (`pkg/executor/simple.go`):
             // the target connection must exist on this server
@@ -2706,7 +2724,17 @@ impl Session {
                     });
                     Ok(Some(StmtOutput::Affected(0)))
                 }
-                _ => Ok(None),
+                // Go's executor builder names the AST node of the statements
+                // it has no executor for (`Unsupported type *ast.HelpStmt`,
+                // 8108).
+                tidb_ast::ServerControlStmt::Restart => Err(DriverError::DdlCoded {
+                    errno: 8108,
+                    message: "Unsupported type *ast.RestartStmt".to_owned(),
+                }),
+                tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::DdlCoded {
+                    errno: 8108,
+                    message: "Unsupported type *ast.HelpStmt".to_owned(),
+                }),
             },
             _ => Ok(None),
         }
