@@ -440,7 +440,6 @@
       "pkg/planner/funcdep/fd_graph.go": "ignore fd_graph code",
       "pkg/planner/funcdep/doc.go": "ignore funcdep code",
       "pkg/planner/util/path.go": "ignore path code",
-      "pkg/planner/memo/": "ignore memo code",
       "pkg/ttl/cache/ttlstatus.go": "ignore ttlstatus code",
       "pkg/ttl/ttlworker/": "ignore ttlworker code",
       "pkg/ttl/sqlbuilder/sql_test.go": "ignore sql_test code",

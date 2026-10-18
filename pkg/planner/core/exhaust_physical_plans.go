@@ -756,7 +756,7 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 	} else {
 		innerJoinKeys, outerJoinKeys, _, _ = p.GetJoinKeys()
 	}
-	innerChildWrapper := extractIndexJoinInnerChildPattern(p, innerChild)
+	innerChildWrapper := extractIndexJoinInnerChildPattern(p, innerChild, innerJoinKeys)
 	if innerChildWrapper == nil {
 		return nil
 	}
@@ -856,9 +856,88 @@ type indexJoinInnerChildWrapper struct {
 	ds             *logicalop.DataSource
 	hasDitryWrite  bool
 	zippedChildren []base.LogicalPlan
+	// rangeOtherConds are the join's other conditions that may be used to build runtime
+	// ranges on the inner side, see pruneIndexJoinRangeCondsForAgg.
+	rangeOtherConds []expression.Expression
 }
 
-func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
+// pruneIndexJoinRangeCondsForAgg drops the join's other conditions that reference a column of
+// the aggregation which is not a direct GROUP BY column. Those conditions are only used to build
+// runtime ranges (e.g. `a.c2 > t1.c2` on index(c1, c2)); a range on such a column would filter
+// rows below the aggregation and split groups. The index join still evaluates all of its other
+// conditions above the aggregation, and equality-only access paths remain available.
+func pruneIndexJoinRangeCondsForAgg(conds []expression.Expression, la *logicalop.LogicalAggregation) []expression.Expression {
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
+	kept := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		safe := true
+		for _, col := range expression.ExtractColumns(cond) {
+			if !la.Schema().Contains(col) {
+				// columns from the outer side.
+				continue
+			}
+			if _, ok := groupByCols[col.UniqueID]; !ok {
+				safe = false
+				break
+			}
+		}
+		if safe {
+			kept = append(kept, cond)
+		}
+	}
+	return kept
+}
+
+// checkIndexJoinInnerTaskWithAgg checks if join key set is subset of group by items.
+// Otherwise the aggregation group might be split into multiple groups by the join keys, which generate incorrect result.
+// Current limitation:
+// This check currently relies on UniqueID matching between:
+// 1) columns extracted from GroupByItems, and
+// 2) columns from DataSource that are used as inner join keys.
+// It works for plain GROUP BY columns, but it is conservative for GROUP BY expressions or
+// columns introduced/re-mapped by intermediate operators (for example, GROUP BY c1+c2).
+// In those cases, semantically equivalent keys may carry different UniqueIDs, and columns
+// nested inside expressions are deliberately not treated as grouping keys, so we may
+// reject some valid index join plans (false negatives) to keep correctness.
+// TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
+	// Only direct GROUP BY columns count as grouping keys. A column that merely
+	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
+	// partition the groups by that column, so probing per join-key value would
+	// still split a group across probes.
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
+
+	// Only check the inner keys that is from the DataSource, and newly generated keys like agg func or projection column
+	// will not be considerted here. Because we only need to make sure the keys from DataSource is not split by group by,
+	// and the newly generated keys will not cause the split.
+	innerKeysFromDataSource := make(map[int64]struct{}, len(innerJoinKeys))
+	for _, key := range innerJoinKeys {
+		if expression.ExprFromSchema(key, dataSourceSchema) {
+			innerKeysFromDataSource[key.UniqueID] = struct{}{}
+		}
+	}
+	if len(innerKeysFromDataSource) > len(groupByCols) {
+		return false
+	}
+	for keyColID := range innerKeysFromDataSource {
+		if _, ok := groupByCols[keyColID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan, innerJoinKeys []*expression.Column) *indexJoinInnerChildWrapper {
 	wrapper := &indexJoinInnerChildWrapper{}
 	nextChild := func(pp base.LogicalPlan) base.LogicalPlan {
 		if len(pp.Children()) != 1 {
@@ -886,6 +965,15 @@ childLoop:
 	}
 	if wrapper.ds == nil || wrapper.ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return nil
+	}
+	wrapper.rangeOtherConds = p.OtherConditions
+	for _, child := range wrapper.zippedChildren {
+		if la, ok := child.(*logicalop.LogicalAggregation); ok {
+			if !checkIndexJoinInnerTaskWithAgg(la, innerJoinKeys, wrapper.ds.Schema()) {
+				return nil
+			}
+			wrapper.rangeOtherConds = pruneIndexJoinRangeCondsForAgg(wrapper.rangeOtherConds, la)
+		}
 	}
 	return wrapper
 }
@@ -917,7 +1005,7 @@ func buildIndexJoinInner2TableScan(
 	var innerTask, innerTask2 base.Task
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, wrapper.rangeOtherConds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
 			return nil
 		}
@@ -1014,7 +1102,7 @@ func buildIndexJoinInner2IndexScan(
 		}
 		return false
 	}
-	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, indexValid)
+	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResult(p, ds, wrapper.rangeOtherConds, innerJoinKeys, outerJoinKeys, indexValid)
 	if indexJoinResult == nil {
 		return nil
 	}

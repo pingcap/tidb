@@ -133,14 +133,15 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
 	require.NoError(t, err)
+	partitionIDs := make(map[int64]struct{})
+	for _, def := range tableInfo.Meta().GetPartitionInfo().Definitions {
+		partitionIDs[def.ID] = struct{}{}
+	}
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
-		PartitionIDs: map[int64]struct{}{
-			115: {},
-			116: {},
-		},
-		Weight: 2,
+		PartitionIDs:  partitionIDs,
+		Weight:        2,
 	}
 	initJobs(tk)
 	insertMultipleFinishedJobs(tk, "example_table", "p0")

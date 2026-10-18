@@ -880,6 +880,14 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetMaxSQLLength(TidbOptInt(val, DefTiDBStmtSummaryMaxSQLLength))
 		}},
+	{Scope: ScopeGlobal, Name: TiDBStmtSummaryPersistEvicted, Value: BoolToOnOff(DefTiDBStmtSummaryPersistEvicted), Type: TypeBool, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return stmtsummaryv2.SetPersistEvicted(TiDBOptOn(val))
+		}},
+	{Scope: ScopeGlobal, Name: TiDBStmtSummaryGroupByUser, Value: BoolToOnOff(DefTiDBStmtSummaryGroupByUser), Type: TypeBool, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return stmtsummaryv2.SetGroupByUser(TiDBOptOn(val))
+		}},
 	{Scope: ScopeGlobal, Name: TiDBCapturePlanBaseline, Value: DefTiDBCapturePlanBaseline, Type: TypeBool, AllowEmptyAll: true},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskMaxTime, Value: strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskStartTime, Value: DefTiDBEvolvePlanTaskStartTime, Type: TypeTime},
@@ -1610,6 +1618,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableConnectionEventLog, Value: BoolToOnOff(DefTiDBEnableConnectionEventLog), Type: TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(EnableConnectionEventLog.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
@@ -2228,10 +2242,28 @@ var defaultSysVars = []*SysVar{
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.SetEnableCascadesPlanner(TiDBOptOn(val))
-		return nil
-	}},
+	// TiDBEnableCascadesPlanner is deprecated and retired: the Cascades planner has
+	// been removed. The variable is kept so that existing configurations and sessions
+	// keep working; setting it only emits a warning and has no effect.
+	//
+	// Do NOT re-activate this name for a future Cascades planner implementation. Users
+	// are told that it is deprecated and will be removed, so reviving it would silently
+	// change the plan of every session that still has it set. A new implementation must
+	// ship behind a new variable name; this one should be deleted in a major release.
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: Off, Type: TypeBool,
+		GetSession: func(_ *SessionVars) (string, error) {
+			return Off, nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return Off, nil
+		},
+		Validation: func(vars *SessionVars, _ string, _ string, _ ScopeFlag) (string, error) {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableCascadesPlanner))
+			return Off, nil
+		},
+		SetSession: func(_ *SessionVars, _ string) error {
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: BoolToOnOff(DefTiDBEnableIndexMerge), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil

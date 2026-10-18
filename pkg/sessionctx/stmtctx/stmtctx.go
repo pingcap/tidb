@@ -346,6 +346,11 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
+	// MatchSQLBindingCacheKey is the AST node used to match the SQL binding.
+	MatchSQLBindingCacheKey ast.StmtNode
+	// MatchSQLBindingCache caches the binding match result for the current statement.
+	MatchSQLBindingCache any
+
 	// ExecRetryCount records the number of retries for executing the statement.
 	// It is set after ExecStmt execution and currently only used in the Slow Log phase
 	// after LogSlowQuery is called.

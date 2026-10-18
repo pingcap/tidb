@@ -30,7 +30,7 @@ require (
 	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
 	github.com/bazelbuild/rules_go v0.42.1-0.20231101215950-df20c987afcb
 	github.com/bits-and-blooms/bitset v1.14.3
-	github.com/blacktear23/go-proxyprotocol v1.0.6
+	github.com/blacktear23/go-proxyprotocol v1.0.8
 	github.com/butuzov/mirror v1.2.0
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/charithe/durationcheck v0.0.10
@@ -118,7 +118,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260803075849-c3b50791b9fb
+	github.com/tikv/client-go/v2 v2.0.8-0.20260908025646-0f91f124d321
 	github.com/tikv/pd/client v0.0.0-20260804033407-85a975a5ca78
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6

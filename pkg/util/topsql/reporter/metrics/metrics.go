@@ -21,22 +21,23 @@ import (
 
 // reporter metrics vars
 var (
-	IgnoreExceedSQLCounter              prometheus.Counter
-	IgnoreExceedPlanCounter             prometheus.Counter
-	IgnoreCollectChannelFullCounter     prometheus.Counter
-	IgnoreCollectStmtChannelFullCounter prometheus.Counter
-	IgnoreReportChannelFullCounter      prometheus.Counter
-	ReportAllDurationSuccHistogram      prometheus.Observer
-	ReportAllDurationFailedHistogram    prometheus.Observer
-	ReportRecordDurationSuccHistogram   prometheus.Observer
-	ReportRecordDurationFailedHistogram prometheus.Observer
-	ReportSQLDurationSuccHistogram      prometheus.Observer
-	ReportSQLDurationFailedHistogram    prometheus.Observer
-	ReportPlanDurationSuccHistogram     prometheus.Observer
-	ReportPlanDurationFailedHistogram   prometheus.Observer
-	TopSQLReportRecordCounterHistogram  prometheus.Observer
-	TopSQLReportSQLCountHistogram       prometheus.Observer
-	TopSQLReportPlanCountHistogram      prometheus.Observer
+	IgnoreExceedSQLCounter                prometheus.Counter
+	IgnoreExceedPlanCounter               prometheus.Counter
+	IgnoreCollectChannelFullCounter       prometheus.Counter
+	IgnoreCollectStmtChannelFullCounter   prometheus.Counter
+	IgnoreReportChannelFullCounter        prometheus.Counter
+	IgnoreReportDataByBackpressureCounter prometheus.Counter
+	ReportAllDurationSuccHistogram        prometheus.Observer
+	ReportAllDurationFailedHistogram      prometheus.Observer
+	ReportRecordDurationSuccHistogram     prometheus.Observer
+	ReportRecordDurationFailedHistogram   prometheus.Observer
+	ReportSQLDurationSuccHistogram        prometheus.Observer
+	ReportSQLDurationFailedHistogram      prometheus.Observer
+	ReportPlanDurationSuccHistogram       prometheus.Observer
+	ReportPlanDurationFailedHistogram     prometheus.Observer
+	TopSQLReportRecordCounterHistogram    prometheus.Observer
+	TopSQLReportSQLCountHistogram         prometheus.Observer
+	TopSQLReportPlanCountHistogram        prometheus.Observer
 )
 
 func init() {
@@ -50,6 +51,7 @@ func InitMetricsVars() {
 	IgnoreCollectChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_channel_full")
 	IgnoreCollectStmtChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_stmt_channel_full")
 	IgnoreReportChannelFullCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_report_channel_full")
+	IgnoreReportDataByBackpressureCounter = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_report_data_by_backpressure")
 	ReportAllDurationSuccHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblOK)
 	ReportAllDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblError)
 	ReportRecordDurationSuccHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("record", metrics.LblOK)
