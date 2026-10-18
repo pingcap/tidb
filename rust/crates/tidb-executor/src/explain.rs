@@ -3348,6 +3348,7 @@ pub fn process_plan_info_with_brief(
             fast_candidate,
             PhysicalPlan::PointGet(_) | PhysicalPlan::TableDual(_)
         ),
+        plan: Some(crate::StoredPlan(std::sync::Arc::new(physical.deep_clone()))),
         ..crate::ProcessPlanInfo::default()
     };
     collect_executor_process_fields(
@@ -3547,6 +3548,21 @@ pub fn explain_physical_plan(
     let mut physical = physical.deep_clone();
     crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
     render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
+}
+
+/// `EXPLAIN [FORMAT = f] FOR CONNECTION`: Go renders the target's retained
+/// plan with the runtime statistics the target collected, so the result has
+/// the analyze columns. This tier keeps no per-operator counters of an
+/// ordinary statement, so those cells report what an unexecuted plan does.
+pub fn explain_connection_plan(
+    physical: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let mut physical = physical.deep_clone();
+    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    render_physical_plan(ctx, ctx, &physical, catalog, format, true, None, &[])
 }
 
 /// `EXPLAIN ANALYZE FORMAT = 'plan_cache'` over the plan the non-prepared

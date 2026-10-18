@@ -786,6 +786,7 @@ mod tests {
         let catalog = Arc::new(crate::catalog_watch::SharedCatalog::new(
             crate::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
+                policies: Vec::new(),
                 schema_version: 1,
                 databases: vec![],
             },
@@ -1228,6 +1229,7 @@ mod tests {
         Arc::new(crate::catalog_watch::SharedCatalog::new(
             crate::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
+                policies: Vec::new(),
                 schema_version: 1,
                 databases: vec![crate::cluster_catalog::LoadedDatabase {
                     info: tidb_model::db::DBInfo::default(),

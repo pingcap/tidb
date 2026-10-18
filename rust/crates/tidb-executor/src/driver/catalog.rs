@@ -1536,6 +1536,16 @@ impl Catalog {
             .ranges_in(start, end)
     }
 
+    /// The regions overlapping `[start, end)` with their own bounds and ids,
+    /// as the region cache loads them.
+    #[must_use]
+    pub fn region_metas_in(&self, start: &[u8], end: &[u8]) -> Vec<crate::region_map::RegionMeta> {
+        self.regions
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .regions_in(start, end)
+    }
+
     /// The store's label-rule manager (Go `InfoSyncer.labelRuleManager`).
     #[must_use]
     pub fn label_rule_manager(&self) -> &Arc<dyn crate::label_manager::LabelRuleManager> {
@@ -1668,6 +1678,14 @@ impl Catalog {
             self.bump_version();
         }
         dropped
+    }
+
+    /// Stores a policy read back from meta, KEEPING its stored id (the
+    /// references to it are by id) and moving the id counter past it.
+    pub fn put_policy(&mut self, policy: tidb_model::PolicyInfo) {
+        self.next_policy_id = self.next_policy_id.max(policy.id);
+        self.policies
+            .insert(policy.name.lowercase().to_owned(), policy);
     }
 
     /// Go `CreatePlacementPolicyWithInfo`: stores a new policy.

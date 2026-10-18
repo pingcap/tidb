@@ -726,6 +726,7 @@ mod tests {
         syncer.init(&context).unwrap();
         let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: Vec::new(),
         }));
@@ -770,6 +771,7 @@ mod tests {
         syncer.init(&context).unwrap();
         let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: Vec::new(),
         }));
@@ -807,6 +809,7 @@ mod tests {
     fn must_reload_waits_out_failed_passes_until_one_succeeds() {
         let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: Vec::new(),
         }));
@@ -840,6 +843,7 @@ mod tests {
     fn must_reload_gives_up_when_the_node_stops() {
         let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: Vec::new(),
         }));

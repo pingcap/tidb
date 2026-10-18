@@ -411,6 +411,7 @@ mod tests {
         );
         ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: table_id,
             databases: vec![LoadedDatabase {
                 info: DBInfo::default(),

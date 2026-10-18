@@ -5131,6 +5131,61 @@ impl ClusterServerSession {
         })?;
         self.execute_parsed(sql, &stmt)
     }
+    /// Go `TraceExec`: runs the wrapped statement through its normal route
+    /// (write or result set), then answers with the spans of that run.
+    fn execute_trace<'a>(
+        &'a mut self,
+        trace: &tidb_ast::TraceStmt,
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
+        tidb_session::trace::check_options(trace).map_err(SqlQueryError::unknown)?;
+        let inner = (*trace.statement).clone();
+        let inner_sql = tidb_session::trace::statement_text(&inner);
+        let started = std::time::SystemTime::now();
+        let clock = std::time::Instant::now();
+        let mut rows = 0_u64;
+        let mut affected = 0_u64;
+        let mut error = None;
+        match QuerySession::execute_write_parsed(self, &inner_sql, &inner) {
+            Ok(Some(outcome)) => affected = outcome.affected_rows,
+            Ok(None) => match self.execute_parsed(&inner_sql, &inner) {
+                Ok(mut result) => loop {
+                    match result.source().next_batch(1024) {
+                        Ok(batch) if batch.is_empty() => break,
+                        Ok(batch) => rows += batch.len() as u64,
+                        Err(failure) => {
+                            error = Some((failure.code, failure.message));
+                            break;
+                        }
+                    }
+                },
+                Err(failure) => error = Some((failure.code, failure.message)),
+            },
+            Err(failure) => error = Some((failure.code, failure.message)),
+        }
+        let elapsed = clock.elapsed();
+        let kind = tidb_session::trace::kind_of(
+            &inner,
+            self.session.published_plan(),
+            rows,
+            self.explicit.is_some() || self.session.in_transaction(),
+        );
+        let spans = tidb_session::trace::build_spans(&tidb_session::trace::TraceInput {
+            kind,
+            sql: inner_sql,
+            started,
+            elapsed,
+            affected_rows: affected,
+            error,
+            chunk_sizes: self.session.chunk_sizes(),
+        });
+        let (columns, result_rows) = tidb_session::trace::render(&trace.format, &spans, started)
+            .map_err(SqlQueryError::unknown)?;
+        let columns = crate::pipeline_session::select_columns(&columns);
+        Ok(QueryResult::new(Box::new(
+            crate::pipeline_session::MaterializedResultSetSource::new(columns, result_rows),
+        )))
+    }
+
     fn binding_records_changed(&self) -> bool {
         self.bindings
             .as_ref()
@@ -8442,6 +8497,12 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        // Go `TraceExec` runs the statement it wraps and reports its spans.
+        if let Stmt::Admin(admin) = stmt {
+            if let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() {
+                return self.execute_trace(trace);
+            }
+        }
         // See `execute_write_parsed`: a prepared DDL body takes the DDL route.
         if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
             return self.execute_parsed(&body_sql, &body);

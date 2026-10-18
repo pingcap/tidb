@@ -1100,7 +1100,7 @@ impl Session {
     /// VIEW, anything else any privilege but CREATE TEMPORARY TABLES (a
     /// local temporary table any at all), each refused as its own command
     /// denied on the lower-cased name. A missing table is checked as a table.
-    fn require_show_create_privilege(
+    pub(crate) fn require_show_create_privilege(
         &self,
         database: &str,
         table_name: &str,
@@ -1324,19 +1324,94 @@ impl Session {
             // statement then explains through the ordinary machinery.
             tidb_ast::AdminStmt::ExplainFor(explain_for) => {
                 let target = explain_for.connection_id;
-                let found = self.process.as_ref().map_or(false, |guard| {
-                    guard
-                        .registry()
-                        .snapshot()
-                        .iter()
-                        .any(|row| row.id == target)
-                });
-                if !found {
+                let Some(guard) = self.process.as_ref() else {
                     return Err(DriverError::UnknownThreadId(target));
+                };
+                let registry = guard.registry();
+                let Some(target_row) = registry.snapshot().into_iter().find(|row| row.id == target)
+                else {
+                    return Err(DriverError::UnknownThreadId(target));
+                };
+                let plan = registry.plan_of(target);
+                // Go `buildExplainFor`: another user's connection needs SUPER,
+                // refused with `ErrAccessDenied` over the two names alone.
+                if let Some((_, user, host)) = self.privilege_context() {
+                    if user != target_row.user
+                        && !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Super)
+                    {
+                        return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
+                            1045,
+                            format!(
+                                "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
+                            ),
+                        )));
+                    }
                 }
-                Err(DriverError::unsupported(
-                    "EXPLAIN FOR CONNECTION over a live statement is not supported yet",
-                ))
+                let format = explain_for.format.to_lowercase();
+                let text = |name: &str| {
+                    (
+                        name.to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    )
+                };
+                // Go `buildExplainFor`: no plan at all is the statement's own
+                // empty result; any other plan needs one of the three formats.
+                if matches!(plan, crate::process::ProcessPlan::None) {
+                    return Ok(Some(StmtOutput::Affected(0)));
+                }
+                let explain_format = match format.as_str() {
+                    "" | "row" => tidb_executor::ExplainFormat::Row,
+                    "brief" => tidb_executor::ExplainFormat::Brief,
+                    "verbose" => tidb_executor::ExplainFormat::Verbose,
+                    other => {
+                        return Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                            format!("explain format '{other}' for connection is not supported now"),
+                        )));
+                    }
+                };
+                let plan = match plan {
+                    crate::process::ProcessPlan::Plan(plan) => plan,
+                    // An `Explain` plan renders nothing, under the analyze
+                    // header of the format.
+                    _ => {
+                        let names: &[&str] = if explain_format == tidb_executor::ExplainFormat::Verbose
+                        {
+                            &[
+                                "id",
+                                "estRows",
+                                "estCost",
+                                "actRows",
+                                "task",
+                                "access object",
+                                "execution info",
+                                "operator info",
+                                "memory",
+                                "disk",
+                            ]
+                        } else {
+                            &[
+                                "id",
+                                "estRows",
+                                "actRows",
+                                "task",
+                                "access object",
+                                "execution info",
+                                "operator info",
+                                "memory",
+                                "disk",
+                            ]
+                        };
+                        return Ok(Some(StmtOutput::Rows {
+                            columns: names.iter().map(|name| text(name)).collect(),
+                            rows: Vec::new(),
+                        }));
+                    }
+                };
+                let ctx = self.statement_context(false);
+                let (columns, rows) = self.with_catalog_mut(|catalog| {
+                    tidb_executor::explain_connection_plan(&plan.0, catalog, &ctx, explain_format)
+                })?;
+                Ok(Some(StmtOutput::Rows { columns, rows }))
             }
             // go `fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
             // static table then every dynamic privilege.
@@ -1423,22 +1498,84 @@ impl Session {
                     rows: Vec::new(),
                 }))
             }
+            // Go `TraceExec`: runs the statement, then reports the spans.
+            tidb_ast::AdminStmt::Trace(trace) => {
+                crate::trace::check_options(trace)
+                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
+                let inner_sql = crate::trace::statement_text(&trace.statement);
+                let started = std::time::SystemTime::now();
+                let clock = std::time::Instant::now();
+                let inner = (*trace.statement).clone();
+                let outcome = self.execute_statement_owned(inner, &inner_sql);
+                let elapsed = clock.elapsed();
+                let (rows, affected, error) = match outcome {
+                    Ok(StmtOutput::Rows { rows, .. }) => (rows.len() as u64, 0, None),
+                    Ok(StmtOutput::Affected(count)) => (0, count, None),
+                    Ok(_) => (0, 0, None),
+                    Err(error) => {
+                        let mysql = error.to_mysql_error();
+                        (0, 0, Some((mysql.code, mysql.message)))
+                    }
+                };
+                let plan = self.published_plan();
+                let kind = crate::trace::kind_of(
+                    &trace.statement,
+                    plan,
+                    rows,
+                    self.in_transaction(),
+                );
+                let spans = crate::trace::build_spans(&crate::trace::TraceInput {
+                    kind,
+                    sql: inner_sql,
+                    started,
+                    elapsed,
+                    affected_rows: affected,
+                    error,
+                    chunk_sizes: self.chunk_sizes(),
+                });
+                let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
+                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
+                Ok(Some(StmtOutput::Rows { columns, rows }))
+            }
             // Go `getTiProxyAddrs`: every TRAFFIC statement talks to a
             // TiProxy, and this deployment has none.
             tidb_ast::AdminStmt::Traffic(_) => Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
                 "no tiproxy server found",
             ))),
-            // go `ShowPlacementForTable`/`Target`: this tier carries no
-            // placement rules, so every target answers the empty set (the
-            // oracle's own answer for the battery's unplaced table).
-            tidb_ast::AdminStmt::ShowPlacement(_) => Ok(Some(StmtOutput::Rows {
-                columns: vec![
-                    ("Target".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("Placement".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                    ("Scheduling_State".to_owned(), tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)),
-                ],
-                rows: Vec::new(),
-            })),
+            // Go `fetchShowPlacement` and its FOR DATABASE/TABLE/PARTITION and
+            // LABELS forms (`executor/show_placement.go`).
+            tidb_ast::AdminStmt::ShowPlacement(show) => {
+                let columns = if show.target == tidb_ast::ShowPlacementTarget::Labels {
+                    return Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                        "pd http client unavailable",
+                    )));
+                } else {
+                    ["Target", "Placement", "Scheduling_State"]
+                        .iter()
+                        .map(|name| {
+                            (
+                                (*name).to_owned(),
+                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                            )
+                        })
+                        .collect()
+                };
+                let rows = self.placement_rows(&show.target)?;
+                let (like_pattern, where_clause) = match show.filter.as_ref() {
+                    None => (None, None),
+                    Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
+                        let value = datum_text(&self.eval_value(expr)?);
+                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+                    }
+                    Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
+                };
+                self.filter_show_output(
+                    StmtOutput::Rows { columns, rows },
+                    like_pattern,
+                    where_clause,
+                )
+                .map(Some)
+            }
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
@@ -2587,6 +2724,43 @@ impl Session {
                     ],
                     rows,
                 }))
+            }
+            // Go `fetchShowTableRegions` / `fetchShowDistributions`.
+            tidb_ast::AdminStmt::ShowTablePlacement(show) => {
+                let (database, table_name) = match show.table.as_slice() {
+                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
+                    [database, table] => (database.clone(), table.clone()),
+                    _ => return Err(DriverError::unsupported("empty table name")),
+                };
+                if show.kind == tidb_ast::ShowTablePlacementKind::Distributions {
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::show_regions::show_table_distributions(
+                            catalog,
+                            &database,
+                            &table_name,
+                            &show.partitions,
+                        )
+                    })?;
+                    return Ok(None);
+                }
+                let rows = self.with_catalog_mut(|catalog| {
+                    tidb_executor::show_regions::show_table_regions(
+                        catalog,
+                        &database,
+                        &table_name,
+                        &show.partitions,
+                        show.index.as_deref(),
+                    )
+                })?;
+                let output = StmtOutput::Rows {
+                    columns: tidb_executor::show_regions::table_region_columns(),
+                    rows,
+                };
+                let where_clause = match &show.filter {
+                    Some(tidb_ast::ShowInspectionFilter::Where(expr)) => Some(expr),
+                    _ => None,
+                };
+                self.filter_show_output(output, None, where_clause).map(Some)
             }
             // Go `fetchShowColumns`.
             tidb_ast::AdminStmt::ShowColumns(show) => {

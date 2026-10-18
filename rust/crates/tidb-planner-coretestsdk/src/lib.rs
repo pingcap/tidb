@@ -641,6 +641,15 @@ impl MockInfoSchema {
                             }
                         })
                         .collect(),
+                    definer_user: view
+                        .definer
+                        .as_ref()
+                        .map_or_else(String::new, |definer| definer.username.clone()),
+                    definer_host: view
+                        .definer
+                        .as_ref()
+                        .map_or_else(String::new, |definer| definer.hostname.clone()),
+                    security_definer: view.security == tidb_ast::ViewSecurity::DEFINER,
                 });
             } else {
                 drop(info);

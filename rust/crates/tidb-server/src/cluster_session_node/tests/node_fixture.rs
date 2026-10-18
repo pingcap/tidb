@@ -235,6 +235,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
             name: CiString::new("batch"),
             state: tidb_model::SchemaState::PUBLIC,
         }],
+        policies: Vec::new(),
         schema_version: 11,
         databases: vec![LoadedDatabase {
             info: DBInfo {

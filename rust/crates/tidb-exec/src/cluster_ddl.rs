@@ -9852,6 +9852,22 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 info.placement_policy_ref =
                     check_and_normalize_placement_policy(snapshot, policy_name)?;
             }
+            // Go `handleTablePlacement`: every partition that names a policy
+            // of its own resolves it BY id too (`default` clears it), or the
+            // bundles below cannot find the policy.
+            if let Some(partition) = info.partition.as_ref() {
+                let definitions = partition.read().definitions.snapshot();
+                for (index, definition) in definitions.iter().enumerate() {
+                    let Some(reference) = definition.placement_policy_ref.as_ref() else {
+                        continue;
+                    };
+                    let written = reference.read().name.original().to_owned();
+                    let resolved = check_and_normalize_placement_policy(snapshot, &written)?;
+                    partition.read().definitions.update(index, |definition| {
+                        definition.placement_policy_ref = resolved;
+                    });
+                }
+            }
             // Go `BuildTableInfoWithStmt`: a non-temporary table that names no
             // placement takes the schema's default. A written `default` is a
             // reference there (cleared only afterwards), so it does not.

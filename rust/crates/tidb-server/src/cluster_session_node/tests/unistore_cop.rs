@@ -18048,6 +18048,96 @@ fn account_rows_follow_go() {
     assert_eq!(columns, [["cu1"]], "{columns:?}");
 }
 
+/// `EXPLAIN FOR CONNECTION` renders the plan the connection's previous
+/// statement published, under the analyze columns, as Go does: a statement
+/// that was itself an EXPLAIN leaves an `Explain` plan that renders nothing,
+/// and only brief/row/verbose are admitted. Captured from the oracle.
+#[test]
+fn explain_for_connection_renders_the_previous_plan() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1142)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE efc (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    let id = displayed(rows(&mut session, "select connection_id()"))[0][0].clone();
+    rows(&mut session, "select * from efc where a = 1");
+    let plan = displayed(rows(&mut session, &format!("explain for connection {id}")));
+    assert_eq!(plan.len(), 1, "{plan:?}");
+    assert!(plan[0][0].starts_with("Point_Get_"), "{plan:?}");
+    assert_eq!(plan[0][3], "root");
+    assert_eq!(plan[0][4], "table:efc");
+    // The EXPLAIN FOR statement is itself an EXPLAIN: its own plan is empty.
+    let after = displayed(rows(
+        &mut session,
+        &format!("explain format='brief' for connection {id}"),
+    ));
+    assert!(after.is_empty(), "{after:?}");
+    rows(&mut session, "select * from efc where a = 1");
+    let (_, message) = query_error(&mut session, &format!("explain format='json' for connection {id}"));
+    assert!(
+        message.contains("explain format 'json' for connection is not supported now"),
+        "{message}"
+    );
+    let (code, message) = query_error(&mut session, "explain for connection 99999");
+    assert_eq!((code, message.as_str()), (1094, "Unknown thread id: 99999"));
+}
+
+/// Placement policies live in meta, not in the node: the catalog a node
+/// builds from the cluster must carry them, or `SHOW PLACEMENT`,
+/// `information_schema.placement_policies` and `SHOW TABLE ... REGIONS`
+/// (which prints the policy of a table or partition) see none. A partition's
+/// own policy is resolved by id when the table is created, as
+/// `handleTablePlacement` does. Captured from the oracle.
+#[test]
+fn placement_policies_reach_the_cluster_catalog() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1143)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE PLACEMENT POLICY ppa FOLLOWERS=4")
+        .unwrap();
+    session
+        .execute_write("CREATE PLACEMENT POLICY ppb PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\"")
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE ppt (a INT, b INT) PLACEMENT POLICY ppa PARTITION BY RANGE (a) \
+             (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY ppb, \
+              PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select policy_name, followers from information_schema.placement_policies order by 1"
+        )),
+        vec![vec!["ppa", "4"], vec!["ppb", "2"]]
+    );
+    let show = displayed(rows(&mut session, "show placement"));
+    let targets: Vec<&str> = show.iter().map(|row| row[0].as_str()).collect();
+    assert_eq!(
+        targets,
+        vec![
+            "POLICY ppa",
+            "POLICY ppb",
+            "TABLE test.ppt",
+            "TABLE test.ppt PARTITION p0",
+            "TABLE test.ppt PARTITION p1",
+            "TABLE test.ppt PARTITION p2"
+        ]
+    );
+    assert_eq!(show[3][1], "PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\"");
+    assert_eq!(show[4][1], "FOLLOWERS=4");
+    assert_eq!(show[2][2], "PENDING");
+    let regions = displayed(rows(&mut session, "show table ppt regions"));
+    assert_eq!(regions.len(), 1, "{regions:?}");
+    assert_eq!(
+        (regions[0][11].as_str(), regions[0][12].as_str()),
+        ("PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\"", "PENDING")
+    );
+}
+
 /// A CTE definition keeps its storage id in every format
 /// (`CTEDefinition.ExplainID`), and the implicit casts a builtin's arguments
 /// carry no longer decide push-down: `round(dt)` and `conv(int, ...)` read a

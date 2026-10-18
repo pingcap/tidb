@@ -126,6 +126,22 @@ fn started_cluster() -> (RecordedSnapshot, ClusterCatalog) {
     (snapshot, catalog)
 }
 
+/// Stores a placement policy the way `Mutator.CreatePolicy` does.
+fn put_policy(snapshot: &mut RecordedSnapshot, id: i64, name: &str) {
+    let policy = tidb_model::PolicyInfo {
+        placement_settings: Some(tidb_model::GoShared::new(
+            tidb_model::PlacementSettings::default(),
+        )),
+        id,
+        name: tidb_ast::CiString::new(name),
+        state: tidb_model::SchemaState::PUBLIC,
+    };
+    snapshot.put(
+        key::policy_kv_key(id),
+        value::serialize_policy_info(&policy).expect("a policy encodes"),
+    );
+}
+
 #[test]
 fn an_unchanged_schema_version_reloads_nothing() {
     let (mut snapshot, catalog) = started_cluster();
@@ -717,6 +733,7 @@ fn drop_schema_and_truncate_diffs_answer_gos_ids() {
             ActionType::ACTION_TRUNCATE_TABLE.0
         ),
     );
+    put_policy(&mut snapshot, 99, "p99");
     snapshot.commit_diff(
         102,
         &diff_json(102, ActionType::ACTION_CREATE_PLACEMENT_POLICY, 99, 0),
@@ -966,6 +983,7 @@ fn policy_diffs_change_nothing_and_stay_incremental() {
         ActionType::ACTION_ALTER_MASKING_POLICY,
     ] {
         let (mut snapshot, catalog) = started_cluster();
+        put_policy(&mut snapshot, 99, "p99");
         snapshot.commit_diff(101, &diff_json(101, action, 99, 0));
         let next = diffs_reload(
             reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
@@ -975,6 +993,44 @@ fn policy_diffs_change_nothing_and_stay_incremental() {
         assert_eq!(next.databases.len(), catalog.databases.len(), "{action}");
         assert_eq!(next.databases[0].tables.len(), 1, "{action}");
     }
+}
+
+/// Go `applyCreatePolicy` / `applyAlterPolicy` read the policy back from meta
+/// and `applyDropPolicy` removes it by id; a policy the diff names but meta
+/// no longer holds is a missing object, which takes the full load.
+#[test]
+fn policy_diffs_keep_the_loaded_policy_set_current() {
+    let (mut snapshot, catalog) = started_cluster();
+    assert!(catalog.policies.is_empty());
+    put_policy(&mut snapshot, 99, "p99");
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_CREATE_PLACEMENT_POLICY, 99, 0),
+    );
+    let created = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs"),
+        "create policy",
+    );
+    assert_eq!(created.policies.len(), 1);
+    assert_eq!(created.policies[0].id, 99);
+    snapshot.commit_diff(
+        102,
+        &diff_json(102, ActionType::ACTION_DROP_PLACEMENT_POLICY, 99, 0),
+    );
+    let dropped = diffs_reload(
+        reload_cluster_catalog(&mut snapshot, &created).expect("reload runs"),
+        "drop policy",
+    );
+    assert!(dropped.policies.is_empty());
+    snapshot.commit_diff(
+        103,
+        &diff_json(103, ActionType::ACTION_ALTER_PLACEMENT_POLICY, 98, 0),
+    );
+    let reloaded = reload_cluster_catalog(&mut snapshot, &dropped).expect("reload runs");
+    assert!(
+        matches!(reloaded, ReloadedCatalog::Full { .. }),
+        "{reloaded:?}"
+    );
 }
 
 /// Go `applyExchangeTablePartition`'s public case: the normal table (its ID

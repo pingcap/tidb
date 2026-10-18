@@ -99,6 +99,7 @@ impl ClusterDdl for MockDdl {
         let current = self.catalog.load();
         let mut next = ClusterCatalog {
             resource_groups: current.resource_groups.clone(),
+            policies: current.policies.clone(),
             schema_version: current.schema_version + 1,
             databases: current.databases.clone(),
         };

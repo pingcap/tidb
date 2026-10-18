@@ -375,6 +375,7 @@ mod tests {
     fn catalog() -> ClusterCatalog {
         ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 1,
             databases: vec![LoadedDatabase {
                 info: DBInfo {

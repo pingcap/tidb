@@ -557,3 +557,70 @@ fn region_split_policies_print_back_and_warn_for_a_new_index() {
         ]]
     );
 }
+
+/// Go `fetchShowTableRegions`: the record range then each index range, one
+/// row per region ever reached, each key decoded by `regionKeyDecoder`; the
+/// store's ids are 2 for the bootstrap region and then pairs (region, peer).
+#[test]
+fn show_table_regions_lists_split_regions_as_go_does() {
+    let mut session = Session::new();
+    session
+        .run("create table t(a int primary key, b int, c varchar(10), key ib(b), unique key uc(c))")
+        .unwrap();
+    // One region for everything, and the column set Go builds.
+    let one = rows(&mut session, "show table t regions");
+    assert_eq!(one.len(), 1);
+    assert_eq!(
+        one[0],
+        vec!["2", "", "", "3", "1", "3", "0", "0", "0", "0", "0", "", ""]
+    );
+    assert_eq!(rows(&mut session, "show table t index ib regions"), one);
+    assert_eq!(
+        split(
+            &mut session,
+            "split table t index ib between (0) and (100) regions 3"
+        ),
+        vec!["3", "1"]
+    );
+    let index = rows(&mut session, "show table t index ib regions");
+    let ids: Vec<&str> = index.iter().map(|row| row[0].as_str()).collect();
+    assert_eq!(ids, vec!["2", "4", "6"]);
+    // Region 4 starts where region 2 ends, and the decoded keys carry the
+    // table id, the index id and the hex of the encoded value.
+    assert_eq!(index[0][2], index[1][1]);
+    assert!(index[1][1].contains("_i_1_"), "{:?}", index[1]);
+    assert!(index[2][2].ends_with("_i_2_"), "{:?}", index[2]);
+    // The table's own listing adds the record range, whose region was
+    // created last (the split key `t{id}_i2` cuts off the unique index).
+    let all = rows(&mut session, "show table t regions");
+    assert_eq!(all[0][0], "8");
+    assert_eq!(all.len(), 4);
+    // `WHERE` filters the listing like any SHOW.
+    assert_eq!(
+        column(&mut session, "show table t regions where region_id > 4"),
+        vec!["8", "6"]
+    );
+    assert_eq!(
+        code(&mut session, "show table t index nope regions"),
+        (1176, "Key 'nope' doesn't exist in table 't'".to_owned())
+    );
+    assert_eq!(
+        code(&mut session, "show table t partition (p0) regions"),
+        (1747, "PARTITION () clause on non partitioned table".to_owned())
+    );
+    session.run("create temporary table tmp (a int)").unwrap();
+    assert_eq!(
+        code(&mut session, "show table tmp regions"),
+        (
+            8006,
+            "`show table regions` is unsupported on temporary tables.".to_owned()
+        )
+    );
+    assert_eq!(
+        code(&mut session, "show table t distributions"),
+        (
+            1105,
+            "[PD:client:ErrClientGetLeader]get leader failed, pd http cli is nil".to_owned()
+        )
+    );
+}

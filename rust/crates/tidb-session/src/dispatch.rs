@@ -2839,6 +2839,14 @@ impl Session {
         // The jobs this statement's DDL submits are finished into the DDL
         // history once it completes, as Go's job worker finishes them.
         drop(self.ddl_job_sink.take());
+        if matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(),
+            tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::ExplainFor(_)))
+        {
+            self.process_plan_info
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .explain_marker = true;
+        }
         // A statement this one runs inside its own execution belongs to the
         // outer statement's lock step, which only the outer call finishes.
         let nested = self.transaction_statement.is_some();

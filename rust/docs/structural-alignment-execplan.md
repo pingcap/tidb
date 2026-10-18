@@ -70,6 +70,48 @@ Each milestone lands as its own commit through the pre-commit hook, so any one c
 - [x] (2026-10-18) Account survey (91 CREATE/ALTER/RENAME/DROP USER, GRANT/REVOKE, SHOW GRANTS/CREATE USER and the `mysql.*` privilege tables) against the oracle. `WITH MAX_USER_CONNECTIONS n` is now carried by the registry, the cluster account writer and loader (it was silently 0 on a cluster, so `SHOW CREATE USER` omitted it); `CREATE ROLE` records the role's `{}` row in the registry's `mysql.global_priv` image; `RENAME USER` leaves the column grants under the old name, as Go's list of renamed tables (which omits `mysql.columns_priv`) does. Pinned by `account_rows_follow_go`. Left: the parse error position of `GRANT r TO u WITH ADMIN OPTION` (Go consumes `WITH ADMIN` before failing at `OPTION`), and harness-only differences (root's password hash, `user()` host).
 - [x] (2026-10-18) Session-statement and ADMIN survey (147 transaction, savepoint, XA, FLUSH, KILL, PREPARE, SET, EXPLAIN forms and 44 ADMIN forms) against the oracle. Fixed: `RESTART` and `HELP` answer 8108 `Unsupported type *ast.<Node>`; `ADMIN RELOAD STATS_EXTENDED` and `ADMIN PLUGINS` fail as Go's do; `ADMIN CHECKSUM TABLE` names its column `Checksum_crc64_xor`; `ADMIN SHOW SLOW` has Go's 14 columns; `ADMIN SHOW DDL JOB QUERIES` (both the id list, with Go's "ids >= jobs answers nothing" quirk, and the `LIMIT` form) reads the job history. Not mirrored on purpose: the Go hand parser accepts empty clauses (`WHERE` with no condition, `UPDATE t SET a =`), panics on `SELECT 1 UNION SELECT`, and prints different `near "..."` text for many truncated statements; those are hand-parser defects, not behavior to copy. Open: `EXPLAIN FOR CONNECTION`, `TRACE`, `RECOMMEND INDEX` (the `indexadvisor` package), Go's bootstrap DDL jobs missing from `ADMIN SHOW DDL JOBS`, `EXPLAIN ANALYZE` runtime counters (`RU`, `Concurrency`, memory).
 - [x] (2026-10-18) `@@tidb_last_ddl_info` / session-state `ddl-info` (Go `recordLastDDLInfo`: the query of the last DDL job the session waited for and Go's per-process `seqAllocator` count, recorded at the cluster DDL route and the in-process job filing; SHOW VARIABLES reads the live getters) and `tidb_slow_log_rules` (new `slow_log_rules.rs`: Go's `field:value` rule syntax over the 38 accessor fields, strconv-exact errors, ten-rule limit, ConnID refused at SESSION scope, and the encoded read-back at both scopes). Probed with 40 rule texts at both scopes (the only differences left are Go's randomised map order for a multi-field rule). Matching rules against statements (deciding what the slow log records) is not wired. Pinned by `slow_log_rules_and_last_ddl_info_follow_go`.
+- [x] (2026-10-18) EXPLAIN FOR CONNECTION and TRACE follow Go. A statement
+  publishes its physical plan (`ProcessPlanInfo.plan`, with the previous plan
+  and an explain marker kept across the statement-start reset), and
+  `ProcessRegistry::plan_of` answers Go's `ProcessInfo.Plan` semantics: a
+  connection whose last statement was itself an EXPLAIN renders nothing, an
+  unknown id is 1094, and only brief/row/verbose are admitted. `TRACE` runs
+  its inner statement and builds Go's span list in `tidb-session/src/trace.rs`
+  (row, json and log formats; DML/DDL/simple kinds). Runtime counters of
+  EXPLAIN FOR CONNECTION (actRows, execution info) and a few trace shapes
+  (merge-join child order, union, SHOW Next counts) are still open.
+- [x] (2026-10-18) Bootstrap DDL job history is deliberately not copied: the
+  Go test harness bootstraps with small mysql table ids (4, 6, ... 108) and 58
+  job rows, while this node reserves production metadef ids
+  (`RESERVED_GLOBAL_ID_UPPER_BOUND - n`) and bootstraps five mview/mlog tables,
+  `SCHEMATA_EXTENSIONS` and the workload-repository variables the branch
+  oracle lacks. Differential probes therefore compare user-table ids
+  normalised (`t_<id>_` -> `t_N_`).
+- [x] (2026-10-18) `SHOW TABLE ... REGIONS` / `DISTRIBUTIONS` and
+  `SHOW PLACEMENT` follow Go (`tidb-executor/src/show_regions.rs`,
+  `tidb-session/src/show_placement.rs`). `RegionMap` now carries region ids
+  the way the mock cluster hands them out (bootstrap region 2/peer 3, then
+  (region, peer) pairs in ascending key order, one store) and answers
+  `regions_in(start, end)` with each region's own bounds; the listing is Go's
+  `getPhysicalTableRegions` / `getPhysicalIndexRegions` (record range, then
+  each index range, de-duplicated by region id, `regionKeyDecoder` for every
+  key, global indexes at the logical table id) with Go's header, scheduling
+  constraints from the table/partition policy and state `PENDING` (what
+  `GetReplicationState` answers with no PD client; `SCHEDULED` for a schema
+  with no table). `DISTRIBUTIONS` validates the table and partitions and then
+  fails with Go's no-PD error; `SHOW PLACEMENT LABELS` fails with
+  `pd http client unavailable` like `TIKV_STORE_STATUS`. Still open: the
+  listing is the in-process store's, not PD's, and `ALTER RANGE ... PLACEMENT
+  POLICY` is parsed but never executed, so `RANGE` rows of SHOW PLACEMENT
+  cannot appear.
+- [x] (2026-10-18) Root cause behind empty `SHOW PLACEMENT` /
+  `information_schema.placement_policies` on a cluster node: the cluster
+  loader dropped placement policies. `ClusterCatalog.policies` is now read
+  from meta, kept current by the policy schema diffs, and installed with
+  `Catalog::put_policy` (ids preserved). The cluster `CREATE TABLE` also
+  resolves each partition's own policy by id (Go `handleTablePlacement`);
+  before, the bundles for `PARTITION p0 PLACEMENT POLICY x` failed with
+  "no placement policy with id 0".
 - [x] (2026-10-17) Milestone 3 spike: `tidb_exec::in_memory_meta::InMemoryMeta` (a `MetaSnapshot` over an ordered map with `apply`) runs the production cycle with no TiKV: bootstrap the meta, plan a statement with `plan_ddl`, apply the plan's mutations, load the catalog back; pinned by `a_planned_create_database_applies_to_the_store_and_loads_back`. The DDL half of the target is therefore feasible without a new planner. Scouting the storage side (read-only): the row backend is the `TableStorage` trait in `tidb-executor/src/storage.rs`, which speaks raw TiKV-format key and value bytes (`get`, `get_local`, scans, staged-write hooks), with `MemTableStorage` for the in-process tier and `ClusterTableStorage` over txnkv for production; `table_from_meta::cluster_table(table, storage, auto)` builds a `KvTable` from a loaded `TableInfo` and a storage handle. Record keys carry the table id, so one shared in-memory ordered map, handed to every table the loader builds, keeps the rows across a catalog reload the way TiKV does; that shared map plus the auto-id allocator state are what a bare session's store must own beyond the meta map. Still unproven and the real work of 3b/3c: the table rows (the in-process `Catalog` owns them, behind the `TableStorage` trait that `ClusterTableStorage` also implements) and the session orchestration `run_ddl` holds in `tidb-server` (privileges, implicit commit, table-lock jobs, warning drain).
 - [ ] Milestone 3: DDL duplication, decided (see the Decision log) and scouted; it is a program, staged as follows. 3a: define the seam in `tidb-session` (a DDL service trait the session calls for every schema change; the cluster tier implements it, and the in-process tier is wrapped as a second implementation so call sites stop branching). 3b: move the glue the cluster session needs to boot a store-backed session (boot, schema sync, the DDL worker, about 6,000 of the 20,000 lines under `cluster_session_node`) below `tidb-session` into a domain crate, as Go's `domain` package sits below `session`. 3c: give `Session::new()` an in-process unistore through that crate. 3d: migrate statement kinds one per gate (their tests move with them), deleting the executor DDL for each kind once nothing calls it. 3e: delete the in-process catalog's row storage once no statement kind uses it.
 - [ ] Milestone 4: execution details.

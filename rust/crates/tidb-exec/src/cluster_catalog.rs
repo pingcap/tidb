@@ -162,6 +162,9 @@ pub struct ClusterCatalog {
     /// Go `Mutator.ListResourceGroups`: the stored resource groups, with
     /// meta's default group when none is stored under that name.
     pub resource_groups: Vec<tidb_model::ResourceGroupInfo>,
+    /// Go `Mutator.ListPolicies`: the stored placement policies, which a
+    /// table, partition or database names by id.
+    pub policies: Vec<tidb_model::PolicyInfo>,
 }
 
 impl ClusterCatalog {
@@ -219,6 +222,14 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
         .any(|group| group.name.lowercase() == tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
     {
         resource_groups.push(tidb_model::ResourceGroupInfo::default_group());
+    }
+
+    let mut policies = Vec::new();
+    for (_, stored) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
+        policies.push(
+            value::parse_policy_info(&stored)
+                .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?,
+        );
     }
 
     let mut databases = Vec::new();
@@ -293,6 +304,7 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
 
     Ok(ClusterCatalog {
         resource_groups,
+        policies,
         schema_version,
         databases,
     })

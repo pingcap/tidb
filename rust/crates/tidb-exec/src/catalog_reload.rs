@@ -307,7 +307,7 @@ type AppliedDiff = Result<Result<Vec<i64>, FullReloadReason>, ClusterCatalogErro
 /// load: a database, table or policy the diff names that is not there.
 ///
 /// What this catalog does not keep, Go's appliers for it touch nothing else:
-/// placement policies, resource groups and masking policies (their own maps),
+/// masking policies (their own map),
 /// placement bundles, auto-ID allocators, `sortedTablesBuckets` and the
 /// temporary-table set (in-memory caches). A full load reads none of those
 /// either, so applying their diffs as no-ops is the same catalog a full load
@@ -407,14 +407,30 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 .retain(|existing| existing.id != diff.schema_id);
             Ok(Ok(Vec::new()))
         }
-        // Go `applyCreatePolicy` / `applyAlterPolicy` / `applyDropPolicy`
-        // (`builder_misc.go:25-72`) and `applyMaskingPolicyChange`
-        // (`builder.go:412-415`) touch only the policy and masking-policy
-        // maps, which this catalog does not hold.
-        ActionType::ACTION_CREATE_PLACEMENT_POLICY
-        | ActionType::ACTION_ALTER_PLACEMENT_POLICY
-        | ActionType::ACTION_DROP_PLACEMENT_POLICY
-        | ActionType::ACTION_CREATE_MASKING_POLICY
+        // Go `applyCreatePolicy` / `applyAlterPolicy` (`builder_misc.go:25-60`):
+        // the policy the diff names, read back from meta, replaces the one
+        // with that id.
+        ActionType::ACTION_CREATE_PLACEMENT_POLICY | ActionType::ACTION_ALTER_PLACEMENT_POLICY => {
+            let Some(stored) = snapshot.get(&key::policy_kv_key(diff.schema_id))? else {
+                return Ok(Err(missing(version, format!("policy {}", diff.schema_id))));
+            };
+            let policy = value::parse_policy_info(&stored)
+                .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?;
+            catalog.policies.retain(|existing| existing.id != policy.id);
+            catalog.policies.push(policy);
+            Ok(Ok(Vec::new()))
+        }
+        // Go `applyDropPolicy` (`:62-72`): the policy with the diff's id
+        // leaves the map.
+        ActionType::ACTION_DROP_PLACEMENT_POLICY => {
+            catalog
+                .policies
+                .retain(|existing| existing.id != diff.schema_id);
+            Ok(Ok(Vec::new()))
+        }
+        // Go `applyMaskingPolicyChange` (`builder.go:412-415`) touches only
+        // the masking-policy map, which this catalog does not hold.
+        ActionType::ACTION_CREATE_MASKING_POLICY
         | ActionType::ACTION_ALTER_MASKING_POLICY
         | ActionType::ACTION_DROP_MASKING_POLICY => Ok(Ok(Vec::new())),
         // Go `applyTruncateTableOrPartition`, `applyDropTableOrPartition`,

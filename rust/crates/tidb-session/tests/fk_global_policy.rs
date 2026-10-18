@@ -220,6 +220,7 @@ fn foreign_key_global_policy_batch() {
     assert!(table.indices.is_empty());
     let catalog = tidb_exec::cluster_catalog::ClusterCatalog {
         resource_groups: Vec::new(),
+        policies: Vec::new(),
         schema_version: 1,
         databases: vec![],
     };

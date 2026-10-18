@@ -52,6 +52,7 @@ pub mod hash_table_v2;
 pub mod join_row_table;
 pub mod join_table_meta;
 pub mod region_map;
+pub mod show_regions;
 pub mod row_table_builder;
 pub mod split_region;
 pub mod table_size_stats;
@@ -259,7 +260,7 @@ pub use driver::{
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
-    brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt,
+    brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan,
     explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt,
     explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan,
     explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info,
@@ -286,7 +287,7 @@ pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
-    ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo,
+    ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, StoredPlan,
     RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck,
     SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState,
 };

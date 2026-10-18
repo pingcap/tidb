@@ -238,6 +238,23 @@ pub trait GlobalSysvarAccessor: Send + Sync {
     fn get_global_sysvar(&self, name: &str) -> Option<String>;
 }
 
+/// The physical plan a connection last executed, shared with
+/// `EXPLAIN FOR CONNECTION` (Go's `ProcessInfo.Plan`).
+#[derive(Clone)]
+pub struct StoredPlan(pub Arc<tidb_planner::physical::PhysicalPlan>);
+
+impl std::fmt::Debug for StoredPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("StoredPlan")
+    }
+}
+
+impl PartialEq for StoredPlan {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Plan-derived fields Go publishes on `sessmgr.ProcessInfo` when the
 /// ordinary executor is built.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -273,6 +290,16 @@ pub struct ProcessPlanInfo {
     /// execution began, after planning, which `max_execution_time` counts
     /// from.
     pub execution_started: Option<(std::time::Instant, chrono::DateTime<chrono::Utc>)>,
+    /// Go `ProcessInfo.Plan`: the plan, for `EXPLAIN FOR CONNECTION`.
+    pub plan: Option<StoredPlan>,
+    /// The plan the connection's previous statement published; Go keeps it
+    /// on the process info until the next statement replaces it.
+    pub previous_plan: Option<StoredPlan>,
+    /// The running statement is an EXPLAIN: Go's process plan is then the
+    /// `Explain` plan, which `EXPLAIN FOR CONNECTION` renders as no rows.
+    pub explain_marker: bool,
+    /// [`Self::explain_marker`] of the previous statement.
+    pub previous_explain: bool,
 }
 
 /// Boundaries shared by statement summaries and execution counters.

@@ -1851,3 +1851,47 @@ fn slow_log_rules_and_last_ddl_info_follow_go() {
         "{info:?}"
     );
 }
+
+/// `TRACE` runs its statement and reports the span tree in Go's three
+/// formats, with Go's span names (the timestamps are this run's own).
+#[test]
+fn trace_reports_go_spans() {
+    let mut session = Session::new();
+    let rows = row_text(session.run("TRACE SELECT 1"));
+    let operations = rows
+        .iter()
+        .map(|row| row[0].trim_end().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        operations,
+        [
+            "trace",
+            "  ├─session.ExecuteStmt",
+            "  │ ├─executor.Compile",
+            "  │ │ ├─planner.Preprocess",
+            "  │ │ └─planner.Optimize",
+            "  │ └─session.runStmt",
+            "  ├─*executor.ProjectionExec.Next",
+            "  │ └─*executor.TableDualExec.Next",
+            "  └─*executor.ProjectionExec.Next",
+            "    └─*executor.TableDualExec.Next",
+        ]
+    );
+    let log = row_text(session.run("TRACE FORMAT = 'log' SELECT 1"));
+    assert_eq!(log[0][1], "--- start span trace ----");
+    assert!(
+        log.iter()
+            .any(|row| row[1] == "execute done, ReturnRow: 1, ModifyRow: 0"),
+        "{log:?}"
+    );
+    let json = row_text(session.run("TRACE FORMAT = 'json' SELECT 1"));
+    assert!(json[0][0].starts_with(r#"[{"ID":{"Trace":""#), "{json:?}");
+    let error = session
+        .run("TRACE FORMAT = 'nosuch' SELECT 1")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        error.message,
+        "trace format should be one of 'row', 'log' or 'json'"
+    );
+}

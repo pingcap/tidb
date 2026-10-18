@@ -366,6 +366,7 @@ mod tests {
             catalog: Arc::new(SharedClusterCatalog::new(
                 tidb_exec::cluster_catalog::ClusterCatalog {
                     resource_groups: Vec::new(),
+                    policies: Vec::new(),
                     schema_version: 0,
                     databases: Vec::new(),
                 },

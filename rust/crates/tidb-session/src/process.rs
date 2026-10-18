@@ -61,6 +61,17 @@ pub trait ProcessKillTarget: Send + Sync {
     }
 }
 
+/// What `ProcessInfo.Plan` holds for a connection (`EXPLAIN FOR CONNECTION`).
+pub enum ProcessPlan {
+    /// A statement plan.
+    Plan(tidb_executor::StoredPlan),
+    /// An `Explain` plan, which renders as no rows.
+    Explain,
+    /// No plan: the statement had none to publish.
+    None,
+}
+
+
 /// One snapshot shared by SHOW and information_schema.PROCESSLIST.
 #[derive(Clone, Debug, Default)]
 pub struct ProcessRow {
@@ -797,6 +808,27 @@ impl ProcessRegistry {
             entry.mem_tracker = Some(mem);
             entry.disk_tracker = Some(disk);
         });
+    }
+
+    /// Go `ProcessInfo.Plan` of connection `id`: the plan its last statement
+    /// published, `None` when it published none.
+    pub fn plan_of(&self, id: u64) -> ProcessPlan {
+        self.with_entry(id, |entry| {
+            entry
+                .process_plan_info
+                .as_ref()
+                .map_or(ProcessPlan::None, |plan| {
+                    let cell = plan
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    match cell.plan.clone().or_else(|| cell.previous_plan.clone()) {
+                        Some(plan) => ProcessPlan::Plan(plan),
+                        None if cell.previous_explain => ProcessPlan::Explain,
+                        None => ProcessPlan::None,
+                    }
+                })
+        })
+        .unwrap_or(ProcessPlan::None)
     }
 
     fn set_process_plan_info(&self, id: u64, plan: Arc<Mutex<tidb_executor::ProcessPlanInfo>>) {

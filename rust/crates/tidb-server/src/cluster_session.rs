@@ -165,6 +165,11 @@ pub fn cluster_session_catalog_with_templates(
     for group in &loaded.resource_groups {
         catalog.put_resource_group(group.clone());
     }
+    // Go `infoschema`'s policy map, from meta: a table's, partition's or
+    // schema's placement reference resolves against it.
+    for policy in &loaded.policies {
+        catalog.put_policy(policy.clone());
+    }
     for database in &loaded.databases {
         let schema = database.info.name.original().to_owned();
         // Go `DBInfo.Charset`/`Collate`: what `SHOW CREATE DATABASE` and
@@ -435,6 +440,7 @@ mod tests {
         };
         ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
@@ -494,6 +500,7 @@ mod tests {
         };
         let loaded = ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
@@ -839,6 +846,7 @@ mod tests {
         };
         ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
@@ -1292,6 +1300,7 @@ mod tests {
         };
         ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
@@ -1474,6 +1483,7 @@ mod tests {
     fn one_table_catalog(table: TableInfo) -> ClusterCatalog {
         ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 7,
             databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
                 info: DBInfo {

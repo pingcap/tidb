@@ -1254,6 +1254,8 @@ pub use tidb_executor::TxnErrorKind;
 
 mod account;
 pub mod slow_log_rules;
+pub mod trace;
+mod show_placement;
 mod account_password;
 mod admin_check_arm;
 mod alter_schema;
@@ -1501,6 +1503,27 @@ impl Session {
 
     pub(crate) fn last_query_info_value(&self) -> String {
         self.last_query_info.borrow().clone()
+    }
+
+    /// `(tidb_init_chunk_size, tidb_max_chunk_size)` in effect.
+    pub fn chunk_sizes(&self) -> (u64, u64) {
+        let size = |name: &str, default: u64| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(default)
+        };
+        (size("tidb_init_chunk_size", 32), size("tidb_max_chunk_size", 1024))
+    }
+
+    /// The plan the last executed statement published (for `TRACE`).
+    pub fn published_plan(&self) -> Option<std::sync::Arc<tidb_planner::physical::PhysicalPlan>> {
+        let cell = self
+            .process_plan_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cell.plan.as_ref().map(|plan| std::sync::Arc::clone(&plan.0))
     }
 
     /// Go `recordLastDDLInfo`: the query of a DDL job this session waited for
@@ -2580,11 +2603,17 @@ impl Session {
             previous.statement_memory().finish_statement();
         }
         self.stmt_hints = tidb_hint::StmtHints::default();
-        *self
-            .process_plan_info
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            tidb_executor::ProcessPlanInfo::default();
+        {
+            let mut cell = self
+                .process_plan_info
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let previous_plan = cell.plan.take();
+            let previous_explain = cell.explain_marker;
+            *cell = tidb_executor::ProcessPlanInfo::default();
+            cell.previous_plan = previous_plan;
+            cell.previous_explain = previous_explain;
+        }
         self.check_sandbox_mode(sql)?;
         self.begin_statement_observation(sql);
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as

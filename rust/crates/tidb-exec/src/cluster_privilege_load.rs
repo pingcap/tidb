@@ -793,6 +793,7 @@ mod tests {
         // table nobody can log in to.
         let catalog = ClusterCatalog {
             resource_groups: Vec::new(),
+            policies: Vec::new(),
             schema_version: 0,
             databases: Vec::new(),
         };
