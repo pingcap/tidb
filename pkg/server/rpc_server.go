@@ -260,7 +260,7 @@ func (*rpcServer) ReportMPPTaskStatus(_ context.Context, req *mpp.ReportTaskStat
 			err = status.Errorf(codes.Internal, "panic when RPC server handling ReportMPPTaskStatus: %v", v)
 		}
 	}()
-	if req == nil || req.Meta == nil {
+	if req.Meta == nil {
 		return nil, status.Error(codes.InvalidArgument, "meta is not set in ReportTaskStatusRequest")
 	}
 	resp = mppcoordmanager.InstanceMPPCoordinatorManager.ReportStatus(req)

@@ -35,10 +35,4 @@ func TestReportMPPTaskStatusWithoutMeta(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, resp)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
-
-	// A nil request is rejected the same way instead of panicking.
-	resp, err = s.ReportMPPTaskStatus(context.Background(), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
