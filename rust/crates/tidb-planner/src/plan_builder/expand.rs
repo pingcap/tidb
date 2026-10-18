@@ -280,7 +280,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .cloned()
                 .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             let mut column = Column::new(self.column_ids.alloc(), ret_type);
-            column.orig_name = name.display_name();
             column.index = proj_columns.len() as i64;
             distinct_gby_col_names.push(name.names.column.original.clone());
             distinct_gby_field_names.push(name.clone());

@@ -1673,11 +1673,13 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 // projection: pushing it below would create a schema-owning
                 // Limit with zero columns, violating ColumnPruner's invariant.
                 // The projection is the owner that produces those values.
-                let child_has_no_columns = op
-                    .base
-                    .children()
-                    .first()
-                    .is_some_and(|child| child.schema().is_none_or(Schema::is_empty));
+                // A TableDual child is the exception: `AttachChild` folds
+                // the TopN into it (`dual.RowCount = min(rows - offset,
+                // count)`), so no schema-owning Limit is created.
+                let child_has_no_columns = op.base.children().first().is_some_and(|child| {
+                    !matches!(child, LogicalPlan::TableDual(_))
+                        && child.schema().is_none_or(Schema::is_empty)
+                });
                 if child_has_no_columns
                     || op
                         .exprs

@@ -664,19 +664,25 @@ fn window_info(
         };
         parts.push(format!(
             "{kind} between {} and {}",
-            frame_bound_text(frame.start.as_ref()),
-            frame_bound_text(frame.end.as_ref())
+            frame_bound_text(eval_ctx, frame.start.as_ref()),
+            frame_bound_text(eval_ctx, frame.end.as_ref())
         ));
     }
     format!("{functions} over({})", parts.join(" "))
 }
 
-fn frame_bound_text(bound: Option<&tidb_planner::logical::window::FrameBound>) -> String {
-    use tidb_planner::logical::window::{BoundType, FrameBound};
+/// Go `PhysicalWindow.formatFrameBound`: a RANGE bound prints the operand of
+/// its calc function (`interval "2:30" "MINUTE_SECOND"` for date arithmetic,
+/// the offset constant for plus/minus), a ROWS bound its row count.
+fn frame_bound_text(
+    eval_ctx: &dyn tidb_expr::Columns,
+    bound: Option<&tidb_planner::logical::window::FrameBound>,
+) -> String {
+    use tidb_expr::expression::Expression;
+    use tidb_planner::logical::window::BoundType;
     let Some(bound) = bound else {
         return String::new();
     };
-    let _: &FrameBound = bound;
     if bound.bound_type == BoundType::CurrentRow {
         return "current row".to_owned();
     }
@@ -685,11 +691,54 @@ fn frame_bound_text(bound: Option<&tidb_planner::logical::window::FrameBound>) -
     } else {
         "following"
     };
-    if bound.unbounded {
-        format!("unbounded {direction}")
+    let operand = if bound.unbounded {
+        "unbounded".to_owned()
+    } else if let Some(calc) = bound.calc_funcs.first() {
+        match calc {
+            Expression::ScalarFunction(function) => {
+                let args = function.get_args();
+                // This port names the date arithmetic after its unit
+                // (`date_add_minute_second`); Go's name is `date_add`.
+                let name = function.func_name.lowercase();
+                let name = if name.starts_with("date_add") {
+                    "date_add"
+                } else if name.starts_with("date_sub") {
+                    "date_sub"
+                } else {
+                    &*name
+                };
+                match name {
+                    "date_add" | "date_sub" => {
+                        let lowered = function.func_name.lowercase();
+                        // The unit is the third argument in Go; this port
+                        // folds it into the function name.
+                        let unit = args.get(2).map_or_else(
+                            || {
+                                let suffix = lowered.get(9..).unwrap_or_default();
+                                format!("\"{}\"", suffix.to_ascii_uppercase())
+                            },
+                            |arg| expression_text(eval_ctx, arg),
+                        );
+                        format!(
+                            "interval {} {unit}",
+                            args.get(1)
+                                .map(|arg| expression_text(eval_ctx, arg))
+                                .unwrap_or_default(),
+                        )
+                    }
+                    "plus" | "minus" => args
+                        .get(1)
+                        .map(|arg| expression_text(eval_ctx, arg))
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                }
+            }
+            _ => String::new(),
+        }
     } else {
-        format!("{} {direction}", bound.num)
-    }
+        bound.num.to_string()
+    };
+    format!("{operand} {direction}")
 }
 
 fn scan_ranges_text(ranges: &tidb_planner::ranger::types::Ranges) -> String {
@@ -1659,16 +1708,31 @@ fn physical_operator_info(
             .explain_info(ignore_explain_id_suffix)
             .unwrap_or_else(|error| format!("{error:?}")),
         PhysicalPlan::Window(window) => window_info(eval_ctx, window),
+        // Go `PhysicalExpand.explainInfoV2`: each level is an
+        // `ExplainExpressionList` over the Expand's schema, and the schema
+        // columns are joined without a space.
         PhysicalPlan::Expand(expand) => format!(
             "level-projection:{}; schema: [{}]",
             expand
                 .level_exprs
                 .iter()
-                .map(|level| format!("[{}]", expressions_text(eval_ctx, level)))
+                .map(|level| format!("[{}]", projection_text(eval_ctx, level, plan.schema())))
                 .collect::<Vec<_>>()
                 .join(","),
             plan.schema()
-                .map(|schema| columns_text(eval_ctx, &schema.columns))
+                .map(|schema| {
+                    schema
+                        .columns
+                        .iter()
+                        .map(|column| {
+                            expression_text(
+                                eval_ctx,
+                                &tidb_expr::expression::Expression::Column(column.clone()),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
                 .unwrap_or_default()
         ),
         PhysicalPlan::MaxOneRow(_)

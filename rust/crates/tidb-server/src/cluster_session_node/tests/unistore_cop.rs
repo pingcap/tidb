@@ -17875,6 +17875,70 @@ fn grouped_range_reads_merge_sort_instead_of_sorting() {
     assert!(capped.contains("Sort"), "{capped}");
 }
 
+/// Shapes captured from the oracle: a correlated scalar COUNT/BIT_* over a
+/// non-unique key decorrelates into an outer join under `ifnull(agg, default)`
+/// (`aggDefaultValueMap`), a HAVING on it becomes `if(cond, v, NULL)` rather
+/// than a join condition, a LIMIT folds into a TableDual through a
+/// Projection, a RANGE frame prints its offset operand and a rollup's
+/// level-projection prints `expr->Column`.
+#[test]
+fn decorrelated_defaults_dual_limits_and_frames_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1138)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE dd1 (c1 INT PRIMARY KEY, c2 INT)")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE dd2 (c1 INT, c2 INT, KEY (c1))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO dd1 VALUES (1,1),(2,2),(3,3),(4,4)")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO dd2 VALUES (1,1),(1,2),(3,3),(3,5),(3,6)")
+        .unwrap();
+    let text = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let counted = text(
+        &mut session,
+        "explain format='brief' select c1, (select count(*) from dd2 where dd2.c1 = dd1.c1) from dd1",
+    );
+    assert!(
+        counted.contains("left outer join") && counted.contains("ifnull(Column#"),
+        "{counted}"
+    );
+    assert!(!counted.contains("Apply"), "{counted}");
+    let having = text(
+        &mut session,
+        "explain format='brief' select c1, (select count(*) from dd2 where dd2.c1 = dd1.c1 \
+         having count(*) > 1) from dd1",
+    );
+    assert!(having.contains("if(gt(ifnull("), "{having}");
+    let answer = text(
+        &mut session,
+        "select c1, (select count(*) from dd2 where dd2.c1 = dd1.c1 having count(*) > 1) \
+         from dd1 order by c1",
+    );
+    assert_eq!(answer, "1 2\n2 NULL\n3 3\n4 NULL", "{answer}");
+    let dual = text(&mut session, "explain format='brief' select 1 as a from dual order by a limit 1");
+    assert!(!dual.contains("Limit") && dual.contains("TableDual"), "{dual}");
+    session
+        .execute_write("CREATE TABLE ff (a INT, b INT)")
+        .unwrap();
+    let frame = text(
+        &mut session,
+        "explain format='brief' select sum(a) over (partition by a order by b range between \
+         1 preceding and 1 following) from ff",
+    );
+    assert!(frame.contains("range between 1 preceding and 1 following"), "{frame}");
+}
+
 /// A CTE definition keeps its storage id in every format
 /// (`CTEDefinition.ExplainID`), and the implicit casts a builtin's arguments
 /// carry no longer decide push-down: `round(dt)` and `conv(int, ...)` read a

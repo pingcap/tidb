@@ -760,7 +760,11 @@ fn append_index_merge_scan_columns(
                 added = true;
             }
         }
-    } else {
+    } else if !schema
+        .columns
+        .iter()
+        .any(|column| column.id == crate::logical::data_source::EXTRA_HANDLE_ID)
+    {
         let mut extra = tidb_expr::column::Column::new(
             ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)

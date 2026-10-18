@@ -85,6 +85,20 @@ pub(crate) fn physical_expression_text_with_columns(
                     physical_expression_text_with_columns(ctx, argument, column_names, style)
                 })
                 .collect::<Option<Vec<_>>>()?;
+            // Go `ScalarFunction.explainInfo`: `in(_tidb_tid, -1)`, the
+            // impossible partition a global index filter uses when pruning
+            // left nothing, prints as `in(_tidb_tid, dual)`.
+            if function.func_name.lowercase() == "in"
+                && arguments.len() == 2
+                && arguments[0].ends_with("_tidb_tid")
+                && matches!(
+                    function.args.get(1),
+                    Some(Expression::Constant(constant))
+                        if matches!(constant.value, tidb_datatype::Datum::Int(-1))
+                )
+            {
+                return Some(format!("in({}, dual)", arguments[0]));
+            }
             match function.func_name.lowercase() {
                 // Go names every cast `cast` and renders it as
                 // `cast(arg, RetType.String())`; this port keeps one name per

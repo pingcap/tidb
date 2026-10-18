@@ -60,11 +60,14 @@ enum PullUpAggregation {
     /// apply and makes it the aggregation's child.
     Above,
     /// The correlated equalities became join keys; the caller optimizes the
-    /// apply and keeps the aggregation as its inner child. The column is a
-    /// scalar COUNT's output for the `ifnull(count, 0)` default fold
-    /// (Go `aggDefaultValueMap`), absent for non-count aggregations.
+    /// apply and keeps the aggregation as its inner child. `default_values`
+    /// is Go's `aggDefaultValueMap` over the aggregation's output columns (a
+    /// COUNT is 0 over an empty group), and `having_conds` the join
+    /// conditions Go moved off the join so a HAVING-filtered group answers
+    /// NULL while an empty group answers the default.
     Equalities {
-        count_default: Option<tidb_expr::column::Column>,
+        default_values: Vec<(tidb_expr::column::Column, tidb_expr::constant::Constant)>,
+        having_conds: Vec<Expression>,
     },
 }
 
@@ -329,7 +332,8 @@ impl DecorrelateSolver {
                         return Ok(LogicalPlan::Aggregation(aggregation));
                     }
                     PullUpAggregation::Equalities {
-                        count_default: count_default_col,
+                        default_values,
+                        having_conds,
                     } => {
                         let query_block_offset = apply.base().base.query_block_offset();
                         let outer = apply
@@ -341,54 +345,145 @@ impl DecorrelateSolver {
                         apply
                             .base_mut()
                             .set_children(vec![outer, LogicalPlan::Aggregation(aggregation)]);
-                        let optimized =
-                            Self::optimize(ctx, LogicalPlan::Apply(apply), group_by_column)?;
-                        // Go :495-540: a scalar COUNT's empty-group default
-                        // 0 rides the `ifnull(count, 0)` projection above
-                        // the join — the count's value for an unmatched
-                        // outer row is 0, not NULL.
-                        let Some(count_col) = count_default_col.as_ref() else {
-                            return Ok(optimized);
+                        if default_values.is_empty() {
+                            return Self::optimize(
+                                ctx,
+                                LogicalPlan::Apply(apply),
+                                group_by_column,
+                            );
+                        }
+                        let apply_schema = apply.base().base.schema().cloned().unwrap_or_default();
+                        let new_projection = |exprs: Vec<Expression>, schema: Schema| {
+                            let base = crate::logical::BaseLogicalPlan::new(
+                                ctx.allocator,
+                                LogicalProjection::TYPE,
+                                query_block_offset,
+                            );
+                            let mut projection =
+                                LogicalPlan::Projection(LogicalProjection::new(base, exprs));
+                            projection.base_mut().base.set_schema(Some(schema));
+                            projection
                         };
-                        let Some(join_schema) = optimized.schema().cloned() else {
-                            return Ok(optimized);
+                        let column_exprs = |schema: &Schema| -> Vec<Expression> {
+                            schema.columns.iter().cloned().map(Expression::Column).collect()
                         };
-                        let zero = tidb_expr::constant::Constant::new_zero();
-                        let ifnull_expr = ctx
-                            .builder
-                            .new_function(
-                                "ifnull",
-                                count_col.ret_type.clone(),
-                                vec![
-                                    tidb_expr::expression::Expression::Column(count_col.clone()),
-                                    tidb_expr::expression::Expression::Constant(zero),
-                                ],
-                            )
-                            .map_err(|error| PlanError::internal(error.to_string()))?;
-                        let exprs: Vec<tidb_expr::expression::Expression> = join_schema
-                            .columns
-                            .iter()
-                            .map(|column| {
-                                if column.unique_id == count_col.unique_id {
-                                    ifnull_expr.clone()
-                                } else {
-                                    tidb_expr::expression::Expression::Column(column.clone())
+                        let ifnull_of = |column: &tidb_expr::column::Column,
+                                         value: &tidb_expr::constant::Constant|
+                         -> Result<Expression, PlanError> {
+                            ctx.builder
+                                .new_function(
+                                    "ifnull",
+                                    column.ret_type.clone(),
+                                    vec![
+                                        Expression::Column(column.clone()),
+                                        Expression::Constant(value.clone()),
+                                    ],
+                                )
+                                .map_err(|error| PlanError::internal(error.to_string()))
+                        };
+                        let plan = if having_conds.is_empty() {
+                            // Go :494: `ifnull(agg, default)` for each
+                            // defaulted output over the apply's own schema.
+                            let mut exprs = column_exprs(&apply_schema);
+                            for (column, value) in &default_values {
+                                let position = apply_schema.column_index(column);
+                                if position >= 0 {
+                                    exprs[position as usize] = ifnull_of(column, value)?;
                                 }
-                            })
-                            .collect();
-                        let base = crate::logical::BaseLogicalPlan::new(
-                            ctx.allocator,
-                            LogicalProjection::TYPE,
-                            query_block_offset,
-                        );
-                        let mut projection =
-                            LogicalPlan::Projection(LogicalProjection::new(base, exprs));
-                        projection
-                            .base_mut()
-                            .base
-                            .set_schema(Some(join_schema.clone()));
-                        projection.base_mut().set_children(vec![optimized]);
-                        return Ok(projection);
+                            }
+                            let mut projection = new_projection(exprs, apply_schema.clone());
+                            projection
+                                .base_mut()
+                                .set_children(vec![LogicalPlan::Apply(apply)]);
+                            projection
+                        } else {
+                            // Go :510: materialise the HAVING condition once,
+                            // then NULL every inner column when it is false.
+                            let mut default_exprs = column_exprs(&apply_schema);
+                            let mut default_schema = apply_schema.clone();
+                            let mut value_schema = Schema::default();
+                            let mut value_exprs = Vec::with_capacity(default_values.len());
+                            for (column, value) in &default_values {
+                                let position = apply_schema.column_index(column);
+                                let folded = ifnull_of(column, value)?;
+                                if position >= 0 {
+                                    default_exprs[position as usize] = folded.clone();
+                                }
+                                value_schema.append(std::iter::once(column.clone()));
+                                value_exprs.push(folded);
+                            }
+                            let opts = SubstituteOptions::new(ctx.builder);
+                            let having_items: Vec<Expression> = having_conds
+                                .iter()
+                                .map(|condition| {
+                                    tidb_expr::expr_util::substitute::column_substitute(
+                                        condition,
+                                        &value_schema,
+                                        &value_exprs,
+                                        &opts,
+                                    )
+                                })
+                                .collect();
+                            let having_expr =
+                                tidb_expr::simple_expr::compose_cnf_condition(having_items)
+                                    .ok_or_else(|| PlanError::internal("empty HAVING"))?;
+                            let mut having_col = tidb_expr::column::Column::new(
+                                ctx.column_allocator.alloc(),
+                                having_expr
+                                    .static_type()
+                                    .cloned()
+                                    .unwrap_or_else(|| {
+                                        tidb_datatype::FieldType::new(
+                                            tidb_datatype::FieldTypeCode::LongLong,
+                                        )
+                                    }),
+                            );
+                            having_col.index = default_schema.len() as i64;
+                            default_exprs.push(having_expr);
+                            default_schema.append(std::iter::once(having_col.clone()));
+                            let mut default_projection =
+                                new_projection(default_exprs, default_schema.clone());
+                            default_projection
+                                .base_mut()
+                                .set_children(vec![LogicalPlan::Apply(apply)]);
+                            let mut exprs = column_exprs(&Schema::new(
+                                default_schema.columns[..apply_schema.len()].to_vec(),
+                            ));
+                            let outer_len = outer_schema.len();
+                            for index in outer_len..apply_schema.len() {
+                                let mut ret_type = apply_schema.columns[index]
+                                    .ret_type
+                                    .clone()
+                                    .unwrap_or_else(|| {
+                                        tidb_datatype::FieldType::new(
+                                            tidb_datatype::FieldTypeCode::LongLong,
+                                        )
+                                    });
+                                ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                                let null_value = Expression::Constant(
+                                    tidb_expr::constant::Constant::new(
+                                        tidb_datatype::Datum::Null,
+                                        ret_type.clone(),
+                                    ),
+                                );
+                                exprs[index] = ctx
+                                    .builder
+                                    .new_function(
+                                        "if",
+                                        Some(ret_type),
+                                        vec![
+                                            Expression::Column(having_col.clone()),
+                                            exprs[index].clone(),
+                                            null_value,
+                                        ],
+                                    )
+                                    .map_err(|error| PlanError::internal(error.to_string()))?;
+                            }
+                            let mut projection = new_projection(exprs, apply_schema.clone());
+                            projection.base_mut().set_children(vec![default_projection]);
+                            projection
+                        };
+                        return Self::optimize(ctx, plan, group_by_column);
                     }
                 }
             }
@@ -584,52 +679,52 @@ impl DecorrelateSolver {
                 );
             return Ok(PullUpAggregation::NotFired);
         }
-        // Go's `aggDefaultValueMap` arm: a scalar COUNT whose join key's
-        // inner column is the inner source's unique key collapses the count
-        // to the per-match constant (the uniqueness bounds the count to
-        // {0,1}). Without the uniqueness the count stays an aggregation (a
-        // valid correlated plan).
-        let count_present = aggregation
-            .agg_funcs
-            .iter()
-            .any(|func| matches!(func.name().to_ascii_lowercase().as_str(), "count"));
-        if count_present {
-            let key_unique = {
-                let mut current = aggregation.base.children().first().cloned();
-                let mut found = false;
-                while let Some(plan) = current {
-                    if let LogicalPlan::DataSource(ds) = &plan {
-                        found = ds.pk_is_handle
-                            && ds.handle_cols.first().is_some_and(|handle| {
-                                eq_cond_with_cor_col.iter().any(|eq| {
-                                    eq.get_args().iter().any(|arg| {
-                                        matches!(arg, Expression::Column(column)
-                                            if column.unique_id == handle.unique_id)
-                                    })
-                                })
-                            });
-                        break;
-                    }
-                    current = plan.children().first().cloned();
+        // Go `aggDefaultValueMap` (`rule_decorrelate.go:122`): COUNT, BIT_OR
+        // and BIT_XOR answer 0, BIT_AND all ones, over an empty input.
+        let agg_schema = aggregation.base.base.schema().cloned().unwrap_or_default();
+        let mut default_values = Vec::new();
+        for (index, func) in aggregation.agg_funcs.iter().enumerate() {
+            let default = match func.name().to_ascii_lowercase().as_str() {
+                "bit_or" | "bit_xor" | "count" => {
+                    tidb_expr::constant::Constant::new_zero()
                 }
-                found
+                "bit_and" => tidb_expr::constant::Constant::new(
+                    tidb_datatype::Datum::UInt(u64::MAX),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                        .with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED),
+                ),
+                _ => continue,
             };
-            if !key_unique {
-                if let Some(LogicalPlan::Selection(mut restored)) =
-                    aggregation.base.children().first().cloned()
-                {
-                    restored.conditions = original;
-                    aggregation
-                        .base
-                        .set_children(vec![LogicalPlan::Selection(restored)]);
-                }
-                apply.cor_cols =
-                    super::super::expression_rewriter::extract_cor_columns_by_schema_4_logical_plan(
-                        &mut LogicalPlan::Aggregation(aggregation.clone()),
-                        outer_schema,
-                    );
-                return Ok(PullUpAggregation::NotFired);
+            if let Some(column) = agg_schema.columns.get(index) {
+                default_values.push((column.clone(), default));
             }
+        }
+        // Conditions pulled up from above the aggregation (typically HAVING)
+        // would make "no matching group" ambiguous once attached to the join:
+        // an empty group takes the default, a group the HAVING filtered out
+        // takes NULL. Go moves them into a projection instead.
+        let mut having_conds = Vec::new();
+        let join = &mut apply.join;
+        if !default_values.is_empty()
+            && !(join.equal_conditions.is_empty()
+                && join.left_conditions.is_empty()
+                && join.right_conditions.is_empty()
+                && join.other_conditions.is_empty()
+                && join.na_eq_conditions.is_empty())
+        {
+            having_conds.extend(
+                std::mem::take(&mut join.equal_conditions)
+                    .into_iter()
+                    .map(Expression::ScalarFunction),
+            );
+            having_conds.extend(
+                std::mem::take(&mut join.na_eq_conditions)
+                    .into_iter()
+                    .map(Expression::ScalarFunction),
+            );
+            having_conds.append(&mut join.left_conditions);
+            having_conds.append(&mut join.right_conditions);
+            having_conds.append(&mut join.other_conditions);
         }
         let mut group_by_cols = Schema::new(aggregation.get_group_by_cols());
         let mut schema = aggregation.base.base.schema().cloned().unwrap_or_default();
@@ -671,23 +766,10 @@ impl DecorrelateSolver {
                 }
             }
         }
-        // Go `aggDefaultValueMap` (`rule_decorrelate.go:122`): a scalar COUNT
-        // carries the empty-group default 0 — the count output column rides
-        // the `ifnull(count, 0)` projection above the join (:495-510). The
-        // fold projection is built by the caller over the converted join.
-        let count_default = aggregation
-            .base
-            .base
-            .schema()
-            .as_ref()
-            .and_then(|schema| schema.columns.first().cloned())
-            .filter(|_| {
-                aggregation
-                    .agg_funcs
-                    .first()
-                    .is_some_and(|func| func.name().to_ascii_lowercase() == "count")
-            });
-        Ok(PullUpAggregation::Equalities { count_default })
+        Ok(PullUpAggregation::Equalities {
+            default_values,
+            having_conds,
+        })
     }
 
     /// Go `DecorrelateSolver.optimize`'s projection arm

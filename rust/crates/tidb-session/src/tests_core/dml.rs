@@ -401,10 +401,18 @@ fn correlated_subqueries_drive_update_assignments() {
          (SELECT COUNT(*) FROM t2 WHERE t1.id = t2.id) \
          WHERE t1.id = 10",
     ));
+    // The Update child holds the SET subquery's decorrelated form: a left
+    // outer join under `ifnull(count, 0)` (Go `aggDefaultValueMap`), the plan
+    // the oracle records for this statement.
     assert!(
-        plan.iter()
-            .any(|row| row.first().is_some_and(|id| id.contains("Apply_"))),
-        "Go buildUpdateLists retains the correlated SET subquery in the Update child: {plan:?}"
+        plan.iter().any(|row| row.get(4).is_some_and(|info| info.contains("ifnull(Column#")))
+            && plan
+                .iter()
+                .any(|row| row.get(4).is_some_and(|info| info.contains("left outer join")))
+            && !plan
+                .iter()
+                .any(|row| row.first().is_some_and(|id| id.contains("Apply_"))),
+        "Go buildUpdateLists decorrelates the SET subquery in the Update child: {plan:?}"
     );
 
     assert_eq!(
