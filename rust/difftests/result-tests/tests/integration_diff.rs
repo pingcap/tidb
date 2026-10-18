@@ -238,7 +238,7 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // index-merge paths and grouped-range ordered scans). They are
     // budgeted apart: the number may only go down, and lowering the constant
     // records a fixed plan.
-    const PLAN_TEXT_BUDGET: usize = 12;
+    const PLAN_TEXT_BUDGET: usize = 9;
     let (plan_text, other): (Vec<&String>, Vec<&String>) = total
         .divergences
         .iter()

@@ -194,8 +194,10 @@ impl LogicalApply {
     /// * a `LATERAL` inner or outer apply takes `lateral_row_count`, floored at
     ///   the outer count for a left outer join. For an explicit keyed `ON`
     ///   clause this is Go's `EstimateFullJoinRowCount`; a correlated lateral
-    ///   subtree with no explicit key uses the product fallback because the
-    ///   inner profile already includes its correlated predicate.
+    ///   subtree with no explicit key is `left * right / max(NDV(outer
+    ///   correlated columns), 1)` (Go divides because the inner profile is the
+    ///   whole inner plan's rows, not a per-outer-row count); an uncorrelated
+    ///   one uses the product.
     ///
     /// The NDVs are the outer child's, plus one entry per column the INNER side
     /// contributes: `2.0` for the marker of a left-outer-semi apply, and the
@@ -205,10 +207,10 @@ impl LogicalApply {
     ///
     /// `lateral_row_count` stands for Go's keyed `IsLateral` branch; see this
     /// module's header and [`Self::needs_lateral_row_count_estimate`].
-    /// `None` selects Go's product branch, `leftProfile.RowCount *
-    /// rightProfile.RowCount`. This is also the correct bound for a
-    /// correlated lateral inner with no explicit key because the right
-    /// profile already includes the correlated predicate.
+    /// `None` selects Go's uncorrelated product branch, `leftProfile.RowCount *
+    /// rightProfile.RowCount`. The keyed estimate and the keyless correlated
+    /// division are both computed by the caller, which owns the session's
+    /// NDV skew ratio.
     ///
     /// `getGroupNDVs` is vacuous: [`StatsInfo`] has no `GroupNDVs` field.
     pub fn derive_stats(
@@ -278,11 +280,8 @@ impl LogicalApply {
     /// Whether [`Self::derive_stats`] MUST be given a `lateral_row_count`.
     ///
     /// True exactly when Go takes its keyed estimator branch — explicit `ON`
-    /// clause join keys — rather than the dependency-closed Cartesian
-    /// fallback. A correlated inner with no explicit key intentionally takes
-    /// the product path: its right profile already includes the pushed
-    /// correlated predicate, so dividing by the outer NDV would apply the
-    /// selectivity twice.
+    /// clause join keys — rather than the keyless branches (which the
+    /// caller also resolves, but which `derive_stats` can fall back from).
     #[must_use]
     pub fn needs_lateral_row_count_estimate(&self) -> bool {
         if !self.is_lateral

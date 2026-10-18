@@ -43,7 +43,7 @@ pub struct UsedStatsInfoForTable {
 impl UsedStatsInfoForTable {
     /// Formats the source EXPLAIN suffix for this table's recorded statuses.
     ///
-    /// Go prints up to three statuses, columns before indexes, and then a
+    /// Go prints up to three statuses, indexes before columns, and then a
     /// count grouped by status for the remainder. Missing schema names fall
     /// back to `ID <id>`.
     #[must_use]
@@ -63,14 +63,8 @@ impl UsedStatsInfoForTable {
         let mut output_left = 3;
         let mut status_counts = BTreeMap::<String, usize>::new();
         let mut first = true;
-        append_explain_statuses(
-            &mut output,
-            &mut first,
-            &mut output_left,
-            &mut status_counts,
-            &self.column_stats_load_status,
-            column_names,
-        );
+        // Go `FormatForExplain` collects the INDEX statuses first
+        // (`collectFromColOrIdxStatus(false, ...)`), then the columns'.
         append_explain_statuses(
             &mut output,
             &mut first,
@@ -79,10 +73,17 @@ impl UsedStatsInfoForTable {
             &self.index_stats_load_status,
             index_names,
         );
+        append_explain_statuses(
+            &mut output,
+            &mut first,
+            &mut output_left,
+            &mut status_counts,
+            &self.column_stats_load_status,
+            column_names,
+        );
         if !status_counts.is_empty() {
-            if !first {
-                output.push_str(", ");
-            }
+            // Go writes the join of the printed statuses and then `...(more: `
+            // with no separator between them.
             output.push_str("...(more: ");
             for (index, (status, count)) in status_counts.iter().enumerate() {
                 if index > 0 {

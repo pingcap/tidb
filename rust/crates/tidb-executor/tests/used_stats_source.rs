@@ -111,7 +111,7 @@ fn used_stats_explain_matches_source_status_order_and_truncation() {
     let index_names = BTreeMap::from([(7, "idx".to_owned())]);
     assert_eq!(
         stats.format_for_explain(&column_names, &index_names),
-        "stats:partial[a:allEvicted, b:onlyCmsEvicted, c:onlyHistRemained, ...(more: 2 allEvicted)]"
+        "stats:partial[idx:allEvicted, a:allEvicted, b:onlyCmsEvicted...(more: 1 allEvicted, 1 onlyHistRemained)]"
     );
 }
 

@@ -2396,7 +2396,43 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                 let outer_len = child_schemas
                     .first()
                     .map_or(0, |schema| schema.columns.len());
-                let lateral_row_count = if op.needs_lateral_row_count_estimate() {
+                // Go `LogicalApply.DeriveStats`, the keyless correlated LATERAL
+                // branch: the inner profile is the whole inner plan's rows, not a
+                // per-outer-row count, so it is divided by the NDV of the outer
+                // columns the inner references before multiplying by the left
+                // rows. (Go's TODO notes this under-estimates a LIMIT-bounded
+                // inner; that is the behavior to match.)
+                let keyless_correlated_count = if op.is_lateral
+                    && matches!(
+                        op.join.join_type,
+                        LogicalJoinType::Inner | LogicalJoinType::LeftOuter
+                    )
+                    && !op.needs_lateral_row_count_estimate()
+                    && !op.cor_cols.is_empty()
+                {
+                    match (child_stats.first(), child_stats.get(1)) {
+                        (Some(left), Some(right)) => {
+                            let outer_columns: Vec<i64> = op
+                                .cor_cols
+                                .iter()
+                                .map(|cor| cor.column.unique_id)
+                                .collect();
+                            let (outer_ndv, _) =
+                                crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                                    &outer_columns,
+                                    left,
+                                    self.group_ndv_skew_ratio,
+                                );
+                            Some(left.row_count() * right.row_count() / outer_ndv.max(1.0))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let lateral_row_count = if keyless_correlated_count.is_some() {
+                    keyless_correlated_count
+                } else if op.needs_lateral_row_count_estimate() {
                     match (child_stats.first(), child_stats.get(1)) {
                         (Some(left), Some(right)) => {
                             let (left_keys, right_keys, _, _) = op.join.get_join_keys();

@@ -287,19 +287,11 @@ pub(super) fn converge_union_index_merge_path<'a>(
                         condition.canonical_hash_code() == filter.canonical_hash_code()
                     })
                 }
-                Partial::MvIndex {
-                    index_pos, paths, ..
-                } => paths.iter().all(|path| {
-                    crate::logical::data_source::index_covers_condition(
-                        ds,
-                        &ds.indexes[*index_pos],
-                        filter,
-                        ctx.opt_prefix_index_single_scan,
-                    ) && path.filled().detached.access_conds.iter().any(|condition| {
-                        condition.canonical_hash_code() == filter.canonical_hash_code()
-                    })
-                }),
-                Partial::Table { .. } => false,
+                // Go `indexMergePartialPathCoversFilter`: "Be conservative: only
+                // remove a filter when a normal index partial path carries the
+                // exact predicate in AccessConds. Filters handled by table/MV
+                // paths ... still need the global Selection."
+                Partial::MvIndex { .. } | Partial::Table { .. } => false,
             })
         })
         .cloned()

@@ -5997,3 +5997,27 @@ fn cluster_tables_plan_as_tidb_store_scans() {
     ));
     assert_eq!(instance.len(), 1);
 }
+
+/// Go `LogicalApply.DeriveStats` for a keyless correlated LATERAL join: the
+/// inner profile is the whole inner plan's rows, so the Apply's estimate is
+/// `left * right / max(NDV(outer correlated columns), 1)` (2.50 for a LIMIT 2
+/// over 10000 outer rows, captured from Go), not the Cartesian product.
+#[test]
+fn keyless_correlated_lateral_apply_divides_by_the_outer_ndv() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE lt1 (a INT, b INT)").unwrap();
+    session
+        .run("CREATE TABLE lt2 (a INT, c INT, d INT, INDEX idx(a, c, d))")
+        .unwrap();
+    let rows = row_text(session.run(
+        "EXPLAIN FORMAT='brief' SELECT * FROM lt1, \
+         LATERAL (SELECT d FROM lt2 WHERE lt2.a = lt1.a ORDER BY c LIMIT 2) x",
+    ));
+    assert_eq!(rows[0][0], "Apply");
+    assert_eq!(rows[0][1], "2.50");
+    let rows = row_text(session.run(
+        "EXPLAIN FORMAT='brief' SELECT * FROM lt1, \
+         LATERAL (SELECT d FROM lt2 WHERE lt2.a = lt1.a ORDER BY c LIMIT 5) x",
+    ));
+    assert_eq!(rows[0][1], "6.25");
+}
