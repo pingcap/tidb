@@ -546,6 +546,7 @@ impl PlannerCatalog {
 /// `performance_schema` ones.
 fn is_virtual_schema_table(database: &str, name: &str) -> bool {
     database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+        || database.eq_ignore_ascii_case(crate::driver::metricsschema::METRICS_SCHEMA)
         || (database.eq_ignore_ascii_case(crate::driver::perfschema::PERFORMANCE_SCHEMA)
             && crate::driver::perfschema::is_predefined_table(name))
 }
@@ -861,6 +862,32 @@ impl Default for Catalog {
     /// remains deliberately generic: callers that operate on it directly
     /// still own policy checks for protected schemas.
     fn default() -> Self {
+        Self::seeded(true)
+    }
+}
+
+impl Catalog {
+    /// The seeded catalog [`Catalog::default`] answers. `with_metric_tables`
+    /// is false only while the metric tables themselves are being built, which
+    /// needs a catalog to build them in.
+    /// The seeded catalog without `metrics_schema`'s tables: the scratch the
+    /// metric tables are built in.
+    pub(crate) fn seeded_without_metric_tables() -> Self {
+        Self::seeded(false)
+    }
+
+    /// The tables of `database` (a lowercase key), by stored name.
+    pub(crate) fn tables_of(
+        &self,
+        database: &str,
+    ) -> impl Iterator<Item = (&String, &Arc<TableEntry>)> {
+        self.databases
+            .get(database)
+            .into_iter()
+            .flat_map(|database| database.tables.iter())
+    }
+
+    fn seeded(with_metric_tables: bool) -> Self {
         let mut databases = HashMap::new();
         databases.insert(
             DEFAULT_DATABASE.to_owned(),
@@ -898,34 +925,11 @@ impl Default for Catalog {
         // queries fail `query metric error: pd unavailable` (the metric
         // storage is absent) -- mirrored here as empty MemTables of the
         // same shape (oracle g-is).
-        let metric_tables: std::collections::HashMap<String, std::sync::Arc<TableEntry>> =
-            tidb_metadef::metric_table_def::METRIC_TABLE_MAP
-                .iter()
-                .map(|(name, def)| {
-                    // Go `MetricTableDef.genColumnInfos`: time, the labels,
-                    // `quantile` only for a quantile metric, then value.
-                    let mut columns =
-                        vec![("time".to_owned(), FieldType::new(FieldTypeCode::Datetime))];
-                    for label in def.labels {
-                        columns.push((
-                            (*label).to_owned(),
-                            FieldType::new(FieldTypeCode::VarString),
-                        ));
-                    }
-                    if def.quantile > 0.0 {
-                        columns
-                            .push(("quantile".to_owned(), FieldType::new(FieldTypeCode::Double)));
-                    }
-                    columns.push(("value".to_owned(), FieldType::new(FieldTypeCode::Double)));
-                    (
-                        name.to_string(),
-                        std::sync::Arc::new(TableEntry::Mem(MemTable {
-                            columns,
-                            rows: Vec::new(),
-                        })),
-                    )
-                })
-                .collect();
+        let metric_tables = if with_metric_tables {
+            super::metricsschema::tables()
+        } else {
+            HashMap::new()
+        };
         for (id, key, display) in [
             (4, "metrics_schema", "METRICS_SCHEMA"),
             (5, "performance_schema", "PERFORMANCE_SCHEMA"),

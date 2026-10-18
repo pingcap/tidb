@@ -1544,3 +1544,40 @@ fn a_scalar_subquery_over_information_schema_reads_rows_during_planning() {
         [["u"]]
     );
 }
+
+/// `metrics_schema` tables are Go's `genColumnInfos` + `buildTableMeta`
+/// objects: they describe, show and list like any table (captured from Go),
+/// and a scan still fails for want of the metric storage.
+#[test]
+fn metrics_schema_tables_describe_and_show_like_go() {
+    let mut session = Session::new();
+    let desc = row_text(session.run("DESC metrics_schema.tidb_query_duration"))
+        .into_iter()
+        .map(|row| row[..5].join(" "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        desc,
+        [
+            "time datetime YES  CURRENT_TIMESTAMP",
+            "instance varchar(512) YES  NULL",
+            "sql_type varchar(512) YES  NULL",
+            "quantile double YES  0.9",
+            "value double YES  NULL",
+        ]
+    );
+    let shown = row_text(session.run("SHOW CREATE TABLE metrics_schema.tidb_qps"));
+    assert_eq!(
+        shown[0][1],
+        "CREATE TABLE `tidb_qps` (\n  `time` datetime DEFAULT CURRENT_TIMESTAMP,\n  `instance` varchar(512) DEFAULT NULL,\n  `type` varchar(512) DEFAULT NULL,\n  `result` varchar(512) DEFAULT NULL,\n  `value` double DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='TiDB query processing numbers per second'"
+    );
+    let full = row_text(session.run("SHOW FULL TABLES FROM metrics_schema LIKE 'tidb_qps'"));
+    assert_eq!(full, [["tidb_qps", "SYSTEM VIEW"]]);
+    let counted = row_text(session.run(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'metrics_schema'",
+    ));
+    assert_eq!(counted, [["642"]]);
+    let error = session
+        .run("SELECT * FROM metrics_schema.tidb_qps")
+        .unwrap_err();
+    assert!(error.to_string().contains("pd unavailable"), "{error}");
+}

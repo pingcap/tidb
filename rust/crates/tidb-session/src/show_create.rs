@@ -34,10 +34,17 @@ fn escape_name(name: &str, ansi_quotes: bool) -> String {
 }
 
 /// Go's `TABLE_TYPE` / `Table_type` value for an object — `getTableType`
-/// (`executor/show.go:519-528`): a view is VIEW, a sequence is SEQUENCE,
-/// everything this tier lists is BASE TABLE.
-pub(super) fn table_type_of(is_view: bool, is_sequence: bool) -> &'static str {
-    if is_view {
+/// (`executor/show.go`): a virtual table (the `information_schema`,
+/// `performance_schema` and `metrics_schema` ones) is SYSTEM VIEW, a view is
+/// VIEW, a sequence is SEQUENCE, everything else is BASE TABLE.
+pub(super) fn table_type_of(
+    is_virtual: bool,
+    is_view: bool,
+    is_sequence: bool,
+) -> &'static str {
+    if is_virtual {
+        "SYSTEM VIEW"
+    } else if is_view {
         "VIEW"
     } else if is_sequence {
         "SEQUENCE"

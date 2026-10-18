@@ -4017,7 +4017,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "COMMIT_TIME",
+        name: "Commit_time",
         tp: FieldTypeCode::Double,
         size: 22,
         decimal: 0,
@@ -4035,7 +4035,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "COMMIT_BACKOFF_TIME",
+        name: "Commit_backoff_time",
         tp: FieldTypeCode::Double,
         size: 22,
         decimal: 0,
@@ -4044,7 +4044,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "BACKOFF_TYPES",
+        name: "Backoff_types",
         tp: FieldTypeCode::Varchar,
         size: 64,
         decimal: 0,
@@ -4053,7 +4053,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "RESOLVE_LOCK_TIME",
+        name: "Resolve_lock_time",
         tp: FieldTypeCode::Double,
         size: 22,
         decimal: 0,
@@ -4062,7 +4062,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "LOCAL_LATCH_WAIT_TIME",
+        name: "Local_latch_wait_time",
         tp: FieldTypeCode::Double,
         size: 22,
         decimal: 0,
@@ -4071,7 +4071,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "WRITE_KEYS",
+        name: "Write_keys",
         tp: FieldTypeCode::LongLong,
         size: 22,
         decimal: 0,
@@ -4080,7 +4080,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "WRITE_SIZE",
+        name: "Write_size",
         tp: FieldTypeCode::LongLong,
         size: 22,
         decimal: 0,
@@ -4098,7 +4098,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "TXN_RETRY",
+        name: "Txn_retry",
         tp: FieldTypeCode::LongLong,
         size: 22,
         decimal: 0,
@@ -4116,7 +4116,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "PROCESS_TIME",
+        name: "Process_time",
         tp: FieldTypeCode::Double,
         size: 22,
         decimal: 0,
@@ -4125,7 +4125,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "WAIT_TIME",
+        name: "Wait_time",
         tp: FieldTypeCode::Double,
         size: 22,
         decimal: 0,
@@ -4134,7 +4134,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "BACKOFF_TIME",
+        name: "Backoff_time",
         tp: FieldTypeCode::Double,
         size: 22,
         decimal: 0,
@@ -4161,7 +4161,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "TOTAL_KEYS",
+        name: "Total_keys",
         tp: FieldTypeCode::LongLong,
         size: 20,
         decimal: 0,
@@ -4179,7 +4179,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "ROCKSDB_DELETE_SKIPPED_COUNT",
+        name: "Rocksdb_delete_skipped_count",
         tp: FieldTypeCode::LongLong,
         size: 20,
         decimal: 0,
@@ -4188,7 +4188,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "ROCKSDB_KEY_SKIPPED_COUNT",
+        name: "Rocksdb_key_skipped_count",
         tp: FieldTypeCode::LongLong,
         size: 20,
         decimal: 0,
@@ -4197,7 +4197,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "ROCKSDB_BLOCK_CACHE_HIT_COUNT",
+        name: "Rocksdb_block_cache_hit_count",
         tp: FieldTypeCode::LongLong,
         size: 20,
         decimal: 0,
@@ -4206,7 +4206,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "ROCKSDB_BLOCK_READ_COUNT",
+        name: "Rocksdb_block_read_count",
         tp: FieldTypeCode::LongLong,
         size: 20,
         decimal: 0,
@@ -4215,7 +4215,7 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         comment: None,
     },
     InfoColumn {
-        name: "ROCKSDB_BLOCK_READ_BYTE",
+        name: "Rocksdb_block_read_byte",
         tp: FieldTypeCode::LongLong,
         size: 20,
         decimal: 0,

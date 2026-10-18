@@ -81,6 +81,13 @@ fn go_constants() -> HashMap<String, String> {
                 } else {
                     continue;
                 };
+                // A qualified name (`execdetails.CommitTimeStr`) is that
+                // package's constant, whatever another package calls the
+                // same identifier.
+                let package_name = package.rsplit('/').next().unwrap_or(package);
+                constants
+                    .entry(format!("{package_name}.{name}"))
+                    .or_insert_with(|| value.clone());
                 constants.entry(name.to_owned()).or_insert(value);
             }
         }
@@ -179,6 +186,9 @@ fn resolve<'a>(expression: &'a str, constants: &'a HashMap<String, String>) -> &
     let expression = expression.trim();
     if let Some(text) = expression.strip_prefix('"') {
         return text.strip_suffix('"').unwrap_or(text);
+    }
+    if let Some(text) = constants.get(expression) {
+        return text;
     }
     let key = expression.rsplit('.').next().unwrap_or(expression);
     constants.get(key).map_or(expression, String::as_str)

@@ -2518,12 +2518,21 @@ impl Session {
                     Some(pattern) => pattern.row_predicate(&column_names)?,
                     None => None,
                 };
+                let is_virtual_schema = [
+                    "information_schema",
+                    "performance_schema",
+                    "metrics_schema",
+                ]
+                .iter()
+                .any(|schema| database.eq_ignore_ascii_case(schema));
                 let mut rows = Vec::with_capacity(listed.len());
                 for (name, is_view, is_sequence) in listed {
                     let mut row = vec![Datum::Bytes(name.into_bytes())];
                     if full {
                         row.push(Datum::Bytes(
-                            table_type_of(is_view, is_sequence).as_bytes().to_vec(),
+                            table_type_of(is_virtual_schema, is_view, is_sequence)
+                                .as_bytes()
+                                .to_vec(),
                         ));
                     }
                     if let Some(predicate) = &like_predicate {

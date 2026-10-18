@@ -2136,9 +2136,8 @@ pub const SYS_TABLES: &[(&str, i64)] = &[("schema_unused_indexes", 122)];
 /// creating tier recorded no TSO.
 pub(crate) fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZone) -> Datum {
     use chrono::{Datelike, TimeZone, Timelike};
-    if update_ts == 0 {
-        return Datum::Null;
-    }
+    // Go `TSConvert2Time`: a table that never recorded a TSO (the seeded
+    // `metrics_schema` ones) reads as the epoch in the session zone.
     let Some(moment) = zone
         .timestamp_millis_opt((update_ts >> 18) as i64)
         .single()
@@ -2184,6 +2183,11 @@ fn tables_rows(
             schema.to_ascii_lowercase().as_str(),
             "metrics_schema" | "performance_schema" | "sys"
         ) {
+            // The metric tables are listed once, from the generated block
+            // below, in the order the oracle shows them.
+            if schema.eq_ignore_ascii_case("metrics_schema") {
+                continue;
+            }
             let table = match catalog.table_in(&schema, &table_name) {
                 Some(TableEntry::Kv(table)) => table,
                 _ => continue,
@@ -2334,7 +2338,11 @@ fn tables_rows(
                 row.push(text("utf8mb4_bin"));
                 row.push(Datum::Null);
                 row.push(text(""));
-                row.push(text(""));
+                // A metric table's comment is its definition's (`tableInfo.Comment`).
+                let comment = tidb_metadef::metric_table_def::get_metric_table_def(table_name)
+                    .filter(|_| schema_upper == "METRICS_SCHEMA")
+                    .map_or("", |def| def.comment);
+                row.push(text(comment));
             }
             row.push(Datum::Int(*table_id));
             row.push(Datum::Null);
