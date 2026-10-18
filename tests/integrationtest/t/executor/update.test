@@ -776,8 +776,6 @@ update parent set ref = 3 where id = 2;
 --enable_warnings
 update ignore parent set ref = 3 where id = 2;
 --disable_warnings
-<<<<<<< HEAD
-=======
 
 # Issue 65067
 # Create tables with nonclustered primary key
@@ -920,4 +918,3 @@ UPDATE t PARTITION (p0) x, t PARTITION (p1) y SET x.b = x.b, y.b = 1;
 COMMIT;
 SELECT * FROM t ORDER BY a;
 DROP TABLE t;
->>>>>>> 328460a9af0 (executor: fix multi-table UPDATE row tracking on nonclustered partitioned tables (#71972))

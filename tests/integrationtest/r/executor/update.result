@@ -989,8 +989,6 @@ Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`
 update parent set ref = 3 where id = 2;
 Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
 update ignore parent set ref = 3 where id = 2;
-<<<<<<< HEAD
-=======
 DROP TABLE IF EXISTS t, tp;
 CREATE TABLE t (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED);
 CREATE TABLE tp (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED)
@@ -1176,4 +1174,3 @@ a	b
 1	0
 11	1
 DROP TABLE t;
->>>>>>> 328460a9af0 (executor: fix multi-table UPDATE row tracking on nonclustered partitioned tables (#71972))
