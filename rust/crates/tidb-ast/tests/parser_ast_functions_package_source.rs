@@ -112,6 +112,7 @@ fn functions_visitor_cover() {
     let value = int("42");
     let mut trees = [
         Expr::Aggregate {
+            written: None,
             name: "SUM".to_string(),
             distinct: false,
             args: vec![value.clone()],
@@ -159,6 +160,7 @@ fn func_call_expr_restore() {
         // JSON_*AGG parse into the aggregate family in Go as well.
         (
             Expr::Aggregate {
+                written: None,
                 name: "JSON_ARRAYAGG".to_string(),
                 distinct: false,
                 args: vec![column(&["attribute"])],
@@ -167,6 +169,7 @@ fn func_call_expr_restore() {
         ),
         (
             Expr::Aggregate {
+                written: None,
                 name: "JSON_OBJECTAGG".to_string(),
                 distinct: false,
                 args: vec![column(&["attribute"]), column(&["value"])],
@@ -475,6 +478,7 @@ fn trim(expr: &str, remstr: &str, direction: TrimDirection) -> Expr {
 
 fn agg(name: &str, distinct: bool, args: Vec<Expr>) -> Expr {
     Expr::Aggregate {
+        written: None,
         name: name.to_string(),
         distinct,
         args,
@@ -639,6 +643,7 @@ fn aggregate_func_expr_restore() {
             collation: String::new(),
         };
         let expr = Expr::GroupConcat {
+            written: None,
             distinct: false,
             args: vec![column(&["a"])],
             order_by,

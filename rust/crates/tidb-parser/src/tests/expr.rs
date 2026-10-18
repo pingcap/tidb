@@ -895,6 +895,7 @@ fn group_concat() {
     assert_eq!(
         expr,
         &Expr::GroupConcat {
+            written: Some("group_concat".to_owned()),
             distinct: false,
             args: vec![
                 Expr::Column(vec!["a".to_string()]),

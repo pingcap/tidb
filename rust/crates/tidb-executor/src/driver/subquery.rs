@@ -973,10 +973,12 @@ pub(crate) fn fold_subqueries(
         // by name after this fold has had its chance.
         Expr::Aggregate {
             name,
+            written,
             distinct,
             args,
         } => Expr::Aggregate {
             name: name.clone(),
+            written: written.clone(),
             distinct: *distinct,
             args: args
                 .iter()

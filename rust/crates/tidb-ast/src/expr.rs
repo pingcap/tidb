@@ -20,6 +20,7 @@ use cast::restore_cast_type;
 use tidb_mysql::to_lowercase as identifier_to_lower;
 mod op;
 mod restore;
+pub(crate) use restore::keyword_case;
 
 pub use cast::*;
 pub use op::*;
@@ -367,6 +368,10 @@ pub enum Expr {
     Aggregate {
         /// The canonical aggregate name (restored uppercase).
         name: String,
+        /// The name as the statement wrote it (Go `AggregateFuncExpr.F`),
+        /// which a restore without keyword-case flags prints. \`None\` for an
+        /// aggregate the parser did not read from text.
+        written: Option<String>,
         /// Whether `DISTINCT` was specified.
         distinct: bool,
         /// The argument list — always exactly one element except
@@ -384,6 +389,8 @@ pub enum Expr {
     /// `aggregate::Database::group_concat_order` for the exact
     /// sort/dedup interaction with `DISTINCT`.
     GroupConcat {
+        /// The name as the statement wrote it (Go `AggregateFuncExpr.F`).
+        written: Option<String>,
         /// Whether `DISTINCT` was specified.
         distinct: bool,
         /// The per-row arguments, concatenated like `CONCAT(args...)`.
@@ -1353,6 +1360,7 @@ impl crate::Visitable for Expr {
             }
             Self::Aggregate {
                 name,
+                written: _,
                 distinct,
                 args,
             } => {
@@ -1366,6 +1374,7 @@ impl crate::Visitable for Expr {
                 let _ = args;
             }
             Self::GroupConcat {
+                written: _,
                 distinct,
                 args,
                 order_by,

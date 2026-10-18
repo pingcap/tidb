@@ -57,6 +57,7 @@ fn binary(op: BinaryOp, l: Expr, r: Expr) -> Expr {
 fn has_agg_flag() {
     // FlagHasAggregateFunc alone (its own arg is constant-like in Go).
     let with_aggregate = Expr::Aggregate {
+        written: None,
         name: "SUM".to_string(),
         distinct: false,
         args: vec![int("1")],
@@ -67,6 +68,7 @@ fn has_agg_flag() {
     let aggregate_plus_variable = binary(
         BinaryOp::Eq,
         Expr::Aggregate {
+            written: None,
             name: "SUM".to_string(),
             distinct: false,
             args: vec![int("1")],
@@ -211,6 +213,7 @@ fn flag() {
     let substring_call = func_expr("SUBSTRING", vec![string("abc"), int("1")]);
 
     let sum_column = Expr::Aggregate {
+        written: None,
         name: "SUM".to_string(),
         distinct: false,
         args: vec![column(&["a"])],
@@ -232,6 +235,7 @@ fn flag() {
         list: vec![
             int("1"),
             Expr::Aggregate {
+                written: None,
                 name: "COUNT".to_string(),
                 distinct: false,
                 args: vec![int("1")],

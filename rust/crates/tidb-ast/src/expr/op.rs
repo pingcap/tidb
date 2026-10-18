@@ -93,7 +93,7 @@ impl UnaryOp {
 }
 
 /// An infix binary operator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     /// `+`.
     Plus,

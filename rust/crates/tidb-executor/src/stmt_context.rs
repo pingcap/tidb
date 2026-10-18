@@ -1133,6 +1133,9 @@ pub struct StmtContextData {
     enable_unsafe_substitute: bool,
     /// Go `SessionVars.EnableForceInlineCTE` (`tidb_opt_force_inline_cte`).
     enable_force_inline_cte: bool,
+    /// The statement skipped Go's preprocessor, so no CTE counted a consumer
+    /// (the Index Advisor optimizes parsed statements directly).
+    skip_cte_consumer_counts: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
     /// Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.
@@ -1416,6 +1419,15 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_force_inline_cte(mut self, enable: bool) -> Self {
         self.enable_force_inline_cte = enable;
+        self
+    }
+
+    /// Plans without Go's preprocessor pass, which is what counts each CTE's
+    /// consumers: every CTE keeps consumer count 0 and is not inlined by
+    /// default (the Index Advisor plans this way).
+    #[must_use]
+    pub fn with_skip_cte_consumer_counts(mut self, skip: bool) -> Self {
+        self.skip_cte_consumer_counts = skip;
         self
     }
 
@@ -2520,6 +2532,7 @@ impl StmtContext {
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
             enable_force_inline_cte: false,
+            skip_cte_consumer_counts: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
             allow_in_subq_to_join_and_agg: true,
             enable_no_decorrelate_in_select:
@@ -3072,6 +3085,13 @@ impl StmtContext {
     /// Returns `@@tidb_opt_force_inline_cte`.
     pub fn enable_force_inline_cte(&self) -> bool {
         self.enable_force_inline_cte
+    }
+
+    /// Whether the statement is planned without the preprocessor's CTE
+    /// consumer counts.
+    #[must_use]
+    pub fn skip_cte_consumer_counts(&self) -> bool {
+        self.skip_cte_consumer_counts
     }
 
     /// Returns `@@tidb_opt_enable_semi_join_rewrite`.

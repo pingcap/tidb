@@ -260,7 +260,7 @@ pub use driver::{
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
-    brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan,
+    brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost,
     explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt,
     explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan,
     explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info,

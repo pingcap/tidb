@@ -1576,6 +1576,10 @@ impl Session {
                 )
                 .map(Some)
             }
+            // Go `RecommendIndexExec` (`executor/recommend_index.go`).
+            tidb_ast::AdminStmt::RecommendIndex(recommend) => {
+                self.recommend_index_stmt(recommend).map(Some)
+            }
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),

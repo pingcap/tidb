@@ -199,6 +199,55 @@ pub fn create_hypo_index(
     hypo_indexes.add(database, table_name, index)
 }
 
+/// The Index Advisor's `addHypoIndex` (`pkg/planner/indexadvisor/optimizer.go`):
+/// a public, non-unique hypothetical index over `columns`, built straight
+/// from the table's columns with no key-length admission and replacing any
+/// hypothetical index of the same name, as the advisor's own map write does.
+pub fn set_advisor_hypo_index(
+    catalog: &Catalog,
+    database: &str,
+    table_name: &str,
+    index_name: &str,
+    columns: &[String],
+    hypo_indexes: &mut HypoIndexes,
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+        return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{table_name}"),
+        )));
+    };
+    let mut offsets = Vec::with_capacity(columns.len());
+    for column in columns {
+        let wanted = column.go_to_lower();
+        let Some(offset) = table
+            .columns()
+            .iter()
+            .position(|stored| stored.name.go_to_lower() == wanted)
+        else {
+            return Err(DriverError::Mysql(crate::driver::MysqlError::new(
+                1105,
+                format!("column {column} not found in table {database}.{table_name}"),
+            )));
+        };
+        offsets.push(offset);
+    }
+    let index = KvIndex {
+        id: 0,
+        name: index_name.to_owned(),
+        comment: String::new(),
+        unique: false,
+        prefix_lengths: vec![super::index_prefix::UNSPECIFIED_LENGTH; offsets.len()],
+        column_offsets: offsets,
+        visible: true,
+        global: false,
+        global_index_version: 0,
+        clustered_primary: false,
+    };
+    let name = index.name.go_to_lower();
+    let _ = hypo_indexes.remove(database, table_name, &name, true);
+    hypo_indexes.add(database, table_name, index)
+}
+
 /// Go `dropIndex` with `isHypo`: the table must exist and not be cached, and
 /// then `dropHypoIndexFromCtx`.
 pub fn drop_hypo_index(

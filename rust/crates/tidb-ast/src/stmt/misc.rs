@@ -91,6 +91,10 @@ pub enum RecommendIndexStmt {
     Set(Vec<RecommendIndexOption>),
     Status,
     Cancel,
+    /// A sub-command Go's hand parser accepts without knowing (it records the
+    /// lower-cased token) and the planner then refuses with "unsupported
+    /// action".
+    Unknown(String),
 }
 
 /// Extended-statistics kind.
@@ -244,6 +248,10 @@ impl RecommendIndexStmt {
             Self::Set(options) => restore_recommend_options(out, " SET ", options),
             Self::Status => out.push_str(" STATUS"),
             Self::Cancel => out.push_str(" CANCEL"),
+            Self::Unknown(action) => {
+                out.push(' ');
+                out.push_str(action);
+            }
         }
     }
 }
@@ -520,6 +528,9 @@ impl crate::Visitable for RecommendIndexStmt {
             }
             Self::Status => {}
             Self::Cancel => {}
+            Self::Unknown(field_0) => {
+                let _ = field_0;
+            }
         }
         visitor.leave(self)
     }

@@ -452,7 +452,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // body of a view: that body is parsed and built when the view is read
         // (`BuildDataSourceFromView`), so every CTE in it keeps consumerCount 0
         // and is never inlined by default (issue #56582).
-        let in_view_body = !self.building_view_stack.is_empty();
+        let in_view_body = !self.building_view_stack.is_empty() || self.skip_cte_consumer_counts;
         for (consumer_count, cte) in consumer_counts.iter().copied().zip(&with.ctes) {
             let consumer_count = if in_view_body { 0 } else { consumer_count };
             let index = self.outer_ctes.len();

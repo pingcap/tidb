@@ -1050,8 +1050,8 @@ pub fn aggregates_anywhere(expr: &Expr) -> bool {
     found
 }
 
-/// Every column `expr` reads OUTSIDE an aggregate, a window call or an
-/// `ANY_VALUE()`, which are the subtrees that answer for their own columns.
+/// Every column `expr` reads OUTSIDE an aggregate or an `ANY_VALUE()`, which
+/// are the subtrees that answer for their own columns.
 #[must_use]
 pub fn bare_columns(expr: &Expr) -> Vec<Vec<String>> {
     let mut found = Vec::new();
@@ -1065,9 +1065,9 @@ fn collect_bare_columns(expr: &Expr, out: &mut Vec<Vec<String>>) {
             out.push(path.clone());
             true
         }
-        // A window call's own frame reads whole partitions, so its columns are
-        // not this expression's to justify.
-        Expr::Window { .. } => true,
+        // Go's resolver exempts only aggregates, `ANY_VALUE()` and subqueries:
+        // a window call's arguments, `PARTITION BY` and `ORDER BY` columns are
+        // visited like any other, so an aggregated query must justify them.
         // A subquery has its OWN scope. The outer names it correlates to go
         // unchecked here, which is the permissive side and Go's too on this
         // path.

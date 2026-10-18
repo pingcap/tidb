@@ -55,6 +55,7 @@ impl Parser {
             }
             return Ok(Expr::Aggregate {
                 name,
+                written: Some(window_name),
                 distinct: false,
                 args: vec![arg],
             });
@@ -124,6 +125,7 @@ impl Parser {
         }
         Ok(Expr::Aggregate {
             name,
+            written: Some(window_name),
             distinct,
             args,
         })
@@ -367,7 +369,7 @@ impl Parser {
     /// `parseWindowFuncExpr`, which copies only `Args`/`Distinct` from the
     /// aggregate node into the window node, never `Order`.
     pub(crate) fn parse_group_concat(&mut self) -> PResult<Expr> {
-        self.bump(); // GROUP_CONCAT
+        let written = self.bump().text.clone(); // GROUP_CONCAT
         self.expect_op("(")?;
         let distinct = if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
             self.bump();
@@ -422,6 +424,7 @@ impl Parser {
             });
         }
         Ok(Expr::GroupConcat {
+            written: Some(written),
             distinct,
             args,
             order_by,

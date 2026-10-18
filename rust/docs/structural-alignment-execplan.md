@@ -112,6 +112,28 @@ Each milestone lands as its own commit through the pre-commit hook, so any one c
   resolves each partition's own policy by id (Go `handleTablePlacement`);
   before, the bundles for `PARTITION p0 PLACEMENT POLICY x` failed with
   "no placement policy with id 0".
+- [x] (2026-10-18) `RECOMMEND INDEX RUN | SET | SHOW` follow Go: the whole
+  `pkg/planner/indexadvisor` package is ported (`tidb-session/src/index_advisor/`:
+  `keyset` = `pkg/util/set`, `model`, `options`, `query` = `utils.go`,
+  `algorithm` = AutoAdmin, and the Session-backed what-if optimizer). Plan costs
+  come from `tidb_executor::query_plan_cost` (the root of the Ver2 plan cost),
+  hypothetical indexes from `set_advisor_hypo_index`. Differential probes
+  (TPCC workload, joins, DNF/order-by, covering/prefix/existing indexes, data +
+  `ANALYZE`, options, error texts) agree row for row with Go. Known edges: a
+  workload read from `statements_summary_history` sees this node's own session
+  statements (Go's harness records none), DML/DDL workload statements get the
+  planner errors Go's mock store produced (nil-pointer for INSERT/ANALYZE,
+  1288 for UPDATE/DELETE), and views are not offered as index targets.
+  Differences the advisor exposed, fixed at their roots:
+  hypothetical indexes now stay out of the statistics collection and bypass the
+  latest-schema check but get a filled path (so locking reads and index-filter
+  row counts match); `RestoreSkipRedundantParentheses` and the keyword-case
+  rules of `WriteKeyWord` (function, aggregate, window, `FOR UPDATE` spellings,
+  `OF` tables qualified by the default database) are ported, which changes
+  binding text; ONLY_FULL_GROUP_BY now justifies a window call's columns;
+  the hand-parser quirks of `RECOMMEND` (optional `INDEX`, unknown action,
+  non-literal option values) are mirrored; a planning mode without the
+  preprocessor's CTE consumer counts exists for the advisor.
 - [x] (2026-10-17) Milestone 3 spike: `tidb_exec::in_memory_meta::InMemoryMeta` (a `MetaSnapshot` over an ordered map with `apply`) runs the production cycle with no TiKV: bootstrap the meta, plan a statement with `plan_ddl`, apply the plan's mutations, load the catalog back; pinned by `a_planned_create_database_applies_to_the_store_and_loads_back`. The DDL half of the target is therefore feasible without a new planner. Scouting the storage side (read-only): the row backend is the `TableStorage` trait in `tidb-executor/src/storage.rs`, which speaks raw TiKV-format key and value bytes (`get`, `get_local`, scans, staged-write hooks), with `MemTableStorage` for the in-process tier and `ClusterTableStorage` over txnkv for production; `table_from_meta::cluster_table(table, storage, auto)` builds a `KvTable` from a loaded `TableInfo` and a storage handle. Record keys carry the table id, so one shared in-memory ordered map, handed to every table the loader builds, keeps the rows across a catalog reload the way TiKV does; that shared map plus the auto-id allocator state are what a bare session's store must own beyond the meta map. Still unproven and the real work of 3b/3c: the table rows (the in-process `Catalog` owns them, behind the `TableStorage` trait that `ClusterTableStorage` also implements) and the session orchestration `run_ddl` holds in `tidb-server` (privileges, implicit commit, table-lock jobs, warning drain).
 - [ ] Milestone 3: DDL duplication, decided (see the Decision log) and scouted; it is a program, staged as follows. 3a: define the seam in `tidb-session` (a DDL service trait the session calls for every schema change; the cluster tier implements it, and the in-process tier is wrapped as a second implementation so call sites stop branching). 3b: move the glue the cluster session needs to boot a store-backed session (boot, schema sync, the DDL worker, about 6,000 of the 20,000 lines under `cluster_session_node`) below `tidb-session` into a domain crate, as Go's `domain` package sits below `session`. 3c: give `Session::new()` an in-process unistore through that crate. 3d: migrate statement kinds one per gate (their tests move with them), deleting the executor DDL for each kind once nothing calls it. 3e: delete the in-process catalog's row storage once no statement kind uses it.
 - [ ] Milestone 4: execution details.

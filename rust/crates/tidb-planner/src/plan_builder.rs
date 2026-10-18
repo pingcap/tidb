@@ -815,6 +815,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.ctx.GetSessionVars().EnableForceInlineCTE()` (`buildWith`,
     /// `:8013`), which sets every CTE's `forceInlineByHintOrVar`.
     pub enable_force_inline_cte: bool,
+    /// Go never ran `preprocess` (the Index Advisor): no CTE has consumers
+    /// counted, so none is inlined by default.
+    pub skip_cte_consumer_counts: bool,
     /// Go `b.ctx.GetSessionVars().EnableMPPSharedCTEExecution`
     /// (`tryToBuildSequence`, `:4625`). Go's variable defaults to OFF, so a
     /// `LogicalSequence` is not built unless a caller asks for one.
@@ -1531,6 +1534,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             index_lookup_push_down_session: Default::default(),
             enable_skew_distinct_agg: false,
             enable_force_inline_cte: false,
+            skip_cte_consumer_counts: false,
             enable_mpp_shared_cte_execution: false,
         }
     }

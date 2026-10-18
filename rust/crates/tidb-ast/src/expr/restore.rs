@@ -17,6 +17,7 @@
 
 use super::cast::{restore_cast_type, restore_cast_type_kw, restore_typed_literal};
 use super::*;
+use crate::format::{RestoreParentOp, RestoreParentSide};
 use tidb_mysql::to_lowercase as identifier_to_lower;
 
 impl Expr {
@@ -463,14 +464,20 @@ impl Expr {
             }
             Expr::Unary(op, e) => {
                 out.push_str(op.restore());
-                e.restore_into_with_context(out, context);
+                e.restore_into_with_context(out, &context.with_unary_parent());
             }
             Expr::Binary(op, l, r) => {
                 let bracket = context.flags().has_bracket_around_binary_operation();
                 if bracket {
                     out.push('(');
                 }
-                restore_binary_operand(out, l, context, bracket);
+                let parent = RestoreParentOp::Binary(*op);
+                restore_binary_operand(
+                    out,
+                    l,
+                    &context.with_parent(parent, RestoreParentSide::Left),
+                    bracket,
+                );
                 if context.flags().has_spaces_around_binary_operation() {
                     out.push(' ');
                     out.push_str(op.restore().trim());
@@ -478,14 +485,29 @@ impl Expr {
                 } else {
                     out.push_str(op.restore());
                 }
-                restore_binary_operand(out, r, context, bracket);
+                restore_binary_operand(
+                    out,
+                    r,
+                    &context.with_parent(parent, RestoreParentSide::Right),
+                    bracket,
+                );
                 if bracket {
                     out.push(')');
                 }
             }
             Expr::Paren(e) => {
+                // Go `ParentheseExpr.Restore`.
+                if context.flags().has_skip_redundant_parentheses()
+                    && context.can_restore_without_parentheses(
+                        restore_parent_op_of(e),
+                        matches!(**e, Expr::Unary(..)),
+                    )
+                {
+                    e.restore_into_with_context(out, context);
+                    return;
+                }
                 out.push('(');
-                e.restore_into_with_context(out, context);
+                e.restore_into_with_context(out, &context.with_reset_parent());
                 out.push(')');
             }
             Expr::Row(values) => {
@@ -500,19 +522,21 @@ impl Expr {
             }
             Expr::Func { name, args, .. } => {
                 if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() == 2 {
-                    args[0].restore_into_with_context(out, context);
+                    args[0].restore_into_with_context(
+                        out,
+                        &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Left),
+                    );
                     out.push_str(" MEMBER OF (");
-                    args[1].restore_into_with_context(out, context);
+                    args[1].restore_into_with_context(
+                        out,
+                        &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Right),
+                    );
                     out.push(')');
                     return;
                 }
-                if context.flags().has_keyword_lowercase()
-                    || !context.flags().has_keyword_uppercase()
-                {
-                    out.push_str(&identifier_to_lower(name));
-                } else {
-                    out.push_str(&name.to_ascii_uppercase());
-                }
+                // Go `FuncCallExpr.Restore`: `WriteKeyWord(FnName.O)`, which
+                // changes the case only under a keyword-case flag.
+                out.push_str(&keyword_case(context, name));
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
@@ -539,10 +563,17 @@ impl Expr {
             }
             Expr::Aggregate {
                 name,
+                written,
                 distinct,
                 args,
             } => {
-                out.push_str(name);
+                // Go `AggregateFuncExpr.Restore` writes \`F\` with \`WriteKeyWord\`:
+                // as written unless a keyword-case flag is set.
+                if context.flags().has_keyword_uppercase() {
+                    out.push_str(name);
+                } else {
+                    out.push_str(&keyword_case(context, written.as_deref().unwrap_or(name)));
+                }
                 out.push('(');
                 if *distinct {
                     out.push_str("DISTINCT ");
@@ -556,12 +587,17 @@ impl Expr {
                 out.push(')');
             }
             Expr::GroupConcat {
+                written,
                 distinct,
                 args,
                 order_by,
                 separator,
             } => {
-                out.push_str("GROUP_CONCAT(");
+                out.push_str(&keyword_case(
+                    context,
+                    written.as_deref().unwrap_or("GROUP_CONCAT"),
+                ));
+                out.push('(');
                 if *distinct {
                     out.push_str("DISTINCT ");
                 }
@@ -594,7 +630,7 @@ impl Expr {
             } => {
                 // Go `WindowFuncExpr.Restore` writes the name with
                 // `WriteKeyWord`; the AST keeps it as written.
-                out.push_str(&name.to_ascii_uppercase());
+                out.push_str(&keyword_case(context, name));
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
@@ -721,7 +757,10 @@ impl Expr {
                 out.push(')');
             }
             Expr::In { expr, list, not } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::In, RestoreParentSide::Left),
+                );
                 out.push_str(if *not { " NOT IN (" } else { " IN (" });
                 for (i, e) in list.iter().enumerate() {
                     if i > 0 {
@@ -737,11 +776,15 @@ impl Expr {
                 high,
                 not,
             } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::Between, RestoreParentSide::Left),
+                );
                 out.push_str(if *not { " NOT BETWEEN " } else { " BETWEEN " });
-                low.restore_into_with_context(out, context);
+                let right = context.with_parent(RestoreParentOp::Between, RestoreParentSide::Right);
+                low.restore_into_with_context(out, &right);
                 out.push_str(" AND ");
-                high.restore_into_with_context(out, context);
+                high.restore_into_with_context(out, &right);
             }
             Expr::Like {
                 expr,
@@ -750,14 +793,20 @@ impl Expr {
                 ilike,
                 escape,
             } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::Like, RestoreParentSide::Left),
+                );
                 out.push_str(match (*not, *ilike) {
                     (true, true) => " NOT ILIKE ",
                     (true, false) => " NOT LIKE ",
                     (false, true) => " ILIKE ",
                     (false, false) => " LIKE ",
                 });
-                pattern.restore_into_with_context(out, context);
+                pattern.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::Like, RestoreParentSide::Right),
+                );
                 // Go restores an explicit `ESCAPE '\'` as if it were
                 // omitted -- see this variant's own doc.
                 if let Some(esc) = escape.filter(|esc| *esc != b'\\') {
@@ -769,12 +818,21 @@ impl Expr {
                 }
             }
             Expr::Regexp { expr, pattern, not } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::Regexp, RestoreParentSide::Left),
+                );
                 out.push_str(if *not { " NOT REGEXP " } else { " REGEXP " });
-                pattern.restore_into_with_context(out, context);
+                pattern.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::Regexp, RestoreParentSide::Right),
+                );
             }
             Expr::Is { expr, target, not } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(is_parent_op(*target), RestoreParentSide::Left),
+                );
                 out.push_str(" IS ");
                 if *not {
                     out.push_str("NOT ");
@@ -788,7 +846,7 @@ impl Expr {
             }
             Expr::Subquery(s) => {
                 out.push('(');
-                s.restore_into_with_context(out, context);
+                s.restore_into_with_context(out, &context.with_reset_parent());
                 out.push(')');
             }
             Expr::Exists { subquery, not } => {
@@ -796,7 +854,7 @@ impl Expr {
                     out.push_str("NOT ");
                 }
                 out.push_str("EXISTS (");
-                subquery.restore_into_with_context(out, context);
+                subquery.restore_into_with_context(out, &context.with_reset_parent());
                 out.push(')');
             }
             Expr::InSubquery {
@@ -804,9 +862,12 @@ impl Expr {
                 subquery,
                 not,
             } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::In, RestoreParentSide::Left),
+                );
                 out.push_str(if *not { " NOT IN (" } else { " IN (" });
-                subquery.restore_into_with_context(out, context);
+                subquery.restore_into_with_context(out, &context.with_reset_parent());
                 out.push(')');
             }
             Expr::CompareSubquery {
@@ -815,10 +876,13 @@ impl Expr {
                 all,
                 subquery,
             } => {
-                left.restore_into_with_context(out, context);
+                left.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::Binary(*op), RestoreParentSide::Left),
+                );
                 out.push_str(op.restore());
                 out.push_str(if *all { "ALL (" } else { "ANY (" });
-                subquery.restore_into_with_context(out, context);
+                subquery.restore_into_with_context(out, &context.with_reset_parent());
                 out.push(')');
             }
             Expr::Case {
@@ -881,7 +945,8 @@ impl Expr {
                 }
                 CastStyle::BinaryOperator => {
                     out.push_str("BINARY ");
-                    cast.expr.restore_into_with_context(out, context);
+                    cast.expr
+                        .restore_into_with_context(out, &context.with_unary_parent());
                 }
                 CastStyle::DateLiteral => restore_typed_literal("DATE", &cast.expr, out),
                 CastStyle::TimeLiteral => restore_typed_literal("TIME", &cast.expr, out),
@@ -905,7 +970,10 @@ impl Expr {
                 out.push_str("')");
             }
             Expr::Collate { expr, collation } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::Collate, RestoreParentSide::Left),
+                );
                 out.push_str(" COLLATE ");
                 out.push_str(collation);
             }
@@ -931,11 +999,61 @@ impl Expr {
                 out.push(')');
             }
             Expr::MemberOf { expr, array } => {
-                expr.restore_into_with_context(out, context);
+                expr.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Left),
+                );
                 out.push_str(" MEMBER OF (");
-                array.restore_into_with_context(out, context);
+                array.restore_into_with_context(
+                    out,
+                    &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Right),
+                );
                 out.push(')');
             }
         }
+    }
+}
+
+/// Go `RestoreCtx.WriteKeyWord`: the text in the flagged case, or as it is
+/// when no keyword-case flag is set.
+pub(crate) fn keyword_case(context: &RestoreContext, text: &str) -> String {
+    if context.flags().has_keyword_uppercase() {
+        text.to_ascii_uppercase()
+    } else if context.flags().has_keyword_lowercase() {
+        text.to_ascii_lowercase()
+    } else {
+        text.to_owned()
+    }
+}
+
+/// Go `restoreParenthesizedExprOp`: the operator a parenthesized expression
+/// restores as, when it has one.
+fn restore_parent_op_of(expr: &Expr) -> Option<RestoreParentOp> {
+    match expr {
+        Expr::Binary(op, ..) => Some(RestoreParentOp::Binary(*op)),
+        Expr::Between { .. } => Some(RestoreParentOp::Between),
+        Expr::CompareSubquery { op, .. } => Some(RestoreParentOp::Binary(*op)),
+        Expr::Is { target, .. } => Some(is_parent_op(*target)),
+        Expr::In { .. } | Expr::InSubquery { .. } => Some(RestoreParentOp::In),
+        Expr::Like { .. } => Some(RestoreParentOp::Like),
+        Expr::Regexp { .. } => Some(RestoreParentOp::Regexp),
+        Expr::Collate { .. } => Some(RestoreParentOp::Collate),
+        Expr::MemberOf { .. } => Some(RestoreParentOp::MemberOf),
+        Expr::Func { name, args, .. }
+            if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() == 2 =>
+        {
+            Some(RestoreParentOp::MemberOf)
+        }
+        _ => None,
+    }
+}
+
+/// The operator an `IS` test restores under: `IS NULL` and `IS UNKNOWN` are
+/// Go's `IsNullExpr`, the others `IsTruthExpr`.
+fn is_parent_op(target: IsTarget) -> RestoreParentOp {
+    match target {
+        IsTarget::Null | IsTarget::Unknown => RestoreParentOp::IsNull,
+        IsTarget::True => RestoreParentOp::IsTruth,
+        IsTarget::False => RestoreParentOp::IsFalsity,
     }
 }

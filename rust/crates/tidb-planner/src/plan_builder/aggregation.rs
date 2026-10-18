@@ -1603,10 +1603,12 @@ fn decompose_aggregate(agg: &Expr) -> Result<DecomposedAggregate<'_>, PlanError>
     match agg {
         Expr::Aggregate {
             name,
+            written: _,
             distinct,
             args,
         } => Ok((name.to_ascii_lowercase(), args, *distinct, &[], None)),
         Expr::GroupConcat {
+            written: _,
             distinct,
             args,
             order_by,

@@ -39,6 +39,7 @@ fn test_has_agg_flag() {
         expr: Box::new(Expr::Int("1".to_owned())),
         low: Box::new(Expr::Int("0".to_owned())),
         high: Box::new(Expr::Aggregate {
+            written: None,
             name: "COUNT".to_owned(),
             distinct: false,
             args: vec![Expr::Int("1".to_owned())],

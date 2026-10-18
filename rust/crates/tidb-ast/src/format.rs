@@ -439,12 +439,109 @@ impl<W: RestoreWriter> RestoreCtx<W> {
     }
 }
 
+/// The operator an expression restore is nested under (Go `RestoreCtx.
+/// ParentBinaryOp`), which decides whether a parenthesized child keeps its
+/// parentheses under `RestoreSkipRedundantParentheses`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RestoreParentOp {
+    /// An infix operator.
+    Binary(crate::BinaryOp),
+    /// `BETWEEN` (Go's restore-only opcode).
+    Between,
+    /// `IN`.
+    In,
+    /// `LIKE` / `ILIKE`.
+    Like,
+    /// `REGEXP`.
+    Regexp,
+    /// `IS [NOT] NULL`.
+    IsNull,
+    /// `IS [NOT] TRUE`.
+    IsTruth,
+    /// `IS [NOT] FALSE`.
+    IsFalsity,
+    /// `MEMBER OF`.
+    MemberOf,
+    /// `COLLATE`.
+    Collate,
+}
+
+/// Which side of its parent operator a child sits on (Go
+/// `RestoreCtx.ParentBinarySide`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RestoreParentSide {
+    /// The left operand.
+    Left,
+    /// The right operand.
+    Right,
+}
+
+impl RestoreParentOp {
+    /// Go `restoreBinaryPrecedence`: MySQL operator precedence, larger binds
+    /// tighter, 0 unknown.
+    fn precedence(self) -> u8 {
+        use crate::BinaryOp as B;
+        match self {
+            Self::Binary(op) => match op {
+                B::LogicOr => 1,
+                B::LogicXor => 2,
+                B::LogicAnd => 3,
+                B::Eq | B::Ne | B::NullEq | B::Lt | B::Le | B::Gt | B::Ge => 5,
+                B::BitOr => 6,
+                B::BitAnd => 7,
+                B::LeftShift | B::RightShift => 8,
+                B::Plus | B::Minus => 9,
+                B::Mul | B::Div | B::IntDiv | B::Mod => 10,
+                B::BitXor => 11,
+            },
+            Self::In
+            | Self::Like
+            | Self::Regexp
+            | Self::IsNull
+            | Self::IsTruth
+            | Self::IsFalsity
+            | Self::MemberOf => 5,
+            Self::Between => 4,
+            Self::Collate => 12,
+        }
+    }
+
+    /// Go `isAssociativeRestoreOp`.
+    fn associative_with(self, child: Self) -> bool {
+        use crate::BinaryOp as B;
+        self == child
+            && matches!(
+                self,
+                Self::Binary(B::LogicAnd | B::LogicOr | B::BitAnd | B::BitOr | B::BitXor)
+            )
+    }
+
+    /// Go `canRestoreBinaryChildWithoutParentheses`.
+    fn child_can_drop_parentheses(self, child: Self, side: RestoreParentSide) -> bool {
+        let (parent_precedence, child_precedence) = (self.precedence(), child.precedence());
+        if parent_precedence == 0 || child_precedence == 0 {
+            return false;
+        }
+        if child_precedence > parent_precedence {
+            return true;
+        }
+        if child_precedence < parent_precedence {
+            return false;
+        }
+        side == RestoreParentSide::Left || self.associative_with(child)
+    }
+}
+
 /// Copyable restore policy passed through the existing AST restore tree.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RestoreContext {
     flags: RestoreFlags,
     default_db: Arc<str>,
     cte_names: Arc<Vec<String>>,
+    /// Go `ParentBinaryOp` and `ParentBinarySide`.
+    parent: Option<(RestoreParentOp, RestoreParentSide)>,
+    /// Go `InUnaryOperation`.
+    in_unary: bool,
 }
 
 impl Default for RestoreContext {
@@ -460,7 +557,59 @@ impl RestoreContext {
             flags,
             default_db: Arc::from(""),
             cte_names: Arc::new(Vec::new()),
+            parent: None,
+            in_unary: false,
         }
+    }
+
+    /// Go `restoreExprWithBinaryOpParent`: the context a child restores under.
+    #[must_use]
+    pub fn with_parent(&self, op: RestoreParentOp, side: RestoreParentSide) -> Self {
+        let mut context = self.clone();
+        context.parent = Some((op, side));
+        context
+    }
+
+    /// Go `restoreExprWithUnaryOpParent`.
+    #[must_use]
+    pub fn with_unary_parent(&self) -> Self {
+        let mut context = self.clone();
+        context.in_unary = true;
+        context
+    }
+
+    /// Go `restoreWithResetParentContext`.
+    #[must_use]
+    pub fn with_reset_parent(&self) -> Self {
+        let mut context = self.clone();
+        context.parent = None;
+        context.in_unary = false;
+        context
+    }
+
+    /// Go `canRestoreWithoutParentheses`, for a parenthesized `expr` whose
+    /// own operator is `child` (`None` when it has none) and whether it is a
+    /// unary operation.
+    pub fn can_restore_without_parentheses(
+        &self,
+        child: Option<RestoreParentOp>,
+        child_is_unary: bool,
+    ) -> bool {
+        if self.in_unary {
+            return false;
+        }
+        // Dropping a unary child's parentheses could expose a different parse
+        // boundary to the surrounding binary operator.
+        if child_is_unary && self.parent.is_some() {
+            return false;
+        }
+        let Some(child) = child else {
+            return true;
+        };
+        let Some((parent, side)) = self.parent else {
+            return true;
+        };
+        parent.child_can_drop_parentheses(child, side)
     }
 
     /// Returns a context that qualifies unqualified table names with `database`.
@@ -477,6 +626,8 @@ impl RestoreContext {
             flags: self.flags,
             default_db: Arc::clone(&self.default_db),
             cte_names: Arc::new(names),
+            parent: self.parent,
+            in_unary: self.in_unary,
         }
     }
 
@@ -486,6 +637,8 @@ impl RestoreContext {
             flags: self.flags.without(flags),
             default_db: Arc::clone(&self.default_db),
             cte_names: Arc::clone(&self.cte_names),
+            parent: self.parent,
+            in_unary: self.in_unary,
         }
     }
 

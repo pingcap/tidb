@@ -125,14 +125,23 @@ impl Parser {
         })
     }
 
+    /// Go `parseRecommendStmt` (`misc_stmt_parser.go`): `INDEX` is optional,
+    /// an `APPLY`/`IGNORE` id too, and a sub-command the parser does not know
+    /// is recorded (lower-cased) for the planner to refuse.
     pub(crate) fn parse_recommend_index(&mut self) -> PResult<RecommendIndexStmt> {
         self.expect_kw("RECOMMEND")?;
-        self.expect_kw("INDEX")?;
+        if self.is_kw("INDEX") {
+            self.bump();
+        }
         if self.is_kw("RUN") {
             self.bump();
             let sql = if self.is_kw("FOR") {
                 self.bump();
-                Some(self.parse_misc_string("recommendation SQL")?)
+                if self.peek().kind == TokenKind::Str {
+                    Some(self.parse_misc_string("recommendation SQL")?)
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -152,7 +161,11 @@ impl Parser {
         } else if self.is_kw("APPLY") || self.is_kw("IGNORE") {
             let apply = self.is_kw("APPLY");
             self.bump();
-            let id = self.parse_misc_i64("recommendation ID")?;
+            let id = if self.peek().kind == TokenKind::IntLit {
+                self.parse_misc_i64("recommendation ID")?
+            } else {
+                0
+            };
             Ok(if apply {
                 RecommendIndexStmt::Apply(id)
             } else {
@@ -168,7 +181,8 @@ impl Parser {
             self.bump();
             Ok(RecommendIndexStmt::Cancel)
         } else {
-            Err(self.err_here("expected RECOMMEND INDEX action"))
+            let action = self.bump().text.to_lowercase();
+            Ok(RecommendIndexStmt::Unknown(action))
         }
     }
 
@@ -293,10 +307,28 @@ impl Parser {
         loop {
             let name = self.parse_name_or_keyword()?;
             self.expect_op("=")?;
-            options.push(RecommendIndexOption {
-                name,
-                value: self.parse_expr(prec::NONE)?,
-            });
+            let value = self.parse_expr(prec::NONE)?;
+            // Go's `parseRecommendOptions` gives up the whole list, without
+            // consuming anything further, when a value is not a literal
+            // (`ast.ValueExpr`): `max_num_index=-1` leaves no options.
+            if !matches!(
+                value,
+                tidb_ast::Expr::Int(_)
+                    | tidb_ast::Expr::Decimal(_)
+                    | tidb_ast::Expr::Float(_)
+                    | tidb_ast::Expr::Hex(_)
+                    | tidb_ast::Expr::Bit(_)
+                    | tidb_ast::Expr::String(_)
+                    | tidb_ast::Expr::RawString(_)
+                    | tidb_ast::Expr::CharsetString { .. }
+                    | tidb_ast::Expr::CharsetBinary { .. }
+                    | tidb_ast::Expr::Null
+                    | tidb_ast::Expr::Bool(_)
+                    | tidb_ast::Expr::ParamMarker { .. }
+            ) {
+                return Ok(Vec::new());
+            }
+            options.push(RecommendIndexOption { name, value });
             if !self.is_op(",") {
                 break;
             }

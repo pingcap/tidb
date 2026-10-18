@@ -12938,6 +12938,18 @@ fn hypothetical_indexes_are_session_state_as_go_does() {
         )
         .last()
         .unwrap(),
+        // The unique hypothetical index answers `c = 2` with a point get,
+        // which beats the two-column one (the oracle's plan, now that a
+        // hypothetical index gets a filled path like any other).
+        "table:t, index:hypo_c(c)"
+    );
+    assert_eq!(
+        explain(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT b FROM test.t WHERE b = 1 AND c > 2"
+        )
+        .last()
+        .unwrap(),
         "table:t, index:hypo_bc(b, c)"
     );
     assert_eq!(

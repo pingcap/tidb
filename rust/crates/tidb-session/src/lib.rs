@@ -1256,6 +1256,7 @@ mod account;
 pub mod slow_log_rules;
 pub mod trace;
 mod show_placement;
+mod index_advisor;
 mod account_password;
 mod admin_check_arm;
 mod alter_schema;

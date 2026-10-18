@@ -234,7 +234,7 @@ impl SelectStmt {
             }
             restore_order_by(out, &self.order_by);
             restore_limit(out, &self.limit);
-            restore_lock(out, &self.lock);
+            restore_lock(out, &self.lock, context);
             if let Some(into) = &self.into_outfile {
                 out.push(' ');
                 into.restore_into(out);
@@ -366,7 +366,7 @@ impl SelectStmt {
         // A plain `SELECT`'s own lock prints AFTER `ORDER BY`/`LIMIT`
         // (real SQL clause order — see `SelectStmt::lock`'s own doc for
         // the opposite `SetOprStmt`-level order).
-        restore_lock(out, &self.lock);
+        restore_lock(out, &self.lock, context);
         if let Some(into) = &self.into_outfile {
             out.push(' ');
             into.restore_into(out);
@@ -387,7 +387,7 @@ impl SelectStmt {
             .restore_into_with_context(out, context);
         restore_order_by(out, &self.order_by);
         restore_limit(out, &self.limit);
-        restore_lock(out, &self.lock);
+        restore_lock(out, &self.lock, context);
         if let Some(into) = &self.into_outfile {
             out.push(' ');
             into.restore_into(out);
@@ -449,17 +449,29 @@ pub enum LockWait {
 /// [`SelectLock`]'s own doc — both spellings share one
 /// `LockKind::Share` variant, so there's no separate case to handle
 /// here).
-fn restore_lock(out: &mut String, lock: &Option<SelectLock>) {
+fn restore_lock(out: &mut String, lock: &Option<SelectLock>, context: &RestoreContext) {
     let Some(lock) = lock else { return };
-    out.push_str(match lock.kind {
-        LockKind::Update => " FOR UPDATE",
-        LockKind::Share => " FOR SHARE",
-    });
+    // Go `SelectStmt.Restore`: the clause is `WriteKeyWord` text in Go's own
+    // spelling (`for update`, `OF`, `nowait`), cased only by a keyword flag.
+    let keyword = |text: &str| crate::expr::keyword_case(context, text);
+    out.push(' ');
+    out.push_str(&keyword(match lock.kind {
+        LockKind::Update => "for update",
+        LockKind::Share => "for share",
+    }));
     if !lock.of.is_empty() {
-        out.push_str(" OF ");
+        out.push_str(&keyword(" OF "));
         for (i, path) in lock.of.iter().enumerate() {
             if i > 0 {
                 out.push_str(", ");
+            }
+            // Go `TableName.Restore`: an unqualified name takes the default
+            // database.
+            if let [name] = path.as_slice() {
+                if let Some(database) = context.default_db_for_table(name, false) {
+                    out.push_str(&back_quote(database));
+                    out.push('.');
+                }
             }
             for (j, part) in path.iter().enumerate() {
                 if j > 0 {
@@ -471,10 +483,11 @@ fn restore_lock(out: &mut String, lock: &Option<SelectLock>) {
     }
     match lock.wait {
         LockWait::Default => {}
-        LockWait::NoWait => out.push_str(" NOWAIT"),
-        LockWait::SkipLocked => out.push_str(" SKIP LOCKED"),
+        LockWait::NoWait => out.push_str(&keyword(" nowait")),
+        LockWait::SkipLocked => out.push_str(&keyword(" skip locked")),
         LockWait::Wait(seconds) => {
-            out.push_str(" WAIT ");
+            out.push_str(&keyword(" wait"));
+            out.push(' ');
             out.push_str(&seconds.to_string());
         }
     }

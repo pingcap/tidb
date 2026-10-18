@@ -908,6 +908,7 @@ pub(super) fn logical_from_plan(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
@@ -1641,13 +1642,17 @@ impl InitStats<'_> {
         // every public, non-hidden column and every public index; a stored
         // table holds what it analyzed.
         let pseudo_collection = statistics.is_none_or(|statistics| statistics.pseudo);
+        // A hypothetical index (negative id here, id 0 in Go) belongs to the
+        // session, not to `TableInfo`, so Go's `PseudoTable` and the loaded
+        // statistics never hold it: selectivity ignores its columns.
         let index_in_collection = |index: &tidb_planner::plan_builder::catalog::SourceIndex| {
-            match statistics {
-                Some(statistics) if !pseudo_collection => {
-                    statistics.indexes.contains_key(&index.id)
+            index.id >= 0
+                && match statistics {
+                    Some(statistics) if !pseudo_collection => {
+                        statistics.indexes.contains_key(&index.id)
+                    }
+                    _ => index.is_public,
                 }
-                _ => index.is_public,
-            }
         };
         // GenerateHistCollFromColumnInfo builds every index map from retained
         // payloads, including invalid/evicted ones. A schema-only index must
@@ -1998,9 +2003,19 @@ impl InitStats<'_> {
         if !source.pushed_down_conds.is_empty() {
             if let Some(TableEntry::Kv(table)) = source_table {
                 for index in &source.indexes {
+                    // A hypothetical index lives in the session, not in the
+                    // table, and Go fills its path like any other.
+                    let hypo_metadata = || {
+                        self.context
+                            .hypo_indexes()?
+                            .table_indexes(&source.db_name, &source.table_name)
+                            .into_iter()
+                            .find(|candidate| candidate.id == index.id)
+                    };
                     let Some(metadata) = table
                         .plan_indexes()
                         .find(|candidate| candidate.id == index.id)
+                        .or_else(hypo_metadata)
                     else {
                         continue;
                     };
@@ -2880,6 +2895,7 @@ fn planner_built_query_with_allocators(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
@@ -3010,6 +3026,7 @@ fn query_visit_info_inner(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     let node = tidb_resolve::NodeW::new(query.clone());
     builder
@@ -3149,6 +3166,7 @@ pub(crate) fn query_builds_correlated_columns(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     let node = tidb_resolve::NodeW::new(query.clone());
     let plan = builder.build_query_node(&node, false)?;
@@ -3210,6 +3228,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
@@ -3867,6 +3886,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());

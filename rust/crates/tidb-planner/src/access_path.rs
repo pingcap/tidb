@@ -1252,6 +1252,13 @@ pub fn get_possible_access_paths(
         if !index.is_public {
             continue;
         }
+        // A hypothetical index (negative id) is appended to the public paths
+        // as it is (`:1419-1441`): it is not in the latest schema, whose check
+        // only vets stored indexes.
+        if index.id < 0 {
+            paths.push(PossiblePath::Index { index: offset });
+            continue;
+        }
         if check_latest_schema && latest_indexes.is_none() {
             let (indexes, changed) =
                 crate::domain_misc::get_latest_index_info(latest_index_schema, table.table_id, 0)?;

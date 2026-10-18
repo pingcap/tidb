@@ -417,6 +417,7 @@ pub(super) fn resolve_prepared_aggregate(
     let [SelectField::Expr {
         expr: Expr::Aggregate {
             name,
+            written: _,
             distinct,
             args,
         },

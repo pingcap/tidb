@@ -3610,6 +3610,33 @@ pub fn explain_select_stmt(
     )
 }
 
+/// The Index Advisor's `queryPlanCost` (`pkg/planner/optimize.go`): the
+/// root cost of the plan the optimizer picks for `query`, with the
+/// `tidb_opt_fix_control` 43817 rule the advisor turns on -- a plan that would
+/// evaluate an uncorrelated scalar subquery while planning is refused.
+pub fn query_plan_cost(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<f64, DriverError> {
+    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    let (mut physical, scalar_subqueries) =
+        crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
+    if !scalar_subqueries.is_empty() {
+        return Err(DriverError::Mysql(crate::driver::MysqlError::new(
+            1105,
+            "evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817"
+                .to_owned(),
+        )));
+    }
+    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    let coster = Ver2Coster::from_env(ctx.optimizer_cost_env()).with_explain_cache();
+    Ok(coster
+        .plan_cost(&physical, tidb_planner::task_type::TaskType::Root, false)
+        .value())
+}
+
 /// Plain `EXPLAIN` over a supported set operation.
 pub fn explain_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,
