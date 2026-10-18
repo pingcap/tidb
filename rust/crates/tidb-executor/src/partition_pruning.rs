@@ -137,10 +137,9 @@ fn pruned_ids_impl(
         PartitionKind::None => None,
         PartitionKind::Hash => prune_hash_ids(spec, ranges, ctx),
         PartitionKind::Key => Some(prune_key_ids(spec, ranges)),
-        PartitionKind::Range {
-            less_than,
-            unsigned,
-        } => Some(prune_range_ids(spec, ranges, less_than, *unsigned, ctx)),
+        // Go prunes `PARTITION BY RANGE` by the statement's predicates, not by
+        // ranger intervals: see [`scalar_range_pruned_ids`].
+        PartitionKind::Range { .. } => None,
         PartitionKind::RangeColumns {
             less_than,
             field_types,
@@ -824,222 +823,10 @@ fn interval_includes_null(range: &IndexRange) -> bool {
     matches!(range.low.first(), Some(Datum::Null)) && !range.low_exclusive
 }
 
-fn interval_is_null_point(range: &IndexRange) -> bool {
-    matches!(range.low.first(), Some(Datum::Null))
-        && !range.low_exclusive
-        && matches!(range.high.first(), Some(Datum::Null))
-        && !range.high_exclusive
-}
-
-fn prune_range_ids(
-    spec: &PartitionSpec,
-    ranges: &[IndexRange],
-    less_than: &[RangeBound],
-    unsigned: bool,
-    ctx: &impl tidb_expr::Columns,
-) -> Vec<i64> {
-    let transformed = if spec.expr.as_column().is_some() {
-        ranges.to_vec()
-    } else if ranges.iter().all(|range| range.is_point(true)) {
-        match ranges
-            .iter()
-            .map(|range| evaluate_range_partition_point(spec, range, ctx))
-            .collect::<Option<Vec<_>>>()
-        {
-            Some(ranges) => ranges,
-            None => {
-                return spec
-                    .definitions
-                    .iter()
-                    .map(|definition| definition.id)
-                    .collect();
-            }
-        }
-    } else {
-        let Some(mode) = range_partition_monotone_mode(&spec.expr) else {
-            return spec
-                .definitions
-                .iter()
-                .map(|definition| definition.id)
-                .collect();
-        };
-        match ranges
-            .iter()
-            .map(|range| transform_monotone_range(spec, range, mode, ctx))
-            .collect::<Option<Vec<_>>>()
-        {
-            Some(ranges) => ranges,
-            None => {
-                return spec
-                    .definitions
-                    .iter()
-                    .map(|definition| definition.id)
-                    .collect();
-            }
-        }
-    };
-    let mut kept = Vec::with_capacity(spec.definitions.len());
-    for (index, definition) in spec.definitions.iter().enumerate() {
-        let low = if index == 0 {
-            None
-        } else {
-            match less_than[index - 1] {
-                RangeBound::Value(value) => Some(value),
-                // A `MAXVALUE` below the last position is 1481 at CREATE, so
-                // this is unreachable; keeping the partition is the safe
-                // reading if it ever were.
-                RangeBound::MaxValue => None,
-            }
-        };
-        let high = match less_than[index] {
-            RangeBound::Value(value) => Some(value),
-            RangeBound::MaxValue => None,
-        };
-        if transformed.iter().any(|range| {
-            (index == 0 && interval_includes_null(range))
-                || (!interval_is_null_point(range)
-                    && range_meets_partition(range, low, high, unsigned))
-        }) {
-            kept.push(definition.id);
-        }
-    }
-    kept
-}
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RangeMonotoneMode {
     Strict,
     NonStrict,
-}
-
-fn range_partition_monotone_mode(
-    expression: &tidb_expr::expression::Expression,
-) -> Option<RangeMonotoneMode> {
-    use tidb_expr::expression::Expression;
-
-    let Expression::ScalarFunction(function) = expression else {
-        return expression.as_column().map(|_| RangeMonotoneMode::Strict);
-    };
-    let name = function.func_name.lowercase();
-    let args = function.get_args();
-    match name {
-        "year" | "to_days" if matches!(args.first(), Some(Expression::Column(_))) => {
-            Some(RangeMonotoneMode::NonStrict)
-        }
-        "unix_timestamp" | "plus" | "minus"
-            if matches!(args.first(), Some(Expression::Column(_))) =>
-        {
-            Some(RangeMonotoneMode::Strict)
-        }
-        "floor" => {
-            let Some(Expression::ScalarFunction(unix_timestamp)) = args.first() else {
-                return None;
-            };
-            (unix_timestamp.func_name.lowercase() == "unix_timestamp"
-                && matches!(
-                    unix_timestamp.get_args().first(),
-                    Some(Expression::Column(_))
-                ))
-            .then_some(RangeMonotoneMode::NonStrict)
-        }
-        "extract" => extract_partition_monotone_mode(args),
-        _ => None,
-    }
-}
-
-fn extract_partition_monotone_mode(
-    args: &[tidb_expr::expression::Expression],
-) -> Option<RangeMonotoneMode> {
-    use tidb_datatype::FieldTypeCode;
-    use tidb_expr::expression::Expression;
-
-    let [Expression::Constant(unit), value] = args else {
-        return None;
-    };
-    let unit = unit.value.as_raw_bytes()?;
-    let column = match value {
-        Expression::Column(column) => column,
-        Expression::ScalarFunction(cast)
-            if cast.func_name.lowercase() == "cast"
-                && cast.get_static_type()?.code() == FieldTypeCode::Duration
-                && matches!(cast.get_args().first(), Some(Expression::Column(_))) =>
-        {
-            cast.get_args().first()?.as_column()?
-        }
-        _ => return None,
-    };
-    let code = column.get_static_type()?.code();
-    let unit = std::str::from_utf8(unit).ok()?.to_ascii_uppercase();
-    let monotone = match code {
-        FieldTypeCode::Date | FieldTypeCode::Datetime => {
-            matches!(unit.as_str(), "YEAR" | "YEAR_MONTH")
-        }
-        FieldTypeCode::Duration => matches!(
-            unit.as_str(),
-            "HOUR" | "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND"
-        ),
-        _ => false,
-    };
-    monotone.then_some(RangeMonotoneMode::NonStrict)
-}
-
-fn evaluate_range_partition_point(
-    spec: &PartitionSpec,
-    range: &IndexRange,
-    ctx: &impl tidb_expr::Columns,
-) -> Option<IndexRange> {
-    if range.high.len() != spec.dependencies.len() {
-        return None;
-    }
-    let row = tidb_chunk::mutrow::MutRow::from_datums(&range.high);
-    let value = spec.expr.eval(ctx, row.to_row()).ok()?;
-    range_partition_integer(value).map(|value| IndexRange {
-        low: vec![value.clone()],
-        high: vec![value],
-        low_exclusive: false,
-        high_exclusive: false,
-    })
-}
-
-fn transform_monotone_range(
-    spec: &PartitionSpec,
-    range: &IndexRange,
-    mode: RangeMonotoneMode,
-    ctx: &impl tidb_expr::Columns,
-) -> Option<IndexRange> {
-    if range.low.len() != 1 || range.high.len() != 1 || spec.dependencies.len() != 1 {
-        return None;
-    }
-    let low = evaluate_range_partition_endpoint(spec, &range.low[0], ctx)?;
-    let high = evaluate_range_partition_endpoint(spec, &range.high[0], ctx)?;
-    Some(IndexRange {
-        low: vec![low],
-        high: vec![high],
-        low_exclusive: range.low_exclusive && mode == RangeMonotoneMode::Strict,
-        high_exclusive: range.high_exclusive && mode == RangeMonotoneMode::Strict,
-    })
-}
-
-fn evaluate_range_partition_endpoint(
-    spec: &PartitionSpec,
-    value: &Datum,
-    ctx: &impl tidb_expr::Columns,
-) -> Option<Datum> {
-    if matches!(value, Datum::Null | Datum::MinNotNull | Datum::MaxValue) {
-        return Some(value.clone());
-    }
-    let row = tidb_chunk::mutrow::MutRow::from_datums(std::slice::from_ref(value));
-    range_partition_integer(spec.expr.eval(ctx, row.to_row()).ok()?)
-}
-
-fn range_partition_integer(value: Datum) -> Option<Datum> {
-    match value {
-        Datum::Null | Datum::Int(_) | Datum::UInt(_) => Some(value),
-        Datum::Bit(value) | Datum::BinaryLiteral(value) => {
-            Some(Datum::UInt(value.to_int().value()))
-        }
-        _ => None,
-    }
 }
 
 /// Go `getUsedHashPartitions`. Points evaluate the complete partition
@@ -1156,88 +943,6 @@ fn hash_pruning_integer(value: &Datum, field_type: &tidb_datatype::FieldType) ->
         {
             Some(value.to_int().value() as i64)
         }
-        _ => None,
-    }
-}
-
-/// Whether one `index_range` interval can hold a value this partition
-/// stores, given the partition's half-open value window `[low, high)`.
-///
-/// `low`/`high` of `None` are unbounded (the first partition below, a
-/// `MAXVALUE` partition above). Anything the interval cannot be compared
-/// against -- a non-integer bound, a bound this tier cannot read -- answers
-/// `true`, because an unreadable bound proves nothing about emptiness.
-fn range_meets_partition(
-    range: &IndexRange,
-    low: Option<i64>,
-    high: Option<i64>,
-    unsigned: bool,
-) -> bool {
-    // A range whose low end is at or above the partition's EXCLUSIVE upper
-    // bound admits no value this partition stores. Go's `GT` branch searches
-    // with `data.C+1`, because these range bounds are discrete integer values;
-    // apply the same wrapping increment to an exclusive ranger endpoint.
-    //
-    // A low end that is not an integer -- NULL, `MinNotNull`, a string --
-    // proves nothing and keeps the partition.
-    // `high`/`low` are PARTITION bounds, so they carry the partitioning
-    // column's signedness; the range endpoints carry their own.
-    if let (Some(high), Some((value, exclusive, value_unsigned))) = (high, interval_low(range)) {
-        let value = if exclusive {
-            value.wrapping_add(1)
-        } else {
-            value
-        };
-        if compare_int(value, value_unsigned, high, unsigned) != Ordering::Less {
-            return false;
-        }
-    }
-    // A range whose high end is below the partition's INCLUSIVE lower bound
-    // admits no value this partition stores. Here the exclusive case is
-    // exact: `[..., low)` admits nothing at or above `low`.
-    if let (Some(low), Some((value, exclusive, value_unsigned))) = (low, interval_high(range)) {
-        let below = if exclusive {
-            compare_int(low, unsigned, value, value_unsigned) != Ordering::Less
-        } else {
-            compare_int(value, value_unsigned, low, unsigned) == Ordering::Less
-        };
-        if below {
-            return false;
-        }
-    }
-    true
-}
-
-/// `a < b`, read with the partition expression's own signedness.
-/// The interval's low endpoint as an integer, or `None` for an endpoint this
-/// tier cannot compare against a partition bound.
-fn interval_low(range: &IndexRange) -> Option<(i64, bool, bool)> {
-    integer_endpoint(range.low.first())
-        .map(|(value, unsigned)| (value, range.low_exclusive, unsigned))
-}
-
-/// The interval's high endpoint and whether it is EXCLUSIVE, as
-/// [`interval_low`].
-fn interval_high(range: &IndexRange) -> Option<(i64, bool, bool)> {
-    integer_endpoint(range.high.first())
-        .map(|(value, unsigned)| (value, range.high_exclusive, unsigned))
-}
-
-/// One endpoint datum as the 64-bit pattern a partition bound compares
-/// against, or `None` when it is not an integer at all.
-///
-/// `MinNotNull`/`MaxValue` are the range algebra's own infinities and NULL is
-/// below every value; none of them bounds a partition, so each answers
-/// `None` and keeps the partition.
-/// The endpoint's value AND whether it is unsigned in its own right.
-///
-/// Collapsing `Datum::UInt(v)` to `v as i64` and dropping the flag is what
-/// made a constant above `i64::MAX` read as a negative number and prune the
-/// wrong partitions.
-fn integer_endpoint(value: Option<&Datum>) -> Option<(i64, bool)> {
-    match value? {
-        Datum::Int(value) => Some((*value, false)),
-        Datum::UInt(value) => Some((*value as i64, true)),
         _ => None,
     }
 }
@@ -1512,69 +1217,123 @@ mod tests {
         }
     }
 
+    fn part_column(code: tidb_datatype::FieldTypeCode) -> tidb_expr::column::Column {
+        let mut column = tidb_expr::column::Column::new(1, tidb_datatype::FieldType::new(code));
+        column.id = 1;
+        column.index = 0;
+        column
+    }
+
+    /// `name(column, value)`, or `name(value, column)` when `flipped`.
+    fn condition(
+        name: &str,
+        column: &tidb_expr::column::Column,
+        value: Datum,
+        flipped: bool,
+    ) -> tidb_expr::expression::Expression {
+        use tidb_expr::expression::Expression;
+        // A time constant has the column's own time type, as Go's comparison
+        // cast leaves it.
+        let value_type = match &value {
+            Datum::Time(_) => column.ret_type.clone().expect("a typed column"),
+            _ => tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        };
+        let mut args = vec![
+            Expression::Column(column.clone()),
+            Expression::Constant(tidb_expr::constant::Constant::new(value, value_type)),
+        ];
+        if flipped {
+            args.reverse();
+        }
+        Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+            tidb_ast::CiString::new(name),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            args,
+        ))
+    }
+
+    fn cond(name: &str, column: &tidb_expr::column::Column, value: i64) -> tidb_expr::expression::Expression {
+        condition(name, column, Datum::Int(value), false)
+    }
+
+    fn is_null(column: &tidb_expr::column::Column) -> tidb_expr::expression::Expression {
+        tidb_expr::expression::Expression::ScalarFunction(
+            tidb_expr::scalar_function::ScalarFunction::new(
+                tidb_ast::CiString::new("isnull"),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                vec![tidb_expr::expression::Expression::Column(column.clone())],
+            ),
+        )
+    }
+
+    fn logic(name: &str, args: Vec<tidb_expr::expression::Expression>) -> tidb_expr::expression::Expression {
+        tidb_expr::expression::Expression::ScalarFunction(
+            tidb_expr::scalar_function::ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                args,
+            ),
+        )
+    }
+
+    fn range_pruned(
+        spec: &PartitionSpec,
+        column: &tidb_expr::column::Column,
+        conditions: &[tidb_expr::expression::Expression],
+    ) -> Option<Vec<i64>> {
+        scalar_range_pruned_ids(spec, conditions, column, &tidb_expr::NoColumns)
+    }
+
     /// The captured queries, as the partitions each must read: `a < 10` is
     /// `p0` alone, `a = 10` is `p1` alone, `a >= 20` is `pm` alone.
     #[test]
     fn range_pruning_keeps_exactly_the_partitions_the_predicate_can_match() {
         let spec = range_table();
-        // a < 10
-        assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::MinNotNull, false, Datum::Int(10), true)]
-            ),
-            Some(vec![101])
-        );
-        // a = 10
-        assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(10), false, Datum::Int(10), false)]
-            ),
-            Some(vec![102])
-        );
-        // a >= 20
-        assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(20), false, Datum::MaxValue, false)]
-            ),
-            Some(vec![103])
-        );
+        let a = part_column(tidb_datatype::FieldTypeCode::LongLong);
+        assert_eq!(range_pruned(&spec, &a, &[cond("lt", &a, 10)]), Some(vec![101]));
+        assert_eq!(range_pruned(&spec, &a, &[cond("eq", &a, 10)]), Some(vec![102]));
+        assert_eq!(range_pruned(&spec, &a, &[cond("ge", &a, 20)]), Some(vec![103]));
         // a >= 9 AND a <= 20 spans all three.
         assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(9), false, Datum::Int(20), false)]
-            ),
+            range_pruned(&spec, &a, &[cond("ge", &a, 9), cond("le", &a, 20)]),
             Some(vec![101, 102, 103])
         );
         // a > 9 AND a <= 10 admits only integer 10, so Go's GT `C+1`
         // search excludes p0.
         assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(9), true, Datum::Int(10), false)]
-            ),
+            range_pruned(&spec, &a, &[cond("gt", &a, 9), cond("le", &a, 10)]),
             Some(vec![102])
         );
+        assert_eq!(range_pruned(&spec, &a, &[is_null(&a)]), Some(vec![101]));
+    }
+
+    /// Go keeps every partition for a predicate its pruner does not know:
+    /// `a != 10`, `a not in (...)`, and an OR with an unknown branch.
+    #[test]
+    fn range_pruning_ignores_predicates_go_cannot_prune_by() {
+        let spec = range_table();
+        let a = part_column(tidb_datatype::FieldTypeCode::LongLong);
+        let all = Some(vec![101, 102, 103]);
+        assert_eq!(range_pruned(&spec, &a, &[cond("ne", &a, 10)]), all);
         assert_eq!(
-            pruned_ids(&spec, &[interval(Datum::Null, false, Datum::Null, false)]),
-            Some(vec![101])
+            range_pruned(
+                &spec,
+                &a,
+                &[logic("or", vec![cond("ne", &a, 10), cond("lt", &a, 5)])]
+            ),
+            all
         );
     }
 
-    /// The boundary rows, one interval each: `a = 9` and `a = 10` must not
-    /// land in the same partition, and `a = 19`/`a = 20` must not either.
+    /// The boundary rows: `a = 9` and `a = 10` must not land in the same
+    /// partition, and `a = 19`/`a = 20` must not either.
     #[test]
     fn the_boundary_values_prune_to_different_partitions() {
         let spec = range_table();
+        let a = part_column(tidb_datatype::FieldTypeCode::LongLong);
         for (value, expected) in [(9_i64, 101_i64), (10, 102), (19, 102), (20, 103)] {
             assert_eq!(
-                pruned_ids(
-                    &spec,
-                    &[interval(Datum::Int(value), false, Datum::Int(value), false)]
-                ),
+                range_pruned(&spec, &a, &[cond("eq", &a, value)]),
                 Some(vec![expected]),
                 "a = {value}"
             );
@@ -1586,68 +1345,51 @@ mod tests {
         use tidb_ast::CiString;
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::{
-            column::Column, constant::Constant, expression::Expression,
-            scalar_function::ScalarFunction,
+            constant::Constant, expression::Expression, scalar_function::ScalarFunction,
         };
 
         let mut spec = range_table();
         let field_type = FieldType::new(FieldTypeCode::LongLong);
-        let mut column = Column::new(1, field_type.clone());
-        column.index = 0;
+        let a = part_column(FieldTypeCode::LongLong);
         spec.expr = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("plus"),
             field_type.clone(),
             vec![
-                Expression::Column(column.clone()),
+                Expression::Column(a.clone()),
                 Expression::Constant(Constant::new(Datum::Int(1), field_type.clone())),
             ],
         ));
-
         assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(9), false, Datum::Int(9), false)]
-            ),
+            range_pruned(&spec, &a, &[cond("eq", &a, 9)]),
             Some(vec![102]),
             "RANGE(a + 1) must compare the evaluated value at an exact point"
         );
         assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(8), false, Datum::Int(9), false)]
-            ),
+            range_pruned(&spec, &a, &[cond("ge", &a, 8), cond("le", &a, 9)]),
             Some(vec![101, 102]),
-            "Go transforms both endpoints of a strictly monotone partition function"
+            "Go evaluates each bound through a strictly monotone partition function"
         );
 
         spec.expr = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("mod"),
             field_type.clone(),
             vec![
-                Expression::Column(column),
+                Expression::Column(a.clone()),
                 Expression::Constant(Constant::new(Datum::Int(2), field_type)),
             ],
         ));
         assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(21), false, Datum::Int(21), false)]
-            ),
+            range_pruned(&spec, &a, &[cond("eq", &a, 21)]),
             Some(vec![101]),
             "Go evaluates equality constants even for a non-monotone function"
         );
         assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(Datum::Int(20), false, Datum::Int(21), false)]
-            ),
+            range_pruned(&spec, &a, &[cond("ge", &a, 20), cond("le", &a, 21)]),
             Some(vec![101, 102, 103]),
             "Go cannot prune a non-point predicate through a non-monotone function"
         );
 
-        let datetime_type = FieldType::new(FieldTypeCode::Datetime);
-        let mut datetime_column = Column::new(1, datetime_type);
-        datetime_column.index = 0;
+        let datetime = part_column(FieldTypeCode::Datetime);
         spec.kind = PartitionKind::Range {
             less_than: vec![
                 RangeBound::Value(2007),
@@ -1659,7 +1401,7 @@ mod tests {
         spec.expr = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("year"),
             FieldType::new(FieldTypeCode::LongLong),
-            vec![Expression::Column(datetime_column)],
+            vec![Expression::Column(datetime.clone())],
         ));
         let march_2007 = Datum::Time(
             tidb_datatype::Time::new(
@@ -1670,9 +1412,10 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            pruned_ids(
+            range_pruned(
                 &spec,
-                &[interval(Datum::MinNotNull, false, march_2007, true)]
+                &datetime,
+                &[condition("lt", &datetime, march_2007, false)]
             ),
             Some(vec![101, 102]),
             "Go relaxes < to <= through a non-strict monotone function"
@@ -1683,18 +1426,16 @@ mod tests {
     fn range_pruning_matches_go_monotone_datetime_and_timestamp_cases() {
         use tidb_ast::CiString;
         use tidb_datatype::{CoreTime, FieldType, FieldTypeCode, Time, TimeType};
-        use tidb_expr::{column::Column, expression::Expression, scalar_function::ScalarFunction};
+        use tidb_expr::{expression::Expression, scalar_function::ScalarFunction};
 
-        let datetime_type = FieldType::new(FieldTypeCode::Datetime);
-        let mut datetime_column = Column::new(1, datetime_type.clone());
-        datetime_column.index = 0;
+        let datetime_column = part_column(FieldTypeCode::Datetime);
         let mut datetime_spec =
             range_table_with_bounds(vec![RangeBound::Value(733_108), RangeBound::Value(733_132)]);
         datetime_spec.expr_text = "to_days(`d`)".to_owned();
         datetime_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("to_days"),
             FieldType::new(FieldTypeCode::LongLong),
-            vec![Expression::Column(datetime_column)],
+            vec![Expression::Column(datetime_column.clone())],
         ));
         datetime_spec.dependencies = vec!["d".to_owned()];
         let datetime = |year, month, day| {
@@ -1708,28 +1449,23 @@ mod tests {
             )
         };
         assert_eq!(
-            pruned_ids(
+            range_pruned(
                 &datetime_spec,
-                &[interval(
-                    Datum::MinNotNull,
-                    false,
-                    datetime(2000, 3, 8),
-                    true,
-                )],
+                &datetime_column,
+                &[condition("lt", &datetime_column, datetime(2000, 3, 8), false)],
             ),
             Some(vec![0])
         );
         assert_eq!(
-            pruned_ids(
+            range_pruned(
                 &datetime_spec,
-                &[interval(datetime(2018, 3, 8), true, Datum::MaxValue, false,)],
+                &datetime_column,
+                &[condition("gt", &datetime_column, datetime(2018, 3, 8), false)],
             ),
             Some(Vec::new())
         );
 
-        let timestamp_type = FieldType::new(FieldTypeCode::Timestamp);
-        let mut timestamp_column = Column::new(1, timestamp_type);
-        timestamp_column.index = 0;
+        let timestamp_column = part_column(FieldTypeCode::Timestamp);
         let mut timestamp_spec = range_table_with_bounds(vec![
             RangeBound::Value(1_199_145_600),
             RangeBound::Value(1_207_008_000),
@@ -1740,7 +1476,7 @@ mod tests {
         timestamp_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("unix_timestamp"),
             FieldType::new(FieldTypeCode::LongLong),
-            vec![Expression::Column(timestamp_column)],
+            vec![Expression::Column(timestamp_column.clone())],
         ));
         timestamp_spec.dependencies = vec!["report_updated".to_owned()];
         let may_2008 = Datum::Time(
@@ -1752,14 +1488,16 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            pruned_ids(
+            range_pruned(
                 &timestamp_spec,
-                &[interval(may_2008, true, Datum::MaxValue, false)],
+                &timestamp_column,
+                &[condition("gt", &timestamp_column, may_2008, false)],
             ),
             Some(vec![2, 3])
         );
     }
 
+    /// Go `TestPartitionRangeForExpr` (`rule_partition_pruning_test.go:243`).
     #[test]
     fn range_pruning_matches_go_partition_range_for_expr_matrix() {
         let spec = range_table_with_bounds(vec![
@@ -1770,76 +1508,40 @@ mod tests {
             RangeBound::Value(17),
             RangeBound::MaxValue,
         ]);
-        let min = Datum::MinNotNull;
-        let max = Datum::MaxValue;
-        let cases = [
-            ("a < 2 and a > 10", Vec::new(), Vec::new()),
-            (
-                "a > 3",
-                vec![interval(Datum::Int(3), true, max.clone(), false)],
-                vec![1, 2, 3, 4, 5],
-            ),
-            (
-                "a < 3",
-                vec![interval(min.clone(), false, Datum::Int(3), true)],
-                vec![0],
-            ),
-            (
-                "a >= 11",
-                vec![interval(Datum::Int(11), false, max.clone(), false)],
-                vec![3, 4, 5],
-            ),
-            (
-                "a > 11",
-                vec![interval(Datum::Int(11), true, max.clone(), false)],
-                vec![3, 4, 5],
-            ),
-            (
-                "a < 11",
-                vec![interval(min.clone(), false, Datum::Int(11), true)],
-                vec![0, 1, 2],
-            ),
-            (
-                "a = 16",
-                vec![interval(Datum::Int(16), false, Datum::Int(16), false)],
-                vec![4],
-            ),
-            (
-                "a > 66",
-                vec![interval(Datum::Int(66), true, max.clone(), false)],
-                vec![5],
-            ),
+        let a = part_column(tidb_datatype::FieldTypeCode::LongLong);
+        let cases: Vec<(&str, Vec<tidb_expr::expression::Expression>, Vec<i64>)> = vec![
+            ("a < 2 and a > 10", vec![cond("lt", &a, 2), cond("gt", &a, 10)], vec![]),
+            ("a > 3", vec![cond("gt", &a, 3)], vec![1, 2, 3, 4, 5]),
+            ("a < 3", vec![cond("lt", &a, 3)], vec![0]),
+            ("a >= 11", vec![cond("ge", &a, 11)], vec![3, 4, 5]),
+            ("a > 11", vec![cond("gt", &a, 11)], vec![3, 4, 5]),
+            ("a < 11", vec![cond("lt", &a, 11)], vec![0, 1, 2]),
+            ("a = 16", vec![cond("eq", &a, 16)], vec![4]),
+            ("a > 66", vec![cond("gt", &a, 66)], vec![5]),
             (
                 "a > 2 and a < 10",
-                vec![interval(Datum::Int(2), true, Datum::Int(10), true)],
+                vec![cond("gt", &a, 2), cond("lt", &a, 10)],
                 vec![0, 1, 2],
             ),
             (
                 "a < 2 or a >= 15",
-                vec![
-                    interval(min.clone(), false, Datum::Int(2), true),
-                    interval(Datum::Int(15), false, max.clone(), false),
-                ],
+                vec![logic("or", vec![cond("lt", &a, 2), cond("ge", &a, 15)])],
                 vec![0, 4, 5],
             ),
-            (
-                "a is null",
-                vec![interval(Datum::Null, false, Datum::Null, false)],
-                vec![0],
-            ),
+            ("a is null", vec![is_null(&a)], vec![0]),
             (
                 "12 > a",
-                vec![interval(min.clone(), false, Datum::Int(12), true)],
+                vec![condition("gt", &a, Datum::Int(12), true)],
                 vec![0, 1, 2, 3],
             ),
             (
                 "4 <= a",
-                vec![interval(Datum::Int(4), false, max, false)],
+                vec![condition("le", &a, Datum::Int(4), true)],
                 vec![1, 2, 3, 4, 5],
             ),
         ];
-        for (predicate, ranges, expected) in cases {
-            assert_eq!(pruned_ids(&spec, &ranges), Some(expected), "{predicate}");
+        for (predicate, conditions, expected) in cases {
+            assert_eq!(range_pruned(&spec, &a, &conditions), Some(expected), "{predicate}");
         }
     }
 
@@ -2072,27 +1774,6 @@ mod tests {
             ),
             Some(vec![201, 202, 203]),
             "Go declines non-point pruning for a compound LIST expression"
-        );
-    }
-
-    /// An endpoint this tier cannot compare against a bound prunes nothing
-    /// and reads the whole table, while the ranger's own EMPTY range list is
-    /// the contradictory `WHERE` and prunes everything away.
-    #[test]
-    fn an_inexpressible_restriction_prunes_nothing() {
-        let spec = range_table();
-        assert_eq!(pruned_ids(&spec, &[]), Some(Vec::new()));
-        assert_eq!(
-            pruned_ids(
-                &spec,
-                &[interval(
-                    Datum::Null,
-                    false,
-                    Datum::Bytes(b"x".to_vec()),
-                    false
-                )]
-            ),
-            Some(vec![101, 102, 103])
         );
     }
 
@@ -2660,6 +2341,425 @@ where
         end = end.min(length);
         (start, end)
     }
+}
+
+/// Go `LessThanDataInt` with the pruned column's own signedness.
+struct ScalarRangePruner<'a, C> {
+    less_than: &'a [RangeBound],
+    /// Go `mysql.HasUnsignedFlag(col.GetStaticType().GetFlag())`.
+    unsigned: bool,
+    column: &'a tidb_expr::column::Column,
+    /// Go `RangePruner.PartFn`: the partition expression when it is a
+    /// function of the column, `None` for a bare column.
+    part_fn: Option<&'a tidb_expr::expression::Expression>,
+    /// Go `RangePruner.Monotonous`; `None` is `MonotoneModeInvalid`.
+    monotone: Option<RangeMonotoneMode>,
+    ctx: &'a C,
+}
+
+/// One `f(x) op const` condition, Go `DataForPrune`.
+struct DataForPrune {
+    op: &'static str,
+    value: i64,
+    unsigned: bool,
+}
+
+impl<C: tidb_expr::Columns> ScalarRangePruner<'_, C> {
+    fn full(&self) -> PartitionRangeOr {
+        PartitionRangeOr::full(self.less_than.len())
+    }
+
+    fn is_part_col(&self, expr: &tidb_expr::expression::Expression) -> bool {
+        matches!(expr, tidb_expr::expression::Expression::Column(column) if column.id == self.column.id)
+    }
+
+    /// Go `PartitionRangeForCNFExpr`.
+    fn range_for_cnf(
+        &self,
+        exprs: &[tidb_expr::expression::Expression],
+        mut result: PartitionRangeOr,
+    ) -> PartitionRangeOr {
+        for expr in exprs {
+            result = self.range_for_expr(expr, result);
+        }
+        result
+    }
+
+    /// Go `PartitionRangeForExpr`.
+    fn range_for_expr(
+        &self,
+        expr: &tidb_expr::expression::Expression,
+        result: PartitionRangeOr,
+    ) -> PartitionRangeOr {
+        if let tidb_expr::expression::Expression::ScalarFunction(op) = expr {
+            match op.func_name.lowercase() {
+                "and" => return self.range_for_cnf(&op.args, result),
+                "or" if op.args.len() == 2 => {
+                    // Go `partitionRangeForOrExpr`.
+                    let left = self.range_for_expr(&op.args[0], self.full());
+                    let right = self.range_for_expr(&op.args[1], self.full());
+                    return result.intersection(left.union(right));
+                }
+                "in" => return result.intersection(self.range_for_in(&op.args)),
+                _ => {}
+            }
+        }
+        match self.partition_range_for_expr(expr) {
+            Some((start, end)) => result.intersection_range(start, end),
+            None => result,
+        }
+    }
+
+    /// Go `partitionRangeForInExpr`.
+    fn range_for_in(&self, args: &[tidb_expr::expression::Expression]) -> PartitionRangeOr {
+        use tidb_expr::expression::Expression;
+        if !args.first().is_some_and(|first| self.is_part_col(first)) {
+            return self.full();
+        }
+        let mut result = PartitionRangeOr(Vec::new());
+        for arg in &args[1..] {
+            let Expression::Constant(constant) = arg else {
+                return self.full();
+            };
+            if constant.value.is_null() {
+                continue;
+            }
+            let evaluated = match self.part_fn {
+                // Go `replaceColumnWithConst`: fn(col) becomes fn(const).
+                Some(part_fn) => {
+                    let replaced = replace_column_with_const(part_fn, arg);
+                    self.eval_int(&replaced)
+                }
+                None => self.eval_int(arg),
+            };
+            // An error is Go's `return pruner.fullRange()`; a NULL
+            // value keeps the zero Go reads from `EvalInt`.
+            let Some((value, unsigned)) = evaluated else {
+                return self.full();
+            };
+            let (start, end) = self.prune_use_binary_search(&DataForPrune {
+                op: "eq",
+                value: value.unwrap_or(0),
+                unsigned,
+            });
+            result.0.push(PartitionRange { start, end });
+        }
+        result.simplify()
+    }
+
+    /// Go `RangePruner.partitionRangeForExpr`; `None` is Go's `ok == false`.
+    fn partition_range_for_expr(
+        &self,
+        expr: &tidb_expr::expression::Expression,
+    ) -> Option<(usize, usize)> {
+        if let tidb_expr::expression::Expression::Constant(constant) = expr {
+            // A constant false expression.
+            if matches!(constant.value, Datum::Int(0) | Datum::UInt(0)) {
+                return Some((0, 0));
+            }
+        }
+        let data = self.extract_data_for_prune(expr)?;
+        Some(self.prune_use_binary_search(&data))
+    }
+
+    /// Go `RangePruner.extractDataForPrune`: the expression has to be
+    /// `f(x) op const`.
+    fn extract_data_for_prune(
+        &self,
+        expr: &tidb_expr::expression::Expression,
+    ) -> Option<DataForPrune> {
+        use tidb_expr::expression::Expression;
+        let Expression::ScalarFunction(op) = expr else {
+            return None;
+        };
+        let mut op_name = match op.func_name.lowercase() {
+            "eq" => "eq",
+            "lt" => "lt",
+            "gt" => "gt",
+            "le" => "le",
+            "ge" => "ge",
+            "nulleq" => "nulleq",
+            "isnull" => {
+                return match op.args.first() {
+                    Some(arg) if self.is_part_col(arg) => Some(DataForPrune {
+                        op: "isnull",
+                        value: 0,
+                        unsigned: false,
+                    }),
+                    _ => None,
+                };
+            }
+            _ => return None,
+        };
+        let [left, right] = op.args.as_slice() else {
+            return None;
+        };
+        let constant = if self.is_part_col(left) {
+            matches!(right, Expression::Constant(_)).then_some(right)
+        } else if self.is_part_col(right) {
+            matches!(left, Expression::Constant(_)).then(|| {
+                // Go `opposite`.
+                op_name = match op_name {
+                    "lt" => "gt",
+                    "gt" => "lt",
+                    "le" => "ge",
+                    "ge" => "le",
+                    same => same,
+                };
+                left
+            })
+        } else {
+            None
+        }?;
+        // Current expression is `col op const`.
+        let evaluated = match self.part_fn {
+            Some(part_fn) => {
+                // If the partition function is not monotone, only EQ
+                // condition can be pruning.
+                if self.monotone.is_none() && op_name != "eq" {
+                    return None;
+                }
+                // When the PartFn is not strict monotonous, `<` relaxes to
+                // `<=` and `>` to `>=`: `col < '2020-02-11 17:34:11'` does
+                // not imply `to_days(col) < to_days(2020-02-11 17:34:11)`.
+                if self.monotone == Some(RangeMonotoneMode::NonStrict) {
+                    op_name = match op_name {
+                        "lt" => "le",
+                        "gt" => "ge",
+                        same => same,
+                    };
+                }
+                self.eval_int(&replace_column_with_const(part_fn, constant))?
+            }
+            None => self.eval_int(constant)?,
+        };
+        match evaluated {
+            (Some(value), unsigned) => Some(DataForPrune {
+                op: if op_name == "nulleq" { "eq" } else { op_name },
+                value,
+                unsigned,
+            }),
+            // Mark it as IsNull, which `prune_use_binary_search` handles.
+            (None, _) if op_name == "nulleq" => Some(DataForPrune {
+                op: "isnull",
+                value: 0,
+                unsigned: false,
+            }),
+            (None, _) => None,
+        }
+    }
+
+    /// Go `Expression.EvalInt` over an empty row: the value (`None` for SQL
+    /// NULL) and whether the expression's type is unsigned; `None` is Go's
+    /// error.
+    fn eval_int(&self, expr: &tidb_expr::expression::Expression) -> Option<(Option<i64>, bool)> {
+        let unsigned = expr
+            .static_type()
+            .is_some_and(tidb_datatype::FieldType::is_unsigned);
+        match tidb_expr::eval_expression_once(expr, self.ctx).ok()? {
+            Datum::Null => Some((None, unsigned)),
+            Datum::Int(value) => Some((Some(value), unsigned)),
+            Datum::UInt(value) => Some((Some(value as i64), unsigned)),
+            _ => None,
+        }
+    }
+
+    /// Go `PruneUseBinarySearch` (`lessThan.compare` with MAXVALUE greater
+    /// than everything).
+    fn prune_use_binary_search(&self, data: &DataForPrune) -> (usize, usize) {
+        let length = self.less_than.len();
+        let compare = |ith: usize, value: i64| -> Ordering {
+            match self.less_than[ith] {
+                RangeBound::MaxValue => Ordering::Greater,
+                RangeBound::Value(bound) => compare_int(bound, self.unsigned, value, data.unsigned),
+            }
+        };
+        let (start, end) = match data.op {
+            "eq" => {
+                let position = go_sort_search(length, |i| compare(i, data.value) == Ordering::Greater);
+                (position, position + 1)
+            }
+            "lt" => {
+                let position = go_sort_search(length, |i| compare(i, data.value) != Ordering::Less);
+                (0, position + 1)
+            }
+            "ge" => (
+                go_sort_search(length, |i| compare(i, data.value) == Ordering::Greater),
+                length,
+            ),
+            // Although `value + 1` may overflow, the answer stays correct.
+            "gt" => (
+                go_sort_search(length, |i| {
+                    compare(i, data.value.wrapping_add(1)) == Ordering::Greater
+                }),
+                length,
+            ),
+            "le" => {
+                let position = go_sort_search(length, |i| compare(i, data.value) == Ordering::Greater);
+                (0, position + 1)
+            }
+            "isnull" => (0, 1),
+            _ => (0, length),
+        };
+        (start, end.min(length))
+    }
+}
+
+/// Go `replaceColumnWithConst`: `fn(col)` becomes `fn(const)`.
+fn replace_column_with_const(
+    part_fn: &tidb_expr::expression::Expression,
+    constant: &tidb_expr::expression::Expression,
+) -> tidb_expr::expression::Expression {
+    use tidb_expr::expression::Expression;
+    let mut replaced = part_fn.clone();
+    let Expression::ScalarFunction(function) = &mut replaced else {
+        return replaced;
+    };
+    // The partition function may be floor(unix_timestamp(ts)) instead of a
+    // simple fn(col).
+    if function.func_name.lowercase() == "floor" {
+        if let Some(Expression::ScalarFunction(inner)) = function.args.first_mut() {
+            if inner.func_name.lowercase() == "unix_timestamp" {
+                inner.args[0] = constant.clone();
+                return replaced;
+            }
+        }
+    } else if function.func_name.lowercase() == "extract" {
+        // `extract(unit, col)` carries the column second, possibly under the
+        // time-to-duration cast Go adds.
+        if let Some(Expression::ScalarFunction(cast)) = function.args.get_mut(1) {
+            if is_time_as_duration_cast(cast) {
+                cast.args[0] = constant.clone();
+                return replaced;
+            }
+        }
+        function.args[1] = constant.clone();
+        return replaced;
+    }
+    function.args[0] = constant.clone();
+    replaced
+}
+
+/// Go `expr.Function.PbCode() == tipb.ScalarFuncSig_CastTimeAsDuration`.
+fn is_time_as_duration_cast(function: &tidb_expr::scalar_function::ScalarFunction) -> bool {
+    function.func_name.lowercase().starts_with("cast")
+        && function
+            .get_static_type()
+            .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::Duration)
+        && function.args.len() == 1
+}
+
+/// Go `MakePartitionByFnCol` for the pruned column: whether `spec.expr` is a
+/// bare column or a function of it, and the monotone mode Go assigns.
+/// `None` is Go's `col == nil` (no pruning).
+fn partition_fn_of_column(
+    spec: &PartitionSpec,
+) -> Option<(Option<&tidb_expr::expression::Expression>, Option<RangeMonotoneMode>)> {
+    use tidb_expr::expression::Expression;
+    let function = match &spec.expr {
+        Expression::Column(_) => return Some((None, None)),
+        Expression::ScalarFunction(function) => function,
+        _ => return None,
+    };
+    let args = function.get_args();
+    match function.func_name.lowercase() {
+        "floor" => {
+            // Special handling for floor(unix_timestamp(ts)).
+            if let Some(Expression::ScalarFunction(inner)) = args.first() {
+                if inner.func_name.lowercase() == "unix_timestamp" {
+                    if let [Expression::Column(_)] = inner.get_args() {
+                        return Some((Some(&spec.expr), Some(RangeMonotoneMode::NonStrict)));
+                    }
+                }
+            }
+        }
+        "extract" => {
+            if let [Expression::Constant(unit), value] = args {
+                let column = match value {
+                    Expression::Column(column) => Some(column),
+                    Expression::ScalarFunction(cast) if is_time_as_duration_cast(cast) => {
+                        cast.get_args().first().and_then(Expression::as_column)
+                    }
+                    _ => None,
+                };
+                if let (Some(column), Some(unit)) = (column, unit.value.as_raw_bytes()) {
+                    let unit = std::str::from_utf8(unit).ok()?;
+                    use tidb_datatype::FieldTypeCode::{Date, Datetime, Duration};
+                    match column.get_static_type().map(tidb_datatype::FieldType::code) {
+                        // Only YEAR and YEAR_MONTH are monotonic; the rest
+                        // wrap around.
+                        Some(Date | Datetime) => {
+                            let monotone = matches!(unit, "YEAR" | "YEAR_MONTH");
+                            return Some((
+                                Some(&spec.expr),
+                                monotone.then_some(RangeMonotoneMode::NonStrict),
+                            ));
+                        }
+                        Some(Duration) => {
+                            let monotone = matches!(
+                                unit,
+                                "HOUR" | "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND"
+                            );
+                            return Some((
+                                Some(&spec.expr),
+                                monotone.then_some(RangeMonotoneMode::NonStrict),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    // `fn(col, ...)`: one column argument, and it is the first parameter.
+    if spec.dependencies.len() != 1 || !matches!(args.first(), Some(Expression::Column(_))) {
+        return None;
+    }
+    let monotone = match function.func_name.lowercase() {
+        "year" | "to_days" => Some(RangeMonotoneMode::NonStrict),
+        // `unix_timestamp` is strict; plus and minus only when the form is
+        // fn(column, const).
+        "unix_timestamp" | "plus" | "minus" => Some(RangeMonotoneMode::Strict),
+        _ => None,
+    };
+    Some((Some(&spec.expr), monotone))
+}
+
+/// Go `PruneRangePartition` for `PARTITION BY RANGE (expr)`: the physical ids
+/// `conditions` can reach, or `None` when Go cannot prune this table.
+pub(crate) fn scalar_range_pruned_ids(
+    spec: &PartitionSpec,
+    conditions: &[tidb_expr::expression::Expression],
+    column: &tidb_expr::column::Column,
+    ctx: &impl tidb_expr::Columns,
+) -> Option<Vec<i64>> {
+    let PartitionKind::Range { less_than, .. } = &spec.kind else {
+        return None;
+    };
+    if less_than.len() != spec.definitions.len() {
+        return None;
+    }
+    let (part_fn, monotone) = partition_fn_of_column(spec)?;
+    let pruner = ScalarRangePruner {
+        less_than,
+        unsigned: column
+            .ret_type
+            .as_ref()
+            .is_some_and(tidb_datatype::FieldType::is_unsigned),
+        column,
+        part_fn,
+        monotone,
+        ctx,
+    };
+    let ranges = pruner.range_for_cnf(conditions, pruner.full());
+    Some(
+        ranges
+            .0
+            .iter()
+            .flat_map(|range| spec.definitions[range.start..range.end].iter().map(|definition| definition.id))
+            .collect(),
+    )
 }
 
 /// Go `pruneRangeColumnsPartition` for a single-column RANGE COLUMNS table:

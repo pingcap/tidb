@@ -17567,3 +17567,52 @@ fn json_function_arguments_carry_go_implicit_casts() {
         assert!(text.contains(expected), "{sql}\n{text}");
     }
 }
+
+/// Go prunes `PARTITION BY RANGE` by the statement's predicates
+/// (`PartitionRangeForCNFExpr`): `!=` and `NOT IN` are not predicates it
+/// knows, so they read every partition, and a non-clustered table's
+/// `_tidb_rowid` extends a non-unique index so `ORDER BY a, _tidb_rowid`
+/// needs no sort. Each expectation was confirmed on the Go oracle.
+#[test]
+fn range_pruning_and_handle_ordering_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1132)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("SET @@tidb_partition_prune_mode = 'dynamic'")
+        .unwrap();
+    session
+        .execute_write(
+            "CREATE TABLE pr (a INT, b INT) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20), \
+             PARTITION p2 VALUES LESS THAN (30), PARTITION p3 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE ho (a INT, KEY ia (a))")
+        .unwrap();
+    let plan = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, &format!("explain format='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for (sql, partitions) in [
+        ("select * from pr where a != 5", "partition:all"),
+        ("select * from pr where a not in (1,2,3)", "partition:all"),
+        ("select * from pr where a in (1, 15, null)", "partition:p0,p1"),
+        ("select * from pr where a < 5 or a > 25", "partition:p0,p2,p3"),
+        ("select * from pr where a between 5 and 15", "partition:p0,p1"),
+        ("select * from pr where a > 9 and a <= 10", "partition:p1"),
+    ] {
+        let text = plan(&mut session, sql);
+        assert!(text.contains(partitions), "{sql}\n{text}");
+    }
+    let ordered = plan(
+        &mut session,
+        "select * from ho use index (ia) order by a, _tidb_rowid",
+    );
+    assert!(!ordered.contains("Sort"), "{ordered}");
+    assert!(ordered.contains("keep order:true"), "{ordered}");
+}

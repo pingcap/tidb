@@ -605,18 +605,20 @@ impl DataSource {
     }
 
     /// Go `DataSource.GetPKIsHandleCol()` (`logical_datasource.go:599`) via
-    /// `getPKIsHandleColFromSchema` (`:580`): the integer primary key column,
-    /// present only when the table is `PKIsHandle` and the column survived
-    /// pruning.
+    /// `getPKIsHandleColFromSchema` (`:580`): the integer primary key column
+    /// of a `PKIsHandle` table, otherwise the `_tidb_rowid` column when the
+    /// data source still carries it. Either way it must have survived pruning.
     #[must_use]
     pub fn get_pk_is_handle_col<'a>(&self, self_schema: &'a Schema) -> Option<&'a Column> {
-        if !self.pk_is_handle {
-            return None;
-        }
-        let position = self
-            .columns
-            .iter()
-            .position(|column| column.is_primary_key)?;
+        let position = if self.pk_is_handle {
+            self.columns
+                .iter()
+                .position(|column| column.is_primary_key)?
+        } else {
+            self.columns
+                .iter()
+                .position(|column| column.id == EXTRA_HANDLE_ID)?
+        };
         self_schema.columns.get(position)
     }
 

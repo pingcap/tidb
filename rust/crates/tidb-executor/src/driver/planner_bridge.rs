@@ -605,6 +605,22 @@ fn partition_indices_for_spec(
             surviving,
         ));
     }
+    // Go `PruneRangePartition` prunes `PARTITION BY RANGE (expr)` by its
+    // predicates too (`PartitionRangeForCNFExpr`), never through the ranger.
+    if matches!(partition.kind, crate::partition_routing::PartitionKind::Range { .. }) {
+        if let [column] = columns.as_slice() {
+            if let Some(ids) =
+                crate::partition_pruning::scalar_range_pruned_ids(partition, &conditions, column, context)
+            {
+                surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+            }
+        }
+        return Ok(remap_partition_indices(
+            partition,
+            &source.partition_names,
+            surviving,
+        ));
+    }
     let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
     let Ok(detached) = tidb_planner::ranger::detacher::detach_partition_range_with_fallback_handler(
         &conditions,
