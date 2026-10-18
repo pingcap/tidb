@@ -29,6 +29,7 @@
 pub mod account_policy;
 pub mod adapter;
 pub mod catalog_reload;
+pub mod in_memory_meta;
 pub mod catalog_watch;
 pub mod cluster_account_write;
 pub mod cluster_config;
