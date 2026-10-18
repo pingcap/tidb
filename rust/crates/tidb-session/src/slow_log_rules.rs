@@ -1,0 +1,400 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `pkg/sessionctx/variable/slow_log.go`'s rule syntax for
+//! `tidb_slow_log_rules`: `field:value[,field:value...][;rule...]`, at most ten
+//! rules, each field one of [`FIELDS`] with a value of that field's type.
+//!
+//! This is the parse and encode half (`parseSlowLogRuleSet`, `encodeRules`):
+//! what a `SET` accepts and what a session reads back.
+
+/// The type a field's threshold parses as (Go's `parseUint64`, `parseInt64`,
+/// `parseFloat64`, `parseBool` and `ParseString`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Uint,
+    Int,
+    Float,
+    Bool,
+    Text,
+}
+
+/// `SlowLogRuleFieldAccessors`: the lower-cased field names and their types.
+const FIELDS: &[(&str, Kind)] = &[
+    ("conn_id", Kind::Uint),
+    ("session_alias", Kind::Text),
+    ("db", Kind::Text),
+    ("exec_retry_count", Kind::Uint),
+    ("query_time", Kind::Float),
+    ("parse_time", Kind::Float),
+    ("compile_time", Kind::Float),
+    ("rewrite_time", Kind::Float),
+    ("optimize_time", Kind::Float),
+    ("wait_ts", Kind::Float),
+    ("is_internal", Kind::Bool),
+    ("digest", Kind::Text),
+    ("num_cop_tasks", Kind::Int),
+    ("mem_max", Kind::Int),
+    ("disk_max", Kind::Int),
+    ("write_sql_response_total", Kind::Float),
+    ("succ", Kind::Bool),
+    ("resource_group", Kind::Text),
+    ("kv_total", Kind::Float),
+    ("pd_total", Kind::Float),
+    ("unpacked_bytes_sent_tikv_total", Kind::Int),
+    ("unpacked_bytes_received_tikv_total", Kind::Int),
+    ("unpacked_bytes_sent_tikv_cross_zone", Kind::Int),
+    ("unpacked_bytes_received_tikv_cross_zone", Kind::Int),
+    ("unpacked_bytes_sent_tiflash_total", Kind::Int),
+    ("unpacked_bytes_received_tiflash_total", Kind::Int),
+    ("unpacked_bytes_sent_tiflash_cross_zone", Kind::Int),
+    ("unpacked_bytes_received_tiflash_cross_zone", Kind::Int),
+    ("process_time", Kind::Float),
+    ("backoff_time", Kind::Float),
+    ("total_keys", Kind::Uint),
+    ("process_keys", Kind::Uint),
+    ("cop_mvcc_read_amplification", Kind::Float),
+    ("prewrite_time", Kind::Float),
+    ("commit_time", Kind::Float),
+    ("write_keys", Kind::Uint),
+    ("write_size", Kind::Uint),
+    ("prewrite_region", Kind::Uint),
+];
+
+/// One parsed threshold, printed by `encodeRules` as Go's `%v`.
+#[derive(Clone, Debug, PartialEq)]
+enum Threshold {
+    Uint(u64),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Text(String),
+}
+
+impl Threshold {
+    fn encode(&self) -> String {
+        match self {
+            Self::Uint(value) => value.to_string(),
+            Self::Int(value) => value.to_string(),
+            // `%v` of a float64 is `%g` with the shortest representation.
+            Self::Float(value) => tidb_datatype::go_strconv::format_float(*value, b'g', -1, 64),
+            Self::Bool(value) => value.to_string(),
+            Self::Text(value) => value.clone(),
+        }
+    }
+}
+
+/// Go's `strconv` error text for a failed parse.
+fn syntax_error(function: &str, text: &str) -> String {
+    format!("strconv.{function}: parsing {text:?}: invalid syntax")
+}
+
+fn range_error(function: &str, text: &str) -> String {
+    format!("strconv.{function}: parsing {text:?}: value out of range")
+}
+
+fn parse_uint(text: &str) -> Result<Threshold, String> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(syntax_error("ParseUint", text));
+    }
+    text.parse::<u64>()
+        .map(Threshold::Uint)
+        .map_err(|_| range_error("ParseUint", text))
+}
+
+fn parse_int(text: &str) -> Result<Threshold, String> {
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(syntax_error("ParseInt", text));
+    }
+    let value = text
+        .parse::<i64>()
+        .map_err(|_| range_error("ParseInt", text))?;
+    if value < 0 {
+        return Err(format!("threshold value must be non-negative, got {value}"));
+    }
+    Ok(Threshold::Int(value))
+}
+
+fn parse_float(text: &str) -> Result<Threshold, String> {
+    let value = text
+        .parse::<f64>()
+        .map_err(|_| syntax_error("ParseFloat", text))?;
+    let spelled_infinity = text
+        .trim_start_matches(['+', '-'])
+        .to_ascii_lowercase()
+        .starts_with("inf");
+    if value.is_infinite() && !spelled_infinity {
+        return Err(range_error("ParseFloat", text));
+    }
+    if value.is_nan() || value.is_infinite() {
+        return Err(format!(
+            "threshold value must be finite, got {}",
+            tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
+        ));
+    }
+    if value < 0.0 {
+        return Err(format!(
+            "threshold value must be non-negative, got {}",
+            tidb_datatype::go_strconv::format_float(value, b'g', -1, 64)
+        ));
+    }
+    Ok(Threshold::Float(value))
+}
+
+fn parse_bool(text: &str) -> Result<Threshold, String> {
+    match text {
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => Ok(Threshold::Bool(true)),
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => Ok(Threshold::Bool(false)),
+        _ => Err(syntax_error("ParseBool", text)),
+    }
+}
+
+/// Go `ParseSlowLogFieldValue`.
+fn parse_field_value(field: &str, value: &str) -> Result<Threshold, String> {
+    let Some((_, kind)) = FIELDS
+        .iter()
+        .find(|(name, _)| *name == field.to_lowercase())
+    else {
+        return Err(format!("unknown slow log field name:{field}"));
+    };
+    match kind {
+        Kind::Uint => parse_uint(value),
+        Kind::Int => parse_int(value),
+        Kind::Float => parse_float(value),
+        Kind::Bool => parse_bool(value),
+        Kind::Text => Ok(Threshold::Text(value.to_owned())),
+    }
+}
+
+fn is_word(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
+/// `slowLogFieldRe.FindAllStringSubmatch`: every leftmost match of
+/// `\s*(\w+)\s*:\s*([^,]+)\s*`, as its (field, value) groups.
+fn field_matches(rule: &str) -> Vec<(String, String)> {
+    let chars = rule.chars().collect::<Vec<_>>();
+    let mut matches = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let mut at = start;
+        while at < chars.len() && chars[at].is_whitespace() {
+            at += 1;
+        }
+        let field_start = at;
+        while at < chars.len() && is_word(chars[at]) {
+            at += 1;
+        }
+        let field_end = at;
+        if field_end == field_start {
+            start += 1;
+            continue;
+        }
+        while at < chars.len() && chars[at].is_whitespace() {
+            at += 1;
+        }
+        if at >= chars.len() || chars[at] != ':' {
+            start += 1;
+            continue;
+        }
+        at += 1;
+        let colon_end = at;
+        while at < chars.len() && chars[at].is_whitespace() {
+            at += 1;
+        }
+        let mut value_start = at;
+        while at < chars.len() && chars[at] != ',' {
+            at += 1;
+        }
+        if at == value_start {
+            // `[^,]+` needs a character: the whitespace the `\s*` took may be
+            // given back to it, otherwise this start does not match.
+            if value_start == colon_end {
+                start += 1;
+                continue;
+            }
+            value_start -= 1;
+        }
+        matches.push((
+            chars[field_start..field_end].iter().collect::<String>(),
+            chars[value_start..at].iter().collect::<String>(),
+        ));
+        start = at;
+    }
+    matches
+}
+
+/// One rule: its conditions by lower-cased field name, in the order each
+/// field first appeared (Go ranges over a map, so its order is unspecified).
+struct Rule {
+    conditions: Vec<(String, Threshold)>,
+    conn_id: Option<u64>,
+}
+
+/// Go `parseSlowLogRuleEntry`.
+fn parse_rule(raw: &str, allow_conn_id: bool) -> Result<Option<Rule>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let matches = field_matches(raw);
+    if matches.is_empty() {
+        return Err(format!("invalid slow log rule format:{raw}"));
+    }
+    let mut conditions: Vec<(String, Threshold)> = Vec::new();
+    let mut conn_id = None;
+    for (field, value) in matches {
+        let field = field.trim().to_lowercase();
+        let value = value.trim();
+        let threshold = parse_field_value(&field, value.trim_matches(['"', '\'']))
+            .map_err(|error| format!("invalid slow log format, value:{value}, err:{error}"))?;
+        if field == "conn_id" {
+            if !allow_conn_id {
+                return Err(format!("do not allow ConnID value:{value}"));
+            }
+            if let Threshold::Uint(id) = threshold {
+                conn_id = Some(id);
+            }
+        }
+        match conditions.iter_mut().find(|(name, _)| *name == field) {
+            Some((_, existing)) => *existing = threshold,
+            None => conditions.push((field, threshold)),
+        }
+    }
+    Ok(Some(Rule {
+        conditions,
+        conn_id,
+    }))
+}
+
+/// Go `parseSlowLogRuleSet`: the rules by ConnID (`None` for an unbound
+/// rule), in source order.
+fn parse_rule_set(raw: &str, allow_conn_id: bool) -> Result<Vec<(Option<u64>, Vec<Rule>)>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rules = raw.split(';').collect::<Vec<_>>();
+    if rules.len() > 10 {
+        return Err(format!(
+            "invalid slow log rules count:{}, limit is 10",
+            rules.len()
+        ));
+    }
+    let mut grouped: Vec<(Option<u64>, Vec<Rule>)> = Vec::new();
+    for rule in rules {
+        let Some(rule) = parse_rule(rule, allow_conn_id)? else {
+            continue;
+        };
+        match grouped.iter_mut().find(|(id, _)| *id == rule.conn_id) {
+            Some((_, group)) => group.push(rule),
+            None => grouped.push((rule.conn_id, vec![rule])),
+        }
+    }
+    Ok(grouped)
+}
+
+/// Go `encodeRules`.
+fn encode_rules(rules: &[Rule]) -> String {
+    rules
+        .iter()
+        .map(|rule| {
+            rule.conditions
+                .iter()
+                .map(|(field, threshold)| format!("{field}:{}", threshold.encode()))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// `SetSession`'s `ParseSessionSlowLogRules`: validates the value and returns
+/// what `GetSession` reads back (the encoded unbound rules, or empty).
+///
+/// # Errors
+/// Go's message for a malformed rule set.
+pub fn session_rules(raw: &str) -> Result<String, String> {
+    let grouped = parse_rule_set(raw, false)?;
+    Ok(grouped
+        .iter()
+        .find(|(id, _)| id.is_none())
+        .map(|(_, rules)| encode_rules(rules))
+        .unwrap_or_default())
+}
+
+/// `SetGlobal`'s `ParseGlobalSlowLogRules`: validates the value and returns
+/// its `RawRules`, the groups' encodings joined by `;`.
+///
+/// # Errors
+/// Go's message for a malformed rule set.
+pub fn global_rules(raw: &str) -> Result<String, String> {
+    let grouped = parse_rule_set(raw, true)?;
+    Ok(grouped
+        .iter()
+        .map(|(_, rules)| encode_rules(rules))
+        .collect::<Vec<_>>()
+        .join(";"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rules_parse_and_encode_like_go() {
+        assert_eq!(session_rules("").unwrap(), "");
+        assert_eq!(session_rules("query_time:1").unwrap(), "query_time:1");
+        assert_eq!(
+            session_rules("Query_Time: 1.5 , succ:true; db:'test'").unwrap(),
+            "query_time:1.5,succ:true;db:test"
+        );
+        assert_eq!(
+            session_rules("query_time:1,query_time:2").unwrap(),
+            "query_time:2"
+        );
+        assert_eq!(
+            session_rules("query_time:1000000").unwrap(),
+            "query_time:1e+06"
+        );
+        assert_eq!(
+            session_rules("zzz").unwrap_err(),
+            "invalid slow log rule format:zzz"
+        );
+        assert_eq!(
+            session_rules("conn_id:5").unwrap_err(),
+            "do not allow ConnID value:5"
+        );
+        assert_eq!(
+            global_rules("conn_id:5,query_time:1;db:x").unwrap(),
+            "conn_id:5,query_time:1;db:x"
+        );
+        assert_eq!(
+            session_rules("query_time:-1").unwrap_err(),
+            "invalid slow log format, value:-1, err:threshold value must be non-negative, got -1"
+        );
+        assert_eq!(
+            session_rules("nosuch:1").unwrap_err(),
+            "invalid slow log format, value:1, err:unknown slow log field name:nosuch"
+        );
+        assert_eq!(
+            session_rules("total_keys:abc").unwrap_err(),
+            "invalid slow log format, value:abc, err:strconv.ParseUint: parsing \"abc\": invalid syntax"
+        );
+        assert!(session_rules(&"a:1;".repeat(11))
+            .unwrap_err()
+            .contains("limit is 10"));
+    }
+}

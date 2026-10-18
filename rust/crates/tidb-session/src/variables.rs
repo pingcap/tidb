@@ -1656,6 +1656,13 @@ impl Session {
                 {
                     return Ok(Expr::String(self.last_txn_info_value()));
                 }
+                // `@@tidb_last_ddl_info`: Go's JSON-marshalled
+                // `SessionVars.LastDDLInfo`.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("tidb_last_ddl_info")
+                {
+                    return Ok(Expr::String(self.last_ddl_info_value()));
+                }
                 // `@@tidb_last_query_info` is Go's JSON-marshalled
                 // `SessionVars.LastQueryInfo` getter. Keep it out of the
                 // registry's empty default so the zero-value JSON shape is

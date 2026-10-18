@@ -7542,6 +7542,11 @@ impl ClusterServerSession {
             ClusterDdlReport::Applied { created_id, .. } => *created_id,
             ClusterDdlReport::AlreadySatisfied { .. } => None,
         };
+        // Go `recordLastDDLInfo`: a statement that ran a job leaves its query
+        // and the job's sequence number on the session.
+        if matches!(report, ClusterDdlReport::Applied { .. }) {
+            self.session.record_last_ddl_info(sql);
+        }
         self.session
             .finish_cluster_ddl_lock_effect(lock_effect, created_id);
         // Go raises `job.Warning` on the session's own statement context, so

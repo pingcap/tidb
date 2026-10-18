@@ -1800,3 +1800,54 @@ fn admin_statement_answers_follow_go() {
     assert_eq!(queries.len(), 1);
     assert_eq!(queries[0][1], "CREATE TABLE aq1 (a INT)");
 }
+
+/// `@@tidb_slow_log_rules` accepts and normalizes Go's rule syntax, and
+/// `@@tidb_last_ddl_info` reports the last DDL job's query and sequence
+/// number. Captured from the oracle.
+#[test]
+fn slow_log_rules_and_last_ddl_info_follow_go() {
+    let mut session = Session::new();
+    session
+        .run("SET @@session.tidb_slow_log_rules = 'Query_Time: 1.5 , succ:true; db:\\'test\\''")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@session.tidb_slow_log_rules")),
+        [["query_time:1.5,succ:true;db:test"]]
+    );
+    session
+        .run("SET @@global.tidb_slow_log_rules = 'query_time:1000000'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@global.tidb_slow_log_rules")),
+        [["query_time:1e+06"]]
+    );
+    for (value, message) in [
+        ("zzz", "invalid slow log rule format:zzz"),
+        ("conn_id:5", "do not allow ConnID value:5"),
+        (
+            "nosuch:1",
+            "invalid slow log format, value:1, err:unknown slow log field name:nosuch",
+        ),
+    ] {
+        let error = session
+            .run(&format!("SET @@session.tidb_slow_log_rules = '{value}'"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1105, message),
+            "{value}"
+        );
+    }
+
+    assert_eq!(
+        row_text(session.run("SELECT @@tidb_last_ddl_info")),
+        [[r#"{"query":"","seq_num":0}"#]]
+    );
+    session.run("CREATE TABLE ldi (a INT)").unwrap();
+    let info = row_text(session.run("SELECT @@tidb_last_ddl_info"));
+    assert!(
+        info[0][0].starts_with(r#"{"query":"CREATE TABLE ldi (a INT)","seq_num":"#),
+        "{info:?}"
+    );
+}

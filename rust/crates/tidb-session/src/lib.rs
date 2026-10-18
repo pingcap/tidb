@@ -782,6 +782,9 @@ pub struct Session {
     /// DML/EXECUTE/SHOW statement records query diagnostics, so retain the
     /// JSON shape Go's `json.Marshal(sessionstates.QueryInfo{})` emits.
     last_query_info: std::cell::RefCell<String>,
+    /// Go `SessionVars.LastDDLInfo` (`sessionstates.LastDDLInfo`): the query
+    /// and sequence number of the last DDL job this session waited for.
+    last_ddl_info: std::cell::RefCell<(String, u64)>,
     /// Where this session reports the tables its statements bind, for the
     /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
     mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
@@ -1072,6 +1075,7 @@ impl Session {
                 "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
                     .to_owned(),
             ),
+            last_ddl_info: std::cell::RefCell::new((String::new(), 0)),
             published_last_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
@@ -1249,6 +1253,7 @@ fn new_time_seeded_rand() -> Arc<MysqlRng> {
 pub use tidb_executor::TxnErrorKind;
 
 mod account;
+pub mod slow_log_rules;
 mod account_password;
 mod admin_check_arm;
 mod alter_schema;
@@ -1496,6 +1501,21 @@ impl Session {
 
     pub(crate) fn last_query_info_value(&self) -> String {
         self.last_query_info.borrow().clone()
+    }
+
+    /// Go `recordLastDDLInfo`: the query of a DDL job this session waited for
+    /// and its sequence number -- Go's `seqAllocator`, a per-process counter
+    /// of finished jobs.
+    pub fn record_last_ddl_info(&self, query: &str) {
+        static DDL_JOB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = DDL_JOB_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        *self.last_ddl_info.borrow_mut() = (query.to_owned(), seq);
+    }
+
+    /// `@@tidb_last_ddl_info`: Go's `json.Marshal(LastDDLInfo)`.
+    pub(crate) fn last_ddl_info_value(&self) -> String {
+        let (query, seq) = self.last_ddl_info.borrow().clone();
+        go_json_marshal(&serde_json::json!({"query": query, "seq_num": seq}))
     }
 
     /// Binds where this session reports the tables its statements bind --
@@ -3242,4 +3262,16 @@ pub(crate) fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
         0,
     )
     .map_or(tidb_datatype::Datum::Null, tidb_datatype::Datum::Time)
+}
+
+/// Go `json.Marshal` of a value: `encoding/json` escapes `<`, `>`, `&` and the
+/// U+2028/U+2029 separators inside strings.
+pub(crate) fn go_json_marshal(value: &serde_json::Value) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }

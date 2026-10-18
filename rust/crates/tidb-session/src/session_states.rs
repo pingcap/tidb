@@ -188,6 +188,10 @@ impl Session {
             "affected-rows": self.prev_row_count, "last-insert-id": self.last_insert_id,
             "warnings": warnings, "rs-group": self.resource_group,
         });
+        let (ddl_query, ddl_seq) = self.last_ddl_info.borrow().clone();
+        if ddl_seq != 0 {
+            state["ddl-info"] = json!({"query": ddl_query, "seq_num": ddl_seq});
+        }
         let query: Value =
             serde_json::from_str(&self.last_query_info.borrow()).unwrap_or(Value::Null);
         if query.get("start_ts").and_then(Value::as_u64).unwrap_or(0) != 0 {
@@ -396,6 +400,15 @@ impl Session {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
+        if let Some(info) = state.get("ddl-info").filter(|q| !q.is_null()) {
+            *self.last_ddl_info.borrow_mut() = (
+                info.get("query")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                info.get("seq_num").and_then(Value::as_u64).unwrap_or(0),
+            );
+        }
         if let Some(query) = state.get("query-info").filter(|q| !q.is_null()) {
             *self.last_query_info.borrow_mut() = query.to_string();
         }

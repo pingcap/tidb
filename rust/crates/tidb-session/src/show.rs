@@ -1702,7 +1702,21 @@ impl Session {
                     if !matches {
                         continue;
                     }
-                    let value = if show.global {
+                    // The read-only session getters Go computes from live
+                    // session state (`GetSession`), not from a stored value.
+                    let live = if show.global {
+                        None
+                    } else {
+                        match definition.name {
+                            "tidb_last_ddl_info" => Some(self.last_ddl_info_value()),
+                            "tidb_last_query_info" => Some(self.last_query_info_value()),
+                            "tidb_last_txn_info" => Some(self.last_txn_info_value()),
+                            _ => None,
+                        }
+                    };
+                    let value = if let Some(live) = live {
+                        live
+                    } else if show.global {
                         self.vars
                             .get_global(definition.name)
                             .unwrap_or_else(|_| sysvar::effective_default(definition))

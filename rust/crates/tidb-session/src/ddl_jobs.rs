@@ -50,6 +50,10 @@ impl Session {
         let Ok(filed) = filed else {
             return;
         };
+        // Go `recordLastDDLInfo` over the job the statement waited for.
+        if let Some(job) = filed.last() {
+            self.record_last_ddl_info(&job.query.to_utf8_lossy_go());
+        }
         for mut job in filed {
             // Go `addHistoryDDLJob2Table` only logs a failure.
             let _ = self.insert_ddl_history_row(&mut job);

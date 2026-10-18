@@ -1947,6 +1947,25 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's `tidb_slow_log_rules` hooks: SetSession parses the unbound
+        // rules (a ConnID is refused) and GetSession reads back their
+        // encoding; SetGlobal parses with ConnIDs allowed and stores the text.
+        if self.name == "tidb_slow_log_rules" {
+            if scope == SCOPE_SESSION {
+                let encoded = crate::slow_log_rules::session_rules(&validated.value)
+                    .map_err(ValidationError::Refused)?;
+                return Ok(Validated {
+                    value: encoded,
+                    truncated: validated.truncated,
+                });
+            }
+            let encoded = crate::slow_log_rules::global_rules(&validated.value)
+                .map_err(ValidationError::Refused)?;
+            return Ok(Validated {
+                value: encoded,
+                truncated: validated.truncated,
+            });
+        }
         // Go's `setPipelinedDmlResourcePolicy` (`sysvar.go`), a SetSession
         // hook: `standard`, `conservative`, or `custom{key=value, ...}` over
         // `concurrency`, `resolve_concurrency` (1..=8192) and
