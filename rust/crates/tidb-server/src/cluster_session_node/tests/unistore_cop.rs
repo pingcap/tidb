@@ -17616,3 +17616,46 @@ fn range_pruning_and_handle_ordering_follow_go() {
     assert!(!ordered.contains("Sort"), "{ordered}");
     assert!(ordered.contains("keep order:true"), "{ordered}");
 }
+
+/// A pre-evaluated scalar subquery keeps its `ScalarQueryCol` reference even
+/// when its value is NULL, and `tidb_opt_derive_topn` derives a TopN or Limit
+/// below a window from a filter on `row_number()`. Go oracle texts.
+#[test]
+fn scalar_subquery_null_reference_and_derived_topn_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1133)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("CREATE TABLE dq1 (a INT, b INT)")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE dq2 (a INT, b INT)")
+        .unwrap();
+    session
+        .execute_write("CREATE TABLE dw (a INT, b INT, c INT, PRIMARY KEY (b, a))")
+        .unwrap();
+    let plan = |session: &mut ClusterServerSession, sql: &str| {
+        displayed(rows(session, &format!("explain format='brief' {sql}")))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let text = plan(&mut session, "select dq1.a, (select min(dq2.a) from dq2) from dq1");
+    assert!(text.contains("(<nil>)->Column"), "{text}");
+    assert!(text.contains("ScalarQueryCol#"), "{text}");
+
+    let window = "select * from (select row_number() over (order by a) as rn from dw) dt where rn <= 3";
+    let off = plan(&mut session, window);
+    assert!(!off.contains("TopN"), "{off}");
+    session
+        .execute_write("SET tidb_opt_derive_topn = 1")
+        .unwrap();
+    let on = plan(&mut session, window);
+    assert!(on.contains("TopN") && on.contains("count:3"), "{on}");
+    let no_order = plan(
+        &mut session,
+        "select * from (select row_number() over () as rn from dw) dt where rn <= 3",
+    );
+    assert!(no_order.contains("Limit") && no_order.contains("count:3"), "{no_order}");
+}

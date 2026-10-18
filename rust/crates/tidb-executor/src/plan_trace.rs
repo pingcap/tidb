@@ -190,10 +190,12 @@ fn string_with_ctx_constant(
     // which prints a NULL value as `<nil>` (q43's case-else:
     // `case(eq(...), val, <nil>)`). The quoted "NULL" spelling belongs to
     // `Constant.Format`/`ExplainInfo` (Selection conditions), not here.
-    if value.is_null() {
-        return Some("<nil>".to_owned());
-    }
-    let value = constant_value_text(value)?;
+    let value = if value.is_null() {
+        "<nil>".to_owned()
+    } else {
+        constant_value_text(value)?
+    };
+    // The reference wraps a NULL result too: `ScalarQueryCol#14(<nil>)`.
     if constant.subquery_ref_id > 0 {
         Some(format!(
             "ScalarQueryCol#{}({value})",

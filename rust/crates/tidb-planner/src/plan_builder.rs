@@ -3552,7 +3552,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         where_clause: &Expr,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<LogicalPlan, PlanError> {
-        self.opt_flag |= flags::PREDICATE_PUSH_DOWN;
+        self.opt_flag |= flags::PREDICATE_PUSH_DOWN
+            | flags::DERIVE_TOPN_FROM_WINDOW
+            | flags::PREDICATE_SIMPLIFICATION;
         if self.cur_clause != ClauseCode::Having {
             self.cur_clause = ClauseCode::Where;
         }

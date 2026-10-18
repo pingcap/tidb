@@ -1169,6 +1169,7 @@ pub struct StmtContextData {
     /// every Apply operator uses the same session-visible cache budget.
     apply_cache_capacity: i64,
     enable_parallel_apply: bool,
+    allow_derive_topn: bool,
     /// Which `ResetContextOfStmt` arm built this context; see
     /// [`StatementClass`]. It is an INPUT to [`StmtContext::push_down_flags`],
     /// which is why it rides the context rather than being re-derived at the
@@ -1542,6 +1543,9 @@ context_configuration! {
     /// Go ParallelApply's independently cancellable child request context.
     pub fn with_coprocessor_worker_scope(mut self) -> Self { self.memory = self.memory.clone().with_coprocessor_worker_scope(); self }
     pub fn with_parallel_apply(mut self, enabled: bool) -> Self { self.enable_parallel_apply = enabled; self }
+    /// Go `SessionVars.AllowDeriveTopN`, captured at statement start.
+    #[must_use]
+    pub fn with_allow_derive_topn(mut self, enabled: bool) -> Self { self.allow_derive_topn = enabled; self }
 
     pub fn with_apply_cache_capacity(mut self, capacity: i64) -> Self {
         self.apply_cache_capacity = capacity;
@@ -2516,6 +2520,7 @@ impl StmtContext {
             group_concat_max_len: 1024,
             apply_cache_capacity: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
             enable_parallel_apply: false,
+            allow_derive_topn: false,
             statement_class: StatementClass::Other,
             enable_stable_result_mode: false,
             ignore_inlist_plan_digest: tidb_vardef::defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST,
@@ -4332,6 +4337,13 @@ impl StmtContext {
     /// Whether post-optimization may parallelize eligible Apply operators.
     pub fn enable_parallel_apply(&self) -> bool {
         self.enable_parallel_apply
+    }
+
+    /// Whether `tidb_opt_derive_topn` lets the optimizer derive a TopN or
+    /// Limit below a window from a filter on its row number.
+    #[must_use]
+    pub fn allow_derive_topn(&self) -> bool {
+        self.allow_derive_topn
     }
 
     pub fn apply_cache_capacity(&self) -> i64 {

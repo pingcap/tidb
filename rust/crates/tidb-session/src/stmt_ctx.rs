@@ -117,6 +117,8 @@ pub(crate) struct StatementVarSnapshot {
     group_concat_max_len: u64,
     apply_cache_capacity: i64,
     enable_parallel_apply: bool,
+    /// Go `SessionVars.AllowDeriveTopN` (`tidb_opt_derive_topn`).
+    allow_derive_topn: bool,
     hashagg_partial_concurrency: usize,
     hashagg_final_concurrency: usize,
     block_encryption_mode: tidb_executor::BlockEncryptionMode,
@@ -1117,6 +1119,7 @@ impl Session {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(1024),
             enable_parallel_apply: on("tidb_enable_parallel_apply"),
+            allow_derive_topn: on("tidb_opt_derive_topn"),
             apply_cache_capacity: self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_APPLY_CACHE)
@@ -1305,6 +1308,7 @@ impl Session {
         let group_concat_max_len = snapshot.group_concat_max_len;
         let apply_cache_capacity = snapshot.apply_cache_capacity;
         let enable_parallel_apply = snapshot.enable_parallel_apply;
+        let allow_derive_topn = snapshot.allow_derive_topn;
         let hashagg_partial_concurrency = snapshot.hashagg_partial_concurrency;
         let hashagg_final_concurrency = snapshot.hashagg_final_concurrency;
         let block_encryption_mode = snapshot.block_encryption_mode;
@@ -1485,6 +1489,8 @@ impl Session {
                     .with_group_concat_max_len(group_concat_max_len)
                     .with_apply_cache_capacity(apply_cache_capacity)
                     .with_parallel_apply(enable_parallel_apply)
+                .with_allow_derive_topn(allow_derive_topn)
+                    .with_allow_derive_topn(allow_derive_topn)
                     .with_block_encryption_mode(block_encryption_mode)
                     .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
                     .with_sql_mode(snapshot.scanner_sql_mode)

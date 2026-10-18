@@ -3413,7 +3413,7 @@ fn optimize_built_logical(
         use_plan_cache,
         eval_context: ctx,
         plan_cache_marker: Some(ctx),
-        allow_derive_topn: true,
+        allow_derive_topn: ctx.allow_derive_topn(),
         expr_pushdown_blacklist: ctx.expr_pushdown_blacklist().clone(),
         disabled_rules: DisabledLogicalRules::from_names(
             tidb_planner::logical::rule::OPT_RULE_LIST
