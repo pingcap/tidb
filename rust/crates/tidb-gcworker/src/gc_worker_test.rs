@@ -34,6 +34,10 @@ use tikv_client::proto::{kvrpcpb, metapb};
 use tikv_client::tikv::{KvStore, MockSafePointKv};
 
 use crate::tikv_store::TikvStoreClient;
+use tikv_client::transaction::gc::{
+    new_gc_resolve_lock_max_backoff, resolve_locks_for_range, BaseRegionLockResolver, KeyLocation,
+    RegionLockResolver,
+};
 
 use crate::gc_worker::*;
 use crate::seams::*;
@@ -285,6 +289,8 @@ struct Suite {
     /// The worker's store, PD and TiKV halves over the embedded store.
     tikv: Arc<TikvStoreClient<UnistorePdClient>>,
     cluster: Arc<Cluster>,
+    /// Go `s.initRegion.regionID`.
+    init_region_id: u64,
     kv: Arc<FakeKv>,
     sessions: Arc<FakeSessions>,
     rules: Arc<FakeRules>,
@@ -320,7 +326,7 @@ fn create_gc_worker_suite_full(
         .as_ref()
         .map_or(NULL_KEYSPACE_ID, keyspace_id);
     let (rpc, pd, cluster) = tidb_unistore::mock::new(current_keyspace_id, keyspaces).unwrap();
-    bootstrap_with_multi_stores(&cluster, 3);
+    let (_, _, init_region_id, _) = bootstrap_with_multi_stores(&cluster, 3);
     let scan_lock_requests: Arc<Mutex<Vec<ScanLockRequest>>> = Arc::default();
     let recorded = Arc::clone(&scan_lock_requests);
     rpc.set_send_hook(Some(Arc::new(move |request| {
@@ -371,6 +377,7 @@ fn create_gc_worker_suite_full(
         oracle,
         tikv,
         cluster,
+        init_region_id,
         kv,
         sessions,
         rules,
@@ -1268,6 +1275,294 @@ fn test_skip_gc_and_only_resolve_lock() {
     // GC was skipped.
     let last = s.job().load_time(GC_LAST_RUN_TIME_KEY).unwrap().unwrap();
     assert_eq!(last.timestamp(), last_run_time.timestamp());
+}
+
+type ScanLocksFn = Arc<
+    dyn Fn(&[kvrpcpb::LockInfo], &[u8]) -> (Vec<kvrpcpb::LockInfo>, Option<KeyLocation>)
+        + Send
+        + Sync,
+>;
+type BatchResolveLocksFn = Arc<
+    dyn Fn(&[kvrpcpb::LockInfo], Option<KeyLocation>) -> tikv_client::Result<Option<KeyLocation>>
+        + Send
+        + Sync,
+>;
+
+/// Go `mockGCWorkerLockResolver`: the store's resolver, with the scanned
+/// locks and their location replaced by `scan_locks` and the resolution by
+/// `batch_resolve_locks` when set.
+struct MockGcWorkerLockResolver<PdC: tikv_client::PdClient> {
+    inner: BaseRegionLockResolver<PdC>,
+    scan_locks: Arc<Mutex<Option<ScanLocksFn>>>,
+    batch_resolve_locks: Mutex<Option<BatchResolveLocksFn>>,
+}
+
+impl<PdC: tikv_client::PdClient> MockGcWorkerLockResolver<PdC> {
+    fn new(inner: BaseRegionLockResolver<PdC>) -> Self {
+        Self {
+            inner,
+            scan_locks: Arc::default(),
+            batch_resolve_locks: Mutex::new(None),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<PdC: tikv_client::PdClient> RegionLockResolver for MockGcWorkerLockResolver<PdC> {
+    fn identifier(&self) -> String {
+        "gc worker test".to_owned()
+    }
+
+    async fn resolve_locks_in_one_region(
+        &self,
+        backoff: &mut tikv_client::Backoff,
+        locks: Vec<kvrpcpb::LockInfo>,
+        location: Option<KeyLocation>,
+    ) -> tikv_client::Result<Option<KeyLocation>> {
+        let batch = self.batch_resolve_locks.lock().unwrap().clone();
+        match batch {
+            Some(batch) => batch(&locks, location),
+            None => {
+                self.inner
+                    .resolve_locks_in_one_region(backoff, locks, location)
+                    .await
+            }
+        }
+    }
+
+    async fn scan_locks_in_one_region(
+        &self,
+        backoff: &mut tikv_client::Backoff,
+        key: &[u8],
+        end_key: &[u8],
+        max_version: u64,
+        scan_limit: u32,
+    ) -> tikv_client::Result<(Vec<kvrpcpb::LockInfo>, Option<KeyLocation>)> {
+        let (mut locks, mut location) = self
+            .inner
+            .scan_locks_in_one_region(backoff, key, end_key, max_version, scan_limit)
+            .await?;
+        let scan = self.scan_locks.lock().unwrap().clone();
+        if let Some(scan) = scan {
+            let (mock_locks, mock_location) = scan(&locks, key);
+            // Append the mock's locks; use its location.
+            locks.extend(mock_locks);
+            location = mock_location;
+        }
+        Ok((locks, location))
+    }
+}
+
+/// Go `tikv.NewRegionVerID(id, confVer, ver)` as a location with no bounds.
+fn location_of(id: u64, conf_ver: u64, ver: u64) -> KeyLocation {
+    KeyLocation {
+        region: tikv_client::RegionVerId { id, conf_ver, ver },
+        start_key: Vec::new(),
+        end_key: Vec::new(),
+    }
+}
+
+fn lock(key: &[u8], txn_id: u64, ttl: u64) -> kvrpcpb::LockInfo {
+    kvrpcpb::LockInfo {
+        key: key.to_vec(),
+        lock_version: txn_id,
+        lock_ttl: ttl,
+        ..kvrpcpb::LockInfo::default()
+    }
+}
+
+/// Go `TestResolveLockRangeInfine`: a resolution error stops the range.
+/// Go also enables client-go's `invalidCacheAndRetry` failpoint; the store's
+/// PD keeps no region cache to invalidate.
+#[test]
+fn test_resolve_lock_range_infine() {
+    let s = create_gc_worker_suite();
+    let resolver = MockGcWorkerLockResolver::new(BaseRegionLockResolver::new(
+        "test",
+        (**s.tikv.store()).clone(),
+    ));
+    *resolver.scan_locks.lock().unwrap() =
+        Some(Arc::new(|_, _| (Vec::new(), Some(location_of(0, 0, 0)))));
+    // A mock error, to test the backoff.
+    *resolver.batch_resolve_locks.lock().unwrap() = Some(Arc::new(|_, _| {
+        Err(tikv_client::Error::StringError("mock error".to_owned()))
+    }));
+    let (_, result) = s.block_on(resolve_locks_for_range(
+        tikv_client::async_util::Cancellation::default(),
+        &resolver,
+        1,
+        vec![0],
+        vec![1],
+        &tikv_client::Backoff::no_backoff,
+        10,
+    ));
+    assert!(result.is_err());
+}
+
+/// Go `TestResolveLockRangeMeetRegionCacheMiss`: a resolution that answers
+/// no location makes the range scan the region again.
+#[test]
+fn test_resolve_lock_range_meet_region_cache_miss() {
+    let s = create_gc_worker_suite();
+    let safepoint_ts: u64 = 434_245_550_444_904_450;
+    let all_locks = vec![
+        // TxnID < safepointTS
+        lock(&[1], 434_245_550_444_904_449, 5),
+        // safepointTS < TxnID < lowResolveTS, TxnID + TTL < lowResolveTS
+        lock(&[2], 434_245_550_445_166_592, 10),
+        // safepointTS < TxnID < lowResolveTS, TxnID + TTL > lowResolveTS
+        lock(&[3], 434_245_550_445_166_593, 20),
+        // TxnID > lowResolveTS
+        lock(&[4], 434_245_550_449_099_752, 20),
+    ];
+    let scan_cnt = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let resolve_cnt = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let resolver = MockGcWorkerLockResolver::new(BaseRegionLockResolver::new(
+        "test",
+        (**s.tikv.store()).clone(),
+    ));
+    let region_id = s.init_region_id;
+    let scans = Arc::clone(&scan_cnt);
+    *resolver.scan_locks.lock().unwrap() = Some(Arc::new(move |_, _| {
+        scans.fetch_add(1, Ordering::AcqRel);
+        (all_locks.clone(), Some(location_of(region_id, 0, 0)))
+    }));
+    let resolves = Arc::clone(&resolve_cnt);
+    *resolver.batch_resolve_locks.lock().unwrap() = Some(Arc::new(move |_, location| {
+        if resolves.fetch_add(1, Ordering::AcqRel) == 0 {
+            // The region cache misses: no location, so the region is scanned
+            // again (Go invalidates the cached region first).
+            return Ok(None);
+        }
+        Ok(location)
+    }));
+    let (_, result) = s.block_on(resolve_locks_for_range(
+        tikv_client::async_util::Cancellation::default(),
+        &resolver,
+        safepoint_ts,
+        vec![0],
+        vec![10],
+        &tikv_client::Backoff::no_backoff,
+        10,
+    ));
+    result.unwrap();
+    assert_eq!(2, resolve_cnt.load(Ordering::Acquire));
+    assert_eq!(2, scan_cnt.load(Ordering::Acquire));
+}
+
+/// Go `TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge`, on
+/// client-go's mock cluster (Go's `MockTiKV`): the region merges while its
+/// locks resolve, and the rescan of the merged region resolves all four.
+#[test]
+fn test_resolve_lock_range_meet_region_enlarge_caused_by_region_merge() {
+    if tidb_config::kerneltype::is_next_gen() {
+        return;
+    }
+    use tikv_client::mock::mocktikv::{
+        bootstrap_with_multi_stores as mock_bootstrap_with_multi_stores, new_tikv_and_pd_client,
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (_rpc, cluster, pd) = new_tikv_and_pd_client("", None).unwrap();
+    let (_, _, init_region_id, _) = mock_bootstrap_with_multi_stores(&cluster, 3);
+    let store = runtime
+        .block_on(tikv_client::transaction::Client::new_with_pd_client(
+            Arc::new(pd),
+            tikv_client::Config::default(),
+        ))
+        .unwrap();
+
+    // key range: ['' - 'm' - 'z']
+    let region2 = cluster.alloc_id();
+    let new_peers = cluster.alloc_ids(3);
+    cluster.split(init_region_id, region2, b"m", &new_peers, new_peers[0]);
+
+    let resolver = Arc::new(MockGcWorkerLockResolver::new(BaseRegionLockResolver::new(
+        "test", store,
+    )));
+    let region_location = |region: &tikv_client::proto::metapb::Region| {
+        let epoch = region.region_epoch.clone().unwrap_or_default();
+        location_of(region.id, epoch.conf_ver, epoch.version)
+    };
+    let region_by_key = {
+        let cluster = cluster.clone();
+        move |key: &[u8]| {
+            let mut encoded = Vec::new();
+            tidb_codec::encode_bytes(&mut encoded, key);
+            cluster.region_by_key(&encoded).map(|lookup| lookup.0)
+        }
+    };
+    *resolver.scan_locks.lock().unwrap() = Some(Arc::new(move |_, key| {
+        let Some(region) = region_by_key(key) else {
+            return (Vec::new(), None);
+        };
+        // First scans: two locks in each region.
+        if region.id == init_region_id {
+            return (
+                vec![lock(b"a", 0, 0), lock(b"b", 0, 0)],
+                Some(region_location(&region)),
+            );
+        }
+        if region.id == region2 {
+            return (
+                vec![lock(b"o", 0, 0), lock(b"p", 0, 0)],
+                Some(region_location(&region)),
+            );
+        }
+        (Vec::new(), None)
+    }));
+    let first_access = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let resolved_lock: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
+    let scan_locks = Arc::clone(&resolver.scan_locks);
+    let resolved = Arc::clone(&resolved_lock);
+    *resolver.batch_resolve_locks.lock().unwrap() = Some(Arc::new(move |locks, location| {
+        let location = location.expect("a location");
+        if location.region.id == init_region_id && first_access.swap(false, Ordering::AcqRel) {
+            // Merge region2 into region1 and answer EpochNotMatch; the mock
+            // PD keeps no region cache to update.
+            cluster.merge(init_region_id, region2);
+            let merged = cluster.region_by_id(init_region_id).unwrap().0;
+            let merged_location = region_location(&merged);
+            // Region1 now holds all four locks.
+            *scan_locks.lock().unwrap() = Some(Arc::new(move |_, key| {
+                if key.is_empty() {
+                    let locks = vec![
+                        lock(b"a", 0, 0),
+                        lock(b"b", 0, 0),
+                        lock(b"o", 0, 0),
+                        lock(b"p", 0, 0),
+                    ];
+                    if let Some(i) = locks.iter().position(|lock| key <= lock.key.as_slice()) {
+                        return (locks[i..].to_vec(), Some(merged_location.clone()));
+                    }
+                }
+                (Vec::new(), None)
+            }));
+            return Ok(None);
+        }
+        resolved
+            .lock()
+            .unwrap()
+            .extend(locks.iter().map(|lock| lock.key.clone()));
+        Ok(Some(location))
+    }));
+    let (_, result) = runtime.block_on(resolve_locks_for_range(
+        tikv_client::async_util::Cancellation::default(),
+        resolver.as_ref(),
+        1,
+        Vec::new(),
+        b"z".to_vec(),
+        &new_gc_resolve_lock_max_backoff,
+        10,
+    ));
+    result.unwrap();
+    assert_eq!(
+        *resolved_lock.lock().unwrap(),
+        vec![b"a".to_vec(), b"b".to_vec(), b"o".to_vec(), b"p".to_vec()]
+    );
 }
 
 #[test]

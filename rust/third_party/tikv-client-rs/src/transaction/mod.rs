@@ -71,6 +71,7 @@ pub use transaction::TTL_FACTOR;
 mod art;
 mod buffer;
 mod client;
+pub mod gc;
 pub(crate) mod latch;
 mod lock;
 pub mod lowering;

@@ -21,7 +21,8 @@ After this plan, the node runs Go's GC worker. Every minute one TiDB becomes GC 
 - [x] (2026-10-19) Milestone 4, oracle: Go's tidb-server and the Rust node in turn on one nightly playground. Both write the same rows in the same formats (`tikv_gc_leader_desc` included, now with Go's monotonic `m=+…` suffix from `tidb_util::monotime`), log the same job phases in the same order, and leave a dropped table without keys after GC (`playground_table_keys`: Go 6 -> 0, Rust 8 -> 0). The Rust node takes the lease over after Go's expires and runs on Go's bootstrap with `--load-privileges`. The run found and fixed the client's idle-pool bug (see Surprises). The adapter's `doGCForRegion` sends `CmdGC` to the region leader as Go's `SendReq` does. The package receipt is under Artifacts and Notes.
 - [x] (2026-10-19) The suite runs on the embedded store (`client-rust-unistore-execplan.md` Steps 3-5): `TestDoGCForOneRegion` (first arm), `TestRunGCJobAPI`, `TestRunDistGCJobAPI` and the probe half of `TestRunGCJob` are ported. The worker's store/PD/TiKV halves live in `tidb-gcworker` (`tikv_store.rs`).
 - [x] (2026-10-19) With client-rust's store oracle (`MockOracle` on the store): the probe half of `TestLeaderTick`, `TestGCWithPendingTxn`, `TestGCWithPendingTxn2`, `TestSkipGCAndOnlyResolveLock`.
-- [ ] Still waiting: client-rust's `RegionLockResolver` seam (`TestResolveLockRange*`), unistore's lock waiting (`TestResolveLocksNearTxnSafePoint`), and the failpoint arms of `TestDoGCForOneRegion`; see that plan's Steps 5b-5d.
+- [x] (2026-10-19) With client-rust's `RegionLockResolver`: `TestResolveLockRangeInfine`, `TestResolveLockRangeMeetRegionCacheMiss`, `TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge`. The worker's scan-lock limit is now client-go's 1024.
+- [ ] Still waiting: unistore's lock waiting (`TestResolveLocksNearTxnSafePoint`) and the failpoint arms of `TestDoGCForOneRegion`; see that plan's Steps 5c-5d.
 
 ## Surprises & Discoveries
 

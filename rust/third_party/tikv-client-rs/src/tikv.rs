@@ -104,7 +104,9 @@ pub const SAFE_TS_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
 pub const READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
 pub const READ_TIMEOUT_MEDIUM: Duration = Duration::from_secs(60);
 pub const MAX_WRITE_EXECUTION_TIME: Duration = Duration::from_secs(20);
-pub const GC_SCAN_LOCK_LIMIT: u32 = 2_048;
+/// client-go `GCScanLockLimit`: half the lock resolver's resolved cache, so
+/// GC does not sweep out the cache entries other readers rely on.
+pub const GC_SCAN_LOCK_LIMIT: u32 = (crate::transaction::RESOLVED_CACHE_SIZE / 2) as u32;
 pub const SPLIT_BATCH_REGION_LIMIT: usize = 2_048;
 pub const MODE_RAW: Mode = KeyMode::Raw;
 pub const MODE_TXN: Mode = KeyMode::Txn;

@@ -568,11 +568,11 @@ impl<PdC: PdClient> Client<PdC> {
         .await
     }
 
-    /// client-go `tikv.ResolveLocksForRange`: resolves, region by region,
-    /// every lock in `range` whose start ts is at most `max_version`,
-    /// scanning `scan_limit` locks per request. It is the handler GC's
-    /// range-task runner runs on each task; the stat counts the regions
-    /// completed before any error.
+    /// client-go `KVStore.resolveLocks`'s handler: `tikv.ResolveLocksForRange`
+    /// over the store's own `NewRegionLockResolver("gc-client-go-api", s)`,
+    /// resolving, region by region, every lock in `range` whose start ts is
+    /// at most `max_version`, scanning `scan_limit` locks per request. The
+    /// stat counts the regions completed before any error.
     pub async fn resolve_locks_for_range(
         &self,
         cancellation: Cancellation,
@@ -580,37 +580,17 @@ impl<PdC: PdClient> Client<PdC> {
         range: (Vec<u8>, Vec<u8>),
         scan_limit: u32,
     ) -> (TaskStat, Result<()>) {
-        let mut stat = TaskStat::default();
-        let regions = region_stream_for_range(range, self.pd.clone());
-        futures::pin_mut!(regions);
-
-        while let Some(region) = regions.next().await {
-            if cancellation.is_cancelled() {
-                return (
-                    stat,
-                    Err(crate::Error::StringError("range task cancelled".to_owned())),
-                );
-            }
-            let ((start_key, end_key), _) = match region {
-                Ok(region) => region,
-                Err(error) => return (stat, Err(error)),
-            };
-            let result = self
-                .cleanup_locks(
-                    BoundRange::from((start_key, end_key)),
-                    max_version,
-                    ResolveLocksOptions {
-                        batch_size: scan_limit,
-                        ..Default::default()
-                    },
-                )
-                .await;
-            match result {
-                Ok(_) => stat.completed_regions += 1,
-                Err(error) => return (stat, Err(error)),
-            }
-        }
-        (stat, Ok(()))
+        let resolver = super::gc::BaseRegionLockResolver::new("gc-client-go-api", self.clone());
+        super::gc::resolve_locks_for_range(
+            cancellation,
+            &resolver,
+            max_version.version(),
+            range.0,
+            range.1,
+            &super::gc::new_gc_resolve_lock_max_backoff,
+            scan_limit,
+        )
+        .await
     }
 
     // Note: `batch_size` must be >= expected number of locks.
@@ -853,6 +833,11 @@ impl<PdC: PdClient> Client<PdC> {
     /// embedded TiDB/UniStore owner can reuse the authoritative region cache.
     pub fn pd_client(&self) -> Arc<PdC> {
         self.pd.clone()
+    }
+
+    /// The store-owned lock-resolution context (client-go `store.GetLockResolver()`).
+    pub(crate) fn lock_resolver_context(&self) -> ResolveLocksContext {
+        self.lock_resolver_context.clone()
     }
 
     pub(crate) fn keyspace(&self) -> Keyspace {

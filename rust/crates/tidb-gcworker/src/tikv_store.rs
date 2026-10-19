@@ -25,6 +25,10 @@ use tikv_client::async_util::Cancellation;
 use tikv_client::proto::keyspacepb::KeyspaceMeta;
 use tikv_client::proto::{kvrpcpb, metapb, pdpb};
 use tikv_client::tikv::KvStore;
+use tikv_client::transaction::gc::{
+    new_gc_resolve_lock_max_backoff, resolve_locks_for_range, BaseRegionLockResolver,
+    RegionLockResolver,
+};
 use tikv_client::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
 use tikv_client::{PdClient, TimestampExt};
 
@@ -42,6 +46,8 @@ pub struct TikvStoreClient<PdC: PdClient> {
     runtime: Arc<tokio::runtime::Runtime>,
     store: KvStore<PdC>,
     keyspace_meta: Option<KeyspaceMeta>,
+    /// Go `GCWorker.regionLockResolver`.
+    region_lock_resolver: Arc<dyn RegionLockResolver>,
 }
 
 impl<PdC: PdClient> TikvStoreClient<PdC> {
@@ -53,11 +59,23 @@ impl<PdC: PdClient> TikvStoreClient<PdC> {
         store: KvStore<PdC>,
         keyspace_meta: Option<KeyspaceMeta>,
     ) -> Self {
+        // Go `NewGCWorker`: `tikv.NewRegionLockResolver("gc-worker", store)`.
+        let region_lock_resolver =
+            Arc::new(BaseRegionLockResolver::new("gc-worker", (*store).clone()));
         Self {
             runtime,
             store,
             keyspace_meta,
+            region_lock_resolver,
         }
+    }
+
+    /// The worker's halves with `resolver` resolving locks, as Go's tests and
+    /// `RunGCJob` hand the worker their own `regionLockResolver`.
+    #[must_use]
+    pub fn with_region_lock_resolver(mut self, resolver: Arc<dyn RegionLockResolver>) -> Self {
+        self.region_lock_resolver = resolver;
+        self
     }
 
     /// The store beneath.
@@ -154,39 +172,38 @@ impl<PdC: PdClient> GcPdClient for TikvStoreClient<PdC> {
     }
 }
 
-/// client-go `tikv.ResolveLocksForRange` as a range-task handler.
-struct ResolveLocksForRange<PdC: PdClient> {
-    client: tikv_client::transaction::Client<PdC>,
-    max_version: pdpb::Timestamp,
+/// Go `resolveLocks`'s range-task handler: client-go
+/// `tikv.ResolveLocksForRange` through the worker's lock resolver.
+#[derive(Clone)]
+struct ResolveLocksForRange {
+    resolver: Arc<dyn RegionLockResolver>,
+    max_version: u64,
     scan_limit: u32,
 }
 
-impl<PdC: PdClient> Clone for ResolveLocksForRange<PdC> {
-    fn clone(&self) -> Self {
-        Self {
-            client: self.client.clone(),
-            max_version: self.max_version.clone(),
-            scan_limit: self.scan_limit,
-        }
-    }
-}
-
 #[async_trait::async_trait]
-impl<PdC: PdClient> RangeTaskHandler for ResolveLocksForRange<PdC> {
+impl RangeTaskHandler for ResolveLocksForRange {
     async fn handle(
         &self,
         cancellation: Cancellation,
         range: (Vec<u8>, Vec<u8>),
     ) -> (TaskStat, tikv_client::Result<()>) {
-        self.client
-            .resolve_locks_for_range(cancellation, &self.max_version, range, self.scan_limit)
-            .await
+        resolve_locks_for_range(
+            cancellation,
+            self.resolver.as_ref(),
+            self.max_version,
+            range.0,
+            range.1,
+            &new_gc_resolve_lock_max_backoff,
+            self.scan_limit,
+        )
+        .await
     }
 }
 
 struct TikvResolveLocksRunner<'a, PdC: PdClient> {
     runtime: &'a tokio::runtime::Runtime,
-    runner: Runner<PdC, ResolveLocksForRange<PdC>>,
+    runner: Runner<PdC, ResolveLocksForRange>,
 }
 
 impl<PdC: PdClient> ResolveLocksRunner for TikvResolveLocksRunner<'_, PdC> {
@@ -250,8 +267,8 @@ impl<PdC: PdClient> GcKvClient for TikvStoreClient<PdC> {
         scan_limit: u32,
     ) -> Box<dyn ResolveLocksRunner + '_> {
         let handler = ResolveLocksForRange {
-            client: (*self.store).clone(),
-            max_version: pdpb::Timestamp::from_version(max_version),
+            resolver: Arc::clone(&self.region_lock_resolver),
+            max_version,
             scan_limit,
         };
         Box::new(TikvResolveLocksRunner {
