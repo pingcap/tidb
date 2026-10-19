@@ -35,8 +35,8 @@ After this plan, the node runs Go's GC worker. Every minute one TiDB becomes GC 
 - Decision: the worker reaches the store, PD, sessions, and the placement and label services only through traits defined in the crate (`GcStore`, `GcPdClient`, `GcKvClient`, `GcSessionFactory`, `GcRuleClient`). Production adapters live in `tidb-server`; test doubles live in the crate's tests.
   Rationale: Go reaches them through interfaces (`kv.Storage`, `pd.Client`, `pdgc.InternalController`, `tikv.Storage`, `sessionapi.Session`, `infosync`). Its tests replace the KV client (`mockGCWorkerClient`) and the lock resolver (`mockGCWorkerLockResolver`) the same way, and `tidb-gcworker` must not depend on `tidb-server`.
   Date/Author: 2026-10-19, Claude.
-- Decision: missing PD calls are added to the vendored client, which ports client-go and the PD client, rather than to a TiDB crate.
-  Rationale: they are PD client methods in Go (`pd.Client.UpdateServiceGCSafePoint`, `UpdateGCSafePoint`, `GetAllKeyspaces`). The sync log `rust/third_party/tikv-client-rs-SYNC-LOG.md` records vendored edits.
+- Decision: missing PD client calls (`UpdateServiceGCSafePoint`, `UpdateGCSafePoint`, `GetAllKeyspaces`, `IsKeyspaceUsingKeyspaceLevelGC`, a per-address `UnsafeDestroyRange` send) are added upstream in `ngaut/client-rust` (local checkout `~/projects/client-rust`, push authorized by the owner) and reach this repository through `scripts/sync-tikv-client-rs.sh`; the vendored tree is never edited directly, since the next sync would overwrite it. Until then the crate keeps a private port of `IsKeyspaceUsingKeyspaceLevelGC`.
+  Rationale: they are PD client and client-go methods in Go; the vendored client is the client-go port.
   Date/Author: 2026-10-19, Claude.
 
 ## Outcomes & Retrospective
@@ -92,7 +92,7 @@ Milestone 2. Port `GCWorker` and every method listed in Context, in Go's order a
 - Tests that need a real MVCC store with region splits (`TestResolveLockRange*`, `TestGCWithPendingTxn*`) run against the vendored client's mock cluster (`src/mock/mocktikv`), which client-go's own `mocktikv` corresponds to.
 
 Milestone 3.
-- Add to the vendored client: `update_service_gc_safe_point`, `update_gc_safe_point`, `get_all_keyspaces`, and a per-address `UnsafeDestroyRange` send. Record each in the sync log.
+- Add to `ngaut/client-rust`: `update_service_gc_safe_point`, `update_gc_safe_point`, `get_all_keyspaces`, `is_keyspace_using_keyspace_level_gc`, and a per-address `UnsafeDestroyRange` send; push, then sync the vendored tree.
 - In `tidb-server`, add `cluster_session_node/gc_worker.rs`. It implements the seams over a private `KvStore` (as `TikvRegionStore` does), the advanced system session pool, `load_history_persisted_ddl_job`, the placement and label delivery clients, and `DelRangeTable`. Make the emulator's `complete_delete_range` public for reuse (Go `util.CompleteDeleteRange`).
 - Start the worker in `boot.rs` after the stats workers and drop its guard next to `stats_maintenance`. The embedded node does not start it.
 - Add a status-variable provider hook so `SHOW STATUS` lists `tidb_gc_last_run_time`, `tidb_gc_leader_desc`, `tidb_gc_leader_lease`, `tidb_gc_leader_uuid` and `tidb_gc_safe_point` as Go's `Stats` does.
