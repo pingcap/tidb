@@ -819,14 +819,18 @@ where
                     // TRUNCATE's new identity, which a session holding a lock
                     // on the old one moves its lock to and which is
                     // pre-split like a created table.
-                    let created_id = (job.type_ == tidb_model::ActionType::ACTION_TRUNCATE_TABLE)
-                        .then(|| {
-                            job.binlog_info
-                                .as_ref()
-                                .and_then(|history| history.read().table_info.clone())
-                                .map(|table| table.read().id)
-                        })
-                        .flatten();
+                    let created_id = matches!(
+                        job.type_,
+                        tidb_model::ActionType::ACTION_TRUNCATE_TABLE
+                            | tidb_model::ActionType::ACTION_CREATE_TABLE
+                    )
+                    .then(|| {
+                        job.binlog_info
+                            .as_ref()
+                            .and_then(|history| history.read().table_info.clone())
+                            .map(|table| table.read().id)
+                    })
+                    .flatten();
                     return Ok(ClusterDdlReport::Applied {
                         schema_version: job.last_schema_version,
                         created_id,
@@ -2554,6 +2558,7 @@ where
                     | DdlStatement::DropSequence { .. }
                     | DdlStatement::DropDatabase { .. }
                     | DdlStatement::TruncateTable { .. }
+                    | DdlStatement::CreateTable { .. }
             )
         {
             // Go `createIndex` / `dropIndex` / `dropTableObject` /
@@ -2573,10 +2578,16 @@ where
                 tidb_exec::real_tikv_ddl::AddIndexSubmitted::AlreadySatisfied(report) => {
                     return Ok(report)
                 }
-                tidb_exec::real_tikv_ddl::AddIndexSubmitted::Job(ddl_job_id) => {
+                tidb_exec::real_tikv_ddl::AddIndexSubmitted::Job(ddl_job_id, executor_warnings) => {
                     self.notify_new_job_submitted();
-                    let report = self.wait_persisted_job(ddl_job_id)?;
+                    let mut report = self.wait_persisted_job(ddl_job_id)?;
                     self.refresh_catalog();
+                    // The executor's warnings precede the job's.
+                    let (ClusterDdlReport::Applied { warnings, .. }
+                    | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut report;
+                    let job_warnings = std::mem::take(warnings);
+                    *warnings = executor_warnings;
+                    warnings.extend(job_warnings);
                     return Ok(report);
                 }
             }

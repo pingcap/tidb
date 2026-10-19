@@ -19782,5 +19782,41 @@ fn truncate_table_runs_as_a_persisted_job_like_go() {
     rows(&mut session, "insert into tp values (1),(2)");
     rows(&mut session, "truncate table tp");
     assert_eq!(last_job(&mut session), "truncate table|tp|public|0|synced");
-    assert_eq!(displayed(rows(&mut session, "select count(*) from tp")), [["0"]]);
+    assert_eq!(
+        displayed(rows(&mut session, "select count(*) from tp")),
+        [["0"]]
+    );
+}
+
+/// Go `onRenameIndex` renames an expression index's hidden columns with it
+/// (`renameHiddenColumns`, Issue 51431), so a later index may take the old
+/// name. Captured from the Go oracle.
+#[test]
+fn renaming_an_expression_index_frees_its_name_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1942)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    rows(&mut session, "create table t(j json)");
+    rows(
+        &mut session,
+        "alter table t add index idx1((cast(j as char(10) array)))",
+    );
+    rows(&mut session, "alter table t rename index idx1 to idx2");
+    rows(
+        &mut session,
+        "alter table t add index idx1((cast(j as char(10) array)))",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "show create table t")).remove(0)[1],
+        "CREATE TABLE `t` (\n  `j` json DEFAULT NULL,\n  KEY `idx2` ((cast(`j` as char(10) array))),\n  KEY `idx1` ((cast(`j` as char(10) array)))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    rows(&mut session, "insert into t values ('[\"a\",\"b\"]')");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select count(*) from t where 'a' member of (j)"
+        )),
+        [["1"]]
+    );
 }

@@ -1273,8 +1273,23 @@ where
                 }
             };
         let for_update_ts = match lock_outcome {
-            LockKeysOutcome::Locked { for_update_ts, .. }
-            | LockKeysOutcome::RetryStatement { for_update_ts, .. } => for_update_ts,
+            LockKeysOutcome::Locked { for_update_ts, .. } => for_update_ts,
+            // A newer commit beat the lock: Go's `genGIDAndCallWithRetry`
+            // treats the retryable error by starting the attempt over in a
+            // new transaction (the statement's staged state is discarded
+            // with it).
+            LockKeysOutcome::RetryStatement { .. } if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT => {
+                let _ = transaction.rollback();
+                std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
+                attempt += 1;
+                continue;
+            }
+            LockKeysOutcome::RetryStatement { .. } => {
+                let _ = transaction.rollback();
+                return Err(ClusterDdlError::NotCommitted(
+                    "the global id key kept conflicting".to_owned(),
+                ));
+            }
             LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
                 let _ = transaction.rollback();
                 return Err(ClusterDdlError::NotCommitted(error.message));
@@ -1384,8 +1399,8 @@ pub fn submit_check_constraint_job_with_retry<
 
 /// What submitting an ADD INDEX came to.
 pub enum AddIndexSubmitted {
-    /// The job queued, by id.
-    Job(i64),
+    /// The job queued, by id, with the executor's statement warnings.
+    Job(i64, Vec<(DdlWarningLevel, u16, String)>),
     /// `IF NOT EXISTS` over an existing index: nothing queued.
     AlreadySatisfied(ClusterDdlReport),
 }
@@ -1439,6 +1454,16 @@ pub fn submit_persisted_job_with_retry<
                     min_job_id,
                 )
             }
+            DdlStatement::CreateTable { .. } => {
+                crate::cluster_ddl::create_table::prepare_create_table_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
             DdlStatement::TruncateTable { .. } => {
                 crate::cluster_ddl::truncate::prepare_truncate_table_job_submission(
                     &mut snapshot,
@@ -1470,8 +1495,10 @@ pub fn submit_persisted_job_with_retry<
         }
     };
     let _ = preparation.rollback();
-    let mut spec = match prepared? {
-        Some(crate::cluster_ddl::add_index::AddIndexSubmission::Job(spec)) => *spec,
+    let (mut spec, warnings) = match prepared? {
+        Some(crate::cluster_ddl::add_index::AddIndexSubmission::Job(spec, warnings)) => {
+            (*spec, warnings)
+        }
         Some(crate::cluster_ddl::add_index::AddIndexSubmission::AlreadySatisfied {
             detail,
             warnings,
@@ -1492,7 +1519,7 @@ pub fn submit_persisted_job_with_retry<
         timeout,
         |_| Option::<fn()>::None,
     )?;
-    Ok(AddIndexSubmitted::Job(spec.job.id))
+    Ok(AddIndexSubmitted::Job(spec.job.id, warnings))
 }
 
 /// Loads the persisted active DDL queue from a fresh cluster snapshot.

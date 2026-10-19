@@ -127,8 +127,12 @@ pub enum ReorgResult {
 
 /// The ADD INDEX submission's answer.
 pub enum AddIndexSubmission {
-    /// The job to queue.
-    Job(Box<crate::ddl_job_submit::JobSpec>),
+    /// The job to queue, and the warnings Go's executor appended to the
+    /// statement before submitting it.
+    Job(
+        Box<crate::ddl_job_submit::JobSpec>,
+        Vec<(DdlWarningLevel, u16, String)>,
+    ),
     /// `IF NOT EXISTS` over an existing index: a Note, no job.
     AlreadySatisfied {
         /// What was already true.
@@ -325,7 +329,7 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
         snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec))))
+    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
 }
 
 fn unsupported_partial_index() -> DdlPlanError {

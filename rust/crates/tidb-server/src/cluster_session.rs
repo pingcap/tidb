@@ -280,7 +280,14 @@ pub fn cluster_session_catalog_with_templates(
                         .expect("the schema was created just above this loop");
                 }
                 Err(reason) => {
-                    report_unbuildable_table(&schema, table, &reason);
+                    // A table a DDL job holds in an intermediate state (DROP's
+                    // write-only / delete-only, CREATE's delete-only before
+                    // its foreign keys go public) is not a port gap: Go loads
+                    // it too and refuses every statement on it with
+                    // `ErrTableNotExists` (`tryLockMDLAndUpdateSchemaIfNecessary`).
+                    if table.state == tidb_model::SchemaState::PUBLIC {
+                        report_unbuildable_table(&schema, table, &reason);
+                    }
                     skipped.push(SkippedTable {
                         name: format!("{schema}.{}", table.name.original()),
                         reason,

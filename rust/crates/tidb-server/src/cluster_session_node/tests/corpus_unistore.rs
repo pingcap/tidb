@@ -633,8 +633,13 @@ fn production_replay_stays_within_budget() {
     );
     let diverged: usize = reported.values().map(|(diverged, _)| diverged).sum();
     let out_of_domain: usize = reported.values().map(|(_, skipped)| skipped).sum();
+    let refusing: Vec<String> = reported
+        .iter()
+        .filter(|(_, (_, skipped))| *skipped > 0)
+        .map(|(topic, (_, skipped))| format!("{topic} ({skipped})"))
+        .collect();
     eprintln!(
-        "production replay: {} topics, {diverged} diverged, {out_of_domain} out of domain\n  {}",
+        "production replay: {} topics, {diverged} diverged, {out_of_domain} out of domain {refusing:?}\n  {}",
         reported.len(),
         divergences.join("\n  ")
     );

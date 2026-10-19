@@ -4150,19 +4150,66 @@ fn apply_rename_index(
         }
     }
     // Go `renameIndexes` walks every index and renames each one whose name
-    // matches, rather than stopping at the first.
-    //
-    // Its two other passes have nothing to rename here: temp indexes exist
-    // only during a reorg this node does not run, and the hidden columns of
-    // an expression index cannot occur because this node refuses to create
-    // or load one.
+    // matches, rather than stopping at the first, then renames the expression
+    // index's key parts and hidden columns (`renameExpressionIndexColumnRefs`
+    // and `onRenameIndex`'s `renameHiddenColumns`, Issue 51431): a hidden
+    // column left under the old name would collide with the next index of
+    // that name.
     for candidate in info.indices.iter_deref() {
         let mut candidate = candidate.write();
         if candidate.name.lowercase() == from_lower {
             candidate.name = CiString::new(to.to_owned());
         }
     }
+    rename_expression_index_column_refs(info, from, to);
+    rename_hidden_columns(info, from, to);
     Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go `getExpressionIndexOriginName`: `_V$_<index>_<n>` -> `<index>`.
+fn get_expression_index_origin_name(name: &str) -> &str {
+    let column_name = name.strip_prefix("_V$_").unwrap_or(name);
+    match column_name.rfind('_') {
+        Some(position) => &column_name[..position],
+        None => column_name,
+    }
+}
+
+/// Go `strings.Replace(s, from, to, 1)`.
+fn replace_first(text: &str, from: &str, to: &str) -> String {
+    text.replacen(from, to, 1)
+}
+
+/// Go `strings.Replace` on a `CIStr`'s original spelling (its lower-case
+/// form follows).
+fn rename_ci_first(name: &CiString, from: &str, to: &str) -> CiString {
+    CiString::new(replace_first(name.original(), from, to))
+}
+
+/// Go `renameExpressionIndexColumnRefs`.
+fn rename_expression_index_column_refs(info: &TableInfo, from: &str, to: &str) {
+    for index in info.indices.iter_deref() {
+        for part in index.read().columns.iter_deref() {
+            let mut part = part.write();
+            let hidden = info
+                .columns
+                .get(part.offset as usize)
+                .is_some_and(|column| column.read().hidden);
+            if hidden && get_expression_index_origin_name(part.name.original()) == from {
+                part.name = rename_ci_first(&part.name, from, to);
+            }
+        }
+    }
+}
+
+/// Go `renameHiddenColumns`.
+fn rename_hidden_columns(info: &TableInfo, from: &str, to: &str) {
+    for column in info.columns.iter_deref() {
+        let mut column = column.write();
+        if column.hidden && get_expression_index_origin_name(column.name.original()) == from {
+            column.name = rename_ci_first(&column.name, from, to);
+        }
+    }
 }
 
 /// Go `validateAlterIndexVisibility` and `setIndexVisibility` over an
@@ -6115,6 +6162,7 @@ pub enum PersistedDdlJobPlan {
 }
 
 pub mod add_index;
+pub mod create_table;
 pub mod drop_index;
 pub mod drop_object;
 pub mod truncate;
@@ -6173,7 +6221,9 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                     plan_persisted_create_schema_job_step(catalog, active)
                 }
                 ActionType::ACTION_CREATE_TABLE => {
-                    plan_persisted_create_table_job_step(catalog, active, start_ts)
+                    create_table::plan_persisted_create_table_job_step(
+                        snapshot, catalog, active, start_ts,
+                    )
                 }
                 ActionType::ACTION_CREATE_TABLES => {
                     plan_persisted_create_tables_job_step(catalog, active, start_ts)
@@ -6992,153 +7042,6 @@ fn plan_persisted_create_schema_job_step(
             placement_bundles: Vec::new(),
             placement_rollback_bundles: Vec::new(),
             affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
-            resource_group_update: None,
-        },
-        update_raw_args: true,
-        run_error: None,
-        reorg: None,
-    })
-}
-
-/// Plans one execution step of a persisted `ACTION_CREATE_TABLE` job.
-///
-/// Pinned Go `onCreateTable` fast path (`pkg/ddl/table.go`): the submitter
-/// packed the full `TableInfo` into the job's raw args and allocated
-/// `job.TableID`; the owner re-stamps the ID, refuses the job when the table
-/// already exists in the target schema (Go `checkTableNotExists` cancels),
-/// publishes the table `PUBLIC` in one meta write, bumps the schema version
-/// with a `CREATE TABLE` diff, and persists DONE. Synchronization and history
-/// belong to the shared worker lifecycle.
-fn plan_persisted_create_table_job_step(
-    catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
-    start_ts: u64,
-) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let ddl_job_id = active.job.id;
-
-    let args = tidb_model::get_create_table_args(&mut active.job)
-        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
-        .ok_or_else(|| DdlPlanError::Encode("CREATE TABLE job has nil args".to_owned()))?;
-    let submitted = args
-        .read()
-        .table_info
-        .get()
-        .ok_or_else(|| DdlPlanError::Encode("CREATE TABLE job has nil table_info".to_owned()))?
-        .read()
-        .clone();
-    let mut table_info = submitted;
-    // Go `onCreateTable`: the owner re-stamps the ID from the job.
-    table_info.id = active.job.table_id;
-
-    let database = catalog
-        .databases
-        .iter()
-        .find(|database| database.info.id == active.job.schema_id)
-        .ok_or_else(|| {
-            cancel_ddl_job(
-                active,
-                DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
-                        .generate(format!(
-                            "Unknown database '(Schema ID {})'",
-                            active.job.schema_id
-                        )),
-                ),
-            )
-        })?;
-    let name_taken = database
-        .tables
-        .iter()
-        .any(|table| table.name.lowercase() == table_info.name.lowercase());
-    let id_taken = database
-        .tables
-        .iter()
-        .any(|table| table.id == table_info.id);
-    if name_taken || id_taken {
-        return Err(cancel_ddl_job(
-            active,
-            DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrTableExists)
-                    .generate(format!(
-                        "Table '{}.{}' already exists",
-                        database.info.name.original(),
-                        table_info.name.original()
-                    )),
-            ),
-        ));
-    }
-
-    let schema_version = catalog.schema_version + 1;
-    let mut mutations = Vec::new();
-    let diff = {
-        table_info.state = SchemaState::PUBLIC;
-        table_info.update_ts = start_ts;
-        mutations.push(BufferMutation::set(
-            key::table_kv_key(database.info.id, table_info.id),
-            value::serialize_table_info(&table_info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        let diff = SchemaDiff {
-            version: schema_version,
-            action_type: active.job.type_,
-            schema_id: database.info.id,
-            table_id: table_info.id,
-            ..SchemaDiff::default()
-        };
-        mutations.push(BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?);
-        mutations.push(BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        active.job.last_schema_version = schema_version;
-        diff
-    };
-
-    active.job.finish_table_job(
-        JobState::DONE,
-        SchemaState::PUBLIC,
-        schema_version,
-        Some(GoShared::new(table_info.clone())),
-    );
-    // Go `createTable`'s `createTableAffinityGroupsInPD`, wrapped as
-    // "failed to create table affinity groups in PD".
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate {
-        create_error_context: Some(CREATE_TABLE_AFFINITY_ERROR),
-        ..crate::ddl_affinity::AffinityGroupUpdate::default()
-    };
-    affinity_groups.create_for(&table_info).map_err(|error| {
-        cancel_ddl_job(
-            active,
-            pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
-        )
-    })?;
-
-    Ok(PersistedDdlActionStep {
-        write: DdlWrite {
-            ddl_job_id,
-            mutations,
-            schema_version,
-            diff,
-            created_id: None,
-            backfill: Vec::new(),
-            exchange_partition_validation: None,
-            check_constraint_validation: None,
-            column_reorgs: Vec::new(),
-            foreign_key_checks: Vec::new(),
-            cache_table_check: None,
-            partition_reorg: None,
-            mdl_info_update: None,
-            label_rules: Vec::new(),
-            warnings: Vec::new(),
-            placement_bundles: Vec::new(),
-            placement_rollback_bundles: Vec::new(),
-            affinity_groups,
             resource_group_update: None,
         },
         update_raw_args: true,
@@ -10112,70 +10015,32 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if_not_exists,
             build,
         } => {
-            let Some(database) = find_database(&catalog, schema) else {
-                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            let mut info = match build_create_table_info(
+                snapshot,
+                &catalog,
+                schema,
+                table,
+                *if_not_exists,
+                build,
+                &mut warnings,
+            )? {
+                Ok(info) => info,
+                Err(plan) => return Ok(plan),
             };
-            let db_id = database.info.id;
-            // Go's create-table path publishes the TableInfo the builder
-            // produced; it does not call `TableInfo.Clone` on the way to
-            // `Mutator.CreateTableOrView`. A plain struct/header copy is all
-            // this immutable plan needs before stamping its two scalar
-            // transaction-owned fields. `clone_like_go()` would allocate an
-            // empty `Indices` slice even when the builder left it nil, turning
-            // Go's persisted `"index_info":null` into `[]`.
-            let mut info = build
-                .for_database(&database.info.charset, &database.info.collate)
-                .map_err(DdlPlanError::Admission)?;
-            // Go `checkTTLInfoValid`'s foreign-key half, which reads the
-            // infoschema the builder does not see.
-            if info.ttl_info.is_some()
-                && !crate::foreign_key_build::get_table_referred_foreign_keys(
-                    &catalog, schema, table,
-                )
-                .is_empty()
-            {
-                let error = tidb_executor::DriverError::TtlReferencedByForeignKey.to_mysql_error();
-                return Err(coded_refusal(error.code, error.message));
-            }
-            // Go `CreateTable`: the built table's `checkTableForeignKeysValid`
-            // (executor.go:1106) comes before `createTableWithInfoJob`'s
-            // existence check, which is followed by `checkTableInfoValidExtra`
-            // and, in the job, the owner's `checkTableForeignKeyValidInOwner` +
-            // `allocateFKIndexID` (create_table.go:87). This planner runs every
-            // stage against the one snapshot it publishes from.
-            // A new parent also needs validation against existing children.
-            let fk_check = build.context.foreign_key_checks();
-            crate::foreign_key_build::check_table_foreign_keys_valid(
-                &catalog, schema, &info, fk_check,
-            )
-            .map_err(DdlPlanError::Admission)?;
-            if let Some(existing) = find_table(database, table) {
-                if *if_not_exists {
-                    // Go `createTableWithInfoJob`: `ErrTableExists` as a note.
-                    return Ok(already_with_warnings(
-                        format!("table `{schema}`.`{}` already exists", existing.name.original()),
-                        vec![(
-                            DdlWarningLevel::Note,
-                            1050,
-                            format!("Table '{schema}.{}' already exists", existing.name.original()),
-                        )],
-                    ));
-                }
-                return Err(DdlPlanError::TableExists {
-                    schema: schema.clone(),
-                    table: table.clone(),
-                });
-            }
-            check_table_info_valid_extra(&info, &mut warnings)?;
+            let db_id = find_database(&catalog, schema)
+                .expect("build_create_table_info found the database")
+                .info
+                .id;
             crate::foreign_key_build::check_table_foreign_keys_valid_in_owner(
-                &catalog, schema, &mut info, fk_check,
+                &catalog,
+                schema,
+                &mut info,
+                build.context.foreign_key_checks(),
             )
             .map_err(DdlPlanError::Admission)?;
             // Go `assignIDsForTable` (`ddl/jobsubmit/submit.go`) draws
             // `1 + len(Definitions)` ids in ONE call: the table's own first,
             // then one physical table per partition in definition order.
-            // Taking them together is what makes a partitioned table's
-            // physical ids a contiguous ascending block after its own.
             let partition_count = info.partition.as_ref().map_or(0, |partition| {
                 partition.read().definitions.with_visible(<[_]>::len)
             }) as i64;
@@ -10191,120 +10056,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         .update(ordinal, |definition| definition.id = *id);
                 }
             }
-            // Go `CreateTableWithInfo` resolves a table's
-            // `PLACEMENT POLICY = name` against the policies in the
-            // infoschema and refuses an unknown one with
-            // `ErrPlacementPolicyNotExists` (8239). The reference records the
-            // policy's ID as well as its name, because placement bundles
-            // resolve by id -- a name-only reference would describe placement
-            // that never reaches the scheduler.
-            //
-            // This runs HERE rather than in the lowering step because the
-            // lookup needs the same snapshot the rest of the statement plans
-            // against; `CreateTableBuild` keeps the original statement, so
-            // the written name is still in reach.
-            let written_policy =
-                build
-                    .create
-                    .table_options
-                    .iter()
-                    .find_map(|option| match option {
-                        tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
-                        _ => None,
-                    });
-            if let Some(policy_name) = &written_policy {
-                // Go `checkAndNormalizePlacementPolicy`: `default` is no
-                // policy at all.
-                info.placement_policy_ref =
-                    check_and_normalize_placement_policy(snapshot, policy_name)?;
-            }
-            // Go `handleTablePlacement`: every partition that names a policy
-            // of its own resolves it BY id too (`default` clears it), or the
-            // bundles below cannot find the policy.
-            if let Some(partition) = info.partition.as_ref() {
-                let definitions = partition.read().definitions.snapshot();
-                for (index, definition) in definitions.iter().enumerate() {
-                    let Some(reference) = definition.placement_policy_ref.as_ref() else {
-                        continue;
-                    };
-                    let written = reference.read().name.original().to_owned();
-                    let resolved = check_and_normalize_placement_policy(snapshot, &written)?;
-                    partition.read().definitions.update(index, |definition| {
-                        definition.placement_policy_ref = resolved;
-                    });
-                }
-            }
-            // Go `BuildTableInfoWithStmt`: a non-temporary table that names no
-            // placement takes the schema's default. A written `default` is a
-            // reference there (cleared only afterwards), so it does not.
-            if written_policy.is_none()
-                && info.placement_policy_ref.is_none()
-                && info.temp_table_type == tidb_model::TempTableType::NONE
-            {
-                if let Some(reference) = find_database(&catalog, schema)
-                    .and_then(|database| database.info.placement_policy_ref.as_ref())
-                {
-                    info.placement_policy_ref =
-                        Some(tidb_model::GoShared::new(reference.read().clone()));
-                }
-            }
-            // Go builds the table's bundles once the ids are assigned and
-            // sends them before the schema version is published
-            // (`ddl/create_table.go:143`). `NewFullTableBundles` covers the
-            // table's own rules AND every partition that names a policy of
-            // its own.
-            if info.placement_policy_ref.is_some()
-                || info.partition.as_ref().is_some_and(|partition| {
-                    partition
-                        .read()
-                        .definitions
-                        .snapshot()
-                        .iter()
-                        .any(|definition| definition.placement_policy_ref.is_some())
-                })
-            {
-                let policies = load_policies(snapshot)?;
-                placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
-                    .map_err(|error| {
-                        DdlPlanError::Admission(DdlAdmissionError::with_code(
-                            GENERIC_ERROR_CODE,
-                            format!("building placement rules: {error}"),
-                        ))
-                    })?;
-            }
-            // Go `createTable`'s `createTableAffinityGroupsInPD`, after the
-            // placement bundles and wrapped as Go wraps it.
-            affinity_groups.create_error_context = Some(CREATE_TABLE_AFFINITY_ERROR);
-            affinity_groups
-                .create_for(&info)
-                .map_err(|error| pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
-            // Go `createTable` stamps the job transaction's own start timestamp.
-            info.update_ts = start_ts;
-            let encoded = value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(BufferMutation::set(
-                key::table_kv_key(db_id, table_id),
-                encoded,
-            )?);
-            // Go `handleAutoIncID` seeds the allocator when the table option
-            // asks for a first id above 1, and seeds it to `AutoIncID - 1`,
-            // because the counter holds the id last handed out: "if the option
-            // sets auto_increment to 10, the counter will be set to 9, so the
-            // next allocated ID will be 10". At or below 1 it writes nothing,
-            // and an absent key already reads as 0. Which key it is, is Go's
-            // `SepAutoInc` choice, made in one place.
-            if info.auto_inc_id > 1 {
-                writes.push(BufferMutation::set(
-                    crate::cluster_auto_id::auto_id_key_for(db_id, &info),
-                    value::encode_int_value(info.auto_inc_id - 1),
-                )?);
-            }
-            if info.auto_random_bits > 0 && info.auto_rand_id > 1 {
-                writes.push(BufferMutation::set(
-                    crate::cluster_auto_id::auto_random_id_key_for(db_id, &info),
-                    value::encode_int_value(info.auto_rand_id - 1),
-                )?);
-            }
+            apply_create_table(
+                snapshot,
+                db_id,
+                &mut info,
+                start_ts,
+                &mut writes,
+                &mut placement_bundles,
+                &mut affinity_groups,
+            )?;
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
@@ -14102,6 +13862,179 @@ fn append_history_ddl_job<S: MetaSnapshot>(
 /// done state Go's `Finish*Job` leaves, and the finished table or schema in
 /// `BinlogInfo`. A multi-schema change carries its sub-jobs.
 #[allow(clippy::too_many_arguments)]
+/// Go `executor.CreateTable` up to the job: the table built from the
+/// statement (`BuildTableInfoWithStmt`, with the schema's default placement
+/// and every written policy resolved by id), `checkTableForeignKeysValid`,
+/// the existence check (a Note under IF NOT EXISTS, answered as `Err(plan)`)
+/// and `checkTableInfoValidExtra`. Ids are not assigned yet.
+fn build_create_table_info<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    schema: &str,
+    table: &str,
+    if_not_exists: bool,
+    build: &CreateTableBuild,
+    warnings: &mut Vec<(DdlWarningLevel, u16, String)>,
+) -> Result<Result<TableInfo, DdlPlan>, DdlPlanError> {
+    let Some(database) = find_database(catalog, schema) else {
+        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+    };
+    // Go's create-table path publishes the TableInfo the builder produced;
+    // it does not call `TableInfo.Clone` on the way to
+    // `Mutator.CreateTableOrView`. `clone_like_go()` would allocate an empty
+    // `Indices` slice even when the builder left it nil, turning Go's
+    // persisted `"index_info":null` into `[]`.
+    let mut info = build
+        .for_database(&database.info.charset, &database.info.collate)
+        .map_err(DdlPlanError::Admission)?;
+    // Go `checkTTLInfoValid`'s foreign-key half, which reads the infoschema
+    // the builder does not see.
+    if info.ttl_info.is_some()
+        && !crate::foreign_key_build::get_table_referred_foreign_keys(catalog, schema, table)
+            .is_empty()
+    {
+        let error = tidb_executor::DriverError::TtlReferencedByForeignKey.to_mysql_error();
+        return Err(coded_refusal(error.code, error.message));
+    }
+    // Go `CreateTable`: the built table's `checkTableForeignKeysValid`
+    // (executor.go:1106) comes before `createTableWithInfoJob`'s existence
+    // check, which is followed by `checkTableInfoValidExtra`.
+    let fk_check = build.context.foreign_key_checks();
+    crate::foreign_key_build::check_table_foreign_keys_valid(catalog, schema, &info, fk_check)
+        .map_err(DdlPlanError::Admission)?;
+    if let Some(existing) = find_table(database, table) {
+        if if_not_exists {
+            // Go `createTableWithInfoJob`: `ErrTableExists` as a note.
+            return Ok(Err(already_with_warnings(
+                format!(
+                    "table `{schema}`.`{}` already exists",
+                    existing.name.original()
+                ),
+                vec![(
+                    DdlWarningLevel::Note,
+                    1050,
+                    format!(
+                        "Table '{schema}.{}' already exists",
+                        existing.name.original()
+                    ),
+                )],
+            )));
+        }
+        return Err(DdlPlanError::TableExists {
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+        });
+    }
+    check_table_info_valid_extra(&info, warnings)?;
+    // Go `CreateTableWithInfo` resolves a table's `PLACEMENT POLICY = name`
+    // against the policies in the infoschema and refuses an unknown one with
+    // `ErrPlacementPolicyNotExists` (8239). The reference records the
+    // policy's ID as well as its name, because placement bundles resolve by
+    // id.
+    let written_policy = build
+        .create
+        .table_options
+        .iter()
+        .find_map(|option| match option {
+            tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+            _ => None,
+        });
+    if let Some(policy_name) = &written_policy {
+        // Go `checkAndNormalizePlacementPolicy`: `default` is no policy.
+        info.placement_policy_ref = check_and_normalize_placement_policy(snapshot, policy_name)?;
+    }
+    // Go `handleTablePlacement`: every partition that names a policy of its
+    // own resolves it BY id too (`default` clears it).
+    if let Some(partition) = info.partition.as_ref() {
+        let definitions = partition.read().definitions.snapshot();
+        for (index, definition) in definitions.iter().enumerate() {
+            let Some(reference) = definition.placement_policy_ref.as_ref() else {
+                continue;
+            };
+            let written = reference.read().name.original().to_owned();
+            let resolved = check_and_normalize_placement_policy(snapshot, &written)?;
+            partition.read().definitions.update(index, |definition| {
+                definition.placement_policy_ref = resolved;
+            });
+        }
+    }
+    // Go `BuildTableInfoWithStmt`: a non-temporary table that names no
+    // placement takes the schema's default. A written `default` is a
+    // reference there (cleared only afterwards), so it does not.
+    if written_policy.is_none()
+        && info.placement_policy_ref.is_none()
+        && info.temp_table_type == tidb_model::TempTableType::NONE
+    {
+        if let Some(reference) = database.info.placement_policy_ref.as_ref() {
+            info.placement_policy_ref = Some(tidb_model::GoShared::new(reference.read().clone()));
+        }
+    }
+    Ok(Ok(info))
+}
+
+/// Go `createTable`'s publication once the ids are stamped: the placement
+/// bundles (`NewFullTableBundles`, sent before the schema version is
+/// published), the affinity groups, the table key at the job transaction's
+/// start timestamp and `handleAutoIncID`'s counter seeds.
+fn apply_create_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    db_id: i64,
+    info: &mut TableInfo,
+    start_ts: u64,
+    writes: &mut Vec<BufferMutation>,
+    placement_bundles: &mut Vec<tidb_placement::Bundle>,
+    affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
+) -> Result<(), DdlPlanError> {
+    if info.placement_policy_ref.is_some()
+        || info.partition.as_ref().is_some_and(|partition| {
+            partition
+                .read()
+                .definitions
+                .snapshot()
+                .iter()
+                .any(|definition| definition.placement_policy_ref.is_some())
+        })
+    {
+        let policies = load_policies(snapshot)?;
+        *placement_bundles =
+            tidb_placement::new_full_table_bundles(&policies, info).map_err(|error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("building placement rules: {error}"),
+                ))
+            })?;
+    }
+    // Go `createTable`'s `createTableAffinityGroupsInPD`, after the
+    // placement bundles and wrapped as Go wraps it.
+    affinity_groups.create_error_context = Some(CREATE_TABLE_AFFINITY_ERROR);
+    affinity_groups
+        .create_for(info)
+        .map_err(|error| pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
+    info.update_ts = start_ts;
+    let encoded = value::serialize_table_info(info)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    writes.push(BufferMutation::set(
+        key::table_kv_key(db_id, info.id),
+        encoded,
+    )?);
+    // Go `handleAutoIncID` seeds the allocator when the table option asks for
+    // a first id above 1, to `AutoIncID - 1` (the counter holds the id last
+    // handed out). Which key it is, is Go's `SepAutoInc` choice.
+    if info.auto_inc_id > 1 {
+        writes.push(BufferMutation::set(
+            crate::cluster_auto_id::auto_id_key_for(db_id, info),
+            value::encode_int_value(info.auto_inc_id - 1),
+        )?);
+    }
+    if info.auto_random_bits > 0 && info.auto_rand_id > 1 {
+        writes.push(BufferMutation::set(
+            crate::cluster_auto_id::auto_random_id_key_for(db_id, info),
+            value::encode_int_value(info.auto_rand_id - 1),
+        )?);
+    }
+    Ok(())
+}
+
 /// Go `onTruncateTable`'s metadata: the table under `new_table_id` (and its
 /// partitions under `new_partition_ids`), the old table key and allocators
 /// gone, the placement bundles, affinity groups and label rules re-keyed.

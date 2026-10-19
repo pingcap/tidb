@@ -80,7 +80,7 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
         snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec))))
+    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
 }
 
 /// Go `ErrTruncateIllegalForeignKey` with the child named.
