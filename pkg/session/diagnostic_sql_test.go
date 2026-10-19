@@ -52,6 +52,32 @@ func TestDiagnosticSQLAllowlist(t *testing.T) {
 		want bool
 	}{
 		{name: "select", sql: "explain select 1", want: true},
+		{name: "system information schema", sql: "select * from information_schema.tables", want: true},
+		{name: "system scalar subquery", sql: "select (select count(*) from mysql.user) from information_schema.tables", want: true},
+		{name: "system recursive cte", sql: "with recursive cte as (select user from mysql.user union all select user from cte) select * from cte", want: true},
+		{name: "cte without table", sql: "with cte as (select 1) select * from cte", want: false},
+		{name: "system exists", sql: "select * from mysql.user where exists (select * from information_schema.tables)", want: true},
+		{name: "user scalar subquery", sql: "select (select a from test.t) from mysql.user", want: false},
+		{name: "system subquery assignment", sql: "select (select @x := 1) from mysql.user", want: false},
+		{name: "system cte", sql: "with cte as (select * from mysql.user) select * from cte", want: true},
+		{name: "user cte", sql: "with cte as (select * from test.t) select * from cte", want: false},
+		{name: "cte base table shadow", sql: "with t as (select * from t) select * from t", want: false},
+		{name: "cte union scope", sql: "(with cte as (select user from mysql.user) select user from cte) union all select user from cte", want: false},
+		{name: "cte nested user", sql: "with cte as (select * from mysql.user) select * from (with cte as (select * from test.t) select * from cte) t", want: false},
+		{name: "system mysql", sql: "select * from mysql.user", want: true},
+		{name: "system performance schema", sql: "select * from performance_schema.setup_actors", want: true},
+		{name: "system metrics schema", sql: "select * from metrics_schema.tidb_query_duration", want: true},
+		{name: "plain select", sql: "select 1", want: false},
+		{name: "user table", sql: "select * from test.t", want: false},
+		{name: "mixed join", sql: "select * from information_schema.tables join test.t", want: false},
+		{name: "system lock", sql: "select * from mysql.user for update", want: false},
+		{name: "system assignment", sql: "select @x := 1 from mysql.user", want: false},
+		{name: "system outfile", sql: "select * from mysql.user into outfile '/tmp/diagnostic.out'", want: false},
+		{name: "system set var", sql: "select /*+ set_var(max_execution_time=1) */ * from mysql.user", want: false},
+		{name: "system function", sql: "select get_lock('x', 0) from mysql.user", want: false},
+		{name: "mixed union", sql: "select * from mysql.user union all select * from test.t", want: false},
+		{name: "system union", sql: "select user from mysql.user union all select user from mysql.user", want: true},
+		{name: "system nested user", sql: "select * from (select * from test.t) t join mysql.user", want: false},
 		{name: "union", sql: "explain select 1 union all select 2", want: true},
 		{name: "cte", sql: "explain with cte as (select 1 as a) select a from cte", want: true},
 		{name: "stored generated column", sql: "explain select stored_col from t where stored_col > 0", want: true},
@@ -101,7 +127,7 @@ func TestDiagnosticSQLAllowlist(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			stmt, err := p.ParseOneStmt(test.sql, "", "")
 			require.NoError(t, err)
-			require.Equal(t, test.want, isDiagnosticSQLAllowed(stmt))
+			require.Equal(t, test.want, isDiagnosticSQLAllowed(stmt, "test", nil))
 		})
 	}
 
@@ -119,6 +145,14 @@ func TestDiagnosticSQLExecutionGuard(t *testing.T) {
 	se := CreateSessionAndSetID(t, store)
 	t.Cleanup(se.Close)
 
+	for _, sql := range []string{
+		"create table test.diagnostic_user_table (a int)",
+		"create view mysql.diagnostic_user_view as select * from test.diagnostic_user_table",
+	} {
+		_, err := se.Execute(context.Background(), sql)
+		require.NoError(t, err)
+	}
+
 	t.Run("diagnostic mode", func(t *testing.T) {
 		restore := diagnosticmode.SetForTest(true)
 		t.Cleanup(restore)
@@ -133,16 +167,33 @@ func TestDiagnosticSQLExecutionGuard(t *testing.T) {
 			"show databases",
 			"show tables",
 			"show create table mysql.user",
+			"select count(*) from information_schema.tables",
+			"select count(*) from mysql.user",
+			"with cte as (select * from mysql.user) select count(*) from cte",
+			"select (select count(*) from mysql.user) from information_schema.tables limit 1",
+			"select count(*) from performance_schema.setup_actors",
+			"select t.table_name from information_schema.tables t join information_schema.columns c on t.table_name = c.table_name limit 1",
+			"use mysql",
+			"select count(*) from user",
+			"use test",
 		} {
 			resultSets, err = se.Execute(context.Background(), sql)
 			require.NoError(t, err, sql)
 			for _, resultSet := range resultSets {
+				_, err = GetRows4Test(context.Background(), se, resultSet)
+				require.NoError(t, err, sql)
 				require.NoError(t, resultSet.Close(), sql)
 			}
 		}
 
 		for _, sql := range []string{
 			"select 1",
+			"select * from test.t",
+			"select * from mysql.diagnostic_user_view",
+			"select * from mysql.user join test.t",
+			"select * from mysql.user for update",
+			"select @x := 1 from mysql.user",
+			"select * from mysql.user where exists (select * from test.t)",
 			"insert into t values (1)",
 			"begin",
 			"create table t (a int)",
