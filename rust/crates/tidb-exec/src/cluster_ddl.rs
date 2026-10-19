@@ -2434,40 +2434,18 @@ fn lower_alter_table_catalog(
             if *if_exists {
                 return Ok(None);
             }
-            let Some(auto_random) = column.options.iter().find_map(|option| match option {
-                tidb_ast::ColumnOption::AutoRandom(option) => Some(option),
-                _ => None,
-            }) else {
-                // No AUTO_RANDOM: the ordinary MODIFY. Its options are
-                // admitted by the session (Go `GetModifiableColumnJob`) and
-                // built by the plan.
-                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-                return Ok(Some(DdlStatement::ModifyColumn {
-                    schema,
-                    table,
-                    column: Box::new(column.clone()),
-                    position: position.clone(),
-                    context: DdlStatementContext(context.clone()),
-                    rename_from: None,
-                    modify_column_type: None,
-                }));
-            };
-            if column.options.iter().any(|option| {
-                !matches!(
-                    option,
-                    tidb_ast::ColumnOption::AutoRandom(_) | tidb_ast::ColumnOption::NotNull
-                )
-            }) {
-                return Ok(None);
-            }
+            // Go `GetModifiableColumnJob` handles an AUTO_RANDOM change too
+            // (`checkAutoRandom`, then the owner's
+            // `checkAndApplyAutoRandomBits`).
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-            Ok(Some(DdlStatement::AlterAutoRandomBits {
+            Ok(Some(DdlStatement::ModifyColumn {
                 schema,
                 table,
-                column: column.name.clone(),
-                shard_bits: auto_random.shard_bits.unwrap_or(5),
-                range_bits: auto_random.range_bits.unwrap_or(64),
-                unsigned: column.ty.unsigned,
+                column: Box::new(column.clone()),
+                position: position.clone(),
+                context: DdlStatementContext(context.clone()),
+                rename_from: None,
+                modify_column_type: None,
             }))
         }
         tidb_ast::AlterTableAction::ChangeColumn {

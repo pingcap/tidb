@@ -20381,6 +20381,115 @@ fn partition_changes_run_as_persisted_jobs_like_go() {
     );
 }
 
+/// MODIFY COLUMN with AUTO_RANDOM runs as Go's persisted
+/// `ActionModifyColumn` job (`checkAutoRandom` at admission, the owner's
+/// `checkAndApplyAutoRandomBits`): an AUTO_INCREMENT clustered key converts
+/// and continues past the row IDs handed out, the shard bits may grow, and
+/// every other change is Go's refusal (captured from Go on this branch).
+#[test]
+fn auto_random_changes_run_as_modify_column_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1956)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    rows(&mut session, "set @@tidb_allow_remove_auto_inc = 1");
+    let version = |session: &mut ClusterServerSession| -> i64 {
+        displayed(rows(session, "admin show ddl"))[0][0]
+            .parse()
+            .unwrap()
+    };
+    let job = |session: &mut ClusterServerSession| -> String {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|")
+    };
+    let refused = |session: &mut ClusterServerSession, sql: &str| -> (u16, String) {
+        let error = session.execute_write(sql).unwrap_err();
+        (error.code, error.message)
+    };
+    rows(
+        &mut session,
+        "create table t (a bigint auto_increment primary key, b int)",
+    );
+    rows(&mut session, "insert into t (b) values (1),(2)");
+    for sql in [
+        "alter table t modify a bigint auto_random(5)",
+        "alter table t modify a bigint auto_random(6)",
+        "alter table t modify a bigint auto_random(6) comment 'x'",
+    ] {
+        let before = version(&mut session);
+        rows(&mut session, sql);
+        assert_eq!(version(&mut session) - before, 1, "{sql}");
+        assert_eq!(
+            job(&mut session),
+            "test|t|modify column|public|synced",
+            "{sql}"
+        );
+    }
+    let shown = displayed(rows(&mut session, "show create table t"))
+        .remove(0)
+        .remove(1);
+    assert!(
+        shown.contains("`a` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(6) */ COMMENT 'x'"),
+        "{shown}"
+    );
+    // The converted column continues past the AUTO_INCREMENT IDs.
+    rows(&mut session, "insert into t (b) values (3)");
+    let ids = displayed(rows(
+        &mut session,
+        "select a & 0x7FFFFFFFFFF from t order by b",
+    ));
+    let third: i64 = ids[2][0].parse().unwrap();
+    assert_eq!((ids[0][0].as_str(), ids[1][0].as_str()), ("1", "2"));
+    assert!(third > 2, "{ids:?}");
+    let invalid = |reason: &str| (8216, format!("Invalid auto random: {reason}"));
+    for (sql, expected) in [
+        (
+            "alter table t modify a bigint auto_random(4)",
+            invalid("decreasing auto_random shard bits is not supported"),
+        ),
+        (
+            "alter table t modify a bigint auto_random(16)",
+            invalid("max allowed auto_random shard bits is 15, but got 16 on column `a`"),
+        ),
+        (
+            "alter table t modify a bigint auto_random(6, 32)",
+            invalid("alter the range bits of auto_random column is not supported"),
+        ),
+        (
+            "alter table t modify a int auto_random(6)",
+            (
+                8200,
+                "Unsupported modify column: this column has primary key flag".to_owned(),
+            ),
+        ),
+        (
+            "alter table t modify a bigint auto_random(6) default 3",
+            invalid("auto_random is incompatible with default"),
+        ),
+        (
+            "alter table t modify a bigint",
+            invalid("adding/dropping/modifying auto_random is not supported"),
+        ),
+    ] {
+        assert_eq!(refused(&mut session, sql), expected, "{sql}");
+    }
+    rows(&mut session, "create table u (a bigint primary key, b int)");
+    rows(
+        &mut session,
+        "create table v (a bigint auto_increment primary key nonclustered, b int)",
+    );
+    for sql in [
+        "alter table u modify a bigint auto_random(5)",
+        "alter table v modify a bigint auto_random(5)",
+    ] {
+        assert_eq!(
+            refused(&mut session, sql),
+            invalid("auto_random can only be converted from auto_increment clustered primary key"),
+            "{sql}"
+        );
+    }
+}
+
 /// REORGANIZE PARTITION, ADD PARTITION on a HASH table, COALESCE
 /// PARTITION, ALTER TABLE ... PARTITION BY and REMOVE PARTITIONING run as
 /// Go's persisted reorganization jobs: six schema versions (none ->

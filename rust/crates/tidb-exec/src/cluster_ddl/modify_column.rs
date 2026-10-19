@@ -162,12 +162,14 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                     ),
                 ));
             }
+            let new_shard_bits = check_auto_random(stored, &old, &changed, column)?;
             let args = tidb_model::ModifyColumnArgs {
                 column: Some(GoShared::new(changed)),
                 old_column_name: CiString::new(old_name),
                 position: Some(GoShared::new(tidb_ast::JobColumnPosition::from_statement(
                     position,
                 ))),
+                new_shard_bits,
                 ..tidb_model::ModifyColumnArgs::default()
             };
             (schema, stored, schema_id, args)
@@ -236,6 +238,198 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
         }),
         Vec::new(),
     )))
+}
+
+/// Go `isClusteredPKColumn`.
+fn is_clustered_pk_column(column: &tidb_model::ColumnInfo, table: &TableInfo) -> bool {
+    if table.pk_is_handle {
+        return column.field_type.has_flag(FieldTypeFlags::PRI_KEY);
+    }
+    if table.is_common_handle {
+        return table.indices.iter_deref().any(|index| {
+            let index = index.read();
+            index.primary
+                && index
+                    .columns
+                    .iter_deref()
+                    .any(|part| part.read().offset as i64 == column.offset as i64)
+        });
+    }
+    false
+}
+
+/// Go `extractAutoRandomBitsFromColDef` with `AutoRandomShardBitsNormalize`
+/// and `AutoRandomRangeBitsNormalize`: (0, 0) without AUTO_RANDOM.
+fn extract_auto_random_bits_from_col_def(
+    column: &tidb_ast::ColumnDef,
+) -> Result<(u64, u64), DdlPlanError> {
+    let Some(option) = column.options.iter().find_map(|option| match option {
+        tidb_ast::ColumnOption::AutoRandom(option) => Some(option),
+        _ => None,
+    }) else {
+        return Ok((0, 0));
+    };
+    let shard_bits = option.shard_bits.unwrap_or(5);
+    if shard_bits == 0 {
+        return Err(DdlPlanError::InvalidAutoRandom(
+            "the value of auto_random should be positive".to_owned(),
+        ));
+    }
+    if shard_bits > 15 {
+        return Err(DdlPlanError::InvalidAutoRandom(format!(
+            "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
+            column.name
+        )));
+    }
+    let range_bits = option.range_bits.unwrap_or(64);
+    if !(32..=64).contains(&range_bits) {
+        return Err(DdlPlanError::InvalidAutoRandom(format!(
+            "auto_random range bits must be between 32 and 64, but got {range_bits}"
+        )));
+    }
+    Ok((shard_bits, range_bits))
+}
+
+/// Go `checkAutoRandom`: the shard bits a MODIFY gives an AUTO_RANDOM
+/// column (0 when it is not one), which may only grow, and from AUTO_INCREMENT
+/// on a clustered primary key only.
+fn check_auto_random(
+    table: &TableInfo,
+    old: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+    column: &tidb_ast::ColumnDef,
+) -> Result<u64, DdlPlanError> {
+    let (old_shard_bits, old_range_bits) = if is_clustered_pk_column(old, table) {
+        (table.auto_random_bits, table.auto_random_range_bits)
+    } else {
+        (0, 0)
+    };
+    let (new_shard_bits, new_range_bits) = extract_auto_random_bits_from_col_def(column)?;
+    let invalid = |reason: String| DdlPlanError::InvalidAutoRandom(reason);
+    if old_shard_bits < new_shard_bits {
+        if old_shard_bits == 0 {
+            let converting = old.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT)
+                && table.pk_is_handle
+                && old.field_type.has_flag(FieldTypeFlags::PRI_KEY);
+            if !converting {
+                return Err(invalid(
+                    "auto_random can only be converted from auto_increment clustered primary key"
+                        .to_owned(),
+                ));
+            }
+        }
+    } else if old_shard_bits > new_shard_bits {
+        if new_shard_bits == 0 {
+            return Err(invalid(
+                "adding/dropping/modifying auto_random is not supported".to_owned(),
+            ));
+        }
+        return Err(invalid(
+            "decreasing auto_random shard bits is not supported".to_owned(),
+        ));
+    }
+    if old_shard_bits > 0 || new_shard_bits > 0 {
+        if old.field_type.code() != new.field_type.code() {
+            return Err(invalid(
+                "modifying the auto_random column type is not supported".to_owned(),
+            ));
+        }
+        if old.field_type.code() != FieldTypeCode::LongLong {
+            return Err(invalid(format!(
+                "auto_random option must be defined on `bigint` column, but not on `{}` column",
+                tidb_datatype::type_str(old.field_type.code())
+            )));
+        }
+        let has = |wanted: fn(&tidb_ast::ColumnOption) -> bool| column.options.iter().any(wanted);
+        if has(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement)) {
+            return Err(invalid(
+                "auto_random is incompatible with auto_increment".to_owned(),
+            ));
+        }
+        if has(|option| matches!(option, tidb_ast::ColumnOption::Default(_))) {
+            return Err(invalid(
+                "auto_random is incompatible with default".to_owned(),
+            ));
+        }
+    }
+    // Go `rangeBitsIsChanged`: an unset width is the default 64.
+    let normalized = |bits: u64| if bits == 0 { 64 } else { bits };
+    if normalized(old_range_bits) != normalized(new_range_bits) {
+        return Err(invalid(
+            "alter the range bits of auto_random column is not supported".to_owned(),
+        ));
+    }
+    Ok(new_shard_bits)
+}
+
+/// Go `checkAndApplyAutoRandomBits` (`checkNewAutoRandomBits`,
+/// `applyNewAutoRandomBits`): the counter the new layout continues from is
+/// bumped and must still fit the incremental bits, then the table takes the
+/// new shard bits, and a column converted from AUTO_INCREMENT has its
+/// AUTO_RANDOM counter rebased past the row IDs handed out.
+fn check_and_apply_auto_random_bits<S: MetaSnapshot>(
+    snapshot: &mut S,
+    database_id: i64,
+    info: &mut TableInfo,
+    old: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+    new_shard_bits: u64,
+    counter_writes: &mut Vec<BufferMutation>,
+) -> Result<(), DdlPlanError> {
+    if new_shard_bits == 0 {
+        return Ok(());
+    }
+    // Go `autoid.NewShardIDFormat` over the table's (possibly unset) range
+    // bits, in unsigned arithmetic.
+    let range_bits = info.auto_random_range_bits;
+    let incremental_bits = if new.field_type.is_unsigned() {
+        range_bits.wrapping_sub(new_shard_bits)
+    } else {
+        range_bits.wrapping_sub(new_shard_bits).wrapping_sub(1)
+    };
+    let converted = old.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT);
+    let counter_key = if !converted {
+        key::auto_random_table_id_kv_key(database_id, info.id)
+    } else if info.sep_auto_inc() {
+        key::auto_increment_id_kv_key(database_id, info.id)
+    } else {
+        key::auto_table_id_kv_key(database_id, info.id)
+    };
+    // `idAcc.Inc(1)` first, against concurrent DML, then `Get`.
+    let current = read_auto_id(snapshot, &counter_key)?.wrapping_add(1);
+    counter_writes.push(BufferMutation::set(
+        counter_key.clone(),
+        value::encode_int_value(current),
+    )?);
+    let used_bits = u64::from(64 - (current as u64).leading_zeros());
+    if used_bits > incremental_bits {
+        let overflow = used_bits - incremental_bits;
+        return Err(DdlPlanError::InvalidAutoRandom(format!(
+            "max allowed auto_random shard bits is {}, but got {} on column `{}`",
+            new_shard_bits.wrapping_sub(overflow),
+            new_shard_bits,
+            old.name.original()
+        )));
+    }
+    info.auto_random_bits = new_shard_bits;
+    if !converted {
+        return Ok(());
+    }
+    // The AUTO_RANDOM allocator's `Rebase(nextAutoIncID)`.
+    let row_id_key = key::auto_table_id_kv_key(database_id, info.id);
+    let next = if row_id_key == counter_key {
+        current
+    } else {
+        read_auto_id(snapshot, &row_id_key)?
+    };
+    let random_key = key::auto_random_table_id_kv_key(database_id, info.id);
+    if next > read_auto_id(snapshot, &random_key)? {
+        counter_writes.push(BufferMutation::set(
+            random_key,
+            value::encode_int_value(next),
+        )?);
+    }
+    Ok(())
 }
 
 /// Go `ErrColumnNotExists` (1054).
@@ -465,6 +659,28 @@ pub(super) fn plan_persisted_modify_column_job_step<S: MetaSnapshot>(
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    // The AUTO_RANDOM counters the step bumped commit with it.
+    let mut counter_writes = Vec::new();
+    let mut step = plan_modify_column_step(
+        snapshot,
+        catalog,
+        active,
+        start_ts,
+        outcome,
+        &mut counter_writes,
+    )?;
+    step.write.mutations.extend(counter_writes);
+    Ok(step)
+}
+
+fn plan_modify_column_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    outcome: Option<&ReorgOutcome>,
+    counter_writes: &mut Vec<BufferMutation>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_modify_column_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {
@@ -535,13 +751,18 @@ pub(super) fn plan_persisted_modify_column_job_step<S: MetaSnapshot>(
         return Ok(step);
     }
 
-    // Go `checkAndApplyAutoRandomBits`: only a shard-bits change has work.
-    if args.new_shard_bits != 0 {
-        return Err(cancel_ddl_job(
-            active,
-            unsupported_modify_column("changing the auto_random shard bits"),
-        ));
-    }
+    // Go `checkAndApplyAutoRandomBits`, for every kind of change.
+    let database_id = active.job.schema_id;
+    check_and_apply_auto_random_bits(
+        snapshot,
+        database_id,
+        &mut target.info,
+        &old,
+        &new,
+        args.new_shard_bits,
+        counter_writes,
+    )
+    .map_err(|error| cancel_ddl_job(active, error))?;
     check_modify_types_owner(&target.info, &old, &new)
         .map_err(|error| cancel_ddl_job(active, error))?;
     check_column_referenced_by_partial_condition(&target.info, new.name.original())
