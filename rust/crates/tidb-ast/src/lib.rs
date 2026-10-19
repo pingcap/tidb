@@ -161,7 +161,7 @@ pub use resource_group::{
 pub use select::*;
 pub use sequence::{
     AlterInstanceStmt, AlterRangeStmt, AlterSequenceStmt, CreateSequenceStmt, DropSequenceStmt,
-    SequenceOption,
+    JobSequenceOption, SequenceOption,
 };
 pub use session::{
     DefaultRoleSelection, RoleSpec, SessionStmt, SetDefaultRoleStmt, SetPasswordStmt,

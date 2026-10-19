@@ -1532,6 +1532,30 @@ pub fn submit_persisted_job_with_retry<
                     min_job_id,
                 )
             }
+            DdlStatement::ModifySchemaCharsetAndCollate { .. }
+            | DdlStatement::ModifySchemaDefaultPlacement { .. } => {
+                crate::cluster_ddl::alter_schema::prepare_alter_schema_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::CreateView { .. }
+            | DdlStatement::CreateSequence { .. }
+            | DdlStatement::CreateTableLike { .. }
+            | DdlStatement::AlterSequence { .. } => {
+                crate::cluster_ddl::create_object::prepare_create_object_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
             DdlStatement::CreateTable { .. } => {
                 crate::cluster_ddl::create_table::prepare_create_table_job_submission(
                     &mut snapshot,

@@ -6222,7 +6222,9 @@ pub enum PersistedDdlJobPlan {
 
 pub mod add_column;
 pub mod add_index;
+pub mod alter_schema;
 pub mod alter_table;
+pub mod create_object;
 pub mod create_schema;
 pub mod create_table;
 pub mod drop_column;
@@ -6261,6 +6263,11 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_MODIFY_COLUMN
             | ActionType::ACTION_MULTI_SCHEMA_CHANGE
             | ActionType::ACTION_ADD_FOREIGN_KEY
+            | ActionType::ACTION_CREATE_VIEW
+            | ActionType::ACTION_CREATE_SEQUENCE
+            | ActionType::ACTION_ALTER_SEQUENCE
+            | ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
+            | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
@@ -6313,6 +6320,19 @@ fn plan_persisted_action<S: MetaSnapshot>(
         }
         ActionType::ACTION_CREATE_TABLES => {
             plan_persisted_create_tables_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_CREATE_VIEW => {
+            create_object::plan_persisted_create_view_job_step(snapshot, catalog, active, start_ts)
+        }
+        ActionType::ACTION_CREATE_SEQUENCE => {
+            create_object::plan_persisted_create_sequence_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_ALTER_SEQUENCE => {
+            create_object::plan_persisted_alter_sequence_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
+        | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
+            alter_schema::plan_persisted_alter_schema_job_step(snapshot, catalog, active)
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
             rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
@@ -7973,7 +7993,15 @@ fn plan_cancel_persisted_ddl_job(
     let cancel = match active.job.type_ {
         ActionType::ACTION_CREATE_SCHEMA
         | ActionType::ACTION_CREATE_TABLE
-        | ActionType::ACTION_CREATE_TABLES => true,
+        | ActionType::ACTION_CREATE_TABLES
+        | ActionType::ACTION_CREATE_VIEW
+        | ActionType::ACTION_CREATE_SEQUENCE
+        | ActionType::ACTION_ALTER_SEQUENCE => true,
+        // `cancelOnlyNotHandledJob(job, model.StateNone)`.
+        ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
+        | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
+            active.job.schema_state == SchemaState::NONE
+        }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
             active.job.schema_state == SchemaState::NONE
         }

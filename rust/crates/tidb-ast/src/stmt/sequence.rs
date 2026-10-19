@@ -136,6 +136,60 @@ pub enum SequenceOption {
     RestartWith(i64),
 }
 
+/// Go `ast.SequenceOption` as a DDL job persists it (`AlterSequenceArgs`):
+/// the option type's ordinal (`SequenceOptionType`) and its value.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct JobSequenceOption {
+    /// Go `SequenceOptionType`.
+    pub tp: i64,
+    /// Go `IntValue`, zero for an option without one.
+    pub int_value: i64,
+}
+
+impl JobSequenceOption {
+    /// The persisted form of `option`.
+    #[must_use]
+    pub fn from_option(option: &SequenceOption) -> Self {
+        let (tp, int_value) = match option {
+            SequenceOption::IncrementBy(value) => (1, *value),
+            SequenceOption::StartWith(value) => (2, *value),
+            SequenceOption::NoMinValue => (3, 0),
+            SequenceOption::MinValue(value) => (4, *value),
+            SequenceOption::NoMaxValue => (5, 0),
+            SequenceOption::MaxValue(value) => (6, *value),
+            SequenceOption::NoCache => (7, 0),
+            SequenceOption::Cache(value) => (8, *value),
+            SequenceOption::NoCycle => (9, 0),
+            SequenceOption::Cycle => (10, 0),
+            SequenceOption::Restart => (11, 0),
+            SequenceOption::RestartWith(value) => (12, *value),
+        };
+        Self { tp, int_value }
+    }
+
+    /// The option this persists, `None` for Go's `SequenceOptionNone` or an
+    /// ordinal no option has.
+    #[must_use]
+    pub fn to_option(&self) -> Option<SequenceOption> {
+        Some(match self.tp {
+            1 => SequenceOption::IncrementBy(self.int_value),
+            2 => SequenceOption::StartWith(self.int_value),
+            3 => SequenceOption::NoMinValue,
+            4 => SequenceOption::MinValue(self.int_value),
+            5 => SequenceOption::NoMaxValue,
+            6 => SequenceOption::MaxValue(self.int_value),
+            7 => SequenceOption::NoCache,
+            8 => SequenceOption::Cache(self.int_value),
+            9 => SequenceOption::NoCycle,
+            10 => SequenceOption::Cycle,
+            11 => SequenceOption::Restart,
+            12 => SequenceOption::RestartWith(self.int_value),
+            _ => return None,
+        })
+    }
+}
+
 impl SequenceOption {
     fn restore_into(&self, out: &mut String) {
         match self {

@@ -2558,6 +2558,12 @@ where
                     | DdlStatement::RenameColumn { .. }
                     | DdlStatement::MultiSchemaChange { .. }
                     | DdlStatement::AddForeignKey { .. }
+                    | DdlStatement::CreateView { .. }
+                    | DdlStatement::CreateSequence { .. }
+                    | DdlStatement::CreateTableLike { .. }
+                    | DdlStatement::AlterSequence { .. }
+                    | DdlStatement::ModifySchemaCharsetAndCollate { .. }
+                    | DdlStatement::ModifySchemaDefaultPlacement { .. }
             )
             || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {

@@ -877,6 +877,59 @@ pub struct Ident {
     pub name: CiString,
 }
 
+/// Go `AlterSequenceArgs`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AlterSequenceArgs {
+    /// The sequence. Go's struct-valued `ast.Ident` is never omitted.
+    #[serde(rename = "ident", default)]
+    pub ident: Ident,
+    /// The options as written.
+    #[serde(rename = "seq_options", default, skip_serializing_if = "Vec::is_empty")]
+    pub seq_options: Vec<tidb_ast::JobSequenceOption>,
+}
+
+impl JobArgs for AlterSequenceArgs {
+    job_args_identity_methods!(AlterSequence);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *AlterSequenceArgs receiver").read();
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(ast_type("Ident", GoTypeKind::Struct), value.ident.clone()),
+            typed_value_any(
+                ast_type("SequenceOption", GoTypeKind::Struct)
+                    .pointer_to()
+                    .slice_of(),
+                value.seq_options.clone(),
+            ),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let ident = GoField::<Ident>::default();
+        let seq_options = GoField::<Vec<tidb_ast::JobSequenceOption>>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&ident, ast_type("Ident", GoTypeKind::Struct))?;
+        decoder.decode(
+            &seq_options,
+            ast_type("SequenceOption", GoTypeKind::Struct)
+                .pointer_to()
+                .slice_of(),
+        )?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            ident: ident.get(),
+            seq_options: seq_options.get(),
+        })))
+    }
+}
+
+/// Go `GetAlterSequenceArgs`.
+pub fn get_alter_sequence_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterSequenceArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
 /// Go `DropTableArgs`: the drop-table arguments, and what a finished drop
 /// table, view or sequence job records for the delete range.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

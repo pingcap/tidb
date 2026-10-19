@@ -20108,6 +20108,113 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
     assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
 }
 
+/// CREATE VIEW, CREATE / ALTER SEQUENCE, CREATE TABLE LIKE, the
+/// AUTO_RANDOM rebase, TTL and ALTER DATABASE run as Go's persisted jobs:
+/// Go queues a job even when the owner then finds nothing to change (a
+/// repeated placement policy, an ALTER SEQUENCE to the same options), and
+/// the AUTO_RANDOM rebase warns like the AUTO_INCREMENT one. Captured from
+/// the Go oracle.
+#[test]
+fn objects_and_options_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1946)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let job = |session: &mut _| -> (i64, String) {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        (
+            row[0].parse().unwrap(),
+            [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|"),
+        )
+    };
+    for (sql, expected) in [
+        (
+            "create view v1 as select 1",
+            "test|v1|create view|public|synced",
+        ),
+        (
+            "create or replace view v1 as select 2",
+            "test|v1|create view|public|synced",
+        ),
+        (
+            "create sequence s1 start 10",
+            "test|s1|create sequence|public|synced",
+        ),
+        (
+            "create table t1 (a bigint primary key auto_random, b int)",
+            "test|t1|create table|public|synced",
+        ),
+        (
+            "create table t2 like t1",
+            "test|t2|create table|public|synced",
+        ),
+        (
+            "create table t3 (a int, created timestamp)",
+            "test|t3|create table|public|synced",
+        ),
+        (
+            "alter table t3 ttl = created + interval 1 day",
+            "test|t3|alter table ttl|public|synced",
+        ),
+        (
+            "alter table t3 remove ttl",
+            "test|t3|alter table no_ttl|public|synced",
+        ),
+    ] {
+        rows(&mut session, sql);
+        assert_eq!(job(&mut session).1, expected, "{sql}");
+    }
+    assert_eq!(displayed(rows(&mut session, "select * from v1")), [["2"]]);
+    assert_eq!(
+        displayed(rows(&mut session, "select nextval(s1)")),
+        [["10"]]
+    );
+    rows(&mut session, "alter sequence s1 restart with 100");
+    assert_eq!(job(&mut session).1, "test|s1|alter sequence|public|synced");
+    assert_eq!(
+        displayed(rows(&mut session, "select nextval(s1)")),
+        [["100"]]
+    );
+    // The owner finds nothing to change: done, no new schema state.
+    rows(&mut session, "alter sequence s1 increment by 1");
+    assert_eq!(job(&mut session).1, "test|s1|alter sequence|none|synced");
+
+    rows(&mut session, "insert into t1 (b) values (1)");
+    rows(&mut session, "alter table t1 auto_random_base = 1");
+    let warnings = displayed(rows(&mut session, "show warnings"));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(
+        (warnings[0][0].as_str(), warnings[0][1].as_str()),
+        ("Warning", "1105")
+    );
+    assert!(
+        warnings[0][2].starts_with("Can't reset AUTO_INCREMENT to 1 without FORCE option, using "),
+        "{warnings:?}"
+    );
+    assert_eq!(
+        job(&mut session).1,
+        "test|t1|rebase auto_random ID|public|synced"
+    );
+
+    rows(&mut session, "create database dbx");
+    rows(
+        &mut session,
+        "alter database dbx charset utf8mb4 collate utf8mb4_general_ci",
+    );
+    assert_eq!(
+        job(&mut session).1,
+        "dbx||modify schema charset and collate|public|synced"
+    );
+    rows(&mut session, "create placement policy p1 followers=2");
+    rows(&mut session, "alter database dbx placement policy p1");
+    let (first, kind) = job(&mut session);
+    assert_eq!(kind, "dbx||modify schema default placement|public|synced");
+    rows(&mut session, "alter database dbx placement policy p1");
+    let (second, kind) = job(&mut session);
+    assert_eq!(kind, "dbx||modify schema default placement|public|synced");
+    assert!(second > first, "Go queues the repeated change too");
+}
+
 /// A multi-schema ALTER runs as Go's persisted `ActionMultiSchemaChange`
 /// job: ADMIN SHOW DDL JOBS lists every sub-job under it (with the comments
 /// column one row down, as Go writes it), a sub-job that fails rolls every

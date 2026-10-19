@@ -21,6 +21,7 @@
 
 use super::add_index::{action_step, table_step, AddIndexSubmission};
 use super::*;
+use tidb_model::JobArgs;
 
 /// Whether this node submits `statement` as one of these jobs.
 pub fn is_alter_table_statement(statement: &DdlStatement) -> bool {
@@ -35,11 +36,14 @@ pub fn is_alter_table_statement(statement: &DdlStatement) -> bool {
             | DdlStatement::ShardRowId { .. }
             | DdlStatement::ModifyAutoIdCache { .. }
             | DdlStatement::RebaseAutoIncrementId { .. }
+            | DdlStatement::RebaseAutoRandom { .. }
+            | DdlStatement::AlterTtl { .. }
+            | DdlStatement::RemoveTtl { .. }
     )
 }
 
 /// The actions [`plan_persisted_alter_table_job_step`] runs.
-pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 9] = [
+pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 12] = [
     ActionType::ACTION_MODIFY_TABLE_COMMENT,
     ActionType::ACTION_ALTER_INDEX_VISIBILITY,
     ActionType::ACTION_RENAME_INDEX,
@@ -49,6 +53,9 @@ pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 9] = [
     ActionType::ACTION_SHARD_ROW_ID,
     ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE,
     ActionType::ACTION_REBASE_AUTO_ID,
+    ActionType::ACTION_REBASE_AUTO_RANDOM_BASE,
+    ActionType::ACTION_ALTER_TTLINFO,
+    ActionType::ACTION_ALTER_TTLREMOVE,
 ];
 
 fn already_satisfied(detail: String) -> Option<AddIndexSubmission> {
@@ -318,8 +325,13 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let (schema_id, stored) = locate_table(catalog, schema, table)?;
             let mut new_base = *new_base;
             if !*force {
-                let adjusted =
-                    adjust_new_base_to_next_global_id(snapshot, schema_id, stored, new_base)?;
+                let adjusted = adjust_new_base_to_next_global_id(
+                    snapshot,
+                    AutoIdKind::Increment,
+                    schema_id,
+                    stored,
+                    new_base,
+                )?;
                 if adjusted != new_base {
                     warnings.push((
                         DdlWarningLevel::Warning,
@@ -337,6 +349,126 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     new_base: GoField::new(new_base),
                     force: GoField::new(*force),
                 }))),
+            )
+        }
+        // Go `executor.RebaseAutoID` for the auto-random allocator.
+        DdlStatement::RebaseAutoRandom {
+            schema,
+            table,
+            next,
+            force,
+        } => {
+            let (schema_id, stored) = locate_table(catalog, schema, table)?;
+            if stored.auto_random_bits == 0 || stored.get_pk_col_info().is_none() {
+                return Err(DdlPlanError::InvalidAutoRandom(
+                    "alter auto_random_base of a non auto_random table".to_owned(),
+                ));
+            }
+            let unsigned = stored.is_auto_random_bit_col_unsigned();
+            let range_bits = if stored.auto_random_range_bits == 0 {
+                64
+            } else {
+                stored.auto_random_range_bits
+            };
+            let incremental_bits = range_bits - stored.auto_random_bits - u64::from(!unsigned);
+            let maximum = (1_u64 << incremental_bits) - 1;
+            let requested = *next as u64;
+            if *next < 0 || requested & maximum != requested {
+                return Err(DdlPlanError::InvalidAutoRandom(format!(
+                    "alter auto_random_base to {next} overflows the incremental bits, max allowed base is {maximum}"
+                )));
+            }
+            let mut new_base = *next;
+            if !*force {
+                let adjusted = adjust_new_base_to_next_global_id(
+                    snapshot,
+                    AutoIdKind::Random,
+                    schema_id,
+                    stored,
+                    new_base,
+                )?;
+                if adjusted != new_base {
+                    warnings.push((
+                        DdlWarningLevel::Warning,
+                        tidb_error::mysql::errcode::ErrUnknown,
+                        cant_reset_auto_increment(new_base, adjusted),
+                    ));
+                }
+                new_base = adjusted;
+            }
+            (
+                ActionType::ACTION_REBASE_AUTO_RANDOM_BASE,
+                schema,
+                table,
+                JobArgsValue::RebaseAutoId(Some(GoShared::new(tidb_model::RebaseAutoIDArgs {
+                    new_base: GoField::new(new_base),
+                    force: GoField::new(*force),
+                }))),
+            )
+        }
+        // Go `executor.AlterTableTTLInfoOrEnable`.
+        DdlStatement::AlterTtl {
+            schema,
+            table,
+            ttl_info,
+            enable,
+            job_interval,
+        } => {
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            match ttl_info {
+                Some(ttl) => {
+                    let mut candidate = stored.clone_like_go();
+                    candidate.ttl_info = Some(GoShared::new((**ttl).clone()));
+                    let referred = !crate::foreign_key_build::get_table_referred_foreign_keys(
+                        catalog, schema, table,
+                    )
+                    .is_empty();
+                    crate::table_info_build::check_ttl_info_valid(&candidate, referred).map_err(
+                        |error| {
+                            let error = error.to_mysql_error();
+                            coded_refusal(error.code, error.message)
+                        },
+                    )?;
+                }
+                None if stored.ttl_info.is_none() => {
+                    let option = if enable.is_some() {
+                        "TTL_ENABLE"
+                    } else {
+                        "TTL_JOB_INTERVAL"
+                    };
+                    let error =
+                        tidb_executor::DriverError::SetTtlOptionForNonTtlTable(option.to_owned())
+                            .to_mysql_error();
+                    return Err(coded_refusal(error.code, error.message));
+                }
+                None => {}
+            }
+            (
+                ActionType::ACTION_ALTER_TTLINFO,
+                schema,
+                table,
+                JobArgsValue::AlterTtlInfo(Some(GoShared::new(tidb_model::AlterTTLInfoArgs {
+                    ttl_info: ttl_info.as_ref().map(|ttl| GoShared::new((**ttl).clone())),
+                    ttl_enable: *enable,
+                    ttl_cron_job_schedule: job_interval.clone(),
+                }))),
+            )
+        }
+        // Go `executor.AlterTableRemoveTTL`: no job for a table without TTL.
+        DdlStatement::RemoveTtl { schema, table } => {
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            if stored.ttl_info.is_none() {
+                return Ok(already_satisfied(format!(
+                    "`{schema}`.`{table}` has no TTL"
+                )));
+            }
+            (
+                ActionType::ACTION_ALTER_TTLREMOVE,
+                schema,
+                table,
+                tidb_model::EmptyArgs::into_job_args_value(Some(GoShared::new(
+                    tidb_model::EmptyArgs::default(),
+                ))),
             )
         }
         _ => unreachable!("checked by is_alter_table_statement"),
@@ -367,13 +499,42 @@ fn cant_reset_auto_increment(requested: i64, adjusted: i64) -> String {
     )
 }
 
+/// Go's `autoid.AllocatorType` for the counters a rebase moves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AutoIdKind {
+    /// `AutoIncrementType`.
+    Increment,
+    /// `AutoRandomType`.
+    Random,
+}
+
+impl AutoIdKind {
+    fn counter_key(self, db_id: i64, info: &TableInfo) -> Vec<u8> {
+        match self {
+            Self::Increment => crate::cluster_auto_id::auto_id_key_for(db_id, info),
+            Self::Random => key::auto_random_table_id_kv_key(db_id, info.id),
+        }
+    }
+
+    fn unsigned(self, info: &TableInfo) -> bool {
+        match self {
+            Self::Increment => info.is_auto_inc_col_unsigned(),
+            Self::Random => info.is_auto_random_bit_col_unsigned(),
+        }
+    }
+}
+
 /// The table's auto-increment allocator when the auto-ID service owns it
 /// (`AUTO_ID_CACHE 1`); otherwise the counter lives in the meta keys.
 fn auto_increment_service<S: MetaSnapshot>(
     snapshot: &S,
+    kind: AutoIdKind,
     db_id: i64,
     info: &TableInfo,
 ) -> Option<crate::cluster_auto_id::AutoIdServiceAllocator<crate::auto_id_client::AutoIdClient>> {
+    if kind != AutoIdKind::Increment {
+        return None;
+    }
     let client = snapshot.auto_id_client().filter(|_| info.sep_auto_inc())?;
     Some(crate::cluster_auto_id::AutoIdServiceAllocator::new(
         client.clone(),
@@ -388,21 +549,22 @@ fn auto_increment_service<S: MetaSnapshot>(
     ))
 }
 
-/// The id the auto-increment counter last handed out (an absent key reads
-/// as 0, Go's `GetInt64`).
+/// The id the counter last handed out (an absent key reads as 0, Go's
+/// `GetInt64`).
 fn auto_increment_counter<S: MetaSnapshot>(
     snapshot: &mut S,
+    kind: AutoIdKind,
     db_id: i64,
     info: &TableInfo,
 ) -> Result<i64, DdlPlanError> {
-    if let Some(service) = auto_increment_service(snapshot, db_id, info) {
+    if let Some(service) = auto_increment_service(snapshot, kind, db_id, info) {
         let call = tidb_executor::kv_table::AutoIdCall::background();
         return service
             .alloc(&call, 0, 1, 1)
             .map(|(_, end)| end)
             .map_err(|error| DdlPlanError::Encode(error.to_string()));
     }
-    let key = crate::cluster_auto_id::auto_id_key_for(db_id, info);
+    let key = kind.counter_key(db_id, info);
     match snapshot.get(&key)? {
         Some(value) => {
             value::parse_int_value(&value).map_err(|error| DdlPlanError::Encode(error.to_string()))
@@ -415,11 +577,12 @@ fn auto_increment_counter<S: MetaSnapshot>(
 /// would hand out (`NextGlobalAutoID`), compared unsigned.
 fn adjust_new_base_to_next_global_id<S: MetaSnapshot>(
     snapshot: &mut S,
+    kind: AutoIdKind,
     db_id: i64,
     info: &TableInfo,
     new_base: i64,
 ) -> Result<i64, DdlPlanError> {
-    let next_global = (auto_increment_counter(snapshot, db_id, info)? as u64).wrapping_add(1);
+    let next_global = (auto_increment_counter(snapshot, kind, db_id, info)? as u64).wrapping_add(1);
     Ok(u64::max(new_base as u64, next_global) as i64)
 }
 
@@ -427,6 +590,7 @@ fn adjust_new_base_to_next_global_id<S: MetaSnapshot>(
 /// `alloc.ForceRebase(newBase-1)` (sets exactly).
 fn rebase_auto_increment_counter<S: MetaSnapshot>(
     snapshot: &mut S,
+    kind: AutoIdKind,
     db_id: i64,
     info: &TableInfo,
     new_base: i64,
@@ -437,7 +601,7 @@ fn rebase_auto_increment_counter<S: MetaSnapshot>(
         return Err(DdlPlanError::AutoIdReadFailed);
     }
     let new_end = new_base.wrapping_sub(1);
-    if let Some(service) = auto_increment_service(snapshot, db_id, info) {
+    if let Some(service) = auto_increment_service(snapshot, kind, db_id, info) {
         let call = if force {
             tidb_executor::kv_table::AutoIdCall::with_timeout(std::time::Duration::from_secs(30))
         } else {
@@ -447,15 +611,15 @@ fn rebase_auto_increment_counter<S: MetaSnapshot>(
             .rebase(&call, new_end, force)
             .map_err(|error| DdlPlanError::Encode(error.to_string()));
     }
-    let current = auto_increment_counter(snapshot, db_id, info)?;
-    let grows = if info.is_auto_inc_col_unsigned() {
+    let current = auto_increment_counter(snapshot, kind, db_id, info)?;
+    let grows = if kind.unsigned(info) {
         (new_end as u64) > (current as u64)
     } else {
         new_end > current
     };
     if force || grows {
         mutations.push(BufferMutation::set(
-            crate::cluster_auto_id::auto_id_key_for(db_id, info),
+            kind.counter_key(db_id, info),
             value::encode_int_value(new_end),
         )?);
     }
@@ -545,7 +709,12 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             info.comment = args.read().comment.get().to_string();
         }
         // Go `onRebaseAutoID`.
-        ActionType::ACTION_REBASE_AUTO_ID => {
+        ActionType::ACTION_REBASE_AUTO_ID | ActionType::ACTION_REBASE_AUTO_RANDOM_BASE => {
+            let kind = if active.job.type_ == ActionType::ACTION_REBASE_AUTO_ID {
+                AutoIdKind::Increment
+            } else {
+                AutoIdKind::Random
+            };
             let args = tidb_model::get_rebase_auto_id_args(&mut active.job)
                 .map_err(|error| args_error(active, error))?
                 .ok_or_else(|| nil_args(active))?;
@@ -558,7 +727,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             }
             if !force {
                 let adjusted =
-                    adjust_new_base_to_next_global_id(snapshot, schema_id, &info, new_base)?;
+                    adjust_new_base_to_next_global_id(snapshot, kind, schema_id, &info, new_base)?;
                 if adjusted != new_base {
                     active.job.warning =
                         Some(GoShared::new(tidb_error::terror::TerrorError::synthesize(
@@ -571,9 +740,13 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 }
                 new_base = adjusted;
             }
-            info.auto_inc_id = new_base;
+            match kind {
+                AutoIdKind::Increment => info.auto_inc_id = new_base,
+                AutoIdKind::Random => info.auto_rand_id = new_base,
+            }
             rebase_auto_increment_counter(
                 snapshot,
+                kind,
                 schema_id,
                 &info,
                 new_base,
@@ -582,6 +755,53 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             )
             .map_err(|error| cancel_ddl_job(active, error))?;
         }
+        // Go `onTTLInfoChange`.
+        ActionType::ACTION_ALTER_TTLINFO => {
+            let args = tidb_model::get_alter_ttl_info_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let (ttl_info, ttl_enable, schedule) = {
+                let args = args.read();
+                (
+                    args.ttl_info.clone(),
+                    args.ttl_enable,
+                    args.ttl_cron_job_schedule.clone(),
+                )
+            };
+            let set_ttl_option = |option: &str| {
+                let error =
+                    tidb_executor::DriverError::SetTtlOptionForNonTtlTable(option.to_owned())
+                        .to_mysql_error();
+                coded_refusal(error.code, error.message)
+            };
+            if let Some(ttl_info) = ttl_info {
+                let mut ttl = ttl_info.read().clone();
+                if let Some(old) = &info.ttl_info {
+                    let old = old.read();
+                    if ttl_enable.is_none() {
+                        ttl.enable = old.enable;
+                    }
+                    if schedule.is_none() {
+                        ttl.job_interval = old.job_interval.clone();
+                    }
+                }
+                info.ttl_info = Some(GoShared::new(ttl));
+            }
+            if let Some(enable) = ttl_enable {
+                let Some(ttl) = &info.ttl_info else {
+                    return Err(set_ttl_option("TTL_ENABLE"));
+                };
+                ttl.write().enable = enable;
+            }
+            if let Some(schedule) = schedule {
+                let Some(ttl) = &info.ttl_info else {
+                    return Err(set_ttl_option("TTL_JOB_INTERVAL"));
+                };
+                ttl.write().job_interval = schedule;
+            }
+        }
+        // Go `onTTLInfoRemove`.
+        ActionType::ACTION_ALTER_TTLREMOVE => info.ttl_info = None,
         ActionType::ACTION_ALTER_INDEX_VISIBILITY => {
             let args = tidb_model::get_alter_index_visibility_args(&mut active.job)
                 .map_err(|error| args_error(active, error))?

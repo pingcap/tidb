@@ -109,7 +109,9 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
 }
 
 /// Go `getSharedInvolvingSchemaInfo`.
-fn shared_involving_schema_info(info: &TableInfo) -> Vec<tidb_model::InvolvingSchemaInfo> {
+pub(super) fn shared_involving_schema_info(
+    info: &TableInfo,
+) -> Vec<tidb_model::InvolvingSchemaInfo> {
     let mut involving: Vec<_> = info
         .foreign_keys
         .iter_deref()

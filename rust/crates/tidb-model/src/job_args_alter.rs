@@ -1015,6 +1015,82 @@ pub fn get_alter_index_visibility_args(
     get_or_decode_args(job)
 }
 
+/// Go `AlterTTLInfoArgs`: at least one of the three is set.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct AlterTTLInfoArgs {
+    /// The new TTL definition.
+    #[serde(rename = "ttl_info", default, skip_serializing_if = "Option::is_none")]
+    pub ttl_info: Option<GoShared<crate::table::TTLInfo>>,
+    /// `TTL_ENABLE`.
+    #[serde(
+        rename = "ttl_enable",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ttl_enable: Option<bool>,
+    /// `TTL_JOB_INTERVAL`.
+    #[serde(
+        rename = "ttl_cron_job_schedule",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ttl_cron_job_schedule: Option<String>,
+}
+
+impl JobArgs for AlterTTLInfoArgs {
+    job_args_identity_methods!(AlterTtlInfo);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *AlterTTLInfoArgs receiver").read();
+        GoSharedSlice::from_vec(vec![
+            typed_pointer_any(
+                model_type("TTLInfo", GoTypeKind::Struct),
+                value.ttl_info.clone(),
+            ),
+            typed_value_any(
+                builtin_type("bool", GoTypeKind::Bool).pointer_to(),
+                value.ttl_enable,
+            ),
+            typed_value_any(
+                builtin_type("string", GoTypeKind::String).pointer_to(),
+                value.ttl_cron_job_schedule.clone(),
+            ),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let ttl_info = GoField::<Option<GoShared<crate::table::TTLInfo>>>::default();
+        let ttl_enable = GoField::<Option<bool>>::default();
+        let schedule = GoField::<Option<String>>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &ttl_info,
+            model_type("TTLInfo", GoTypeKind::Struct).pointer_to(),
+        )?;
+        decoder.decode(
+            &ttl_enable,
+            builtin_type("bool", GoTypeKind::Bool).pointer_to(),
+        )?;
+        decoder.decode(
+            &schedule,
+            builtin_type("string", GoTypeKind::String).pointer_to(),
+        )?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            ttl_info: ttl_info.get(),
+            ttl_enable: ttl_enable.get(),
+            ttl_cron_job_schedule: schedule.get(),
+        })))
+    }
+}
+
+/// Go `GetAlterTTLInfoArgs`.
+pub fn get_alter_ttl_info_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterTTLInfoArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
 /// Go `AddForeignKeyArgs`.
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub struct AddForeignKeyArgs {
