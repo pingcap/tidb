@@ -315,6 +315,10 @@ pub(crate) fn ddl_job_rows(job: &Job, in_show_stmt: bool) -> Vec<Vec<Datum>> {
     )];
     let mut last_values = Vec::new();
     if job.type_ == ActionType::ACTION_MULTI_SCHEMA_CHANGE {
+        let (use_dxf, use_cloud) = job.reorg_meta.as_ref().map_or((false, false), |meta| {
+            let meta = meta.read();
+            (meta.is_dist_reorg, meta.use_cloud_storage)
+        });
         if let Some(info) = &job.multi_schema_info {
             for sub_job in info.read().sub_jobs.iter_deref() {
                 let sub_job = sub_job.read();
@@ -325,13 +329,104 @@ pub(crate) fn ddl_job_rows(job: &Job, in_show_stmt: bool) -> Vec<Vec<Datum>> {
                     sub_job.real_start_ts,
                     sub_job.state,
                 ));
-                last_values.push(last_column(String::new()));
+                last_values.push(last_column(show_comments_from_subjob(
+                    sub_job.reorg_type,
+                    use_dxf,
+                    use_cloud,
+                )));
             }
         }
     }
-    last_values.push(last_column(String::new()));
+    last_values.push(last_column(show_comments_from_job(job)));
     for (row, last) in rows.iter_mut().zip(last_values) {
         row.push(last);
     }
     rows
+}
+
+/// Go `showCommentsFromJob`: the job's reorganization labels.
+fn show_comments_from_job(job: &Job) -> String {
+    use tidb_model::reorg::analyze_state;
+    use tidb_model::ReorgType;
+    let Some(meta) = job.reorg_meta.as_ref() else {
+        return String::new();
+    };
+    let meta = meta.read();
+    let mut labels: Vec<String> = Vec::new();
+    match meta.analyze_state {
+        analyze_state::RUNNING => labels.push("analyzing".to_owned()),
+        analyze_state::FAILED => labels.push("analyze_failed".to_owned()),
+        analyze_state::TIMEOUT => labels.push("analyze_timeout".to_owned()),
+        _ => {}
+    }
+    let is_adding_index = job.type_ == ActionType::ACTION_ADD_INDEX
+        || job.type_ == ActionType::ACTION_ADD_PRIMARY_KEY;
+    if is_adding_index && tidb_config::kerneltype::is_next_gen() {
+        // The parameters are determined automatically in next-gen.
+        return labels.join(", ");
+    }
+    if is_adding_index {
+        match meta.reorg_type {
+            ReorgType::TXN => labels.push(ReorgType::TXN.to_string()),
+            ReorgType::INGEST => {
+                labels.push(ReorgType::INGEST.to_string());
+                if meta.is_dist_reorg {
+                    labels.push("DXF".to_owned());
+                }
+                if meta.use_cloud_storage {
+                    labels.push("cloud".to_owned());
+                }
+            }
+            ReorgType::TXN_MERGE => labels.push(ReorgType::TXN_MERGE.to_string()),
+            _ => {}
+        }
+    }
+    if job.may_need_reorg() {
+        use tidb_vardef::defaults::{
+            DEF_TIDB_DDL_REORG_BATCH_SIZE, DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED,
+            DEF_TIDB_DDL_REORG_WORKER_COUNT,
+        };
+        let defaults = tidb_model::DDLReorgProcessDefaults::new(
+            || DEF_TIDB_DDL_REORG_WORKER_COUNT,
+            || DEF_TIDB_DDL_REORG_BATCH_SIZE,
+        );
+        let concurrency = meta.get_concurrency(defaults);
+        let batch_size = meta.get_batch_size(defaults);
+        let max_write_speed = meta.get_max_write_speed();
+        if concurrency != DEF_TIDB_DDL_REORG_WORKER_COUNT {
+            labels.push(format!("thread={concurrency}"));
+        }
+        if batch_size != DEF_TIDB_DDL_REORG_BATCH_SIZE {
+            labels.push(format!("batch_size={batch_size}"));
+        }
+        if max_write_speed != DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED {
+            labels.push(format!("max_write_speed={max_write_speed}"));
+        }
+        if !meta.target_scope.is_empty() {
+            labels.push(format!("service_scope={}", meta.target_scope));
+        }
+        if meta.max_node_count != 0 {
+            labels.push(format!("max_node_count={}", meta.max_node_count));
+        }
+    }
+    labels.join(", ")
+}
+
+/// Go `showCommentsFromSubjob`.
+fn show_comments_from_subjob(
+    reorg_type: tidb_model::ReorgType,
+    use_dxf: bool,
+    use_cloud: bool,
+) -> String {
+    if tidb_config::kerneltype::is_next_gen() || reorg_type == tidb_model::ReorgType::NONE {
+        return String::new();
+    }
+    let mut labels = vec![reorg_type.to_string()];
+    if use_dxf {
+        labels.push("DXF".to_owned());
+    }
+    if use_dxf && use_cloud {
+        labels.push("cloud".to_owned());
+    }
+    labels.join(", ")
 }

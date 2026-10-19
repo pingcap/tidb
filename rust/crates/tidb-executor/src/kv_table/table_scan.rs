@@ -63,7 +63,7 @@ impl KvTable {
     /// context at cursor-open time. The row codec is asked for only the kept
     /// columns' ids, so an unreferenced column is never decoded; `None` keeps
     /// the whole schema.
-    fn row_decoder_projected(
+    pub(in crate::kv_table) fn row_decoder_projected(
         &self,
         keep: Option<&[usize]>,
         context: &RowDecodeContext,

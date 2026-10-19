@@ -630,13 +630,78 @@ impl Session {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(0)
         };
-        self.statement_context(false)
+        let context = self
+            .statement_context(false)
             .with_foreign_key_checks(self.foreign_key_checks())
             .with_clustered_index_def_mode(self.clustered_index_mode())
             .with_shard_row_id_defaults(
                 uint_var(tidb_vardef::tidb_vars::TIDB_SHARD_ROW_ID_BITS),
                 uint_var(tidb_vardef::tidb_vars::TIDB_PRE_SPLIT_REGIONS),
-            )
+            );
+        let reorg_vars = self.ddl_reorg_vars(&context);
+        context.with_ddl_reorg_vars(reorg_vars)
+    }
+
+    /// The values Go `NewDDLReorgMeta` / `initJobReorgMetaFromVariables`
+    /// read off the session for a reorganizing job.
+    fn ddl_reorg_vars(&self, context: &tidb_executor::StmtContext) -> tidb_executor::DdlReorgVars {
+        use tidb_vardef::tidb_vars;
+        let defaults = tidb_executor::DdlReorgVars::default();
+        let int_var = |name: &str, default: i64| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(default)
+        };
+        let bool_var = |name: &str, default: bool| {
+            self.vars.get_system(name).map_or(default, |value| {
+                tidb_vardef::option_values::tidb_opt_on(&value)
+            })
+        };
+        // Go `ddlutil.GetTimeZone`: a loadable zone name with offset 0, else
+        // "UTC" with the zone's current offset.
+        let (time_zone_name, time_zone_offset) = match context.session_zone() {
+            tidb_datatype::SessionTimeZone::Named(zone) => (zone.name().to_owned(), 0),
+            tidb_datatype::SessionTimeZone::Local => ("Local".to_owned(), 0),
+            tidb_datatype::SessionTimeZone::Fixed { name, offset_secs } => {
+                if name.parse::<chrono_tz::Tz>().is_ok() {
+                    (name, 0)
+                } else {
+                    ("UTC".to_owned(), i64::from(offset_secs))
+                }
+            }
+        };
+        tidb_executor::DdlReorgVars {
+            worker_count: int_var(
+                tidb_vars::TIDB_DDL_REORG_WORKER_COUNT,
+                defaults.worker_count,
+            ),
+            batch_size: int_var(tidb_vars::TIDB_DDL_REORG_BATCH_SIZE, defaults.batch_size),
+            max_write_speed: int_var(tidb_vars::TIDB_DDL_REORG_MAX_WRITE_SPEED, 0),
+            max_dist_task_nodes: int_var(
+                tidb_vars::TIDB_MAX_DIST_TASK_NODES,
+                defaults.max_dist_task_nodes,
+            ),
+            enable_dist_task: bool_var(tidb_vars::TIDB_ENABLE_DIST_TASK, defaults.enable_dist_task),
+            enable_fast_reorg: tidb_vardef::ENABLE_FAST_REORG
+                .load(std::sync::atomic::Ordering::SeqCst),
+            target_scope: self
+                .vars
+                .get_system(tidb_vars::TIDB_SERVICE_SCOPE)
+                .unwrap_or_default(),
+            resource_group_name: self.current_resource_group().to_owned(),
+            enable_ddl_analyze: self
+                .vars
+                .get_system(tidb_vars::TIDB_ENABLE_DDL_ANALYZE)
+                .unwrap_or_else(|_| defaults.enable_ddl_analyze.clone()),
+            analyze_version: self
+                .vars
+                .get_system(tidb_vars::TIDB_ANALYZE_VERSION)
+                .unwrap_or_else(|_| defaults.analyze_version.clone()),
+            time_zone_name,
+            time_zone_offset,
+        }
     }
 
     /// Shares evaluation policy and warnings with server-owned ANALYZE sampling.

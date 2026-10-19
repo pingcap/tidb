@@ -37,6 +37,55 @@ use tidb_util::spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// The session values Go reads when it builds a reorganizing job's
+/// `ReorgMeta` (`NewDDLReorgMeta`, `initJobReorgMetaFromVariables`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DdlReorgVars {
+    /// `tidb_ddl_reorg_worker_cnt`.
+    pub worker_count: i64,
+    /// `tidb_ddl_reorg_batch_size`.
+    pub batch_size: i64,
+    /// `tidb_ddl_reorg_max_write_speed`, in bytes per second.
+    pub max_write_speed: i64,
+    /// `tidb_max_dist_task_nodes` (-1 means automatic).
+    pub max_dist_task_nodes: i64,
+    /// `tidb_enable_dist_task`.
+    pub enable_dist_task: bool,
+    /// `tidb_ddl_enable_fast_reorg`.
+    pub enable_fast_reorg: bool,
+    /// `tidb_service_scope` (Go `dxfhandle.GetTargetScope`).
+    pub target_scope: String,
+    /// The statement's resource group.
+    pub resource_group_name: String,
+    /// `tidb_stats_update_during_ddl`, as the job's session variable.
+    pub enable_ddl_analyze: String,
+    /// `tidb_analyze_version`, as the job's session variable.
+    pub analyze_version: String,
+    /// Go `ddlutil.GetTimeZone`: the session zone's name and offset.
+    pub time_zone_name: String,
+    /// See [`Self::time_zone_name`].
+    pub time_zone_offset: i64,
+}
+
+impl Default for DdlReorgVars {
+    fn default() -> Self {
+        Self {
+            worker_count: tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
+            batch_size: tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
+            max_write_speed: 0,
+            max_dist_task_nodes: tidb_vardef::defaults::DEF_TIDB_MAX_DIST_TASK_NODES,
+            enable_dist_task: true,
+            enable_fast_reorg: tidb_vardef::defaults::DEF_TIDB_ENABLE_FAST_REORG,
+            target_scope: String::new(),
+            resource_group_name: String::new(),
+            enable_ddl_analyze: "OFF".to_owned(),
+            analyze_version: "2".to_owned(),
+            time_zone_name: "UTC".to_owned(),
+            time_zone_offset: 0,
+        }
+    }
+}
+
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
 /// `InDeleteStmt`, `InSelectStmt`, `InLoadDataStmt`).
@@ -1097,6 +1146,7 @@ pub struct StmtContextData {
     ddl_session_alias: String,
     /// Go `TraceInfo.TraceID`, captured when the DDL job is submitted.
     ddl_trace_id: Vec<u8>,
+    ddl_reorg_vars: DdlReorgVars,
     /// Where this statement's DDL submits its jobs (Go `doDDLJob2`), for the
     /// session to finish into history; `None` for a statement whose jobs no
     /// history records (an internal or test context).
@@ -2518,6 +2568,7 @@ impl StmtContext {
             ddl_reorg_priority: 1,
             ddl_session_alias: String::new(),
             ddl_trace_id: Vec::new(),
+            ddl_reorg_vars: DdlReorgVars::default(),
             ddl_job_sink: None,
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
@@ -2991,6 +3042,20 @@ impl StmtContext {
     #[must_use]
     pub fn ddl_trace_id(&self) -> &[u8] {
         &self.ddl_trace_id
+    }
+
+    /// The session settings Go `initJobReorgMetaFromVariables` copies into a
+    /// reorganizing job's `ReorgMeta`.
+    #[must_use]
+    pub fn ddl_reorg_vars(&self) -> &DdlReorgVars {
+        &self.ddl_reorg_vars
+    }
+
+    /// Captures [`Self::ddl_reorg_vars`].
+    #[must_use]
+    pub fn with_ddl_reorg_vars(mut self, vars: DdlReorgVars) -> Self {
+        self.ddl_reorg_vars = vars;
+        self
     }
 
     /// Whether subtraction must use a signed result domain.

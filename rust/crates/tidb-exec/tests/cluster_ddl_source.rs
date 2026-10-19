@@ -63,6 +63,7 @@ fn plan_worker_step(
         PersistedDdlJobPlan::Step(step) => Ok(step),
         PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
         PersistedDdlJobPlan::SchemaSync { .. } => panic!("a previous MDL barrier is still pending"),
+        PersistedDdlJobPlan::Reorg(_) => panic!("a reorganization runs outside the worker step"),
     }
 }
 
@@ -7398,6 +7399,7 @@ fn seed_step(
         PersistedDdlJobPlan::Step(step) => Ok(step),
         PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
         PersistedDdlJobPlan::SchemaSync { .. } => panic!("seed step must acknowledge previous MDL"),
+        PersistedDdlJobPlan::Reorg(_) => panic!("a reorganization runs outside the worker step"),
     }
 }
 

@@ -65,6 +65,7 @@ pub mod ddl_history_table;
 pub mod ddl_job_scheduler;
 pub mod ddl_job_submit;
 pub mod ddl_job_table;
+pub mod ddl_reorg_table;
 pub mod ddl_systable;
 mod deadlock_recording;
 pub use deadlock_recording::configure_deadlock_history;

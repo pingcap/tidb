@@ -56,6 +56,8 @@ use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
 
+mod add_index_reorg;
+
 /// What undoes a delivered label step: the rules its IDs held before it.
 struct LabelDeliveryReceipt {
     manager: std::sync::Arc<dyn tidb_executor::label_manager::LabelRuleManager>,
@@ -752,6 +754,69 @@ pub trait IndexBackfiller {
             message: "this path cannot move a table's rows between partitions".to_owned(),
         })
     }
+
+    /// One unit of ADD INDEX's transactional reorganization through a batch
+    /// transaction's snapshot and buffer (Go's backfill workers). The caller
+    /// commits the buffer, with the batch's row locks, in that transaction.
+    fn reorg_add_index(
+        &self,
+        _reorg: &crate::cluster_ddl::add_index::AddIndexReorg,
+        _work: AddIndexReorgWork<'_>,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
+    ) -> Result<AddIndexReorgAnswer, LockSqlError> {
+        Err(LockSqlError {
+            code: 1105,
+            state: *b"HY000",
+            message: "this path cannot reorganize an index".to_owned(),
+        })
+    }
+
+    /// The node's live row-ID allocators, for the `mysql.tidb_ddl_reorg` row
+    /// Go's `initDDLReorgHandle` inserts. `None` reserves inside the
+    /// transaction instead.
+    fn reorg_row_ids(&self) -> Option<Arc<dyn crate::table_from_meta::TableAutoIds>> {
+        None
+    }
+}
+
+/// See [`IndexBackfiller::reorg_add_index`].
+pub enum AddIndexReorgWork<'a> {
+    /// Go `getTableRange` for one physical table.
+    TableRange {
+        /// The physical table.
+        physical_id: i64,
+    },
+    /// Go `addIndexTxnWorker.BackfillData` for every index being added, over
+    /// the rows in `[start, end)`.
+    Backfill {
+        /// The physical table.
+        physical_id: i64,
+        /// The batch's first key.
+        start: &'a [u8],
+        /// The range's end.
+        end: &'a [u8],
+    },
+    /// Go `mergeIndexWorker.BackfillData` over one index's temporary
+    /// entries in `[start, end)`.
+    Merge {
+        /// The index.
+        index_id: i64,
+        /// The physical table.
+        physical_id: i64,
+        /// The batch's first key.
+        start: &'a [u8],
+        /// The range's end.
+        end: &'a [u8],
+    },
+}
+
+/// See [`IndexBackfiller::reorg_add_index`].
+pub enum AddIndexReorgAnswer {
+    /// The record range, `None` for an empty physical table.
+    Range(Option<(Vec<u8>, Vec<u8>)>),
+    /// What a batch did.
+    Batch(tidb_executor::kv_table::ReorgBatch),
 }
 
 /// The default for a backfiller that cannot read a table's stored bytes.
@@ -825,7 +890,7 @@ pub trait DdlSchemaSync {
     fn clean_job_versions(&self, ddl_job_id: i64) -> Result<(), String>;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum DdlPhase<'statement> {
     /// A direct change, and what Go's submitter copies from the issuing
     /// session into its job.
@@ -914,6 +979,8 @@ enum DdlPhaseOutcome {
     },
     AlreadySatisfied(ClusterDdlReport),
     Committed(CommittedDdlPhase),
+    /// The job's next step needs a reorganization run first.
+    Reorg(Box<crate::cluster_ddl::add_index::AddIndexReorg>),
 }
 
 /// Publishes one catalog change together with the index entries it owes.
@@ -999,7 +1066,9 @@ pub fn commit_cluster_ddl_with_backfill<
         }
     };
     match outcome? {
-        DdlPhaseOutcome::SchemaSync { .. } | DdlPhaseOutcome::Paused => {
+        DdlPhaseOutcome::SchemaSync { .. }
+        | DdlPhaseOutcome::Paused
+        | DdlPhaseOutcome::Reorg(_) => {
             unreachable!("direct DDL has no persisted job")
         }
         DdlPhaseOutcome::AlreadySatisfied(report) => Ok(report),
@@ -1069,7 +1138,7 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
             DdlPhase::Persisted {
                 ddl_job_id,
                 check_owner,
-                schema_state,
+                schema_state: schema_state.clone(),
             },
             timeout,
             notifier,
@@ -1081,6 +1150,18 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
         )?;
         match outcome {
             DdlPhaseOutcome::Paused => return Ok(PersistedDdlJobOutcome::Paused),
+            DdlPhaseOutcome::Reorg(reorg) => {
+                // Go `runReorgJob`: the owner reorganizes in its own
+                // transactions; the next step reads the outcome.
+                let outcome = add_index_reorg::run_add_index_reorg(
+                    &opener,
+                    timeout,
+                    backfiller,
+                    &reorg,
+                    check_owner,
+                )?;
+                schema_state.reorg = Some(outcome);
+            }
             DdlPhaseOutcome::SchemaSync {
                 version,
                 mdl_info,
@@ -1116,6 +1197,12 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
                 }
             }
             DdlPhaseOutcome::Committed(committed) if committed.persisted_job_terminal => {
+                if let Err(error) =
+                    add_index_reorg::clean_ddl_reorg_handles(&opener, timeout, ddl_job_id)
+                {
+                    eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_reorg_handle_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
+                    serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                }
                 if schema_state.mdl_enabled {
                     if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
                         eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
@@ -1125,6 +1212,8 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
                 return Ok(PersistedDdlJobOutcome::Finished);
             }
             DdlPhaseOutcome::Committed(committed) => {
+                // A reorganization outcome is read by exactly one step.
+                schema_state.reorg = None;
                 if let ClusterDdlReport::Applied { schema_version, .. } = &committed.report {
                     if *schema_version > 0 {
                         schema_state.pending_version = Some(*schema_version);
@@ -1290,6 +1379,80 @@ pub fn submit_check_constraint_job_with_retry<
         |_| Option::<fn()>::None,
     )?;
     Ok(spec.job.id)
+}
+
+/// What submitting an ADD INDEX came to.
+pub enum AddIndexSubmitted {
+    /// The job queued, by id.
+    Job(i64),
+    /// `IF NOT EXISTS` over an existing index: nothing queued.
+    AlreadySatisfied(ClusterDdlReport),
+}
+
+/// Go `executor.createIndex` -> `doDDLJob2`: submits one persisted ADD
+/// INDEX / ADD PRIMARY KEY job without executing it; the owner steps it
+/// through `onCreateIndex`'s states.
+pub fn submit_add_index_job_with_retry<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    statement: &DdlStatement,
+    timeout: Duration,
+    upgrading: bool,
+    min_job_id: i64,
+) -> Result<AddIndexSubmitted, ClusterDdlError> {
+    // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
+    let store_count = opener
+        .pd()
+        .store_addresses()
+        .map_or(0, |stores| stores.len());
+    let preparation = SessionTransaction::begin(
+        Arc::clone(&opener),
+        timeout,
+        crate::session_commit_protocol::bootstrap_commit_protocol(),
+    )?;
+    let start_ts = preparation.start_ts();
+    let prepared = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            preparation
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        crate::cluster_ddl::add_index::prepare_add_index_job_submission(
+            &mut snapshot,
+            statement,
+            start_ts,
+            upgrading,
+            min_job_id,
+            store_count,
+        )
+    };
+    let _ = preparation.rollback();
+    let mut spec = match prepared? {
+        Some(crate::cluster_ddl::add_index::AddIndexSubmission::Job(spec)) => *spec,
+        Some(crate::cluster_ddl::add_index::AddIndexSubmission::AlreadySatisfied {
+            detail,
+            warnings,
+        }) => {
+            return Ok(AddIndexSubmitted::AlreadySatisfied(
+                ClusterDdlReport::AlreadySatisfied { detail, warnings },
+            ))
+        }
+        None => {
+            return Err(ClusterDdlError::NotCommitted(
+                "the statement is not an ADD INDEX job".to_owned(),
+            ))
+        }
+    };
+    gen_global_ids_and_insert_jobs_with_retry(
+        opener,
+        std::slice::from_mut(&mut spec),
+        timeout,
+        |_| Option::<fn()>::None,
+    )?;
+    Ok(AddIndexSubmitted::Job(spec.job.id))
 }
 
 /// Loads the persisted active DDL queue from a fresh cluster snapshot.
@@ -1496,7 +1659,7 @@ fn commit_cluster_ddl_phase_with_retry<
     loop {
         match commit_cluster_ddl_with_backfill_once(
             Arc::clone(&opener),
-            phase,
+            phase.clone(),
             timeout,
             notifier,
             backfiller,
@@ -1560,14 +1723,14 @@ fn commit_cluster_ddl_with_backfill_once<
             }
             DdlPhase::Persisted {
                 ddl_job_id,
-                schema_state,
+                ref schema_state,
                 ..
             } => {
                 match plan_persisted_ddl_job_step(
                     &mut snapshot,
                     ddl_job_id,
                     start_ts,
-                    schema_state,
+                    schema_state.clone(),
                     &|| refresh_ddl_error_count_limit(&opener, timeout),
                 ) {
                     Ok(PersistedDdlJobPlan::Paused) => {
@@ -1589,6 +1752,12 @@ fn commit_cluster_ddl_with_backfill_once<
                             mdl_info,
                             publish_version,
                         });
+                    }
+                    Ok(PersistedDdlJobPlan::Reorg(reorg)) => {
+                        transaction
+                            .rollback()
+                            .map_err(ClusterDdlError::NotCommitted)?;
+                        return Ok(DdlPhaseOutcome::Reorg(Box::new(reorg)));
                     }
                     Ok(PersistedDdlJobPlan::Step(step)) => Ok((
                         DdlPlan::Write(Box::new(step.write)),
@@ -1839,7 +2008,9 @@ fn commit_cluster_ddl_with_backfill_once<
             write.affinity_groups.apply_delete();
             match phase {
                 DdlPhase::Initial(..) => notify_schema_version(notifier, planned_version),
-                DdlPhase::Persisted { schema_state, .. } if planned_version != 0 => {
+                DdlPhase::Persisted {
+                    ref schema_state, ..
+                } if planned_version != 0 => {
                     if schema_state.mdl_enabled {
                         if let Some(notifier) = notifier {
                             notifier

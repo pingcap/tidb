@@ -276,6 +276,8 @@ where
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     owner: Mutex<Option<Arc<dyn tidb_owner::Manager>>>,
     worker: Mutex<Option<SchedulerWorker>>,
+    /// The node's row-ID allocators, bound once the node builds them.
+    row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
 }
 
 impl<C, L, P> PersistedDdlScheduler<C, L, P>
@@ -349,6 +351,7 @@ where
         owner: Arc<dyn tidb_owner::Manager>,
         stop: Arc<AtomicBool>,
         stopped: Receiver<()>,
+        row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
         if stop.load(Ordering::Acquire) {
@@ -384,14 +387,17 @@ where
                                 Ok(())
                             }
                         };
+                        let backfiller = KvTableIndexBackfiller {
+                            row_ids: row_ids.get().cloned(),
+                        };
                         match run_persisted_ddl_job(
                             Arc::clone(&opener),
                             job.id,
                             timeout,
                             notifier_ref,
-                            &KvTableIndexBackfiller,
-                            &KvTableIndexBackfiller,
-                            &KvTableIndexBackfiller,
+                            &backfiller,
+                            &KvTableIndexBackfiller::default(),
+                            &KvTableIndexBackfiller::default(),
                             schema_sync.as_ref(),
                             &check_owner,
                             &|delay| wait_ddl_retry(&stopped, delay),
@@ -495,6 +501,7 @@ where
                 let server_state = Arc::clone(&self.server_state);
                 let server_state_context = self.server_state_context.clone();
                 let min_job_id_refresher = Arc::clone(&self.min_job_id_refresher);
+                let row_ids = Arc::clone(&self.row_ids);
                 let owner = self
                     .owner
                     .lock()
@@ -515,6 +522,7 @@ where
                         owner,
                         stop,
                         stopped,
+                        row_ids,
                     )
                 }
             })
@@ -567,6 +575,14 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    /// The node's row-ID allocators, for the rows the owner inserts into
+    /// `mysql.*` tables (Go's internal INSERTs allocate from them).
+    #[must_use]
+    pub fn with_row_ids(self, ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>) -> Self {
+        let _ = self.scheduler.row_ids.set(ids);
+        self
+    }
+
     /// DDL rebases use the process AutoID service rather than stale IID metadata.
     pub fn with_auto_ids(mut self, client: Arc<tidb_exec::auto_id_client::AutoIdClient>) -> Self {
         self.auto_ids = Some(client);
@@ -671,6 +687,7 @@ where
             min_job_id_refresher: Arc::clone(&min_job_id_refresher),
             owner: Mutex::new(None),
             worker: Mutex::new(None),
+            row_ids: Arc::new(std::sync::OnceLock::new()),
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
             Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
@@ -1026,9 +1043,9 @@ mod schema_sync_tests {
                 job_id,
                 timeout,
                 Some(&notifier),
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
                 &barrier,
                 &|| Ok(()),
                 &|_| panic!("no action error retry expected"),
@@ -1231,9 +1248,9 @@ mod schema_sync_tests {
                 id,
                 timeout,
                 notifier,
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
                 &barrier,
                 check,
                 &|_| panic!("this job must not wait after an action error"),
@@ -1663,9 +1680,9 @@ mod schema_sync_tests {
                 id,
                 timeout,
                 None,
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
                 &barrier,
                 &|| Ok(()),
                 &|delay| {
@@ -1790,8 +1807,8 @@ mod schema_sync_tests {
             700,
             timeout,
             None,
-            &KvTableIndexBackfiller,
-            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
             &validator,
             &barrier,
             &|| Ok(()),
@@ -1833,8 +1850,8 @@ mod schema_sync_tests {
             700,
             timeout,
             None,
-            &KvTableIndexBackfiller,
-            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
@@ -1882,8 +1899,8 @@ mod schema_sync_tests {
             704,
             timeout,
             None,
-            &KvTableIndexBackfiller,
-            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
             &|| Ok(()),
@@ -1959,8 +1976,8 @@ mod schema_sync_tests {
             702,
             timeout,
             None,
-            &KvTableIndexBackfiller,
-            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
             &panicking,
             &barrier,
             &lost_owner,
@@ -1975,8 +1992,8 @@ mod schema_sync_tests {
             702,
             timeout,
             None,
-            &KvTableIndexBackfiller,
-            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
             &panicking,
             &barrier,
             &|| Ok(()),
@@ -2050,8 +2067,8 @@ mod schema_sync_tests {
                 703,
                 timeout,
                 None,
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
                 &pause_then_panic,
                 &barrier,
                 &|| Ok(()),
@@ -2073,8 +2090,8 @@ mod schema_sync_tests {
                 703,
                 timeout,
                 None,
-                &KvTableIndexBackfiller,
-                &KvTableIndexBackfiller,
+                &KvTableIndexBackfiller::default(),
+                &KvTableIndexBackfiller::default(),
                 &panicking,
                 &barrier,
                 &|| Ok(()),
@@ -2460,6 +2477,29 @@ where
             self.refresh_catalog();
             return Ok(report);
         }
+        if matches!(statement, DdlStatement::CreateIndex { .. }) {
+            // Go `createIndex`: a persisted job the owner steps through
+            // delete-only, write-only and the reorganization.
+            match tidb_exec::real_tikv_ddl::submit_add_index_job_with_retry(
+                Arc::clone(&self.opener),
+                statement,
+                self.timeout,
+                self.server_state.is_upgrading_state(),
+                self.min_job_id_refresher.current_min_job_id(),
+            )
+            .map_err(cluster_ddl_error)?
+            {
+                tidb_exec::real_tikv_ddl::AddIndexSubmitted::AlreadySatisfied(report) => {
+                    return Ok(report)
+                }
+                tidb_exec::real_tikv_ddl::AddIndexSubmitted::Job(ddl_job_id) => {
+                    self.notify_new_job_submitted();
+                    let report = self.wait_persisted_job(ddl_job_id)?;
+                    self.refresh_catalog();
+                    return Ok(report);
+                }
+            }
+        }
         let notifier = self
             .notifier
             .as_ref()
@@ -2469,9 +2509,9 @@ where
             statement,
             self.timeout,
             notifier,
-            &KvTableIndexBackfiller,
-            &KvTableIndexBackfiller,
-            &KvTableIndexBackfiller,
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
             self.schema_sync.as_ref(),
             self.auto_ids.as_ref(),
             job_context,
@@ -2651,9 +2691,112 @@ impl tidb_executor::kv_table::AutoIdStore for DdlTransactionAutoIdStore {
     }
 }
 
-struct KvTableIndexBackfiller;
+#[derive(Default)]
+struct KvTableIndexBackfiller {
+    /// The node's row-ID allocators, for the reorg handle's row.
+    row_ids: Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>,
+}
 
 impl IndexBackfiller for KvTableIndexBackfiller {
+    fn reorg_row_ids(&self) -> Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>> {
+        self.row_ids.clone()
+    }
+
+    /// Go's txn backfill workers over the table as the job holds it, with the
+    /// indexes being added written as the table's own: the backfill writes
+    /// their real keys (Go `FromBackfill`), and the merge replays the
+    /// temporary entries onto them.
+    fn reorg_add_index(
+        &self,
+        reorg: &tidb_exec::cluster_ddl::add_index::AddIndexReorg,
+        work: tidb_exec::real_tikv_ddl::AddIndexReorgWork<'_>,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<tidb_exec::real_tikv_ddl::AddIndexReorgAnswer, LockSqlError> {
+        use tidb_exec::real_tikv_ddl::{AddIndexReorgAnswer, AddIndexReorgWork};
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let info = reorg.table.clone_like_go();
+        for index in info.indices.iter_deref() {
+            let mut index = index.write();
+            if reorg.index_ids.contains(&index.id) {
+                index.state = tidb_model::SchemaState::PUBLIC;
+                index.backfill_state = tidb_model::BackfillState::INAPPLICABLE;
+            }
+        }
+        let context = &reorg.context.0;
+        let mut table = cluster_table(&info, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?
+            .with_new_collation_mode(tidb_datatype::new_collation_enabled());
+        match work {
+            AddIndexReorgWork::TableRange { physical_id } => table
+                .physical_record_range(physical_id)
+                .map(AddIndexReorgAnswer::Range)
+                .map_err(backfill_failure),
+            AddIndexReorgWork::Backfill {
+                physical_id,
+                start,
+                end,
+            } => {
+                // A partial index's entries are the rows its condition holds
+                // for (Go `buildIndexConditionChecker` in the backfill).
+                for index in info.indices.iter_deref() {
+                    let index = index.read();
+                    if !reorg.index_ids.contains(&index.id) || !index.has_condition() {
+                        continue;
+                    }
+                    let condition = index
+                        .condition_expr()
+                        .map_err(|error| exchange_validation_internal(error.message))?;
+                    table
+                        .add_partial_index_condition(
+                            index.id,
+                            index.name.original(),
+                            &condition,
+                            &context.session_zone(),
+                            context.like_default_escape(),
+                        )
+                        .map_err(backfill_failure)?;
+                }
+                let decode = RowDecodeContext::for_write(context);
+                let mut combined: Option<tidb_executor::kv_table::ReorgBatch> = None;
+                for index_id in &reorg.index_ids {
+                    let batch = table
+                        .backfill_index_batch(
+                            *index_id,
+                            physical_id,
+                            start,
+                            end,
+                            reorg.batch_size,
+                            &decode,
+                        )
+                        .map_err(backfill_failure)?;
+                    combined = Some(match combined {
+                        None => batch,
+                        Some(mut combined) => {
+                            // Every index walks the same rows.
+                            combined.added = combined.added.max(batch.added);
+                            combined.locks.extend(batch.locks);
+                            combined
+                        }
+                    });
+                }
+                let mut batch = combined.unwrap_or_default();
+                batch.locks.sort();
+                batch.locks.dedup();
+                Ok(AddIndexReorgAnswer::Batch(batch))
+            }
+            AddIndexReorgWork::Merge {
+                index_id,
+                physical_id,
+                start,
+                end,
+            } => table
+                .merge_temp_index_batch(index_id, physical_id, start, end, reorg.batch_size)
+                .map(AddIndexReorgAnswer::Batch)
+                .map_err(backfill_failure),
+        }
+    }
+
     fn stage(
         &self,
         plan: &IndexBackfill,

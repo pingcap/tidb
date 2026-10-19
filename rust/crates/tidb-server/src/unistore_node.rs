@@ -625,6 +625,9 @@ pub(crate) fn unistore_cluster_session_stack(
         )),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
+        crate::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
+    );
     let cluster_ddl = Arc::new(
         RealClusterDdl::new(
             opener.clone(),
@@ -642,12 +645,10 @@ pub(crate) fn unistore_cluster_session_stack(
             crate::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
                 "campaign DDL owner failed: {error}"
             )))
-        })?,
+        })?
+        .with_row_ids(Arc::clone(&node_auto_ids)),
     );
 
-    let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
-        crate::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
-    );
     let factory = ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             opener.clone(),

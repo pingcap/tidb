@@ -5892,6 +5892,9 @@ struct PersistedDdlActionStep {
     write: DdlWrite,
     update_raw_args: bool,
     run_error: Option<DdlPlanError>,
+    /// A reorganization the owner must run before the job moves on; the
+    /// step then commits nothing.
+    reorg: Option<add_index::AddIndexReorg>,
 }
 
 /// Plans pinned Go CHECK-job admission and queue insertion.
@@ -6075,7 +6078,7 @@ fn new_check_constraint_job(
 
 /// Schema acknowledgements belong to one owner run, like Go jobContext. A new
 /// owner starts without acknowledgements and recovers durable schema state.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct DdlJobSchemaState {
     /// Go IsMDLEnabled, including the next-generation kernel override.
     pub mdl_enabled: bool,
@@ -6083,6 +6086,9 @@ pub struct DdlJobSchemaState {
     pub synced_version: Option<i64>,
     /// Version committed by this run that still needs acknowledgement.
     pub pending_version: Option<i64>,
+    /// The reorganization this owner run finished since the job's last step
+    /// (Go `reorgCtx.doneCh`); a new owner reruns it from the handle.
+    pub reorg: Option<add_index::ReorgOutcome>,
 }
 
 impl DdlJobSchemaState {
@@ -6092,6 +6098,7 @@ impl DdlJobSchemaState {
             mdl_enabled,
             synced_version: None,
             pending_version: None,
+            reorg: None,
         }
     }
 }
@@ -6113,7 +6120,12 @@ pub enum PersistedDdlJobPlan {
     },
     /// One action or history transaction, planned from the current active row.
     Step(PersistedDdlJobStep),
+    /// A reorganization the owner runs in its own transactions before it
+    /// plans the job again (Go `runReorgJob`).
+    Reorg(add_index::AddIndexReorg),
 }
+
+pub mod add_index;
 
 /// Actions currently integrated into the persisted owner worker. Seed planners
 /// outside this set are not made live by the common lifecycle.
@@ -6129,6 +6141,8 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_RENAME_TABLES
             | ActionType::ACTION_DROP_SCHEMA
             | ActionType::ACTION_DROP_TABLE
+            | ActionType::ACTION_ADD_INDEX
+            | ActionType::ACTION_ADD_PRIMARY_KEY
     )
 }
 
@@ -6142,6 +6156,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     schema_state: DdlJobSchemaState,
     load_error_count_limit: &dyn Fn() -> i64,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
+    let reorg_outcome = schema_state.reorg.clone();
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
@@ -6149,7 +6164,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
         schema_state,
         load_error_count_limit,
         supports_persisted_ddl_job,
-        |_snapshot, catalog, active| {
+        |snapshot, catalog, active| {
             let action = active.job.type_;
             match action {
                 ActionType::ACTION_ADD_CHECK_CONSTRAINT
@@ -6174,6 +6189,15 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 }
                 ActionType::ACTION_DROP_TABLE => {
                     plan_persisted_drop_table_job_step(catalog, active)
+                }
+                ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
+                    add_index::plan_persisted_add_index_job_step(
+                        snapshot,
+                        catalog,
+                        active,
+                        start_ts,
+                        reorg_outcome.as_ref(),
+                    )
                 }
                 _ => unreachable!("supported action checked above"),
             }
@@ -6316,12 +6340,19 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         }
     });
     let panicked = outcome.is_err();
+    if let Ok(Ok(PersistedDdlActionStep {
+        reorg: Some(reorg), ..
+    })) = &outcome
+    {
+        return Ok(PersistedDdlJobPlan::Reorg(reorg.clone()));
+    }
     let mut step = match outcome {
         Ok(Ok(step)) => step,
         Ok(Err(error)) => PersistedDdlActionStep {
             write: job_only_write(ddl_job_id, Vec::new()),
             update_raw_args: !was_rollingback && active.job.is_rollingback(),
             run_error: Some(error),
+            reorg: None,
         },
         Err(()) => {
             // An interrupted planner has no completed metadata write set.
@@ -6839,6 +6870,7 @@ fn plan_persisted_check_constraint_job_step(
         // action, independently of whether the schema version changed.
         update_raw_args: true,
         run_error: None,
+        reorg: None,
     })
 }
 
@@ -6950,6 +6982,7 @@ fn plan_persisted_create_schema_job_step(
         },
         update_raw_args: true,
         run_error: None,
+        reorg: None,
     })
 }
 
@@ -7096,6 +7129,7 @@ fn plan_persisted_create_table_job_step(
         },
         update_raw_args: true,
         run_error: None,
+        reorg: None,
     })
 }
 
@@ -7289,6 +7323,7 @@ fn plan_persisted_create_tables_job_step(
         },
         update_raw_args: true,
         run_error: None,
+        reorg: None,
     })
 }
 
@@ -7538,6 +7573,7 @@ fn plan_persisted_rename_tables_job_step(
             },
             update_raw_args: true,
             run_error: None,
+            reorg: None,
         });
     }
 
@@ -7613,6 +7649,7 @@ fn plan_persisted_rename_tables_job_step(
         },
         update_raw_args: true,
         run_error: None,
+        reorg: None,
     })
 }
 
@@ -7746,6 +7783,7 @@ fn plan_persisted_drop_schema_job_step(
         },
         update_raw_args: false,
         run_error: None,
+        reorg: None,
     })
 }
 
@@ -7846,6 +7884,7 @@ fn plan_persisted_drop_table_job_step(
         },
         update_raw_args: false,
         run_error: None,
+        reorg: None,
     })
 }
 // Action handlers select cancellation; the shared worker records this fresh
@@ -7947,6 +7986,7 @@ fn job_control_step(job: &Job) -> PersistedDdlActionStep {
         write: job_only_write(job.id, Vec::new()),
         update_raw_args: false,
         run_error: None,
+        reorg: None,
     }
 }
 
@@ -7997,6 +8037,9 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_DROP_CHECK_CONSTRAINT
         | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
             return plan_persisted_check_constraint_job_step(catalog, active, start_ts);
+        }
+        ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
+            return add_index::plan_cancel_add_index(catalog, active, start_ts);
         }
         _ => {
             return Err(DdlPlanError::Encode(format!(

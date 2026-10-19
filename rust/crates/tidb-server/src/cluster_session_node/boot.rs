@@ -393,6 +393,17 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )
         .map_err(|e| RunConfiguredNodeError::Engine(SqlQueryError::unknown(e.to_string())))?,
     );
+    // One registry for the whole node, so every connection inserting into a
+    // table allocates from the one range this node reserved -- Go's
+    // per-`tidb-server` allocator, not a per-session one. The statistics
+    // writers allocate their `mysql.*` rows from it too.
+    let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
+        crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
+            authority.transaction_opener(),
+            CONTROL_PLANE_TIMEOUT,
+        )
+        .with_service(auto_id_service.clone()),
+    );
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
@@ -410,7 +421,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 "campaign DDL owner failed: {error}"
             )))
         })?
-        .with_auto_ids(auto_id_service.clone()),
+        .with_auto_ids(auto_id_service.clone())
+        .with_row_ids(Arc::clone(&node_auto_ids)),
     );
     // Go `InfoSyncer.initResourceManagerClient(pdCli)`: the resource-group
     // jobs write PD's resource manager through it.
@@ -463,17 +475,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
         authority.pd_client(),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    // One registry for the whole node, so every connection inserting into a
-    // table allocates from the one range this node reserved -- Go's
-    // per-`tidb-server` allocator, not a per-session one. The statistics
-    // writers allocate their `mysql.*` rows from it too.
-    let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
-        crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
-            authority.transaction_opener(),
-            CONTROL_PLANE_TIMEOUT,
-        )
-        .with_service(auto_id_service.clone()),
-    );
     let factory = ClusterSessionFactory::new(
         // Row reads and writes are DATA-plane traffic: a statement's snapshot
         // gets queue behind concurrent coprocessor scans on the same store,

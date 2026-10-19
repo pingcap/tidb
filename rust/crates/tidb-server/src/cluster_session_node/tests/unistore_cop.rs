@@ -651,16 +651,19 @@ fn a_partial_index_holds_only_the_rows_its_condition_admits() {
         displayed(rows(&mut session, through_ia)),
         [["10"], ["30"], ["50"]]
     );
-    // The backfill writes an entry for the rows the condition admits only.
-    session
+    // Adding a partial index to an existing table needs Go's ingest
+    // reorganization; without Lightning the owner picks txn-merge and
+    // cancels the job (Go `checkAndBuildIndexInfo`'s refusal), as the Go
+    // oracle answers on the embedded store.
+    let error = session
         .execute_write("CREATE INDEX ib ON test.t (b) WHERE a < 5")
-        .unwrap();
+        .unwrap_err();
     assert_eq!(
-        displayed(rows(
-            &mut session,
-            "SELECT b FROM test.t USE INDEX (ib) WHERE a < 5 AND b > 0"
-        )),
-        [["30"]]
+        (error.code, error.message.as_str()),
+        (
+            8200,
+            "Unsupported add partial index: add partial index without fast reorg is not supported"
+        )
     );
     rows(&mut session, "ADMIN CHECK TABLE test.t");
     let referenced =
@@ -737,9 +740,6 @@ fn a_partial_index_holds_only_the_rows_its_condition_admits() {
     );
     session
         .execute_write("ALTER TABLE test.t DROP INDEX ia")
-        .unwrap();
-    session
-        .execute_write("ALTER TABLE test.t DROP INDEX ib")
         .unwrap();
     session
         .execute_write("ALTER TABLE test.t MODIFY COLUMN a BIGINT")
@@ -18148,11 +18148,22 @@ fn placement_policies_reach_the_cluster_catalog() {
     assert_eq!(show[3][1], "PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\"");
     assert_eq!(show[4][1], "FOLLOWERS=4");
     assert_eq!(show[2][2], "PENDING");
+    // With split-table on (Go `main.go` sets `EnableSplitTableRegion`),
+    // CREATE TABLE splits every partition into its own region, and each
+    // region shows its partition's placement.
     let regions = displayed(rows(&mut session, "show table ppt regions"));
-    assert_eq!(regions.len(), 1, "{regions:?}");
+    let placement: Vec<(&str, &str)> = regions
+        .iter()
+        .map(|row| (row[11].as_str(), row[12].as_str()))
+        .collect();
     assert_eq!(
-        (regions[0][11].as_str(), regions[0][12].as_str()),
-        ("PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\"", "PENDING")
+        placement,
+        vec![
+            ("PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\"", "PENDING"),
+            ("FOLLOWERS=4", "PENDING"),
+            ("FOLLOWERS=4", "PENDING"),
+        ],
+        "{regions:?}"
     );
 }
 
@@ -19157,4 +19168,161 @@ fn regions_split_and_show_like_go() {
         assert_eq!(row[3], row[5], "leader is the only peer");
         assert_eq!(row[4], "1", "store 1");
     }
+}
+
+/// ADD INDEX runs as Go's persisted job: delete-only, write-only, the txn-merge
+/// reorganization and public, with the job's comments; a duplicate rolls the
+/// job back and a partial index is cancelled by the owner. Captured from the
+/// Go oracle on this branch.
+#[test]
+fn add_index_runs_as_a_persisted_job_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1935)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    rows(&mut session, "create table t (a int, b int, c varchar(10))");
+    rows(
+        &mut session,
+        "insert into t values (1,1,'x'),(2,2,'y'),(3,2,'z')",
+    );
+    // (type, schema_state, rows, state, comments) of the newest job.
+    let mut last_job = |session: &mut _| {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [3, 4, 7, 11, 12]
+            .map(|column| row[column].clone())
+            .join("|")
+    };
+    for (sql, job) in [
+        (
+            "alter table t add index i(b)",
+            "add index|public|3|synced|txn-merge, max_node_count=3",
+        ),
+        (
+            "alter table t add index j(c(2))",
+            "add index|public|3|synced|txn-merge, max_node_count=3",
+        ),
+        (
+            "alter table t add index k((a+b))",
+            "add index|public|3|synced|txn-merge, max_node_count=3",
+        ),
+        (
+            "alter table t add primary key (a)",
+            "add primary key|public|3|synced|txn-merge, max_node_count=3",
+        ),
+        (
+            "create index ci on t (c)",
+            "add index|public|3|synced|txn-merge, max_node_count=3",
+        ),
+    ] {
+        rows(&mut session, sql);
+        assert_eq!(last_job(&mut session), job, "{sql}");
+    }
+    let error = session
+        .execute_write("alter table t add unique index u(b)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1062, "Duplicate entry '2' for key 't.u'")
+    );
+    assert_eq!(
+        last_job(&mut session),
+        "add index|none|0|rollback done|txn-merge, max_node_count=3"
+    );
+    rows(&mut session, "create table e (a int)");
+    for (table, sql) in [
+        ("t", "alter table t add index p(a) where a > 1"),
+        ("e", "alter table e add index p(a) where a > 1"),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                8200,
+                "Unsupported add partial index: add partial index without fast reorg is not supported"
+            ),
+            "{table}"
+        );
+        assert_eq!(
+            last_job(&mut session),
+            "add index|none|0|cancelled|txn-merge, max_node_count=3",
+            "{table}"
+        );
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select * from t use index(i) where b = 2"
+        )),
+        vec![
+            vec!["2".to_owned(), "2".to_owned(), "y".to_owned()],
+            vec!["3".to_owned(), "2".to_owned(), "z".to_owned()],
+        ]
+    );
+    rows(&mut session, "admin check table t");
+    let created = displayed(rows(&mut session, "show create table t")).remove(0);
+    assert!(!created[1].contains("`u`"), "{}", created[1]);
+    let error = session
+        .execute_write("alter table t add index i(b)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1061, "Duplicate key name 'i'")
+    );
+    rows(&mut session, "alter table t add index if not exists i(b)");
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        vec![vec![
+            "Note".to_owned(),
+            "1061".to_owned(),
+            "Duplicate key name 'i'".to_owned()
+        ]]
+    );
+    // More rows than one batch (`tidb_ddl_reorg_batch_size` 256), over
+    // partitions: every batch commits and the handle moves on.
+    rows(&mut session, "create table d (x int)");
+    rows(
+        &mut session,
+        "insert into d values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)",
+    );
+    rows(
+        &mut session,
+        "create table big (a int, b int) partition by hash(a) partitions 3",
+    );
+    rows(
+        &mut session,
+        "insert into big select p.x*100+q.x*10+r.x, p.x from d p, d q, d r",
+    );
+    rows(&mut session, "alter table big add unique index ua(a)");
+    assert_eq!(
+        last_job(&mut session),
+        "add index|public|1000|synced|txn-merge, max_node_count=3"
+    );
+    rows(&mut session, "admin check table big");
+    // A duplicate found batches in rolls the job back.
+    rows(&mut session, "create table big1 (a int, b int)");
+    rows(
+        &mut session,
+        "insert into big1 select a, if(a = 999, 5, a) from big order by a",
+    );
+    let error = session
+        .execute_write("alter table big1 add unique index ub(b)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1062, "Duplicate entry '5' for key 'big1.ub'")
+    );
+    // Go counts the three batches committed before the failing one.
+    assert_eq!(
+        last_job(&mut session),
+        "add index|none|768|rollback done|txn-merge, max_node_count=3"
+    );
+    rows(&mut session, "admin check table big1");
+    // Go `cleanupDDLReorgHandles`: nothing is left behind.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select count(*) from mysql.tidb_ddl_reorg"
+        )),
+        vec![vec!["0".to_owned()]]
+    );
 }
