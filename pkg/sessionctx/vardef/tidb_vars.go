@@ -98,6 +98,12 @@ const (
 	// sampled NDV off.
 	TiDBAnalyzeSampledNDVThreshold = "tidb_analyze_sampled_ndv_threshold"
 
+	// TiDBAnalyzeContiguousBuckets makes ANALYZE start each histogram bucket at
+	// the upper bound of the previous bucket. Without it, values between two
+	// sampled bounds belong to no bucket and are estimated as almost no rows,
+	// which is frequent when the sample comes from a few sampled data blocks.
+	TiDBAnalyzeContiguousBuckets = "tidb_analyze_contiguous_buckets"
+
 	// TiDBAutoAnalyzeStartTime will run if current time is within start time and end time.
 	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
 	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
@@ -1538,6 +1544,7 @@ const (
 	DefIndexLookupJoinConcurrency       = ConcurrencyUnset
 	DefTiDBEnableAdaptiveLimitScan      = false
 	DefTiDBAnalyzeSampledNDVThreshold   = 0
+	DefTiDBAnalyzeContiguousBuckets     = false
 	DefIndexSerialScanConcurrency       = 1
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000
@@ -2044,6 +2051,7 @@ var (
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
 	AnalyzeSampledNDVThreshold           = atomic.NewInt64(DefTiDBAnalyzeSampledNDVThreshold)
+	AnalyzeContiguousBuckets             = atomic.NewBool(DefTiDBAnalyzeContiguousBuckets)
 	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
 	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
