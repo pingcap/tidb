@@ -44,6 +44,10 @@ use crate::Result;
 use crate::SecurityManager;
 use crate::Timestamp;
 
+/// How many times a located region that left the cache before it was
+/// routed is located again.
+const ROUTE_CACHE_MISS_RETRIES: usize = 8;
+
 /// The PdClient handles all the encoding stuff.
 ///
 /// Raw APIs does not require encoding/decoding at all.
@@ -233,13 +237,40 @@ pub trait PdClient: Send + Sync + 'static {
 
     /// In transactional API, `key` is in raw format
     async fn store_for_key(self: Arc<Self>, key: &Key) -> Result<RegionStore> {
-        let region = self.region_for_key(key).await?;
-        self.map_region_to_store(region).await
+        // A split may replace the located region before it is routed
+        // (source `LocateKey` then `GetRPCContext` returning nil): locate
+        // again rather than fail.
+        let mut attempts = 0;
+        loop {
+            let region = self.region_for_key(key).await?;
+            let ver_id = region.ver_id();
+            match self.clone().map_region_to_store(region).await {
+                Err(crate::Error::EntryNotFoundInRegionCache)
+                    if attempts < ROUTE_CACHE_MISS_RETRIES =>
+                {
+                    attempts += 1;
+                    self.invalidate_region_cache(ver_id).await;
+                }
+                result => return result,
+            }
+        }
     }
 
     async fn store_for_id(self: Arc<Self>, id: RegionId) -> Result<RegionStore> {
-        let region = self.region_for_id(id).await?;
-        self.map_region_to_store(region).await
+        let mut attempts = 0;
+        loop {
+            let region = self.region_for_id(id).await?;
+            let ver_id = region.ver_id();
+            match self.clone().map_region_to_store(region).await {
+                Err(crate::Error::EntryNotFoundInRegionCache)
+                    if attempts < ROUTE_CACHE_MISS_RETRIES =>
+                {
+                    attempts += 1;
+                    self.invalidate_region_cache(ver_id).await;
+                }
+                result => return result,
+            }
+        }
     }
 
     async fn all_stores(&self) -> Result<Vec<Store>>;

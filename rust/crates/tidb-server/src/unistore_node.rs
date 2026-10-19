@@ -646,7 +646,13 @@ pub(crate) fn unistore_cluster_session_stack(
                 "campaign DDL owner failed: {error}"
             )))
         })?
-        .with_row_ids(Arc::clone(&node_auto_ids)),
+        .with_row_ids(Arc::clone(&node_auto_ids))
+        // Go's mockstore reports no delete-range support, so the DDL layer
+        // emulates it.
+        .with_delete_range_emulator()
+        .map_err(|error| {
+            crate::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(error))
+        })?,
     );
 
     let factory = ClusterSessionFactory::new(

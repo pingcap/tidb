@@ -57,6 +57,7 @@ use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
 
 mod add_index_reorg;
+pub mod delete_range;
 
 /// What undoes a delivered label step: the rules its IDs held before it.
 struct LabelDeliveryReceipt {
@@ -772,10 +773,10 @@ pub trait IndexBackfiller {
         })
     }
 
-    /// The node's live row-ID allocators, for the `mysql.tidb_ddl_reorg` row
-    /// Go's `initDDLReorgHandle` inserts. `None` reserves inside the
-    /// transaction instead.
-    fn reorg_row_ids(&self) -> Option<Arc<dyn crate::table_from_meta::TableAutoIds>> {
+    /// The node's live row-ID allocators, for the `mysql.*` rows the owner
+    /// inserts (Go's internal INSERTs: the reorg handle, the delete ranges).
+    /// `None` reserves inside the transaction instead.
+    fn system_row_ids(&self) -> Option<Arc<dyn crate::table_from_meta::TableAutoIds>> {
         None
     }
 }
@@ -1703,12 +1704,14 @@ fn commit_cluster_ddl_with_backfill_once<
         crate::session_commit_protocol::bootstrap_commit_protocol(),
     )?;
     let start_ts = transaction.start_ts();
+    let row_ids = backfiller.system_row_ids();
     let plan = {
         let mut snapshot = SnapshotMetaSnapshot::new(
             transaction
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-        );
+        )
+        .with_row_ids_opt(row_ids.as_ref());
         match phase {
             DdlPhase::Initial(statement, job_context) => {
                 crate::cluster_ddl::plan_ddl_with_auto_ids(

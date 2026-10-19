@@ -209,6 +209,7 @@ pub(crate) fn bootstrapped() -> MetaStore {
         "tidb_ddl_job",
         "tidb_ddl_history",
         "tidb_mdl_info",
+        "gc_delete_range",
     ] {
         let system_table = tidb_metadef::DDL_TABLE_VERSION_TABLES
             .iter()
@@ -651,10 +652,21 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
                         .unwrap(),
                 )
                 .unwrap();
-            assert_eq!(
-                completed.raw_args, job.raw_args,
-                "lifecycle steps preserve unmodified submission args"
-            );
+            // Go `needUpdateRawArgs`: the done step persists the finished
+            // arguments the delete range reads.
+            if job.type_ == ActionType::ACTION_DROP_TABLE {
+                let finished = tidb_model::get_finished_drop_table_args(&mut completed)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    finished.read().start_key.0.snapshot(),
+                    tidb_codec::table_key::encode_table_prefix(job.table_id)
+                );
+            } else {
+                assert!(tidb_model::get_finished_drop_schema_args(&mut completed)
+                    .unwrap()
+                    .is_some());
+            }
         }
 
         let history = DdlHistoryTable::locate(&catalog)
@@ -3021,6 +3033,27 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     );
 }
 
+/// The `mysql.gc_delete_range` rows the applied changes recorded, as
+/// `(element_id, start_key, end_key)`.
+pub(crate) fn delete_ranges(store: &mut MetaStore) -> Vec<(i64, Vec<u8>, Vec<u8>)> {
+    let catalog = load_cluster_catalog(store).unwrap();
+    tidb_exec::ddl_delete_range::DelRangeTable::locate(&catalog, "gc_delete_range")
+        .unwrap()
+        .load(store, u64::MAX)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.task.element_id, row.task.start_key, row.task.end_key))
+        .collect()
+}
+
+/// The range `[start, end)` of one index's entries.
+pub(crate) fn index_range(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<u8>) {
+    (
+        tidb_codec::table_key::encode_table_index_prefix(table_id, index_id),
+        tidb_codec::table_key::encode_table_index_prefix(table_id, index_id + 1),
+    )
+}
+
 fn committed_table(store: &MetaStore, table_id: i64) -> tidb_model::TableInfo {
     serde_json::from_slice(
         store
@@ -4554,14 +4587,8 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
         470_000_001,
     );
     assert_eq!(dropped.diff.action_type.0, 8, "ActionDropIndex");
-    assert!(matches!(
-        dropped
-            .backfill
-            .first()
-            .expect("entries are removed")
-            .operation,
-        IndexBackfillOperation::Drop
-    ));
+    // Its entries are left to the delete range.
+    assert!(dropped.backfill.is_empty());
 
     // Go merges multiple add-index sub-jobs. Both entry walks remain ordered
     // in the one catalog transaction.
@@ -5545,19 +5572,11 @@ fn drop_index_removes_it_and_owes_the_entry_removal() {
     );
     // `ActionDropIndex`.
     assert_eq!(write.diff.action_type.0, 8);
-    let backfill = write.backfill.first().expect("entries are owed");
-    assert!(matches!(backfill.operation, IndexBackfillOperation::Drop));
-    {
-        let index = backfill.index.read();
-        assert_eq!(index.name.original(), "vi");
-    }
-    assert_eq!(
-        backfill.table.indices.len(),
-        1,
-        "the walker gets the table with the index still on it, so it can key its entries"
-    );
-
+    // Go leaves the entries to the delete range the job records.
+    assert!(write.backfill.is_empty());
     apply(&mut store, &write);
+    let (start, end) = index_range(table_id, 1);
+    assert_eq!(delete_ranges(&mut store), vec![(1, start, end)]);
     let refused = plan_ddl(
         &mut store,
         &statement("DROP INDEX nosuch ON u6.minimal"),
@@ -5813,12 +5832,10 @@ fn drop_column_shifts_offsets_and_takes_its_single_column_index() {
 
     // The single-column index on `a` goes with `a`.
     let write = plan(&mut store, "ALTER TABLE u6.t DROP COLUMN a", 300);
-    assert_eq!(
-        write.backfill.len(),
-        1,
-        "column removal must delete its index keys"
-    );
+    // Go leaves the index's keys to the delete range.
+    assert!(write.backfill.is_empty());
     apply(&mut store, &write);
+    assert_eq!(delete_ranges(&mut store).len(), 1);
     let stored: serde_json::Value =
         serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
             .expect("stored");
@@ -5975,24 +5992,16 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
             .expect("stored");
     assert_eq!(stored["index_info"].as_array().unwrap().len(), 1);
 
-    // The drop direction: the backfill's table still CARRIES the index the
-    // walk removes, while the stored table no longer names it.
+    // The drop direction: the stored table no longer names the index.
     let write = plan(
         &mut store,
         "ALTER TABLE u6.t ADD COLUMN d BIGINT, DROP INDEX idx_c",
         300,
     );
     apply(&mut store, &write);
-    let backfill = write.backfill.first().expect("the removal walks");
-    assert!(matches!(backfill.operation, IndexBackfillOperation::Drop));
-    assert!(
-        backfill
-            .table
-            .indices
-            .iter_deref()
-            .any(|index| index.read().name.original() == "idx_c"),
-        "the walk's table still carries the dropped index"
-    );
+    // The dropped index's entries are left to the delete range.
+    assert!(write.backfill.is_empty());
+    assert_eq!(delete_ranges(&mut store).len(), 1);
     let stored: serde_json::Value =
         serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
             .expect("stored");
@@ -7559,21 +7568,24 @@ fn grouped_drop_columns_remove_every_owned_index_range() {
         100,
     );
     apply(&mut store, &write);
+    let table_id = write.created_id.unwrap();
     let write = plan(
         &mut store,
         "ALTER TABLE u6.t DROP COLUMN a, DROP COLUMN b",
         200,
     );
-    assert_eq!(write.backfill.len(), 2);
-    for (work, name) in write.backfill.iter().zip(["ia", "ib"]) {
-        assert!(matches!(work.operation, IndexBackfillOperation::Drop));
-        assert_eq!(work.index.read().name.original(), name);
-        assert!(work
-            .table
-            .indices
-            .iter_deref()
-            .any(|idx| idx.read().id == work.index.read().id));
-    }
+    // Go leaves the indexes' entries to the delete range.
+    assert!(write.backfill.is_empty());
+    apply(&mut store, &write);
+    let ranges: Vec<(i64, Vec<u8>, Vec<u8>)> = delete_ranges(&mut store);
+    let expected: Vec<(i64, Vec<u8>, Vec<u8>)> = [1, 2]
+        .into_iter()
+        .map(|index_id| {
+            let (start, end) = index_range(table_id, index_id);
+            (index_id, start, end)
+        })
+        .collect();
+    assert_eq!(ranges, expected);
 }
 
 /// Go admits all specs before its shared MultiSchemaChange worker applies them.

@@ -727,8 +727,8 @@ fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
         "{error}"
     );
 
-    // A NONCLUSTERED primary key is an ordinary index and goes, entries and
-    // all -- the same backfill DROP INDEX owes.
+    // A NONCLUSTERED primary key is an ordinary index and goes; its entries
+    // are left to the delete range, as DROP INDEX leaves them.
     let write = plan(
         &mut store,
         "CREATE TABLE u6.plain (id BIGINT, v BIGINT, PRIMARY KEY (id) NONCLUSTERED)",
@@ -737,11 +737,13 @@ fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
     apply(&mut store, &write);
     let table_id = write.created_id.expect("CREATE TABLE allocates an id");
     let write = plan(&mut store, "ALTER TABLE u6.plain DROP PRIMARY KEY", 600);
-    assert!(
-        !write.backfill.is_empty(),
-        "the entries go with the definition"
-    );
+    assert!(write.backfill.is_empty());
     apply(&mut store, &write);
+    let (start, end) = super::cluster_ddl_source::index_range(table_id, 1);
+    assert_eq!(
+        super::cluster_ddl_source::delete_ranges(&mut store),
+        vec![(1, start, end)]
+    );
     assert_eq!(
         stored_table(&write, table_id)["index_info"]
             .as_array()

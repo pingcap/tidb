@@ -278,6 +278,8 @@ where
     worker: Mutex<Option<SchedulerWorker>>,
     /// The node's row-ID allocators, bound once the node builds them.
     row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
+    /// Go `delRange`'s emulator, on a store without delete-range support.
+    del_range: Arc<std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>>,
 }
 
 impl<C, L, P> PersistedDdlScheduler<C, L, P>
@@ -352,6 +354,9 @@ where
         stop: Arc<AtomicBool>,
         stopped: Receiver<()>,
         row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
+        del_range: Arc<
+            std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>,
+        >,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
         if stop.load(Ordering::Acquire) {
@@ -402,7 +407,13 @@ where
                             &check_owner,
                             &|delay| wait_ddl_retry(&stopped, delay),
                         ) {
-                            Ok(PersistedDdlJobOutcome::Finished | PersistedDdlJobOutcome::Paused) => {}
+                            Ok(PersistedDdlJobOutcome::Finished) => {
+                                // Go `addDelRangeJob` wakes the emulator.
+                                if let Some(emulator) = del_range.get() {
+                                    emulator.notify();
+                                }
+                            }
+                            Ok(PersistedDdlJobOutcome::Paused) => {}
                             Err(error) => eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
                                 job.id, serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned())),
                         }
@@ -502,6 +513,7 @@ where
                 let server_state_context = self.server_state_context.clone();
                 let min_job_id_refresher = Arc::clone(&self.min_job_id_refresher);
                 let row_ids = Arc::clone(&self.row_ids);
+                let del_range = Arc::clone(&self.del_range);
                 let owner = self
                     .owner
                     .lock()
@@ -523,6 +535,7 @@ where
                         stop,
                         stopped,
                         row_ids,
+                        del_range,
                     )
                 }
             })
@@ -564,6 +577,8 @@ where
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     min_job_id_stop: Sender<()>,
     min_job_id_worker: Option<JoinHandle<()>>,
+    /// Serializes this node's one-transaction DDL commits (see `execute`).
+    direct_ddl_turn: Mutex<()>,
     /// Go `detectAndUpdateJobVersion`'s background re-detection, while some
     /// peer is still older than job version 2 / global index V1.
     job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
@@ -581,6 +596,19 @@ where
     pub fn with_row_ids(self, ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>) -> Self {
         let _ = self.scheduler.row_ids.set(ids);
         self
+    }
+
+    /// Go `newDelRangeManager` for a store without delete-range support
+    /// (`SupportDeleteRange` false, the embedded store): the owner works off
+    /// `mysql.gc_delete_range` itself. Bind the row-ID allocators first.
+    pub fn with_delete_range_emulator(self) -> Result<Self, String> {
+        let emulator = tidb_exec::real_tikv_ddl::delete_range::start_del_range_emulator(
+            Arc::clone(&self.opener),
+            self.timeout,
+            self.scheduler.row_ids.get().cloned(),
+        )?;
+        let _ = self.scheduler.del_range.set(emulator);
+        Ok(self)
     }
 
     /// DDL rebases use the process AutoID service rather than stale IID metadata.
@@ -688,6 +716,7 @@ where
             owner: Mutex::new(None),
             worker: Mutex::new(None),
             row_ids: Arc::new(std::sync::OnceLock::new()),
+            del_range: Arc::new(std::sync::OnceLock::new()),
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
             Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
@@ -727,6 +756,7 @@ where
             min_job_id_refresher,
             min_job_id_stop,
             min_job_id_worker: Some(min_job_id_worker),
+            direct_ddl_turn: Mutex::new(()),
             job_version_detector,
         })
     }
@@ -2504,12 +2534,24 @@ where
             .notifier
             .as_ref()
             .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
+        // Go's owner never commits two general jobs' catalog transactions at
+        // once; this node's one-transaction changes take turns too, so two of
+        // its sessions never prewrite into each other's keys and wait out
+        // each other's lock TTL. Peers still meet as write conflicts.
+        let _turn = self
+            .direct_ddl_turn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // The node's allocators serve the `mysql.*` rows the change inserts.
+        let backfiller = KvTableIndexBackfiller {
+            row_ids: self.scheduler.row_ids.get().cloned(),
+        };
         let report = commit_cluster_ddl_with_backfill(
             Arc::clone(&self.opener),
             statement,
             self.timeout,
             notifier,
-            &KvTableIndexBackfiller::default(),
+            &backfiller,
             &KvTableIndexBackfiller::default(),
             &KvTableIndexBackfiller::default(),
             self.schema_sync.as_ref(),
@@ -2517,6 +2559,10 @@ where
             job_context,
         )
         .map_err(cluster_ddl_error)?;
+        // Go `addDelRangeJob` wakes the emulator for every finished job.
+        if let Some(emulator) = self.scheduler.del_range.get() {
+            emulator.notify();
+        }
         self.refresh_catalog();
         Ok(report)
     }
@@ -2698,7 +2744,7 @@ struct KvTableIndexBackfiller {
 }
 
 impl IndexBackfiller for KvTableIndexBackfiller {
-    fn reorg_row_ids(&self) -> Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>> {
+    fn system_row_ids(&self) -> Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>> {
         self.row_ids.clone()
     }
 

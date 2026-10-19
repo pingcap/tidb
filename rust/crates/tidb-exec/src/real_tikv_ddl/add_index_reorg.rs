@@ -131,7 +131,7 @@ where
 /// One reorganization transaction: `work` reads through the snapshot,
 /// stages into the buffer and names extra mutations; the whole is committed
 /// at once and retried on a write conflict.
-fn reorg_transaction<C, L, P, T>(
+pub(super) fn reorg_transaction<C, L, P, T>(
     opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
     timeout: Duration,
     mut work: impl FnMut(
@@ -277,7 +277,7 @@ where
         .physical_ids
         .first()
         .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no table".to_owned()))?;
-    let row_ids = backfiller.reorg_row_ids();
+    let row_ids = backfiller.system_row_ids();
     reorg_transaction(opener, timeout, |meta, snapshot, buffer, start_ts| {
         let handle = if reorg.merging {
             let mut empty = true;

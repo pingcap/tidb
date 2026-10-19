@@ -49,7 +49,7 @@ impl<L> RegionCache<L> {
             .regions
             .iter()
             .find(|location| location.region == region)
-            .ok_or(RegionRouteError::MissingLeader)?;
+            .ok_or(RegionRouteError::RegionNotCached(region.clone()))?;
         let now = health_now();
         let mut candidates = Vec::new();
         for peer in &location.peers {
@@ -123,7 +123,7 @@ impl<L> RegionCache<L> {
             .regions
             .iter()
             .find(|r| r.region == region)
-            .ok_or(RegionRouteError::MissingLeader)?;
+            .ok_or(RegionRouteError::RegionNotCached(region.clone()))?;
         let capture = |id| {
             let peer = location
                 .peers
@@ -231,7 +231,7 @@ impl<L> RegionCache<L> {
             .regions
             .iter()
             .find(|location| location.region == region)
-            .ok_or(RegionRouteError::MissingLeader)?;
+            .ok_or(RegionRouteError::RegionNotCached(region.clone()))?;
         let peers = location
             .peers
             .iter()

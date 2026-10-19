@@ -866,6 +866,155 @@ pub fn get_finished_truncate_table_args(
     Ok(Some(value))
 }
 
+/// Go `ast.Ident`: a schema-qualified object name.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ident {
+    /// The schema name.
+    #[serde(rename = "Schema")]
+    pub schema: CiString,
+    /// The object name.
+    #[serde(rename = "Name")]
+    pub name: CiString,
+}
+
+/// Go `DropTableArgs`: the drop-table arguments, and what a finished drop
+/// table, view or sequence job records for the delete range.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DropTableArgs {
+    /// Every table the statement names; each drop runs as its own job.
+    #[serde(rename = "identifiers", default, skip_serializing_if = "Vec::is_empty")]
+    pub identifiers: Vec<Ident>,
+    /// Submission-time foreign-key check flag.
+    #[serde(rename = "fk_check", default, skip_serializing_if = "is_false")]
+    pub fk_check: bool,
+    /// Finished-job start key, kept for older readers.
+    #[serde(
+        rename = "start_key",
+        default,
+        skip_serializing_if = "go_byte_slice_is_empty"
+    )]
+    pub start_key: GoByteSlice,
+    /// Finished-job partition identifiers.
+    #[serde(
+        rename = "old_partition_ids",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub old_partition_ids: Vec<i64>,
+    /// Finished-job label-rule identifiers.
+    #[serde(
+        rename = "old_rule_ids",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub old_rule_ids: Vec<String>,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn go_byte_slice_is_empty(value: &GoByteSlice) -> bool {
+    value.0.is_empty()
+}
+
+impl JobArgs for DropTableArgs {
+    fn into_job_args_value(value: Option<GoShared<Self>>) -> JobArgsValue {
+        JobArgsValue::DropTable(value)
+    }
+
+    fn from_job_args_value(value: &JobArgsValue) -> Option<Option<GoShared<Self>>> {
+        match value {
+            JobArgsValue::DropTable(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *DropTableArgs receiver").read();
+        // Only a drop-table job has arguments; drop view / sequence has none.
+        if job.type_ != ActionType::ACTION_DROP_TABLE {
+            return GoSharedSlice::from_vec(Vec::new());
+        }
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(
+                ast_type("Ident", GoTypeKind::Struct).slice_of(),
+                value.identifiers.clone(),
+            ),
+            ColumnDefaultValue::Bool(value.fk_check).into(),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let identifiers = GoField::<Vec<Ident>>::default();
+        let fk_check = GoField::<bool>::default();
+        if job.type_ == ActionType::ACTION_DROP_TABLE {
+            let mut decoder = V1Decoder::new(job)?;
+            decoder.decode(
+                &identifiers,
+                ast_type("Ident", GoTypeKind::Struct).slice_of(),
+            )?;
+            decoder.decode(&fk_check, builtin_type("bool", GoTypeKind::Bool))?;
+            decoder.finish(job);
+        }
+        Ok(Some(GoShared::new(Self {
+            identifiers: identifiers.get(),
+            fk_check: fk_check.get(),
+            ..Default::default()
+        })))
+    }
+}
+
+impl FinishedJobArgs for DropTableArgs {
+    fn get_finished_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *DropTableArgs receiver").read();
+        GoSharedSlice::from_vec(vec![
+            ColumnDefaultValue::Bytes(GoAnyBytes::from_vec(value.start_key.0.snapshot())).into(),
+            typed_value_any(
+                builtin_type("[]int64", GoTypeKind::Slice),
+                value.old_partition_ids.clone(),
+            ),
+            typed_value_any(
+                builtin_type("[]string", GoTypeKind::Slice),
+                value.old_rule_ids.clone(),
+            ),
+        ])
+    }
+}
+
+/// Go `GetDropTableArgs`.
+pub fn get_drop_table_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<DropTableArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `GetFinishedDropTableArgs`.
+pub fn get_finished_drop_table_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<DropTableArgs>>, serde_json::Error> {
+    if job.version != JobVersion::V1 {
+        return get_or_decode_args_v2(job);
+    }
+    let start_key = GoField::<GoByteSlice>::default();
+    let old_partition_ids = GoField::<Vec<i64>>::default();
+    let old_rule_ids = GoField::<Vec<String>>::default();
+    let mut decoder = V1Decoder::new(job)?;
+    decoder.decode(&start_key, builtin_type("[]uint8", GoTypeKind::Slice))?;
+    decoder.decode(
+        &old_partition_ids,
+        builtin_type("[]int64", GoTypeKind::Slice),
+    )?;
+    decoder.decode(&old_rule_ids, builtin_type("[]string", GoTypeKind::Slice))?;
+    decoder.finish(job);
+    Ok(Some(GoShared::new(DropTableArgs {
+        start_key: start_key.get(),
+        old_partition_ids: old_partition_ids.get(),
+        old_rule_ids: old_rule_ids.get(),
+        ..Default::default()
+    })))
+}
+
 /// Go `TableIDIndexID`: one table/index pair whose index range is deleted.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TableIDIndexID {

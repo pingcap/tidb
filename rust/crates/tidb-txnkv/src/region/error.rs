@@ -107,6 +107,10 @@ pub enum RegionRouteError {
     },
     /// The selected region has no declared leader.
     MissingLeader,
+    /// The region the request was routed to is no longer cached (a split or
+    /// merge replaced it meanwhile). Client-go's `rpcCtx == nil`: answered as
+    /// `EpochNotMatch`, so the caller re-splits against fresh regions.
+    RegionNotCached(RegionVerId),
     /// The leader peer references no store.
     MissingStore(u64),
     /// The selected store has no address.

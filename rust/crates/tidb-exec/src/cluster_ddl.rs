@@ -4076,8 +4076,6 @@ fn apply_drop_primary_key(
     catalog: &ClusterCatalog,
     schema: &str,
     info: &mut TableInfo,
-    use_new_collation: bool,
-    backfill: &mut Vec<IndexBackfill>,
 ) -> Result<(), DdlPlanError> {
     // A clustered primary key -- whether it is the int handle (`PKIsHandle`)
     // or a composite one (`IsCommonHandle`) -- is what the rows are STORED
@@ -4104,9 +4102,6 @@ fn apply_drop_primary_key(
     let dropped = primary.read().clone_like_go();
     crate::foreign_key_build::check_index_needed_in_foreign_key(catalog, schema, info, &dropped)
         .map_err(DdlPlanError::Admission)?;
-    // The removal walk rebuilds the dropped index's entry keys, so its table
-    // must still CARRY the index.
-    let backfill_table = Box::new(info.clone_like_go());
     // Go `onDropIndex`: the primary key's columns lose PRI first.
     drop_index_column_flag(info, &dropped);
     if let Some(offset) = info.indices.iter_handles().position(|candidate| {
@@ -4119,14 +4114,8 @@ fn apply_drop_primary_key(
     }) {
         info.indices.delete_go(offset, offset + 1);
     }
-    // An index whose rows survive its `TableInfo` is invisible garbage that a
-    // later index of the same id would read as its own.
-    backfill.push(IndexBackfill {
-        table: backfill_table,
-        index: GoShared::new(dropped),
-        use_new_collation,
-        operation: IndexBackfillOperation::Drop,
-    });
+    // Go leaves the dropped index's entries to the delete range the
+    // finished job records (`insertJobIntoDeleteRangeTable`).
     Ok(())
 }
 
@@ -6185,10 +6174,10 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                     plan_persisted_rename_tables_job_step(catalog, active, start_ts)
                 }
                 ActionType::ACTION_DROP_SCHEMA => {
-                    plan_persisted_drop_schema_job_step(catalog, active)
+                    plan_persisted_drop_schema_job_step(snapshot, catalog, active)
                 }
                 ActionType::ACTION_DROP_TABLE => {
-                    plan_persisted_drop_table_job_step(catalog, active)
+                    plan_persisted_drop_table_job_step(snapshot, catalog, active)
                 }
                 ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
                     add_index::plan_persisted_add_index_job_step(
@@ -6426,7 +6415,14 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         .job
         .encode(false)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let mut mutations = Vec::new();
+    // Go `finishDDLJob` -> `addDelRangeJob`: the keys the job left behind,
+    // recorded before it moves to history.
+    let mut mutations = crate::ddl_delete_range::add_del_range_job_mutations(
+        snapshot,
+        catalog,
+        &active.job,
+        start_ts,
+    )?;
     append_history_ddl_job(catalog, snapshot, &active.job, encoded, &mut mutations)?;
     job_table
         .append_delete(active, &mut mutations)
@@ -7661,7 +7657,8 @@ fn plan_persisted_rename_tables_job_step(
 /// database meta key (table KVs are left to the delete range) and finishes
 /// with `FinishDBJob`. A missing database cancels the job with the recorded
 /// error (Go `checkSchemaExistAndCancelNotExistJob`).
-fn plan_persisted_drop_schema_job_step(
+fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -7730,22 +7727,63 @@ fn plan_persisted_drop_schema_job_step(
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         )?);
     } else {
-        // Go `metaMut.DropDatabase`: only the database meta key is deleted;
-        // the tables' KVs are cleaned by the delete range.
+        // Go `Mutator.DropDatabase` is `HClear(DB:<id>)` then
+        // `HDel(DBs, DB:<id>)`: every field of the database's hash, its
+        // tables' metadata and allocators, goes; the tables' rows are left
+        // to the delete range.
+        for (raw_key, _) in snapshot.scan_prefix(&key::database_metas_kv_prefix(db_info.id))? {
+            mutations.push(BufferMutation::delete(raw_key)?);
+        }
         mutations.push(BufferMutation::delete(key::database_kv_key(db_info.id))?);
-        // Go `onDropSchema`'s `batchDeleteTableAffinityGroups`.
-        if let Some(dropped) = catalog
+        let tables: Vec<TableInfo> = catalog
             .databases
             .iter()
             .find(|database| database.info.id == db_info.id)
-        {
-            for table in &dropped.tables {
-                affinity_groups.delete_for(table, None);
-            }
+            .map(|database| {
+                database
+                    .tables
+                    .iter()
+                    .map(TableInfo::clone_like_go)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Go `onDropSchema`'s `batchDeleteTableAffinityGroups`.
+        for table in &tables {
+            affinity_groups.delete_for(table, None);
         }
+        // Go splits the drop-schema events, 100 tables each (500 past
+        // 100,000 tables), under sub-job ids 0, 1, ...
+        if !tidb_metadef::is_mem_or_sys_db(&db_info.name.lowercase().go_to_lower()) {
+            let tables_per_event = if tables.len() > 100_000 { 500 } else { 100 };
+            let events: Vec<(i64, SchemaChangeEvent)> = tables
+                .chunks(tables_per_event)
+                .enumerate()
+                .map(|(sub_job_id, chunk)| {
+                    (
+                        i64::try_from(sub_job_id).expect("drop-schema event count fits in i64"),
+                        SchemaChangeEvent::drop_schema(&db_info, chunk),
+                    )
+                })
+                .collect();
+            append_schema_change_mutations(snapshot, catalog, ddl_job_id, &events, &mut mutations)?;
+        }
+        // Go `getIDs(tables)`: each table's id, then its partitions'.
+        let dropped_ids: Vec<i64> = tables
+            .iter()
+            .flat_map(|table| std::iter::once(table.id).chain(add_index::partition_ids(table)))
+            .collect();
         active
             .job
-            .finish_db_job(JobState::DONE, SchemaState::NONE, schema_version, None);
+            .fill_finished_args(Some(GoShared::new(tidb_model::DropSchemaArgs {
+                all_dropped_table_ids: GoField::new(GoSharedSlice::from_vec(dropped_ids)),
+                ..tidb_model::DropSchemaArgs::default()
+            })));
+        active.job.finish_db_job(
+            JobState::DONE,
+            SchemaState::NONE,
+            schema_version,
+            Some(GoShared::new(db_info.clone())),
+        );
     }
     active.job.schema_state = db_info.state;
     mutations.push(BufferMutation::set(
@@ -7781,7 +7819,8 @@ fn plan_persisted_drop_schema_job_step(
             affinity_groups,
             resource_group_update: None,
         },
-        update_raw_args: false,
+        // Go `needUpdateRawArgs`: the finished arguments reach history.
+        update_raw_args: active.job.is_done(),
         run_error: None,
         reorg: None,
     })
@@ -7796,7 +7835,8 @@ fn plan_persisted_drop_schema_job_step(
 /// with the recorded error (Go `checkTableExistAndCancelNonExistJob`). Each
 /// call advances exactly one state; the runner loops until the job lands in
 /// history.
-fn plan_persisted_drop_table_job_step(
+fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -7835,18 +7875,87 @@ fn plan_persisted_drop_table_job_step(
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         )?);
     } else {
+        let database_id = database.info.id;
         mutations.push(BufferMutation::delete(key::table_kv_key(
-            database.info.id,
+            database_id,
             table.id,
         ))?);
+        // Go `DropTableOrView` plus `GetAutoIDAccessors(...).Del()` remove
+        // the table's allocator fields, and `DropSequence` also its value.
+        // Each is deleted only if this snapshot observed it, as `HDel` does.
+        let mut allocator_keys = vec![
+            key::auto_table_id_kv_key(database_id, table.id),
+            key::auto_increment_id_kv_key(database_id, table.id),
+            key::auto_random_table_id_kv_key(database_id, table.id),
+        ];
+        if table.is_sequence() {
+            allocator_keys.push(key::sequence_kv_key(database_id, table.id));
+        }
+        for allocator in allocator_keys {
+            if snapshot.get(&allocator)?.is_some() {
+                mutations.push(BufferMutation::delete(allocator)?);
+            }
+        }
+        // Go `asyncNotifyEvent(NewDropTableEvent)` for a table.
+        if !table.is_sequence()
+            && !table.is_view()
+            && !tidb_metadef::is_mem_or_sys_db(&database.info.name.lowercase().go_to_lower())
+        {
+            append_schema_change_mutations(
+                snapshot,
+                catalog,
+                ddl_job_id,
+                &[(-1, SchemaChangeEvent::drop_table(table.clone_like_go()))],
+                &mut mutations,
+            )?;
+        }
         // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
         affinity_groups.delete_for(&table, None);
+        let old_partition_ids = add_index::partition_ids(&table);
+        let codec = tidb_executor::ddl_label::CodecV1;
+        let schema_name = active.job.schema_name.to_string();
+        let mut rule_ids: Vec<String> = table
+            .partition
+            .as_ref()
+            .map(|partition| {
+                partition
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .iter()
+                    .map(|definition| {
+                        tidb_executor::ddl_label::new_rule_id(
+                            &codec,
+                            &schema_name,
+                            table.name.lowercase(),
+                            definition.name.lowercase(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        rule_ids.push(tidb_executor::ddl_label::new_rule_id(
+            &codec,
+            &schema_name,
+            table.name.lowercase(),
+            "",
+        ));
         active.job.finish_table_job(
             JobState::DONE,
             SchemaState::NONE,
             schema_version,
             Some(GoShared::new(table.clone())),
         );
+        active
+            .job
+            .fill_finished_args(Some(GoShared::new(tidb_model::DropTableArgs {
+                start_key: tidb_model::GoByteSlice(GoSharedSlice::from_vec(
+                    tidb_codec::table_key::gen_table_prefix(active.job.table_id),
+                )),
+                old_partition_ids,
+                old_rule_ids: rule_ids,
+                ..tidb_model::DropTableArgs::default()
+            })));
     }
     active.job.schema_state = table.state;
     mutations.push(BufferMutation::set(
@@ -7882,7 +7991,8 @@ fn plan_persisted_drop_table_job_step(
             affinity_groups,
             resource_group_update: None,
         },
-        update_raw_args: false,
+        // Go `needUpdateRawArgs`: the finished arguments reach history.
+        update_raw_args: active.job.is_done(),
         run_error: None,
         reorg: None,
     })
@@ -8707,30 +8817,6 @@ pub enum IndexBackfillOperation {
     Add(DdlStatementContext),
     /// Remove every key owned by the index.
     Drop,
-}
-
-/// Column removal owns the implicit deletion of its single-column indexes.
-fn plan_removed_column_indexes(
-    before: &TableInfo,
-    after: &TableInfo,
-    use_new_collation: bool,
-    backfill: &mut Vec<IndexBackfill>,
-) {
-    for index in before.indices.iter_handles().flatten() {
-        let id = index.read().id;
-        if !after
-            .indices
-            .iter_deref()
-            .any(|candidate| candidate.read().id == id)
-        {
-            backfill.push(IndexBackfill {
-                table: Box::new(before.clone_like_go()),
-                index: index.clone(),
-                use_new_collation,
-                operation: IndexBackfillOperation::Drop,
-            });
-        }
-    }
 }
 
 /// The candidate table shape whose enforced CHECK must hold for every
@@ -9705,13 +9791,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         DdlStatement::DropPrimaryKey { schema, table } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             let mut info = stored.clone_like_go();
-            apply_drop_primary_key(
-                &catalog,
-                schema,
-                &mut info,
-                use_new_collation,
-                &mut backfill,
-            )?;
+            apply_drop_primary_key(&catalog, schema, &mut info)?;
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -11854,7 +11934,6 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             check_visible_column_cnt(stored, 0, 1)?;
             let mut info = stored.clone_like_go();
             apply_drop_column(&mut info, column);
-            plan_removed_column_indexes(stored, &info, use_new_collation, &mut backfill);
             check_table_info_valid(&info)?;
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -12188,14 +12267,9 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                             info.columns.len() + pending_added_columns,
                         );
                         check_drop_column(&catalog, schema, &info, column, column_count)?;
-                        let before = info.clone_like_go();
+                        // The indexes the column takes with it are left to
+                        // the delete range, as Go's drop column leaves them.
                         apply_drop_column(&mut info, column);
-                        plan_removed_column_indexes(
-                            &before,
-                            &info,
-                            use_new_collation,
-                            &mut backfill,
-                        );
                         AlterColumnOutcome::Applied
                     }
                     AlterColumnAction::AddIndex {
@@ -12274,10 +12348,6 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                             )
                             .map_err(DdlPlanError::Admission)?;
                         }
-                        // The removal walk rebuilds the dropped index's entry
-                        // keys, so its table must still CARRY the index —
-                        // snapshot before the delete, evolved columns and all.
-                        let backfill_table = Box::new(info.clone_like_go());
                         // Go `onDropIndex`: flags and hidden columns first.
                         drop_index_column_flag(&info, &dropped);
                         remove_dependent_hidden_columns(&mut info, &dropped);
@@ -12291,12 +12361,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         }) {
                             info.indices.delete_go(offset, offset + 1);
                         }
-                        backfill.push(IndexBackfill {
-                            table: backfill_table,
-                            index: GoShared::new(dropped),
-                            use_new_collation,
-                            operation: IndexBackfillOperation::Drop,
-                        });
+                        // Its entries are left to the delete range.
                         applied += 1;
                         continue;
                     }
@@ -12373,13 +12438,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                         continue;
                     }
                     AlterColumnAction::DropPrimaryKey => {
-                        apply_drop_primary_key(
-                            &catalog,
-                            schema,
-                            &mut info,
-                            use_new_collation,
-                            &mut backfill,
-                        )?;
+                        apply_drop_primary_key(&catalog, schema, &mut info)?;
                         AlterColumnOutcome::Applied
                     }
                     AlterColumnAction::RenameIndex { from, to } => {
@@ -13662,21 +13721,11 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
-            // Go moves a dropped index through `delete only` and hands its key
-            // range to the delete-range GC worker; this node is the single
-            // catalog writer and removes the entries in the same transaction,
-            // for the same reason it drops a table in one version. Leaving them
-            // behind would be worse than untidy: `TableInfo.MaxIndexID` never
-            // goes down, but a later index on the same table would still walk
-            // the same rows, and a stale entry under a REUSED id — which a
-            // restored or rebuilt table can produce — reads as a row that is
-            // not there.
-            backfill.push(IndexBackfill {
-                table: Box::new(stored.clone_like_go()),
-                index: GoShared::new(dropped),
-                use_new_collation,
-                operation: IndexBackfillOperation::Drop,
-            });
+            // Go hands the dropped index's key range to the delete range
+            // (`insertJobIntoDeleteRangeTable`) instead of deleting its
+            // entries in the job; index ids are never reused
+            // (`TableInfo.MaxIndexID` only grows).
+            let _ = dropped;
             diff.action_type = ActionType::ACTION_DROP_INDEX;
             diff.schema_id = db_id;
             diff.table_id = table_id;
@@ -13942,6 +13991,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             .encode(false)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         append_history_ddl_job(&catalog, snapshot, &job, encoded, &mut writes)?;
+        // Go `finishDDLJob` -> `addDelRangeJob`: the keys the change left
+        // behind, for the store's garbage collection.
+        let ranges = direct_job_delete_ranges(&catalog, &diff, &writes, ddl_job_id);
+        let rows = crate::ddl_delete_range::del_range_rows_mutations(
+            snapshot, &catalog, &ranges, start_ts,
+        )?;
+        writes.extend(rows);
     }
 
     // The version bump comes last so the write set always ends with the two
@@ -14015,6 +14071,158 @@ fn append_history_ddl_job<S: MetaSnapshot>(
 /// done state Go's `Finish*Job` leaves, and the finished table or schema in
 /// `BinlogInfo`. A multi-schema change carries its sub-jobs.
 #[allow(clippy::too_many_arguments)]
+/// Go `insertJobIntoDeleteRangeTable` for a change applied in one
+/// transaction: what Go's finished job arguments would name, read from what
+/// the change removed (dropped tables and partitions, replaced global
+/// indexes, removed indexes).
+fn direct_job_delete_ranges(
+    catalog: &ClusterCatalog,
+    diff: &SchemaDiff,
+    writes: &[BufferMutation],
+    ddl_job_id: i64,
+) -> Vec<crate::ddl_delete_range::DelRangeTask> {
+    let stored = |id: i64| {
+        catalog
+            .databases
+            .iter()
+            .flat_map(|database| database.tables.iter())
+            .find(|table| table.id == id)
+    };
+    let finished = || {
+        writes
+            .iter()
+            .find(|write| {
+                write.key() == key::table_kv_key(diff.schema_id, diff.table_id).as_slice()
+            })
+            .and_then(|write| {
+                tidb_meta::value::parse_table_info(write.value(), diff.schema_id).ok()
+            })
+    };
+    let mut ranges = crate::ddl_delete_range::DelRangeBuilder::new(ddl_job_id);
+    match diff.action_type {
+        ActionType::ACTION_DROP_TABLE => {
+            if let Some(table) = stored(diff.table_id) {
+                let partitions = add_index::partition_ids(table);
+                if !partitions.is_empty() {
+                    ranges.tables(&partitions);
+                }
+                ranges.tables(&[table.id]);
+            }
+        }
+        ActionType::ACTION_DROP_SCHEMA => {
+            if let Some(database) = catalog
+                .databases
+                .iter()
+                .find(|database| database.info.id == diff.schema_id)
+            {
+                let ids: Vec<i64> = database
+                    .tables
+                    .iter()
+                    .flat_map(|table| {
+                        std::iter::once(table.id).chain(add_index::partition_ids(table))
+                    })
+                    .collect();
+                ranges.tables(&ids);
+            }
+        }
+        ActionType::ACTION_TRUNCATE_TABLE => {
+            if let Some(table) = stored(diff.old_table_id) {
+                let partitions = add_index::partition_ids(table);
+                if !partitions.is_empty() {
+                    ranges.tables(&partitions);
+                }
+                ranges.tables(&[table.id]);
+            }
+        }
+        ActionType::ACTION_DROP_TABLE_PARTITION
+        | ActionType::ACTION_TRUNCATE_TABLE_PARTITION
+        | ActionType::ACTION_REORGANIZE_PARTITION
+        | ActionType::ACTION_REMOVE_PARTITIONING
+        | ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
+            let Some(old) = stored(diff.table_id) else {
+                return Vec::new();
+            };
+            let new = finished();
+            let new_partitions = new
+                .as_ref()
+                .map(add_index::partition_ids)
+                .unwrap_or_default();
+            if matches!(
+                diff.action_type,
+                ActionType::ACTION_REORGANIZE_PARTITION
+                    | ActionType::ACTION_REMOVE_PARTITIONING
+                    | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+            ) {
+                // Replaced global indexes (Go `OldGlobalIndexes`).
+                for index in old.indices.iter_deref() {
+                    let index = index.read();
+                    let kept = new.as_ref().is_some_and(|new| {
+                        new.indices
+                            .iter_deref()
+                            .any(|candidate| candidate.read().id == index.id)
+                    });
+                    if index.global && !kept {
+                        ranges.indices(old.id, &[index.id]);
+                    }
+                }
+            }
+            let removed: Vec<i64> = add_index::partition_ids(old)
+                .into_iter()
+                .filter(|id| !new_partitions.contains(id))
+                .collect();
+            ranges.tables(&removed);
+        }
+        ActionType::ACTION_DROP_INDEX
+        | ActionType::ACTION_DROP_PRIMARY_KEY
+        | ActionType::ACTION_DROP_COLUMN
+        | ActionType::ACTION_MODIFY_COLUMN
+        | ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
+            let (Some(old), Some(new)) = (stored(diff.table_id), finished()) else {
+                return Vec::new();
+            };
+            let removed: Vec<(i64, bool)> = old
+                .indices
+                .iter_deref()
+                .filter(|index| {
+                    let id = index.read().id;
+                    !new.indices
+                        .iter_deref()
+                        .any(|candidate| candidate.read().id == id)
+                })
+                .map(|index| {
+                    let index = index.read();
+                    (index.id, index.global)
+                })
+                .collect();
+            let global: Vec<i64> = removed
+                .iter()
+                .filter(|(_, g)| *g)
+                .map(|(id, _)| *id)
+                .collect();
+            let local: Vec<i64> = removed
+                .iter()
+                .filter(|(_, g)| !*g)
+                .map(|(id, _)| *id)
+                .collect();
+            if !global.is_empty() {
+                ranges.indices(old.id, &global);
+            }
+            if !local.is_empty() {
+                let partitions = add_index::partition_ids(old);
+                if partitions.is_empty() {
+                    ranges.indices(old.id, &local);
+                } else {
+                    for partition in partitions {
+                        ranges.indices(partition, &local);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    ranges.finish()
+}
+
 fn finished_direct_job(
     catalog: &ClusterCatalog,
     statement: &DdlStatement,
@@ -15361,7 +15569,18 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
     let processed_by_column = column_id("processed_by_flag")?;
     let row_id_key = key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, table.id);
     let needs_row_id = !table.pk_is_handle && !table.is_common_handle;
-    let mut row_id = if needs_row_id {
+    // Go's internal INSERT allocates `_tidb_rowid` from the node's allocator,
+    // whose reservation commits on its own; only without one does the
+    // counter move inside this transaction, where every concurrent DDL
+    // writes the same key.
+    let allocator = needs_row_id
+        .then(|| {
+            snapshot
+                .row_ids()
+                .map(|ids| ids.row_allocator_for(tidb_metadef::system::SYSTEM_DATABASE_ID, table))
+        })
+        .flatten();
+    let mut row_id = if needs_row_id && allocator.is_none() {
         snapshot
             .get(&row_id_key)?
             .map(|stored| value::parse_int_value(&stored))
@@ -15372,7 +15591,15 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
         0
     };
     for (sub_job_id, event) in events {
-        if needs_row_id {
+        if let Some(allocator) = &allocator {
+            let id = allocator.alloc_next().map_err(|error| {
+                DdlPlanError::Encode(format!(
+                    "mysql.{NOTIFIER_TABLE_NAME}'s row-ID allocator: {error}"
+                ))
+            })?;
+            row_id = i64::try_from(id)
+                .map_err(|_| DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        } else if needs_row_id {
             row_id = row_id
                 .checked_add(1)
                 .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
@@ -15397,7 +15624,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
         };
         writes.extend(mutations.map_err(|error| DdlPlanError::Encode(error.to_string()))?);
     }
-    if needs_row_id {
+    if needs_row_id && allocator.is_none() {
         writes.push(BufferMutation::set(
             row_id_key,
             value::encode_int_value(row_id),

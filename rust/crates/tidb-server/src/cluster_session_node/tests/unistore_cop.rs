@@ -19399,7 +19399,136 @@ fn add_index_stays_consistent_with_concurrent_dml() {
         rows(&mut session, &format!("admin check table {table}"));
     }
     assert_eq!(
-        displayed(rows(&mut session, "select count(*) from cd use index(ib) where b >= 0")),
-        displayed(rows(&mut session, "select count(*) from cd ignore index(ib)")),
+        displayed(rows(
+            &mut session,
+            "select count(*) from cd use index(ib) where b >= 0"
+        )),
+        displayed(rows(
+            &mut session,
+            "select count(*) from cd ignore index(ib)"
+        )),
     );
+}
+
+/// Go `insertJobIntoDeleteRangeTable` and the delete-range emulator of a
+/// store without native delete-range support: each finished job records the
+/// keys it left behind in `mysql.gc_delete_range`, and the emulator deletes
+/// them, advancing `start_key` past each batch, then moves the row to
+/// `mysql.gc_delete_range_done`. Rows captured from the Go oracle (its ids
+/// differ; keys are rebuilt from this node's ids).
+#[test]
+fn delete_ranges_are_recorded_and_worked_off_like_go() {
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+    fn int_key(value: i64) -> Vec<u8> {
+        let mut key = vec![0x03];
+        key.extend_from_slice(&((value as u64) ^ (1 << 63)).to_be_bytes());
+        key
+    }
+    let table = |id: i64| tidb_codec::table_key::encode_table_prefix(id);
+    let index = |id: i64, index: i64| tidb_codec::table_key::encode_table_index_prefix(id, index);
+    const TEMP: i64 = 0x7fff_0000_0000_0000;
+
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1938)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let id_of = |session: &mut _, sql: &str| -> Vec<i64> {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row[0].parse().unwrap())
+            .collect()
+    };
+    rows(&mut session, "create table t1 (a int, b int, key k(b))");
+    rows(&mut session, "insert into t1 values (1,1)");
+    let t1 = id_of(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_name='t1'",
+    )[0];
+    rows(&mut session, "alter table t1 add index k2(a)");
+    rows(&mut session, "alter table t1 drop index k");
+    rows(&mut session, "truncate table t1");
+    rows(
+        &mut session,
+        "create table tp (a int, b int, key k(b)) partition by hash(a) partitions 2",
+    );
+    let tp = id_of(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_name='tp'",
+    )[0];
+    let tp_parts = id_of(
+        &mut session,
+        "select tidb_partition_id from information_schema.partitions where table_name='tp' order by 1",
+    );
+    rows(&mut session, "alter table tp drop index k");
+    rows(&mut session, "drop table tp");
+    rows(&mut session, "create database dd");
+    rows(&mut session, "create table dd.x (a int)");
+    let x = id_of(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_schema='dd'",
+    )[0];
+    rows(&mut session, "drop database dd");
+    rows(
+        &mut session,
+        "create table tr (a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))",
+    );
+    let tr_parts = id_of(
+        &mut session,
+        "select tidb_partition_id from information_schema.partitions where table_name='tr' order by 1",
+    );
+    rows(&mut session, "alter table tr drop partition p0");
+    rows(&mut session, "alter table tr truncate partition p1");
+
+    // The emulator runs behind the DDL; wait for it to drain.
+    let pending = "select count(*) from mysql.gc_delete_range";
+    let started = std::time::Instant::now();
+    while displayed(rows(&mut session, pending)) != [["0"]] {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "emulator stuck"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let done: Vec<String> = displayed(rows(
+        &mut session,
+        "select element_id, start_key, end_key from mysql.gc_delete_range_done order by job_id, element_id",
+    ))
+    .into_iter()
+    .map(|row| row.join(" "))
+    .collect();
+    let row = |element: i64, start: Vec<u8>, end: Vec<u8>| {
+        format!("{element} {} {}", hex(&start), hex(&end))
+    };
+    let mut drop_k_start = index(t1, 1);
+    drop_k_start.extend(int_key(1));
+    drop_k_start.extend(int_key(1));
+    drop_k_start.push(0);
+    let mut truncate_start = tidb_codec::table_key::encode_row_key_with_handle(
+        t1,
+        &tidb_codec::table_key::RecordHandle::Int(1),
+    );
+    truncate_start.push(0);
+    let expected = vec![
+        // add index k2: its temporary index.
+        row(1, index(t1, TEMP | 2), index(t1, TEMP | 3)),
+        // drop index k: the emulator moved start_key past the one entry.
+        row(1, drop_k_start, index(t1, 2)),
+        // truncate table: the old table, start_key past its one row.
+        row(1, truncate_start, table(t1 + 1)),
+        // drop index on a partitioned table: per partition.
+        row(1, index(tp_parts[0], 1), index(tp_parts[0], 2)),
+        row(2, index(tp_parts[1], 1), index(tp_parts[1], 2)),
+        // drop table: the partitions, then the logical table.
+        row(1, table(tp_parts[0]), table(tp_parts[0] + 1)),
+        row(2, table(tp_parts[1]), table(tp_parts[1] + 1)),
+        row(3, table(tp), table(tp + 1)),
+        // drop database: its tables.
+        row(1, table(x), table(x + 1)),
+        // drop and truncate partition: the replaced partitions.
+        row(1, table(tr_parts[0]), table(tr_parts[0] + 1)),
+        row(1, table(tr_parts[1]), table(tr_parts[1] + 1)),
+    ];
+    assert_eq!(done, expected);
 }

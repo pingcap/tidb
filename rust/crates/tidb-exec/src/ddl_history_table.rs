@@ -171,15 +171,28 @@ impl DdlHistoryTable {
         encoded: &[u8],
         mutations: &mut Vec<BufferMutation>,
     ) -> Result<(), DdlHistoryTableError> {
-        let already_exists = scan_system_table(snapshot, &self.view)?
-            .into_iter()
-            .map(|(key, value)| {
-                let row = SystemRow::parse(&self.view, &key, &value)?;
-                Ok(row.i64("job_id")? == Some(job.id))
-            })
-            .collect::<Result<Vec<_>, SystemTableError>>()?
-            .into_iter()
-            .any(|matches| matches);
+        // Go's `INSERT IGNORE` checks the `job_id` primary key: a point
+        // read of the row when it is the handle, not a walk of the history.
+        let already_exists = if self.table.pk_is_handle {
+            let record = tidb_codec::table_key::encode_row_key_with_handle(
+                self.table.id,
+                &tidb_codec::table_key::RecordHandle::Int(job.id),
+            );
+            snapshot
+                .get(&record)
+                .map_err(SystemTableError::from)?
+                .is_some()
+        } else {
+            scan_system_table(snapshot, &self.view)?
+                .into_iter()
+                .map(|(key, value)| {
+                    let row = SystemRow::parse(&self.view, &key, &value)?;
+                    Ok(row.i64("job_id")? == Some(job.id))
+                })
+                .collect::<Result<Vec<_>, SystemTableError>>()?
+                .into_iter()
+                .any(|matches| matches)
+        };
         if already_exists {
             return Ok(());
         }

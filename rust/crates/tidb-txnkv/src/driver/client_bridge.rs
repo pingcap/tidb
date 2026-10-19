@@ -82,6 +82,14 @@ impl ResolverBridgeError {
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::StringError(error.to_string())
 }
+/// A routing failure: a region the cache no longer holds is client-go's
+/// "region missing in cache", which the sender answers as `EpochNotMatch`.
+fn route_failure(error: crate::region::RegionRouteError) -> Error {
+    match error {
+        crate::region::RegionRouteError::RegionNotCached(_) => Error::EntryNotFoundInRegionCache,
+        error => failure(error),
+    }
+}
 fn region_id(id: RegionVerId) -> crate::region::RegionVerId {
     crate::region::RegionVerId::new(id.id, id.conf_ver, id.ver)
 }
@@ -223,7 +231,7 @@ where
                 cache.native_replica_candidates(region_id(region), labels, stores, state)
             })
             .map_err(failure)?
-            .map_err(failure)
+            .map_err(route_failure)
     }
     fn route(
         &self,
@@ -237,7 +245,7 @@ where
                 cache.native_route(region_id(region), target, proxy, forwarding)
             })
             .map_err(failure)?
-            .map_err(failure)
+            .map_err(route_failure)
     }
     fn proxy(
         &self,
@@ -248,7 +256,7 @@ where
         self.storage
             .with_region_cache(|cache| cache.native_proxy(region_id(region), leader, state))
             .map_err(failure)?
-            .map_err(failure)
+            .map_err(route_failure)
     }
     fn route_feedback(&self, route: &LeaderRequest, success: bool) {
         if success {

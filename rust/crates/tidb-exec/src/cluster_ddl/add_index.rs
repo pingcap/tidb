@@ -423,7 +423,7 @@ fn job_batch_size(job: &Job) -> usize {
 }
 
 /// Go `getPartitionIDs`.
-fn partition_ids(table: &TableInfo) -> Vec<i64> {
+pub(super) fn partition_ids(table: &TableInfo) -> Vec<i64> {
     table
         .get_partition_info()
         .map(|info| {
@@ -927,7 +927,9 @@ fn plan_write_reorganization<S: MetaSnapshot>(
     );
     Ok(PersistedDdlActionStep {
         write,
-        update_raw_args: false,
+        // Go `needUpdateRawArgs`: the finished arguments are what history
+        // and the delete range read.
+        update_raw_args: true,
         run_error: None,
         reorg: None,
     })

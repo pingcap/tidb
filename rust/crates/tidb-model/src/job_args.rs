@@ -408,6 +408,8 @@ pub enum JobArgsValue {
     BatchCreateTable(Option<GoShared<BatchCreateTableArgs>>),
     /// `*model.TruncateTableArgs`, including a typed nil pointer.
     TruncateTable(Option<GoShared<TruncateTableArgs>>),
+    /// `*model.DropTableArgs`, including a typed nil pointer.
+    DropTable(Option<GoShared<DropTableArgs>>),
     /// `*model.TablePartitionArgs`, including a typed nil pointer.
     TablePartition(Option<GoShared<TablePartitionArgs>>),
     /// `*model.ExchangeTablePartitionArgs`, including a typed nil pointer.
@@ -458,6 +460,7 @@ impl JobArgsValue {
             Self::CreateTable(value) => job.fill_args(value.clone()),
             Self::BatchCreateTable(value) => job.fill_args(value.clone()),
             Self::TruncateTable(value) => job.fill_args(value.clone()),
+            Self::DropTable(value) => job.fill_args(value.clone()),
             Self::TablePartition(value) => job.fill_args(value.clone()),
             Self::ExchangeTablePartition(value) => job.fill_args(value.clone()),
             Self::AlterTablePartition(value) => job.fill_args(value.clone()),
@@ -490,6 +493,7 @@ impl JobArgsValue {
             Self::CreateTable(_) => "CreateTableArgs",
             Self::BatchCreateTable(_) => "BatchCreateTableArgs",
             Self::TruncateTable(_) => "TruncateTableArgs",
+            Self::DropTable(_) => "DropTableArgs",
             Self::TablePartition(_) => "TablePartitionArgs",
             Self::ExchangeTablePartition(_) => "ExchangeTablePartitionArgs",
             Self::AlterTablePartition(_) => "AlterTablePartitionArgs",
@@ -523,6 +527,7 @@ impl JobArgsValue {
             Self::CreateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::BatchCreateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TruncateTable(value) => value.as_ref().map(GoShared::identity_address),
+            Self::DropTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TablePartition(value) => value.as_ref().map(GoShared::identity_address),
             Self::ExchangeTablePartition(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterTablePartition(value) => value.as_ref().map(GoShared::identity_address),
@@ -595,6 +600,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::TruncateTable(value) => GoTypedPointer::new(
                 model_type("TruncateTableArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::DropTable(value) => GoTypedPointer::new(
+                model_type("DropTableArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),

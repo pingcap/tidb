@@ -1364,6 +1364,46 @@ where
                 Ok(region_store)
             }) {
             Ok(region_store) => region_store,
+            Err(Error::EntryNotFoundInRegionCache) => {
+                // Source `SendReqCtx` with `rpcCtx == nil`: the region left the
+                // cache (split or merged meanwhile), so the request is answered
+                // with `EpochNotMatch` without an RPC, the entry is invalidated
+                // and the owning caller re-splits against fresh regions.
+                pd_client
+                    .invalidate_region_cache(region_ver_id.clone())
+                    .await;
+                let error = Error::RegionError(Box::new(errorpb::Error {
+                    message: "region missing in cache".to_owned(),
+                    epoch_not_match: Some(errorpb::EpochNotMatch::default()),
+                    ..Default::default()
+                }));
+                // Nothing was sent, so re-sharding is always safe; source
+                // callers back off `BoRegionMiss` and retry on this answer.
+                return match backoff
+                    .backoff(
+                        BO_REGION_MISS,
+                        format!("region missing in cache: {region_ver_id:?}"),
+                    )
+                    .await
+                {
+                    Ok(true) => {
+                        plan.mark_retry_request();
+                        Self::single_plan_handler(
+                            pd_client,
+                            plan,
+                            backoff,
+                            permits,
+                            preserve_region_results,
+                            one_region,
+                            None,
+                            false,
+                        )
+                        .await
+                    }
+                    Ok(false) => (Err(error), backoff),
+                    Err(backoff_error) => (Err(backoff_error), backoff),
+                };
+            }
             Err(err) if is_selector_exhausted_error(&err) => {
                 if let Some((config, reason)) = plan.largest_pending_backoff() {
                     match backoff.backoff(config, reason).await {
@@ -2998,7 +3038,8 @@ impl<P: Plan + Shardable, PdC: PdClient> ResolveLock<P, PdC> {
     async fn execute_inner_retry(&mut self) -> Result<(P::Result, Option<ReadLockHintsInRequest>)> {
         self.inner.mark_retry_request();
         if let Some(region) = self.inner.lock_retry_region() {
-            let store = self
+            let ver_id = region.ver_id();
+            let store = match self
                 .pd_client
                 .clone()
                 .map_region_to_store_with_replica(
@@ -3007,7 +3048,21 @@ impl<P: Plan + Shardable, PdC: PdClient> ResolveLock<P, PdC> {
                     ReplicaSelectorState::default(),
                     self.inner.is_read_request(),
                 )
-                .await?;
+                .await
+            {
+                Ok(store) => store,
+                // Source `SendReqCtx` with `rpcCtx == nil`: the region left
+                // the cache meanwhile; the owner re-splits on `EpochNotMatch`.
+                Err(Error::EntryNotFoundInRegionCache) => {
+                    self.pd_client.invalidate_region_cache(ver_id).await;
+                    return Err(Error::RegionError(Box::new(errorpb::Error {
+                        message: "region missing in cache".to_owned(),
+                        epoch_not_match: Some(errorpb::EpochNotMatch::default()),
+                        ..Default::default()
+                    })));
+                }
+                Err(error) => return Err(error),
+            };
             self.inner.apply_store(&store)?;
         }
         self.execute_inner().await

@@ -446,7 +446,8 @@ fn store_facade_scan_regions_uses_actual_serving_responses() {
             (b"b".to_vec(), b"two".to_vec())
         ]
     );
-    assert_eq!(regions[0].region.id, 1);
+    // Go's `MockRegionManager` bootstraps store 1, region 2, peer 3.
+    assert_eq!(regions[0].region.id, 2);
     txn.finish_without_writes().unwrap();
 }
 
