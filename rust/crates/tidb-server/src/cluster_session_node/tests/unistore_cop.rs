@@ -19326,3 +19326,80 @@ fn add_index_runs_as_a_persisted_job_like_go() {
         vec![vec!["0".to_owned()]]
     );
 }
+
+/// Go runs ADD INDEX through delete-only, write-only and the txn-merge
+/// reorganization precisely so that DML running meanwhile keeps the new
+/// index whole: writes during the backfill go to the temporary index and the
+/// merge replays them. A second session inserts, updates and deletes rows
+/// throughout the job; the table and every index agree afterwards.
+#[test]
+fn add_index_stays_consistent_with_concurrent_dml() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut session = factory.open_session(session_context(1936)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    rows(&mut session, "create table d (x int)");
+    rows(
+        &mut session,
+        "insert into d values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)",
+    );
+    for table in ["cd", "ce"] {
+        rows(
+            &mut session,
+            &format!("create table {table} (a int primary key, b int, c int)"),
+        );
+        rows(
+            &mut session,
+            &format!(
+                "insert into {table} select p.x*1000+q.x*100+r.x*10+s.x, p.x, q.x from d p, d q, d r, d s"
+            ),
+        );
+    }
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let rounds = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let (done, rounds) = (&done, &rounds);
+        scope.spawn(move || {
+            let mut session = factory.open_session(session_context(1937)).unwrap();
+            rows(&mut session, "USE test");
+            while !done.load(std::sync::atomic::Ordering::Acquire) {
+                let round = rounds.load(std::sync::atomic::Ordering::Acquire);
+                let key = (round * 397) % 10000;
+                for table in ["cd", "ce"] {
+                    for sql in [
+                        format!(
+                            "insert into {table} values ({}, {round}, {round})",
+                            10000 + round
+                        ),
+                        format!("update {table} set b = b + 1 where a = {key}"),
+                        format!("delete from {table} where a = {}", (key + 5000) % 10000),
+                    ] {
+                        rows(&mut session, &sql);
+                    }
+                }
+                rounds.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            }
+        });
+        for sql in [
+            "alter table cd add index ib(b)",
+            "alter table ce add index ibc((b + c))",
+        ] {
+            let before = rounds.load(std::sync::atomic::Ordering::Acquire);
+            rows(&mut session, sql);
+            // The writer must have run while the job did.
+            assert!(
+                rounds.load(std::sync::atomic::Ordering::Acquire) > before + 1,
+                "{sql}"
+            );
+        }
+        done.store(true, std::sync::atomic::Ordering::Release);
+    });
+    for table in ["cd", "ce"] {
+        rows(&mut session, &format!("admin check table {table}"));
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "select count(*) from cd use index(ib) where b >= 0")),
+        displayed(rows(&mut session, "select count(*) from cd ignore index(ib)")),
+    );
+}
