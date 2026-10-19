@@ -231,13 +231,11 @@ pub struct Catalog {
     /// BDR role, "" when unset. It is store-global meta rather than schema,
     /// so every snapshot and staged copy of this catalog shares it.
     bdr_role: Arc<std::sync::RwLock<String>>,
-    /// The store's region boundaries (`kv.SplittableStore`), store metadata
-    /// every snapshot and staged copy of this catalog shares.
-    ///
-    /// NOT MODELLED (documented): this is the in-process store's map. A
-    /// cluster catalog has no SplitRegion RPC behind it yet, so its splits
-    /// and sampled ranges come from the same map rather than TiKV's regions.
-    regions: Arc<std::sync::RwLock<crate::region_map::RegionMap>>,
+    /// The store's regions (`kv.SplittableStore` and its region cache),
+    /// store state every snapshot and staged copy of this catalog shares: the
+    /// in-process store's own map, or the cluster store a node hands in
+    /// through [`Self::set_region_store`].
+    regions: Arc<dyn crate::region_map::RegionStore>,
     /// Go `infosync`'s label-rule manager. A store without PD gets the
     /// in-memory `mockLabelManager`; like the BDR role it is store-global,
     /// so every snapshot and staged copy of this catalog shares it, and a
@@ -1018,7 +1016,7 @@ impl Catalog {
             metadata_version: next_metadata_version(),
             plan_cache_epoch: Arc::default(),
             bdr_role: Arc::default(),
-            regions: Arc::default(),
+            regions: Arc::new(crate::region_map::LocalRegionStore::default()),
             label_rules: Arc::new(crate::label_manager::MockLabelManager::default()),
             ddl_job_history: Arc::default(),
             pessimistic_locks: Arc::default(),
@@ -1542,53 +1540,38 @@ impl Catalog {
             .clone()
     }
 
-    /// client-go `SplitRegions` over this store: the number of regions the
-    /// keys created.
-    pub fn split_regions<I>(&self, keys: I) -> usize
-    where
-        I: IntoIterator<Item = Vec<u8>>,
-    {
-        self.regions
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .split(keys)
-    }
-
-    /// This catalog's region map, for the catalog that replaces it to adopt
-    /// through [`Self::set_store_regions`].
+    /// The store's regions.
     #[must_use]
-    pub fn store_regions(&self) -> Arc<std::sync::RwLock<crate::region_map::RegionMap>> {
+    pub fn region_store(&self) -> Arc<dyn crate::region_map::RegionStore> {
         Arc::clone(&self.regions)
     }
 
-    /// Hands this catalog the node's region map. The map is store metadata,
-    /// not schema, so a node that rebuilds its catalog from the stored schema
-    /// (every DDL does) must carry the splits `SPLIT TABLE` made across the
-    /// rebuild, as it carries the label-rule manager.
-    pub fn set_store_regions(
-        &mut self,
-        regions: Arc<std::sync::RwLock<crate::region_map::RegionMap>>,
-    ) {
+    /// Hands this catalog the node's store regions. They are store state, not
+    /// schema, so a node that rebuilds its catalog from the stored schema
+    /// (every DDL does) keeps the same store, as it keeps the label-rule
+    /// manager.
+    pub fn set_region_store(&mut self, regions: Arc<dyn crate::region_map::RegionStore>) {
         self.regions = regions;
     }
 
     /// The regions overlapping `[start, end)`, clipped to it.
-    #[must_use]
-    pub fn region_ranges_in(&self, start: &[u8], end: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
-        self.regions
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .ranges_in(start, end)
+    pub fn region_ranges_in(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        let regions = self.regions.load_regions_in_key_range(start, end)?;
+        Ok(crate::region_map::clip_regions(&regions, start, end))
     }
 
     /// The regions overlapping `[start, end)` with their own bounds and ids,
     /// as the region cache loads them.
-    #[must_use]
-    pub fn region_metas_in(&self, start: &[u8], end: &[u8]) -> Vec<crate::region_map::RegionMeta> {
-        self.regions
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .regions_in(start, end)
+    pub fn region_metas_in(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<crate::region_map::RegionMeta>, String> {
+        self.regions.load_regions_in_key_range(start, end)
     }
 
     /// The store's label-rule manager (Go `InfoSyncer.labelRuleManager`).

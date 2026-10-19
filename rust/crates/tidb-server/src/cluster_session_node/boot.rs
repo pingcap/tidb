@@ -75,6 +75,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let mut loaded = None;
+    // The cluster's regions as `SPLIT`, `SHOW TABLE ... REGIONS`,
+    // `TABLESAMPLE REGIONS()` and the pre-split after CREATE TABLE reach them.
+    let region_store: Arc<dyn tidb_executor::region_map::RegionStore> =
+        Arc::new(tidb_exec::tikv_region_store::TikvRegionStore::new(
+            config.pd_endpoints.clone(),
+            config.cluster_security.clone(),
+        ));
     let authority = ProductionReadProcessAuthority::connect_with_catalog_and_security(
         config.pd_endpoints.clone(),
         COPROCESSOR_QUERY_TIMEOUT,
@@ -106,6 +113,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 eprintln!(
                     "{{\"event\":\"cluster_bootstrap_published\",\"schema_version\":{schema_version}}}"
                 );
+                // Go `EnableSplitTableRegion`: the bootstrap cut every system
+                // table's region (re-cutting an existing boundary is a no-op).
+                if tidb_config::config_tree::config::get_global_config().split_table {
+                    tidb_exec::pre_split::split_bootstrap_tables(region_store.as_ref(), 0);
+                }
             }
             loaded = Some(
                 load_catalog_from_cluster(opener, COPROCESSOR_QUERY_TIMEOUT)
@@ -512,6 +524,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     )
     .with_global_config_syncer(global_config_keeper.syncer())
     .with_cop_scans(cop_scans)
+    .with_region_store(region_store)
     .with_server_info(Arc::clone(&server_info))
     .with_connection_ids(crate::sql_node::new_connection_id_allocator(
         &config.global_config,

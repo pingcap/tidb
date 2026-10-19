@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The in-process store's REGION boundaries: what `kv.SplittableStore`
-//! splits and what `TABLESAMPLE REGIONS()` and the region cache read.
+//! The store's REGIONS as SQL reaches them: [`RegionStore`] is Go's
+//! `kv.SplittableStore` plus the region-cache and PD reads `SHOW TABLE ...
+//! REGIONS` and `TABLESAMPLE REGIONS()` make; a cluster node supplies one
+//! over its real store. [`RegionMap`] is the in-process store's own regions.
 //!
 //! The keyspace starts as one region `["", "")`. A split key strictly inside
 //! a region splits it in two; a key that is already a region's start key
@@ -24,20 +26,131 @@
 
 use std::collections::BTreeMap;
 
-/// One region as the store reports it: client-go `Region.GetMeta()` plus the
-/// leader, for `SHOW TABLE ... REGIONS`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One region as the store reports it, for `SHOW TABLE ... REGIONS`: Go
+/// `regionMeta` (client-go `Region.GetMeta()`, its leader, PD's statistics
+/// and whether PD is scattering it).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RegionMeta {
     /// `metapb.Region.Id`.
     pub id: u64,
-    /// The region's only peer, which is also its leader.
+    /// `GetLeaderPeerID`.
     pub peer_id: u64,
-    /// The store holding that peer.
+    /// `GetLeaderStoreID`.
     pub store_id: u64,
+    /// Every peer's id, in `metapb.Region.Peers` order.
+    pub peers: Vec<u64>,
     /// `metapb.Region.StartKey`, the region's own (unclipped) bound.
     pub start_key: Vec<u8>,
     /// `metapb.Region.EndKey`; empty for the last region.
     pub end_key: Vec<u8>,
+    /// `CheckRegionInScattering`.
+    pub scattering: bool,
+    /// PD's `RegionInfo.WrittenBytes` (0 without PD, as Go's `getRegionInfo`).
+    pub written_bytes: u64,
+    /// PD's `RegionInfo.ReadBytes`.
+    pub read_bytes: u64,
+    /// PD's `RegionInfo.ApproximateSize`.
+    pub approximate_size: i64,
+    /// PD's `RegionInfo.ApproximateKeys`.
+    pub approximate_keys: i64,
+}
+
+/// Go `kv.SplittableStore` with the reads `SHOW TABLE ... REGIONS` and
+/// `TABLESAMPLE REGIONS()` make of the store's region cache and PD.
+pub trait RegionStore: Send + Sync + std::fmt::Debug {
+    /// client-go `SplitRegions(keys, scatter, tableID)`: the ids of the
+    /// regions the split produced -- one per region it created, as client-go
+    /// drops each response's last region -- and the error that stopped it
+    /// part way, if any.
+    fn split_regions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        scatter: bool,
+        table_id: Option<i64>,
+    ) -> (Vec<u64>, Option<String>);
+
+    /// client-go `WaitScatterRegionFinish` with a backoff budget in
+    /// milliseconds.
+    fn wait_scatter_region_finish(&self, region_id: u64, backoff_ms: i64) -> Result<(), String>;
+
+    /// client-go `CheckRegionInScattering`.
+    fn check_region_in_scattering(&self, region_id: u64) -> Result<bool, String>;
+
+    /// client-go `RegionCache.LoadRegionsInKeyRange(start, end)` with Go
+    /// `getRegionInfo`'s PD statistics: every region overlapping
+    /// `[start, end)` with its own bounds, in key order. An empty `end` is
+    /// the keyspace's end.
+    fn load_regions_in_key_range(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<RegionMeta>, String>;
+}
+
+/// The regions overlapping `[start, end)`, clipped to it, as Go
+/// `splitIntoMultiRanges` clips the loaded regions.
+#[must_use]
+pub fn clip_regions(regions: &[RegionMeta], start: &[u8], end: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    regions
+        .iter()
+        .map(|region| {
+            let low = if region.start_key.as_slice() > start {
+                region.start_key.clone()
+            } else {
+                start.to_vec()
+            };
+            let high = if !region.end_key.is_empty()
+                && (end.is_empty() || region.end_key.as_slice() < end)
+            {
+                region.end_key.clone()
+            } else {
+                end.to_vec()
+            };
+            (low, high)
+        })
+        .collect()
+}
+
+/// The in-process store's [`RegionStore`]: a [`RegionMap`] that splits at
+/// once and never scatters (unistore's mock PD answers every operator query
+/// with SUCCESS).
+#[derive(Debug, Default)]
+pub struct LocalRegionStore(std::sync::RwLock<RegionMap>);
+
+impl RegionStore for LocalRegionStore {
+    fn split_regions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        _scatter: bool,
+        _table_id: Option<i64>,
+    ) -> (Vec<u64>, Option<String>) {
+        let ids = self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .split(keys);
+        (ids, None)
+    }
+
+    fn wait_scatter_region_finish(&self, _region_id: u64, _backoff_ms: i64) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn check_region_in_scattering(&self, _region_id: u64) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    fn load_regions_in_key_range(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<RegionMeta>, String> {
+        Ok(self
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .regions_in(start, end))
+    }
 }
 
 /// The mock cluster's bootstrap: one store, one region, one peer
@@ -69,25 +182,26 @@ impl Default for RegionMap {
 
 impl RegionMap {
     /// client-go `SplitRegions` over the mock store: each distinct key that
-    /// falls strictly inside a region creates one region. Returns how many.
+    /// falls strictly inside a region creates one region. Returns the new
+    /// regions' ids.
     ///
     /// The store cuts the keys in ascending order whatever order the caller
     /// built them in, so the ids a batch is given follow key order.
-    pub fn split<I>(&mut self, keys: I) -> usize
+    pub fn split<I>(&mut self, keys: I) -> Vec<u64>
     where
         I: IntoIterator<Item = Vec<u8>>,
     {
         let mut keys: Vec<Vec<u8>> = keys.into_iter().filter(|key| !key.is_empty()).collect();
         keys.sort();
         keys.dedup();
-        let mut created = 0;
+        let mut created = Vec::new();
         for key in keys {
             if self.starts.contains_key(&key) {
                 continue;
             }
             self.starts.insert(key, (self.next_id, self.next_id + 1));
+            created.push(self.next_id);
             self.next_id += 2;
-            created += 1;
         }
         created
     }
@@ -119,8 +233,10 @@ impl RegionMap {
                 id: *id,
                 peer_id: *peer,
                 store_id: BOOTSTRAP_STORE_ID,
+                peers: vec![*peer],
                 start_key: low.to_vec(),
                 end_key: high.to_vec(),
+                ..RegionMeta::default()
             });
         }
         regions
@@ -160,11 +276,15 @@ mod tests {
     fn a_split_key_counts_only_when_it_creates_a_region() {
         let mut regions = RegionMap::default();
         assert_eq!(
-            regions.split([b"t1".to_vec(), b"t5".to_vec(), b"t1".to_vec()]),
+            regions
+                .split([b"t1".to_vec(), b"t5".to_vec(), b"t1".to_vec()])
+                .len(),
             2
         );
         assert_eq!(
-            regions.split([b"t5".to_vec(), b"t3".to_vec(), Vec::new()]),
+            regions
+                .split([b"t5".to_vec(), b"t3".to_vec(), Vec::new()])
+                .len(),
             1
         );
         assert_eq!(
@@ -184,7 +304,7 @@ mod tests {
     #[test]
     fn regions_keep_their_own_bounds_and_get_ids_in_key_order() {
         let mut regions = RegionMap::default();
-        assert_eq!(regions.split([b"t5".to_vec(), b"t1".to_vec()]), 2);
+        assert_eq!(regions.split([b"t5".to_vec(), b"t1".to_vec()]), vec![4, 6]);
         let all = regions.regions_in(b"", b"");
         let ids: Vec<(u64, u64)> = all.iter().map(|r| (r.id, r.peer_id)).collect();
         assert_eq!(ids, vec![(2, 3), (4, 5), (6, 7)]);

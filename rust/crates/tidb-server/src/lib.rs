@@ -93,6 +93,7 @@ mod shutdown_signal;
 pub mod signal_exit;
 mod sql_node;
 mod unistore_node;
+mod unistore_region_store;
 pub mod wire_status;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,

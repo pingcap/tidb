@@ -2092,6 +2092,20 @@ impl ClusterSessionFactory {
         self
     }
 
+    /// Hands every session catalog the store's regions (Go
+    /// `kv.SplittableStore` and the region cache).
+    #[must_use]
+    pub fn with_region_store(
+        self,
+        regions: Arc<dyn tidb_executor::region_map::RegionStore>,
+    ) -> Self {
+        self.session_kv_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_region_store(regions);
+        self
+    }
+
     /// Shares the leased numeric identity with connection allocation and admission.
     #[must_use]
     pub fn with_server_identity(
@@ -6450,7 +6464,7 @@ impl ClusterServerSession {
         let shared = self.session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         // The region map is store metadata the schema rebuild does not own.
-        built.catalog.set_store_regions(catalog.store_regions());
+        built.catalog.set_region_store(catalog.region_store());
         *catalog = built.catalog;
         drop(catalog);
         self.schema_version = loaded.schema_version;
@@ -7544,22 +7558,63 @@ impl ClusterServerSession {
         // executor boundary. Do the same while this connection's transaction
         // is still intact: a denial must neither publish staged writes nor
         // reach the cluster catalog authority.
-        self.session.begin_ddl_statement(parsed).map_err(map_error)?;
+        self.session
+            .begin_ddl_statement(parsed)
+            .map_err(map_error)?;
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
         // The session owns the rest of the DDL path; this node supplies the
         // service that publishes to the cluster.
-        let service = ClusterDdlService(Arc::clone(&self.ddl));
+        let service = ClusterDdlService::new(Arc::clone(&self.ddl));
         self.session
             .run_ddl_statement(sql, parsed, statement, &service)
             .map_err(map_error)?;
+        let created = std::mem::take(
+            &mut *service
+                .created_tables
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        self.pre_split_created_tables(&created);
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
         Ok(WriteOutcome {
             affected_rows: 0,
             last_insert_id: 0,
         })
+    }
+
+    /// Go `preSplitAndScatterTable` after CREATE TABLE, on a node whose
+    /// `split-table` is on (Go `EnableSplitTableRegion`).
+    fn pre_split_created_tables(&mut self, created: &[i64]) {
+        if created.is_empty() || !tidb_config::config_tree::config::get_global_config().split_table
+        {
+            return;
+        }
+        let Ok(regions) = self.session.region_store() else {
+            return;
+        };
+        let scatter_scope = self
+            .session
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION)
+            .unwrap_or_default();
+        let loaded = self.catalog.load();
+        for id in created {
+            let found = loaded
+                .databases
+                .iter()
+                .flat_map(|database| database.tables.iter())
+                .find(|table| table.id == *id);
+            if let Some(table) = found {
+                tidb_exec::pre_split::pre_split_and_scatter(
+                    regions.as_ref(),
+                    table,
+                    &scatter_scope,
+                );
+            }
+        }
     }
 
     fn run_mixed_temporary_drop(
@@ -8658,7 +8713,21 @@ fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_executor::DriverError
     ))
 }
 
-struct ClusterDdlService(Arc<dyn ClusterDdl>);
+struct ClusterDdlService {
+    ddl: Arc<dyn ClusterDdl>,
+    /// The tables a CREATE TABLE published, by id: Go's executor pre-splits
+    /// each once `DoDDLJob` succeeded (`preSplitAndScatterTable`).
+    created_tables: Mutex<Vec<i64>>,
+}
+
+impl ClusterDdlService {
+    fn new(ddl: Arc<dyn ClusterDdl>) -> Self {
+        Self {
+            ddl,
+            created_tables: Mutex::new(Vec::new()),
+        }
+    }
+}
 
 impl tidb_session::ddl_service::DdlService for ClusterDdlService {
     fn execute(
@@ -8666,13 +8735,27 @@ impl tidb_session::ddl_service::DdlService for ClusterDdlService {
         statement: &DdlStatement,
         job_context: &tidb_executor::StmtContext,
     ) -> Result<tidb_exec::real_tikv_ddl::ClusterDdlReport, tidb_executor::DriverError> {
-        self.0.execute(statement, job_context).map_err(|error| {
+        let report = self.ddl.execute(statement, job_context).map_err(|error| {
             tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
                 error.code,
                 error.state,
                 error.message,
             ))
-        })
+        })?;
+        if let (
+            DdlStatement::CreateTable { .. } | DdlStatement::CreateTableLike { .. },
+            tidb_exec::real_tikv_ddl::ClusterDdlReport::Applied {
+                created_id: Some(id),
+                ..
+            },
+        ) = (statement, &report)
+        {
+            self.created_tables
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(*id);
+        }
+        Ok(report)
     }
 }
 

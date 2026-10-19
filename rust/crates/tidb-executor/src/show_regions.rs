@@ -19,7 +19,7 @@
 //! (`pkg/executor/split.go`): for every physical table, the regions covering
 //! its record range and then each index range, de-duplicated by region id,
 //! each key rendered by `regionKeyDecoder`. The regions come from the store's
-//! region cache, which here is the node's [`crate::region_map::RegionMap`].
+//! region cache and PD ([`crate::region_map::RegionStore`]).
 
 use std::collections::HashSet;
 
@@ -249,8 +249,11 @@ fn collect(
     decoder: &KeyDecoder,
     seen: &mut HashSet<u64>,
     rows: &mut Vec<Row>,
-) {
-    for region in catalog.region_metas_in(&range.0, &range.1) {
+) -> Result<(), DriverError> {
+    let regions = catalog
+        .region_metas_in(&range.0, &range.1)
+        .map_err(|error| DriverError::Mysql(MysqlError::new(errcode::ErrUnknown, error)))?;
+    for region in regions {
         if !seen.insert(region.id) {
             continue;
         }
@@ -261,6 +264,7 @@ fn collect(
             physical_id: decoder.physical_id,
         });
     }
+    Ok(())
 }
 
 /// Go `getPhysicalTableRegions`: the record range, then every index range.
@@ -270,7 +274,7 @@ fn table_regions(
     physical_id: i64,
     seen: &mut HashSet<u64>,
     rows: &mut Vec<Row>,
-) {
+) -> Result<(), DriverError> {
     let decoder = |index_prefix: Vec<u8>, index_id: i64| KeyDecoder {
         physical_id,
         table_prefix: tidb_codec::table_key::gen_table_prefix(physical_id),
@@ -285,7 +289,7 @@ fn table_regions(
         &decoder(Vec::new(), 0),
         seen,
         rows,
-    );
+    )?;
     for index in target.table.map_or(&[][..], KvTable::indexes) {
         collect(
             catalog,
@@ -296,8 +300,9 @@ fn table_regions(
             ),
             seen,
             rows,
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Go `getPhysicalIndexRegions`.
@@ -307,7 +312,7 @@ fn index_regions(
     physical_id: i64,
     seen: &mut HashSet<u64>,
     rows: &mut Vec<Row>,
-) {
+) -> Result<(), DriverError> {
     let index_prefix = tidb_codec::table_key::encode_table_index_prefix(physical_id, index_id);
     let decoder = KeyDecoder {
         physical_id,
@@ -323,7 +328,7 @@ fn index_regions(
         &decoder,
         seen,
         rows,
-    );
+    )
 }
 
 /// Go `getPolicyPlacement`.
@@ -407,7 +412,7 @@ pub fn show_table_regions(
                 physical_ids = vec![target.id];
             }
             for physical_id in physical_ids {
-                index_regions(catalog, found.id, physical_id, &mut seen, &mut rows);
+                index_regions(catalog, found.id, physical_id, &mut seen, &mut rows)?;
             }
         }
         None => {
@@ -415,9 +420,16 @@ pub fn show_table_regions(
                 physical_ids.insert(0, target.id);
             }
             for physical_id in physical_ids {
-                table_regions(catalog, &target, physical_id, &mut seen, &mut rows);
+                table_regions(catalog, &target, physical_id, &mut seen, &mut rows)?;
             }
         }
+    }
+    // Go `checkRegionsStatus`: whether PD is scattering each region.
+    let store = catalog.region_store();
+    for row in &mut rows {
+        row.region.scattering = store
+            .check_region_in_scattering(row.region.id)
+            .map_err(|error| DriverError::Mysql(MysqlError::new(errcode::ErrUnknown, error)))?;
     }
     let placements = scheduling(catalog, &target)?;
     Ok(rows
@@ -433,12 +445,20 @@ pub fn show_table_regions(
                 Datum::Bytes(row.end.into_bytes()),
                 Datum::UInt(row.region.peer_id),
                 Datum::UInt(row.region.store_id),
-                Datum::Bytes(row.region.peer_id.to_string().into_bytes()),
-                Datum::Int(0),
-                Datum::UInt(0),
-                Datum::UInt(0),
-                Datum::Int(0),
-                Datum::Int(0),
+                Datum::Bytes(
+                    row.region
+                        .peers
+                        .iter()
+                        .map(u64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                        .into_bytes(),
+                ),
+                Datum::Int(i64::from(row.region.scattering)),
+                Datum::UInt(row.region.written_bytes),
+                Datum::UInt(row.region.read_bytes),
+                Datum::Int(row.region.approximate_size),
+                Datum::Int(row.region.approximate_keys),
                 Datum::Bytes(constraints.into_bytes()),
                 Datum::Bytes(state.into_bytes()),
             ]

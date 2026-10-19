@@ -310,7 +310,22 @@ pub(crate) fn in_process_write_stack() -> Result<
     ),
     SqlQueryError,
 > {
+    in_process_write_stack_with_regions().map(|(authority, pd, opener, _)| (authority, pd, opener))
+}
+
+/// [`in_process_write_stack`] with the store's region manager, which the
+/// region cache loads from and `SPLIT` cuts.
+pub(crate) fn in_process_write_stack_with_regions() -> Result<
+    (
+        SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
+        InProcessPd,
+        InProcessOpener,
+        Arc<tidb_unistore::region_manager::InProcessRegionManager>,
+    ),
+    SqlQueryError,
+> {
     let pd = InProcessPd::new();
+    let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
     // Go's unistore store holds THE cluster's mock PD client
     // (`mock_region.go`), so its async-commit/1PC `minCommitTS` draws from
     // the same oracle start timestamps do. The embedded store mirrors that:
@@ -318,7 +333,7 @@ pub(crate) fn in_process_write_stack() -> Result<
     let client = InProcessClient::over(KvHandler {
         store: MvccStore::with_pd(pd.oracle()),
     });
-    let cache = RegionCache::new(InProcessRegionLoader);
+    let cache = RegionCache::new(InProcessRegionLoader::new(Arc::clone(&regions)));
     let read_authority = SharedReadAuthority::start_with_lock_resolver(client, cache)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     // The embedded store never garbage-collects, so the read floor is a
@@ -336,7 +351,7 @@ pub(crate) fn in_process_write_stack() -> Result<
     )
     .map_err(|error| SqlQueryError::unknown(error.to_string()))?
     .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
-    Ok((read_authority, pd, transaction_opener))
+    Ok((read_authority, pd, transaction_opener, regions))
 }
 
 /// Runs the wide cluster-session surface over the embedded store.
@@ -487,7 +502,20 @@ pub(crate) fn unistore_cluster_session_stack(
     use crate::real_tikv_node::RunConfiguredNodeError;
 
     let engine = RunConfiguredNodeError::Engine;
-    let (read_authority, _pd, opener) = in_process_write_stack().map_err(engine)?;
+    let (read_authority, _pd, opener, regions) =
+        in_process_write_stack_with_regions().map_err(engine)?;
+    // The store's regions as `SPLIT`, `SHOW TABLE ... REGIONS` and
+    // `TABLESAMPLE REGIONS()` reach them.
+    let region_cache = read_authority
+        .opener()
+        .open_session()
+        .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?
+        .region_cache_handle();
+    let region_store: Arc<dyn tidb_executor::region_map::RegionStore> = Arc::new(
+        crate::unistore_region_store::UnistoreRegionStore::new(regions, move |stale| {
+            let _ = region_cache.with_cache(|cache| cache.invalidate(stale));
+        }),
+    );
     // Go `affinity.InitManager(nil)`: unistore has no PD HTTP client, so the
     // affinity groups live in the mock manager.
     tidb_domain::affinity::init_manager(None);
@@ -504,6 +532,11 @@ pub(crate) fn unistore_cluster_session_stack(
         crate::bootstrap_publish::notify_committed_bootstrap(&outcome, schema_version, None)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     eprintln!("{{\"event\":\"bootstrap_committed\",\"schema_version\":{schema_version}}}");
+    // Go `EnableSplitTableRegion` (config `split-table`): the bootstrap cut
+    // every system table's region on the fresh store.
+    if tidb_config::config_tree::config::get_global_config().split_table {
+        tidb_exec::pre_split::split_bootstrap_tables(region_store.as_ref(), 0);
+    }
 
     // Go's bootstrap INSERTs `root@%` into `mysql.user`; this node provisions
     // its startup identity from `--auth-file` instead, so it has to become a
@@ -654,6 +687,7 @@ pub(crate) fn unistore_cluster_session_stack(
         Arc::clone(&node_auto_ids),
     )
     .with_cop_scans(cop_scans)
+    .with_region_store(region_store)
     .with_server_info(server_info)
     // No etcd: the standalone server ID, as Go's Domain allocator names.
     .with_connection_ids(crate::sql_node::new_connection_id_allocator(

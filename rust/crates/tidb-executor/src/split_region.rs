@@ -58,16 +58,22 @@ pub fn split_region_columns() -> Vec<(String, FieldType)> {
     ]
 }
 
+/// Go `checkScatterRegionFinishBackOff`: the backoff a region still gets
+/// once the split's time budget is spent.
+const CHECK_SCATTER_REGION_FINISH_BACKOFF: i64 = 50;
+
 /// Plans and runs one SPLIT statement over `table`, answering Go's one row
 /// (`appendSplitRegionResultToChunk`). `wait_finish` is
 /// `@@tidb_wait_split_region_finish`: without it Go reports no region as
-/// scattered.
+/// scattered; `timeout` is `@@tidb_wait_split_region_timeout`
+/// (`GetSplitRegionTimeout`).
 pub fn split_region(
     stmt: &tidb_ast::SplitRegionStmt,
     table: &KvTable,
     catalog: &Catalog,
     ctx: &StmtContext,
     wait_finish: bool,
+    timeout: std::time::Duration,
 ) -> Result<Vec<Datum>, DriverError> {
     let table_name = match table.name() {
         "" => stmt.table.last().map_or("", String::as_str),
@@ -117,10 +123,28 @@ pub fn split_region(
             keys
         }
     };
-    let regions = catalog.split_regions(keys);
-    // The in-process store scatters nothing, so every created region has
-    // "finished" scattering the moment it exists, as unistore reports.
-    let finished = if wait_finish { regions } else { 0 };
+    // Go `SplitTableRegionExec.splitTableRegion` / `splitIndexRegion`: a
+    // failed split is logged, and the regions it did create are reported.
+    let start = std::time::Instant::now();
+    let store = catalog.region_store();
+    let (region_ids, _error) = store.split_regions(keys, true, Some(table.table_id));
+    let regions = region_ids.len();
+    let mut finished = 0;
+    if regions > 0 && wait_finish {
+        // Go `waitScatterRegionFinish`: each region waits for what remains of
+        // the split's budget, or the short backoff once it is spent.
+        for region_id in region_ids {
+            let elapsed = start.elapsed();
+            let remain = if elapsed >= timeout {
+                CHECK_SCATTER_REGION_FINISH_BACKOFF
+            } else {
+                i64::try_from((timeout - elapsed).as_millis()).unwrap_or(i64::MAX)
+            };
+            if store.wait_scatter_region_finish(region_id, remain).is_ok() {
+                finished += 1;
+            }
+        }
+    }
     let ratio = if finished > 0 && regions > 0 {
         finished as f64 / regions as f64
     } else {

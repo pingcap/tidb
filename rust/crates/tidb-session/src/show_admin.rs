@@ -473,6 +473,14 @@ impl crate::Session {
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_WAIT_SPLIT_REGION_FINISH)
             .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+        // Go `GetSplitRegionTimeout`: `tidb_wait_split_region_timeout` seconds.
+        let timeout = std::time::Duration::from_secs(
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_WAIT_SPLIT_REGION_TIMEOUT)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(300),
+        );
         let row = self.with_catalog_mut(|catalog| {
             let catalog = &*catalog;
             match catalog.table_in(&database, &name) {
@@ -483,6 +491,7 @@ impl crate::Session {
                         catalog,
                         &ctx,
                         wait_finish,
+                        timeout,
                     )
                 }
                 Some(_) => Err(DriverError::unsupported(

@@ -486,7 +486,7 @@ mod tests {
         use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
 
         let client = InProcessClient::new();
-        let cache = RegionCache::new(crate::region_loader::InProcessRegionLoader);
+        let cache = RegionCache::new(crate::region_loader::InProcessRegionLoader::default());
         let authority =
             tidb_txnkv::SharedReadAuthority::start_with_lock_resolver(client.clone(), cache)
                 .expect("the read authority starts over the in-process plane");
@@ -690,7 +690,7 @@ mod tests {
             WarningCollector,
         };
         let (client, cop) = cop_read_fixture();
-        let cache = tidb_txnkv::region::RegionCache::new(InProcessRegionLoader);
+        let cache = tidb_txnkv::region::RegionCache::new(InProcessRegionLoader::default());
         let authority: tidb_txnkv::SharedReadAuthority<InProcessClient, InProcessRegionLoader> =
             tidb_txnkv::SharedReadAuthority::start(client, cache).expect("the authority starts");
         for keep_order in [true, false] {

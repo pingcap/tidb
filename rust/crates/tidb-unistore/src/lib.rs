@@ -115,6 +115,7 @@ pub mod lockwaiter;
 pub mod mvcc;
 pub mod mvcc_store;
 pub mod region_loader;
+pub mod region_manager;
 #[cfg(test)]
 mod tests_mockstore_part1_go_parity;
 #[cfg(test)]

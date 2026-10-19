@@ -29,6 +29,14 @@ use crate::privilege::GlobalPriv;
 use crate::{DriverError, StmtOutput};
 
 impl crate::Session {
+    /// The store's regions this session's catalog reaches (Go
+    /// `kv.SplittableStore`).
+    pub fn region_store(
+        &mut self,
+    ) -> Result<std::sync::Arc<dyn tidb_executor::region_map::RegionStore>, DriverError> {
+        self.with_catalog_mut(|catalog| Ok(catalog.region_store()))
+    }
+
     fn load_data_env(&self) -> LoadDataEnv {
         LoadDataEnv {
             charset_database: self

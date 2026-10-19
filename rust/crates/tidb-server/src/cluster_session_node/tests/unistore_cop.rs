@@ -19034,3 +19034,127 @@ const LOAD_DATA_CAST_CASES: &[(&str, &str, &[u8], &str, &str)] = &[
     ("ld", "load data local infile '/x' into table tg (a, b)", b"2\x094\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
     ("q", "select * from tg", b"", "[[1 2 3] [2 4 4]]", ""),
 ];
+
+/// Go `SPLIT TABLE`, `SHOW TABLE ... REGIONS` and `preSplitAndScatter` over
+/// the embedded store's real regions, against Go on this branch (split-table
+/// on, `tidb_scatter_region = 'table'` so Go splits synchronously). Region and
+/// peer ids are left out: Go's bootstrap splits race its DDL goroutines.
+#[test]
+fn regions_split_and_show_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1934)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    session
+        .execute_write("SET @@tidb_scatter_region = 'table'")
+        .unwrap();
+    rows(
+        &mut session,
+        "create table t (a int primary key, b int, key i(b))",
+    );
+    for (sql, expected) in [
+        (
+            "split table t index i between (0) and (100) regions 2",
+            "2 1",
+        ),
+        ("split table t by (10), (20), (30)", "3 1"),
+        ("split table t by (10), (20), (25)", "1 1"),
+    ] {
+        let answer = displayed(rows(&mut session, sql)).remove(0).join(" ");
+        assert_eq!(answer, expected, "{sql}");
+    }
+    rows(
+        &mut session,
+        "create table tr (a bigint auto_random(3) primary key, b int) pre_split_regions = 2",
+    );
+    rows(
+        &mut session,
+        "create table tps (a int, b int, key k(b)) shard_row_id_bits = 1 pre_split_regions = 1 partition by hash(a) partitions 2",
+    );
+    rows(
+        &mut session,
+        "create table tpn (a int, b int, key k(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)",
+    );
+    let ids: std::collections::HashMap<String, String> = displayed(rows(
+        &mut session,
+        "select table_name, tidb_table_id from information_schema.tables where table_schema = 'test'",
+    ))
+    .into_iter()
+    .map(|row| (row[0].clone(), row[1].clone()))
+    .chain(
+        displayed(rows(
+            &mut session,
+            "select concat(table_name, '.', partition_name), tidb_partition_id from information_schema.partitions where table_schema = 'test' and partition_name is not null",
+        ))
+        .into_iter()
+        .map(|row| (row[0].clone(), row[1].clone())),
+    )
+    .collect();
+    let lowest_reserved = tidb_metadef::DDL_TABLE_VERSION_TABLES
+        .iter()
+        .flat_map(|group| group.tables.iter())
+        .chain(tidb_metadef::BOOTSTRAP_TABLES.iter())
+        .map(|table| table.id)
+        .min()
+        .unwrap()
+        .to_string();
+    let expand = |line: &str| {
+        let mut line = line.replace("{lowest_reserved}", &lowest_reserved);
+        for (name, id) in &ids {
+            line = line.replace(&format!("{{{name}}}"), id);
+        }
+        line
+    };
+    // Captured from Go: (start key, end key, scattering) per table.
+    let expected = [
+        ("t", "t_{t}_i_2_ t_{t}_r_10 0"),
+        ("t", "t_{t}_r_10 t_{t}_r_20 0"),
+        ("t", "t_{t}_r_20 t_{t}_r_25 0"),
+        ("t", "t_{t}_r_25 t_{t}_r_30 0"),
+        ("t", "t_{t}_r_30 t_{tr}_ 0"),
+        ("t", "t_{t}_ t_{t}_i_1_03800000000000003203000000000000 0"),
+        (
+            "t",
+            "t_{t}_i_1_03800000000000003203000000000000 t_{t}_i_2_ 0",
+        ),
+        ("tr", "t_{tr}_ t_{tr}_r_2305843009213693952 0"),
+        (
+            "tr",
+            "t_{tr}_r_2305843009213693952 t_{tr}_r_4611686018427387904 0",
+        ),
+        (
+            "tr",
+            "t_{tr}_r_4611686018427387904 t_{tr}_r_6917529027641081856 0",
+        ),
+        ("tr", "t_{tr}_r_6917529027641081856 t_{tps.p0}_ 0"),
+        ("tps", "t_{tps.p0}_i_2_ t_{tps.p0}_r_4611686018427387904 0"),
+        ("tps", "t_{tps.p0}_r_4611686018427387904 t_{tps.p1}_ 0"),
+        ("tps", "t_{tps.p0}_ t_{tps.p0}_i_2_ 0"),
+        ("tps", "t_{tps.p1}_i_2_ t_{tps.p1}_r_4611686018427387904 0"),
+        ("tps", "t_{tps.p1}_r_4611686018427387904 t_{tpn.p0}_ 0"),
+        ("tps", "t_{tps.p1}_ t_{tps.p1}_i_2_ 0"),
+        ("tpn", "t_{tpn.p0}_ t_{tpn.p1}_ 0"),
+        // Go's next boundary is its lowest reserved system table (a DDL
+        // table, 281474976710648); this node bootstraps every `mysql.*`
+        // table at a reserved id, so its lowest one is lower.
+        ("tpn", "t_{tpn.p1}_ t_{lowest_reserved}_ 0"),
+    ];
+    let mut actual = Vec::new();
+    for table in ["t", "tr", "tps", "tpn"] {
+        for row in displayed(rows(&mut session, &format!("show table {table} regions"))) {
+            actual.push((table, format!("{} {} {}", row[1], row[2], row[6])));
+        }
+    }
+    let expected: Vec<(&str, String)> = expected
+        .iter()
+        .map(|(table, line)| (*table, expand(line)))
+        .collect();
+    assert_eq!(actual, expected);
+    // The index's regions alone, and every region's leader is its one peer.
+    let index_regions = displayed(rows(&mut session, "show table t index i regions"));
+    assert_eq!(index_regions.len(), 2);
+    for row in &index_regions {
+        assert_eq!(row[3], row[5], "leader is the only peer");
+        assert_eq!(row[4], "1", "store 1");
+    }
+}

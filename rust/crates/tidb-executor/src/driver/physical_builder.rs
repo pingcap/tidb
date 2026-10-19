@@ -1034,6 +1034,7 @@ fn build_table_sample(
         ranges.extend(
             catalog
                 .region_ranges_in(&start, end.as_bytes())
+                .map_err(|error| DriverError::Mysql(crate::MysqlError::new(1105, error)))?
                 .into_iter()
                 .map(|(start, end)| crate::table_sample::SampleRange {
                     table: position,

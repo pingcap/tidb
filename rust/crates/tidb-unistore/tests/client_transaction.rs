@@ -48,7 +48,7 @@ impl Store {
         });
         let storage = SharedReadRuntime::new_injected(
             client.clone(),
-            RegionCache::new(InProcessRegionLoader),
+            RegionCache::new(InProcessRegionLoader::default()),
         );
         let oracle = Oracle(oracle);
         let pd = ClientPd::new(storage.clone(), oracle.clone());
