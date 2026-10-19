@@ -243,6 +243,18 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta>;
 
+    /// client-go `pd.Client.Close` for the transaction client's owner: joins
+    /// the client's workers and retires its connections. Clients without
+    /// background work need not override it.
+    async fn close(&self) {}
+
+    /// The TiKV client of the store at `address`, as client-go's
+    /// `KVStore.GetTiKVClient()` reaches a store by address outside region
+    /// routing (store-level commands). Clients without such a pool refuse.
+    async fn kv_client(&self, _address: &str) -> Result<Self::KvClient> {
+        Err(crate::Error::Unimplemented)
+    }
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -1551,6 +1563,14 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
 
     async fn load_keyspace(&self, keyspace: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.pd.load_keyspace(keyspace).await
+    }
+
+    async fn close(&self) {
+        PdRpcClient::close(self).await;
+    }
+
+    async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
+        PdRpcClient::kv_client(self, address).await
     }
 }
 

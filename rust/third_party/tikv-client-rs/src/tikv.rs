@@ -572,14 +572,14 @@ impl SafeTsState {
     }
 }
 
-pub(crate) struct StoreRuntime {
+pub(crate) struct StoreRuntime<PdC: PdClient = PdRpcClient> {
     uuid: String,
     cluster_id: u64,
-    pd: Arc<PdRpcClient>,
+    pd: Arc<PdC>,
     safe_point: Arc<TxnSafePointCache>,
     safe_ts: RwLock<SafeTsState>,
     provider: RwLock<Option<Arc<dyn ResolvedTsProvider>>>,
-    compatible_loader: AsyncMutex<Option<Arc<EtcdSafePointKv>>>,
+    compatible_loader: AsyncMutex<Option<Arc<dyn SafePointKv>>>,
     compatible_mode: AtomicBool,
     cancellation: Cancellation,
     tasks: AsyncMutex<Vec<JoinHandle<()>>>,
@@ -590,9 +590,9 @@ pub(crate) struct StoreRuntime {
     keyspace_meta: Option<keyspacepb::KeyspaceMeta>,
 }
 
-impl StoreRuntime {
+impl<PdC: PdClient> StoreRuntime<PdC> {
     pub(crate) async fn new(
-        pd: Arc<PdRpcClient>,
+        pd: Arc<PdC>,
         endpoints: Vec<String>,
         config: &Config,
         safe_point_kv_prefix: String,
@@ -619,6 +619,43 @@ impl StoreRuntime {
             endpoints,
             security,
             safe_point_kv_prefix,
+            keyspace_meta,
+        });
+        let safe_point = runtime.load_txn_safe_point().await?;
+        runtime.safe_point.update(safe_point, SystemTime::now());
+        runtime.start_workers().await;
+        Ok(runtime)
+    }
+
+    /// [`Self::new`] with the compatible safe-point KV supplied rather than
+    /// opened against PD's etcd (client-go `NewKVStore`'s `spkv`).
+    pub(crate) async fn new_with_safe_point_kv(
+        pd: Arc<PdC>,
+        safe_point_kv: Arc<dyn SafePointKv>,
+        config: &Config,
+        keyspace_meta: Option<keyspacepb::KeyspaceMeta>,
+    ) -> Result<Arc<Self>> {
+        let cluster_id = pd.cluster_id().await;
+        let security = Arc::new(
+            config
+                .security_manager()
+                .map_err(|error| Error::StringError(error.to_string()))?,
+        );
+        let runtime = Arc::new(Self {
+            uuid: format!("tikv-{cluster_id}"),
+            cluster_id,
+            pd,
+            safe_point: Arc::new(TxnSafePointCache::new(0, SystemTime::now())),
+            safe_ts: RwLock::new(SafeTsState::default()),
+            provider: RwLock::new(None),
+            compatible_loader: AsyncMutex::new(Some(safe_point_kv)),
+            compatible_mode: AtomicBool::new(false),
+            cancellation: Cancellation::default(),
+            tasks: AsyncMutex::new(Vec::new()),
+            closed: AtomicBool::new(false),
+            endpoints: Vec::new(),
+            security,
+            safe_point_kv_prefix: String::new(),
             keyspace_meta,
         });
         let safe_point = runtime.load_txn_safe_point().await?;
@@ -675,12 +712,12 @@ impl StoreRuntime {
             .extend([safe_point_task, safe_ts_task]);
     }
 
-    async fn loader(&self) -> Result<Arc<EtcdSafePointKv>> {
+    async fn loader(&self) -> Result<Arc<dyn SafePointKv>> {
         let mut loader = self.compatible_loader.lock().await;
         if let Some(loader) = loader.as_ref() {
             return Ok(loader.clone());
         }
-        let created = Arc::new(
+        let created: Arc<dyn SafePointKv> = Arc::new(
             EtcdSafePointKv::new(
                 self.endpoints.clone(),
                 self.security.clone(),
@@ -939,7 +976,7 @@ async fn refresh_safe_ts_state_for_scope(
     Ok(())
 }
 
-impl Drop for StoreRuntime {
+impl<PdC: PdClient> Drop for StoreRuntime<PdC> {
     fn drop(&mut self) {
         self.cancellation.cancel();
     }
@@ -1139,10 +1176,18 @@ async fn retry_split_after_lock_resolution(
 
 /// Source-exact root store facade. It embeds the native transaction client
 /// while adding the lifecycle state owned by client-go's `tikv.KVStore`.
-#[derive(Clone)]
-pub struct KvStore {
-    inner: TransactionClient,
-    runtime: Arc<StoreRuntime>,
+pub struct KvStore<PdC: PdClient = PdRpcClient> {
+    inner: crate::transaction::Client<PdC>,
+    runtime: Arc<StoreRuntime<PdC>>,
+}
+
+impl<PdC: PdClient> Clone for KvStore<PdC> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            runtime: self.runtime.clone(),
+        }
+    }
 }
 
 impl KvStore {
@@ -1185,6 +1230,58 @@ impl KvStore {
         Ok(Self { inner, runtime })
     }
 
+    /// Returns the authoritative live region cache used by this store's
+    /// request plans, matching client-go's `KVStore.GetRegionCache` surface.
+    pub fn region_cache(
+        &self,
+    ) -> Arc<RegionCache<crate::CodecPdClient<crate::RetryClient<crate::Cluster>>>> {
+        self.inner.pd_client().region_cache()
+    }
+
+    /// Modern PD GC sequence: advance transaction safe point, resolve locks,
+    /// then advance the GC safe point to the actual transaction safe point.
+    pub async fn gc(&self, expected_safe_point: u64) -> Result<u64> {
+        self.gc_with_concurrency(expected_safe_point, 8).await
+    }
+
+    pub async fn gc_with_concurrency(
+        &self,
+        expected_safe_point: u64,
+        concurrency: usize,
+    ) -> Result<u64> {
+        run_gc_controller(self, expected_safe_point, concurrency).await
+    }
+}
+
+impl<PdC: PdClient> KvStore<PdC> {
+    /// client-go `NewKVStore(uuid, pdClient, spkv, tikvclient)`: a store over
+    /// any PD client and the TiKV clients it routes to, such as an
+    /// in-process store's, with `safe_point_kv` holding the compatible txn
+    /// safe point (client-go's tests pass a mock one, as
+    /// `NewTestTiKVStore` does).
+    pub async fn new_with_pd_client(
+        pd: Arc<PdC>,
+        safe_point_kv: Arc<dyn SafePointKv>,
+        config: Config,
+    ) -> Result<Self> {
+        let inner =
+            crate::transaction::Client::new_with_pd_client(pd.clone(), config.clone()).await?;
+        let keyspace_meta = match config.keyspace.as_deref() {
+            Some(name) => Some(
+                pd.load_keyspace(&crate::request::build_keyspace_name(name))
+                    .await?,
+            ),
+            None => None,
+        };
+        let (inner, runtime) = finish_store_construction(
+            inner,
+            StoreRuntime::new_with_safe_point_kv(pd, safe_point_kv, &config, keyspace_meta).await,
+        )
+        .await?;
+        inner.attach_safe_point_cache(runtime.safe_point_cache());
+        Ok(Self { inner, runtime })
+    }
+
     pub fn uuid(&self) -> &str {
         self.runtime.uuid()
     }
@@ -1193,8 +1290,8 @@ impl KvStore {
         self.runtime.cluster_id()
     }
 
-    /// Returns the production PD/routing client owned by this store.
-    pub fn pd_client(&self) -> Arc<PdRpcClient> {
+    /// Returns the PD/routing client owned by this store.
+    pub fn pd_client(&self) -> Arc<PdC> {
         self.inner.pd_client()
     }
 
@@ -1209,16 +1306,8 @@ impl KvStore {
         timeout: Duration,
     ) -> Result<Box<dyn std::any::Any>> {
         use crate::store::KvClient as _;
-        let client = self.pd_client().kv_client(address).await?;
+        let client = PdClient::kv_client(self.pd_client().as_ref(), address).await?;
         client.dispatch_with_timeout(request, Some(timeout)).await
-    }
-
-    /// Returns the authoritative live region cache used by this store's
-    /// request plans, matching client-go's `KVStore.GetRegionCache` surface.
-    pub fn region_cache(
-        &self,
-    ) -> Arc<RegionCache<crate::CodecPdClient<crate::RetryClient<crate::Cluster>>>> {
-        self.inner.pd_client().region_cache()
     }
 
     pub fn is_closed(&self) -> bool {
@@ -1262,20 +1351,6 @@ impl KvStore {
 
     pub async fn current_all_tso_keyspace_group_min_timestamp(&self) -> Result<Timestamp> {
         self.inner.pd_client().get_min_timestamp().await
-    }
-
-    /// Modern PD GC sequence: advance transaction safe point, resolve locks,
-    /// then advance the GC safe point to the actual transaction safe point.
-    pub async fn gc(&self, expected_safe_point: u64) -> Result<u64> {
-        self.gc_with_concurrency(expected_safe_point, 8).await
-    }
-
-    pub async fn gc_with_concurrency(
-        &self,
-        expected_safe_point: u64,
-        concurrency: usize,
-    ) -> Result<u64> {
-        run_gc_controller(self, expected_safe_point, concurrency).await
     }
 
     /// Split through TiKV. The tuple preserves client-go's partial region IDs
@@ -1554,14 +1629,14 @@ impl KvStore {
 }
 
 #[async_trait]
-impl ConstructionOwner for TransactionClient {
+impl<PdC: PdClient> ConstructionOwner for crate::transaction::Client<PdC> {
     async fn close_after_construction_error(self) {
         let _ = self.close().await;
     }
 }
 
 #[async_trait]
-impl ClosingComponent for Arc<StoreRuntime> {
+impl<PdC: PdClient> ClosingComponent for Arc<StoreRuntime<PdC>> {
     async fn close_component(self) -> Result<()> {
         self.close().await;
         Ok(())
@@ -1569,7 +1644,7 @@ impl ClosingComponent for Arc<StoreRuntime> {
 }
 
 #[async_trait]
-impl ClosingComponent for TransactionClient {
+impl<PdC: PdClient> ClosingComponent for crate::transaction::Client<PdC> {
     async fn close_component(self) -> Result<()> {
         self.close().await
     }
@@ -1601,8 +1676,8 @@ impl GcController for KvStore {
     }
 }
 
-impl Deref for KvStore {
-    type Target = TransactionClient;
+impl<PdC: PdClient> Deref for KvStore<PdC> {
+    type Target = crate::transaction::Client<PdC>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -1619,7 +1694,7 @@ pub trait Storage: Send + Sync {
 }
 
 #[async_trait]
-impl Storage for KvStore {
+impl<PdC: PdClient> Storage for KvStore<PdC> {
     fn uuid(&self) -> &str {
         self.uuid()
     }
@@ -2854,5 +2929,56 @@ mod tests {
                 write_throttle_ratio: 0.25,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_store_over_any_pd_client_runs_transactions_and_store_requests() {
+        // client-go `NewTestTiKVStore` builds a KVStore over a mock PD client,
+        // a mock TiKV client and a mock safe-point KV; this is the same store
+        // over client-rust's mocktikv.
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        let (store_id, _, _) = crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let store = KvStore::new_with_pd_client(
+            Arc::new(pd),
+            Arc::new(MockSafePointKv::new()),
+            Config::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut writer = store.begin_optimistic().await.unwrap();
+        writer.put(b"k".to_vec(), b"v".to_vec()).await.unwrap();
+        writer.commit().await.unwrap();
+
+        // A request sent to the store's address outside region routing, as
+        // the GC worker sends store-level commands.
+        let region = store
+            .pd_client()
+            .region_for_key(&Key::from(b"k".to_vec()))
+            .await
+            .unwrap();
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                region_id: region.region.id,
+                region_epoch: region.region.region_epoch.clone(),
+                peer: region.leader.clone(),
+                ..Default::default()
+            }),
+            key: b"k".to_vec(),
+            version: store.current_timestamp().await.unwrap().version(),
+            ..Default::default()
+        };
+        let response = store
+            .send_request(
+                &format!("store{store_id}"),
+                &request,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        let response = response.downcast::<kvrpcpb::GetResponse>().unwrap();
+        assert_eq!(response.value, b"v".to_vec());
+        assert!(!response.not_found);
     }
 }

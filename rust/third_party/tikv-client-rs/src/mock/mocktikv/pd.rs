@@ -290,6 +290,11 @@ impl MockPdClient {
 impl PdClient for MockPdClient {
     type KvClient = RpcClient;
 
+    /// client-go's mock store answers every address with its one RPC client.
+    async fn kv_client(&self, _address: &str) -> Result<RpcClient> {
+        Ok(self.rpc.clone())
+    }
+
     async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
         let store_id = region
             .leader

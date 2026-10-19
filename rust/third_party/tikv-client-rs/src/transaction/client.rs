@@ -86,8 +86,8 @@ fn delete_range_request(
 ///
 /// The returned results of transactional requests are [`Future`](std::future::Future)s that must be
 /// awaited to execute.
-pub struct Client {
-    pd: Arc<PdRpcClient>,
+pub struct Client<PdC: PdClient = PdRpcClient> {
+    pd: Arc<PdC>,
     read_timestamp_validator: Arc<PdReadTimestampValidator>,
     keyspace: Keyspace,
     /// Canonical API V2 keyspace metadata loaded from PD and sent in each
@@ -100,7 +100,7 @@ pub struct Client {
     enable_one_pc: bool,
 }
 
-impl Clone for Client {
+impl<PdC: PdClient> Clone for Client<PdC> {
     fn clone(&self) -> Self {
         Self {
             pd: self.pd.clone(),
@@ -175,24 +175,6 @@ impl Client {
     /// ```
     pub async fn new<S: Into<String>>(pd_endpoints: Vec<S>) -> Result<Client> {
         Self::new_with_config(pd_endpoints, Config::default()).await
-    }
-
-    /// Returns whether client-side transaction latches were enabled when this
-    /// client was constructed.
-    pub fn is_latch_enabled(&self) -> bool {
-        self.latches.is_some()
-    }
-
-    /// Close the client-owned lock resolver and transport workers.
-    ///
-    /// The resolver is shared by cloned clients and transactions. Closing any
-    /// owner therefore cancels and joins its detached lock-cleanup tasks before
-    /// retiring the shared TiKV/PD transport, matching client-go `KVStore.Close`.
-    pub async fn close(self) -> Result<()> {
-        close_transaction_latches(&self.latches);
-        self.lock_resolver_context.close().await;
-        self.pd.close().await;
-        Ok(())
     }
 
     /// Create a transactional [`Client`] with a custom configuration, and connect to the TiKV cluster.
@@ -301,6 +283,59 @@ impl Client {
             enable_one_pc: config.enable_1pc,
         })
     }
+}
+
+impl<PdC: PdClient> Client<PdC> {
+    /// The transaction half of client-go `tikv.NewKVStore(uuid, pdClient,
+    /// spkv, tikvclient)`: a client over any PD client and the TiKV clients
+    /// it routes to, such as an in-process store's. `config.keyspace` names
+    /// the keyspace whose metadata `pd` loads; the PD client applies that
+    /// keyspace's codec itself, as client-go's codec PD client does.
+    pub async fn new_with_pd_client(pd: Arc<PdC>, config: Config) -> Result<Self> {
+        let latches = transaction_latches(&config)?;
+        let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
+            oracle: PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
+                .await
+                .map_err(|error| crate::Error::StringError(error.to_string()))?,
+            safe_point: RwLock::new(None),
+        });
+        let (keyspace, keyspace_name) = match config.keyspace.as_deref().map(build_keyspace_name) {
+            Some(name) => {
+                let meta = pd.load_keyspace(&name).await?;
+                (keyspace_from_pd_meta(&meta)?, Some(meta.name.clone()))
+            }
+            None => (Keyspace::Disable, None),
+        };
+        Ok(Client {
+            pd,
+            read_timestamp_validator,
+            keyspace,
+            keyspace_name,
+            latches,
+            lock_resolver_context: ResolveLocksContext::default(),
+            enable_async_batch_get: config.enable_async_batch_get,
+            enable_async_commit: config.enable_async_commit,
+            enable_one_pc: config.enable_1pc,
+        })
+    }
+
+    /// Returns whether client-side transaction latches were enabled when this
+    /// client was constructed.
+    pub fn is_latch_enabled(&self) -> bool {
+        self.latches.is_some()
+    }
+
+    /// Close the client-owned lock resolver and transport workers.
+    ///
+    /// The resolver is shared by cloned clients and transactions. Closing any
+    /// owner therefore cancels and joins its detached lock-cleanup tasks before
+    /// retiring the shared TiKV/PD transport, matching client-go `KVStore.Close`.
+    pub async fn close(self) -> Result<()> {
+        close_transaction_latches(&self.latches);
+        self.lock_resolver_context.close().await;
+        self.pd.close().await;
+        Ok(())
+    }
 
     /// Creates a new optimistic [`Transaction`].
     ///
@@ -322,7 +357,7 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_optimistic(&self) -> Result<Transaction> {
+    pub async fn begin_optimistic(&self) -> Result<Transaction<PdC>> {
         let timestamp = self.current_timestamp().await?;
         debug!(
             "began optimistic transaction, start_ts: {}",
@@ -348,7 +383,7 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_pessimistic(&self) -> Result<Transaction> {
+    pub async fn begin_pessimistic(&self) -> Result<Transaction<PdC>> {
         let timestamp = self.current_timestamp().await?;
         debug!(
             "began pessimistic transaction, start_ts: {}",
@@ -374,7 +409,10 @@ impl Client {
     /// transaction.commit().await.unwrap();
     /// # });
     /// ```
-    pub async fn begin_with_options(&self, options: TransactionOptions) -> Result<Transaction> {
+    pub async fn begin_with_options(
+        &self,
+        options: TransactionOptions,
+    ) -> Result<Transaction<PdC>> {
         options.validate()?;
         let timestamp = match options.configured_start_timestamp() {
             Some(timestamp) => timestamp,
@@ -385,7 +423,7 @@ impl Client {
     }
 
     /// Create a new [`Snapshot`] at the given [`Timestamp`].
-    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot {
+    pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot<PdC> {
         debug!("creating new snapshot");
         Snapshot::new(self.new_transaction(timestamp, options.read_only()))
     }
@@ -753,7 +791,11 @@ impl Client {
         (runner.completed_regions(), result)
     }
 
-    fn new_transaction(&self, timestamp: Timestamp, options: TransactionOptions) -> Transaction {
+    fn new_transaction(
+        &self,
+        timestamp: Timestamp,
+        options: TransactionOptions,
+    ) -> Transaction<PdC> {
         let options =
             options.with_config_commit_defaults(self.enable_async_commit, self.enable_one_pc);
         let mut transaction = Transaction::new_with_latches_and_keyspace_name(
@@ -773,7 +815,7 @@ impl Client {
     /// Returns the injected or production PD/routing client shared by this
     /// transaction client. This remains available in ordinary builds so an
     /// embedded TiDB/UniStore owner can reuse the authoritative region cache.
-    pub fn pd_client(&self) -> Arc<PdRpcClient> {
+    pub fn pd_client(&self) -> Arc<PdC> {
         self.pd.clone()
     }
 
@@ -793,30 +835,44 @@ impl Client {
             .expect("read timestamp validator lock poisoned") = Some(cache);
     }
 
-    fn plan<Req: KvRequest>(
-        &self,
-        request: Req,
-    ) -> PlanBuilder<PdRpcClient, Dispatch<Req>, NoTarget> {
+    fn plan<Req: KvRequest>(&self, request: Req) -> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
         PlanBuilder::new(self.pd.clone(), self.keyspace, request)
             .keyspace_name_option(self.keyspace_name.as_deref())
     }
 }
 
-#[derive(Clone)]
-struct DeleteRangeHandler {
-    client: Client,
+struct DeleteRangeHandler<PdC: PdClient = PdRpcClient> {
+    client: Client<PdC>,
     notify_only: bool,
 }
 
-#[derive(Clone)]
-struct GcResolveLocksHandler {
-    client: Client,
+impl<PdC: PdClient> Clone for DeleteRangeHandler<PdC> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            notify_only: self.notify_only,
+        }
+    }
+}
+
+struct GcResolveLocksHandler<PdC: PdClient = PdRpcClient> {
+    client: Client<PdC>,
     safepoint: Timestamp,
     batch_size: u32,
 }
 
+impl<PdC: PdClient> Clone for GcResolveLocksHandler<PdC> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            safepoint: self.safepoint.clone(),
+            batch_size: self.batch_size,
+        }
+    }
+}
+
 #[async_trait]
-impl RangeTaskHandler for GcResolveLocksHandler {
+impl<PdC: PdClient> RangeTaskHandler for GcResolveLocksHandler<PdC> {
     async fn handle(
         &self,
         cancellation: Cancellation,
@@ -829,7 +885,7 @@ impl RangeTaskHandler for GcResolveLocksHandler {
 }
 
 #[async_trait]
-impl RangeTaskHandler for DeleteRangeHandler {
+impl<PdC: PdClient> RangeTaskHandler for DeleteRangeHandler<PdC> {
     async fn handle(
         &self,
         cancellation: Cancellation,
@@ -893,6 +949,34 @@ fn close_transaction_latches(latches: &Option<Arc<LatchesScheduler>>) {
 #[cfg(test)]
 mod latch_config_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_client_over_any_pd_client_runs_transactions() {
+        // client-go builds a KVStore over any pd.Client and tikv.Client; the
+        // transaction client here runs over client-go's mock PD and store.
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let client = Client::new_with_pd_client(Arc::new(pd), Config::default())
+            .await
+            .unwrap();
+
+        let mut writer = client.begin_optimistic().await.unwrap();
+        writer.put(b"k".to_vec(), b"v".to_vec()).await.unwrap();
+        writer.commit().await.unwrap();
+
+        let mut reader = client.begin_optimistic().await.unwrap();
+        assert_eq!(
+            reader.get(b"k".to_vec()).await.unwrap(),
+            Some(b"v".to_vec())
+        );
+        reader.rollback().await.unwrap();
+        let snapshot = client.snapshot(
+            client.current_timestamp().await.unwrap(),
+            TransactionOptions::new_optimistic(),
+        );
+        drop(snapshot);
+    }
 
     #[test]
     fn transaction_latches_are_disabled_by_default_and_validate_capacity() {
