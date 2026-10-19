@@ -80,3 +80,19 @@ func BuildExecutorForTest(ctx context.Context, stmt *ExecStmt) error {
 	_, err := stmt.buildExecutor(ctx)
 	return err
 }
+
+func TestBlockSampleNDVRate(t *testing.T) {
+	// Off, or nothing to sample.
+	require.Zero(t, blockSampleNDVRate(5e6, 38, 0))
+	require.Zero(t, blockSampleNDVRate(0, 38, 5000))
+
+	// Rows with values in CF_DEFAULT: 5M rows filled 5,750 write CF blocks.
+	require.InDelta(t, 5000.0/5750, blockSampleNDVRate(5e6, 38, 5000), 0.02)
+	// Two BIGINT columns inline: 50M rows filled about 86,000 blocks, and 300M
+	// rows about 520,000.
+	require.InDelta(t, 5000.0/86000, blockSampleNDVRate(5e7, 38+18, 5000), 0.001)
+	require.InDelta(t, 5000.0/520000, blockSampleNDVRate(3e8, 38+18, 5000), 0.0002)
+
+	// A table with fewer blocks than asked for is read in full.
+	require.Equal(t, 1.0, blockSampleNDVRate(1e5, 38, 5000))
+}
