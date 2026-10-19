@@ -167,6 +167,30 @@ fn compose_ts(physical: i64, logical: i64) -> u64 {
     ((physical << 18) + logical) as u64
 }
 
+/// Go `time.Time.String()` of a local wall-clock time:
+/// `2006-01-02 15:04:05.999999999 -0700 MST`, the fraction without trailing
+/// zeros and the zone named as the OS names it. Go also appends the
+/// monotonic reading (`m=+0.001`), measured from process start, which Rust
+/// does not record.
+pub(crate) fn go_time_string(time: DateTime<Local>) -> String {
+    let fraction = format!("{:09}", time.timestamp_subsec_nanos());
+    let fraction = fraction.trim_end_matches('0');
+    let fraction = if fraction.is_empty() {
+        String::new()
+    } else {
+        format!(".{fraction}")
+    };
+    let abbreviation = tidb_util::timeutil::infer_system_tz()
+        .parse::<chrono_tz::Tz>()
+        .map(|zone| time.with_timezone(&zone).format("%Z").to_string())
+        .unwrap_or_else(|_| time.format("%z").to_string());
+    format!(
+        "{}{fraction} {} {abbreviation}",
+        time.format("%Y-%m-%d %H:%M:%S"),
+        time.format("%z")
+    )
+}
+
 fn now() -> DateTime<FixedOffset> {
     Local::now().fixed_offset()
 }
@@ -295,7 +319,7 @@ impl GcWorker {
         let desc = format!(
             "host:{host_name}, pid:{}, start at {}",
             std::process::id(),
-            now().format("%Y-%m-%d %H:%M:%S%.9f %z")
+            go_time_string(Local::now())
         );
         let worker = Self::with_identity(deps, uuid, desc, keyspace_id);
         tidb_session::statusvar::register_statistics(Arc::new(GcStatistics(Arc::clone(
@@ -2170,7 +2194,7 @@ impl MockGcWorker {
         let desc = format!(
             "host:{host_name}, pid:{}, start at {}",
             std::process::id(),
-            now().format("%Y-%m-%d %H:%M:%S%.9f %z")
+            go_time_string(Local::now())
         );
         Ok(Self {
             worker: GcWorker::with_identity(deps, format!("{version:x}"), desc, NULL_KEYSPACE_ID),

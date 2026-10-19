@@ -1623,3 +1623,26 @@ fn test_calc_delete_range_concurrency() {
         assert!(result >= 1, "{name}");
     }
 }
+
+#[test]
+fn leader_desc_renders_the_start_time_as_go_time_string() {
+    use chrono::TimeZone;
+    let time = chrono::Local
+        .with_ymd_and_hms(2026, 10, 19, 12, 12, 25)
+        .unwrap()
+        + chrono::Duration::microseconds(258_428);
+    let rendered = go_time_string(time);
+    // The fraction loses its trailing zeros; the offset and a zone name follow.
+    assert!(
+        rendered.starts_with("2026-10-19 12:12:25.258428 "),
+        "{rendered}"
+    );
+    assert_eq!(4, rendered.split(' ').count(), "{rendered}");
+    let whole = chrono::Local
+        .with_ymd_and_hms(2026, 10, 19, 12, 12, 25)
+        .unwrap();
+    assert!(
+        go_time_string(whole).starts_with("2026-10-19 12:12:25 "),
+        "a whole second prints no fraction"
+    );
+}

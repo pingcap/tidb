@@ -3703,6 +3703,7 @@ name = "tidb-gcworker"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "serde_json",
  "tidb-codec",
  "tidb-config",
