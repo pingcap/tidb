@@ -21893,3 +21893,79 @@ fn renaming_an_expression_index_frees_its_name_like_go() {
         [["1"]]
     );
 }
+
+/// The GC worker's sessions run Go's statements against the node: the
+/// `mysql.tidb` load and upsert (`loadValueFromSysTable`,
+/// `saveValueToSysTable`) and `pkg/ddl/util`'s delete-range helpers
+/// (`LoadDeleteRanges`, `CompleteDeleteRange`, `LoadDoneDeleteRanges`,
+/// `DeleteDoneRecord`, `IsRaftKv2`), as Go's `TestDeleteRangesFailure` sets
+/// the tables up.
+#[test]
+fn gc_worker_sessions_run_gos_system_table_statements() {
+    use tidb_gcworker::seams::{DelRangeTask, GcSessionFactory};
+
+    let (stack, _users) = cop_backed_stack();
+    let sessions = crate::cluster_session_node::gc_worker::NodeGcSessions::new(
+        &stack.factory,
+        Arc::new(|_| Ok(None)),
+    );
+    let mut session = sessions.create_session();
+
+    // A missing row loads as nothing; the upsert inserts, then updates.
+    assert_eq!(None, session.load_value("tikv_gc_test_key").unwrap());
+    session
+        .save_value("tikv_gc_test_key", "v1", "the comment")
+        .unwrap();
+    assert_eq!(
+        Some("v1".to_owned()),
+        session.load_value("tikv_gc_test_key").unwrap()
+    );
+    session
+        .save_value("tikv_gc_test_key", "v2", "the comment")
+        .unwrap();
+    assert_eq!(
+        Some("v2".to_owned()),
+        session.load_value("tikv_gc_test_key").unwrap()
+    );
+
+    let mut sql = stack
+        .factory
+        .open_session(session_context(1))
+        .expect("session");
+    sql.execute_write(
+        "INSERT INTO mysql.gc_delete_range VALUES \
+         (1, 2, '31', '32', 10), (3, 4, '33', '34', 10), (5, 6, '35', '36', 30)",
+    )
+    .unwrap();
+    let task = |job_id, element_id, start: &[u8], end: &[u8]| DelRangeTask {
+        job_id,
+        element_id,
+        start_key: start.to_vec(),
+        end_key: end.to_vec(),
+    };
+    // `ts < safe point`, the keys hex-decoded.
+    let ranges = session.load_delete_ranges(false, 20).unwrap();
+    assert_eq!(vec![task(1, 2, b"1", b"2"), task(3, 4, b"3", b"4")], ranges);
+
+    // Completed with a done record, the row moves to the done table.
+    session.complete_delete_range(&ranges[0], true).unwrap();
+    assert_eq!(
+        vec![task(3, 4, b"3", b"4")],
+        session.load_delete_ranges(false, 20).unwrap()
+    );
+    assert_eq!(
+        vec![task(1, 2, b"1", b"2")],
+        session.load_delete_ranges(true, 20).unwrap()
+    );
+    // raft-kv2 records no done row.
+    session.complete_delete_range(&ranges[1], false).unwrap();
+    assert!(session.load_delete_ranges(false, 20).unwrap().is_empty());
+    assert_eq!(1, session.load_delete_ranges(true, 20).unwrap().len());
+
+    session.delete_done_record(&ranges[0]).unwrap();
+    assert!(session.load_delete_ranges(true, 20).unwrap().is_empty());
+
+    // The embedded store reports no TiKV `storage.engine`.
+    assert!(!session.is_raft_kv2().unwrap());
+    assert!(session.history_job(1).unwrap().is_none());
+}

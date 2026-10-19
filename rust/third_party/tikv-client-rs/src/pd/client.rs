@@ -1800,7 +1800,7 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         self.keyspace_meta.as_ref()
     }
 
-    async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
+    pub(crate) async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
         if self.kv_client_closed.load(Ordering::Acquire) {
             return Err(crate::Error::StringError("rpc client is closed".to_owned()));
         }

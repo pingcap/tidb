@@ -628,6 +628,25 @@ pub(crate) fn run_cluster_session_node_with_spill(
             TRANSACTION_RPC_TIMEOUT,
         );
     }
+    // Go `Domain.Start` -> `gcworker.NewGCWorker` + `Start`: the GC leader
+    // lease, safe points, lock resolution and delete ranges on TiKV.
+    let gc_worker = authority
+        .pd_client()
+        .map(|pd| {
+            super::gc_worker::start_gc_worker(
+                &factory,
+                &config.pd_endpoints,
+                &config.cluster_security,
+                pd,
+                Arc::new(authority.transaction_opener()),
+            )
+        })
+        .transpose()
+        .map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "start gc worker failed: {error}"
+            )))
+        })?;
     let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
     let workload_store = workload_etcd
         .as_ref()
@@ -770,6 +789,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
             workload_repository.stop();
             drop(replica_read_checker);
+            drop(gc_worker);
             drop(stats_maintenance);
             drop(replica_poll);
             drop(global_config_keeper);

@@ -438,6 +438,14 @@ fn create_gc_worker_suite_with(
     current_keyspace: Option<KeyspaceMeta>,
     keyspaces: Vec<KeyspaceMeta>,
 ) -> Suite {
+    create_gc_worker_suite_full(current_keyspace, keyspaces, None)
+}
+
+fn create_gc_worker_suite_full(
+    current_keyspace: Option<KeyspaceMeta>,
+    keyspaces: Vec<KeyspaceMeta>,
+    gcv2: Option<Arc<dyn GcV2Manager>>,
+) -> Suite {
     let cluster = Cluster::new(MockEngine::new());
     bootstrap_with_multi_stores(&cluster, 3);
     let store = Arc::new(FakeStore {
@@ -459,7 +467,7 @@ fn create_gc_worker_suite_with(
         kv: kv.clone(),
         sessions: sessions.clone(),
         rules: rules.clone(),
-        gcv2: None,
+        gcv2,
     })
     .unwrap();
     worker.tick();
@@ -478,8 +486,9 @@ impl Suite {
         &self.worker.job
     }
 
-    fn job_mut(&mut self) -> &mut GcJobContext {
-        Arc::get_mut(&mut self.worker.job).expect("no GC job is running")
+    /// Go sets its package variable `txnSafePointSyncWaitTime`.
+    fn set_sync_wait_time(&self, wait: Duration) {
+        *self.job().txn_safe_point_sync_wait_time.lock().unwrap() = wait;
     }
 
     /// Go `mustAllocTs`.
@@ -993,7 +1002,7 @@ fn test_unsafe_destroy_range_for_raftkv2() {
 #[test]
 fn test_leader_tick() {
     let mut s = create_gc_worker_suite();
-    s.job_mut().txn_safe_point_sync_wait_time = Duration::ZERO;
+    s.set_sync_wait_time(Duration::ZERO);
 
     let very_long = Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 10) as u64);
     // Avoid failing at the interval check; `lastFinish` is checked by OS time.
@@ -1156,7 +1165,6 @@ fn test_notify_gcv2_after_gc_for_dedicated_worker() {
         ("recycle failure is best effort", true, true, 1),
         ("unified GC", false, false, 0),
     ] {
-        let mut s = create_gc_worker_suite();
         let manager = Arc::new(StubGcV2Manager {
             role: tidb_config::external_workload::ROLE_GCV2_WORKER,
             meta: Some(make_keyspace(1, "ks", keyspace_level)),
@@ -1164,7 +1172,7 @@ fn test_notify_gcv2_after_gc_for_dedicated_worker() {
             register_count: Mutex::new(0),
             recycle: Mutex::new(Vec::new()),
         });
-        s.job_mut().deps.gcv2 = Some(manager.clone());
+        let s = create_gc_worker_suite_full(None, Vec::new(), Some(manager.clone()));
         s.job().notify_gcv2_after_gc(SAFE_POINT);
         assert_eq!(0, *manager.register_count.lock().unwrap(), "{name}");
         let recycle = manager.recycle.lock().unwrap();
@@ -1390,8 +1398,10 @@ fn test_unified_gc_in_multi_batches_of_keyspaces(
         expected.push(req(b"y", b""));
     }
 
-    let mut s = create_gc_worker_suite_with(None, keyspaces);
-    s.job_mut().load_keyspaces_batch_size = load_batch_size;
+    let s = create_gc_worker_suite_with(None, keyspaces);
+    s.job()
+        .load_keyspaces_batch_size
+        .store(load_batch_size, Ordering::Release);
     split_at_keys(&s.kv, &splits);
     s.job().resolve_locks(100, 10).unwrap();
     assert_eq!(expected, collect_and_merge_ranges(&s.kv));
@@ -1430,8 +1440,8 @@ fn test_resolve_locks_with_keyspaces_unified_gc_in_multi_batches_of_keyspaces_mu
 
 #[test]
 fn test_run_gc_job() {
-    let mut s = create_gc_worker_suite();
-    s.job_mut().txn_safe_point_sync_wait_time = Duration::ZERO;
+    let s = create_gc_worker_suite();
+    s.set_sync_wait_time(Duration::ZERO);
     let job = s.job();
     let concurrency = GcConcurrency {
         v: 1,

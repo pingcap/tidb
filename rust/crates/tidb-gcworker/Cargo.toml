@@ -21,5 +21,6 @@ tidb-executor = { path = "../tidb-executor" }
 tidb-log = { path = "../tidb-log" }
 tidb-model = { path = "../tidb-model" }
 tidb-placement = { path = "../tidb-placement" }
+tidb-session = { path = "../tidb-session" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }

@@ -62,6 +62,8 @@ tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-gcworker = { path = "../tidb-gcworker" }
+tidb-placement = { path = "../tidb-placement" }
 tidb-owner = { path = "../tidb-owner" }
 tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 # `pkg/domain/serverinfo`'s syncer: this node's /tidb/server/info entry.
@@ -84,6 +86,7 @@ tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexu
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
+async-trait.workspace = true
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }

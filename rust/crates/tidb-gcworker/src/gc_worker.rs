@@ -258,9 +258,9 @@ pub(crate) struct GcJobContext {
     pub(crate) keyspace_id: u32,
     pub(crate) deps: GcWorkerDeps,
     /// Go's package variable `txnSafePointSyncWaitTime`; tests set it to 0.
-    pub(crate) txn_safe_point_sync_wait_time: Duration,
+    pub(crate) txn_safe_point_sync_wait_time: Mutex<Duration>,
     /// Go's `overrideLoadKeyspacesBatchSize` failpoint.
-    pub(crate) load_keyspaces_batch_size: u32,
+    pub(crate) load_keyspaces_batch_size: std::sync::atomic::AtomicU32,
     /// Go's `getLoadKeyspacesBatchCount` failpoint observation.
     pub(crate) load_keyspaces_batch_count: AtomicUsize,
 }
@@ -297,7 +297,11 @@ impl GcWorker {
             std::process::id(),
             now().format("%Y-%m-%d %H:%M:%S%.9f %z")
         );
-        Ok(Self::with_identity(deps, uuid, desc, keyspace_id))
+        let worker = Self::with_identity(deps, uuid, desc, keyspace_id);
+        tidb_session::statusvar::register_statistics(Arc::new(GcStatistics(Arc::clone(
+            &worker.job,
+        ))));
+        Ok(worker)
     }
 
     pub(crate) fn with_identity(
@@ -313,8 +317,10 @@ impl GcWorker {
                 desc,
                 keyspace_id,
                 deps,
-                txn_safe_point_sync_wait_time: TXN_SAFE_POINT_SYNC_WAIT_TIME,
-                load_keyspaces_batch_size: LOAD_ALL_KEYSPACES_FOR_UNIFIED_GC_BATCH_SIZE,
+                txn_safe_point_sync_wait_time: Mutex::new(TXN_SAFE_POINT_SYNC_WAIT_TIME),
+                load_keyspaces_batch_size: std::sync::atomic::AtomicU32::new(
+                    LOAD_ALL_KEYSPACES_FOR_UNIFIED_GC_BATCH_SIZE,
+                ),
                 load_keyspaces_batch_count: AtomicUsize::new(0),
             }),
             gc_is_running: false,
@@ -404,9 +410,9 @@ impl GcWorker {
         }
     }
 
-    /// Go `GetScope`: the status variables are global.
-    pub fn get_scope(&self, _status: &str) -> tidb_vardef_scope::ScopeFlag {
-        tidb_vardef_scope::DEFAULT_STATUS_VAR_SCOPE_FLAG
+    /// Go `GetScope`.
+    pub fn get_scope(&self, _status: &str) -> u8 {
+        tidb_session::statusvar::DEFAULT_STATUS_VAR_SCOPE_FLAG
     }
 
     /// Go `Stats`: the GC rows of `mysql.tidb` as status variables.
@@ -592,16 +598,29 @@ impl Drop for GcWorkerHandle {
     }
 }
 
-/// Go's status-variable scope types, which the worker reports with.
-pub mod tidb_vardef_scope {
-    /// Go `vardef.ScopeFlag`.
-    pub type ScopeFlag = u8;
-    /// Go `variable.DefaultStatusVarScopeFlag` (`vardef.ScopeGlobal |
-    /// vardef.ScopeSession`).
-    pub const DEFAULT_STATUS_VAR_SCOPE_FLAG: ScopeFlag = 1 | 2;
+/// The worker as a status-variable provider (Go registers the `GCWorker`
+/// itself): the GC rows of `mysql.tidb`.
+struct GcStatistics(Arc<GcJobContext>);
+
+impl tidb_session::statusvar::Statistics for GcStatistics {
+    fn get_scope(&self, _status: &str) -> u8 {
+        tidb_session::statusvar::DEFAULT_STATUS_VAR_SCOPE_FLAG
+    }
+
+    fn stats(&self) -> Result<std::collections::BTreeMap<String, String>, String> {
+        Ok(self.0.stats().into_iter().collect())
+    }
 }
 
 impl GcJobContext {
+    /// Go's `txnSafePointSyncWaitTime`.
+    pub(crate) fn sync_wait_time(&self) -> Duration {
+        *self
+            .txn_safe_point_sync_wait_time
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn session(&self) -> Box<dyn GcSession + '_> {
         self.deps.sessions.create_session()
     }
@@ -1001,7 +1020,7 @@ impl GcJobContext {
 
         // The txn safe point is synchronized to every component after
         // `txnSafePointSyncWaitTime`; nothing GC does may start before.
-        std::thread::sleep(self.txn_safe_point_sync_wait_time);
+        std::thread::sleep(self.sync_wait_time());
 
         // Resolve locks: settle every transaction that started before the
         // txn safe point, so none of them can proceed.
@@ -1488,7 +1507,7 @@ impl GcJobContext {
         );
 
         let is_null_keyspace = keyspace_meta.is_none();
-        let batch_size = self.load_keyspaces_batch_size;
+        let batch_size = self.load_keyspaces_batch_size.load(Ordering::Acquire);
         let mut batch_count = 0usize;
         let record_batch_count = |count: usize| {
             self.load_keyspaces_batch_count
@@ -2118,7 +2137,7 @@ pub fn run_distributed_gc_job(
         GcWorker::with_identity(deps, identifier.to_owned(), String::new(), NULL_KEYSPACE_ID);
     let new_txn_safe_point = worker.job.advance_txn_safe_point(safe_point)?;
     // Let the txn safe point synchronize.
-    std::thread::sleep(worker.job.txn_safe_point_sync_wait_time);
+    std::thread::sleep(worker.job.sync_wait_time());
     worker.job.resolve_locks(new_txn_safe_point, concurrency)?;
     let gc_safe_point = new_txn_safe_point;
     worker.job.broadcast_gc_safe_point(gc_safe_point)

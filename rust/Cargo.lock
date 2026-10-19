@@ -3711,6 +3711,7 @@ dependencies = [
  "tidb-log",
  "tidb-model",
  "tidb-placement",
+ "tidb-session",
  "tidb-txnkv",
  "tidb-util",
  "tikv-client",
@@ -3997,6 +3998,7 @@ name = "tidb-server"
 version = "0.0.0"
 dependencies = [
  "async-stream",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -4035,6 +4037,7 @@ dependencies = [
  "tidb-exec",
  "tidb-executor",
  "tidb-expr",
+ "tidb-gcworker",
  "tidb-hack",
  "tidb-log",
  "tidb-meta",
@@ -4044,6 +4047,7 @@ dependencies = [
  "tidb-owner",
  "tidb-parser",
  "tidb-pd-client",
+ "tidb-placement",
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",

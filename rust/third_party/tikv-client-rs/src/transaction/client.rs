@@ -494,6 +494,51 @@ impl Client {
         .await
     }
 
+    /// client-go `tikv.ResolveLocksForRange`: resolves, region by region,
+    /// every lock in `range` whose start ts is at most `max_version`,
+    /// scanning `scan_limit` locks per request. It is the handler GC's
+    /// range-task runner runs on each task; the stat counts the regions
+    /// completed before any error.
+    pub async fn resolve_locks_for_range(
+        &self,
+        cancellation: Cancellation,
+        max_version: &Timestamp,
+        range: (Vec<u8>, Vec<u8>),
+        scan_limit: u32,
+    ) -> (TaskStat, Result<()>) {
+        let mut stat = TaskStat::default();
+        let regions = region_stream_for_range(range, self.pd.clone());
+        futures::pin_mut!(regions);
+
+        while let Some(region) = regions.next().await {
+            if cancellation.is_cancelled() {
+                return (
+                    stat,
+                    Err(crate::Error::StringError("range task cancelled".to_owned())),
+                );
+            }
+            let ((start_key, end_key), _) = match region {
+                Ok(region) => region,
+                Err(error) => return (stat, Err(error)),
+            };
+            let result = self
+                .cleanup_locks(
+                    BoundRange::from((start_key, end_key)),
+                    max_version,
+                    ResolveLocksOptions {
+                        batch_size: scan_limit,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            match result {
+                Ok(_) => stat.completed_regions += 1,
+                Err(error) => return (stat, Err(error)),
+            }
+        }
+        (stat, Ok(()))
+    }
+
     // Note: `batch_size` must be >= expected number of locks.
     pub async fn scan_locks(
         &self,
@@ -777,38 +822,9 @@ impl RangeTaskHandler for GcResolveLocksHandler {
         cancellation: Cancellation,
         range: (Vec<u8>, Vec<u8>),
     ) -> (TaskStat, Result<()>) {
-        let mut stat = TaskStat::default();
-        let regions = region_stream_for_range(range, self.client.pd.clone());
-        futures::pin_mut!(regions);
-
-        while let Some(region) = regions.next().await {
-            if cancellation.is_cancelled() {
-                return (
-                    stat,
-                    Err(crate::Error::StringError("range task cancelled".to_owned())),
-                );
-            }
-            let ((start_key, end_key), _) = match region {
-                Ok(region) => region,
-                Err(error) => return (stat, Err(error)),
-            };
-            let result = self
-                .client
-                .cleanup_locks(
-                    BoundRange::from((start_key, end_key)),
-                    &self.safepoint,
-                    ResolveLocksOptions {
-                        batch_size: self.batch_size,
-                        ..Default::default()
-                    },
-                )
-                .await;
-            match result {
-                Ok(_) => stat.completed_regions += 1,
-                Err(error) => return (stat, Err(error)),
-            }
-        }
-        (stat, Ok(()))
+        self.client
+            .resolve_locks_for_range(cancellation, &self.safepoint, range, self.batch_size)
+            .await
     }
 }
 

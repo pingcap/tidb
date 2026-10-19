@@ -1964,6 +1964,18 @@ impl Session {
                 if let Some(value) = uptime.as_ref() {
                     dynamic.push(("Uptime", value.as_str(), false));
                 }
+                // Go `variable.GetStatusVars`: the registered providers'
+                // rows (the GC worker's `tidb_gc_*`).
+                let registered = crate::statusvar::get_status_vars().map_err(|error| {
+                    DriverError::Mysql(tidb_executor::MysqlError::unknown(error))
+                })?;
+                dynamic.extend(registered.iter().map(|(name, status)| {
+                    (
+                        name.as_str(),
+                        status.value.as_str(),
+                        status.scope == crate::sysvar::SCOPE_SESSION,
+                    )
+                }));
                 // Go lists the collected statuses sorted by name.
                 let mut listed = SHOW_STATUS_VARS
                     .iter()

@@ -1198,6 +1198,21 @@ impl KvStore {
         self.inner.pd_client()
     }
 
+    /// client-go `KVStore.GetTiKVClient().SendRequest(ctx, addr, req,
+    /// timeout)`: one request to the TiKV store at `address`, outside any
+    /// region routing (store-level commands such as `UnsafeDestroyRange`).
+    /// The response is the request's typed response, boxed.
+    pub async fn send_request(
+        &self,
+        address: &str,
+        request: &dyn Request,
+        timeout: Duration,
+    ) -> Result<Box<dyn std::any::Any>> {
+        use crate::store::KvClient as _;
+        let client = self.pd_client().kv_client(address).await?;
+        client.dispatch_with_timeout(request, Some(timeout)).await
+    }
+
     /// Returns the authoritative live region cache used by this store's
     /// request plans, matching client-go's `KVStore.GetRegionCache` surface.
     pub fn region_cache(

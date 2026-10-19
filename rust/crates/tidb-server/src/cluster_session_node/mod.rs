@@ -395,6 +395,7 @@ mod boot;
 mod ddl;
 mod ddl_job_history_store;
 mod ddl_notifier;
+pub(crate) mod gc_worker;
 mod non_transactional_dml;
 mod record_set;
 mod ru_stats_writer;

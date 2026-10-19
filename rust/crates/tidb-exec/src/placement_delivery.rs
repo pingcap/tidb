@@ -132,3 +132,143 @@ pub fn put_rule_bundles(
         })
     })
 }
+
+/// Go `placement.TiFlashRuleGroupID`.
+const TIFLASH_RULE_GROUP_ID: &str = "tiflash";
+/// Go `placement.RuleIndexTiFlash`.
+const RULE_INDEX_TIFLASH: i64 = 120;
+
+/// Go `pdhttp`'s `rawKeyToKeyHexStr`: the memcomparable-encoded key in hex.
+fn raw_key_to_key_hex_str(key: &[u8]) -> String {
+    if key.is_empty() {
+        return String::new();
+    }
+    let mut encoded = Vec::new();
+    tidb_codec::encode_bytes(&mut encoded, key);
+    encoded.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Go `infosync.MakeNewRule(id, 0, nil)` as the delete operation
+/// `SetPlacementRuleBatch` sends for a zero count (`pd.RuleOp` JSON).
+fn tiflash_rule_delete_op(physical_table_id: i64) -> serde_json::Value {
+    serde_json::json!({
+        "group_id": TIFLASH_RULE_GROUP_ID,
+        "id": format!("table-{physical_table_id}-r"),
+        "index": RULE_INDEX_TIFLASH,
+        "start_key": raw_key_to_key_hex_str(
+            &tidb_codec::table_key::gen_table_record_prefix(physical_table_id),
+        ),
+        "end_key": raw_key_to_key_hex_str(
+            &tidb_codec::table_key::encode_table_prefix(physical_table_id + 1),
+        ),
+        "role": "learner",
+        "is_witness": false,
+        "count": 0,
+        "label_constraints": [{"key": "engine", "op": "in", "values": ["tiflash"]}],
+        "action": "del",
+        "delete_by_id_prefix": false,
+    })
+}
+
+/// Go `infosync.DeleteTiFlashPlacementRules`: removes the TiFlash replica
+/// rule of every physical table, through the TiFlash replica manager's
+/// `SetPlacementRuleBatch` (the `tiflash` rule group configured first, as
+/// `SetTiFlashGroupConfig` does, then one delete operation per table).
+///
+/// # Errors
+///
+/// Returns [`PlacementDeliveryError`] when a request cannot be sent or PD
+/// answers with a non-success status.
+pub fn delete_tiflash_placement_rules(
+    endpoint: &str,
+    physical_table_ids: &[i64],
+    timeout: Duration,
+) -> Result<(), PlacementDeliveryError> {
+    let endpoint = endpoint.trim_end_matches('/').to_owned();
+    let operations: Vec<_> = physical_table_ids
+        .iter()
+        .map(|&id| tiflash_rule_delete_op(id))
+        .collect();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| PlacementDeliveryError::Runtime(error.to_string()))?;
+    runtime.block_on(async move {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
+        let rejected =
+            |status: reqwest::StatusCode, detail: String| PlacementDeliveryError::Rejected {
+                status: status.as_u16(),
+                detail,
+            };
+        // Go `SetTiFlashGroupConfig`: keep a group already at the TiFlash
+        // index without override; otherwise (re)write it.
+        let response = client
+            .get(format!(
+                "{endpoint}/pd/api/v1/config/rule_group/{TIFLASH_RULE_GROUP_ID}"
+            ))
+            .send()
+            .await
+            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(rejected(status, body));
+        }
+        let group: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let configured = group.get("index").and_then(serde_json::Value::as_i64)
+            == Some(RULE_INDEX_TIFLASH)
+            && !group
+                .get("override")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+        if !configured {
+            let response = client
+                .post(format!("{endpoint}/pd/api/v1/config/rule_group"))
+                .header("Content-Type", "application/json")
+                .body(
+                    serde_json::json!({"id": TIFLASH_RULE_GROUP_ID, "index": RULE_INDEX_TIFLASH})
+                        .to_string(),
+                )
+                .send()
+                .await
+                .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(rejected(status, response.text().await.unwrap_or_default()));
+            }
+        }
+        let response = client
+            .post(format!("{endpoint}/pd/api/v1/config/rules/batch"))
+            .header("Content-Type", "application/json")
+            .body(serde_json::Value::Array(operations).to_string())
+            .send()
+            .await
+            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        Err(rejected(status, response.text().await.unwrap_or_default()))
+    })
+}
+
+#[cfg(test)]
+mod tiflash_rule_tests {
+    use super::*;
+
+    #[test]
+    fn a_tiflash_rule_delete_is_go_make_new_rule_with_a_zero_count() {
+        let op = tiflash_rule_delete_op(100);
+        assert_eq!("tiflash", op["group_id"]);
+        assert_eq!("table-100-r", op["id"]);
+        assert_eq!(120, op["index"]);
+        assert_eq!(0, op["count"]);
+        assert_eq!("del", op["action"]);
+        // `t\x80\0\0\0\0\0\0\x64_r` and `t\x80\0\0\0\0\0\0\x65`, memcomparable.
+        assert_eq!("7480000000000000ff645f720000000000fa", op["start_key"]);
+        assert_eq!("7480000000000000ff6500000000000000f8", op["end_key"]);
+    }
+}
