@@ -620,6 +620,34 @@ func TestCheckTxnStatus(t *testing.T) {
 	var err error
 	store := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 
+	t.Run("missing lock rollback rejects duplicated API V2 prefix", func(t *testing.T) {
+		prefix := []byte{'x', 0, 0, 42}
+		for _, test := range []struct {
+			name   string
+			key    []byte
+			reject bool
+		}{
+			{name: "legacy", key: []byte("tprimary")},
+			{name: "short", key: []byte("x")},
+			{name: "single prefix", key: append(append([]byte{}, prefix...), []byte("tprimary")...)},
+			{name: "different prefixes", key: []byte{'x', 0, 0, 42, 'x', 0, 0, 43, 't'}},
+			{name: "duplicated prefix", key: append(append(append([]byte{}, prefix...), prefix...), []byte("tprimary")...), reject: true},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				req := &kvrpcpb.CheckTxnStatusRequest{
+					PrimaryKey: test.key, LockTs: 100, CallerStartTs: 110,
+					CurrentTs: 120, RollbackIfNotExist: true,
+				}
+				_, err := store.MvccStore.CheckTxnStatus(store.newReqCtx(), req)
+				if test.reject {
+					require.EqualError(t, err, "missing-lock rollback key contains duplicated API V2 keyspace prefix")
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+	})
+
 	var resTTL, resCommitTs uint64
 	var action kvrpcpb.Action
 	pk := []byte("tpk")

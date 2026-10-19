@@ -22,10 +22,12 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/stretchr/testify/require"
@@ -1273,7 +1275,88 @@ func newIgnoredLockHintCopWorker(
 	return newCopIteratorWorker(it, nil), it.tasks[0]
 }
 
+// Both individual retries and decoded batch-lock resolution must send a primary
+// with exactly one API V2 prefix. Backporting #70521 without client-go #2050 fails.
+func testHandleBatchCopResponseRetriesAPIV2ChildLock(t *testing.T) {
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:    42,
+		Name:  "test-keyspace",
+		State: keyspacepb.KeyspaceState_ENABLED,
+	}
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+	mockClient, pdClient, cluster, err := unistore.New("", nil, keyspaceMeta.Id, []*keyspacepb.KeyspaceMeta{keyspaceMeta})
+	require.NoError(t, err)
+	unistore.BootstrapWithSingleStore(cluster)
+	primaryKey := codec.EncodeKey([]byte("primary"))
+	var checkedPrimary atomic.Bool
+	client := &ignoredLockHintCopClient{Client: mockClient}
+	client.onRequest = func(req *tikvrpc.Request) *tikvrpc.Response {
+		switch req.Type {
+		case tikvrpc.CmdCop:
+			resp := &coprocessor.Response{Data: []byte("child")}
+			lock := &kvrpcpb.LockInfo{
+				Key:         codec.EncodeKey([]byte("key")),
+				PrimaryLock: append([]byte(nil), primaryKey...),
+				LockVersion: 1,
+				LockType:    kvrpcpb.Op_Put, LockTtl: 1, TxnSize: 1,
+			}
+			if len(req.Cop().Tasks) > 0 {
+				resp.Data = []byte("parent")
+				resp.BatchResponses = []*coprocessor.StoreBatchTaskResponse{{
+					TaskId: req.Cop().Tasks[0].TaskId, Locked: lock,
+				}}
+			} else if !checkedPrimary.Load() {
+				resp.Data = nil
+				resp.Locked = lock
+			}
+			return &tikvrpc.Response{Resp: resp}
+		case tikvrpc.CmdCheckTxnStatus:
+			checkedPrimary.Store(true)
+		}
+		return nil
+	}
+	tikvStore, err := tikv.NewTestKeyspaceTiKVStore(client,
+		pdClient, nil, nil, 0, *keyspaceMeta)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	t.Cleanup(copStore.Close)
+	ctx := context.Background()
+	killed := uint32(0)
+	req := &kv.Request{
+		Tp: kv.ReqTypeDAG, StartTs: 10, StoreType: kv.TiKV,
+		KeyRanges: kv.NewNonPartitionedKeyRanges(BuildKeyRanges("a", "z")), Concurrency: 1,
+	}
+	it, errResp := (&CopClient{store: copStore}).BuildCopIterator(ctx, req, kv.NewVariables(&killed), &kv.ClientSendOption{})
+	require.Nil(t, errResp)
+	require.Len(t, it.tasks, 1)
+	parent := it.tasks[0]
+	child := *parent
+	child.taskID = 1
+	parent.batchTaskList = map[uint64]*batchedCopTask{child.taskID: {task: &child}}
+	worker := newCopIteratorWorker(it, nil)
+	bo := backoff.NewBackofferWithVars(ctx, 3000, nil)
+	pending := []*copTask{parent}
+	var data [][]byte
+	for attempts := 0; len(pending) > 0 && attempts < 4; attempts++ {
+		task := pending[0]
+		pending = pending[1:]
+		result, err := worker.handleTaskOnce(bo, task)
+		require.NoError(t, err)
+		pending = append(pending, result.remains...)
+		if result.resp != nil {
+			data = append(data, result.resp.pbResp.Data)
+		}
+	}
+	require.Empty(t, pending, "child task must finish after resolving its lock")
+	require.True(t, checkedPrimary.Load(), "the lock resolver must check the encoded primary")
+	require.Equal(t, [][]byte{[]byte("parent"), []byte("child")}, data)
+}
+
 func TestHandleBatchCopResponse(t *testing.T) {
+	t.Run("retries an API V2 child lock", testHandleBatchCopResponseRetriesAPIV2ChildLock)
 	t.Run("updates child buckets on version not match", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("backs off when TiKV ignores lock hints", testCoprocessorBacksOffWhenTiKVIgnoresLockHint)
 	t.Run("stops after repeated ignored lock hints", testCoprocessorStopsAfterRepeatedIgnoredLockHint)

@@ -570,6 +570,14 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 		if req.ResolvingPessimisticLock {
 			return TxnStatus{0, kvrpcpb.Action_LockNotExistDoNothing, nil}, nil
 		}
+		// Match CSE's guard before writing a rollback for a missing primary lock.
+		// API V2 transaction keys start with 'x' and a three-byte keyspace ID.
+		const keyspacePrefixLen = 4
+		key := req.PrimaryKey
+		if len(key) >= 2*keyspacePrefixLen && key[0] == 'x' &&
+			bytes.Equal(key[:keyspacePrefixLen], key[keyspacePrefixLen:2*keyspacePrefixLen]) {
+			return TxnStatus{}, errors.New("missing-lock rollback key contains duplicated API V2 keyspace prefix")
+		}
 		batch.Rollback(req.PrimaryKey, false)
 		err = store.dbWriter.Write(batch)
 		return TxnStatus{0, kvrpcpb.Action_LockNotExistRollback, nil}, nil
