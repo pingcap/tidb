@@ -2128,9 +2128,10 @@ func (s *session) getAdvisoryLockOwner() uint64 {
 		ownerID = processInfo.ID
 	}
 	if ownerID == 0 {
-		// Use an internal namespace that cannot collide with real connection IDs:
-		// it is always even and larger than uint32, while real 64-bit connection IDs
-		// are odd and real 32-bit connection IDs fit in uint32.
+		// Keep fallback IDs even and above uint32, outside both GCID formats.
+		// The counter is process-local, so these IDs are not globally unique.
+		// Lock exclusion, reentrancy and release do not require globally unique
+		// owner IDs. Only the holding session reports this ID; other sessions report 1.
 		ownerID = internalAdvisoryLockOwnerIDBase + (internalAdvisoryLockOwnerIDAlloc.Add(1) << 1)
 	}
 	if s.advisoryLockOwnerID.CompareAndSwap(0, ownerID) {
