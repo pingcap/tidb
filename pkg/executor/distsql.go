@@ -367,18 +367,23 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 	if e.index.IsTiCIIndex() {
-		applyTiCIRequest(&builder, e.table.Meta().ID, e.index.ID, e.plans[0].ExplainID().String())
+		freshness := kv.TiCIFreshnessRequirement{}
+		if e.dctx.TiCIFreshnessConfigured {
+			freshness = kv.NewTiCIFreshnessRequirement(e.startTS, e.dctx.TiCIReadMaxStalenessMS, e.dctx.TiCIReadWaitMS)
+		}
+		applyTiCIRequest(&builder, e.table.Meta().ID, e.index.ID, e.plans[0].ExplainID().String(), freshness)
 	}
 	return builder.Build()
 }
 
-func applyTiCIRequest(builder *distsql.RequestBuilder, tableID, indexID int64, executorID string) {
+func applyTiCIRequest(builder *distsql.RequestBuilder, tableID, indexID int64, executorID string, freshness kv.TiCIFreshnessRequirement) {
 	// TiCI is executed on TiFlash nodes, and TiFlash routes to TiCI shards
 	// based on FullTextInfo/TableShardInfos.
 	builder.SetStoreType(kv.TiFlash).SetPaging(false).SetFullText(true).SetAllowBatchCop(true)
 	builder.FullTextInfo.TableID = tableID
 	builder.FullTextInfo.IndexID = indexID
 	builder.FullTextInfo.ExecutorID = executorID
+	builder.FullTextInfo.Freshness = freshness
 }
 
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
@@ -1049,7 +1054,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 					SetMemTracker(tracker).
 					SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 				if e.index.IsTiCIIndex() {
-					applyTiCIRequest(&builder, e.table.Meta().ID, e.index.ID, e.idxPlans[0].ExplainID().String())
+					freshness := kv.NewTiCIFreshnessRequirement(e.startTS, e.ctx.GetSessionVars().TiCIReadMaxStalenessMS, e.ctx.GetSessionVars().TiCIReadWaitMS)
+					applyTiCIRequest(&builder, e.table.Meta().ID, e.index.ID, e.idxPlans[0].ExplainID().String(), freshness)
 				}
 
 				if e.indexLookUpPushDown {

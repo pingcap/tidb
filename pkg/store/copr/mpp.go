@@ -84,7 +84,8 @@ func isRetryableTiCIDispatchError(msg string) bool {
 		strings.Contains(msg, "getshardlocalcacheinfo failed: 14") ||
 		strings.Contains(msg, "getshardlocalcacheinfo failed:14") ||
 		strings.Contains(msg, "worker_not_found") ||
-		strings.Contains(msg, "shard_not_scheduled")
+		strings.Contains(msg, "shard_not_scheduled") ||
+		strings.Contains(msg, "tici shard admission rejected")
 }
 
 func isRetryableTiCIShardBuildError(err error) bool {
@@ -152,7 +153,7 @@ func buildTiCIShardInfosByStoreAddr(ctx context.Context, cache *TiCIShardCache, 
 		}
 		shardLocations = append(shardLocations, locs...)
 	}
-	storeShard, err := buildTiCIShardInfosByAddrFromLocations(shardLocations)
+	storeShard, err := buildTiCIShardInfosByAddrFromLocations(shardLocations, req.TiCIFreshness)
 	if err != nil {
 		return nil, err
 	}

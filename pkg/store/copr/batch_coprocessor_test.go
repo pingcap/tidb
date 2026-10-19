@@ -222,7 +222,7 @@ func TestRetryBatchCopTaskForFullTextUsesContext(t *testing.T) {
 		}},
 	}
 
-	_, err := it.retryBatchCopTask(ctx, bo, task)
+	_, err := it.retryBatchCopTask(ctx, bo, task, true)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -307,7 +307,7 @@ func TestRetryBatchCopTaskForFullTextInvalidatesShardsAndRebuildsTasks(t *testin
 	}
 
 	bo := backoff.NewBackofferWithVars(context.Background(), 1, nil)
-	ret, err := it.retryBatchCopTask(context.Background(), bo, task)
+	ret, err := it.retryBatchCopTask(context.Background(), bo, task, true)
 	require.NoError(t, err)
 	require.Len(t, ret, 2)
 	require.Equal(t, 1, client.scanCalled)
@@ -545,7 +545,7 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 					localCacheAddrs: []string{"addr-a"},
 				},
 			},
-		})
+		}, kv.TiCIFreshnessRequirement{})
 		require.ErrorContains(t, err, "tici shard 1 has nil ranges")
 	})
 
@@ -572,12 +572,18 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 		}
 		cache := NewTiCIShardCache(client)
 
-		tasks, err := buildBatchCopTasksForFullText(context.Background(), &kvStore{TiCIShardCache: cache}, 11, 22, "executor-1", NewKeyRanges([]kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("e")}}))
+		freshness := kv.TiCIFreshnessRequirement{RequiredResolvedTS: 123, Mode: coprocessor.ShardFreshnessMode_BOUNDED_STALE, MaxWaitMS: 50}
+		tasks, err := buildBatchCopTasksForFullText(context.Background(), &kvStore{TiCIShardCache: cache}, 11, 22, "executor-1", NewKeyRanges([]kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("e")}}), freshness)
 		require.NoError(t, err)
 
 		shardCountByAddr := make(map[string]int)
 		for _, task := range tasks {
 			shardCountByAddr[task.storeAddr] += len(task.TableShardInfos[0].ShardInfos)
+			for _, shard := range task.TableShardInfos[0].ShardInfos {
+				require.Equal(t, freshness.RequiredResolvedTS, shard.RequiredResolvedTs)
+				require.Equal(t, freshness.Mode, shard.FreshnessMode)
+				require.Equal(t, freshness.MaxWaitMS, shard.MaxWaitMs)
+			}
 		}
 		require.Equal(t, map[string]int{"addr-a": 2, "addr-b": 2}, shardCountByAddr)
 	})
@@ -607,6 +613,7 @@ func TestConstructMPPTasksTiCIUsesTiCIMPPTaskMeta(t *testing.T) {
 		req := &kv.MPPBuildTasksRequest{
 			StartTS:        1,
 			TiCI:           true,
+			TiCIFreshness:  kv.TiCIFreshnessRequirement{RequiredResolvedTS: 123, Mode: coprocessor.ShardFreshnessMode_STRICT_WATERMARK, MaxWaitMS: 50},
 			TiCITableID:    11,
 			TiCIIndexID:    22,
 			TiCIExecutorID: "executor-1",
@@ -620,6 +627,10 @@ func TestConstructMPPTasksTiCIUsesTiCIMPPTaskMeta(t *testing.T) {
 
 		_, isTiCIMeta := metas[0].(*tiCIMPPTaskMeta)
 		require.True(t, isTiCIMeta)
+		shard := metas[0].(*tiCIMPPTaskMeta).tableShardInfos[0].ShardInfos[0]
+		require.Equal(t, req.TiCIFreshness.RequiredResolvedTS, shard.RequiredResolvedTs)
+		require.Equal(t, req.TiCIFreshness.Mode, shard.FreshnessMode)
+		require.Equal(t, req.TiCIFreshness.MaxWaitMS, shard.MaxWaitMs)
 		_, isBatchCopMeta := metas[0].(*batchCopTask)
 		require.False(t, isBatchCopMeta)
 		require.Contains(t, []string{"addr-a", "addr-b"}, metas[0].GetAddress())
@@ -663,12 +674,76 @@ func TestConstructMPPTasksTiCIUsesTiCIMPPTaskMeta(t *testing.T) {
 	})
 }
 
+func TestTiCIShardRetryFeedbackAndRequirement(t *testing.T) {
+	freshness := kv.TiCIFreshnessRequirement{RequiredResolvedTS: 123, Mode: coprocessor.ShardFreshnessMode_BOUNDED_STALE, MaxWaitMS: 50}
+	shard := &coprocessor.ShardInfo{
+		ShardId:            4,
+		ShardEpoch:         2,
+		Ranges:             []*coprocessor.KeyRange{{Start: []byte("a"), End: []byte("b")}},
+		RequiredResolvedTs: freshness.RequiredResolvedTS,
+		FreshnessMode:      freshness.Mode,
+		MaxWaitMs:          freshness.MaxWaitMS,
+	}
+	task := &batchCopTask{TableShardInfos: []*coprocessor.TableShardInfos{{ExecutorId: "executor-1", ShardInfos: []*coprocessor.ShardInfo{shard}}}}
+	resp := &coprocessor.BatchResponse{ShardRetryInfos: []*coprocessor.ShardRetryInfo{{
+		ShardId: 4, Reason: coprocessor.ShardRetryReason_SHARD_RETRY_READER_BEHIND, RetryAfterMs: 2000,
+	}}}
+	invalidate, wait, err := validateTiCIShardRetryFeedback(task, resp)
+	require.NoError(t, err)
+	require.False(t, invalidate)
+	require.Equal(t, time.Second, wait)
+
+	resp.ShardRetryInfos[0].Reason = coprocessor.ShardRetryReason_SHARD_RETRY_EPOCH_MISMATCH
+	invalidate, _, err = validateTiCIShardRetryFeedback(task, resp)
+	require.NoError(t, err)
+	require.True(t, invalidate)
+
+	resp.ShardRetryInfos[0].Reason = coprocessor.ShardRetryReason_SHARD_RETRY_WRITER_BEHIND
+	invalidate, _, err = validateTiCIShardRetryFeedback(task, resp)
+	require.NoError(t, err)
+	require.False(t, invalidate)
+
+	resp.ShardRetryInfos[0].ShardId = 5
+	_, _, err = validateTiCIShardRetryFeedback(task, resp)
+	require.ErrorContains(t, err, "unknown retry shard")
+	resp.ShardRetryInfos[0].ShardId = 4
+	resp.RetryRegions = []*metapb.Region{{Id: 9}}
+	_, _, err = validateTiCIShardRetryFeedback(task, resp)
+	require.ErrorContains(t, err, "mixes shard and region feedback")
+	resp.RetryRegions = nil
+
+	client := &mppTiCIMockShardClient{result: []*ShardWithAddr{{
+		Shard:           Shard{ShardID: 4, Epoch: 3, StartKey: []byte("a"), EndKey: []byte("b")},
+		localCacheAddrs: []string{"addr-b"},
+	}}}
+	cache := NewTiCIShardCache(client)
+	req := &kv.Request{}
+	req.FullTextInfo.TableID = 11
+	req.FullTextInfo.IndexID = 22
+	req.FullTextInfo.ExecutorID = "executor-1"
+	req.FullTextInfo.Freshness = freshness
+	iterator := &batchCopIterator{store: &kvStore{TiCIShardCache: cache}, req: req}
+	retried, err := iterator.retryBatchCopTask(context.Background(), nil, task, false)
+	require.NoError(t, err)
+	require.Len(t, retried, 1)
+	require.Equal(t, 1, retried[0].tiCIRetryCount)
+	rebuilt := retried[0].TableShardInfos[0].ShardInfos[0]
+	require.Equal(t, uint64(3), rebuilt.ShardEpoch)
+	require.Equal(t, freshness.RequiredResolvedTS, rebuilt.RequiredResolvedTs)
+	require.Equal(t, freshness.Mode, rebuilt.FreshnessMode)
+	require.Equal(t, freshness.MaxWaitMS, rebuilt.MaxWaitMs)
+	task.tiCIRetryCount = maxTiCIBatchCopRetries
+	_, err = iterator.retryBatchCopTask(context.Background(), nil, task, false)
+	require.ErrorContains(t, err, "exhausted 6 shard task retries")
+}
+
 func TestTiCIDispatchRetryHelpers(t *testing.T) {
 	t.Run("is-retryable-dispatch-error", func(t *testing.T) {
 		require.True(t, isRetryableTiCIDispatchError("GetShardLocalCacheInfo failed: 13"))
 		require.True(t, isRetryableTiCIDispatchError("GetShardLocalCacheInfo failed:14"))
 		require.True(t, isRetryableTiCIDispatchError("meta status WORKER_NOT_FOUND"))
 		require.True(t, isRetryableTiCIDispatchError("meta status shard_not_scheduled"))
+		require.True(t, isRetryableTiCIDispatchError("tici shard admission rejected"))
 		require.False(t, isRetryableTiCIDispatchError("some other mpp error"))
 	})
 

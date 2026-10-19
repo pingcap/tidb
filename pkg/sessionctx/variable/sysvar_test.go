@@ -135,6 +135,26 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestTiCIFreshnessSysVars(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, int64(-1), vars.TiCIReadMaxStalenessMS)
+	require.Equal(t, uint32(0), vars.TiCIReadWaitMS)
+
+	staleness := GetSysVar(vardef.TiDBTiCIReadMaxStalenessMS)
+	value, err := staleness.Validate(vars, "999999", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "300000", value)
+	require.NoError(t, staleness.SetSessionFromHook(vars, "1000"))
+	require.Equal(t, int64(1000), vars.TiCIReadMaxStalenessMS)
+
+	wait := GetSysVar(vardef.TiDBTiCIReadWaitMS)
+	value, err = wait.Validate(vars, "999999", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "30000", value)
+	require.NoError(t, wait.SetSessionFromHook(vars, "50"))
+	require.Equal(t, uint32(50), vars.TiCIReadWaitMS)
+}
+
 func TestTiFlashMaxBytes(t *testing.T) {
 	varNames := []string{vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy, vardef.TiDBMaxBytesBeforeTiFlashExternalSort}
 	for index, varName := range varNames {

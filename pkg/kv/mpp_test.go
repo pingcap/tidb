@@ -17,7 +17,9 @@ package kv
 import (
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestMPPBuildTasksRequestToStringTiCIUnambiguous(t *testing.T) {
@@ -44,4 +46,23 @@ func TestMPPBuildTasksRequestToStringTiCIUnambiguous(t *testing.T) {
 	}
 
 	require.NotEqual(t, reqA.ToString(), reqB.ToString())
+	reqC := *reqA
+	reqC.TiCIFreshness = NewTiCIFreshnessRequirement(oracle.ComposeTS(1000, 7), 10, 50)
+	require.NotEqual(t, reqA.ToString(), reqC.ToString())
+}
+
+func TestNewTiCIFreshnessRequirement(t *testing.T) {
+	readTS := oracle.ComposeTS(1000, 7)
+	legacy := NewTiCIFreshnessRequirement(readTS, -1, 50)
+	require.Equal(t, TiCIFreshnessRequirement{}, legacy)
+
+	strict := NewTiCIFreshnessRequirement(readTS, 0, 50)
+	require.Equal(t, coprocessor.ShardFreshnessMode_STRICT_WATERMARK, strict.Mode)
+	require.Equal(t, readTS, strict.RequiredResolvedTS)
+	require.Equal(t, uint32(50), strict.MaxWaitMS)
+
+	bounded := NewTiCIFreshnessRequirement(readTS, 100, 50)
+	require.Equal(t, coprocessor.ShardFreshnessMode_BOUNDED_STALE, bounded.Mode)
+	require.Equal(t, oracle.ComposeTS(900, 7), bounded.RequiredResolvedTS)
+	require.Equal(t, uint64(0), NewTiCIFreshnessRequirement(readTS, 2000, 50).RequiredResolvedTS)
 }
