@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -480,7 +480,7 @@ func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *cl
 	conn := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		capability: originalConn.capability,
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(buf)),
+		pkt:        packetio.NewForTest(bufio.NewWriter(buf)),
 	}
 	conn.pkt.SetSequence(originalConn.pkt.Sequence())
 	conn.SetCtx(originalConn.getCtx())

@@ -14,6 +14,7 @@ go_library(
         "fmsketch.go",
         "histogram.go",
         "index.go",
+        "partition_ndv.go",
         "row_sampler.go",
         "sample.go",
         "sampled_ndv.go",
