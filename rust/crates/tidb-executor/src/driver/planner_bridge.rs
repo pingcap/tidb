@@ -2364,6 +2364,8 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     // nominal sorts) that the elimination pass removed.
     let mut physical =
         tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
+    // Go postOptimize: mergeContinuousSelections.
+    tidb_planner::physical::merge_continuous_selections(&mut physical);
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
     let mut physical = tidb_planner::physical::eliminate_union_scan_over_point_get(
         physical,

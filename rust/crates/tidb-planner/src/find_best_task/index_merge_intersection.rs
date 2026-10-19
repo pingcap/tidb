@@ -32,6 +32,9 @@ pub(super) fn build_prepared_index_merge_task(
 ) -> Result<Task, PlanError> {
     let partials = &path.partials;
     let mut partial_plans_raw = Vec::with_capacity(partials.len());
+    // Go `globalRemainingFilters`: each partial's unpushable conditions, in
+    // partial order, ahead of the table lookup's own.
+    let mut partial_remaining = Vec::new();
     let output_rows = path.count_after_access;
     for partial in partials {
         let source_index = &ds.indexes[partial.index_pos];
@@ -81,6 +84,13 @@ pub(super) fn build_prepared_index_merge_task(
             pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
         });
         if !filled.index_filters.is_empty() {
+            // Go `ConvertToPartialIndexScan`: only what TiKV can evaluate
+            // stays on the partial; the Selection is kept even if empty.
+            let (pushed, rest) = crate::pushdown::extract_filters_for_index_merge(
+                filled.index_filters.clone(),
+                &ctx.expr_pushdown_blacklist,
+            );
+            partial_remaining.extend(rest);
             let mut selection = crate::physical::BasePhysicalPlan::new(
                 ctx.allocator,
                 "Selection",
@@ -98,7 +108,7 @@ pub(super) fn build_prepared_index_merge_task(
             selection.set_children(vec![partial_plan]);
             partial_plan = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                 base: selection,
-                conditions: filled.index_filters.clone(),
+                conditions: pushed,
                 from_data_source: true,
             });
         }
@@ -145,10 +155,12 @@ pub(super) fn build_prepared_index_merge_task(
     });
     // Go `BuildIndexMergeTableScan` separates root conditions before sealing
     // the cop table phase.
-    let (table_filters, root_task_conds) = crate::pushdown::split_index_merge_table_filters(
+    let (table_filters, table_remaining) = crate::pushdown::split_index_merge_table_filters(
         path.table_filters.clone(),
         &ctx.expr_pushdown_blacklist,
     );
+    let mut root_task_conds = partial_remaining;
+    root_task_conds.extend(table_remaining);
     let table_plan = if table_filters.is_empty() {
         table_scan
     } else {

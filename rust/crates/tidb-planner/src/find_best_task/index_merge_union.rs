@@ -435,6 +435,9 @@ pub(super) fn build_converged_union_index_merge_task(
         adjusted
     };
     let mut partial_plans_raw = Vec::with_capacity(partials.len());
+    // Go `globalRemainingFilters`: each partial's unpushable conditions, in
+    // partial order, ahead of the table scan's own.
+    let mut partial_remaining = Vec::new();
     for ((partial, matched), groups) in partials
         .iter()
         .copied()
@@ -450,7 +453,7 @@ pub(super) fn build_converged_union_index_merge_task(
             } => {
                 let scan_rows =
                     partial_rows(*rows, matched.matched(), false, !filled.index_filters.is_empty());
-                push_index_partial(
+                partial_remaining.extend(push_index_partial(
                     ds,
                     ctx,
                     *index_pos,
@@ -461,7 +464,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     desc,
                     groups,
                     &mut partial_plans_raw,
-                )?;
+                )?);
             }
             // Go builds one partial scan per path of the MV alternative.
             Partial::MvIndex {
@@ -475,7 +478,7 @@ pub(super) fn build_converged_union_index_merge_task(
                         false,
                         !filled.index_filters.is_empty(),
                     );
-                    push_index_partial(
+                    partial_remaining.extend(push_index_partial(
                         ds,
                         ctx,
                         *index_pos,
@@ -486,7 +489,7 @@ pub(super) fn build_converged_union_index_merge_task(
                         desc,
                         &[],
                         &mut partial_plans_raw,
-                    )?;
+                    )?);
                 }
             }
             Partial::Table { filled, rows, .. } => {
@@ -657,7 +660,7 @@ pub(super) fn build_converged_union_index_merge_task(
         ))
     });
 
-    let (pushed_filters, root_task_conds) = crate::pushdown::split_index_merge_table_filters(
+    let (pushed_filters, table_remaining) = crate::pushdown::split_index_merge_table_filters(
         table_filters.clone(),
         &ctx.expr_pushdown_blacklist,
     );
@@ -667,8 +670,10 @@ pub(super) fn build_converged_union_index_merge_task(
     // and routes by; any column it appends is projected away above the
     // reader (`NeedExtraProj`). A residual root filter returns before this.
     let extra_columns_added = !by_items.is_empty()
-        && root_task_conds.is_empty()
+        && table_remaining.is_empty()
         && append_index_merge_scan_columns(ds, ctx, table_plan.as_deref_mut());
+    let mut root_task_conds = partial_remaining;
+    root_task_conds.extend(table_remaining);
     let mut table_plan = table_plan;
     let index_plan_finished = !pushed_filters.is_empty();
     if !pushed_filters.is_empty() {
@@ -841,7 +846,7 @@ fn push_index_partial(
     desc: bool,
     group_by_col_idxs: &[usize],
     partial_plans_raw: &mut Vec<PhysicalPlan>,
-) -> Result<(), PlanError> {
+) -> Result<Vec<tidb_expr::expression::Expression>, PlanError> {
     let ranges = &filled.detached.ranges;
     let source_index = &ds.indexes[index_pos];
     let mut schema_columns = partial_index_schema(ds, source_index, ctx)?;
@@ -889,7 +894,21 @@ fn push_index_partial(
         source_index,
         partial_plans_raw.last().and_then(PhysicalPlan::schema),
     );
+    // Go `ConvertToPartialIndexScan`: only the conditions TiKV can evaluate
+    // stay on the partial (`extractFiltersForIndexMerge`); the Selection is
+    // built even when none can, and the rest return to the root task.
+    let mut remaining = Vec::new();
     if !filled.index_filters.is_empty() || global_partition_filter.is_some() {
+        let (pushed, rest) = crate::pushdown::extract_filters_for_index_merge(
+            filled
+                .index_filters
+                .iter()
+                .cloned()
+                .chain(global_partition_filter)
+                .collect(),
+            &ctx.expr_pushdown_blacklist,
+        );
+        remaining = rest;
         let scan = partial_plans_raw
             .pop()
             .expect("partial scan was just built");
@@ -911,16 +930,11 @@ fn push_index_partial(
         base.set_children(vec![scan]);
         partial_plans_raw.push(PhysicalPlan::Selection(crate::physical::PhysicalSelection {
             base,
-            conditions: filled
-                .index_filters
-                .iter()
-                .cloned()
-                .chain(global_partition_filter)
-                .collect(),
+            conditions: pushed,
             from_data_source: true,
         }));
     }
-    Ok(())
+    Ok(remaining)
 }
 
 

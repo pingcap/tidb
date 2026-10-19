@@ -554,7 +554,7 @@ fn production_replay_stays_within_budget() {
     // nine plan texts the in-process replay also budgets, plus its three
     // known stale recordings (`session/nontransactional`'s USE_INDEX spacing).
     // Lower these when a divergence is fixed; never raise them.
-    const DIVERGENCE_BUDGET: usize = 12;
+    const DIVERGENCE_BUDGET: usize = 9;
     const OUT_OF_DOMAIN_BUDGET: usize = 0;
     const SHARDS: usize = 8;
 

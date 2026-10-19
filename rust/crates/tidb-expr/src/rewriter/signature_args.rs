@@ -557,7 +557,7 @@ pub(super) fn build_call(
 /// Wraps `args` the way Go's `newBaseBuiltinFuncWithTp` does for the builtin
 /// `name`. `fold` is `BuildCastFunction`'s closing `FoldConstant`, which Go
 /// skips for a cast whose result is JSON.
-pub(super) fn wrap_builtin_arguments(
+pub(crate) fn wrap_builtin_arguments(
     name: &str,
     args: Vec<Expression>,
     connection: (&str, &str),

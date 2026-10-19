@@ -5277,6 +5277,39 @@ pub fn rebind_correlated_columns_by_schema_4_physical_plan(
 /// pass. It removes only strict identity projections; computed expressions,
 /// reordered columns, `CalculateNoDelay`, and schema-width changes remain.
 #[must_use]
+/// Go `mergeContinuousSelections` (`optimizer.go`, run by `postOptimize`
+/// after `InjectExtraProjection`): a Selection whose child is a Selection
+/// absorbs the child's conditions after its own and adopts the grandchild,
+/// throughout the root tree and inside a TiFlash table reader's plan.
+pub fn merge_continuous_selections(plan: &mut PhysicalPlan) {
+    if let PhysicalPlan::Selection(selection) = plan {
+        while matches!(
+            selection.base.children().first(),
+            Some(PhysicalPlan::Selection(_))
+        ) {
+            let mut children = selection.base.take_children();
+            let PhysicalPlan::Selection(mut child) = children.remove(0) else {
+                unreachable!("the first child was just matched as a Selection");
+            };
+            selection.conditions.append(&mut child.conditions);
+            children.splice(0..0, child.base.take_children());
+            selection.base.set_children(children);
+        }
+    }
+    let mut children = plan.base_mut().take_children();
+    for child in &mut children {
+        merge_continuous_selections(child);
+    }
+    plan.base_mut().set_children(children);
+    if let PhysicalPlan::TableReader(reader) = plan {
+        if reader.store_type == crate::physical_table_reader::StoreType::TiFlash {
+            if let Some(table_plan) = reader.table_plan.as_deref_mut() {
+                merge_continuous_selections(table_plan);
+            }
+        }
+    }
+}
+
 pub fn eliminate_physical_projection(plan: PhysicalPlan) -> PhysicalPlan {
     eliminate_physical_projection_for_update(plan, &std::collections::BTreeSet::new())
 }

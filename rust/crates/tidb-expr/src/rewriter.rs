@@ -39,7 +39,7 @@ const DEFAULT_DECIMAL_LITERAL: &str =
 
 pub(crate) mod control_type;
 mod fold_mode;
-mod signature_args;
+pub(crate) mod signature_args;
 pub(crate) mod result_type;
 
 pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};

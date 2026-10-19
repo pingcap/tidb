@@ -2171,13 +2171,17 @@ fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
         let Expression::ScalarFunction(function) = condition else {
             continue;
         };
+        // Go `extractValueInfo` (ranger `ColumnValues`, hence `ConstCols`):
+        // `isnull(col)`, or `eq` / `nulleq` against a `Constant`. A correlated
+        // column is not a Constant: its range is only "decided by" the outer
+        // row, so it pins nothing at plan time and an inner `ORDER BY ...
+        // LIMIT` keeps its TopN (`planner/core/lateral_join`).
+        let name = function.func_name.lowercase();
         let id = match function.get_args() {
-            // A correlated column is as constant as a literal for one run of
-            // the inner plan, which is how Go's ranger records it in
-            // `ColumnValues`.
-            [Expression::Column(column), Expression::Constant(_) | Expression::CorrelatedColumn(_)]
-            | [Expression::Constant(_) | Expression::CorrelatedColumn(_), Expression::Column(column)]
-                if function.func_name.lowercase() == "eq" =>
+            [Expression::Column(column)] if name == "isnull" => Some(column.unique_id),
+            [Expression::Column(column), Expression::Constant(_)]
+            | [Expression::Constant(_), Expression::Column(column)]
+                if name == "eq" || name == "nulleq" =>
             {
                 Some(column.unique_id)
             }

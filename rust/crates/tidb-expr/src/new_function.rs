@@ -377,6 +377,24 @@ pub fn new_function_impl(
     } else {
         None
     };
+    // Go `newBaseBuiltinFuncWithTp`: after deriving the collation, every
+    // argument is cast to its signature type (`argTps`). Go does this on
+    // every construction, so a function rebuilt by a rewrite (a predicate
+    // substituted through an aggregation) is wrapped again: an argument that
+    // already has the type stays as it is, but a string cast to JSON keeps
+    // its parse flag and is cast once more (`cast(cast(s, json), json)`).
+    // The arithmetic operators keep the rewriter's own operand handling
+    // (`prepare_numeric_arguments` below), which `intdiv`'s virtual operand
+    // casts depend on, exactly as on the AST path.
+    if !matches!(func_name, "plus" | "minus" | "mul" | "div" | "mod" | "intdiv") {
+        function.args = crate::rewriter::signature_args::wrap_builtin_arguments(
+            func_name,
+            std::mem::take(&mut function.args),
+            ctx.connection_charset_info(),
+            &|expression| fold_constant_in_mode(expression, ctx, ConstantFoldMode::Normal),
+            function.ret_type.as_ref(),
+        )?;
+    }
     if let Some(derived) = &derived {
         function.args = crate::rewriter::wrap_binary_literals(
             func_name,
