@@ -1111,7 +1111,7 @@ func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
 	}, versionByRegion)
 }
 
-func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
+func testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
@@ -1276,6 +1276,7 @@ func newIgnoredLockHintCopWorker(
 }
 
 func TestHandleBatchCopResponse(t *testing.T) {
+	t.Run("updates child buckets on version not match", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
 	t.Run("backs off when TiKV ignores lock hints", testCoprocessorBacksOffWhenTiKVIgnoresLockHint)
 	t.Run("stops after repeated ignored lock hints", testCoprocessorStopsAfterRepeatedIgnoredLockHint)
