@@ -4537,8 +4537,8 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
         replace = "github.com/JmPotato/pd/client",
-        sum = "h1:2YoULrkht+laWPkdPTvCEX0jkCLazrlQZUTH/ZaREG0=",
-        version = "v0.0.0-20261019085141-e573c53a5acb",
+        sum = "h1:YA9ohGGgxmgoHzH/34wxom1THNqlzA3HQdBheiDHyXQ=",
+        version = "v0.0.0-20261019091803-928274c1cac3",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
