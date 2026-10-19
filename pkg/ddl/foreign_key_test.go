@@ -272,18 +272,22 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, index idx1 (b),index idx2 (b), foreign key (b) references t1(id));")
 
 	var wg sync.WaitGroup
+	var once sync.Once
 	var dropErr error
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			dropErr = tk2.ExecToErr("alter table t2 drop index idx2")
-		}()
-		// make sure tk2's ddl job already put into ddl job queue.
-		time.Sleep(time.Millisecond * 100)
+		// The competing drop also reaches StatePublic; do not reuse tk2 concurrently.
+		once.Do(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				dropErr = tk2.ExecToErr("alter table t2 drop index idx2")
+			}()
+			// make sure tk2's ddl job already put into ddl job queue.
+			time.Sleep(time.Millisecond * 100)
+		})
 	})
 
 	tk.MustExec("alter table t2 drop index idx1")
