@@ -39,11 +39,20 @@ pub fn is_alter_table_statement(statement: &DdlStatement) -> bool {
             | DdlStatement::RebaseAutoRandom { .. }
             | DdlStatement::AlterTtl { .. }
             | DdlStatement::RemoveTtl { .. }
+            | DdlStatement::AlterTablePlacement { .. }
+            | DdlStatement::AlterTablePartitionPlacement { .. }
+            | DdlStatement::AlterTableAttributes { .. }
+            | DdlStatement::AlterTablePartitionAttributes { .. }
+            | DdlStatement::AlterTableAffinity { .. }
+            | DdlStatement::AlterTableSetRegionSplitPolicy { .. }
+            | DdlStatement::SetTiFlashReplica { .. }
+            | DdlStatement::UpdateTiFlashReplicaStatus { .. }
+            | DdlStatement::AlterTableCache { .. }
     )
 }
 
 /// The actions [`plan_persisted_alter_table_job_step`] runs.
-pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 12] = [
+pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 22] = [
     ActionType::ACTION_MODIFY_TABLE_COMMENT,
     ActionType::ACTION_ALTER_INDEX_VISIBILITY,
     ActionType::ACTION_RENAME_INDEX,
@@ -56,6 +65,16 @@ pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 12] = [
     ActionType::ACTION_REBASE_AUTO_RANDOM_BASE,
     ActionType::ACTION_ALTER_TTLINFO,
     ActionType::ACTION_ALTER_TTLREMOVE,
+    ActionType::ACTION_ALTER_TABLE_PLACEMENT,
+    ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT,
+    ActionType::ACTION_ALTER_TABLE_ATTRIBUTES,
+    ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES,
+    ActionType::ACTION_ALTER_TABLE_AFFINITY,
+    ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
+    ActionType::ACTION_SET_TI_FLASH_REPLICA,
+    ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS,
+    ActionType::ACTION_ALTER_CACHE_TABLE,
+    ActionType::ACTION_ALTER_NO_CACHE_TABLE,
 ];
 
 fn already_satisfied(detail: String) -> Option<AddIndexSubmission> {
@@ -91,6 +110,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         return Ok(None);
     }
     let mut warnings = Vec::new();
+    // Go's placement jobs lock the policy they name, shared.
+    let mut shared_policy: Option<String> = None;
     let (action, schema, table, args) = match statement {
         // Go `AlterTableComment`; the length was validated at lowering.
         DdlStatement::ModifyTableComment {
@@ -471,6 +492,302 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 ))),
             )
         }
+        // Go `executor.AlterTablePlacement`.
+        DdlStatement::AlterTablePlacement {
+            schema,
+            table,
+            policy,
+        } => {
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            if stored.temp_table_type != tidb_model::TempTableType::NONE {
+                return Err(coded_refusal(
+                    8006,
+                    "`placement` is unsupported on temporary tables.".to_owned(),
+                ));
+            }
+            let reference = check_and_normalize_placement_policy(snapshot, policy)?;
+            shared_policy = reference
+                .as_ref()
+                .map(|reference| reference.read().name.lowercase().to_owned());
+            (
+                ActionType::ACTION_ALTER_TABLE_PLACEMENT,
+                schema,
+                table,
+                JobArgsValue::AlterTablePlacement(Some(GoShared::new(
+                    tidb_model::AlterTablePlacementArgs {
+                        placement_policy_ref: reference,
+                    },
+                ))),
+            )
+        }
+        // Go `executor.AlterTablePartitionPlacement`.
+        DdlStatement::AlterTablePartitionPlacement {
+            schema,
+            table,
+            partition,
+            policy,
+        } => {
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            let partition_id = find_partition_id(stored, partition)?;
+            let reference = check_and_normalize_placement_policy(snapshot, policy)?;
+            shared_policy = reference
+                .as_ref()
+                .map(|reference| reference.read().name.lowercase().to_owned());
+            (
+                ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT,
+                schema,
+                table,
+                JobArgsValue::AlterTablePartition(Some(GoShared::new(
+                    tidb_model::AlterTablePartitionArgs {
+                        partition_id: GoField::new(partition_id),
+                        policy_ref_info: GoField::new(reference),
+                        ..tidb_model::AlterTablePartitionArgs::default()
+                    },
+                ))),
+            )
+        }
+        // Go `executor.AlterTableAttributes`: the rule over the table and
+        // every partition.
+        DdlStatement::AlterTableAttributes {
+            schema,
+            table,
+            attributes,
+        } => {
+            let Some(database) = find_database(catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            let rule = label_rules::table_attributes_rule(
+                attributes,
+                database.info.name.lowercase(),
+                &LabelRuleTable::from_table_info(stored),
+            )
+            .map_err(invalid_attributes_spec)?;
+            (
+                ActionType::ACTION_ALTER_TABLE_ATTRIBUTES,
+                schema,
+                table,
+                JobArgsValue::AlterTableAttributes(Some(GoShared::new(
+                    tidb_model::AlterTableAttributesArgs {
+                        label_rule: Some(GoShared::new(label_rule_json(&rule)?)),
+                    },
+                ))),
+            )
+        }
+        // Go `executor.AlterTablePartitionAttributes`.
+        DdlStatement::AlterTablePartitionAttributes {
+            schema,
+            table,
+            partition,
+            attributes,
+        } => {
+            let Some(database) = find_database(catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            let partition_id = find_partition_id(stored, partition)?;
+            let rule = label_rules::partition_attributes_rule(
+                attributes,
+                database.info.name.lowercase(),
+                stored.name.lowercase(),
+                &partition.go_to_lower(),
+                partition_id,
+            )
+            .map_err(invalid_attributes_spec)?;
+            (
+                ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES,
+                schema,
+                table,
+                JobArgsValue::AlterTablePartition(Some(GoShared::new(
+                    tidb_model::AlterTablePartitionArgs {
+                        partition_id: GoField::new(partition_id),
+                        label_rule: GoField::new(Some(GoShared::new(label_rule_json(&rule)?))),
+                        ..tidb_model::AlterTablePartitionArgs::default()
+                    },
+                ))),
+            )
+        }
+        // Go `executor.AlterTableAffinity`.
+        DdlStatement::AlterTableAffinity {
+            schema,
+            table,
+            level,
+        } => {
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            refuse_non_base_table(stored, schema, table)?;
+            let affinity = tidb_executor::ddl::table_affinity(level).map_err(driver_refusal)?;
+            tidb_executor::ddl::validate_table_affinity(
+                stored.temp_table_type != tidb_model::TempTableType::NONE,
+                stored.get_partition_info().is_some(),
+                affinity.as_ref(),
+            )
+            .map_err(driver_refusal)?;
+            (
+                ActionType::ACTION_ALTER_TABLE_AFFINITY,
+                schema,
+                table,
+                JobArgsValue::AlterTableAffinity(Some(GoShared::new(
+                    tidb_model::AlterTableAffinityArgs {
+                        affinity: affinity.map(GoShared::new),
+                    },
+                ))),
+            )
+        }
+        // Go `executor.AlterTableSetRegionSplitPolicy`.
+        DdlStatement::AlterTableSetRegionSplitPolicy {
+            schema,
+            table,
+            target,
+            option,
+        } => {
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            let target = match target {
+                tidb_ast::SplitTarget::Table => tidb_executor::ddl::SplitPolicyTarget::Table,
+                tidb_ast::SplitTarget::PrimaryKey => {
+                    tidb_executor::ddl::SplitPolicyTarget::PrimaryKey
+                }
+                tidb_ast::SplitTarget::Index(name) => {
+                    tidb_executor::ddl::SplitPolicyTarget::Index(name)
+                }
+            };
+            let (index_name, policy) =
+                tidb_executor::ddl::normalize_split_policy(target, option, stored)
+                    .map_err(driver_refusal)?;
+            (
+                ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
+                schema,
+                table,
+                JobArgsValue::AlterTableSetRegionSplitPolicy(Some(GoShared::new(
+                    tidb_model::AlterTableSetRegionSplitPolicyArgs {
+                        index_name,
+                        policy: Some(GoShared::new(policy)),
+                    },
+                ))),
+            )
+        }
+        // Go `executor.AlterTableSetTiFlashReplica`: the lowering checked
+        // the table and the request.
+        DdlStatement::SetTiFlashReplica {
+            schema,
+            table,
+            count,
+            labels,
+            reset_available,
+        } => (
+            ActionType::ACTION_SET_TI_FLASH_REPLICA,
+            schema,
+            table,
+            JobArgsValue::SetTiFlashReplica(Some(GoShared::new(
+                tidb_model::SetTiFlashReplicaArgs {
+                    tiflash_replica: tidb_model::JobTiFlashReplicaSpec {
+                        count: *count,
+                        labels: Some(labels.clone()),
+                        hypo: false,
+                    },
+                    reset_available: *reset_available,
+                    ..tidb_model::SetTiFlashReplicaArgs::default()
+                },
+            ))),
+        ),
+        // Go `executor.UpdateTableReplicaInfo`: no job once the status
+        // already holds.
+        DdlStatement::UpdateTiFlashReplicaStatus {
+            table_id,
+            available,
+        } => {
+            let Some((database, stored)) = catalog.databases.iter().find_map(|database| {
+                database
+                    .tables
+                    .iter()
+                    .find(|stored| stored.id == *table_id || partition_of(stored, *table_id))
+                    .map(|stored| (database, stored))
+            }) else {
+                return Err(DdlPlanError::TableNotExists {
+                    schema: String::new(),
+                    table: format!("(physical id {table_id})"),
+                });
+            };
+            let unchanged = stored.tiflash_replica.as_ref().is_none_or(|replica| {
+                let replica = replica.read();
+                if stored.id == *table_id {
+                    replica.available == *available
+                } else {
+                    replica.is_partition_available(*table_id) == *available
+                }
+            });
+            if unchanged {
+                return Ok(already_satisfied(
+                    "TiFlash replica status already matches".to_owned(),
+                ));
+            }
+            let mut job = session_job(
+                job_context,
+                ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS,
+            );
+            job.schema_id = database.info.id;
+            job.table_id = stored.id;
+            job.schema_name = database.info.name.lowercase().to_owned().into();
+            job.table_name = stored.name.lowercase().to_owned().into();
+            return Ok(Some(AddIndexSubmission::Job(
+                Box::new(crate::ddl_job_submit::JobSpec {
+                    job,
+                    args: JobArgsValue::UpdateTiFlashReplicaStatus(Some(GoShared::new(
+                        tidb_model::UpdateTiFlashReplicaStatusArgs {
+                            available: *available,
+                            physical_id: *table_id,
+                        },
+                    ))),
+                    id_allocated: true,
+                }),
+                warnings,
+            )));
+        }
+        // Go `executor.AlterTableCache` / `AlterTableNoCache`; the size
+        // check and the `table_cache_meta` row come at submission.
+        DdlStatement::AlterTableCache {
+            schema,
+            table,
+            cache,
+        } => {
+            let (_, stored) = locate_table(catalog, schema, table)?;
+            let wanted = if *cache {
+                tidb_model::TableCacheStatusType::ENABLE
+            } else {
+                tidb_model::TableCacheStatusType::DISABLE
+            };
+            if stored.table_cache_status_type == wanted {
+                return Ok(already_satisfied(format!(
+                    "`{schema}`.`{table}` is already {}",
+                    if *cache { "cached" } else { "not cached" }
+                )));
+            }
+            if *cache {
+                if tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+                    return Err(coded_refusal(
+                        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                        "ALTER table cache for tables in system database is currently unsupported",
+                    ));
+                }
+                if stored.temp_table_type != tidb_model::TempTableType::NONE {
+                    return Err(alter_temporary_table_cache());
+                }
+                if stored.partition.is_some() {
+                    return Err(partition_mode_on_cache_table());
+                }
+            }
+            (
+                if *cache {
+                    ActionType::ACTION_ALTER_CACHE_TABLE
+                } else {
+                    ActionType::ACTION_ALTER_NO_CACHE_TABLE
+                },
+                schema,
+                table,
+                tidb_model::EmptyArgs::into_job_args_value(Some(GoShared::new(
+                    tidb_model::EmptyArgs::default(),
+                ))),
+            )
+        }
         _ => unreachable!("checked by is_alter_table_statement"),
     };
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
@@ -482,6 +799,20 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
     if action == ActionType::ACTION_DROP_FOREIGN_KEY {
         job.schema_state = SchemaState::PUBLIC;
     }
+    if let Some(policy) = shared_policy {
+        job.involving_schema_info = GoSharedSlice::from_vec(vec![
+            tidb_model::InvolvingSchemaInfo {
+                database: job.schema_name.clone(),
+                table: job.table_name.clone(),
+                ..tidb_model::InvolvingSchemaInfo::default()
+            },
+            tidb_model::InvolvingSchemaInfo {
+                policy: policy.into(),
+                mode: tidb_model::InvolvingSchemaInfoMode::SHARED,
+                ..tidb_model::InvolvingSchemaInfo::default()
+            },
+        ]);
+    }
     Ok(Some(AddIndexSubmission::Job(
         Box::new(crate::ddl_job_submit::JobSpec {
             job,
@@ -490,6 +821,115 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         }),
         warnings,
     )))
+}
+
+fn driver_refusal(error: tidb_executor::DriverError) -> DdlPlanError {
+    let error = error.to_mysql_error();
+    coded_refusal(error.code, error.message)
+}
+
+fn invalid_attributes_spec(error: tidb_executor::ddl_label::LabelError) -> DdlPlanError {
+    coded_refusal(
+        tidb_error::tidb::errcode::ErrInvalidAttributesSpec,
+        label_rules::invalid_attributes_spec_message(&error),
+    )
+}
+
+/// Go's `*pdhttp.LabelRule` as a job persists it.
+fn label_rule_json(
+    rule: &tidb_executor::ddl_label::Rule,
+) -> Result<serde_json::Value, DdlPlanError> {
+    serde_json::to_value(rule).map_err(|error| DdlPlanError::Encode(error.to_string()))
+}
+
+/// Go `onAlterTableAttributes` / `onAlterTablePartitionAttributes`'s PD
+/// call for a persisted rule.
+fn label_rule_step(rule: &serde_json::Value) -> Result<LabelRuleStep, DdlPlanError> {
+    let rule: tidb_executor::ddl_label::Rule = serde_json::from_value(rule.clone())
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    Ok(LabelRuleStep {
+        write: label_rules::attributes_rule_write(rule),
+        error_context: Some(LABEL_RULES_NOTIFY_ERROR),
+    })
+}
+
+/// Go `ErrOptOnTemporaryTable` for ALTER TABLE CACHE.
+fn alter_temporary_table_cache() -> DdlPlanError {
+    coded_refusal(
+        tidb_error::tidb::errcode::ErrOptOnTemporaryTable,
+        "`alter temporary table cache` is unsupported on temporary tables.",
+    )
+}
+
+/// Go `ErrOptOnCacheTable` for a partitioned table.
+fn partition_mode_on_cache_table() -> DdlPlanError {
+    coded_refusal(
+        tidb_error::tidb::errcode::ErrOptOnCacheTable,
+        "'partition mode' is unsupported on cache tables.",
+    )
+}
+
+/// Go `table.ErrUnknownPartition` as the partition jobs answer it.
+fn unknown_partition(info: &TableInfo) -> DdlPlanError {
+    coded_refusal(
+        tidb_error::tidb::errcode::ErrUnknownPartition,
+        format!(
+            "Unknown partition 'drop?' in table '{}'",
+            info.name.original()
+        ),
+    )
+}
+
+/// Whether `physical_id` is one of `table`'s partitions.
+fn partition_of(table: &TableInfo, physical_id: i64) -> bool {
+    table.get_partition_info().is_some_and(|partition| {
+        partition
+            .read()
+            .definitions
+            .with_visible(|definitions| definitions.iter().any(|p| p.id == physical_id))
+    })
+}
+
+/// Go `tables.FindPartitionByName` for a partition-management statement.
+fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanError> {
+    let Some(partitioning) = table.get_partition_info() else {
+        return Err(driver_refusal(
+            tidb_executor::DriverError::PartitionManagementOnNonpartitioned,
+        ));
+    };
+    let name = partition.go_to_lower();
+    let found = partitioning
+        .read()
+        .definitions
+        .snapshot()
+        .iter()
+        .find(|definition| definition.name.lowercase() == name)
+        .map(|definition| definition.id);
+    found.ok_or_else(|| {
+        driver_refusal(tidb_executor::DriverError::UnknownPartition {
+            partition: name,
+            table: table.name.original().to_owned(),
+        })
+    })
+}
+
+/// Go `checkPlacementPolicyRefValidAndCanNonValidJob`: the policy a job
+/// names must still exist.
+fn check_placement_policy_ref_valid<S: MetaSnapshot>(
+    snapshot: &mut S,
+    reference: &Option<GoShared<tidb_model::PolicyRefInfo>>,
+) -> Result<(), DdlPlanError> {
+    let Some(reference) = reference else {
+        return Ok(());
+    };
+    let id = reference.read().id;
+    if snapshot.get(&key::policy_kv_key(id))?.is_none() {
+        return Err(coded_refusal(
+            8239,
+            format!("Unknown placement policy '(Policy ID {id})'"),
+        ));
+    }
+    Ok(())
 }
 
 /// Go's "Can't reset AUTO_INCREMENT" message.
@@ -698,6 +1138,15 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     let mut with_check = false;
     let mut finished_state = SchemaState::PUBLIC;
     let mut counter_writes = Vec::new();
+    let mut bundles = Vec::new();
+    let mut label_steps = Vec::new();
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    let placement_error = |error: tidb_placement::PlacementError| {
+        coded_refusal(
+            GENERIC_ERROR_CODE,
+            format!("building placement rules: {error}"),
+        )
+    };
     match active.job.type_ {
         ActionType::ACTION_MODIFY_TABLE_COMMENT => {
             let args = tidb_model::get_modify_table_comment_args(&mut active.job)
@@ -957,6 +1406,301 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 .ok_or_else(|| nil_args(active))?;
             info.auto_id_cache = args.read().new_cache.get();
         }
+        // Go `onAlterTablePlacement`.
+        ActionType::ACTION_ALTER_TABLE_PLACEMENT => {
+            let args = tidb_model::get_alter_table_placement_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let reference = args.read().placement_policy_ref.clone();
+            check_placement_policy_ref_valid(snapshot, &reference)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+            let old_enables_placement = info.placement_policy_ref.is_some();
+            info.placement_policy_ref = reference;
+            let policies = load_policies(snapshot)?;
+            match tidb_placement::new_table_bundle(&policies, &info)
+                .map_err(|error| cancel_ddl_job(active, placement_error(error)))?
+            {
+                Some(bundle) => bundles.push(bundle),
+                None if old_enables_placement => bundles.push(tidb_placement::new_bundle(info.id)),
+                None => {}
+            }
+        }
+        // Go `onAlterTablePartitionPlacement`.
+        ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT => {
+            let args = tidb_model::get_alter_table_partition_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let (partition_id, reference) = {
+                let args = args.read();
+                (args.partition_id.get(), args.policy_ref_info.get())
+            };
+            let definitions = info
+                .get_partition_info()
+                .map(|partition| partition.read().definitions.clone());
+            let ordinal = definitions.as_ref().and_then(|definitions| {
+                definitions
+                    .snapshot()
+                    .iter()
+                    .position(|definition| definition.id == partition_id)
+            });
+            let (Some(definitions), Some(ordinal)) = (definitions, ordinal) else {
+                return Err(cancel_ddl_job(active, unknown_partition(&info)));
+            };
+            let mut old_enables_placement = false;
+            let mut definition = None;
+            definitions.update(ordinal, |def| {
+                old_enables_placement = def.placement_policy_ref.is_some();
+                def.placement_policy_ref = reference.clone();
+                definition = Some(def.clone());
+            });
+            let definition = definition.expect("the partition was found above");
+            check_placement_policy_ref_valid(snapshot, &reference)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+            let policies = load_policies(snapshot)?;
+            match tidb_placement::new_partition_bundle(&policies, &definition)
+                .map_err(|error| cancel_ddl_job(active, placement_error(error)))?
+            {
+                Some(bundle) => bundles.push(bundle),
+                None if old_enables_placement => {
+                    bundles.push(tidb_placement::new_bundle(definition.id))
+                }
+                None => {}
+            }
+        }
+        // Go `onAlterTableAttributes`.
+        ActionType::ACTION_ALTER_TABLE_ATTRIBUTES => {
+            let args = tidb_model::get_alter_table_attributes_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let rule = args
+                .read()
+                .label_rule
+                .clone()
+                .ok_or_else(|| nil_args(active))?;
+            let step = label_rule_step(&rule.read())?;
+            label_steps.push(step);
+        }
+        // Go `onAlterTablePartitionAttributes`.
+        ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES => {
+            let args = tidb_model::get_alter_table_partition_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let (partition_id, rule) = {
+                let args = args.read();
+                (args.partition_id.get(), args.label_rule.get())
+            };
+            if !partition_of(&info, partition_id) {
+                return Err(cancel_ddl_job(active, unknown_partition(&info)));
+            }
+            let rule = rule.ok_or_else(|| nil_args(active))?;
+            let step = label_rule_step(&rule.read())?;
+            label_steps.push(step);
+        }
+        // Go `onAlterTableAffinity`: the new groups first (the job fails when
+        // PD refuses), the old ones best-effort unless the level stays.
+        ActionType::ACTION_ALTER_TABLE_AFFINITY => {
+            let args = tidb_model::get_alter_table_affinity_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let affinity = args
+                .read()
+                .affinity
+                .as_ref()
+                .map(|affinity| affinity.read().clone());
+            let old = info.clone_like_go();
+            tidb_executor::ddl::validate_table_affinity(
+                info.temp_table_type != tidb_model::TempTableType::NONE,
+                info.get_partition_info().is_some(),
+                affinity.as_ref(),
+            )
+            .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
+            info.affinity = affinity.map(GoShared::new);
+            if info.affinity.is_some() {
+                affinity_groups
+                    .create_for(&info)
+                    .map_err(|error| cancel_ddl_job(active, pd_step_error(None, error)))?;
+            }
+            if let Some(previous) = old.affinity.as_ref() {
+                let level_changed = info
+                    .affinity
+                    .as_ref()
+                    .is_none_or(|new| new.read().level != previous.read().level);
+                if level_changed {
+                    affinity_groups.delete_for(&old, None);
+                }
+            }
+        }
+        // Go `onAlterTableSetRegionSplitPolicy`.
+        ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY => {
+            let args = tidb_model::get_alter_table_set_region_split_policy_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let (index_name, policy) = {
+                let args = args.read();
+                (
+                    args.index_name.clone(),
+                    args.policy
+                        .as_ref()
+                        .map(|policy| policy.read().clone())
+                        .unwrap_or_default(),
+                )
+            };
+            if !index_name.is_empty() && find_index(&info, &index_name).is_none() {
+                return Err(cancel_ddl_job(
+                    active,
+                    DdlPlanError::KeyNotExists {
+                        index: index_name,
+                        table: table.clone(),
+                    },
+                ));
+            }
+            crate::table_info_build::set_region_split_policy(&mut info, &index_name, policy);
+        }
+        // Go `onSetTableFlashReplica`; PD's rules are the replica manager's.
+        ActionType::ACTION_SET_TI_FLASH_REPLICA => {
+            let args = tidb_model::get_set_tiflash_replica_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let (spec, reset_available) = {
+                let args = args.read();
+                (args.tiflash_replica.clone(), args.reset_available)
+            };
+            if tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
+                return Err(DdlPlanError::from(
+                    tidb_util::dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
+                        .clone(),
+                ));
+            }
+            if spec.count > 0 {
+                let available = !reset_available
+                    && info
+                        .tiflash_replica
+                        .as_ref()
+                        .is_some_and(|old| old.read().available);
+                let mut replica = tidb_model::table::TiFlashReplicaInfo::default();
+                replica.count = spec.count;
+                replica.location_labels = spec.labels.unwrap_or_default().into();
+                replica.available = available;
+                info.tiflash_replica = Some(GoShared::new(replica));
+            } else {
+                info.tiflash_replica = None;
+            }
+        }
+        // Go `onUpdateTiFlashReplicaStatus`.
+        ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS => {
+            let args = tidb_model::get_update_tiflash_replica_status_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let (available, physical_id) = {
+                let args = args.read();
+                (args.available, args.physical_id)
+            };
+            let already = info.tiflash_replica.as_ref().is_none_or(|replica| {
+                let replica = replica.read();
+                if info.id == physical_id {
+                    replica.available == available
+                } else {
+                    replica.is_partition_available(physical_id) == available
+                }
+            });
+            if already {
+                return Err(cancel_ddl_job(
+                    active,
+                    DdlPlanError::Encode(format!(
+                        "the replica available status of table {} is already updated",
+                        info.name
+                    )),
+                ));
+            }
+            let replica = info.tiflash_replica.clone().expect("checked above");
+            if info.id == physical_id {
+                replica.write().available = available;
+            } else if let Some(partition) = info.get_partition_info() {
+                let mut replica = replica.write();
+                let mut ids: Vec<i64> = replica.available_partition_ids.iter().copied().collect();
+                if available {
+                    let definitions = partition.read().definitions.snapshot();
+                    if definitions
+                        .iter()
+                        .any(|definition| definition.id == physical_id)
+                    {
+                        ids.push(physical_id);
+                    }
+                    replica.available = definitions
+                        .iter()
+                        .all(|definition| ids.contains(&definition.id));
+                } else if let Some(position) = ids.iter().position(|id| *id == physical_id) {
+                    ids.remove(position);
+                    replica.available = false;
+                }
+                replica.available_partition_ids = ids.into();
+            } else {
+                return Err(cancel_ddl_job(
+                    active,
+                    DdlPlanError::Encode(format!(
+                        "unknown physical ID {physical_id} in table {}",
+                        info.name.original()
+                    )),
+                ));
+            }
+        }
+        // Go `onAlterCacheTable` / `onAlterNoCacheTable`: through
+        // `TableCacheStatusSwitching`, one version each way.
+        ActionType::ACTION_ALTER_CACHE_TABLE | ActionType::ACTION_ALTER_NO_CACHE_TABLE => {
+            let cache = active.job.type_ == ActionType::ACTION_ALTER_CACHE_TABLE;
+            let (target, from) = if cache {
+                (
+                    tidb_model::TableCacheStatusType::ENABLE,
+                    tidb_model::TableCacheStatusType::DISABLE,
+                )
+            } else {
+                (
+                    tidb_model::TableCacheStatusType::DISABLE,
+                    tidb_model::TableCacheStatusType::ENABLE,
+                )
+            };
+            if info.table_cache_status_type == target {
+                active.job.finish_table_job(
+                    JobState::DONE,
+                    SchemaState::PUBLIC,
+                    0,
+                    Some(GoShared::new(info.clone_like_go())),
+                );
+                return Ok(action_step(job_only_write(active.job.id, Vec::new())));
+            }
+            if cache {
+                if info.temp_table_type != tidb_model::TempTableType::NONE {
+                    return Err(alter_temporary_table_cache());
+                }
+                if info.partition.is_some() {
+                    return Err(partition_mode_on_cache_table());
+                }
+            }
+            if info.table_cache_status_type == from {
+                info.table_cache_status_type = tidb_model::TableCacheStatusType::SWITCHING;
+                check_table_info_valid(&info)?;
+                let write = table_step(catalog, active, schema_id, &info, true, start_ts)?;
+                return Ok(action_step(write));
+            }
+            if info.table_cache_status_type != tidb_model::TableCacheStatusType::SWITCHING {
+                let status = format!("{:?}", info.table_cache_status_type);
+                return Err(cancel_ddl_job(
+                    active,
+                    DdlPlanError::from(tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate(
+                        format!(
+                            "invalid {} state {status}",
+                            if cache {
+                                "alter table cache"
+                            } else {
+                                "alter table no cache"
+                            }
+                        ),
+                    )),
+                ));
+            }
+            info.table_cache_status_type = target;
+            with_check = true;
+        }
         action => unreachable!("{action} is not a one-step ALTER TABLE job"),
     }
     if with_check {
@@ -964,6 +1708,9 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     }
     let mut write = table_step(catalog, active, schema_id, &info, true, start_ts)?;
     write.mutations.extend(counter_writes);
+    write.placement_bundles = bundles;
+    write.label_rules = label_steps;
+    write.affinity_groups = affinity_groups;
     active.job.finish_table_job(
         JobState::DONE,
         finished_state,

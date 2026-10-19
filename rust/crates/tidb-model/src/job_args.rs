@@ -434,6 +434,18 @@ pub enum JobArgsValue {
     AlterTtlInfo(Option<GoShared<AlterTTLInfoArgs>>),
     /// `*model.PlacementPolicyArgs`, including a typed nil pointer.
     PlacementPolicy(Option<GoShared<PlacementPolicyArgs>>),
+    /// `*model.AlterTablePlacementArgs`, including a typed nil pointer.
+    AlterTablePlacement(Option<GoShared<AlterTablePlacementArgs>>),
+    /// `*model.AlterTableAttributesArgs`, including a typed nil pointer.
+    AlterTableAttributes(Option<GoShared<AlterTableAttributesArgs>>),
+    /// `*model.AlterTableAffinityArgs`, including a typed nil pointer.
+    AlterTableAffinity(Option<GoShared<AlterTableAffinityArgs>>),
+    /// `*model.AlterTableSetRegionSplitPolicyArgs`, including a typed nil pointer.
+    AlterTableSetRegionSplitPolicy(Option<GoShared<AlterTableSetRegionSplitPolicyArgs>>),
+    /// `*model.SetTiFlashReplicaArgs`, including a typed nil pointer.
+    SetTiFlashReplica(Option<GoShared<SetTiFlashReplicaArgs>>),
+    /// `*model.UpdateTiFlashReplicaStatusArgs`, including a typed nil pointer.
+    UpdateTiFlashReplicaStatus(Option<GoShared<UpdateTiFlashReplicaStatusArgs>>),
     /// `*model.DropForeignKeyArgs`, including a typed nil pointer.
     DropForeignKey(Option<GoShared<DropForeignKeyArgs>>),
     /// `*model.ModifyTableAutoIDCacheArgs`, including a typed nil pointer.
@@ -485,6 +497,12 @@ impl JobArgsValue {
             Self::AlterSequence(value) => job.fill_args(value.clone()),
             Self::AlterTtlInfo(value) => job.fill_args(value.clone()),
             Self::PlacementPolicy(value) => job.fill_args(value.clone()),
+            Self::AlterTablePlacement(value) => job.fill_args(value.clone()),
+            Self::AlterTableAttributes(value) => job.fill_args(value.clone()),
+            Self::AlterTableAffinity(value) => job.fill_args(value.clone()),
+            Self::AlterTableSetRegionSplitPolicy(value) => job.fill_args(value.clone()),
+            Self::SetTiFlashReplica(value) => job.fill_args(value.clone()),
+            Self::UpdateTiFlashReplicaStatus(value) => job.fill_args(value.clone()),
             Self::DropForeignKey(value) => job.fill_args(value.clone()),
             Self::ModifyTableAutoIdCache(value) => job.fill_args(value.clone()),
             Self::ShardRowId(value) => job.fill_args(value.clone()),
@@ -524,6 +542,12 @@ impl JobArgsValue {
             Self::AlterSequence(_) => "AlterSequenceArgs",
             Self::AlterTtlInfo(_) => "AlterTTLInfoArgs",
             Self::PlacementPolicy(_) => "PlacementPolicyArgs",
+            Self::AlterTablePlacement(_) => "AlterTablePlacementArgs",
+            Self::AlterTableAttributes(_) => "AlterTableAttributesArgs",
+            Self::AlterTableAffinity(_) => "AlterTableAffinityArgs",
+            Self::AlterTableSetRegionSplitPolicy(_) => "AlterTableSetRegionSplitPolicyArgs",
+            Self::SetTiFlashReplica(_) => "SetTiFlashReplicaArgs",
+            Self::UpdateTiFlashReplicaStatus(_) => "UpdateTiFlashReplicaStatusArgs",
             Self::DropForeignKey(_) => "DropForeignKeyArgs",
             Self::ModifyTableAutoIdCache(_) => "ModifyTableAutoIDCacheArgs",
             Self::ShardRowId(_) => "ShardRowIDArgs",
@@ -566,6 +590,16 @@ impl JobArgsValue {
             Self::AlterSequence(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterTtlInfo(value) => value.as_ref().map(GoShared::identity_address),
             Self::PlacementPolicy(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterTablePlacement(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterTableAttributes(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterTableAffinity(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterTableSetRegionSplitPolicy(value) => {
+                value.as_ref().map(GoShared::identity_address)
+            }
+            Self::SetTiFlashReplica(value) => value.as_ref().map(GoShared::identity_address),
+            Self::UpdateTiFlashReplicaStatus(value) => {
+                value.as_ref().map(GoShared::identity_address)
+            }
             Self::DropForeignKey(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifyTableAutoIdCache(value) => value.as_ref().map(GoShared::identity_address),
             Self::ShardRowId(value) => value.as_ref().map(GoShared::identity_address),
@@ -695,6 +729,36 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::PlacementPolicy(value) => GoTypedPointer::new(
                 model_type("PlacementPolicyArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterTablePlacement(value) => GoTypedPointer::new(
+                model_type("AlterTablePlacementArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterTableAttributes(value) => GoTypedPointer::new(
+                model_type("AlterTableAttributesArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterTableAffinity(value) => GoTypedPointer::new(
+                model_type("AlterTableAffinityArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterTableSetRegionSplitPolicy(value) => GoTypedPointer::new(
+                model_type("AlterTableSetRegionSplitPolicyArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::SetTiFlashReplica(value) => GoTypedPointer::new(
+                model_type("SetTiFlashReplicaArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::UpdateTiFlashReplicaStatus(value) => GoTypedPointer::new(
+                model_type("UpdateTiFlashReplicaStatusArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),

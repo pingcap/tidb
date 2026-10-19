@@ -1091,6 +1091,308 @@ pub fn get_alter_ttl_info_args(
     get_or_decode_args(job)
 }
 
+/// Go `AlterTablePlacementArgs`: `None` is the `default` policy.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct AlterTablePlacementArgs {
+    /// The policy the table takes.
+    #[serde(
+        rename = "placement_policy_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub placement_policy_ref: Option<GoShared<crate::PolicyRefInfo>>,
+}
+
+impl JobArgs for AlterTablePlacementArgs {
+    job_args_identity_methods!(AlterTablePlacement);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *AlterTablePlacementArgs receiver").read();
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("PolicyRefInfo", GoTypeKind::Struct),
+            value.placement_policy_ref.clone(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let reference = GoField::<Option<GoShared<crate::PolicyRefInfo>>>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &reference,
+            model_type("PolicyRefInfo", GoTypeKind::Struct).pointer_to(),
+        )?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            placement_policy_ref: reference.get(),
+        })))
+    }
+}
+
+/// Go `GetAlterTablePlacementArgs`.
+pub fn get_alter_table_placement_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterTablePlacementArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `AlterTableAttributesArgs`: PD's label rule, kept as its JSON.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct AlterTableAttributesArgs {
+    /// Go `*pdhttp.LabelRule`.
+    #[serde(
+        rename = "label_rule",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub label_rule: Option<GoShared<serde_json::Value>>,
+}
+
+impl JobArgs for AlterTableAttributesArgs {
+    job_args_identity_methods!(AlterTableAttributes);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *AlterTableAttributesArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            builtin_type("http.LabelRule", GoTypeKind::Struct),
+            value.label_rule.clone(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let rule = GoShared::new(serde_json::Value::Object(Default::default()));
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&rule, builtin_type("http.LabelRule", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            label_rule: Some(rule),
+        })))
+    }
+}
+
+/// Go `GetAlterTableAttributesArgs`.
+pub fn get_alter_table_attributes_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterTableAttributesArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `AlterTableAffinityArgs`: `None` removes the affinity.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct AlterTableAffinityArgs {
+    /// The table's new affinity.
+    #[serde(rename = "affinity", default, skip_serializing_if = "Option::is_none")]
+    pub affinity: Option<GoShared<crate::table::TableAffinityInfo>>,
+}
+
+impl JobArgs for AlterTableAffinityArgs {
+    job_args_identity_methods!(AlterTableAffinity);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("AlterTableAffinityArgs", GoTypeKind::Struct),
+            value.cloned(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(
+            &value,
+            model_type("AlterTableAffinityArgs", GoTypeKind::Struct),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetAlterTableAffinityArgs`.
+pub fn get_alter_table_affinity_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterTableAffinityArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `AlterTableSetRegionSplitPolicyArgs` (untagged fields, written by
+/// their Go names).
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct AlterTableSetRegionSplitPolicyArgs {
+    /// The index, empty for the table's own policy.
+    #[serde(rename = "IndexName", default)]
+    pub index_name: String,
+    /// The policy, `None` to remove it.
+    #[serde(rename = "Policy", default)]
+    pub policy: Option<GoShared<crate::index::RegionSplitPolicy>>,
+}
+
+impl JobArgs for AlterTableSetRegionSplitPolicyArgs {
+    job_args_identity_methods!(AlterTableSetRegionSplitPolicy);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *AlterTableSetRegionSplitPolicyArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(
+                builtin_type("string", GoTypeKind::String),
+                value.index_name.clone(),
+            ),
+            typed_pointer_any(
+                model_type("RegionSplitPolicy", GoTypeKind::Struct),
+                value.policy.clone(),
+            ),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let index_name = GoField::<String>::default();
+        let policy = GoField::<Option<GoShared<crate::index::RegionSplitPolicy>>>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&index_name, builtin_type("string", GoTypeKind::String))?;
+        decoder.decode(
+            &policy,
+            model_type("RegionSplitPolicy", GoTypeKind::Struct).pointer_to(),
+        )?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            index_name: index_name.get(),
+            policy: policy.get(),
+        })))
+    }
+}
+
+/// Go `GetAlterTableSetRegionSplitPolicyArgs`.
+pub fn get_alter_table_set_region_split_policy_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterTableSetRegionSplitPolicyArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `ast.TiFlashReplicaSpec` as a job persists it (untagged fields).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct JobTiFlashReplicaSpec {
+    /// The replica count.
+    #[serde(rename = "Count", default)]
+    pub count: u64,
+    /// The location labels; Go's nil slice is `null`.
+    #[serde(rename = "Labels", default)]
+    pub labels: Option<Vec<String>>,
+    /// A hypothetical replica (index advisor), never a job's.
+    #[serde(rename = "Hypo", default)]
+    pub hypo: bool,
+}
+
+/// Go `SetTiFlashReplicaArgs`.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct SetTiFlashReplicaArgs {
+    /// The replica spec. Go's struct value is never omitted.
+    #[serde(rename = "tiflash_replica", default)]
+    pub tiflash_replica: JobTiFlashReplicaSpec,
+    /// Native BR's repair: the replica turns unavailable again (v2 only).
+    #[serde(
+        rename = "reset_available",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub reset_available: bool,
+    /// Internal repairs skip the columnar-storage gate (v2 only).
+    #[serde(
+        rename = "skip_columnar_storage_gate",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub skip_columnar_storage_gate: bool,
+}
+
+impl JobArgs for SetTiFlashReplicaArgs {
+    job_args_identity_methods!(SetTiFlashReplica);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *SetTiFlashReplicaArgs receiver").read();
+        GoSharedSlice::from_vec(vec![typed_value_any(
+            ast_type("TiFlashReplicaSpec", GoTypeKind::Struct),
+            value.tiflash_replica.clone(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let spec = GoField::<JobTiFlashReplicaSpec>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&spec, ast_type("TiFlashReplicaSpec", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            tiflash_replica: spec.get(),
+            ..Self::default()
+        })))
+    }
+}
+
+/// Go `GetSetTiFlashReplicaArgs`.
+pub fn get_set_tiflash_replica_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<SetTiFlashReplicaArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `UpdateTiFlashReplicaStatusArgs`.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct UpdateTiFlashReplicaStatusArgs {
+    /// Whether the replica is now available.
+    #[serde(
+        rename = "available",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub available: bool,
+    /// The table or partition the status is about.
+    #[serde(
+        rename = "physical_id",
+        default,
+        skip_serializing_if = "is_zero_i64_value"
+    )]
+    pub physical_id: i64,
+}
+
+const fn is_zero_i64_value(value: &i64) -> bool {
+    *value == 0
+}
+
+impl JobArgs for UpdateTiFlashReplicaStatusArgs {
+    job_args_identity_methods!(UpdateTiFlashReplicaStatus);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *UpdateTiFlashReplicaStatusArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![
+            ColumnDefaultValue::Bool(value.available).into(),
+            ColumnDefaultValue::Int(value.physical_id).into(),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let available = GoField::<bool>::default();
+        let physical_id = GoField::<i64>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(&available, builtin_type("bool", GoTypeKind::Bool))?;
+        decoder.decode(&physical_id, builtin_type("int64", GoTypeKind::Int64))?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            available: available.get(),
+            physical_id: physical_id.get(),
+        })))
+    }
+}
+
+/// Go `GetUpdateTiFlashReplicaStatusArgs`.
+pub fn get_update_tiflash_replica_status_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<UpdateTiFlashReplicaStatusArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
 /// Go `AddForeignKeyArgs`.
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub struct AddForeignKeyArgs {

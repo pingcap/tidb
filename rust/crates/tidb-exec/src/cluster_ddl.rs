@@ -15656,7 +15656,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
 
 /// Go `AlterTableCache`'s `replace into mysql.table_cache_meta values (%?,
 /// 'NONE', 0, 0)`: the cached table's lock row, unlocked.
-fn write_table_cache_meta_row(
+pub(crate) fn write_table_cache_meta_row(
     catalog: &ClusterCatalog,
     table_id: i64,
     writes: &mut Vec<BufferMutation>,

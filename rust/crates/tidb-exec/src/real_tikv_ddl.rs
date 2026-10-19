@@ -1701,6 +1701,27 @@ pub fn submit_persisted_job_with_retry<
             ))
         }
     };
+    // Go `AlterTableCache`: `checkCacheTableSize`, then `replace into
+    // mysql.table_cache_meta values (%?, 'NONE', 0, 0)`, each before the job.
+    if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_ALTER_CACHE_TABLE {
+        let table_id = spec.job.table_id;
+        add_index_reorg::reorg_transaction(&opener, timeout, |meta, handle, buffer, _| {
+            let catalog = load_cluster_catalog(meta).map_err(DdlPlanError::Catalog)?;
+            let table = catalog
+                .databases
+                .iter()
+                .flat_map(|database| database.tables.iter())
+                .find(|table| table.id == table_id)
+                .ok_or_else(|| ClusterDdlError::Backfill(format!("table {table_id} is gone")))?;
+            backfiller
+                .stage_cache_table_check(table, handle, buffer)
+                .map_err(ClusterDdlError::IndexBackfill)?;
+            buffer.reset();
+            let mut writes = Vec::new();
+            crate::cluster_ddl::write_table_cache_meta_row(&catalog, table_id, &mut writes)?;
+            Ok(((), writes))
+        })?;
+    }
     // Go `genPlacementPolicyID`: the executor draws the policy's id from the
     // policies' own sequence, in a transaction of its own, before the job.
     if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_CREATE_PLACEMENT_POLICY {

@@ -20108,6 +20108,158 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
     assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
 }
 
+/// The TiFlash replica manager's status update runs as Go's persisted
+/// `ActionUpdateTiFlashReplicaStatus` job (`UpdateTableReplicaInfo` queues it
+/// and the owner applies it): the new status is published, and a status
+/// that already holds queues nothing.
+#[test]
+fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1949)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    rows(&mut session, "create table r (a int)");
+    rows(&mut session, "alter table r set tiflash replica 1");
+    let table_id: i64 = displayed(rows(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_name = 'r'",
+    ))[0][0]
+        .parse()
+        .unwrap();
+    let job = |session: &mut _| -> (i64, String) {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        (
+            row[0].parse().unwrap(),
+            [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|"),
+        )
+    };
+    let update = |available: bool| {
+        stack.factory.ddl.execute(
+            &tidb_exec::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
+                table_id,
+                available,
+            },
+            &tidb_executor::StmtContext::for_query(),
+        )
+    };
+    update(true).unwrap();
+    let (updated, kind) = job(&mut session);
+    assert_eq!(kind, "test|r|update tiflash replica status|public|synced");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select available from information_schema.tiflash_replica where table_name = 'r'"
+        )),
+        [["1"]]
+    );
+    update(true).unwrap();
+    assert_eq!(
+        job(&mut session).0,
+        updated,
+        "the status already holds: no job"
+    );
+    let missing = stack.factory.ddl.execute(
+        &tidb_exec::cluster_ddl::DdlStatement::UpdateTiFlashReplicaStatus {
+            table_id: table_id + 1000,
+            available: true,
+        },
+        &tidb_executor::StmtContext::for_query(),
+    );
+    assert!(missing.is_err());
+}
+
+/// Table placement, attributes, the region split policy, TiFlash replicas
+/// and ALTER TABLE CACHE run as Go's persisted jobs: CACHE and NOCACHE pass
+/// through `TableCacheStatusSwitching`, a schema version each step (oracle:
+/// ADMIN SHOW DDL's SCHEMA_VER moves by 2 for each, by 1 for ATTRIBUTES),
+/// and a repeated CACHE queues nothing. Captured from the Go oracle.
+#[test]
+fn table_options_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1948)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let job = |session: &mut _| -> (i64, String) {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        (
+            row[0].parse().unwrap(),
+            [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|"),
+        )
+    };
+    let version = |session: &mut _| -> i64 {
+        displayed(rows(session, "admin show ddl"))[0][0]
+            .parse()
+            .unwrap()
+    };
+    rows(&mut session, "create table c1 (a int, b int, key ib(b))");
+    rows(&mut session, "create placement policy p1 followers=2");
+    for (sql, expected) in [
+        (
+            "alter table c1 placement policy p1",
+            "test|c1|alter table placement|public|synced",
+        ),
+        (
+            "alter table c1 placement policy default",
+            "test|c1|alter table placement|public|synced",
+        ),
+        (
+            "alter table c1 split index ib between (0) and (100) regions 2",
+            "test|c1|alter table set region split policy|public|synced",
+        ),
+        (
+            "alter table c1 set tiflash replica 0",
+            "test|c1|set tiflash replica|public|synced",
+        ),
+    ] {
+        rows(&mut session, sql);
+        assert_eq!(job(&mut session).1, expected, "{sql}");
+    }
+    let before = version(&mut session);
+    rows(
+        &mut session,
+        "alter table c1 attributes 'merge_option=deny'",
+    );
+    assert_eq!(
+        job(&mut session).1,
+        "test|c1|alter table attributes|public|synced"
+    );
+    assert_eq!(version(&mut session), before + 1);
+
+    let before = version(&mut session);
+    rows(&mut session, "alter table c1 cache");
+    let (cached, kind) = job(&mut session);
+    assert_eq!(kind, "test|c1|alter table cache|public|synced");
+    assert_eq!(version(&mut session), before + 2);
+    rows(&mut session, "alter table c1 cache");
+    assert_eq!(job(&mut session).0, cached, "already cached: no job");
+    let before = version(&mut session);
+    rows(&mut session, "alter table c1 nocache");
+    assert_eq!(
+        job(&mut session).1,
+        "test|c1|alter table nocache|public|synced"
+    );
+    assert_eq!(version(&mut session), before + 2);
+
+    rows(
+        &mut session,
+        "create table tp (a int) partition by range (a) \
+         (partition p0 values less than (10), partition p1 values less than (20))",
+    );
+    rows(
+        &mut session,
+        "alter table tp partition p0 placement policy p1",
+    );
+    assert_eq!(
+        job(&mut session).1,
+        "test|tp|alter table partition placement|public|synced"
+    );
+    let error = session.execute_write("alter table tp cache").unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8242, "'partition mode' is unsupported on cache tables.")
+    );
+}
+
 /// Placement policies and resource groups run as Go's persisted jobs: a
 /// policy's id comes from the policies' own sequence (Go
 /// `genPlacementPolicyID`, so the first is 1 and OR REPLACE spends one
