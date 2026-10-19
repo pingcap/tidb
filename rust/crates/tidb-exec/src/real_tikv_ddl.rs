@@ -1532,6 +1532,30 @@ pub fn submit_persisted_job_with_retry<
                     min_job_id,
                 )
             }
+            DdlStatement::CreatePlacementPolicy { .. }
+            | DdlStatement::AlterPlacementPolicy { .. }
+            | DdlStatement::DropPlacementPolicy { .. } => {
+                crate::cluster_ddl::placement_policy::prepare_placement_policy_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::CreateResourceGroup { .. }
+            | DdlStatement::AlterResourceGroup { .. }
+            | DdlStatement::DropResourceGroup { .. } => {
+                crate::cluster_ddl::resource_group::prepare_resource_group_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
             DdlStatement::ModifySchemaCharsetAndCollate { .. }
             | DdlStatement::ModifySchemaDefaultPlacement { .. } => {
                 crate::cluster_ddl::alter_schema::prepare_alter_schema_job_submission(
@@ -1677,6 +1701,15 @@ pub fn submit_persisted_job_with_retry<
             ))
         }
     };
+    // Go `genPlacementPolicyID`: the executor draws the policy's id from the
+    // policies' own sequence, in a transaction of its own, before the job.
+    if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_CREATE_PLACEMENT_POLICY {
+        let policy_id = add_index_reorg::reorg_transaction(&opener, timeout, |meta, _, _, _| {
+            let (id, mutation) = crate::ddl_job_submit::reserve_placement_policy_id(meta)?;
+            Ok((id, vec![mutation]))
+        })?;
+        crate::cluster_ddl::placement_policy::set_placement_policy_id(&spec, policy_id);
+    }
     gen_global_ids_and_insert_jobs_with_retry(
         opener,
         std::slice::from_mut(&mut spec),

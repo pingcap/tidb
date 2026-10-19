@@ -432,6 +432,8 @@ pub enum JobArgsValue {
     AlterSequence(Option<GoShared<AlterSequenceArgs>>),
     /// `*model.AlterTTLInfoArgs`, including a typed nil pointer.
     AlterTtlInfo(Option<GoShared<AlterTTLInfoArgs>>),
+    /// `*model.PlacementPolicyArgs`, including a typed nil pointer.
+    PlacementPolicy(Option<GoShared<PlacementPolicyArgs>>),
     /// `*model.DropForeignKeyArgs`, including a typed nil pointer.
     DropForeignKey(Option<GoShared<DropForeignKeyArgs>>),
     /// `*model.ModifyTableAutoIDCacheArgs`, including a typed nil pointer.
@@ -482,6 +484,7 @@ impl JobArgsValue {
             Self::AddForeignKey(value) => job.fill_args(value.clone()),
             Self::AlterSequence(value) => job.fill_args(value.clone()),
             Self::AlterTtlInfo(value) => job.fill_args(value.clone()),
+            Self::PlacementPolicy(value) => job.fill_args(value.clone()),
             Self::DropForeignKey(value) => job.fill_args(value.clone()),
             Self::ModifyTableAutoIdCache(value) => job.fill_args(value.clone()),
             Self::ShardRowId(value) => job.fill_args(value.clone()),
@@ -520,6 +523,7 @@ impl JobArgsValue {
             Self::AddForeignKey(_) => "AddForeignKeyArgs",
             Self::AlterSequence(_) => "AlterSequenceArgs",
             Self::AlterTtlInfo(_) => "AlterTTLInfoArgs",
+            Self::PlacementPolicy(_) => "PlacementPolicyArgs",
             Self::DropForeignKey(_) => "DropForeignKeyArgs",
             Self::ModifyTableAutoIdCache(_) => "ModifyTableAutoIDCacheArgs",
             Self::ShardRowId(_) => "ShardRowIDArgs",
@@ -561,6 +565,7 @@ impl JobArgsValue {
             Self::AddForeignKey(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterSequence(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterTtlInfo(value) => value.as_ref().map(GoShared::identity_address),
+            Self::PlacementPolicy(value) => value.as_ref().map(GoShared::identity_address),
             Self::DropForeignKey(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifyTableAutoIdCache(value) => value.as_ref().map(GoShared::identity_address),
             Self::ShardRowId(value) => value.as_ref().map(GoShared::identity_address),
@@ -685,6 +690,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::AlterTtlInfo(value) => GoTypedPointer::new(
                 model_type("AlterTTLInfoArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::PlacementPolicy(value) => GoTypedPointer::new(
+                model_type("PlacementPolicyArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),

@@ -336,6 +336,13 @@ pub fn next_global_id_kv_key() -> Vec<u8> {
     encode_string_data_key(NEXT_GLOBAL_ID)
 }
 
+/// The raw KV key holding the last placement-policy id handed out (Go
+/// `mPolicyGlobalID`, its own sequence apart from the global ids).
+#[must_use]
+pub fn policy_global_id_kv_key() -> Vec<u8> {
+    encode_string_data_key(POLICY_GLOBAL_ID)
+}
+
 /// The raw KV key holding the global schema version.
 #[must_use]
 pub fn schema_version_kv_key() -> Vec<u8> {

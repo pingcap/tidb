@@ -6233,7 +6233,9 @@ pub mod drop_object;
 pub mod foreign_key;
 pub mod modify_column;
 pub mod multi_schema;
+pub mod placement_policy;
 pub mod rename_table;
+pub mod resource_group;
 pub mod truncate;
 
 /// Actions currently integrated into the persisted owner worker. Seed planners
@@ -6268,6 +6270,12 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_ALTER_SEQUENCE
             | ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
             | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT
+            | ActionType::ACTION_CREATE_PLACEMENT_POLICY
+            | ActionType::ACTION_ALTER_PLACEMENT_POLICY
+            | ActionType::ACTION_DROP_PLACEMENT_POLICY
+            | ActionType::ACTION_CREATE_RESOURCE_GROUP
+            | ActionType::ACTION_ALTER_RESOURCE_GROUP
+            | ActionType::ACTION_DROP_RESOURCE_GROUP
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
@@ -6333,6 +6341,30 @@ fn plan_persisted_action<S: MetaSnapshot>(
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
         | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
             alter_schema::plan_persisted_alter_schema_job_step(snapshot, catalog, active)
+        }
+        ActionType::ACTION_CREATE_PLACEMENT_POLICY => {
+            placement_policy::plan_persisted_create_placement_policy_job_step(
+                snapshot, catalog, active,
+            )
+        }
+        ActionType::ACTION_ALTER_PLACEMENT_POLICY => {
+            placement_policy::plan_persisted_alter_placement_policy_job_step(
+                snapshot, catalog, active,
+            )
+        }
+        ActionType::ACTION_DROP_PLACEMENT_POLICY => {
+            placement_policy::plan_persisted_drop_placement_policy_job_step(
+                snapshot, catalog, active,
+            )
+        }
+        ActionType::ACTION_CREATE_RESOURCE_GROUP => {
+            resource_group::plan_persisted_create_resource_group_job_step(catalog, active)
+        }
+        ActionType::ACTION_ALTER_RESOURCE_GROUP => {
+            resource_group::plan_persisted_alter_resource_group_job_step(catalog, active)
+        }
+        ActionType::ACTION_DROP_RESOURCE_GROUP => {
+            resource_group::plan_persisted_drop_resource_group_job_step(catalog, active)
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
             rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
@@ -7996,7 +8028,13 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_CREATE_TABLES
         | ActionType::ACTION_CREATE_VIEW
         | ActionType::ACTION_CREATE_SEQUENCE
-        | ActionType::ACTION_ALTER_SEQUENCE => true,
+        | ActionType::ACTION_ALTER_SEQUENCE
+        | ActionType::ACTION_CREATE_PLACEMENT_POLICY
+        | ActionType::ACTION_ALTER_PLACEMENT_POLICY
+        | ActionType::ACTION_DROP_PLACEMENT_POLICY
+        | ActionType::ACTION_CREATE_RESOURCE_GROUP
+        | ActionType::ACTION_ALTER_RESOURCE_GROUP
+        | ActionType::ACTION_DROP_RESOURCE_GROUP => true,
         // `cancelOnlyNotHandledJob(job, model.StateNone)`.
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
         | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {

@@ -99,8 +99,8 @@ pub use job_args::{
     get_finished_truncate_table_args, get_modify_column_args, get_modify_index_args,
     get_modify_schema_args, get_modify_table_auto_id_cache_args,
     get_modify_table_charset_and_collate_args, get_modify_table_comment_args,
-    get_modify_table_engine_attribute_args, get_rebase_auto_id_args, get_refresh_meta_args,
-    get_rename_table_args, get_rename_tables_args, get_resource_group_args,
+    get_modify_table_engine_attribute_args, get_placement_policy_args, get_rebase_auto_id_args,
+    get_refresh_meta_args, get_rename_table_args, get_rename_tables_args, get_resource_group_args,
     get_set_default_value_args, get_shard_row_id_args, get_table_column_args,
     get_table_partition_args, get_truncate_table_args, index_arg_columnar_index_type,
     rename_tables_args_from_v1, AddCheckConstraintArgs, AddForeignKeyArgs,
@@ -110,9 +110,9 @@ pub use job_args::{
     ExchangeTablePartitionArgs, FinishedJobArgs, GoByteSlice, GoField, Ident, IndexArg,
     IndexArgSplitOpt, IndexOp, JobArgs, JobArgsValue, ModifyColumnArgs, ModifyIndexArgs,
     ModifySchemaArgs, ModifyTableAutoIDCacheArgs, ModifyTableCharsetAndCollateArgs,
-    ModifyTableCommentArgs, ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs,
-    RenameTableArgs, RenameTablesArgs, ResourceGroupArgs, SetDefaultValueArgs, ShardRowIDArgs,
-    TableColumnArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
+    ModifyTableCommentArgs, ModifyTableEngineAttributeArgs, PlacementPolicyArgs, RebaseAutoIDArgs,
+    RefreshMetaArgs, RenameTableArgs, RenameTablesArgs, ResourceGroupArgs, SetDefaultValueArgs,
+    ShardRowIDArgs, TableColumnArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, str_to_job_state, JobState,

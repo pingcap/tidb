@@ -2564,6 +2564,12 @@ where
                     | DdlStatement::AlterSequence { .. }
                     | DdlStatement::ModifySchemaCharsetAndCollate { .. }
                     | DdlStatement::ModifySchemaDefaultPlacement { .. }
+                    | DdlStatement::CreatePlacementPolicy { .. }
+                    | DdlStatement::AlterPlacementPolicy { .. }
+                    | DdlStatement::DropPlacementPolicy { .. }
+                    | DdlStatement::CreateResourceGroup { .. }
+                    | DdlStatement::AlterResourceGroup { .. }
+                    | DdlStatement::DropResourceGroup { .. }
             )
             || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {

@@ -103,6 +103,25 @@ pub fn reserve_global_id<S: MetaSnapshot>(
     Ok((id, allocator.mutation()?.expect("one allocated global ID")))
 }
 
+/// Plans Go `Mutator.GenPlacementPolicyID`: the next id from the
+/// placement policies' own sequence. Commit the mutation before using it.
+pub fn reserve_placement_policy_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+) -> Result<(i64, BufferMutation), DdlPlanError> {
+    let current = match snapshot.get(&key::policy_global_id_kv_key())? {
+        Some(stored) => value::parse_int_value(&stored)
+            .map_err(|error| DdlPlanError::Encode(format!("PolicyGlobalID: {error}")))?,
+        None => 0,
+    };
+    let id = current
+        .checked_add(1)
+        .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+    Ok((
+        id,
+        BufferMutation::set(key::policy_global_id_kv_key(), value::encode_int_value(id))?,
+    ))
+}
+
 fn create_table_args(spec: &JobSpec) -> GoShared<tidb_model::CreateTableArgs> {
     match &spec.args {
         JobArgsValue::CreateTable(Some(args)) => args.clone(),

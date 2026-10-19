@@ -459,15 +459,26 @@ impl ResourceGroupInfo {
     }
 }
 
+impl ResourceGroupInfo {
+    /// Go's named `(*ResourceGroupInfo).Clone`, which dereferences the
+    /// embedded settings pointer and so panics when it is nil.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        assert!(
+            self.settings.is_some(),
+            "Go ResourceGroupInfo.Clone panics for nil ResourceGroupSettings"
+        );
+        self.clone()
+    }
+}
+
+/// A plain copy: nil settings stay nil, as a Go struct copy keeps a nil
+/// pointer. Marshalling a shared value copies it this way, and Go marshals a
+/// DROP RESOURCE GROUP job's name-only group without cloning it.
 impl Clone for ResourceGroupInfo {
     fn clone(&self) -> Self {
-        let settings = self
-            .settings
-            .as_ref()
-            .expect("Go ResourceGroupInfo.Clone panics for nil ResourceGroupSettings")
-            .clone();
         Self {
-            settings: Some(settings),
+            settings: self.settings.clone(),
             id: self.id,
             name: self.name.clone(),
             state: self.state,
@@ -884,6 +895,7 @@ mod tests {
                     .as_ref()
                     .unwrap()
             ));
-        assert!(std::panic::catch_unwind(|| ResourceGroupInfo::default().clone()).is_err());
+        assert!(std::panic::catch_unwind(|| ResourceGroupInfo::default().clone_like_go()).is_err());
+        assert!(ResourceGroupInfo::default().clone().settings.is_none());
     }
 }

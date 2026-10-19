@@ -271,6 +271,88 @@ pub fn get_rename_tables_args(
     get_or_decode_args(job)
 }
 
+/// Go `PlacementPolicyArgs`: CREATE carries the policy (and OR REPLACE),
+/// ALTER the policy and its id, DROP the name and id.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PlacementPolicyArgs {
+    /// The policy as the statement defines it.
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<GoShared<crate::placement::PolicyInfo>>,
+    /// `CREATE OR REPLACE`.
+    #[serde(rename = "replace_on_exist", default, skip_serializing_if = "is_false")]
+    pub replace_on_exist: bool,
+    /// DROP's policy name. Go's struct-valued `CIStr` is omitted only when
+    /// empty, which `omitempty` never does for a struct; it is always written.
+    #[serde(rename = "policy_name", default)]
+    pub policy_name: CiString,
+    /// ALTER's and DROP's policy id.
+    #[serde(rename = "policy_id", default)]
+    pub policy_id: i64,
+}
+
+impl JobArgs for PlacementPolicyArgs {
+    job_args_identity_methods!(PlacementPolicy);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *PlacementPolicyArgs receiver").read();
+        let policy = || {
+            typed_pointer_any(
+                model_type("PolicyInfo", GoTypeKind::Struct),
+                value.policy.clone(),
+            )
+        };
+        GoSharedSlice::from_vec(match job.type_ {
+            ActionType::ACTION_CREATE_PLACEMENT_POLICY => vec![
+                policy(),
+                ColumnDefaultValue::Bool(value.replace_on_exist).into(),
+            ],
+            ActionType::ACTION_ALTER_PLACEMENT_POLICY => vec![policy()],
+            _ => vec![typed_value_any(
+                ast_type("CIStr", GoTypeKind::Struct),
+                value.policy_name.clone(),
+            )],
+        })
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let mut args = Self {
+            policy_id: job.schema_id,
+            ..Self::default()
+        };
+        let mut decoder = V1Decoder::new(job)?;
+        match job.type_ {
+            ActionType::ACTION_CREATE_PLACEMENT_POLICY
+            | ActionType::ACTION_ALTER_PLACEMENT_POLICY => {
+                let policy = GoField::<Option<GoShared<crate::placement::PolicyInfo>>>::default();
+                decoder.decode(
+                    &policy,
+                    model_type("PolicyInfo", GoTypeKind::Struct).pointer_to(),
+                )?;
+                args.policy = policy.get();
+                if job.type_ == ActionType::ACTION_CREATE_PLACEMENT_POLICY {
+                    let replace = GoField::<bool>::default();
+                    decoder.decode(&replace, builtin_type("bool", GoTypeKind::Bool))?;
+                    args.replace_on_exist = replace.get();
+                }
+            }
+            _ => {
+                let name = GoField::<CiString>::default();
+                decoder.decode(&name, ast_type("CIStr", GoTypeKind::Struct))?;
+                args.policy_name = name.get();
+            }
+        }
+        decoder.finish(job);
+        Ok(Some(GoShared::new(args)))
+    }
+}
+
+/// Go `GetPlacementPolicyArgs`.
+pub fn get_placement_policy_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<PlacementPolicyArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
 /// Go `ResourceGroupArgs`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ResourceGroupArgs {

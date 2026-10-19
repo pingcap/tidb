@@ -20108,6 +20108,81 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
     assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
 }
 
+/// Placement policies and resource groups run as Go's persisted jobs: a
+/// policy's id comes from the policies' own sequence (Go
+/// `genPlacementPolicyID`, so the first is 1 and OR REPLACE spends one
+/// before the owner keeps the existing policy), a policy a database still
+/// names cannot be dropped, and DROP RESOURCE GROUP's name-only group is
+/// queued like Go's. Captured from the Go oracle.
+#[test]
+fn placement_policies_and_resource_groups_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1947)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let job = |session: &mut _| -> String {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [1, 3, 4, 5, 11].map(|column| row[column].clone()).join("|")
+    };
+    rows(&mut session, "create placement policy p1 followers=2");
+    assert_eq!(
+        job(&mut session),
+        "p1|create placement policy|public|1|synced"
+    );
+    rows(
+        &mut session,
+        "create or replace placement policy p1 followers=4",
+    );
+    assert_eq!(
+        job(&mut session),
+        "p1|create placement policy|public|1|synced"
+    );
+    rows(&mut session, "create placement policy p2 followers=2");
+    assert_eq!(
+        job(&mut session),
+        "p2|create placement policy|public|3|synced"
+    );
+    rows(&mut session, "create database dp placement policy p2");
+    let error = session
+        .execute_write("drop placement policy p2")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8241, "Placement policy 'p2' is still in use")
+    );
+    rows(&mut session, "alter database dp placement policy default");
+    rows(&mut session, "drop placement policy p2");
+    assert_eq!(job(&mut session), "p2|drop placement policy|none|3|synced");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select policy_id, policy_name from information_schema.placement_policies"
+        )),
+        [["1", "p1"]]
+    );
+
+    rows(&mut session, "create resource group rg1 ru_per_sec=1000");
+    let created = job(&mut session);
+    assert!(
+        created.starts_with("rg1|create resource group|public|"),
+        "{created}"
+    );
+    rows(&mut session, "alter resource group rg1 ru_per_sec=2000");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select ru_per_sec from information_schema.resource_groups where name = 'rg1'"
+        )),
+        [["2000"]]
+    );
+    rows(&mut session, "drop resource group rg1");
+    let dropped = job(&mut session);
+    assert!(
+        dropped.starts_with("rg1|drop resource group|none|"),
+        "{dropped}"
+    );
+}
+
 /// CREATE VIEW, CREATE / ALTER SEQUENCE, CREATE TABLE LIKE, the
 /// AUTO_RANDOM rebase, TTL and ALTER DATABASE run as Go's persisted jobs:
 /// Go queues a job even when the owner then finds nothing to change (a
