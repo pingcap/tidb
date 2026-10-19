@@ -391,6 +391,9 @@ func (s *importStepExecutor) readQuery(
 	selected chan<- importer.QueryChunk,
 ) error {
 	defer close(selected)
+	if err := checkQueryCollation(&s.taskMeta.Plan); err != nil {
+		return err
+	}
 	pool := s.queryRuntime.SysSessionPool()
 	resource, err := pool.Get()
 	if err != nil {
@@ -405,6 +408,17 @@ func (s *importStepExecutor) readQuery(
 	return importer.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.Query, s.taskMeta.Stmt,
 		s.GetResource().Mem.Capacity()/4, selected)
+}
+
+// checkQueryCollation rejects a query whose keyspace uses another collation
+// mode than this node: the SELECT reads the mode of the process, unlike the
+// encoder, which uses the mode captured at submission.
+func checkQueryCollation(plan *importer.Plan) error {
+	nodeNewCollate := collate.NewCollationEnabled()
+	if useNewCollate := plan.GetUseNewCollateOrDefault(nodeNewCollate); useNewCollate != nodeNewCollate {
+		return errors.Errorf("import query needs new collation %t, but this node has %t", useNewCollate, nodeNewCollate)
+	}
+	return nil
 }
 
 // recordQueryReadBytes meters the bytes that TiKV and TiFlash returned to the

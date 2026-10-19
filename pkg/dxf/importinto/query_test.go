@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -118,4 +119,16 @@ func TestImportQueryDownstreamMetadata(t *testing.T) {
 	require.NoError(t, json.Unmarshal(bs, &result))
 	require.Equal(t, sourceMeta.Checksum, result.Checksum)
 	require.Equal(t, sourceMeta.MaxIDs, result.MaxIDs)
+}
+
+func TestCheckQueryCollation(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	defer collate.SetNewCollationEnabledForTest(origin)
+	useNewCollate := true
+	plan := &importer.Plan{UseNewCollate: &useNewCollate}
+	collate.SetNewCollationEnabledForTest(true)
+	require.NoError(t, checkQueryCollation(plan))
+	require.NoError(t, checkQueryCollation(&importer.Plan{}))
+	collate.SetNewCollationEnabledForTest(false)
+	require.ErrorContains(t, checkQueryCollation(plan), "import query needs new collation true, but this node has false")
 }
