@@ -26,6 +26,30 @@ import (
 
 const (
 	sysUserTableName = "user"
+	sysDBTableName   = "db"
+)
+
+type compatibleMissingBackupSystemTableColumn struct {
+	requiredColumns  []string
+	selectExpression string
+}
+
+var (
+	operateViewPrivColumnName = strings.ToLower(mysql.OperateViewPriv.ColumnString())
+
+	compatibleMissingBackupSystemTableColumns = map[string]map[string]compatibleMissingBackupSystemTableColumn{
+		sysUserTableName: {
+			operateViewPrivColumnName: {
+				requiredColumns:  []string{strings.ToLower(mysql.SuperPriv.ColumnString())},
+				selectExpression: "IF(`Super_priv` = 'Y', 'Y', 'N')",
+			},
+		},
+		sysDBTableName: {
+			operateViewPrivColumnName: {
+				selectExpression: "'N'",
+			},
+		},
+	}
 )
 
 var statsTables = map[string]map[string]struct{}{
@@ -102,6 +126,91 @@ func isStatsTable(schemaName string, tableName string) bool {
 	}
 	_, ok = tableMap[tableName]
 	return ok
+}
+
+func buildSystemTableReplaceColumns(
+	dbName, tableName string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) ([]string, []string, error) {
+	upstreamColMap := make(map[string]*model.ColumnInfo, len(upstreamTable.Columns))
+	for _, col := range upstreamTable.Columns {
+		upstreamColMap[col.Name.L] = col
+	}
+
+	downstreamColMap := make(map[string]struct{}, len(downstreamTable.Columns))
+	for _, col := range downstreamTable.Columns {
+		downstreamColMap[col.Name.L] = struct{}{}
+	}
+	for _, col := range upstreamTable.Columns {
+		if _, ok := downstreamColMap[col.Name.L]; !ok {
+			return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				"missing column in cluster data, table: %s, col: %s %s",
+				upstreamTable.Name.O, col.Name, col.FieldType.String())
+		}
+	}
+
+	columnNames := make([]string, 0, len(downstreamTable.Columns))
+	columnExpressions := make([]string, 0, len(downstreamTable.Columns))
+	for _, col := range downstreamTable.Columns {
+		_, ok := upstreamColMap[col.Name.L]
+		if !ok {
+			columnConfig, recognized := getCompatibleMissingBackupSystemTableColumn(tableName, col.Name.L)
+			if recognized {
+				if canLoadSystemTableWithMissingBackupColumn(dbName, tableName, col.Name.L, upstreamColMap) {
+					columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+					columnExpressions = append(columnExpressions, columnConfig.selectExpression)
+					continue
+				}
+				return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in backup data, table: %s, col: %s %s",
+					upstreamTable.Name.O, col.Name, col.FieldType.String())
+			}
+			continue
+		}
+		columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+		columnExpressions = append(columnExpressions, utils.EncloseName(col.Name.L))
+	}
+	if len(columnNames) == 0 {
+		return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"no compatible columns for system table restore, table: %s", upstreamTable.Name.O)
+	}
+	return columnNames, columnExpressions, nil
+}
+
+func hasAllColumns(columns map[string]*model.ColumnInfo, requiredColumns []string) bool {
+	for _, column := range requiredColumns {
+		if _, exists := columns[column]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func canLoadSystemTableWithMissingBackupColumn(dbName, tableName, columnName string, backupColumns map[string]*model.ColumnInfo) bool {
+	if dbName != mysql.SystemDB {
+		return false
+	}
+	columnConfig, ok := getCompatibleMissingBackupSystemTableColumn(tableName, columnName)
+	return ok && columnConfig.selectExpression != "" && hasAllColumns(backupColumns, columnConfig.requiredColumns)
+}
+
+func canSkipUnrecognizedMissingBackupSystemTableColumn(dbName, tableName, columnName string) bool {
+	if dbName != mysql.SystemDB || tableName != sysUserTableName {
+		return false
+	}
+	_, recognized := getCompatibleMissingBackupSystemTableColumn(tableName, columnName)
+	return !recognized
+}
+
+func getCompatibleMissingBackupSystemTableColumn(
+	tableName, columnName string,
+) (compatibleMissingBackupSystemTableColumn, bool) {
+	tableColumns, ok := compatibleMissingBackupSystemTableColumns[tableName]
+	if !ok {
+		return compatibleMissingBackupSystemTableColumn{}, false
+	}
+	columnConfig, ok := tableColumns[columnName]
+	return columnConfig, ok
 }
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
@@ -287,14 +396,15 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
 		// target column order may different with source cluster
-		columnNames := make([]string, 0, len(ti.Columns))
-		for _, col := range ti.Columns {
-			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+		columnNames, columnExpressions, err := buildSystemTableReplaceColumns(dbName, tableName, ti, db.ExistingTables[tableName])
+		if err != nil {
+			return err
 		}
-		colListStr := strings.Join(columnNames, ",")
+		columnListStr := strings.Join(columnNames, ",")
+		columnExpressionStr := strings.Join(columnExpressions, ",")
 		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
 			utils.EncloseDBAndTable(db.Name.L, tableName),
-			colListStr, colListStr,
+			columnListStr, columnExpressionStr,
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
 		return execSQL(replaceIntoSQL)
 	}
@@ -335,17 +445,6 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
 		}
 		backupTi := table.Info
-		// skip checking the number of columns in mysql.user table,
-		// because higher versions of TiDB may add new columns.
-		if len(ti.Columns) != len(backupTi.Columns) && backupTi.Name.L != sysUserTableName {
-			log.Error("column count mismatch",
-				zap.Stringer("table", table.Info.Name),
-				zap.Int("col in cluster", len(ti.Columns)),
-				zap.Int("col in backup", len(backupTi.Columns)))
-			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
-				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
-		}
 		backupColMap := make(map[string]*model.ColumnInfo)
 		for i := range backupTi.Columns {
 			col := backupTi.Columns[i]
@@ -356,8 +455,10 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
-				// skip when the backed up mysql.user table is missing columns.
-				if backupTi.Name.L == sysUserTableName {
+				// Logical restore fills compatible missing columns using configured
+				// expressions or target defaults.
+				if canLoadSystemTableWithMissingBackupColumn(mysql.SystemDB, backupTi.Name.L, col.Name.L, backupColMap) ||
+					canSkipUnrecognizedMissingBackupSystemTableColumn(mysql.SystemDB, backupTi.Name.L, col.Name.L) {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
@@ -384,26 +485,24 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 			}
 		}
 
-		if backupTi.Name.L == sysUserTableName {
-			// check whether the columns of table in cluster are less than the backup data
-			clusterColMap := make(map[string]*model.ColumnInfo)
-			for i := range ti.Columns {
-				col := ti.Columns[i]
-				clusterColMap[col.Name.L] = col
-			}
-			// order can be different
-			for i := range backupTi.Columns {
-				col := backupTi.Columns[i]
-				clusterCol := clusterColMap[col.Name.L]
-				if clusterCol == nil {
-					log.Error("missing column in cluster data",
-						zap.Stringer("table", table.Info.Name),
-						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
-					return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-						"missing column in cluster data, table: %s, col: %s %s",
-						table.Info.Name.O,
-						col.Name, col.FieldType.String())
-				}
+		// check whether the columns of table in cluster are less than the backup data
+		clusterColMap := make(map[string]*model.ColumnInfo)
+		for i := range ti.Columns {
+			col := ti.Columns[i]
+			clusterColMap[col.Name.L] = col
+		}
+		// order can be different
+		for i := range backupTi.Columns {
+			col := backupTi.Columns[i]
+			clusterCol := clusterColMap[col.Name.L]
+			if clusterCol == nil {
+				log.Error("missing column in cluster data",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in cluster data, table: %s, col: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String())
 			}
 		}
 	}
