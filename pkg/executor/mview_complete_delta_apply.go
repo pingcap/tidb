@@ -15,9 +15,12 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/bits"
+	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -29,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 const (
@@ -67,6 +71,7 @@ type MViewCompleteDeltaApplyExec struct {
 	updateTouchedBitmap []uint8
 	updateTouchedStride int
 	executed            bool
+	runtimeStats        *mviewCompleteDeltaApplyRuntimeStats
 }
 
 type mviewCompleteDeltaCompareColumn struct {
@@ -84,6 +89,60 @@ type mviewCompleteDeltaApplyWriterStats struct {
 	insertRows int64
 	updateRows int64
 	deleteRows int64
+}
+
+type mviewCompleteDeltaApplyRuntimeStats struct {
+	writerTime   time.Duration
+	writerDetail mviewCompleteDeltaApplyWriterStats
+}
+
+func (s *mviewCompleteDeltaApplyRuntimeStats) reset() {
+	if s == nil {
+		return
+	}
+	s.writerTime = 0
+	s.writerDetail = mviewCompleteDeltaApplyWriterStats{}
+}
+
+func (s *mviewCompleteDeltaApplyRuntimeStats) String() string {
+	if s == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("mview_complete_delta_apply:{writer:{time:")
+	buf.WriteString(execdetails.FormatDuration(s.writerTime))
+	buf.WriteString(", chunks:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.chunks, 10))
+	buf.WriteString(", row_ops:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.rowOps, 10))
+	buf.WriteString(", rows:{insert:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.insertRows, 10))
+	buf.WriteString(", update:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.updateRows, 10))
+	buf.WriteString(", delete:")
+	buf.WriteString(strconv.FormatInt(s.writerDetail.deleteRows, 10))
+	buf.WriteString("}}}")
+	return buf.String()
+}
+
+func (s *mviewCompleteDeltaApplyRuntimeStats) Clone() execdetails.RuntimeStats {
+	if s == nil {
+		return &mviewCompleteDeltaApplyRuntimeStats{}
+	}
+	return &mviewCompleteDeltaApplyRuntimeStats{writerTime: s.writerTime, writerDetail: s.writerDetail}
+}
+
+func (s *mviewCompleteDeltaApplyRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*mviewCompleteDeltaApplyRuntimeStats)
+	if !ok || tmp == nil {
+		return
+	}
+	s.writerTime += tmp.writerTime
+	s.writerDetail.merge(tmp.writerDetail)
+}
+
+func (*mviewCompleteDeltaApplyRuntimeStats) Tp() int {
+	return execdetails.TpMViewCompleteDeltaApplyRuntimeStats
 }
 
 func (s *mviewCompleteDeltaApplyWriterStats) merge(other mviewCompleteDeltaApplyWriterStats) {
@@ -163,6 +222,14 @@ func (e *MViewCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk
 		return nil
 	}
 	e.executed = true
+	if e.BaseExecutor.RuntimeStats() != nil {
+		if e.runtimeStats == nil {
+			e.runtimeStats = &mviewCompleteDeltaApplyRuntimeStats{}
+		} else {
+			e.runtimeStats.reset()
+		}
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
+	}
 
 	child := e.Children(0)
 	if child == nil {
@@ -190,8 +257,15 @@ func (e *MViewCompleteDeltaApplyExec) Next(ctx context.Context, req *chunk.Chunk
 			stmtCtx.SetMessage(writerStats.stmtMessage())
 			return nil
 		}
+		writeStart := time.Time{}
+		if e.runtimeStats != nil {
+			writeStart = time.Now()
+		}
 		if err := e.applyChunk(txn, tableCtx, stmtCtx, insertSizeHintStep, e.childChunk, &writerStats); err != nil {
 			return err
+		}
+		if e.runtimeStats != nil {
+			e.runtimeStats.writerTime += time.Since(writeStart)
 		}
 	}
 }
@@ -209,6 +283,7 @@ func (e *MViewCompleteDeltaApplyExec) Close() error {
 	e.updateTouchedBitmap = nil
 	e.updateTouchedStride = 0
 	e.executed = false
+	e.runtimeStats = nil
 	return e.BaseExecutor.Close()
 }
 
@@ -235,6 +310,9 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 	defer func() {
 		if stmtWriterStats != nil {
 			stmtWriterStats.merge(writerStatsDelta)
+		}
+		if e.runtimeStats != nil {
+			e.runtimeStats.writerDetail.merge(writerStatsDelta)
 		}
 	}()
 

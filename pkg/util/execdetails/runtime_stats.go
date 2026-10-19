@@ -76,6 +76,10 @@ const (
 	TpHashStateRuntimeStats
 	// TpWriteRuntimeStats is the type for processed DML work.
 	TpWriteRuntimeStats
+	// TpMViewDeltaMergeAggRuntimeStats is the type for MV delta merge aggregation.
+	TpMViewDeltaMergeAggRuntimeStats
+	// TpMViewCompleteDeltaApplyRuntimeStats is the type for MV complete delta apply.
+	TpMViewCompleteDeltaApplyRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
