@@ -1,0 +1,25 @@
+[package]
+name = "tidb-gcworker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/store/gcworker: the GC leader that advances safe points, resolves locks and destroys delete ranges."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde_json = { workspace = true }
+tikv-client.workspace = true
+tidb-codec = { path = "../tidb-codec" }
+tidb-config = { path = "../tidb-config" }
+tidb-exec = { path = "../tidb-exec" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-log = { path = "../tidb-log" }
+tidb-model = { path = "../tidb-model" }
+tidb-placement = { path = "../tidb-placement" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-util = { path = "../tidb-util" }

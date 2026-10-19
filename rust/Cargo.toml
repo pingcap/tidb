@@ -17,6 +17,7 @@ members = [
     "crates/tidb-naming",
     "crates/tidb-tikvutil",
     "crates/tidb-gcutil",
+    "crates/tidb-gcworker",
     "crates/tidb-util",
     "crates/tidb-resourcemanager",
     "crates/tidb-config",

@@ -13,12 +13,16 @@ After this plan, the node runs Go's GC worker. Every minute one TiDB becomes GC 
 ## Progress
 
 - [x] (2026-10-19) Scouting: the Go package inventory, the Rust producer side and emulator, the vendored client's GC surface, and the server's integration points (see Context).
-- [ ] Milestone 1: crate `tidb-gcworker`, its seams and its pure functions, with their Go tests.
-- [ ] Milestone 2: the worker itself (every function of `gc_worker.go`), and the rest of `gc_worker_test.go` on mocks.
+- [x] (2026-10-19) Milestones 1 and 2: `rust/crates/tidb-gcworker` ports every function of `gc_worker.go` (`seams.rs` the collaborators, `gc_worker.rs` the worker), and `gc_worker_test.rs` ports the 28 tests that need no MVCC store, on the client's mock PD and recording doubles (`cargo nextest run -p tidb-gcworker`: 28 passed).
+- [ ] Store-backed tests, with the server adapters: `TestDoGCForOneRegion`, `TestResolveLockRangeInfine`, `TestResolveLockRangeMeetRegionCacheMiss`, `TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge`, `TestResolveLocksNearTxnSafePoint`, `TestRunGCJobAPI`, `TestRunDistGCJobAPI`, `TestGCWithPendingTxn`, `TestGCWithPendingTxn2`, `TestSkipGCAndOnlyResolveLock`, and the probe checks of `TestLeaderTick` / `TestRunGCJob`.
 - [ ] Milestone 3: the vendored client's missing PD calls, the production adapters, start/stop on the real-TiKV node, the status variables.
 - [ ] Milestone 4: real TiKV acceptance (playground), then the package receipt.
 
 ## Surprises & Discoveries
+
+- Observation: Go's `TestSetServiceSafePoint` expectations come from TiDB's own unistore PD (`pkg/store/mockstore/unistore/tikv/mock_region.go`, `gcStatesManagerSimulator.UpdateServiceGCSafePoint`), PD's compatibility wrapper: the "gc_worker" service advances the txn safe point, other services set or delete GC barriers, and the answer is the txn safe point. client-go's mock PD keeps plain service safe points. The test double follows TiDB's unistore; the Rust embedded store's PD (`tidb-unistore`) has neither and must port the simulator before the store-backed tests run on it.
+  Evidence: the test failed on the client mock's semantics and passes on the ported ones.
+- Observation: Go's `TestGCPlacementRules` asserts a counter behind a `gcDeletePlacementRuleCounter` failpoint that `gc_worker.go` on this branch never evaluates; the Rust test asserts the bundles PD receives instead (two for table 10, which Go's mock job names as both table and old partition).
 
 - Observation: the vendored client (`rust/third_party/tikv-client-rs`, the client-go port) already has most of the KV half. It has `RangeTaskRunner` (`src/transaction/range_task.rs`), GC lock resolution (`KvStore::gc`, `src/tikv.rs:1261`, `GcController`), `Client::unsafe_destroy_range` (`src/transaction/client.rs:621`), and `delete_range_with_concurrency`. Its PD has `advance_transaction_safe_point` / `advance_gc_safe_point` / `get_gc_state`. Its mock PD (`src/mock/mocktikv/pd.rs`) models service safe points, GC barriers and both safe points.
   Evidence: grep of the vendored sources, 2026-10-19.

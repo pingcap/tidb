@@ -3699,6 +3699,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-gcworker"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tidb-codec",
+ "tidb-config",
+ "tidb-exec",
+ "tidb-executor",
+ "tidb-log",
+ "tidb-model",
+ "tidb-placement",
+ "tidb-txnkv",
+ "tidb-util",
+ "tikv-client",
+]
+
+[[package]]
 name = "tidb-hack"
 version = "0.0.0"
 dependencies = [
