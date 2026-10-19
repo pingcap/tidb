@@ -20324,6 +20324,28 @@ fn modify_column_runs_as_a_persisted_job_like_go() {
             format!("2 {}", hex(&index(t, TEMP | 4 + 1))),
         ]
     );
+    // Go `updateColumnWorker.getRowRecord`: a NULL bound for a TIMESTAMP NOT
+    // NULL column takes the current time, read in the job's time zone (Go
+    // issue 56051; oracle: both answer 0).
+    rows(&mut session, "create table tz (a int, b int)");
+    rows(&mut session, "insert into tz values (null, null)");
+    rows(&mut session, "alter table tz modify a timestamp not null");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select floor((unix_timestamp() - unix_timestamp(a)) / 2) from tz",
+        )),
+        [["0"]]
+    );
+    rows(&mut session, "set @@time_zone = 'Asia/Tokyo'");
+    rows(&mut session, "alter table tz modify b timestamp not null");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select floor((unix_timestamp() - unix_timestamp(b)) / 2) from tz",
+        )),
+        [["0"]]
+    );
 }
 
 /// DROP TABLE / VIEW / SEQUENCE / DATABASE run as Go's persisted jobs, one

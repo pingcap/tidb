@@ -449,9 +449,11 @@ pub(super) fn reorg_statement_context(job: &Job) -> tidb_executor::StmtContext {
         .reorg_meta
         .as_ref()
         .map_or(job.sql_mode as i64, |meta| meta.read().sql_mode as i64);
+    // Go's reorganization reads the current time in the job's zone, as a
+    // NULL bound for a `TIMESTAMP NOT NULL` column does.
     default_ddl_statement_context()
         .with_ddl_sql_mode(sql_mode)
-        .with_time_zone(zone)
+        .with_lazy_clock(None, zone)
         .for_reorg()
 }
 
