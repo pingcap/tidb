@@ -153,16 +153,18 @@ Package receipt for `pkg/store/gcworker` (Go `gc_worker.go`, `gc_worker_test.go`
   - On `GcJobContext`: `getGCSafePoint`, `logIsGCSafePointTooEarly`, `runKeyspaceDeleteRange`, `prepare`, `checkPrepare`, `getOracleTime`, `checkGCEnable`, `checkUseAutoConcurrency`, `loadBooleanWithDefault`, `getGCConcurrency`, `checkGCInterval`, `validateGCLifeTime`, `calcNewTxnSafePoint`, `advanceTxnSafePoint`, `setGCWorkerServiceSafePoint`, `runGCJob`, `notifyGCV2AfterGC`, `deleteRanges`, `redoDeleteRanges`, `doUnsafeDestroyRangeRequest`, `getStoresForGC`, `loadGCConcurrencyWithDefault`, `checkUseDistributedGC`, `resolveLocks`, `broadcastGCSafePoint`, `doGCForRegion`, `checkLeader`, `saveTime`, `loadTime`, `saveDuration`, `loadDuration`, `loadDurationWithDefault`, `loadValueFromSysTable`, `saveValueToSysTable`, `doGCLabelRules`.
   - Free functions: `calcDeleteRangeConcurrency`, `needsGCOperationForStore`, `doGCPlacementRules`, `getGCRules`, `RunGCJob`, `RunDistributedGCJob`, `RunResolveLocks`, `NewMockGCWorker` / `MockGCWorker.DeleteRanges`.
   - `createSession` is the `GcSessionFactory` seam; the server's `NodeGcSessions` implements it.
-- The collaborators Go reaches through `kv.Storage`, `pd.Client`, `tikv.Storage`, `sessionapi.Session`, `infosync` and `extworkload` are the traits in `seams.rs`. The production implementations are in `rust/crates/tidb-server/src/cluster_session_node/gc_worker.rs`.
-- Tests: 29 in `gc_worker_test.rs`. The Go tests ported there are:
+- The collaborators Go reaches through `kv.Storage`, `pd.Client`, `tikv.Storage`, `sessionapi.Session`, `infosync` and `extworkload` are the traits in `seams.rs`. The store, PD and TiKV halves are `tikv_store::TikvStoreClient<PdC>` in this crate, over any client-rust `KvStore`, with Go's `regionLockResolver`. The sessions and rules halves are in `rust/crates/tidb-server/src/cluster_session_node/gc_worker.rs`.
+- Tests: 39 in `gc_worker_test.rs`. The suite runs on the embedded store (`tidb-unistore`, three stores, `MockOracle` on the store), as Go's `createGCWorkerSuite` does. The Go tests ported there are:
   - `TestGetOracleTime`, `TestPrepareGC`, `TestStatusVars`, `TestGetGCConcurrency`, `TestCheckGCMode`, `TestNeedsGCOperationForStore`;
   - `TestDeleteRangesFailure` (three failure kinds), `TestConcurrentDeleteRanges`, `TestUnsafeDestroyRangeForRaftkv2`;
-  - `TestLeaderTick` (its job-runs part), `TestUnifiedGCNeedsToWait`, `TestNotifyGCV2AfterGCForDedicatedWorker`;
+  - `TestLeaderTick`, `TestUnifiedGCNeedsToWait`, `TestNotifyGCV2AfterGCForDedicatedWorker`;
   - the ten `TestResolveLocksWithKeyspaces_*`;
-  - `TestRunGCJob` (its safe-point part), `TestSetServiceSafePoint`, `TestStartWithRunGCJobFailures`, `TestGCPlacementRules`, `TestGCLabelRules`, `TestCalcDeleteRangeConcurrency`.
+  - `TestRunGCJob`, `TestSetServiceSafePoint`, `TestStartWithRunGCJobFailures`, `TestGCPlacementRules`, `TestGCLabelRules`, `TestCalcDeleteRangeConcurrency`;
+  - `TestDoGCForOneRegion` (its first arm), `TestRunGCJobAPI`, `TestRunDistGCJobAPI`, `TestGCWithPendingTxn`, `TestGCWithPendingTxn2`, `TestSkipGCAndOnlyResolveLock`, `TestResolveLocksNearTxnSafePoint`;
+  - `TestResolveLockRangeInfine`, `TestResolveLockRangeMeetRegionCacheMiss`, `TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge` (on client-rust's mock cluster, as Go's runs on `MockTiKV`).
 
   The Rust-only test is `leader_desc_renders_the_start_time_as_go_time_string`. Go's `TestMain` sets up the goroutine leak check and the failpoints, which has no Rust counterpart. The server test `gc_worker_sessions_run_gos_system_table_statements` pins the session statements on the embedded store; the ignored `playground_table_keys` and `playground_resolve_locks` run against a playground.
-- Still to port, once the embedded store implements GC (`KvScanLock`, `KvGC`, `KvDeleteRange`, `UnsafeDestroyRange` and the PD GC-state simulator of Go's unistore): `TestDoGCForOneRegion`, `TestResolveLockRangeInfine`, `TestResolveLockRangeMeetRegionCacheMiss`, `TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge`, `TestResolveLocksNearTxnSafePoint`, `TestRunGCJobAPI`, `TestRunDistGCJobAPI`, `TestGCWithPendingTxn`, `TestGCWithPendingTxn2`, `TestSkipGCAndOnlyResolveLock`, and the MVCC probe checks of `TestLeaderTick` and `TestRunGCJob`.
+- Still to port: the failpoint arms of `TestDoGCForOneRegion`, which wait on client-go's `KVStore.SendReq` in client-rust (`client-rust-unistore-execplan.md` Step 5d).
 
 ## Interfaces and Dependencies
 
