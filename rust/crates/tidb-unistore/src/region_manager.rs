@@ -13,8 +13,7 @@
 // limitations under the License.
 
 //! Go unistore's `MockRegionManager` (`tikv/mock_region.go`) with the
-//! `regionCtx` it holds (`tikv/region.go`), and the `unistore` package's
-//! `BootstrapWithSingleStore` / `BootstrapWithMultiStores` (`cluster.go`).
+//! `regionCtx` it holds (`tikv/region.go`).
 //!
 //! Regions are Go's `metapb.Region`s with memcomparable-encoded bounds, as a
 //! TiKV store keeps them, so a region error carries the region exactly as
@@ -42,7 +41,7 @@ use tidb_proto::{errorpb, kvrpcpb, metapb};
 use crate::mvcc_store::INTERNAL_KEY_PREFIX;
 
 /// The store every region's one peer lives on after
-/// [`bootstrap_with_single_store`].
+/// [`crate::cluster::bootstrap_with_single_store`].
 pub const STORE_ID: u64 = 1;
 /// The bootstrap region.
 pub const BOOTSTRAP_REGION_ID: u64 = 2;
@@ -130,7 +129,7 @@ pub fn encode_region_key(key: &[u8]) -> Vec<u8> {
 }
 
 /// Go `newPeerMeta`.
-fn new_peer_meta(peer_id: u64, store_id: u64) -> metapb::Peer {
+pub(crate) fn new_peer_meta(peer_id: u64, store_id: u64) -> metapb::Peer {
     metapb::Peer {
         id: peer_id,
         store_id,
@@ -374,7 +373,7 @@ impl InProcessRegionManager {
     #[must_use]
     pub fn new() -> Self {
         let manager = Self::new_mock_region_manager();
-        let (store_id, peer_id, region_id) = bootstrap_with_single_store(&manager);
+        let (store_id, peer_id, region_id) = crate::cluster::bootstrap_with_single_store(&manager);
         debug_assert_eq!(
             (store_id, region_id, peer_id),
             (STORE_ID, BOOTSTRAP_REGION_ID, BOOTSTRAP_PEER_ID)
@@ -684,96 +683,10 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Go `BootstrapWithSingleStore` (`unistore/cluster.go`): one store named
-/// `store<id>`, one region over the whole keyspace with one peer on it.
-/// Answers `(store_id, peer_id, region_id)`.
-pub fn bootstrap_with_single_store(cluster: &InProcessRegionManager) -> (u64, u64, u64) {
-    let store_id = cluster.alloc_id();
-    let region_id = cluster.alloc_id();
-    let peer_id = cluster.alloc_id();
-    let store = metapb::Store {
-        id: store_id,
-        address: format!("store{store_id}"),
-        ..metapb::Store::default()
-    };
-    let region = metapb::Region {
-        id: region_id,
-        region_epoch: Some(metapb::RegionEpoch {
-            conf_ver: 1,
-            version: 1,
-        }),
-        peers: vec![new_peer_meta(peer_id, store_id)],
-        ..metapb::Region::default()
-    };
-    cluster.bootstrap(vec![store], region);
-    (store_id, peer_id, region_id)
-}
-
-/// Go `BootstrapWithMultiStores` (`unistore/cluster.go`): `n` stores, one
-/// region with a peer on each, the first peer leading. Answers
-/// `(store_ids, peer_ids, region_id, leader_peer)`.
-pub fn bootstrap_with_multi_stores(
-    cluster: &InProcessRegionManager,
-    n: usize,
-) -> (Vec<u64>, Vec<u64>, u64, u64) {
-    let store_ids = cluster.alloc_ids(n);
-    let peer_ids = cluster.alloc_ids(n);
-    let leader_peer = peer_ids[0];
-    let region_id = cluster.alloc_id();
-    let stores = store_ids
-        .iter()
-        .map(|id| metapb::Store {
-            id: *id,
-            address: format!("store{id}"),
-            ..metapb::Store::default()
-        })
-        .collect();
-    let peers = peer_ids
-        .iter()
-        .zip(&store_ids)
-        .map(|(peer_id, store_id)| new_peer_meta(*peer_id, *store_id))
-        .collect();
-    let region = metapb::Region {
-        id: region_id,
-        region_epoch: Some(metapb::RegionEpoch {
-            conf_ver: 1,
-            version: 1,
-        }),
-        peers,
-        ..metapb::Region::default()
-    };
-    cluster.bootstrap(stores, region);
-    (store_ids, peer_ids, region_id, leader_peer)
-}
-
-/// Go `BootstrapWithMultiRegions` (`unistore/cluster.go`): one store and
-/// `split_keys.len() + 1` regions cut at the raw `split_keys`. Answers
-/// `(store_id, region_ids, peer_ids)`.
-pub fn bootstrap_with_multi_regions(
-    cluster: &InProcessRegionManager,
-    split_keys: &[Vec<u8>],
-) -> (u64, Vec<u64>, Vec<u64>) {
-    let (store_id, first_peer_id, first_region_id) = bootstrap_with_single_store(cluster);
-    let mut region_ids = vec![first_region_id];
-    region_ids.extend(cluster.alloc_ids(split_keys.len()));
-    let mut peer_ids = vec![first_peer_id];
-    peer_ids.extend(cluster.alloc_ids(split_keys.len()));
-    for (i, key) in split_keys.iter().enumerate() {
-        // Go passes the left region's peer id as the new region's peer.
-        cluster.split(
-            region_ids[i],
-            region_ids[i + 1],
-            key,
-            &[peer_ids[i]],
-            peer_ids[i],
-        );
-    }
-    (store_id, region_ids, peer_ids)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::{bootstrap_with_multi_regions, bootstrap_with_multi_stores};
 
     // WRITTEN: mock_region.go's coverage in Go rides the store suites.
 

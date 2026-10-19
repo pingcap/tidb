@@ -29,8 +29,11 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-model = { path = "../tidb-model" }
-
-[dev-dependencies]
+# Go's unistore implements client-go's `tikv.Client` and `pd.Client`; this
+# crate implements client-rust's.
 tikv-client.workspace = true
 tokio.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
 flate2.workspace = true

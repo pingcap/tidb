@@ -105,6 +105,7 @@
 
 pub mod arena;
 pub mod client;
+pub mod cluster;
 pub mod cophandler;
 pub mod detector;
 pub mod iterator;
@@ -112,10 +113,14 @@ pub mod kv_handler;
 pub mod load_dump;
 pub mod lockstore;
 pub mod lockwaiter;
+pub mod mock;
+pub mod mock_pd;
 pub mod mvcc;
 pub mod mvcc_store;
+pub mod pd;
 pub mod region_loader;
 pub mod region_manager;
+pub mod rpc;
 #[cfg(test)]
 mod tests_mockstore_part1_go_parity;
 #[cfg(test)]
