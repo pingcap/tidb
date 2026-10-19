@@ -1016,9 +1016,46 @@ mod latch_config_tests {
     /// client-go `KVStore.SetOracle`: the store's timestamps come from the
     /// installed oracle -- the client's, a transaction's start and commit
     /// timestamps -- and `GetOracle` answers it.
+    /// client-go binds a transaction's RPC interceptor to the caller's context
+    /// (`KVTxn.Commit`), and commits the secondaries on `store.Ctx()`: the
+    /// interceptor sees the primary's commit, not the detached secondaries'.
+    #[tokio::test]
+    async fn detached_secondary_commits_run_without_the_transactions_interceptor() {
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let client = Client::new_with_pd_client(Arc::new(pd), Config::default())
+            .await
+            .unwrap();
+        let commits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = commits.clone();
+        let interceptor = crate::new_rpc_interceptor("count-commits", move |_, request, next| {
+            if request.label() == "kv_commit" {
+                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            Box::pin(next()) as futures::future::BoxFuture<'_, crate::RpcDispatchResult>
+        });
+
+        let mut transaction = client.begin_optimistic().await.unwrap();
+        transaction.set_rpc_interceptor(interceptor);
+        for key in [b"a".to_vec(), b"b".to_vec(), b"c".to_vec()] {
+            transaction.put(key, b"v".to_vec()).await.unwrap();
+        }
+        transaction.commit().await.unwrap();
+        // The secondaries commit in the background; give them time to land.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let mut reader = client.begin_optimistic().await.unwrap();
+        assert_eq!(
+            reader.get(b"c".to_vec()).await.unwrap(),
+            Some(b"v".to_vec())
+        );
+        reader.rollback().await.unwrap();
+
+        assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn set_oracle_supplies_the_stores_timestamps() {
-        use crate::oracle::Oracle as _;
         let (_client, cluster, pd) =
             crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
         crate::mock::mocktikv::bootstrap_with_single_store(&cluster);

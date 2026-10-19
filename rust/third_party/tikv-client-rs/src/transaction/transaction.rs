@@ -4155,6 +4155,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         if self.is_pipelined() {
             let hooks = self.commit_settings.lifecycle_hooks.clone();
             let start_timestamp = self.timestamp.version();
+            let committer = committer.detached();
             let cancellation = committer.lock_resolver_context.background_cancellation();
             tokio::spawn(async move {
                 if let Some(pre) = hooks.pre {
@@ -5832,7 +5833,9 @@ impl<PdC: PdClient> Transaction<PdC> {
         };
         let keyspace = self.keyspace;
         let keyspace_name = self.keyspace_name.clone();
-        let rpc_interceptor = self.rpc_interceptor.clone();
+        // client-go's keep-alive runs on `context.Background()`, without the
+        // caller's RPC interceptor.
+        let rpc_interceptor: Option<RpcInterceptorChain> = None;
         let ru_details = self.ru_details.clone();
         let commit_settings = self.commit_settings.clone();
         let lifecycle_hooks = self.commit_settings.lifecycle_hooks.clone();
@@ -6751,7 +6754,9 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     fn cleanup_without_wait(self, prewritten: bool) {
-        let hooks = self.settings.lifecycle_hooks.clone();
+        // client-go's cleanup goroutine runs on `store.Ctx()`.
+        let committer = self.detached();
+        let hooks = committer.settings.lifecycle_hooks.clone();
         // client-go starts the cleanup goroutine before returning from
         // CleanupWithoutWait; its lifecycle pre-hook is therefore observable
         // immediately by the caller. Invoke it before handing the action to
@@ -6759,10 +6764,10 @@ impl<PdC: PdClient> Committer<PdC> {
         if let Some(pre) = &hooks.pre {
             pre();
         }
-        let start_timestamp = self.start_version.version();
-        let cancellation = self.lock_resolver_context.background_cancellation();
+        let start_timestamp = committer.start_version.version();
+        let cancellation = committer.lock_resolver_context.background_cancellation();
         tokio::spawn(async move {
-            if let Err(error) = self.rollback(prewritten, cancellation).await {
+            if let Err(error) = committer.rollback(prewritten, cancellation).await {
                 warn!(
                     "failed to clean up transaction after commit error, start_ts: {}, error: {}",
                     start_timestamp, error
@@ -7120,7 +7125,7 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         self.committed = true;
 
-        let secondary = self.clone();
+        let secondary = self.clone().detached();
         let secondary_commit_timestamp = commit_timestamp.clone();
         let hooks = self.settings.lifecycle_hooks.clone();
         tokio::spawn(crate::async_util::with_background_rpc_context(
@@ -7993,7 +7998,7 @@ impl<PdC: PdClient> Committer<PdC> {
                     .await;
             }
 
-            let mut secondary = self.clone();
+            let mut secondary = self.clone().detached();
             let secondary_chunks = chunks.clone();
             let hooks = self.settings.lifecycle_hooks.clone();
             tokio::spawn(crate::async_util::with_background_rpc_context(
@@ -9335,14 +9340,25 @@ impl<PdC: PdClient> Committer<PdC> {
         }
     }
 
+    /// This committer for work client-go runs on `store.Ctx()` or
+    /// `context.Background()` rather than the caller's context: secondary
+    /// commits, cleanup and pipelined resolution. client-go binds a
+    /// transaction's RPC interceptor to the caller's context (`KVTxn.Commit`,
+    /// `Rollback`, `LockKeys`), so that work runs without it.
+    fn detached(mut self) -> Self {
+        self.rpc_interceptor = None;
+        self
+    }
+
     async fn commit_secondary(self, commit_version: Timestamp) -> Result<()> {
         // client-go uses store.Ctx() for secondary commits, including async commit.
-        let cancellation = self.lock_resolver_context.background_cancellation();
+        let committer = self.detached();
+        let cancellation = committer.lock_resolver_context.background_cancellation();
         crate::async_util::with_background_rpc_context(cancellation.clone(), async move {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => Err(Error::ContextCanceled),
-                result = self.commit_secondary_in_background(commit_version) => result,
+                result = committer.commit_secondary_in_background(commit_version) => result,
             }
         })
         .await
