@@ -25,9 +25,8 @@ import (
 )
 
 const (
-	sysUserTableName     = "user"
-	sysDBTableName       = "db"
-	sysBindInfoTableName = "bind_info"
+	sysUserTableName = "user"
+	sysDBTableName   = "db"
 )
 
 type compatibleMissingBackupSystemTableColumn struct {
@@ -48,11 +47,6 @@ var (
 		sysDBTableName: {
 			operateViewPrivColumnName: {
 				selectExpression: "'N'",
-			},
-		},
-		sysBindInfoTableName: {
-			"last_used_date": {
-				selectExpression: "NULL",
 			},
 		},
 	}
@@ -436,17 +430,16 @@ func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB strin
 
 func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
 	log.Info("checking target cluster system table compatibility with backed up data")
-	systemTablesInBackup := make([]*metautil.Table, 0)
+	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && decodedSysDBName.L == mysql.SystemDB &&
-			(sysPrivilegeTableMap[table.Info.Name.L] != "" || table.Info.Name.L == sysBindInfoTableName) {
-			systemTablesInBackup = append(systemTablesInBackup, table)
+		if ok && decodedSysDBName.L == mysql.SystemDB && sysPrivilegeTableMap[table.Info.Name.L] != "" {
+			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
-	for _, table := range systemTablesInBackup {
-		decodedSysDBName, _ := utils.GetSysDBCIStrName(table.DB.Name)
-		ti, err := restore.GetTableSchema(dom, decodedSysDBName, table.Info.Name)
+	sysDB := pmodel.NewCIStr(mysql.SystemDB)
+	for _, table := range privilegeTablesInBackup {
+		ti, err := restore.GetTableSchema(dom, sysDB, table.Info.Name)
 		if err != nil {
 			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
@@ -464,8 +457,8 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 			if backupCol == nil {
 				// Logical restore fills compatible missing columns using configured
 				// expressions or target defaults.
-				if canLoadSystemTableWithMissingBackupColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupColMap) ||
-					canSkipUnrecognizedMissingBackupSystemTableColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L) {
+				if canLoadSystemTableWithMissingBackupColumn(mysql.SystemDB, backupTi.Name.L, col.Name.L, backupColMap) ||
+					canSkipUnrecognizedMissingBackupSystemTableColumn(mysql.SystemDB, backupTi.Name.L, col.Name.L) {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
