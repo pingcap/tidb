@@ -1289,7 +1289,10 @@ impl Session {
                 // Go `DDLJobsReaderExec`: the running jobs, then the history.
                 let (running, history) = self.all_ddl_jobs()?;
                 let jobs = running.into_iter().chain(history).collect::<Vec<_>>();
-                infoschema::ddl_jobs_rows(&jobs, &self.schema_visibility())
+                let visibility = self.schema_visibility();
+                self.with_planning_catalog(|catalog| {
+                    Ok(infoschema::ddl_jobs_rows(&jobs, &visibility, catalog))
+                })?
             } else if table_name.eq_ignore_ascii_case("PROFILING") {
                 crate::memtable_retrievers::pseudo_profiling_rows(
                     tidb_vardef::option_values::tidb_opt_on(

@@ -14,8 +14,8 @@
 
 //! Go `ddl/table_lock.go`'s edits to `TableInfo.Lock`, shared by the
 //! in-process catalog (a `KvTable`'s lock) and the cluster planner (a stored
-//! `TableInfo`'s): `checkTableLocked`, `lockTable` with the state step
-//! `onLockTables` takes, and `unlockTable`.
+//! `TableInfo`'s): `checkTableLocked`, `lockTable` (alone, or with the state
+//! steps of `onLockTables` in one), and `unlockTable`.
 
 use tidb_ast::TableLockType;
 use tidb_model::{SessionInfo, TableLockInfo, TableLockState};
@@ -88,10 +88,8 @@ pub fn check_table_locked(
     Err(table_locked_error(table, lock))
 }
 
-/// Go `ddl.lockTable`, then the state step `onLockTables` takes: absent ->
-/// `pre-lock` -> `public` for a fresh lock, `public` for one more READ
-/// holder, `TS` the job's meta transaction start. A caller that applies the
-/// job in one step lands on the final `public` state.
+/// Go `ddl.lockTable`: the lock after `info` takes a `tp` lock, its state
+/// left for `onLockTables`' step (a fresh lock starts in `none`).
 ///
 /// # Errors
 ///
@@ -102,31 +100,47 @@ pub fn lock_table(
     lock: Option<&TableLockInfo>,
     tp: TableLockType,
     info: &SessionInfo,
-    ts: u64,
 ) -> Result<TableLockInfo, DriverError> {
-    let mut next = match lock.filter(|_| is_locked(lock)) {
-        None => TableLockInfo {
+    let Some(lock) = lock.filter(|_| is_locked(lock)) else {
+        return Ok(TableLockInfo {
             tp,
             sessions: vec![info.clone()].into(),
             ..TableLockInfo::default()
-        },
-        Some(lock) => {
-            let mut next = lock.clone();
-            if next.state != TableLockState::PRE_LOCK {
-                let shared = (next.tp == TableLockType::READ && tp == TableLockType::READ)
-                    || (next.tp == TableLockType::READ_ONLY && tp == TableLockType::READ_ONLY);
-                if !shared {
-                    return Err(table_locked_error(table, lock));
-                }
-                if find_session_info_index(&next, info).is_none() {
-                    let mut sessions: Vec<SessionInfo> = next.sessions.iter().cloned().collect();
-                    sessions.push(info.clone());
-                    next.sessions = sessions.into();
-                }
-            }
-            next
-        }
+        });
     };
+    let mut next = lock.clone();
+    // A pre-lock is this request's own: lock jobs run one at a time.
+    if next.state == TableLockState::PRE_LOCK {
+        return Ok(next);
+    }
+    let shared = (next.tp == TableLockType::READ && tp == TableLockType::READ)
+        || (next.tp == TableLockType::READ_ONLY && tp == TableLockType::READ_ONLY);
+    if !shared {
+        return Err(table_locked_error(table, lock));
+    }
+    if find_session_info_index(&next, info).is_none() {
+        let mut sessions: Vec<SessionInfo> = next.sessions.iter().cloned().collect();
+        sessions.push(info.clone());
+        next.sessions = sessions.into();
+    }
+    Ok(next)
+}
+
+/// [`lock_table`] applied in one step, for a catalog without Go's lock job:
+/// the lock lands on the `public` state `onLockTables` ends in, `TS` the
+/// writing transaction's start.
+///
+/// # Errors
+///
+/// As [`lock_table`].
+pub fn lock_table_in_one_step(
+    table: &str,
+    lock: Option<&TableLockInfo>,
+    tp: TableLockType,
+    info: &SessionInfo,
+    ts: u64,
+) -> Result<TableLockInfo, DriverError> {
+    let mut next = lock_table(table, lock, tp, info)?;
     next.state = TableLockState::PUBLIC;
     next.ts = ts;
     Ok(next)

@@ -2196,7 +2196,6 @@ mod schema_sync_tests {
         );
     }
 
-
     /// Go `detectAndUpdateJobVersionOnce` reads `semver.NewVersion` with
     /// the pre-release cleared.
     #[test]
@@ -2487,6 +2486,8 @@ where
                     | DdlStatement::CreateResourceGroup { .. }
                     | DdlStatement::AlterResourceGroup { .. }
                     | DdlStatement::DropResourceGroup { .. }
+                    | DdlStatement::LockTables { .. }
+                    | DdlStatement::UnlockTables { .. }
             )
             || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {

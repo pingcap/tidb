@@ -20108,6 +20108,150 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
     assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
 }
 
+/// LOCK TABLES, UNLOCK TABLES and ADMIN CLEANUP TABLE LOCK run as Go's
+/// persisted `ActionLockTable` / `ActionUnlockTable` jobs: the session's
+/// earlier locks are released one table per step, each new lock goes
+/// none -> pre-lock -> public (one more READ holder skips the pre-lock), an
+/// unlock that changes nothing still queues a job without a version, and an
+/// unlock job records no query (captured from Go on this branch).
+#[test]
+fn table_locks_run_as_persisted_jobs_like_go() {
+    let previous = tidb_config::config_tree::config::get_global_config();
+    tidb_config::config_tree::config::update_global(|config| config.enable_table_lock = true);
+    let (stack, _users) = cop_backed_stack();
+    let mut first = stack.factory.open_session(session_context(1950)).unwrap();
+    let mut second = stack.factory.open_session(session_context(1951)).unwrap();
+    rows(&mut first, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut first, "USE test");
+    rows(&mut second, "USE test");
+    rows(&mut first, "create table t1 (a int)");
+    rows(&mut first, "create table t2 (a int)");
+    let version = |session: &mut _| -> i64 {
+        displayed(rows(session, "admin show ddl"))[0][0]
+            .parse()
+            .unwrap()
+    };
+    // (job id, db|table|type|state|status, query) of the latest job.
+    let job = |session: &mut _| -> (String, String, String) {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        let query = displayed(rows(
+            session,
+            &format!("admin show ddl job queries {}", row[0]),
+        ))
+        .remove(0)
+        .remove(0);
+        (
+            row[0].clone(),
+            [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|"),
+            query,
+        )
+    };
+    let step = |session: &mut _, sql: &str| -> (i64, String, String, String) {
+        let before = version(session);
+        rows(session, sql);
+        let (id, kind, query) = job(session);
+        (version(session) - before, id, kind, query)
+    };
+    for (on_second, sql, delta, expected, query) in [
+        (
+            false,
+            "lock tables t1 write, t2 read",
+            4,
+            "test|t2|lock table|public|synced",
+            "lock tables t1 write, t2 read",
+        ),
+        // t1 and t2 are released first, then t1 is locked.
+        (
+            false,
+            "lock tables t1 read",
+            4,
+            "test|t1|lock table|public|synced",
+            "lock tables t1 read",
+        ),
+        // One more READ holder: no pre-lock.
+        (
+            true,
+            "lock tables t1 read",
+            1,
+            "test|t1|lock table|public|synced",
+            "lock tables t1 read",
+        ),
+        (
+            false,
+            "unlock tables",
+            1,
+            "test|t1|unlock table|none|synced",
+            "",
+        ),
+        (
+            true,
+            "unlock tables",
+            1,
+            "test|t1|unlock table|none|synced",
+            "",
+        ),
+        (
+            false,
+            "lock tables t1 write",
+            2,
+            "test|t1|lock table|public|synced",
+            "lock tables t1 write",
+        ),
+        (
+            true,
+            "admin cleanup table lock t1",
+            1,
+            "test|t1|unlock table|none|synced",
+            "",
+        ),
+        // The cleanup already released t1: the job changes nothing.
+        (
+            false,
+            "unlock tables",
+            0,
+            "test|t1|unlock table|none|synced",
+            "",
+        ),
+        (
+            false,
+            "lock tables t2 write local",
+            2,
+            "test|t2|lock table|public|synced",
+            "lock tables t2 write local",
+        ),
+        // t1 holds no lock; t2's goes.
+        (
+            true,
+            "admin cleanup table lock t1, t2",
+            1,
+            "test|t2|unlock table|none|synced",
+            "",
+        ),
+    ] {
+        let session = if on_second { &mut second } else { &mut first };
+        let (got_delta, _, kind, got_query) = step(session, sql);
+        assert_eq!(
+            (got_delta, kind.as_str(), got_query.as_str()),
+            (delta, expected, query),
+            "{sql}"
+        );
+    }
+    // The cleanup did not touch this session's own list: its UNLOCK still
+    // queues a job, and holding nothing, the next one queues none.
+    let (delta, last, kind, _) = step(&mut first, "unlock tables");
+    assert_eq!((delta, kind.as_str()), (0, "test|t2|unlock table|none|synced"));
+    let (delta, id, _, _) = step(&mut first, "unlock tables");
+    assert_eq!((delta, id), (0, last));
+    // Another session's WRITE lock refuses before any job.
+    step(&mut first, "lock tables t1 write");
+    let (_, last, _, _) = step(&mut second, "select 1");
+    let error = second.execute_write("lock tables t1 read").unwrap_err();
+    assert_eq!(error.code, 8020, "{}", error.message);
+    assert_eq!(job(&mut second).0, last);
+    rows(&mut first, "unlock tables");
+    tidb_config::config_tree::config::store_global_config((*previous).clone());
+}
+
 /// The TiFlash replica manager's status update runs as Go's persisted
 /// `ActionUpdateTiFlashReplicaStatus` job (`UpdateTableReplicaInfo` queues it
 /// and the owner applies it): the new status is published, and a status

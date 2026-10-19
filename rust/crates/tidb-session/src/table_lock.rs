@@ -51,7 +51,13 @@ fn lock_table(
     tp: TableLockType,
     info: &SessionInfo,
 ) -> Result<(), DriverError> {
-    let next = table_lock::lock_table(&go_to_lower(&table.name), table.lock(), tp, info, 0)?;
+    let next = table_lock::lock_table_in_one_step(
+        &go_to_lower(&table.name),
+        table.lock(),
+        tp,
+        info,
+        0,
+    )?;
     table.set_lock(Some(next));
     Ok(())
 }

@@ -1556,6 +1556,16 @@ pub fn submit_persisted_job_with_retry<
                     min_job_id,
                 )
             }
+            DdlStatement::LockTables { .. } | DdlStatement::UnlockTables { .. } => {
+                crate::cluster_ddl::table_lock::prepare_table_lock_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
             DdlStatement::ModifySchemaCharsetAndCollate { .. }
             | DdlStatement::ModifySchemaDefaultPlacement { .. } => {
                 crate::cluster_ddl::alter_schema::prepare_alter_schema_job_submission(

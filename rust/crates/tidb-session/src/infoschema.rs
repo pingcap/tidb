@@ -2021,10 +2021,11 @@ pub(crate) fn attributes_rows(
 pub(crate) fn ddl_jobs_rows(
     jobs: &[tidb_model::Job],
     visibility: &SchemaVisibility,
+    catalog: &tidb_executor::Catalog,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for job in jobs {
-        let job_rows = crate::ddl_jobs::ddl_job_rows(job, false);
+        let job_rows = crate::ddl_jobs::ddl_job_rows(job, false, catalog);
         let names = |cell: &Datum| match cell {
             Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).to_lowercase(),
             _ => String::new(),

@@ -761,11 +761,13 @@ impl crate::Session {
         // Go `ShowDDLJobsExec.Next`: every running job, then at most
         // `job_number` history jobs.
         let (running, history) = self.all_ddl_jobs()?;
-        let rows = running
-            .iter()
-            .chain(history.iter().take(job_number))
-            .flat_map(|job| crate::ddl_jobs::ddl_job_rows(job, true))
-            .collect::<Vec<_>>();
+        let rows = self.with_planning_catalog(|catalog| {
+            Ok(running
+                .iter()
+                .chain(history.iter().take(job_number))
+                .flat_map(|job| crate::ddl_jobs::ddl_job_rows(job, true, catalog))
+                .collect::<Vec<_>>())
+        })?;
         let varchar = || FieldType::new(FieldTypeCode::Varchar);
         let longlong = || FieldType::new(FieldTypeCode::LongLong);
         let output = StmtOutput::Rows {

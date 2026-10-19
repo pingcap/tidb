@@ -483,7 +483,7 @@ impl Session {
     /// transaction's working copy, else the shared catalog, with the session's
     /// local temporary tables overlaid (a temporary table shadows a base table
     /// of the same name for name resolution too).
-    fn with_planning_catalog<T>(
+    pub(crate) fn with_planning_catalog<T>(
         &self,
         plan: impl FnOnce(&tidb_executor::Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {

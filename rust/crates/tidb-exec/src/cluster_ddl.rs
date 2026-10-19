@@ -6236,6 +6236,7 @@ pub mod multi_schema;
 pub mod placement_policy;
 pub mod rename_table;
 pub mod resource_group;
+pub mod table_lock;
 pub mod truncate;
 
 /// Actions currently integrated into the persisted owner worker. Seed planners
@@ -6276,6 +6277,8 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_CREATE_RESOURCE_GROUP
             | ActionType::ACTION_ALTER_RESOURCE_GROUP
             | ActionType::ACTION_DROP_RESOURCE_GROUP
+            | ActionType::ACTION_LOCK_TABLE
+            | ActionType::ACTION_UNLOCK_TABLE
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
@@ -6365,6 +6368,12 @@ fn plan_persisted_action<S: MetaSnapshot>(
         }
         ActionType::ACTION_DROP_RESOURCE_GROUP => {
             resource_group::plan_persisted_drop_resource_group_job_step(catalog, active)
+        }
+        ActionType::ACTION_LOCK_TABLE => {
+            table_lock::plan_persisted_lock_tables_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_UNLOCK_TABLE => {
+            table_lock::plan_persisted_unlock_tables_job_step(catalog, active, start_ts)
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
             rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
@@ -8034,7 +8043,9 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_DROP_PLACEMENT_POLICY
         | ActionType::ACTION_CREATE_RESOURCE_GROUP
         | ActionType::ACTION_ALTER_RESOURCE_GROUP
-        | ActionType::ACTION_DROP_RESOURCE_GROUP => true,
+        | ActionType::ACTION_DROP_RESOURCE_GROUP
+        | ActionType::ACTION_LOCK_TABLE
+        | ActionType::ACTION_UNLOCK_TABLE => true,
         // `cancelOnlyNotHandledJob(job, model.StateNone)`.
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
         | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
@@ -13034,7 +13045,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 let info = lock_table_target(&catalog, &mut changed, lock)?;
                 let name = info.name.lowercase().to_owned();
                 let current = info.lock.as_ref().map(|lock| lock.read().clone());
-                let next = tidb_executor::ddl::table_lock::lock_table(
+                let next = tidb_executor::ddl::table_lock::lock_table_in_one_step(
                     &name,
                     current.as_ref(),
                     lock.tp,

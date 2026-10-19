@@ -443,7 +443,7 @@ impl ClusterDdl for MockDdl {
                             )
                             .map_err(map_error)?;
                         } else {
-                            let locked = tidb_executor::ddl::table_lock::lock_table(
+                            let locked = tidb_executor::ddl::table_lock::lock_table_in_one_step(
                                 &name,
                                 current.as_ref(),
                                 lock.tp,

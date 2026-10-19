@@ -1393,6 +1393,70 @@ pub fn get_update_tiflash_replica_status_args(
     get_or_decode_args(job)
 }
 
+/// Go `LockTablesArgs`, shared by LOCK TABLES, UNLOCK TABLES and ADMIN
+/// CLEANUP TABLE LOCK.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct LockTablesArgs {
+    /// The tables to lock, in statement order.
+    #[serde(rename = "lock_tables", default, skip_serializing_if = "Vec::is_empty")]
+    pub lock_tables: Vec<crate::table::TableLockTpInfo>,
+    /// How many of them the job has locked.
+    #[serde(
+        rename = "index_of_lock",
+        default,
+        skip_serializing_if = "is_zero_i64_value"
+    )]
+    pub index_of_lock: i64,
+    /// The tables to unlock first (the session's current locks).
+    #[serde(
+        rename = "unlock_tables",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub unlock_tables: Vec<crate::table::TableLockTpInfo>,
+    /// How many of them the job has unlocked.
+    #[serde(
+        rename = "index_of_unlock",
+        default,
+        skip_serializing_if = "is_zero_i64_value"
+    )]
+    pub index_of_unlock: i64,
+    /// The session the locks belong to. Go's struct value is never omitted.
+    #[serde(rename = "session_info", default)]
+    pub session_info: crate::table::SessionInfo,
+    /// ADMIN CLEANUP TABLE LOCK: every holder's lock goes. Go's tag is
+    /// `json:"is_cleanup:omitempty"`, so that string is the key and the
+    /// field is always written.
+    #[serde(rename = "is_cleanup:omitempty", default)]
+    pub is_cleanup: bool,
+}
+
+impl JobArgs for LockTablesArgs {
+    job_args_identity_methods!(LockTables);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("LockTablesArgs", GoTypeKind::Struct),
+            value.cloned(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&value, model_type("LockTablesArgs", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetLockTablesArgs`.
+pub fn get_lock_tables_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<LockTablesArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
 /// Go `AddForeignKeyArgs`.
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub struct AddForeignKeyArgs {

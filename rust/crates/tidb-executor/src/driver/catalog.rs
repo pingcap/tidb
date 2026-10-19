@@ -2129,10 +2129,25 @@ impl Catalog {
             .map(|schema| schema.id)
     }
 
+    /// The name of the database whose Go `DBInfo.ID` is `id`, as Go's
+    /// `is.SchemaByID` finds it.
+    #[must_use]
+    pub fn database_name_by_id(&self, id: i64) -> Option<String> {
+        self.databases
+            .values()
+            .find(|schema| schema.id == id)
+            .map(|schema| schema.name.clone())
+    }
+
     /// The `(schema, table)` names of the stored table whose Go
     /// `TableInfo.ID` is `table_id`, as Go's `is.TableByID` finds it.
     #[must_use]
     pub fn table_names_by_id(&self, table_id: i64) -> Option<(String, String)> {
+        // Memory tables are registered here under ID 0, which no Go table
+        // has.
+        if table_id == 0 {
+            return None;
+        }
         let key = self.table_id_names().get(&table_id)?;
         let schema = self.databases.get(&key.database)?;
         match schema.tables.get(&key.table)?.as_ref() {

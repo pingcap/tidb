@@ -242,7 +242,10 @@ pub(crate) fn tso_local_time(timestamp: u64) -> Time {
 /// change's rows are shifted by one there: the parent row carries the first
 /// sub-job's value and the last sub-job row the parent's. DDL_JOBS repeats
 /// the query in every row, where the shift cannot be seen.
-pub(crate) fn ddl_job_rows(job: &Job, in_show_stmt: bool) -> Vec<Vec<Datum>> {
+///
+/// A job that records neither name gets them from `catalog`, the session's
+/// info schema, by its schema and table IDs.
+pub(crate) fn ddl_job_rows(job: &Job, in_show_stmt: bool, catalog: &Catalog) -> Vec<Vec<Datum>> {
     let history = job.binlog_info.as_ref().map(|info| info.read().clone());
     let mut schema_name = job.schema_name.to_utf8_lossy_go();
     let mut table_name = String::new();
@@ -251,6 +254,15 @@ pub(crate) fn ddl_job_rows(job: &Job, in_show_stmt: bool) -> Vec<Vec<Datum>> {
         finish_ts = history.finished_ts;
         if let Some(info) = &history.table_info {
             table_name = info.read().name.lowercase().to_owned();
+        } else if job.type_ == ActionType::ACTION_RENAME_TABLE {
+            // A running rename has no table info yet: its new name, from the
+            // arguments, keeps the output consistent.
+            if let Ok(Some(args)) = tidb_model::get_rename_table_args(&mut job.clone()) {
+                let new_name = args.read().new_table_name.lowercase().to_owned();
+                if !new_name.is_empty() {
+                    table_name = new_name;
+                }
+            }
         }
         let multiple = history
             .multiple_table_infos
@@ -268,6 +280,18 @@ pub(crate) fn ddl_job_rows(job: &Job, in_show_stmt: bool) -> Vec<Vec<Datum>> {
     }
     if table_name.is_empty() {
         table_name = job.table_name.to_utf8_lossy_go();
+    }
+    // Go: an older job stored neither name.
+    if schema_name.is_empty() {
+        schema_name = catalog
+            .database_name_by_id(job.schema_id)
+            .unwrap_or_default();
+    }
+    if table_name.is_empty() {
+        table_name = catalog
+            .table_names_by_id(job.table_id)
+            .map(|(_, table)| table)
+            .unwrap_or_default();
     }
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     let time_or_null = |ts: u64| {
