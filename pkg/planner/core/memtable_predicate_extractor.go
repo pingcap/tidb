@@ -489,8 +489,8 @@ func (helper extractHelper) extractLikePattern(
 		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
 		// Unicode lowercasing can move a literal outside its regexp case-fold
 		// class (for example, İ becomes i). Such a prefilter can lose valid
-		// ILIKE matches before the scalar recheck, so skip extraction.
-		if fn.FuncName.L == ast.Ilike && toLower && !strings.EqualFold(pattern, strings.ToLower(pattern)) {
+		// LIKE/ILIKE matches before the scalar recheck, so skip extraction.
+		if toLower && !strings.EqualFold(pattern, strings.ToLower(pattern)) {
 			return false, "", false
 		}
 		// The cluster log path sends the pattern verbatim in SearchLogRequest.Patterns.

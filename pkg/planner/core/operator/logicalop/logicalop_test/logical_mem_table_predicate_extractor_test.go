@@ -1802,6 +1802,10 @@ func TestColumns(t *testing.T) {
 			sql:      `select * from information_schema.COLUMNS where column_name ilike 'İ[%';`,
 			remained: "[ilike(Column#4, İ[%, 92)]",
 		},
+		{
+			sql:      `select * from information_schema.COLUMNS where column_name like 'İ[%';`,
+			remained: "[like(Column#4, İ[%, 92)]",
+		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
@@ -2040,6 +2044,21 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+	t.Run("like_unicode_case_folding", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database like_unicode_repro")
+		defer tk.MustExec("drop database like_unicode_repro")
+		tk.MustExec("create table like_unicode_repro.`İ[foo]` (id int)")
+
+		tk.MustQuery("select table_name, table_name like 'İ[%' from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro'").Check(testkit.Rows("İ[foo] 1"))
+		tk.MustQuery("select table_name from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro' and table_name like 'İ[%'").Check(testkit.Rows("İ[foo]"))
+		// Selecting engine bypasses the name-only fast path. The general scan
+		// matches original names, so lowercasing İ to i would discard this table.
+		tk.MustQuery("select table_name, engine from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro' and table_name like 'İ[%'").Check(testkit.Rows("İ[foo] InnoDB"))
+	})
 	t.Run("ilike_unicode_case_folding", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("create database ilike_unicode_repro")
