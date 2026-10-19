@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -44,6 +45,80 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	"golang.org/x/sync/singleflight"
 )
+
+func TestResetExecutionCachesDoesNotOverwriteActiveDistSQLCache(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan *distsqlctx.DistSQLContext, 1)
+
+	go func() {
+		done <- sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+			close(entered)
+			<-release
+			return &distsqlctx.DistSQLContext{}
+		})
+	}()
+
+	<-entered
+	restore := sc.ResetExecutionCaches()
+	close(release)
+
+	select {
+	case dctx := <-done:
+		require.NotNil(t, dctx)
+	case <-time.After(time.Second):
+		t.Fatal("DistSQL cache initialization did not finish")
+	}
+
+	restore()
+}
+
+func TestResetExecutionCachesRestoresOuterCaches(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	outerDistSQLCtx := &distsqlctx.DistSQLContext{}
+	outerRangerCtx := &struct{ name string }{name: "outer ranger"}
+	outerBuildPBCtx := &struct{ name string }{name: "outer buildpb"}
+
+	require.Same(t, outerDistSQLCtx, sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+		return outerDistSQLCtx
+	}))
+	require.Same(t, outerRangerCtx, sc.GetOrInitRangerCtxFromCache(func() any {
+		return outerRangerCtx
+	}))
+	require.Same(t, outerBuildPBCtx, sc.GetOrInitBuildPBCtxFromCache(func() any {
+		return outerBuildPBCtx
+	}))
+
+	restore := sc.ResetExecutionCaches()
+	innerDistSQLCtx := &distsqlctx.DistSQLContext{}
+	innerRangerCtx := &struct{ name string }{name: "inner ranger"}
+	innerBuildPBCtx := &struct{ name string }{name: "inner buildpb"}
+
+	require.Same(t, innerDistSQLCtx, sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+		return innerDistSQLCtx
+	}))
+	require.Same(t, innerRangerCtx, sc.GetOrInitRangerCtxFromCache(func() any {
+		return innerRangerCtx
+	}))
+	require.Same(t, innerBuildPBCtx, sc.GetOrInitBuildPBCtxFromCache(func() any {
+		return innerBuildPBCtx
+	}))
+
+	restore()
+	require.Same(t, outerDistSQLCtx, sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+		t.Fatal("restored DistSQL cache should already be initialized")
+		return nil
+	}))
+	require.Same(t, outerRangerCtx, sc.GetOrInitRangerCtxFromCache(func() any {
+		t.Fatal("restored ranger cache should already be initialized")
+		return nil
+	}))
+	require.Same(t, outerBuildPBCtx, sc.GetOrInitBuildPBCtxFromCache(func() any {
+		t.Fatal("restored buildPB cache should already be initialized")
+		return nil
+	}))
+}
 
 func TestCopTasksDetails(t *testing.T) {
 	ctx := stmtctx.NewStmtCtx()

@@ -253,6 +253,21 @@ func (s *stmtCache) reset() *stmtCache {
 	return s
 }
 
+type distSQLCtxCache struct {
+	init sync.Once
+	dctx *distsqlctx.DistSQLContext
+}
+
+type rangerCtxCache struct {
+	init sync.Once
+	rctx any
+}
+
+type buildPBCtxCache struct {
+	init sync.Once
+	bctx any
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -272,25 +287,17 @@ type StatementContext struct {
 
 	// distSQLCtxCache is used to persist all variables and tools needed by the `distsql`
 	// this cache is set on `StatementContext` because it has to be updated after each statement.
-	distSQLCtxCache struct {
-		init sync.Once
-		dctx *distsqlctx.DistSQLContext
-	}
+	distSQLCtxCache *distSQLCtxCache
 
 	// rangerCtxCache is used to persist all variables and tools needed by the `ranger`
 	// this cache is set on `StatementContext` because it has to be updated after each statement.
 	// `rctx` uses `any` type to avoid cyclic dependency
-	rangerCtxCache struct {
-		init sync.Once
-		rctx any
-	}
+	rangerCtxCache *rangerCtxCache
 
 	// buildPBCtxCache is used to persist all variables and tools needed by the `ToPB`
 	// this cache is set on `StatementContext` because it has to be updated after each statement.
-	buildPBCtxCache struct {
-		init sync.Once
-		bctx any
-	}
+	buildPBCtxCache   *buildPBCtxCache
+	executionCachesMu sync.Mutex
 
 	// Set the following variables before execution
 	hint.StmtHints
@@ -1367,7 +1374,9 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.ExtraWarnHandler.TruncateWarnings(0)
 
 	// `TaskID` is reset, we'll need to reset distSQLCtx
-	sc.distSQLCtxCache.init = sync.Once{}
+	sc.executionCachesMu.Lock()
+	sc.distSQLCtxCache = nil
+	sc.executionCachesMu.Unlock()
 }
 
 // GetExecDetails gets the execution details for the statement.
@@ -1553,31 +1562,61 @@ func (sc *StatementContext) TypeCtxOrDefault() types.Context {
 // GetOrInitDistSQLFromCache returns the `DistSQLContext` inside cache. If it didn't exist, return a new one created by
 // the `create` function.
 func (sc *StatementContext) GetOrInitDistSQLFromCache(create func() *distsqlctx.DistSQLContext) *distsqlctx.DistSQLContext {
-	sc.distSQLCtxCache.init.Do(func() {
-		sc.distSQLCtxCache.dctx = create()
+	cache := sc.getDistSQLCtxCache()
+	cache.init.Do(func() {
+		cache.dctx = create()
 	})
 
-	return sc.distSQLCtxCache.dctx
+	return cache.dctx
 }
 
 // GetOrInitRangerCtxFromCache returns the `RangerContext` inside cache. If it didn't exist, return a new one created by
 // the `create` function.
 func (sc *StatementContext) GetOrInitRangerCtxFromCache(create func() any) any {
-	sc.rangerCtxCache.init.Do(func() {
-		sc.rangerCtxCache.rctx = create()
+	cache := sc.getRangerCtxCache()
+	cache.init.Do(func() {
+		cache.rctx = create()
 	})
 
-	return sc.rangerCtxCache.rctx
+	return cache.rctx
 }
 
 // GetOrInitBuildPBCtxFromCache returns the `BuildPBContext` inside cache. If it didn't exist, return a new one created by
 // the `create` function. It uses the `any` to avoid cycle dependency.
 func (sc *StatementContext) GetOrInitBuildPBCtxFromCache(create func() any) any {
-	sc.buildPBCtxCache.init.Do(func() {
-		sc.buildPBCtxCache.bctx = create()
+	cache := sc.getBuildPBCtxCache()
+	cache.init.Do(func() {
+		cache.bctx = create()
 	})
 
-	return sc.buildPBCtxCache.bctx
+	return cache.bctx
+}
+
+func (sc *StatementContext) getDistSQLCtxCache() *distSQLCtxCache {
+	sc.executionCachesMu.Lock()
+	defer sc.executionCachesMu.Unlock()
+	if sc.distSQLCtxCache == nil {
+		sc.distSQLCtxCache = &distSQLCtxCache{}
+	}
+	return sc.distSQLCtxCache
+}
+
+func (sc *StatementContext) getRangerCtxCache() *rangerCtxCache {
+	sc.executionCachesMu.Lock()
+	defer sc.executionCachesMu.Unlock()
+	if sc.rangerCtxCache == nil {
+		sc.rangerCtxCache = &rangerCtxCache{}
+	}
+	return sc.rangerCtxCache
+}
+
+func (sc *StatementContext) getBuildPBCtxCache() *buildPBCtxCache {
+	sc.executionCachesMu.Lock()
+	defer sc.executionCachesMu.Unlock()
+	if sc.buildPBCtxCache == nil {
+		sc.buildPBCtxCache = &buildPBCtxCache{}
+	}
+	return sc.buildPBCtxCache
 }
 
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {
@@ -1837,22 +1876,17 @@ func (sc *StatementContext) BackupForHandler() (b *BackupStmtCtx) {
 // ResetExecutionCaches clears statement-derived execution caches and returns
 // a restore closure so nested same-context execution can put them back.
 func (sc *StatementContext) ResetExecutionCaches() func() {
+	sc.executionCachesMu.Lock()
 	distSQLCtxCache := sc.distSQLCtxCache
 	rangerCtxCache := sc.rangerCtxCache
 	buildPBCtxCache := sc.buildPBCtxCache
-	sc.distSQLCtxCache = struct {
-		init sync.Once
-		dctx *distsqlctx.DistSQLContext
-	}{}
-	sc.rangerCtxCache = struct {
-		init sync.Once
-		rctx any
-	}{}
-	sc.buildPBCtxCache = struct {
-		init sync.Once
-		bctx any
-	}{}
+	sc.distSQLCtxCache = nil
+	sc.rangerCtxCache = nil
+	sc.buildPBCtxCache = nil
+	sc.executionCachesMu.Unlock()
 	return func() {
+		sc.executionCachesMu.Lock()
+		defer sc.executionCachesMu.Unlock()
 		sc.distSQLCtxCache = distSQLCtxCache
 		sc.rangerCtxCache = rangerCtxCache
 		sc.buildPBCtxCache = buildPBCtxCache
