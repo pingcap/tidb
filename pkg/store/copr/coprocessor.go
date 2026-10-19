@@ -1052,6 +1052,15 @@ type copResponse struct {
 	respTime time.Duration
 }
 
+// requestLockHints keeps the lock hints carried by the RPC that produced a response.
+// The main response and its batched children share the ignored-hint backoff state.
+// Keep them as slices and build lookup maps only when the response contains a lock error.
+type requestLockHints struct {
+	resolved                    []uint64
+	committed                   []uint64
+	backedOffForIgnoredLockHint bool
+}
+
 type copTaskResult struct {
 	resp          *copResponse
 	batchRespList []*copResponse
@@ -1777,6 +1786,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	costTime := time.Since(startTime)
 	copResp := resp.Resp.(*coprocessor.Response)
+	lockHints := &requestLockHints{
+		resolved:  req.ResolvedLocks,
+		committed: req.CommittedLocks,
+	}
 
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
@@ -1789,10 +1802,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	var result *copTaskResult
 	if worker.req.Paging.Enable ||
 		copResp.GetRange() != nil { // For next-gen, the storage may return paging range even if paging is not enabled.
-		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopPagingResult(bo, lockHints, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
-		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopResponse(bo, lockHints, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	}
 	if req.ReadType != "" && result != nil {
 		for _, remain := range result.remains {
@@ -1861,8 +1874,8 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
-	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
+func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, lockHints *requestLockHints, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
+	result, err := worker.handleCopResponse(bo, lockHints, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2024,7 +2037,7 @@ func buildExceedsBoundDiagFields(
 // returns more tasks when that happens, or handles the response if no error.
 // if we're handling coprocessor paging response, lastRange is the range of last
 // successful response, otherwise it's nil.
-func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
+func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, lockHints *requestLockHints, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
 		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
 	}
@@ -2050,14 +2063,14 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return nil, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
+		return worker.handleBatchRemainsOnErr(bo, lockHints, rpcCtx, remains, resp.pbResp, task)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
+		if err := worker.handleLockErr(bo, lockHints, lockErr, task); err != nil {
 			return nil, err
 		}
 		task.meetLockFallback = true
-		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp, task)
+		return worker.handleBatchRemainsOnErr(bo, lockHints, rpcCtx, []*copTask{task}, resp.pbResp, task)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -2110,7 +2123,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				if err != nil {
 					return nil, err
 				}
-				return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
+				return worker.handleBatchRemainsOnErr(bo, lockHints, rpcCtx, remains, resp.pbResp, task)
 			}
 
 			// Important: log enough context here even if the retry succeeds, so we can
@@ -2143,7 +2156,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			if err != nil {
 				return nil, err
 			}
-			return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
+			return worker.handleBatchRemainsOnErr(bo, lockHints, rpcCtx, remains, resp.pbResp, task)
 		}
 
 		otherErrFields := []zap.Field{
@@ -2189,7 +2202,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 
 	worker.checkRespOOM(resp)
 	result := &copTaskResult{resp: resp}
-	batchRespList, batchRemainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp.pbResp, task.batchTaskList)
+	batchRespList, batchRemainTasks, err := worker.handleBatchCopResponse(bo, lockHints, rpcCtx, resp.pbResp, task.batchTaskList)
 	if err != nil {
 		return result, err
 	}
@@ -2198,13 +2211,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	return result, nil
 }
 
-func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, remains []*copTask, resp *coprocessor.Response, task *copTask) (*copTaskResult, error) {
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, lockHints *requestLockHints, rpcCtx *tikv.RPCContext, remains []*copTask, resp *coprocessor.Response, task *copTask) (*copTaskResult, error) {
 	if len(task.batchTaskList) == 0 {
 		return &copTaskResult{remains: remains}, nil
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
-	batchRespList, remainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp, batchedTasks)
+	batchRespList, remainTasks, err := worker.handleBatchCopResponse(bo, lockHints, rpcCtx, resp, batchedTasks)
 	if err != nil {
 		return nil, err
 	}
@@ -2229,7 +2242,7 @@ func getRegionError(ctx context.Context, resp interface{ GetRegionError() *error
 
 // handle the batched cop response.
 // tasks will be changed, so the input tasks should not be used after calling this function.
-func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response,
+func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints *requestLockHints, rpcCtx *tikv.RPCContext, resp *coprocessor.Response,
 	tasks map[uint64]*batchedCopTask) (batchRespList []*copResponse, remainTasks []*copTask, err error) {
 	if len(tasks) == 0 {
 		return nil, nil, nil
@@ -2302,7 +2315,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		}
 		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
-			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
+			if err := worker.handleLockErr(bo, lockHints, lockErr, task); err != nil {
 				return batchRespList, nil, err
 			}
 			task.meetLockFallback = true
@@ -2392,7 +2405,7 @@ func (worker *copIteratorWorker) handleBatchBucketVersionNotMatch(bo *Backoffer,
 	worker.store.GetRegionCache().OnBucketVersionNotMatch(childRPCCtx, bucketVersionNotMatch.GetVersion(), bucketVersionNotMatch.GetKeys())
 }
 
-func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {
+func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockHints *requestLockHints, lockErr *kvrpcpb.LockInfo, task *copTask) error {
 	if lockErr == nil {
 		return nil
 	}
@@ -2411,10 +2424,26 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 		Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
 		Detail:        resolveLockDetail,
 	}
+	if !lockHints.backedOffForIgnoredLockHint {
+		// Cop workers share lock sets that may have changed after this RPC was sent.
+		// Pass this request's hints only until the first ignored-hint backoff, so
+		// children from one response cannot exhaust the budget before a retry.
+		resolveLocksOpts.LockHintsInRequest = txnlock.NewLockHintsInRequest(lockHints.resolved, lockHints.committed)
+	}
 	resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
 	err1 = derr.ToTiDBErr(err1)
 	if err1 != nil {
 		return errors.Trace(err1)
+	}
+	// A successful resolver call has backed off if any lock matched its hints.
+	// Unhinted locks must leave that backoff available for later children.
+	for _, lock := range resolveLocksOpts.Locks {
+		_, resolved := resolveLocksOpts.LockHintsInRequest.Resolved[lock.TxnID]
+		_, committed := resolveLocksOpts.LockHintsInRequest.Committed[lock.TxnID]
+		if resolved || committed {
+			lockHints.backedOffForIgnoredLockHint = true
+			break
+		}
 	}
 	msBeforeExpired := resolveLocksRes.TTL
 	if msBeforeExpired > 0 {
