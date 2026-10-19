@@ -43,10 +43,11 @@ import (
 type AnalyzeIndexExec struct {
 	baseAnalyzeExec
 
-	idxInfo        *model.IndexInfo
-	isCommonHandle bool
-	result         distsql.SelectResult
-	countNullRes   distsql.SelectResult
+	idxInfo           *model.IndexInfo
+	isCommonHandle    bool
+	dependsOnGeometry bool
+	result            distsql.SelectResult
+	countNullRes      distsql.SelectResult
 }
 
 // ctx should come from AnalyzeExec.buildAnalyzeKillCtx so all index analyze
@@ -94,7 +95,7 @@ func analyzeIndexPushdown(ctx context.Context, idxExec *AnalyzeIndexExec) *stati
 		Count:    cnt,
 		Snapshot: idxExec.snapshot,
 	}
-	if idxExec.idxInfo.MVIndex || (idxExec.idxInfo.Global && statsVer == statistics.Version2) {
+	if idxExec.idxInfo.MVIndex || (statsVer == statistics.Version2 && (idxExec.idxInfo.Global || idxExec.dependsOnGeometry)) {
 		result.ForMVIndexOrGlobalIndex = true
 	}
 	return result

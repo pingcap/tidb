@@ -17,6 +17,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
         "//pkg/session/syssession",

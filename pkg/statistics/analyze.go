@@ -117,6 +117,9 @@ type AnalyzeResults struct {
 	//
 	// The global index has only one key range, so an independent task is used to process it.
 	// Global index needs to update only the version at the table-level fields, just like mv index.
+	//
+	// An index that depends on a geometry column is analyzed by an independent task too, since the samples
+	// have no geometry values, and is saved like a global index.
 	ForMVIndexOrGlobalIndex bool
 }
 

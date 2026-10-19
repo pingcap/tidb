@@ -2304,8 +2304,8 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
-				// for mv index and ci index fail it first, then analyze those analyzable indexes.
-				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
+				// for mv index, ci index and indexes depending on geometry columns fail it first, then analyze those analyzable indexes.
+				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable || handleutil.IndexDependsOnGeometry(idx, tblInfo) {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2581,7 +2581,9 @@ func getModifiedIndexesInfoForAnalyze(
 			specialGlobalIdxsInfo = append(specialGlobalIdxsInfo, originIdx)
 			continue
 		}
-		if originIdx.MVIndex {
+		// The samples have no geometry values, so an index that depends on a geometry column
+		// is analyzed from its own entries, as a multi-valued index is.
+		if originIdx.MVIndex || handleutil.IndexDependsOnGeometry(originIdx, tblInfo) {
 			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
@@ -2603,6 +2605,21 @@ func getModifiedIndexesInfoForAnalyze(
 		idxsInfo = append(idxsInfo, idx)
 	}
 	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
+}
+
+// filterGeometryColumns filters out geometry columns and the virtual generated columns
+// computed from them, see handleutil.ColumnDependsOnGeometry. They are always skipped,
+// whatever tidb_analyze_skip_column_types holds, as vector columns are: histograms and TopN
+// over the bytes of geometry values are not useful for estimation. A stored generated column
+// computed from a geometry column is read from storage, so it is analyzed as any column is,
+// and so are the columns computed from it.
+func filterGeometryColumns(origin []*model.ColumnInfo, tblInfo *model.TableInfo) (result []*model.ColumnInfo) {
+	for _, colInfo := range origin {
+		if !handleutil.ColumnDependsOnGeometry(colInfo, tblInfo) {
+			result = append(result, colInfo)
+		}
+	}
+	return result
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
@@ -2799,6 +2816,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			if colsInfo, ok := colsInfoMap[physicalID]; ok {
 				execColsInfo = colsInfo
 			}
+			// Geometry columns are filtered out before the skip types, so that
+			// filterSkipColumnTypes, which skips a generated column with its skipped
+			// dependencies, keeps a stored generated column computed from a geometry column.
+			// They are not passed on as skipped columns: the executor builds the expression of
+			// every skipped virtual generated column, which fails when a column it is computed
+			// from is not read, and no analyzed virtual generated column is computed from them.
+			execColsInfo = filterGeometryColumns(execColsInfo, tbl.TableInfo)
 			var skipColsInfo []*model.ColumnInfo
 			execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
