@@ -20108,6 +20108,172 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
     assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
 }
 
+/// A multi-schema ALTER runs as Go's persisted `ActionMultiSchemaChange`
+/// job: ADMIN SHOW DDL JOBS lists every sub-job under it (with the comments
+/// column one row down, as Go writes it), a sub-job that fails rolls every
+/// sub-job back, an ADD FOREIGN KEY with no index for its columns is a
+/// multi-schema change of its own (the index first), a key the rows break
+/// rolls back, and AUTO_INCREMENT is rebased by its own job. Captured from
+/// the Go oracle.
+#[test]
+fn multi_schema_alter_runs_as_a_persisted_job_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1945)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let jobs = |session: &mut _| -> Vec<String> {
+        displayed(rows(session, "admin show ddl jobs 1"))
+            .into_iter()
+            .map(|row| {
+                assert_ne!(row[9], "NULL", "every sub-job ran: {row:?}");
+                [3, 4, 7, 11, 12]
+                    .map(|column| row[column].clone())
+                    .join("|")
+            })
+            .collect()
+    };
+    rows(
+        &mut session,
+        "create table t (a int, b int, c int, key kc(c))",
+    );
+    rows(&mut session, "insert into t values (1,1,1),(2,2,2)");
+    rows(
+        &mut session,
+        "alter table t add column d int, add index kb(b), modify column a bigint, drop index kc",
+    );
+    assert_eq!(
+        jobs(&mut session),
+        [
+            "alter table multi-schema change|none|0|synced|",
+            "add column /* subjob */|public|0|done|txn-merge, DXF",
+            "add index /* subjob */|public|2|done|",
+            "modify column /* subjob */|public|0|done|",
+            "drop index /* subjob */|none|0|done|max_node_count=3",
+        ]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from t")),
+        [["1", "1", "1", "NULL"], ["2", "2", "2", "NULL"]]
+    );
+    rows(&mut session, "update t set c=1");
+    let error = session
+        .execute_write("alter table t add column f int, add unique index uc(c)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1062, "Duplicate entry '1' for key 't.uc'")
+    );
+    assert_eq!(
+        jobs(&mut session),
+        [
+            "alter table multi-schema change|none|0|rollback done|",
+            "add column /* subjob */|none|0|rollback done|txn-merge, DXF",
+            "add index /* subjob */|none|0|rollback done|max_node_count=3",
+        ]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from t")),
+        [["1", "1", "1", "NULL"], ["2", "2", "1", "NULL"]]
+    );
+    // Go `fillMultiSchemaInfo` has no CHECK sub-job.
+    rows(&mut session, "set global tidb_enable_check_constraint = 1");
+    let error = session
+        .execute_write("alter table t add column j int, add constraint chk check (a > 0)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            8200,
+            "Unsupported multi schema change for add check constraint"
+        )
+    );
+    rows(&mut session, "set global tidb_enable_check_constraint = 0");
+    rows(&mut session, "alter table t add column (h int, i int)");
+    assert_eq!(
+        jobs(&mut session),
+        [
+            "alter table multi-schema change|none|0|synced|",
+            "add column /* subjob */|public|0|done|",
+            "add column /* subjob */|public|0|done|",
+        ]
+    );
+
+    rows(&mut session, "create table p (id int primary key)");
+    rows(&mut session, "create table ch (id int, pid int)");
+    rows(
+        &mut session,
+        "alter table ch add foreign key (pid) references p(id)",
+    );
+    assert_eq!(
+        jobs(&mut session),
+        [
+            "alter table multi-schema change|none|0|synced|txn-merge, DXF",
+            "add index /* subjob */|public|0|done|",
+            "add foreign key /* subjob */|public|0|done|max_node_count=3",
+        ]
+    );
+    rows(
+        &mut session,
+        "create table ch2 (id int, pid int, key k(pid))",
+    );
+    rows(&mut session, "insert into ch2 values (1, 5)");
+    let error = session
+        .execute_write("alter table ch2 add constraint fk2 foreign key (pid) references p(id)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            1452,
+            "Cannot add or update a child row: a foreign key constraint fails (`test`.`ch2`, \
+             CONSTRAINT `fk2` FOREIGN KEY (`pid`) REFERENCES `p` (`id`))"
+        )
+    );
+    assert_eq!(
+        jobs(&mut session),
+        ["add foreign key|none|0|rollback done|"]
+    );
+    rows(&mut session, "insert into p values (5)");
+    rows(
+        &mut session,
+        "alter table ch2 add constraint fk2 foreign key (pid) references p(id)",
+    );
+    assert_eq!(jobs(&mut session), ["add foreign key|public|0|synced|"]);
+
+    rows(
+        &mut session,
+        "create table ai (id int primary key auto_increment)",
+    );
+    rows(&mut session, "insert into ai values (10)");
+    rows(&mut session, "alter table ai auto_increment = 100");
+    assert_eq!(
+        jobs(&mut session),
+        ["rebase auto_increment ID|public|0|synced|"]
+    );
+    rows(
+        &mut session,
+        "alter table ai auto_increment = 5000000, comment 'x'",
+    );
+    assert_eq!(
+        jobs(&mut session),
+        [
+            "alter table multi-schema change|none|0|synced|",
+            "rebase auto_increment ID /* subjob */|public|0|done|",
+            "modify table comment /* subjob */|public|0|done|",
+        ]
+    );
+    rows(&mut session, "insert into ai values ()");
+    assert_eq!(
+        displayed(rows(&mut session, "select max(id) from ai")),
+        [["5000000"]]
+    );
+    rows(&mut session, "alter table ai force auto_increment = 3");
+    rows(&mut session, "insert into ai values ()");
+    assert_eq!(
+        displayed(rows(&mut session, "select id from ai order by id")),
+        [["3"], ["10"], ["5000000"]]
+    );
+}
+
 /// MODIFY / CHANGE / RENAME COLUMN run as Go's persisted `ActionModifyColumn`
 /// job through each of `onModifyColumn`'s courses: metadata only, a checked
 /// narrowing (rolled back on a row that does not fit), a VARCHAR -> CHAR

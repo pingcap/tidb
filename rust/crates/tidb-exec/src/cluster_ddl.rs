@@ -1966,6 +1966,18 @@ fn lower_alter_table_catalog(
                         name: name.clone(),
                     });
                 }
+                // Go `AlterTable`'s `ConstraintCheck`: a warning while CHECK is
+                // off, else `CreateCheckConstraint`'s job.
+                tidb_ast::AlterTableAction::AddCheck(definition) => {
+                    if context.enable_check_constraint() {
+                        actions.push(AlterColumnAction::AddCheck {
+                            definition: Box::new(definition.clone()),
+                            context: DdlStatementContext(context.clone()),
+                        });
+                    } else {
+                        context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                    }
+                }
                 tidb_ast::AlterTableAction::AddForeignKey(definition) => {
                     actions.push(AlterColumnAction::AddForeignKey {
                         definition: Box::new(definition.clone()),
@@ -6167,9 +6179,11 @@ pub struct DdlJobSchemaState {
     pub synced_version: Option<i64>,
     /// Version committed by this run that still needs acknowledgement.
     pub pending_version: Option<i64>,
-    /// The reorganization this owner run finished since the job's last step
-    /// (Go `reorgCtx.doneCh`); a new owner reruns it from the handle.
-    pub reorg: Option<add_index::ReorgOutcome>,
+    /// The reorganizations and checks this owner run finished since the
+    /// job's last committed step, oldest first (Go `reorgCtx.doneCh`, and the
+    /// checks Go runs inside the step: a multi-schema step that publishes
+    /// every sub-job needs each one's); a new owner reruns them.
+    pub reorg: Vec<add_index::ReorgOutcome>,
 }
 
 impl DdlJobSchemaState {
@@ -6179,7 +6193,7 @@ impl DdlJobSchemaState {
             mdl_enabled,
             synced_version: None,
             pending_version: None,
-            reorg: None,
+            reorg: Vec::new(),
         }
     }
 }
@@ -6214,7 +6228,9 @@ pub mod create_table;
 pub mod drop_column;
 pub mod drop_index;
 pub mod drop_object;
+pub mod foreign_key;
 pub mod modify_column;
+pub mod multi_schema;
 pub mod rename_table;
 pub mod truncate;
 
@@ -6243,6 +6259,8 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_ADD_COLUMN
             | ActionType::ACTION_DROP_COLUMN
             | ActionType::ACTION_MODIFY_COLUMN
+            | ActionType::ACTION_MULTI_SCHEMA_CHANGE
+            | ActionType::ACTION_ADD_FOREIGN_KEY
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
@@ -6256,7 +6274,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     schema_state: DdlJobSchemaState,
     load_error_count_limit: &dyn Fn() -> i64,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
-    let reorg_outcome = schema_state.reorg.clone();
+    let reorg_outcomes = schema_state.reorg.clone();
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
@@ -6265,76 +6283,96 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
         load_error_count_limit,
         supports_persisted_ddl_job,
         |snapshot, catalog, active| {
-            let action = active.job.type_;
-            match action {
-                ActionType::ACTION_ADD_CHECK_CONSTRAINT
-                | ActionType::ACTION_DROP_CHECK_CONSTRAINT
-                | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
-                    plan_persisted_check_constraint_job_step(catalog, active, start_ts)
-                }
-                ActionType::ACTION_CREATE_SCHEMA => {
-                    plan_persisted_create_schema_job_step(catalog, active)
-                }
-                ActionType::ACTION_CREATE_TABLE => {
-                    create_table::plan_persisted_create_table_job_step(
-                        snapshot, catalog, active, start_ts,
-                    )
-                }
-                ActionType::ACTION_CREATE_TABLES => {
-                    plan_persisted_create_tables_job_step(catalog, active, start_ts)
-                }
-                ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
-                    rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
-                }
-                ActionType::ACTION_DROP_SCHEMA => {
-                    plan_persisted_drop_schema_job_step(snapshot, catalog, active)
-                }
-                ActionType::ACTION_DROP_TABLE
-                | ActionType::ACTION_DROP_VIEW
-                | ActionType::ACTION_DROP_SEQUENCE => {
-                    plan_persisted_drop_table_job_step(snapshot, catalog, active)
-                }
-                ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
-                    add_index::plan_persisted_add_index_job_step(
-                        snapshot,
-                        catalog,
-                        active,
-                        start_ts,
-                        reorg_outcome.as_ref(),
-                    )
-                }
-                ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
-                    drop_index::plan_persisted_drop_index_job_step(catalog, active, start_ts)
-                }
-                ActionType::ACTION_TRUNCATE_TABLE => {
-                    truncate::plan_persisted_truncate_table_job_step(
-                        snapshot, catalog, active, start_ts,
-                    )
-                }
-                ActionType::ACTION_ADD_COLUMN => add_column::plan_persisted_add_column_job_step(
-                    snapshot, catalog, active, start_ts,
-                ),
-                ActionType::ACTION_DROP_COLUMN => {
-                    drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts)
-                }
-                ActionType::ACTION_MODIFY_COLUMN => {
-                    modify_column::plan_persisted_modify_column_job_step(
-                        snapshot,
-                        catalog,
-                        active,
-                        start_ts,
-                        reorg_outcome.as_ref(),
-                    )
-                }
-                action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
-                    alter_table::plan_persisted_alter_table_job_step(
-                        snapshot, catalog, active, start_ts,
-                    )
-                }
-                _ => unreachable!("supported action checked above"),
-            }
+            plan_persisted_action(snapshot, catalog, active, start_ts, &reorg_outcomes)
         },
     )
+}
+
+/// Go `runOneJobStep`'s dispatch to the action handler, shared by a job and
+/// by a multi-schema change's sub-jobs (run as proxy jobs).
+fn plan_persisted_action<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    reorg_outcomes: &[add_index::ReorgOutcome],
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    // A job of its own reads the latest outcome; a multi-schema change hands
+    // each sub-job its own.
+    let reorg_outcome = reorg_outcomes.last();
+    let action = active.job.type_;
+    match action {
+        ActionType::ACTION_ADD_CHECK_CONSTRAINT
+        | ActionType::ACTION_DROP_CHECK_CONSTRAINT
+        | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
+            plan_persisted_check_constraint_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_CREATE_SCHEMA => plan_persisted_create_schema_job_step(catalog, active),
+        ActionType::ACTION_CREATE_TABLE => {
+            create_table::plan_persisted_create_table_job_step(snapshot, catalog, active, start_ts)
+        }
+        ActionType::ACTION_CREATE_TABLES => {
+            plan_persisted_create_tables_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
+            rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_DROP_SCHEMA => {
+            plan_persisted_drop_schema_job_step(snapshot, catalog, active)
+        }
+        ActionType::ACTION_DROP_TABLE
+        | ActionType::ACTION_DROP_VIEW
+        | ActionType::ACTION_DROP_SEQUENCE => {
+            plan_persisted_drop_table_job_step(snapshot, catalog, active)
+        }
+        ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
+            add_index::plan_persisted_add_index_job_step(
+                snapshot,
+                catalog,
+                active,
+                start_ts,
+                reorg_outcome,
+            )
+        }
+        ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
+            drop_index::plan_persisted_drop_index_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_TRUNCATE_TABLE => {
+            truncate::plan_persisted_truncate_table_job_step(snapshot, catalog, active, start_ts)
+        }
+        ActionType::ACTION_ADD_COLUMN => {
+            add_column::plan_persisted_add_column_job_step(snapshot, catalog, active, start_ts)
+        }
+        ActionType::ACTION_DROP_COLUMN => {
+            drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
+            multi_schema::plan_persisted_multi_schema_job_step(
+                snapshot,
+                catalog,
+                active,
+                start_ts,
+                reorg_outcomes,
+            )
+        }
+        ActionType::ACTION_ADD_FOREIGN_KEY => foreign_key::plan_persisted_add_foreign_key_job_step(
+            catalog,
+            active,
+            start_ts,
+            reorg_outcome,
+        ),
+        ActionType::ACTION_MODIFY_COLUMN => modify_column::plan_persisted_modify_column_job_step(
+            snapshot,
+            catalog,
+            active,
+            start_ts,
+            reorg_outcome,
+        ),
+        action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
+            alter_table::plan_persisted_alter_table_job_step(snapshot, catalog, active, start_ts)
+        }
+        _ => unreachable!("supported action checked above"),
+    }
 }
 
 // All persisted actions share the queue, MDL recovery and history owner. The
@@ -7817,6 +7855,63 @@ fn pd_step_error(context: Option<&str>, error: String) -> DdlPlanError {
     ))
 }
 
+/// Go `doDDLJob2` outside a multi-schema change: a built job goes through
+/// `GenGIDAndInsertJobsWithRetry`'s admission.
+fn submit_built_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    built: Option<add_index::AddIndexSubmission>,
+    start_ts: u64,
+    upgrading: bool,
+    min_job_id: i64,
+) -> Result<Option<add_index::AddIndexSubmission>, DdlPlanError> {
+    match built {
+        Some(add_index::AddIndexSubmission::Job(spec, warnings)) => {
+            let mut specs = [*spec];
+            crate::ddl_job_submit::prepare_submit_batch(
+                snapshot, catalog, &mut specs, start_ts, upgrading, min_job_id,
+            )?;
+            let [spec] = specs;
+            Ok(Some(add_index::AddIndexSubmission::Job(
+                Box::new(spec),
+                warnings,
+            )))
+        }
+        other => Ok(other),
+    }
+}
+
+/// Go `job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible`: a
+/// multi-schema sub-job that has not reached its revertible point yet.
+fn is_revertible_sub_job(job: &Job) -> bool {
+    job.multi_schema_info
+        .as_ref()
+        .is_some_and(|info| info.read().revertible)
+}
+
+/// Go `checkAndMarkNonRevertible`.
+fn check_and_mark_non_revertible(job: &mut Job) {
+    if is_revertible_sub_job(job) {
+        job.mark_non_revertible();
+    }
+}
+
+/// Go `MultiSchemaInfo.SkipVersion`: a sub-job stepped after the one that
+/// published this step's schema version.
+fn skips_version(job: &Job) -> bool {
+    job.multi_schema_info
+        .as_ref()
+        .is_some_and(|info| info.read().skip_version)
+}
+
+/// Go `asyncNotifyEvent`'s sub-job id: a multi-schema sub-job's sequence,
+/// else `noSubJob`.
+fn notifier_sub_job_id(job: &Job) -> i64 {
+    job.multi_schema_info
+        .as_ref()
+        .map_or(-1, |info| i64::from(info.read().seq))
+}
+
 fn cancel_ddl_job(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     error: impl Into<DdlPlanError>,
@@ -7924,6 +8019,12 @@ fn plan_cancel_persisted_ddl_job(
         }
         ActionType::ACTION_MODIFY_COLUMN => {
             return modify_column::plan_cancel_modify_column(catalog, active);
+        }
+        ActionType::ACTION_ADD_FOREIGN_KEY => {
+            return foreign_key::plan_cancel_add_foreign_key(active);
+        }
+        ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
+            return multi_schema::plan_cancel_multi_schema(active);
         }
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
             return alter_table::plan_cancel_alter_table(catalog, active);

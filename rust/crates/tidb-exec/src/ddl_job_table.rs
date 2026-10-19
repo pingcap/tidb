@@ -61,6 +61,22 @@ pub struct ActiveDdlJob {
     values: RowValues,
 }
 
+impl ActiveDdlJob {
+    /// The same row carrying `job` instead: Go's proxy job, which runs a
+    /// multi-schema change's sub-job as if it were the job itself.
+    pub(crate) fn with_job(&self, job: Job) -> Self {
+        Self {
+            job,
+            reorg: self.reorg,
+            schema_ids: self.schema_ids.clone(),
+            table_ids: self.table_ids.clone(),
+            type_: self.type_,
+            processing: self.processing,
+            values: self.values.clone(),
+        }
+    }
+}
+
 /// The stored table definition and projection used by the active-job queue.
 #[derive(Clone, Debug)]
 pub struct DdlJobTable {

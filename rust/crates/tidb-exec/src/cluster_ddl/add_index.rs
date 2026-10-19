@@ -63,6 +63,9 @@ pub struct AddIndexReorg {
     /// For a MODIFY COLUMN's row-rewrite stage, the column it rewrites (the
     /// reorganization's element is then the changing column, not an index).
     pub column: Option<ColumnReorgSpec>,
+    /// The multi-schema sub-job that asked for it (its proxy's
+    /// `MultiSchemaInfo.Seq`), `None` for a job of its own.
+    pub sub_job: Option<i32>,
 }
 
 /// What a MODIFY COLUMN's row rewrite reorganizes: Go's column element.
@@ -103,6 +106,9 @@ pub enum ReorgStageRequest {
     Run(ReorgHandle),
     /// Go `checkModifyColumnData`.
     Check(ColumnDataCheck),
+    /// Go `checkForeignKeyConstrain`: the child's existing rows against the
+    /// parent, answered as a check.
+    CheckForeignKey(Box<super::ForeignKeyCheck>),
 }
 
 /// One `mysql.tidb_ddl_reorg` row.
@@ -129,6 +135,8 @@ pub struct ReorgOutcome {
     pub merging: bool,
     /// The column it rewrote, for a MODIFY COLUMN's row rewrite.
     pub column: Option<ColumnReorgSpec>,
+    /// The multi-schema sub-job it ran for (see [`AddIndexReorg::sub_job`]).
+    pub sub_job: Option<i32>,
     /// A row rewrite's warnings (Go `backfillTaskContext.warnings`): each
     /// code's first warning and its count.
     pub warnings: Vec<(u16, String, i64)>,
@@ -199,6 +207,19 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     min_job_id: i64,
     store_count: usize,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let built = build_add_index_job(snapshot, &catalog, statement, store_count)?;
+    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+}
+
+/// The executor half without `doDDLJob2`: the job unsubmitted, which a
+/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
+pub(super) fn build_add_index_job<S: MetaSnapshot>(
+    _snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    statement: &DdlStatement,
+    store_count: usize,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let DdlStatement::CreateIndex {
         schema,
         table,
@@ -211,7 +232,6 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     if index.primary && (find_index(stored, "PRIMARY").is_some() || stored.pk_is_handle) {
         return Err(DdlPlanError::Admission(
@@ -363,16 +383,14 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     job.session_vars = Some(GoShared::new(session_vars));
     job.reorg_meta = Some(GoShared::new(reorg_meta));
 
-    let mut specs = [crate::ddl_job_submit::JobSpec {
-        job,
-        args: JobArgsValue::ModifyIndex(Some(args)),
-        id_allocated: true,
-    }];
-    crate::ddl_job_submit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
-    )?;
-    let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
+    Ok(Some(AddIndexSubmission::Job(
+        Box::new(crate::ddl_job_submit::JobSpec {
+            job,
+            args: JobArgsValue::ModifyIndex(Some(args)),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    )))
 }
 
 pub(super) fn unsupported_partial_index() -> DdlPlanError {
@@ -389,29 +407,52 @@ pub(super) fn new_add_index_reorg_meta(
     schema: &str,
     store_count: usize,
 ) -> tidb_model::DDLReorgMeta {
+    init_job_reorg_meta_from_variables(context, schema, store_count, true, true)
+}
+
+/// Go `initJobReorgMetaFromVariables`: the session's reorganization
+/// settings when the job may reorganize (`setReorgParam`), and its
+/// distributed-task settings when it may run as one (`setDistTaskParam`).
+pub(super) fn init_job_reorg_meta_from_variables(
+    context: &tidb_executor::StmtContext,
+    schema: &str,
+    store_count: usize,
+    set_reorg_param: bool,
+    set_dist_task_param: bool,
+) -> tidb_model::DDLReorgMeta {
     let vars = context.ddl_reorg_vars();
     let mut meta = tidb_model::DDLReorgMeta::new(
         context.ddl_sql_mode() as u64,
         tidb_model::TimeZoneLocation::new(vars.time_zone_name.clone(), vars.time_zone_offset),
         vars.resource_group_name.clone(),
     );
-    meta.set_concurrency(vars.worker_count);
-    meta.set_batch_size(vars.batch_size);
-    meta.set_max_write_speed(vars.max_write_speed);
-    meta.is_dist_reorg = vars.enable_dist_task;
-    meta.is_fast_reorg = vars.enable_fast_reorg;
-    meta.target_scope = vars.target_scope.clone().into();
-    meta.max_node_count = if vars.max_dist_task_nodes == -1 {
-        // Go `scheduler.CalcMaxNodeCountByStoresNum`.
-        (store_count / 3).max(3) as i64
-    } else {
-        vars.max_dist_task_nodes
-    };
-    if tidb_metadef::is_system_related_db(&schema.go_to_lower()) {
-        meta.is_dist_reorg = false;
-        meta.is_fast_reorg = false;
+    if set_reorg_param {
+        meta.set_concurrency(vars.worker_count);
+        meta.set_batch_size(vars.batch_size);
+        meta.set_max_write_speed(vars.max_write_speed);
+    }
+    if set_dist_task_param {
+        meta.is_dist_reorg = vars.enable_dist_task;
+        meta.is_fast_reorg = vars.enable_fast_reorg;
+        meta.target_scope = vars.target_scope.clone().into();
+        meta.max_node_count = if vars.max_dist_task_nodes == -1 {
+            // Go `scheduler.CalcMaxNodeCountByStoresNum`.
+            (store_count / 3).max(3) as i64
+        } else {
+            vars.max_dist_task_nodes
+        };
+        if tidb_metadef::is_system_related_db(&schema.go_to_lower()) {
+            meta.is_dist_reorg = false;
+            meta.is_fast_reorg = false;
+        }
     }
     meta
+}
+
+/// The multi-schema sub-job a reorganization request comes from: its proxy
+/// job's sequence.
+pub(super) fn reorg_sub_job(job: &Job) -> Option<i32> {
+    job.multi_schema_info.as_ref().map(|info| info.read().seq)
 }
 
 /// Go `newReorgSessCtx` / `ReorgMeta.Location.GetLocation`: the job's SQL
@@ -533,6 +574,9 @@ pub(super) fn table_step(
         value::serialize_table_info(&info)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
     )?);
+    // Go `updateVersionAndTableInfo`: one multi-schema step publishes one
+    // version, the sub-jobs after the first skipping theirs.
+    let should_update_version = should_update_version && !skips_version(&active.job);
     let (schema_version, diff) = if should_update_version {
         let schema_version = catalog.schema_version + 1;
         let diff = SchemaDiff {
@@ -858,6 +902,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
         if let Some(meta) = &active.job.reorg_meta {
             meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
         }
+        check_and_mark_non_revertible(&mut active.job);
         let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
         return Ok(action_step(write));
     }
@@ -894,7 +939,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             catalog,
             active.job.id,
             &[(
-                -1,
+                notifier_sub_job_id(&active.job),
                 SchemaChangeEvent::add_indexes(info.clone_like_go(), added, analyzed),
             )],
             &mut write.mutations,
@@ -994,6 +1039,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             context: DdlStatementContext(reorg_statement_context(&active.job)),
             row_count: active.job.row_count,
             column: None,
+            sub_job: reorg_sub_job(&active.job),
         };
     let finished = match outcome.map(|outcome| &outcome.result) {
         // Go `getReorgInfo`: the first visit persists the snapshot.

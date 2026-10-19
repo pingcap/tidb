@@ -73,7 +73,28 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
     store_count: usize,
     has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog;
+    let catalog = load_cluster_catalog(snapshot)?;
+    let built = build_modify_column_job(
+        snapshot,
+        &catalog,
+        statement,
+        job_context,
+        store_count,
+        has_null,
+    )?;
+    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+}
+
+/// The executor half without `doDDLJob2`: the job unsubmitted, which a
+/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
+pub(super) fn build_modify_column_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    statement: &DdlStatement,
+    job_context: &tidb_executor::StmtContext,
+    store_count: usize,
+    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema, stored, schema_id, args) = match statement {
         DdlStatement::ModifyColumn {
             schema,
@@ -84,7 +105,6 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
             rename_from,
             modify_column_type: _,
         } => {
-            catalog = load_cluster_catalog(snapshot)?;
             let (schema_id, stored) = locate_table(&catalog, schema, table)?;
             tidb_executor::ddl::check_column_qualifier(&column.qualifier, schema, table).map_err(
                 |error| {
@@ -158,7 +178,6 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
             from,
             to,
         } => {
-            catalog = load_cluster_catalog(snapshot)?;
             let (schema_id, stored) = locate_table(&catalog, schema, table)?;
             // Go `RenameColumn`: the column cloned under its new name.
             let Some(renamed) = prepare_rename_column(stored, table, from, to)? else {
@@ -209,16 +228,14 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
         schema,
         store_count,
     )));
-    let mut specs = [crate::ddl_job_submit::JobSpec {
-        job,
-        args: JobArgsValue::ModifyColumn(Some(GoShared::new(args))),
-        id_allocated: true,
-    }];
-    crate::ddl_job_submit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
-    )?;
-    let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
+    Ok(Some(AddIndexSubmission::Job(
+        Box::new(crate::ddl_job_submit::JobSpec {
+            job,
+            args: JobArgsValue::ModifyColumn(Some(GoShared::new(args))),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    )))
 }
 
 /// Go `ErrColumnNotExists` (1054).
@@ -417,6 +434,7 @@ fn check_request(
             context: DdlStatementContext(add_index::reorg_statement_context(&active.job)),
             row_count: active.job.row_count,
             column: None,
+            sub_job: add_index::reorg_sub_job(&active.job),
         },
     )
 }
@@ -1116,8 +1134,30 @@ fn do_modify_column_no_check<S: MetaSnapshot>(
         active.job.state = JobState::ROLLINGBACK;
         return Err(column_in_change(&old, new.id));
     }
+    if let Some(step) = revertible_point(catalog, active, target, args, start_ts)? {
+        return Ok(step);
+    }
     let step = finish_modify_column_without_reorg(catalog, active, target, args, new, start_ts)?;
     Ok(step)
+}
+
+/// Go: a multi-schema sub-job stores its revertible mark, the table as it
+/// stands, and finishes in the step that publishes every sub-job.
+fn revertible_point(
+    catalog: &ClusterCatalog,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    target: &ModifyTarget,
+    args: &tidb_model::ModifyColumnArgs,
+    start_ts: u64,
+) -> Result<Option<PersistedDdlActionStep>, DdlPlanError> {
+    if !is_revertible_sub_job(&active.job) {
+        return Ok(None);
+    }
+    active.job.mark_non_revertible();
+    let database_id = active.job.schema_id;
+    check_table_info_valid(&target.info)?;
+    let write = table_step(catalog, active, database_id, &target.info, false, start_ts)?;
+    Ok(Some(with_args(active, args, action_step(write))))
 }
 
 /// The first visit of the checked courses: the old column refuses NULL and
@@ -1182,6 +1222,9 @@ fn do_modify_column_with_check<S: MetaSnapshot>(
             Err(coded_refusal(code, message))
         }
         Some(None) => {
+            if let Some(step) = revertible_point(catalog, active, target, args, start_ts)? {
+                return Ok(step);
+            }
             finish_modify_column_without_reorg(catalog, active, target, args, new, start_ts)
         }
     }
@@ -1839,6 +1882,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
                 // Completed: no analyze for a job whose
                 // `tidb_enable_ddl_analyze` is off.
                 set_analyze_state(&active.job, tidb_model::reorg::analyze_state::SKIPPED);
+                check_and_mark_non_revertible(&mut active.job);
                 return Ok(with_args(
                     active,
                     args,
@@ -2116,6 +2160,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                 // Completed: no analyze for a job whose
                 // `tidb_enable_ddl_analyze` is off.
                 set_analyze_state(&active.job, tidb_model::reorg::analyze_state::SKIPPED);
+                check_and_mark_non_revertible(&mut active.job);
                 return Ok(with_args(
                     active,
                     args,
@@ -2183,7 +2228,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                     catalog,
                     active.job.id,
                     &[(
-                        -1,
+                        notifier_sub_job_id(&active.job),
                         SchemaChangeEvent::modify_columns(
                             target.info.clone_like_go(),
                             vec![changing.read().clone_like_go()],
@@ -2260,6 +2305,7 @@ fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
             context: DdlStatementContext(add_index::reorg_statement_context(&active.job)),
             row_count: active.job.row_count,
             column: Some(spec.clone()),
+            sub_job: add_index::reorg_sub_job(&active.job),
         };
     Ok(match outcome.map(|outcome| &outcome.result) {
         None if active.job.snapshot_version == 0 => ColumnReorgVisit::Step(reorg_request(

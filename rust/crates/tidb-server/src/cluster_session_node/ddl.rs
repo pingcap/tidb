@@ -834,7 +834,7 @@ where
                     return Ok(ClusterDdlReport::Applied {
                         schema_version: job.last_schema_version,
                         created_id,
-                        warnings: reorg_meta_warnings(&job),
+                        warnings: synced_job_warnings(&job),
                     });
                 }
                 return Err(SqlQueryError::unknown(format!(
@@ -2556,6 +2556,8 @@ where
                     | DdlStatement::RenameTables { .. }
                     | DdlStatement::ModifyColumn { .. }
                     | DdlStatement::RenameColumn { .. }
+                    | DdlStatement::MultiSchemaChange { .. }
+                    | DdlStatement::AddForeignKey { .. }
             )
             || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {
@@ -2571,6 +2573,7 @@ where
                 self.server_state.is_upgrading_state(),
                 self.min_job_id_refresher.current_min_job_id(),
                 &KvTableIndexBackfiller::default(),
+                self.auto_ids.as_ref(),
             )
             .map_err(cluster_ddl_error)?
             {
@@ -2630,8 +2633,32 @@ where
 }
 
 /// Go `DoDDLJobWrapper` on a synced job: the reorganization's warnings,
-/// each once or summarized by code. The job's own `Warning` (an IF EXISTS
-/// the owner met) never reaches the client.
+/// then a multi-schema change's sub-job warnings as notes
+/// (`appendMultiChangeWarningsToOwnerCtx`). A job's own `Warning` never
+/// reaches the client.
+fn synced_job_warnings(
+    job: &tidb_model::Job,
+) -> Vec<(tidb_exec::real_tikv_ddl::DdlWarningLevel, u16, String)> {
+    let mut warnings = reorg_meta_warnings(job);
+    if job.type_ == tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE {
+        if let Some(info) = &job.multi_schema_info {
+            for sub in info.read().sub_jobs.iter_deref() {
+                if let Some(warning) = &sub.read().warning {
+                    let warning = warning.read();
+                    warnings.push((
+                        tidb_exec::real_tikv_ddl::DdlWarningLevel::Note,
+                        u16::try_from(warning.code().value()).unwrap_or(1105),
+                        warning.message().to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+    warnings
+}
+
+/// Go `DoDDLJobWrapper` on a synced job: the reorganization's warnings,
+/// each once or summarized by code.
 fn reorg_meta_warnings(
     job: &tidb_model::Job,
 ) -> Vec<(tidb_exec::real_tikv_ddl::DdlWarningLevel, u16, String)> {

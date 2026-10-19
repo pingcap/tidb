@@ -179,6 +179,8 @@ pub struct SnapshotMetaSnapshot {
     snapshot: Box<dyn ClusterSnapshot>,
     /// The node's live row-ID allocators, for a writer that inserts.
     row_ids: Option<std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    /// The node's auto-ID service client.
+    auto_ids: Option<std::sync::Arc<crate::auto_id_client::AutoIdClient>>,
 }
 
 impl SnapshotMetaSnapshot {
@@ -193,7 +195,19 @@ impl SnapshotMetaSnapshot {
         Self {
             snapshot,
             row_ids: None,
+            auto_ids: None,
         }
+    }
+
+    /// Lets a job reach the auto-ID service (see
+    /// [`MetaSnapshot::auto_id_client`]).
+    #[must_use]
+    pub fn with_auto_ids_opt(
+        mut self,
+        auto_ids: Option<&std::sync::Arc<crate::auto_id_client::AutoIdClient>>,
+    ) -> Self {
+        self.auto_ids = auto_ids.cloned();
+        self
     }
 
     /// Lets a writer allocate new rows' ids from `ids` (see
@@ -252,6 +266,10 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
 
     fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
         self.row_ids.as_deref()
+    }
+
+    fn auto_id_client(&self) -> Option<&std::sync::Arc<crate::auto_id_client::AutoIdClient>> {
+        self.auto_ids.as_ref()
     }
 }
 

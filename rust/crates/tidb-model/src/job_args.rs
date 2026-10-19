@@ -426,6 +426,8 @@ pub enum JobArgsValue {
     ModifyIndex(Option<GoShared<ModifyIndexArgs>>),
     /// `*model.AlterIndexVisibilityArgs`, including a typed nil pointer.
     AlterIndexVisibility(Option<GoShared<AlterIndexVisibilityArgs>>),
+    /// `*model.AddForeignKeyArgs`, including a typed nil pointer.
+    AddForeignKey(Option<GoShared<AddForeignKeyArgs>>),
     /// `*model.DropForeignKeyArgs`, including a typed nil pointer.
     DropForeignKey(Option<GoShared<DropForeignKeyArgs>>),
     /// `*model.ModifyTableAutoIDCacheArgs`, including a typed nil pointer.
@@ -473,6 +475,7 @@ impl JobArgsValue {
             Self::ModifyTableCharsetAndCollate(value) => job.fill_args(value.clone()),
             Self::ModifyIndex(value) => job.fill_args(value.clone()),
             Self::AlterIndexVisibility(value) => job.fill_args(value.clone()),
+            Self::AddForeignKey(value) => job.fill_args(value.clone()),
             Self::DropForeignKey(value) => job.fill_args(value.clone()),
             Self::ModifyTableAutoIdCache(value) => job.fill_args(value.clone()),
             Self::ShardRowId(value) => job.fill_args(value.clone()),
@@ -508,6 +511,7 @@ impl JobArgsValue {
             Self::ModifyTableCharsetAndCollate(_) => "ModifyTableCharsetAndCollateArgs",
             Self::ModifyIndex(_) => "ModifyIndexArgs",
             Self::AlterIndexVisibility(_) => "AlterIndexVisibilityArgs",
+            Self::AddForeignKey(_) => "AddForeignKeyArgs",
             Self::DropForeignKey(_) => "DropForeignKeyArgs",
             Self::ModifyTableAutoIdCache(_) => "ModifyTableAutoIDCacheArgs",
             Self::ShardRowId(_) => "ShardRowIDArgs",
@@ -546,6 +550,7 @@ impl JobArgsValue {
             }
             Self::ModifyIndex(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterIndexVisibility(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AddForeignKey(value) => value.as_ref().map(GoShared::identity_address),
             Self::DropForeignKey(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifyTableAutoIdCache(value) => value.as_ref().map(GoShared::identity_address),
             Self::ShardRowId(value) => value.as_ref().map(GoShared::identity_address),
@@ -655,6 +660,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::AlterIndexVisibility(value) => GoTypedPointer::new(
                 model_type("AlterIndexVisibilityArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AddForeignKey(value) => GoTypedPointer::new(
+                model_type("AddForeignKeyArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),

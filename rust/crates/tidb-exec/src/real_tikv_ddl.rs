@@ -1191,7 +1191,7 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
                     &reorg,
                     check_owner,
                 )?;
-                schema_state.reorg = Some(outcome);
+                schema_state.reorg.push(outcome);
             }
             DdlPhaseOutcome::SchemaSync {
                 version,
@@ -1243,8 +1243,8 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
                 return Ok(PersistedDdlJobOutcome::Finished);
             }
             DdlPhaseOutcome::Committed(committed) => {
-                // A reorganization outcome is read by exactly one step.
-                schema_state.reorg = None;
+                // Reorganization outcomes are read by exactly one step.
+                schema_state.reorg.clear();
                 if let ClusterDdlReport::Applied { schema_version, .. } = &committed.report {
                     if *schema_version > 0 {
                         schema_state.pending_version = Some(*schema_version);
@@ -1452,6 +1452,7 @@ pub fn submit_persisted_job_with_retry<
     upgrading: bool,
     min_job_id: i64,
     backfiller: &dyn IndexBackfiller,
+    auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
 ) -> Result<AddIndexSubmitted, ClusterDdlError> {
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
     let store_count = opener
@@ -1469,8 +1470,54 @@ pub fn submit_persisted_job_with_retry<
             preparation
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-        );
+        )
+        .with_auto_ids_opt(auto_ids);
+        // Go `checkForNullValue`'s query, run in the submitting transaction.
+        let null_snapshot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+        null_snapshot
+            .lock()
+            .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
+            .bind(
+                preparation
+                    .snapshot()
+                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+            );
+        let null_snapshot: Arc<Mutex<dyn ClusterSnapshot>> = null_snapshot;
+        let null_buffer = MutationBuffer::new();
+        let mut has_null = |table: &tidb_model::TableInfo, column_id: i64| {
+            backfiller
+                .has_null_value(table, column_id, Arc::clone(&null_snapshot), &null_buffer)
+                .map_err(|error| {
+                    DdlPlanError::Admission(crate::table_info_build::DdlAdmissionError::with_code(
+                        error.code,
+                        error.message,
+                    ))
+                })
+        };
         match statement {
+            DdlStatement::MultiSchemaChange { .. } => {
+                crate::cluster_ddl::multi_schema::prepare_multi_schema_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                    store_count,
+                    &mut has_null,
+                )
+            }
+            DdlStatement::AddForeignKey { .. } => {
+                crate::cluster_ddl::foreign_key::prepare_add_foreign_key_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                    store_count,
+                )
+            }
             DdlStatement::DropTable { .. }
             | DdlStatement::DropView { .. }
             | DdlStatement::DropSequence { .. }
@@ -1536,28 +1583,6 @@ pub fn submit_persisted_job_with_retry<
                 )
             }
             DdlStatement::ModifyColumn { .. } | DdlStatement::RenameColumn { .. } => {
-                let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
-                slot.lock()
-                    .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
-                    .bind(
-                        preparation
-                            .snapshot()
-                            .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-                    );
-                let snapshot_handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
-                let buffer = MutationBuffer::new();
-                let mut has_null = |table: &tidb_model::TableInfo, column_id: i64| {
-                    backfiller
-                        .has_null_value(table, column_id, Arc::clone(&snapshot_handle), &buffer)
-                        .map_err(|error| {
-                            DdlPlanError::Admission(
-                                crate::table_info_build::DdlAdmissionError::with_code(
-                                    error.code,
-                                    error.message,
-                                ),
-                            )
-                        })
-                };
                 crate::cluster_ddl::modify_column::prepare_modify_column_job_submission(
                     &mut snapshot,
                     statement,
@@ -1892,7 +1917,8 @@ fn commit_cluster_ddl_with_backfill_once<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         )
-        .with_row_ids_opt(row_ids.as_ref());
+        .with_row_ids_opt(row_ids.as_ref())
+        .with_auto_ids_opt(auto_ids);
         match phase {
             DdlPhase::Initial(statement, job_context) => {
                 crate::cluster_ddl::plan_ddl_with_auto_ids(

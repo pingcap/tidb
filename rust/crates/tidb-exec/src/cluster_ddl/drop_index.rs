@@ -32,6 +32,19 @@ pub fn prepare_drop_index_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let built = build_drop_index_job(snapshot, &catalog, statement, job_context)?;
+    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+}
+
+/// The executor half without `doDDLJob2`: the job unsubmitted, which a
+/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
+pub(super) fn build_drop_index_job<S: MetaSnapshot>(
+    _snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    statement: &DdlStatement,
+    job_context: &tidb_executor::StmtContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema, table, index_name, if_exists) = match statement {
         DdlStatement::DropIndex {
             schema,
@@ -44,7 +57,6 @@ pub fn prepare_drop_index_job_submission<S: MetaSnapshot>(
         }
         _ => return Ok(None),
     };
-    let catalog = load_cluster_catalog(snapshot)?;
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let index = find_index(stored, &index_name);
     // Go `CheckIsDropPrimaryKey`: a general index merely named `primary` is
@@ -105,16 +117,14 @@ pub fn prepare_drop_index_job_submission<S: MetaSnapshot>(
         op_type: tidb_model::IndexOp::DROP_INDEX,
         ..tidb_model::ModifyIndexArgs::default()
     });
-    let mut specs = [crate::ddl_job_submit::JobSpec {
-        job,
-        args: JobArgsValue::ModifyIndex(Some(args)),
-        id_allocated: true,
-    }];
-    crate::ddl_job_submit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
-    )?;
-    let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
+    Ok(Some(AddIndexSubmission::Job(
+        Box::new(crate::ddl_job_submit::JobSpec {
+            job,
+            args: JobArgsValue::ModifyIndex(Some(args)),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    )))
 }
 
 /// Go `checkDropIndex`: the indexes the job names, each still there and not
@@ -193,6 +203,13 @@ pub(super) fn plan_persisted_drop_index_job_step(
         .filter_map(|index| find_index(&info, index.read().name.original()))
         .collect();
     let original_state = indexes[0].read().state;
+    // Go: a multi-schema sub-job stops at its revertible point first.
+    if !active.job.is_rollingback() && is_revertible_sub_job(&active.job) {
+        active.job.mark_non_revertible();
+        active.job.schema_state = original_state;
+        let write = table_step(catalog, active, database_id, &info, false, start_ts)?;
+        return Ok(action_step(write));
+    }
     let next = match original_state {
         SchemaState::PUBLIC => SchemaState::WRITE_ONLY,
         SchemaState::WRITE_ONLY => SchemaState::DELETE_ONLY,

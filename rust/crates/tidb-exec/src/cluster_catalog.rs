@@ -83,6 +83,13 @@ pub trait MetaSnapshot {
         None
     }
 
+    /// The node's auto-ID service client, for a job that reads or rebases a
+    /// counter the service owns (`AUTO_ID_CACHE 1`). `None` for a snapshot
+    /// that carries none.
+    fn auto_id_client(&self) -> Option<&std::sync::Arc<crate::auto_id_client::AutoIdClient>> {
+        None
+    }
+
     /// Reads every key/value pair in `[start, end)`, in key order.
     ///
     /// Recorded in-memory snapshots can implement only [`Self::scan_prefix`]:

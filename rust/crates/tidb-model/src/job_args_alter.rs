@@ -1015,6 +1015,56 @@ pub fn get_alter_index_visibility_args(
     get_or_decode_args(job)
 }
 
+/// Go `AddForeignKeyArgs`.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct AddForeignKeyArgs {
+    /// The key the job adds.
+    #[serde(rename = "fk_info", default, skip_serializing_if = "Option::is_none")]
+    pub fk_info: Option<GoShared<crate::table::FKInfo>>,
+    /// The submitting session's `foreign_key_checks`.
+    #[serde(
+        rename = "fk_check",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub fk_check: bool,
+}
+
+impl JobArgs for AddForeignKeyArgs {
+    job_args_identity_methods!(AddForeignKey);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *AddForeignKeyArgs receiver").read();
+        GoSharedSlice::from_vec(vec![
+            typed_pointer_any(
+                model_type("FKInfo", GoTypeKind::Struct),
+                value.fk_info.clone(),
+            ),
+            ColumnDefaultValue::Bool(value.fk_check).into(),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let fk_info = GoShared::new(crate::table::FKInfo::default());
+        let fk_check = GoField::<bool>::default();
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&fk_info, model_type("FKInfo", GoTypeKind::Struct))?;
+        decoder.decode(&fk_check, builtin_type("bool", GoTypeKind::Bool))?;
+        decoder.finish(job);
+        Ok(Some(GoShared::new(Self {
+            fk_info: Some(fk_info),
+            fk_check: fk_check.get(),
+        })))
+    }
+}
+
+/// Go `GetAddForeignKeyArgs`.
+pub fn get_add_foreign_key_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AddForeignKeyArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
 /// Go `DropForeignKeyArgs`.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DropForeignKeyArgs {

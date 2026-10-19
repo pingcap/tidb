@@ -31,6 +31,19 @@ pub fn prepare_drop_column_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let built = build_drop_column_job(snapshot, &catalog, statement, job_context)?;
+    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+}
+
+/// The executor half without `doDDLJob2`: the job unsubmitted, which a
+/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
+pub(super) fn build_drop_column_job<S: MetaSnapshot>(
+    _snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    statement: &DdlStatement,
+    job_context: &tidb_executor::StmtContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let DdlStatement::DropColumn {
         schema,
         table,
@@ -41,7 +54,6 @@ pub fn prepare_drop_column_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     if !check_is_droppable_column(
         &catalog,
@@ -76,16 +88,14 @@ pub fn prepare_drop_column_job_submission<S: MetaSnapshot>(
         ignore_existence_err: *if_exists,
         ..tidb_model::TableColumnArgs::default()
     });
-    let mut specs = [crate::ddl_job_submit::JobSpec {
-        job,
-        args: JobArgsValue::TableColumn(Some(args)),
-        id_allocated: true,
-    }];
-    crate::ddl_job_submit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
-    )?;
-    let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
+    Ok(Some(AddIndexSubmission::Job(
+        Box::new(crate::ddl_job_submit::JobSpec {
+            job,
+            args: JobArgsValue::TableColumn(Some(args)),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    )))
 }
 
 /// What Go `checkDropColumn` found.
@@ -195,6 +205,14 @@ pub(super) fn plan_persisted_drop_column_job_step(
     };
     let database_id = active.job.schema_id;
     let original_state = column.read().state;
+    // Go: a multi-schema sub-job stops at its revertible point first.
+    if !active.job.is_rollingback() && is_revertible_sub_job(&active.job) {
+        active.job.mark_non_revertible();
+        active.job.schema_state = original_state;
+        check_table_info_valid(&info)?;
+        let write = table_step(catalog, active, database_id, &info, false, start_ts)?;
+        return Ok(action_step(write));
+    }
     let move_to_back = |info: &mut TableInfo| {
         let offset = usize::try_from(column.read().offset).unwrap_or(0);
         let last = info.columns.len() - 1;

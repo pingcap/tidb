@@ -31,6 +31,19 @@ pub fn prepare_add_column_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let built = build_add_column_job(snapshot, &catalog, statement, job_context)?;
+    submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+}
+
+/// The executor half without `doDDLJob2`: the job unsubmitted, which a
+/// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
+pub(super) fn build_add_column_job<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    statement: &DdlStatement,
+    job_context: &tidb_executor::StmtContext,
+) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let DdlStatement::AddColumn {
         schema,
         table,
@@ -42,7 +55,6 @@ pub fn prepare_add_column_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let (mut added, _) = match build_add_column(
         stored,
@@ -91,16 +103,14 @@ pub fn prepare_add_column_job_submission<S: MetaSnapshot>(
         ignore_existence_err: *if_not_exists,
         ..tidb_model::TableColumnArgs::default()
     });
-    let mut specs = [crate::ddl_job_submit::JobSpec {
-        job,
-        args: JobArgsValue::TableColumn(Some(args)),
-        id_allocated: true,
-    }];
-    crate::ddl_job_submit::prepare_submit_batch(
-        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
-    )?;
-    let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
+    Ok(Some(AddIndexSubmission::Job(
+        Box::new(crate::ddl_job_submit::JobSpec {
+            job,
+            args: JobArgsValue::TableColumn(Some(args)),
+            id_allocated: true,
+        }),
+        Vec::new(),
+    )))
 }
 
 /// What Go `checkAddColumn` found: the table, the column already appended
@@ -284,6 +294,9 @@ pub(super) fn plan_persisted_add_column_job_step<S: MetaSnapshot>(
     let mut write = table_step(catalog, active, database_id, &info, true, start_ts)?;
     if next != SchemaState::PUBLIC {
         active.job.schema_state = next;
+        if next == SchemaState::WRITE_REORGANIZATION {
+            active.job.mark_non_revertible();
+        }
         return Ok(action_step(write));
     }
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
@@ -292,7 +305,7 @@ pub(super) fn plan_persisted_add_column_job_step<S: MetaSnapshot>(
             catalog,
             active.job.id,
             &[(
-                -1,
+                notifier_sub_job_id(&active.job),
                 SchemaChangeEvent::add_columns(
                     info.clone_like_go(),
                     vec![column.read().clone_like_go()],

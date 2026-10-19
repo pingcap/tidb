@@ -83,11 +83,24 @@ where
                 Err(error) => Err(ClusterDdlError::Backfill(error.message)),
             })?
         }
+        ReorgStageRequest::CheckForeignKey(check) => {
+            reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+                let answer = backfiller.stage_foreign_key_check(check, snapshot, buffer);
+                buffer.reset();
+                Ok((answer, Vec::new()))
+            })
+            // Go `onCreateForeignKey` rolls the job back on any error the
+            // check returns.
+            .map(|answer| {
+                ReorgResult::Checked(answer.err().map(|error| (error.code, error.message)))
+            })?
+        }
     };
     Ok(ReorgOutcome {
         job_id: reorg.job_id,
         merging: reorg.merging,
         column: reorg.column.clone(),
+        sub_job: reorg.sub_job,
         warnings,
         result,
     })
