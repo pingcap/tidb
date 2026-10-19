@@ -235,8 +235,9 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 	storeCodec := e.Ctx().GetStore().GetCodec()
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
 	for i, pid := range physicalIDs {
-		startKey, endKey := storeCodec.EncodeRegionRange(tablecodec.GenTablePrefix(pid), tablecodec.GenTablePrefix(pid+1))
+		endKey := storeCodec.EncodeRegionKey(tablecodec.GenTablePrefix(pid + 1))
 		if i == 0 || physicalIDs[i] != physicalIDs[i-1]+1 {
+			startKey := storeCodec.EncodeRegionKey(tablecodec.GenTablePrefix(pid))
 			ranges = append(ranges, pdhttp.NewKeyRange(startKey, endKey))
 		} else {
 			ranges[len(ranges)-1].EndKey = endKey
