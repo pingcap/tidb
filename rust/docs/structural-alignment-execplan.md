@@ -18,7 +18,7 @@ DDL exists twice. Every cluster schema change Go runs as a job is a persisted jo
 
 Transactions exist twice. Production runs two transaction objects at once (the session's `Transaction` and the node's explicit store transaction, kept in step by call order); there is no isolation-provider seam; `handlePessimisticDML`, the retry loop, savepoints, implicit commit and the `autocommit=0` lazy opener are each implemented twice; `tidb_disable_txn_auto_retry=OFF` retries are refused on the cluster. Target: one TxnManager in `tidb-session` over a store-transaction trait, the in-process catalog one backend of it.
 
-The client stack exists twice. `ngaut/client-rust` (vendored at `third_party/tikv-client-rs`) is the Rust client-go (owner direction, 2026-10-19), but `tidb-txnkv` carries a second client-go-like stack (transactions, lock resolution, region routing) that production and the embedded node run on, so the embedded store (`tidb-unistore`) is unreachable from client-rust. In Go, client-go drives both TiKV and the embedded unistore (through unistore's in-process RPC and PD clients). Target: the embedded store behind client-rust's `KvClient` / `PdClient` seams, then TiDB's paths moved from `tidb-txnkv` onto client-rust one at a time. The first step is planned in `gcworker-execplan.md` (Go's store-backed GC tests need it).
+The client stack exists twice. `ngaut/client-rust` (vendored at `third_party/tikv-client-rs`) is the Rust client-go (owner direction, 2026-10-19), but `tidb-txnkv` carries a second client-go-like stack (region routing, transport, lock resolution, coprocessor dispatch) that production and the embedded node run on; production's transactions already run client-rust's engine through `tidb-txnkv`'s `client_bridge`. In Go, client-go drives both TiKV and the embedded unistore. The embedded store is now behind client-rust's seams (`tidb-unistore`'s `PdClient` and RPC client, `client-rust-unistore-execplan.md` Steps 1-5); what remains is moving TiDB's paths from `tidb-txnkv` onto client-rust (that plan's Step 6).
 
 Caches. `tidb_domain::sysvar_cache` is a complete port with no caller, and the in-process tier never reloads `mysql.global_variables`. Some `information_schema` providers read the latest catalog instead of the statement's pinned one.
 
@@ -31,8 +31,6 @@ Bootstrap layout. Under the classic kernel, Go's bootstrap gives every `mysql.*`
 Planner statistics set-up runs in the executor: `planner_bridge.rs` decides which statistics to load from the AST's WHERE (a predicate in a derived table loads none), recomputes index ranges and fills row estimates with the executor's own `GetRowCountByIndexRanges` (`access_cost.rs`), where Go does it in `initStats` / `fillIndexPath` / `deriveIndexPathStats`. Non-SELECT statements have no `PlanBuilder.Build`.
 
 DDL details still open: the reorganize owner does not repeat `checkReorgPartitionDefs`, `checkColumnsPartitionType`, `checkPartitionFuncType` and `checkPartitionKeysConstraint`; TiFlash's PD rules for new partitions and `checkPartitionReplica`; global-index reads during a PARTITION BY's last states; the region split after a split policy (`preSplitAndScatterTable`); the masking-policy rows Go maintains on DROP / MODIFY COLUMN and RENAME TABLE (no writer); DDL-time analyze (`tidb_stats_update_during_ddl`); `ALTER RANGE ... PLACEMENT POLICY` (parsed, never executed).
-
-No GC on TiKV: nothing destroys `mysql.gc_delete_range` or advances the safe points. Planned in `gcworker-execplan.md`.
 
 ## Plan of work
 
@@ -67,7 +65,7 @@ Each batch lands as its own commit through the pre-commit hook, so any one can b
 - [ ] Milestone 4.
 - [ ] Milestone 5.
 - [ ] Transactions, caches, execution, duplicates, bootstrap layout, and the DDL details above.
-- [ ] The GC worker (`gcworker-execplan.md`).
+- [x] The GC worker runs on the TiKV node (`gcworker-execplan.md`); its store-backed tests run on the embedded store through client-rust (`client-rust-unistore-execplan.md`).
 
 ## Surprises and discoveries
 
