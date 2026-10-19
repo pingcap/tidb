@@ -29,6 +29,7 @@ Before touching `pkg/ddl/`, answer these explicitly (write them down in the PR/i
 7. What is the **expected online behavior** (MDL / blocking, write conflicts, phase boundaries)?
 8. What is the **minimal regression test** (unit/integration), and which failpoints can make it deterministic?
 
+
 ## Index (by task)
 
 - Understand end-to-end call chain: `docs/agents/ddl/01-execution-flow.md`
