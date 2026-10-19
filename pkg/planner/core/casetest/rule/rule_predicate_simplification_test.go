@@ -151,3 +151,17 @@ func TestPredicateSimplification(tt *testing.T) {
 		}
 	})
 }
+
+func TestPredicateSimplificationEnumInListWithCompare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table orders (id int primary key, status enum('new','paid','shipped'))")
+	tk.MustExec("insert into orders values (1,'new'),(2,'paid'),(3,'shipped'),(4,NULL)")
+	tk.MustQuery("select group_concat(id order by id) from orders where status in (1,2) and status <= 'paid'").Check(testkit.Rows("1,2"))
+	tk.MustQuery("select group_concat(id order by id) from orders where status in (1,2) and status < 'shipped'").Check(testkit.Rows("1,2"))
+	tk.MustQuery("select group_concat(id order by id) from orders where status <= 'paid' and (status = 1 or status = 2)").Check(testkit.Rows("1,2"))
+	tk.MustQuery("select group_concat(id order by id) from orders where status in (2,3) and status >= 'new'").Check(testkit.Rows("2,3"))
+	tk.MustExec("create view vw as select * from orders where status in (1,2) and status <= 'paid'")
+	tk.MustQuery("select count(*) from vw").Check(testkit.Rows("2"))
+}
