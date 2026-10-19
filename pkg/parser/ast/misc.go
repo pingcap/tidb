@@ -2517,6 +2517,20 @@ type RecommendIndexOption struct {
 	Value  ValueExpr
 }
 
+// RecommendIndex actions.
+const (
+	RecommendIndexActionRun    = "run"
+	RecommendIndexActionReturn = "return"
+	RecommendIndexActionSet    = "set"
+	RecommendIndexActionShow   = "show"
+	RecommendIndexActionApply  = "apply"
+	RecommendIndexActionIgnore = "ignore"
+)
+
+// RecommendIndexStmtLabel is the statement label used while analyzing a
+// RECOMMEND INDEX workload.
+const RecommendIndexStmtLabel = "RecommendIndex"
+
 // RecommendIndexStmt is a statement to recommend index.
 type RecommendIndexStmt struct {
 	stmtNode
@@ -2530,9 +2544,13 @@ type RecommendIndexStmt struct {
 func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RECOMMEND INDEX")
 	switch n.Action {
-	case "run":
-		ctx.WriteKeyWord(" RUN")
-		if n.SQL != "" {
+	case RecommendIndexActionRun, RecommendIndexActionReturn:
+		if n.Action == RecommendIndexActionReturn {
+			ctx.WriteKeyWord(" RETURN RESULT")
+		} else {
+			ctx.WriteKeyWord(" RUN")
+		}
+		if n.SQL != "" || n.Action == RecommendIndexActionReturn {
 			ctx.WriteKeyWord(" FOR ")
 			ctx.WriteString(n.SQL)
 		}
@@ -2549,15 +2567,15 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 				}
 			}
 		}
-	case "show":
+	case RecommendIndexActionShow:
 		ctx.WriteKeyWord(" SHOW OPTION")
-	case "apply":
+	case RecommendIndexActionApply:
 		ctx.WriteKeyWord(" APPLY ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
-	case "ignore":
+	case RecommendIndexActionIgnore:
 		ctx.WriteKeyWord(" IGNORE ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
-	case "set":
+	case RecommendIndexActionSet:
 		ctx.WriteKeyWord(" SET ")
 		for i, opt := range n.Options {
 			if i != 0 {
@@ -4223,6 +4241,9 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// RedactedValue replaces a secret in redacted output.
+const RedactedValue = "xxxxxx"
+
 // RedactURL redacts sensitive query parameters in supported storage URLs.
 // If the URL is not valid, it returns the original string.
 func RedactURL(str string) string {
@@ -4262,7 +4283,7 @@ func RedactURL(str string) string {
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
-				values[k] = []string{"xxxxxx"}
+				values[k] = []string{RedactedValue}
 			}
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.

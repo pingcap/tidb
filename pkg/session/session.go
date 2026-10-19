@@ -52,6 +52,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -4788,6 +4789,17 @@ func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*dom
 	return domap.GetOrCreateWithFilter(store, filter)
 }
 
+// GetOrCreateBRDomain gets or creates the domain used by standalone BR.
+// WithDisableRPC is set before Init so the published server info is not an RPC target.
+func GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.getWithEtcdClient(store, nil, filter, domainCreateOptions{
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{
+			serverinfo.WithoutStatusEndpointClaim(),
+			serverinfo.WithDisableRPC(),
+		},
+	})
+}
+
 // getStartMode gets the start mode according to the bootstrap version.
 func getStartMode(ver int64) ddl.StartMode {
 	if ver == notBootstrapped {
@@ -5724,7 +5736,14 @@ func (s *session) SetMemoryFootprintChangeHook() {
 			tracker.AttachTo(s.sessionVars.MemTracker)
 			s.sessionVars.MemDBFootprint = tracker
 		}
-		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+		if s.txn.inStmtBufCleanup {
+			// ART can report previously unaccounted node allocations during cleanup.
+			// Keep the footprint accurate without interrupting this cleanup; later
+			// statements must still use the live hook and normal memory enforcement.
+			s.sessionVars.MemDBFootprint.ReplaceBytesUsedForCleanup(int64(mem))
+		} else {
+			s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+		}
 	}
 	s.txn.SetMemoryFootprintChangeHook(hook)
 }

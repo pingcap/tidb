@@ -149,6 +149,23 @@ func TestCreateTableArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
 		}
 	})
+	t.Run("create materialized view shadow", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo: &TableInfo{
+				ID:                     101,
+				MaterializedViewShadow: &MaterializedViewShadowInfo{SourceMViewID: 88},
+			},
+			FKCheck: true,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedViewShadow)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
+		}
+	})
 	t.Run("create materialized view", func(t *testing.T) {
 		inArgs := &CreateMaterializedViewArgs{
 			TableInfo:    &TableInfo{ID: 102, MaterializedView: &MaterializedViewInfo{BaseTableIDs: []int64{88}}},
@@ -225,7 +242,7 @@ func TestDropTableArgs(t *testing.T) {
 		},
 		FKCheck: true,
 	}
-	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
 			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
@@ -255,7 +272,7 @@ func TestFinishedDropTableArgs(t *testing.T) {
 		OldPartitionIDs: []int64{1, 2},
 		OldRuleIDs:      []string{"schema/test/a/par1", "schema/test/a/par2"},
 	}
-	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
 			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
@@ -653,6 +670,49 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 		args, err := GetAlterMaterializedViewLogPurgeArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
+	nextRefreshUnixSeconds := int64(123456)
+	revision := uint64(789)
+	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+		{
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedOldMViewRevision:           &revision,
+			ExpectedLastSuccessReadTSO:         404,
+			ExpectedLastSuccessReadTSONull:     false,
+			NextRefreshUnixSeconds:             &nextRefreshUnixSeconds,
+			ShouldUpdateNextRefreshUnixSeconds: true,
+		},
+		{
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: true,
+		},
+		{
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       303,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: false,
+		},
+	}
+
+	for _, inArgs := range testCases {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionMViewRefreshOutOfPlaceCutover)))
+			args, err := GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs, args)
+		}
 	}
 }
 

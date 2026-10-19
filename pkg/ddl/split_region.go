@@ -17,11 +17,12 @@ package ddl
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -29,13 +30,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
@@ -51,11 +54,12 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
+		policies := prepareSplitPoliciesForTable(ctx, tbInfo)
 		regionIDs = append(regionIDs,
-			applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID, scatterScope)...)
+			applySplitPoliciesForTable(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope, policies)...)
 		for _, def := range parts {
 			regionIDs = append(regionIDs,
-				applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, def.ID, scatterScope)...)
+				applySplitPoliciesForTable(ctxWithTimeout, store, tbInfo, def.ID, scatterScope, policies)...)
 		}
 	} else if hasExplicitRegionSplitConfig(tbInfo) {
 		regionIDs = make([]uint64, 0, len(parts)*(len(tbInfo.Indices)+1))
@@ -83,7 +87,8 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
-		regionIDs = applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID, scatterScope)
+		policies := prepareSplitPoliciesForTable(ctx, tbInfo)
+		regionIDs = applySplitPoliciesForTable(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope, policies)
 	} else if hasExplicitRegionSplitConfig(tbInfo) {
 		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope)
 	} else {
@@ -237,32 +242,116 @@ func hasExplicitRegionSplitConfig(tbInfo *model.TableInfo) bool {
 	return hasSplitPolicies(tbInfo) || (shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0)
 }
 
-func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalTableID int64, scatterScope string) []uint64 {
+type preparedSplitPolicy struct {
+	ctx     *stmtctx.StatementContext
+	lower   []types.Datum
+	upper   []types.Datum
+	regions int
+}
+
+type preparedIndexSplitPolicy struct {
+	index *model.IndexInfo
+	*preparedSplitPolicy
+}
+
+type preparedSplitPolicies struct {
+	table   *preparedSplitPolicy
+	indexes []*preparedIndexSplitPolicy
+}
+
+func prepareSplitPolicy(sctx sessionctx.Context, policy *model.RegionSplitPolicy, boundCols []*model.ColumnInfo) (*preparedSplitPolicy, error) {
+	policyCtx, err := splitPolicyApplyCtx(sctx, policy.TimeZone)
+	if err != nil {
+		return nil, errors.Annotate(err, "resolve time zone")
+	}
+	exprCtx := splitPolicyExprCtx(policyCtx.TimeZone())
+	lower, err := parseValuesToDatums(exprCtx, policy.Lower, boundCols)
+	if err != nil {
+		return nil, errors.Annotate(err, "parse lower bound")
+	}
+	upper, err := parseValuesToDatums(exprCtx, policy.Upper, boundCols)
+	if err != nil {
+		return nil, errors.Annotate(err, "parse upper bound")
+	}
+	return &preparedSplitPolicy{
+		ctx:     policyCtx,
+		lower:   lower,
+		upper:   upper,
+		regions: int(policy.Regions),
+	}, nil
+}
+
+func prepareTableSplitPolicy(sctx sessionctx.Context, tbInfo *model.TableInfo, policy *model.RegionSplitPolicy) (*preparedSplitPolicy, error) {
+	boundCols := regionsplit.GetHandleColumnInfos(tbInfo)
+	prepared, err := prepareSplitPolicy(sctx, policy, boundCols)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSplitPolicyBoundsNotNull(prepared.lower, boundCols); err != nil {
+		return nil, err
+	}
+	if err := checkSplitPolicyBoundsNotNull(prepared.upper, boundCols); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func prepareIndexSplitPolicy(sctx sessionctx.Context, tbInfo *model.TableInfo, idx *model.IndexInfo, policy *model.RegionSplitPolicy) (*preparedSplitPolicy, error) {
+	return prepareSplitPolicy(sctx, policy, splitPolicyIndexColumns(tbInfo, idx))
+}
+
+func prepareSplitPoliciesForTable(sctx sessionctx.Context, tbInfo *model.TableInfo) *preparedSplitPolicies {
+	prepared := &preparedSplitPolicies{}
+	if policy := tbInfo.TableSplitPolicy; policy != nil {
+		var err error
+		prepared.table, err = prepareTableSplitPolicy(sctx, tbInfo, policy)
+		if err != nil {
+			// Metadata written by an older TiDB version can contain a time zone
+			// or bound that is no longer valid. Skip only that policy.
+			logutil.DDLLogger().Warn("failed to prepare table split policy",
+				zap.String("table", tbInfo.Name.O),
+				zap.String("timeZone", policy.TimeZone),
+				zap.Error(err))
+		}
+	}
+
+	for _, idx := range tbInfo.Indices {
+		policy := idx.RegionSplitPolicy
+		if policy == nil || (tbInfo.HasClusteredIndex() && idx.Primary) {
+			continue
+		}
+		values, err := prepareIndexSplitPolicy(sctx, tbInfo, idx, policy)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to prepare index split policy",
+				zap.String("table", tbInfo.Name.O),
+				zap.String("index", idx.Name.O),
+				zap.String("timeZone", policy.TimeZone),
+				zap.Error(err))
+			continue
+		}
+		prepared.indexes = append(prepared.indexes, &preparedIndexSplitPolicy{
+			index:               idx,
+			preparedSplitPolicy: values,
+		})
+	}
+	return prepared
+}
+
+func applySplitPoliciesForTable(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalTableID int64, scatterScope string, policies *preparedSplitPolicies) []uint64 {
 	var regionIDs []uint64
 
-	sc := sctx.GetSessionVars().StmtCtx
 	scatter, scatterGroupID := getScatterConfig(scatterScope, tbInfo.ID)
 
 	// apply table policy
 	// Partitioned-table records use physical partition IDs. The logical table ID
 	// remains available for global index policies below.
-	if policy := tbInfo.TableSplitPolicy; policy != nil &&
+	if policy := policies.table; policy != nil &&
 		(tbInfo.GetPartitionInfo() == nil || physicalTableID != tbInfo.ID) {
-		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
-		if err != nil {
-			logutil.DDLLogger().Warn("failed to parse lower bound for table policy",
-				zap.String("table", tbInfo.Name.O), zap.Error(err))
-			goto index
-		}
-		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
-		if err != nil {
-			logutil.DDLLogger().Warn("failed to parse upper bound for table policy",
-				zap.String("table", tbInfo.Name.O), zap.Error(err))
-			goto index
-		}
-
 		handleCols := regionsplit.BuildHandleColsForSplit(tbInfo)
-		keys, err := regionsplit.GetSplitTableKeys(sc, tbInfo, handleCols, physicalTableID, lower, upper, int(policy.Regions), nil, dbterror.ErrInvalidSplitRegionRanges)
+		keys, err := regionsplit.GetSplitTableKeys(
+			policy.ctx, tbInfo, handleCols, physicalTableID,
+			policy.lower, policy.upper, policy.regions, nil,
+			dbterror.ErrInvalidSplitRegionRanges)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to generate split keys for table policy",
 				zap.String("table", tbInfo.Name.O), zap.Error(err))
@@ -279,40 +368,17 @@ func applySplitPoliciesForTable(ctx context.Context, sctx sessionctx.Context, st
 
 index:
 	// 2. Apply index policies (including PRIMARY)
-	for _, idx := range tbInfo.Indices {
+	for _, policy := range policies.indexes {
+		idx := policy.index
 		if tbInfo.GetPartitionInfo() != nil &&
 			((idx.Global && tbInfo.ID != physicalTableID) || (!idx.Global && tbInfo.ID == physicalTableID)) {
 			continue
 		}
 
-		if idx.RegionSplitPolicy == nil {
-			continue
-		}
-
-		// skip clustered primary
-		if tbInfo.HasClusteredIndex() && idx.Primary {
-			continue
-		}
-
-		policy := idx.RegionSplitPolicy
-		lower, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Lower)
-		if err != nil {
-			logutil.DDLLogger().Warn("failed to parse lower bound for index policy",
-				zap.String("table", tbInfo.Name.O),
-				zap.String("index", idx.Name.O),
-				zap.Error(err))
-			continue
-		}
-		upper, err := parseValuesToDatums(sctx.GetExprCtx(), policy.Upper)
-		if err != nil {
-			logutil.DDLLogger().Warn("failed to parse upper bound for index policy",
-				zap.String("table", tbInfo.Name.O),
-				zap.String("index", idx.Name.O),
-				zap.Error(err))
-			continue
-		}
-
-		keys, err := regionsplit.GetSplitIndexKeys(sc, tbInfo, idx, physicalTableID, lower, upper, int(policy.Regions), nil, dbterror.ErrInvalidSplitRegionRanges)
+		keys, err := regionsplit.GetSplitIndexKeys(
+			policy.ctx, tbInfo, idx, physicalTableID,
+			policy.lower, policy.upper, policy.regions, nil,
+			dbterror.ErrInvalidSplitRegionRanges)
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to generate split keys for index policy",
 				zap.String("table", tbInfo.Name.O),
@@ -332,21 +398,103 @@ index:
 	return regionIDs
 }
 
-func parseValuesToDatums(exprCtx exprctx.ExprContext, values []string) ([]types.Datum, error) {
+// parseValuesToDatums evaluates the persisted split-policy bound expressions and
+// converts the results to the target column types. The conversion mirrors the
+// one-shot `SPLIT TABLE`/`SPLIT INDEX` statements so that a persisted policy
+// produces the same split keys, e.g. a string literal bound for an integer
+// handle column is converted to an integer value instead of retaining its
+// untyped string form. See https://github.com/pingcap/tidb/issues/71395.
+//
+// exprCtx is detached from the applying session's SQL mode and time zone.
+// Policies stored before this validation existed can still fail conversion;
+// callers log that error and skip the policy.
+func parseValuesToDatums(exprCtx expression.BuildContext, values []string, cols []*model.ColumnInfo) ([]types.Datum, error) {
 	datums := make([]types.Datum, len(values))
+	// Only convert when the bound count matches the target columns. A mismatch
+	// means the persisted policy is malformed, keep the previous best-effort
+	// behavior instead of failing the whole split.
+	convert := len(cols) == len(values)
 	for i, val := range values {
 		d, err := expression.ParseSimpleExpr(exprCtx, val)
 		if err != nil {
 			return nil, err
 		}
-		datums[i], err = d.Eval(exprCtx.GetEvalCtx(), chunk.Row{})
+		datum, err := d.Eval(exprCtx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
+		if convert {
+			datum, err = regionsplit.ConvertValueToColumnType(datum, cols[i], exprCtx.GetEvalCtx().TypeCtx())
+			if err != nil {
+				return nil, err
+			}
+		}
+		datums[i] = datum
 	}
 	return datums, nil
 }
 
+func checkSplitPolicyBoundsNotNull(values []types.Datum, boundCols []*model.ColumnInfo) error {
+	for i, value := range values {
+		if !value.IsNull() {
+			continue
+		}
+		columnName := ""
+		if i < len(boundCols) {
+			columnName = boundCols[i].Name.O
+		}
+		return plannererrors.ErrBadNull.GenWithStackByArgs(columnName)
+	}
+	return nil
+}
+
+// splitPolicyExprCtx evaluates a policy with deterministic defaults in its
+// persisted time zone, independent of the applying session.
+func splitPolicyExprCtx(loc *time.Location) expression.BuildContext {
+	if loc == nil {
+		loc = time.UTC
+	}
+	// Match one-shot SPLIT's unsigned conversion without relaxing other
+	// conversion errors handled by StrictFlags.
+	evalCtx := exprstatic.NewEvalContext(
+		exprstatic.WithLocation(loc),
+		exprstatic.WithTypeFlags(types.StrictFlags.WithAllowNegativeToUnsigned(true)),
+	)
+	return exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
+}
+
+// splitPolicyApplyCtx returns a detached statement context for converting and
+// encoding one persisted policy. The context uses default statement flags, so
+// conversion errors stay errors regardless of the worker SQL mode, and its
+// warnings stay off the live session.
+//
+// An empty timeZone is the compatibility fallback for policies written before
+// the defining zone was stored: those bounds are interpreted in the applying
+// session's zone.
+func splitPolicyApplyCtx(sctx sessionctx.Context, timeZone string) (*stmtctx.StatementContext, error) {
+	loc := sctx.GetSessionVars().Location()
+	if timeZone != "" {
+		parsed, err := timeutil.ParseTimeZone(timeZone)
+		if err != nil {
+			return nil, err
+		}
+		loc = parsed
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+	return stmtctx.NewStmtCtxWithTimeZone(loc), nil
+}
+
+// splitPolicyIndexColumns returns the columns an index split policy bound is
+// compared against.
+func splitPolicyIndexColumns(tbInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	cols := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		cols = append(cols, tbInfo.Columns[idxCol.Offset])
+	}
+	return cols
+}
 func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexOption, tbInfo *model.TableInfo) (*model.RegionSplitPolicy, string, error) {
 	indexName := ""
 	if !splitOpt.TableLevel {
@@ -373,62 +521,75 @@ func normalizeSplitPolicy(ctx expression.BuildContext, splitOpt *ast.SplitIndexO
 		return nil, "", dbterror.ErrForbiddenDDL.FastGenByArgs("SPLIT REGION number must not be zero or negative")
 	}
 
-	// default int, it is 1
-	colen := 1
-	if tbInfo.IsCommonHandle && splitOpt.PrimaryKey {
-		pk := tables.FindPrimaryIndex(tbInfo)
-		colen = len(pk.Columns)
-	} else if indexName != "" {
+	// Resolve the columns the bound values are compared against so they can be
+	// converted to the same types as the one-shot `SPLIT TABLE`/`SPLIT INDEX`
+	// statements. See https://github.com/pingcap/tidb/issues/71395.
+	var boundCols []*model.ColumnInfo
+	if splitOpt.TableLevel {
+		boundCols = regionsplit.GetHandleColumnInfos(tbInfo)
+	} else {
 		idx := tbInfo.FindIndexByName(indexName)
 		if idx == nil {
 			return nil, "", dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 		}
-		colen = len(idx.Columns)
+		boundCols = splitPolicyIndexColumns(tbInfo, idx)
 	}
-	if colen != len(splitOpt.SplitOpt.Upper) || colen != len(splitOpt.SplitOpt.Lower) {
+	if len(boundCols) != len(splitOpt.SplitOpt.Upper) || len(boundCols) != len(splitOpt.SplitOpt.Lower) {
 		return nil, "", dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("length of index columns and split values differ")
 	}
 
-	var buf strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
-
+	loc := ctx.GetEvalCtx().Location()
+	if loc == nil {
+		loc = time.UTC
+	}
+	exprCtx := splitPolicyExprCtx(loc)
 	policy := &model.RegionSplitPolicy{
-		Regions: splitOpt.SplitOpt.Num,
+		Regions:  splitOpt.SplitOpt.Num,
+		TimeZone: timeutil.ZoneName(loc),
 	}
-
-	policy.Lower = make([]string, len(splitOpt.SplitOpt.Lower))
-	for i, expr := range splitOpt.SplitOpt.Lower {
-		buf.Reset()
-		// validate expr
-		d, err := expression.BuildSimpleExpr(ctx, expr)
-		if err != nil {
-			return nil, "", errors.Trace(err)
-		}
-		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-			return nil, "", errors.Trace(err)
-		}
-		if err := expr.Restore(restoreCtx); err != nil {
-			return nil, "", errors.Trace(err)
-		}
-		policy.Lower[i] = buf.String()
+	var err error
+	policy.Lower, err = normalizeSplitPolicyBounds(exprCtx, splitOpt.SplitOpt.Lower, boundCols, splitOpt.TableLevel)
+	if err != nil {
+		return nil, "", err
 	}
-
-	policy.Upper = make([]string, len(splitOpt.SplitOpt.Upper))
-	for i, expr := range splitOpt.SplitOpt.Upper {
-		buf.Reset()
-		// validate expr
-		d, err := expression.BuildSimpleExpr(ctx, expr)
-		if err != nil {
-			return nil, "", errors.Trace(err)
-		}
-		if _, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
-			return nil, "", errors.Trace(err)
-		}
-		if err := expr.Restore(restoreCtx); err != nil {
-			return nil, "", errors.Trace(err)
-		}
-		policy.Upper[i] = buf.String()
+	policy.Upper, err = normalizeSplitPolicyBounds(exprCtx, splitOpt.SplitOpt.Upper, boundCols, splitOpt.TableLevel)
+	if err != nil {
+		return nil, "", err
 	}
 
 	return policy, indexName, nil
+}
+
+// normalizeSplitPolicyBounds validates each bound expression, converts it to the
+// matching column type, and returns the restored SQL text.
+func normalizeSplitPolicyBounds(ctx expression.BuildContext, exprs []ast.ExprNode, boundCols []*model.ColumnInfo, rejectNull bool) ([]string, error) {
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	bounds := make([]string, len(exprs))
+	for i, expr := range exprs {
+		buf.Reset()
+		d, err := expression.BuildSimpleExpr(ctx, expr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		value, err := d.Eval(ctx.GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Convert with a detached strict context so an unconvertible bound is
+		// rejected here instead of being stored and skipped when the policy is
+		// applied later.
+		converted, err := regionsplit.ConvertValueToColumnType(value, boundCols[i], ctx.GetEvalCtx().TypeCtx())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rejectNull && converted.IsNull() {
+			return nil, plannererrors.ErrBadNull.GenWithStackByArgs(boundCols[i].Name.O)
+		}
+		if err := expr.Restore(restoreCtx); err != nil {
+			return nil, errors.Trace(err)
+		}
+		bounds[i] = buf.String()
+	}
+	return bounds, nil
 }

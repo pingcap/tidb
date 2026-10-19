@@ -165,6 +165,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain/infosync",

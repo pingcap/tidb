@@ -33,6 +33,7 @@ var (
 	CommandDurationHistogram        *prometheus.HistogramVec
 	QueryRPCHistogram               *prometheus.HistogramVec
 	QueryProcessedKeyHistogram      *prometheus.HistogramVec
+	IACacheHitCount                 *prometheus.CounterVec
 	IARemoteReadSegmentCount        *prometheus.CounterVec
 	IARemoteReadSegmentSize         *prometheus.CounterVec
 	IARemoteReadSegmentWaitDuration *prometheus.HistogramVec
@@ -131,6 +132,14 @@ func InitServerMetrics() {
 			Name:      "query_statement_processed_keys",
 			Help:      "Bucketed histogram of processed key count during the scan of handled query statements.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 32),
+		}, []string{LblSQLType, LblDb})
+
+	IACacheHitCount = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_cache_hit_count",
+			Help:      "Counter of IA segment cache hits observed by TiDB.",
 		}, []string{LblSQLType, LblDb})
 
 	IARemoteReadSegmentCount = metricscommon.NewCounterVec(

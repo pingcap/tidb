@@ -1551,6 +1551,58 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	})
 }
 
+func TestRangeCountThreshold(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_range_count")
+		tk.MustExec("create table t_range_count (a int, b int, c int, index idx(a, b, c))")
+		tk.MustExec("insert into t_range_count values (10,40,70), (20,50,75), (30,60,80), (10,99,70)")
+		tk.MustExec("set @@tidb_opt_range_max_size=0")
+		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("1000"))
+		query := "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30) and b in (40,50,60) and c between 70 and 80"
+		tk.MustExec("set @@tidb_opt_range_max_count=0")
+		unlimitedPlan := tk.MustQuery("explain format='plan_tree' " + query).Rows()
+		require.Contains(t, fmt.Sprint(unlimitedPlan), "range:[10 40 70,10 40 80]")
+		require.Contains(t, fmt.Sprint(unlimitedPlan), "[30 60 70,30 60 80]")
+
+		// The threshold only affects candidate comparison; all nine ranges can still be built.
+		tk.MustExec("set @@tidb_opt_range_max_count=4")
+		tk.MustQuery("explain format='plan_tree' " + query).Check(unlimitedPlan)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery(query + " order by a").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
+		singleIN := "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30,40,50,60)"
+		plan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + singleIN).Rows())
+		require.Contains(t, plan, "IndexRangeScan")
+		require.Contains(t, plan, "[60,60]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustExec("drop table if exists t_range_count_pk")
+		tk.MustExec("create table t_range_count_pk (a int, b int, primary key(a,b) clustered)")
+		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' select * from t_range_count_pk where a in (10,20,30,40,50,60)").Rows())
+		require.Contains(t, plan, "TableRangeScan")
+		require.Contains(t, plan, "[60,60]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustQuery("select /*+ set_var(tidb_opt_range_max_count=1) */ @@tidb_opt_range_max_count").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("4"))
+
+		// Exceeding the threshold must not disable prepared-plan caching or range rebuilds.
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+		tk.MustExec("prepare stmt from 'select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (?,?,?) and b in (?,?,?) and c between ? and ? order by a,b'")
+		tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50, @f=60, @g=70, @h=80")
+		for i := range 2 {
+			tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
+			require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(strconv.Itoa(i)))
+		}
+		tk.MustExec("set @c=70, @e=99")
+		tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").Check(testkit.Rows("10 40 70", "10 99 70"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("deallocate prepare stmt")
+	})
+}
+
 func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")

@@ -735,6 +735,7 @@ func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
 	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, "create table test.t (a int)")
 	execCreate(t, tracker, "create table test.mv (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
 
 	sctx := mock.NewContext()
 	p := parser.New()
@@ -753,6 +754,12 @@ func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
 	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mvInfo))
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow").Clone()
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: 1}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), shadowInfo))
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.shadow (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
 }
 
 func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
@@ -777,6 +784,7 @@ func TestDropMaterializedViewLog(t *testing.T) {
 	tracker := schematracker.NewSchemaTracker(2)
 	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
 
 	sctx := mock.NewContext()
 	p := parser.New()
@@ -792,6 +800,14 @@ func TestDropMaterializedViewLog(t *testing.T) {
 	require.ErrorIs(t, err, infoschema.ErrTableNotExists)
 	baseTable := mustTableByName(t, tracker, "test", "t")
 	require.Nil(t, baseTable.MaterializedViewBase)
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow").Clone()
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: 1}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), shadowInfo))
+	dropShadowStmt, err := p.ParseOneStmt("drop materialized view log on test.shadow", "", "")
+	require.NoError(t, err)
+	err = tracker.DropMaterializedViewLog(sctx, dropShadowStmt.(*ast.DropMaterializedViewLogStmt))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
 }
 
 func TestDropMaterializedViewLogWithDependentMaterializedView(t *testing.T) {

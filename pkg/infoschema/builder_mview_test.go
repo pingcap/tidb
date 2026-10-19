@@ -45,6 +45,111 @@ func TestApplyDropMaterializedViewDiff(t *testing.T) {
 	}
 }
 
+func TestApplyMViewRefreshOutOfPlaceCutoverDiff(t *testing.T) {
+	for _, useV2 := range []bool{false, true} {
+		name := "infoschema-v1"
+		if useV2 {
+			name = "infoschema-v2"
+		}
+		t.Run(name, func(t *testing.T) {
+			re := internal.CreateAutoIDRequirement(t)
+			t.Cleanup(func() {
+				require.NoError(t, re.Store().Close())
+			})
+
+			dbInfo, policy, baseTable, mlogTable, oldMView := setupMaterializedViewInfoSchema(t, re, true)
+			shadowTable := oldMView.Clone()
+			shadowTable.ID = oldMView.ID + 1000
+			shadowTable.Name = ast.NewCIStr("__mv_shadow")
+			shadowTable.MaterializedView = nil
+			shadowTable.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMView.ID}
+			internal.AddTable(t, re.Store(), dbInfo.ID, shadowTable)
+
+			baseAfterCutover := baseTable.Clone()
+			baseAfterCutover.MaterializedViewBase.MViewIDs = []int64{shadowTable.ID}
+			internal.UpdateTable(t, re.Store(), dbInfo, baseAfterCutover)
+			mlogAfterCutover := mlogTable.Clone()
+			mlogAfterCutover.MaterializedViewLog.DependentMViewIDs = []int64{shadowTable.ID}
+			internal.UpdateTable(t, re.Store(), dbInfo, mlogAfterCutover)
+
+			newMView := shadowTable.Clone()
+			newMView.Name = oldMView.Name
+			newMView.MaterializedViewShadow = nil
+			newMView.MaterializedView = oldMView.MaterializedView.Clone()
+			internal.UpdateTable(t, re.Store(), dbInfo, newMView)
+			internal.DropTable(t, re.Store(), dbInfo, oldMView.ID, oldMView.Name.O)
+
+			is := applyMaterializedViewCutoverDiff(t, re, useV2, dbInfo.ID, policy,
+				[]*model.TableInfo{baseTable, mlogTable, oldMView, shadowTable}, &model.SchemaDiff{
+					Type:       model.ActionMViewRefreshOutOfPlaceCutover,
+					SchemaID:   dbInfo.ID,
+					TableID:    shadowTable.ID,
+					OldTableID: oldMView.ID,
+					Version:    2,
+					AffectedOpts: []*model.AffectedOption{{
+						SchemaID: dbInfo.ID, OldSchemaID: dbInfo.ID,
+						TableID: baseTable.ID, OldTableID: baseTable.ID,
+					}, {
+						SchemaID: dbInfo.ID, OldSchemaID: dbInfo.ID,
+						TableID: mlogTable.ID, OldTableID: mlogTable.ID,
+					}},
+				})
+
+			_, exists := is.TableByID(context.Background(), oldMView.ID)
+			require.False(t, exists)
+			newTable, exists := is.TableByID(context.Background(), shadowTable.ID)
+			require.True(t, exists)
+			require.Equal(t, oldMView.Name, newTable.Meta().Name)
+			require.NotNil(t, newTable.Meta().MaterializedView)
+			require.Nil(t, newTable.Meta().MaterializedViewShadow)
+			shadowByName, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("__mv_shadow"))
+			require.Error(t, err)
+			require.Nil(t, shadowByName)
+			mvByName, err := is.TableByName(context.Background(), ast.NewCIStr("test"), oldMView.Name)
+			require.NoError(t, err)
+			require.Equal(t, shadowTable.ID, mvByName.Meta().ID)
+			base, exists := is.TableByID(context.Background(), baseTable.ID)
+			require.True(t, exists)
+			require.Equal(t, []int64{shadowTable.ID}, base.Meta().MaterializedViewBase.MViewIDs)
+			mlog, exists := is.TableByID(context.Background(), mlogTable.ID)
+			require.True(t, exists)
+			require.Equal(t, []int64{shadowTable.ID}, mlog.Meta().MaterializedViewLog.DependentMViewIDs)
+		})
+	}
+}
+
+func applyMaterializedViewCutoverDiff(
+	t *testing.T,
+	re autoid.Requirement,
+	useV2 bool,
+	dbID int64,
+	policy *model.PolicyInfo,
+	tables []*model.TableInfo,
+	diff *model.SchemaDiff,
+) infoschema.InfoSchema {
+	schemaCacheSize := uint64(0)
+	if useV2 {
+		schemaCacheSize = 1
+	}
+	data := infoschema.NewData()
+	dbInfo := &model.DBInfo{ID: dbID, Name: ast.NewCIStr("test"), State: model.StatePublic}
+	dbInfo.Deprecated.Tables = tables
+	builder := infoschema.NewBuilder(re, schemaCacheSize, nil, data, useV2)
+	require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{dbInfo}, []*model.PolicyInfo{policy}, nil, nil, 1))
+	oldInfoSchema := builder.Build(math.MaxUint64)
+
+	txn, err := re.Store().Begin()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, txn.Rollback())
+	})
+	builder = infoschema.NewBuilder(re, schemaCacheSize, nil, data, useV2)
+	require.NoError(t, builder.InitWithOldInfoSchema(oldInfoSchema))
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), diff)
+	require.NoError(t, err)
+	return builder.Build(math.MaxUint64)
+}
+
 func testApplyDropMaterializedViewDiff(t *testing.T, useV2 bool) {
 	re := internal.CreateAutoIDRequirement(t)
 	t.Cleanup(func() {

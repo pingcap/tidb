@@ -386,6 +386,10 @@ type ServerInfo struct {
 	ServerType    ServerType
 	ServerVersion *semver.Version
 	HasTiKV       bool
+	// NextGen reports whether the target is a next-gen (premium keyspace)
+	// cluster. Such clusters expose their version using the cloud format
+	// `TiDB-CLOUD.<YYYYMM>.<patch>` / `Release Version: CLOUD.<YYYYMM>.<patch>`.
+	NextGen bool
 }
 
 var (
@@ -462,6 +466,9 @@ func ParseServerInfo(src string) ServerInfo {
 		// try to parse TiDB X version if Classic tidb version parsing fails.
 		if versionStr == "" {
 			versionStr = parseTiDBXVersionToSemver(src)
+			// A non-empty result means the version string used the cloud
+			// (next-gen) format, so mark the target as a next-gen cluster.
+			serverInfo.NextGen = versionStr != ""
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {

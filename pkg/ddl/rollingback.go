@@ -642,7 +642,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(w.sess.Session(), jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
-		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		err = rollingbackDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(jobCtx, job)
@@ -660,9 +661,12 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionTruncateTablePartition:
 		ver, err = rollingbackTruncateTablePartition(jobCtx, job)
+	case model.ActionCreateMaterializedViewShadow:
+		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate,
+		model.ActionMViewRefreshOutOfPlaceCutover,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIDCache, model.ActionAlterIndexVisibility,
 		model.ActionModifySchemaDefaultPlacement, model.ActionRecoverSchema:

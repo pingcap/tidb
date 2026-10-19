@@ -245,6 +245,7 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
@@ -282,6 +283,7 @@ func TestAddIndexDistCancel(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -469,6 +471,7 @@ func TestAddIndexInvalidDistTaskVariableSetting(t *testing.T) {
 func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -491,6 +494,7 @@ func TestAddUKErrorMessage(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -509,6 +513,7 @@ func TestAddUKErrorMessage(t *testing.T) {
 func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	if kerneltype.IsClassic() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
@@ -539,6 +544,7 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 func TestAddIndexScheduleAway(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	if kerneltype.IsClassic() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
@@ -579,8 +585,18 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec(updateExecID)
 		})
 	})
+	var afterRunSubtaskRuns atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(_ taskexecutor.TaskExecutor, _ *error, ctx context.Context) {
+			// The read-index subtask cannot finish its first run before the
+			// scheduled-away cancel above, so the first run is the one that must
+			// observe the cancelled context. The cancelled subtask is then
+			// retried, and on global sort further steps (merge-sort,
+			// write-and-ingest) run as well; those later runs have a live context,
+			// so only assert on the first run.
+			if afterRunSubtaskRuns.Add(1) != 1 {
+				return
+			}
 			require.Error(t, ctx.Err())
 			require.Equal(t, context.Canceled, context.Cause(ctx))
 		},
@@ -602,6 +618,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")

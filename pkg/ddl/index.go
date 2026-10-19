@@ -1387,6 +1387,25 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 		return nil
 	}
 	loadCloudStorageURI(w, job)
+	// On a NextGen cluster, global sort is the product design for add index /
+	// modify column; local sort is not supported. So, like IMPORT INTO, reject
+	// add index / modify column with local sort.
+	//
+	// ingest.LitInitialized is required to tell whether the lightning/ingest
+	// environment is available: when it is not (e.g. tests backed by a
+	// non-TiKV store), pickBackfillType falls back to txn-merge backfill, which
+	// does not sort locally and therefore must not be rejected here.
+	//
+	// job.ReorgMeta.IsFastReorg is required here even though fast reorg is
+	// always enabled on NextGen: for jobs involving system-related DBs,
+	// initJobReorgMetaFromVariables explicitly disables fast reorg and dist
+	// reorg because they cannot use the distributed task framework. Such jobs
+	// only happen during upgrade (e.g. ADD INDEX on mysql.stats_history) and
+	// fall back to txn backfill, which doesn't sort at all, so they must not be
+	// rejected here.
+	if kerneltype.IsNextGen() && ingest.LitInitialized && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("add index or modify column with local sort")
+	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
 		return err
@@ -1978,9 +1997,8 @@ func doReorgWorkForCreateIndex(
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		}
-		// TODO: Account the RU staged by the temporary-index merge. It is currently
-		// discarded when this job step ends.
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+		accountPendingReorgRU(jobCtx, job, err)
 		return true, ver, errors.Trace(err)
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", allIndexInfos[0].BackfillState)
@@ -2507,6 +2525,7 @@ type baseIndexWorker struct {
 
 type addIndexTxnWorker struct {
 	baseIndexWorker
+	physicalID int64
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -2545,6 +2564,7 @@ func newAddIndexTxnWorker(
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	return &addIndexTxnWorker{
+		physicalID: t.GetPhysicalID(),
 		baseIndexWorker: baseIndexWorker{
 			backfillCtx: bfCtx,
 			indexes:     allIndexes,
@@ -2725,6 +2745,13 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if idxInfo.Global {
+		// Equal compares partition IDs only when both handles are PartitionHandles.
+		// The same inner handle in another partition is a different row.
+		if _, ok := handle.(kv.PartitionHandle); !ok {
+			handle = kv.NewPartitionHandle(w.physicalID, handle)
+		}
 	}
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {
@@ -3494,15 +3521,29 @@ func (w *worker) recordDistTaskRU(jobID int64, task *proto.Task) error {
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Trace(err)
 	}
+	if rc := w.getReorgCtx(jobID); rc != nil {
+		rc.setRU(distTaskRU(taskMeta))
+	}
+	return nil
+}
+
+// distTaskRU converts the workload of a finished backfill DXF task into RU v2.
+// A task is either the ingest backfill or the temp-index merge, so it is
+// accounted with the weight of the write path it actually used.
+func distTaskRU(taskMeta *BackfillTaskMeta) float64 {
+	if taskMeta.Summary == nil {
+		return 0
+	}
+	weights := currentDDLRUWeights()
+	if taskMeta.MergeTempIndex {
+		// The temp-index merge writes the merged index through transactions
+		// instead of ingest, so it is charged on committed transaction bytes.
+		return float64(taskMeta.Summary.MergeTempIndexTxnKVSize) * weights.TxnKVBytes
+	}
 	// TODO: Include scan bytes in this estimate. For partial indexes, the index
 	// KV size can be much smaller than the scanned bytes. For now, only index KV
 	// size is considered because normal and multi-valued indexes are more common.
-	if taskMeta.Summary != nil {
-		if rc := w.getReorgCtx(jobID); rc != nil {
-			rc.setRU(float64(taskMeta.Summary.IndexKVSize) * currentDDLRUWeights().IngestKVBytes)
-		}
-	}
-	return nil
+	return float64(taskMeta.Summary.IndexKVSize) * weights.IngestKVBytes
 }
 
 func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {

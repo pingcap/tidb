@@ -250,6 +250,10 @@ func (u *CRRUpstreamStorage) PresignFile(ctx context.Context, fileName string, e
 	return u.storage.PresignFile(ctx, fileName, expire)
 }
 
+func (u *CRRUpstreamStorage) Features() storeapi.Features {
+	return storeapi.FeatureOf(u.storage)
+}
+
 func (u *CRRUpstreamStorage) Close() {
 	u.storage.Close()
 }
