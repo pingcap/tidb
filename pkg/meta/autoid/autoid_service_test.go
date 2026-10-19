@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/autoid"
@@ -334,19 +335,6 @@ func TestRebaseCanceledRPCReturnsQuickly(t *testing.T) {
 	require.Equal(t, int64(1), mockCli.rebaseCallCount.Load(), "rebase should not retry on canceled context")
 }
 
-type observedDoneContext struct {
-	context.Context
-	doneObserved chan struct{}
-	observed     atomic.Bool
-}
-
-func (ctx *observedDoneContext) Done() <-chan struct{} {
-	if ctx.observed.CompareAndSwap(false, true) {
-		close(ctx.doneObserved)
-	}
-	return ctx.Context.Done()
-}
-
 // TestBackoffCtxAware verifies that backoffer.Backoff respects context cancellation.
 func TestBackoffCtxAware(t *testing.T) {
 	var bo backoffer
@@ -369,32 +357,28 @@ func TestBackoffCtxAware(t *testing.T) {
 	require.Less(t, time.Since(start), 10*time.Millisecond, "Backoff should return immediately on canceled ctx")
 
 	// With a valid ctx that gets canceled during sleep, Backoff should return early.
-	bo.Reset()
-	bo.Duration = backoffMax / 2
-	ctx, cancel = context.WithCancel(context.Background())
-	observedCtx := &observedDoneContext{
-		Context:      ctx,
-		doneObserved: make(chan struct{}),
-	}
-	backoffErr := make(chan error, 1)
-	go func() {
-		backoffErr <- bo.Backoff(observedCtx)
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		bo := backoffer{Duration: backoffMax / 2}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		backoffErr := make(chan error, 1)
+		go func() {
+			backoffErr <- bo.Backoff(ctx)
+		}()
 
-	select {
-	case <-observedCtx.doneObserved:
-	case <-time.After(time.Second):
-		t.Fatal("Backoff should observe ctx before sleeping")
-	}
-	cancel()
-
-	select {
-	case err = <-backoffErr:
-		require.Error(t, err)
+		// Wait until Backoff is blocked in its timer/context select without advancing time.
+		synctest.Wait()
+		select {
+		case err := <-backoffErr:
+			t.Fatalf("Backoff returned before cancellation: %v", err)
+		default:
+		}
+		start := time.Now()
+		cancel()
+		err := <-backoffErr
 		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(time.Second):
-		t.Fatal("Backoff should return after ctx is canceled during sleep")
-	}
+		require.Zero(t, time.Since(start), "Backoff should return before the timer expires")
+	})
 }
 
 func TestAutoIDRPCRetryPolicy(t *testing.T) {
