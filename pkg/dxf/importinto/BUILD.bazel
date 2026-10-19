@@ -121,7 +121,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 41,
+    shard_count = 42,
     deps = [
         "//pkg/config",
         "//pkg/config/configtypes",
@@ -176,6 +176,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/codec",
+        "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/etcd",
         "//pkg/util/mock",
