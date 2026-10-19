@@ -28,11 +28,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -46,6 +48,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/mock/gomock"
 )
 
@@ -126,7 +129,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
 	var taskMgr scheduler.TaskManager = manager
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+	ext := importinto.NewImportSchedulerForTest(proto.ImportStepImport, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -385,7 +388,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 	t.Run("transitions_to_encode_and_sort", func(t *testing.T) {
 		jobID, task := createPrepareTask(t)
 		d := sch.MockScheduler(task)
-		ext := importinto.NewImportSchedulerForTest(true, task,
+		ext := importinto.NewImportSchedulerForTest(proto.ImportStepEncodeAndSort, task,
 			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 
 		require.NoError(t, ext.OnPrepare(ctx, d, task))
@@ -415,7 +418,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 		jobID, task := createPrepareTask(t)
 		require.NoError(t, importer.CancelJob(ctx, conn, jobID))
 		d := sch.MockScheduler(task)
-		ext := importinto.NewImportSchedulerForTest(true, task,
+		ext := importinto.NewImportSchedulerForTest(proto.ImportStepEncodeAndSort, task,
 			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 
 		err := ext.OnPrepare(ctx, d, task)
@@ -432,7 +435,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 	t.Run("cancelled_after_prepare", func(t *testing.T) {
 		jobID, task := createPrepareTask(t)
 		d := sch.MockScheduler(task)
-		ext := importinto.NewImportSchedulerForTest(true, task,
+		ext := importinto.NewImportSchedulerForTest(proto.ImportStepEncodeAndSort, task,
 			scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 		require.NoError(t, ext.OnPrepare(ctx, d, task))
 		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
@@ -527,7 +530,7 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 	}
 
 	var taskMgr scheduler.TaskManager = mgr
-	ext := importinto.NewImportSchedulerForTest(false, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+	ext := importinto.NewImportSchedulerForTest(proto.ImportStepImport, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
 	require.NoError(t, ext.OnDone(ctx, nil, task))
 
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -535,7 +538,54 @@ func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
 	require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
 }
 
+func TestQueryGCBarrierKeeper(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
+	gcStates := store.(kv.StorageWithPD).GetPDClient().GetGCStatesClient(uint32(store.GetCodec().GetKeyspaceID()))
+	barriers := func() []string {
+		state, err := gcStates.GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
+		require.NoError(t, err)
+		bs, err := state.GetGCBarriers()
+		require.NoError(t, err)
+		ids := make([]string, 0, len(bs))
+		for _, b := range bs {
+			ids = append(ids, b.BarrierID)
+		}
+		return ids
+	}
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	acquired := 0
+	acquireRuntime := func() (sqlsvrapi.Runtime, func(), error) {
+		acquired++
+		return newImportTestRuntime(ctrl, store, nil), func() {}, nil
+	}
+	keeper := importinto.QueryGCBarrierKeeper{}
+	keep := func(query *importer.QueryPlan, step proto.Step) {
+		bs, err := (&importinto.LogicalPlan{Plan: importer.Plan{Query: query}}).ToTaskMeta()
+		require.NoError(t, err)
+		task := &proto.Task{TaskBase: proto.TaskBase{ID: 1, Type: proto.ImportInto, Step: step}, Meta: bs}
+		require.NoError(t, keeper.KeepTask(ctx, task, acquireRuntime))
+	}
+	keep(nil, proto.StepInit)
+	keep(&importer.QueryPlan{}, proto.ImportStepQuery)
+	keep(&importer.QueryPlan{ReadTS: ver.Ver}, proto.ImportStepMergeSort)
+	require.Empty(t, barriers())
+	require.Zero(t, acquired)
+	keep(&importer.QueryPlan{ReadTS: ver.Ver}, proto.ImportStepQuery)
+	require.Equal(t, []string{importinto.QueryGCBarrierID(ver.Ver)}, barriers())
+	require.Equal(t, 1, acquired)
+}
+
 func TestSchedulerExtGlobalSort(t *testing.T) {
+	t.Run("files", func(t *testing.T) { testSchedulerExtGlobalSort(t, proto.ImportStepEncodeAndSort) })
+	t.Run("query", func(t *testing.T) { testSchedulerExtGlobalSort(t, proto.ImportStepQuery) })
+}
+
+func testSchedulerExtGlobalSort(t *testing.T, sourceStep proto.Step) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -602,6 +652,15 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			2: {{Path: "gs://test-load/2.csv"}},
 		},
 	}
+	sourceSubtasks := 2
+	if sourceStep == proto.ImportStepQuery {
+		logicalPlan.Plan.Query = &importer.QueryPlan{Keyspace: keyspace}
+		logicalPlan.Plan.DataSourceType = importer.DataSourceTypeQuery
+		logicalPlan.Plan.Path = ""
+		logicalPlan.ChunkMap = nil
+		logicalPlan.Stmt = "IMPORT INTO db.tb FROM (SELECT * FROM db.src)"
+		sourceSubtasks = 1
+	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
@@ -622,15 +681,17 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.ID = taskID
 
-	// to encode-sort stage, job should be running
+	// Enter the source step; the job should be running.
 	d := sch.MockScheduler(task)
 	var taskMgr scheduler.TaskManager = manager
-	ext := importinto.NewImportSchedulerForTest(true, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+	ext := importinto.NewImportSchedulerForTest(sourceStep, task, scheduler.NewParamForTest(taskMgr, newImportTestRuntime(ctrl, store, pool)))
+	task.Keyspace = keyspace
+	require.NoError(t, ext.Init())
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
-	require.Len(t, subtaskMetas, 2)
+	require.Len(t, subtaskMetas, sourceSubtasks)
 	nextStep := ext.GetNextStep(&task.TaskBase)
-	require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
+	require.Equal(t, sourceStep, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
@@ -677,6 +738,9 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
 		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+		summary := &execute.SubtaskSummary{}
+		summary.RowCnt.Store(3)
+		require.NoError(t, manager.UpdateSubtaskSummary(ctx, s.ID, summary))
 	}
 
 	// to merge-sort stage
@@ -752,6 +816,9 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepPostProcess, task.Step)
+	var completedMeta importinto.TaskMeta
+	require.NoError(t, json.Unmarshal(task.Meta, &completedMeta))
+	require.EqualValues(t, 3*sourceSubtasks, completedMeta.Summary.ImportedRows)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)

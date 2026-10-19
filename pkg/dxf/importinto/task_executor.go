@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -50,9 +51,12 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -78,6 +82,7 @@ type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
+	queryRuntime  sqlsvrapi.Runtime
 	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
@@ -329,8 +334,29 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	})
 
 	wctx := workerpool.NewContext(ctx)
-	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
-	for _, chunk := range subtaskMeta.Chunks {
+	defer wctx.Cancel()
+	eg := util.NewErrorGroupWithRecover()
+	chunks := subtaskMeta.Chunks
+	concurrency := s.concurrency
+	if query := s.taskMeta.Plan.Query; query != nil {
+		selected := make(chan importer.QueryChunk, 1)
+		s.tableImporter.SetSelectedChunkCh(selected)
+		// Each encode worker consumes chunks from the shared SELECT output channel.
+		chunks = make([]importer.Chunk, concurrency)
+		for i := range chunks {
+			chunks[i].Timestamp = query.Timestamp
+		}
+		eg.Go(func() error {
+			err := s.readQuery(wctx, selected)
+			if err != nil {
+				wctx.OnError(err)
+			}
+			return err
+		})
+	}
+
+	tasks := make([]*importStepMinimalTask, 0, len(chunks))
+	for _, chunk := range chunks {
 		tasks = append(tasks, &importStepMinimalTask{
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
@@ -340,23 +366,68 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	sourceOp := operator.NewSimpleDataSource(wctx, tasks)
-	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, s.concurrency)
+	op := newEncodeAndSortOperator(wctx, s, sharedVars, s, subtask.ID, concurrency)
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)
-	if err := pipe.Execute(); err != nil {
-		return err
+	if err = pipe.Execute(); err == nil {
+		err = pipe.Close()
 	}
-
-	err = pipe.Close()
+	if err != nil {
+		wctx.OnError(err)
+	}
+	queryErr := eg.Wait()
 	if opErr := wctx.OperatorErr(); opErr != nil {
 		return opErr
 	}
+	if queryErr != nil {
+		return queryErr
+	}
+	return s.onFinished(ctx, subtask, objStore)
+}
+
+func (s *importStepExecutor) readQuery(
+	ctx context.Context,
+	selected chan<- importer.QueryChunk,
+) error {
+	defer close(selected)
+	if err := checkQueryCollation(&s.taskMeta.Plan); err != nil {
+		return err
+	}
+	pool := s.queryRuntime.SysSessionPool()
+	resource, err := pool.Get()
 	if err != nil {
 		return err
 	}
 
-	return s.onFinished(ctx, subtask, objStore)
+	defer pool.Destroy(resource)
+	se := resource.(sessionctx.Context)
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
+	defer s.recordQueryReadBytes(ctx)
+	// Limit the SELECT to a quarter of the subtask memory to leave room for encoding and sort writers.
+	return importer.RunImportQuery(
+		ctx, se, s.taskMeta.Plan.Query, s.taskMeta.Stmt,
+		s.GetResource().Mem.Capacity()/4, selected)
+}
+
+// checkQueryCollation rejects a query whose keyspace uses another collation
+// mode than this node: the SELECT reads the mode of the process, unlike the
+// encoder, which uses the mode captured at submission.
+func checkQueryCollation(plan *importer.Plan) error {
+	nodeNewCollate := collate.NewCollationEnabled()
+	if useNewCollate := plan.GetUseNewCollateOrDefault(nodeNewCollate); useNewCollate != nodeNewCollate {
+		return errors.Errorf("import query needs new collation %t, but this node has %t", useNewCollate, nodeNewCollate)
+	}
+	return nil
+}
+
+// recordQueryReadBytes meters the bytes that TiKV and TiFlash returned to the
+// query, like the cluster read bytes of ADD INDEX.
+func (s *importStepExecutor) recordQueryReadBytes(ctx context.Context) {
+	_, details, _ := execdetails.GetExecDetailsFromContext(ctx)
+	if n := details.UnpackedBytesReceivedKVTotal + details.UnpackedBytesReceivedMPPTotal; n > 0 {
+		s.GetMeterRecorder().IncClusterReadBytes(uint64(n))
+	}
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -927,13 +998,14 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 
 	store := e.TaskRuntime.Store()
 	switch task.Step {
-	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 		return &importStepExecutor{
 			taskID:       task.ID,
 			taskMeta:     &taskMeta,
 			logger:       logger,
 			store:        store,
 			indicesGenKV: indicesGenKV,
+			queryRuntime: e.TaskRuntime,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{

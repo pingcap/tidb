@@ -31,7 +31,8 @@ import (
 // Duration records elapsed time of an IMPORT INTO history job.
 type Duration struct {
 	// All fields use Go time.Duration string format, for example "40m0s".
-	Total            string `json:"total"`
+	Total string `json:"total"`
+	// Encode includes the entire SELECT, encoding and sorting pipeline for FROM SELECT imports.
 	Encode           string `json:"encode"`
 	MergeSort        string `json:"merge_sort"`
 	Ingest           string `json:"ingest"`
@@ -208,7 +209,7 @@ func GetFromHistory(
 	for step, bounds := range stepDurations {
 		duration := formatDuration(max(bounds[1]-bounds[0], 0))
 		switch step {
-		case proto.ImportStepEncodeAndSort:
+		case proto.ImportStepEncodeAndSort, proto.ImportStepQuery:
 			info.Duration.Encode = duration
 		case proto.ImportStepMergeSort:
 			info.Duration.MergeSort = duration
