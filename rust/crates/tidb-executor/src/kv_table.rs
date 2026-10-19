@@ -42,6 +42,7 @@ mod auto_random;
 mod cache;
 mod column_deps;
 mod index_entries;
+mod index_states;
 mod partition_maintenance;
 pub use partition_maintenance::{PartitionReorg, RecreatedIndex};
 mod row_decoder;
@@ -67,8 +68,8 @@ pub use row_decoder::{
 };
 pub use table_meta::{
     index_ranges_estimated_memory_usage, intersect_index_ranges, FkAction, IndexRange, KvColumn,
-    KvForeignKey, KvIndex, PreparedPointGetDecodeContext, RowDecodeContext, TableCharset,
-    TableHandle,
+    KvForeignKey, KvIndex, NonPublicIndex, PreparedPointGetDecodeContext, RowDecodeContext,
+    TableCharset, TableHandle,
 };
 pub(crate) use table_scan::insert_extra_handle;
 pub use table_scan::{
@@ -517,6 +518,8 @@ pub struct KvTable {
     /// The table's indexes (Go `TableInfo.Indices`); `Arc`-shared like
     /// `columns`, for the same reason.
     indexes: std::sync::Arc<Vec<KvIndex>>,
+    /// Indexes a DDL is still adding or dropping; written by state only.
+    nonpublic_indexes: std::sync::Arc<Vec<NonPublicIndex>>,
     /// Go `TableInfo.MaxIndexID`, retained independently of surviving indexes.
     max_index_id: i64,
     /// Compiled `WHERE` predicates for partial indexes, keyed by the Go
@@ -1383,6 +1386,7 @@ impl KvTable {
             keys_read: None,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
+            nonpublic_indexes: std::sync::Arc::new(Vec::new()),
             max_index_id: 0,
             partial_index_conditions: std::collections::BTreeMap::new(),
             common_handle_offsets: Vec::new(),
@@ -3959,6 +3963,7 @@ impl KvTable {
             || (self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty())
             || self.partition.is_some()
             || self.indexes.iter().any(|index| !index.clustered_primary)
+            || !self.nonpublic_indexes.is_empty()
             || self.record_physical_ids().len() != 1
         {
             return Ok(None);
@@ -3997,6 +4002,30 @@ impl KvTable {
         self.indexes_mut().push(index);
     }
 
+    /// Adds an index a DDL is still adding or dropping, which only the write
+    /// path maintains (by its state, as Go's `TableFromMeta` keeps every
+    /// index that is not `StateNone`).
+    pub fn add_nonpublic_index(
+        &mut self,
+        index: KvIndex,
+        state: tidb_model::SchemaState,
+        backfill_state: tidb_model::BackfillState,
+    ) {
+        self.max_index_id = self.max_index_id.max(index.id);
+        self.record_mv_key_part_source(&index);
+        std::sync::Arc::make_mut(&mut self.nonpublic_indexes).push(NonPublicIndex {
+            index,
+            state,
+            backfill_state,
+        });
+    }
+
+    /// The indexes only the write path maintains.
+    #[must_use]
+    pub fn nonpublic_indexes(&self) -> &[NonPublicIndex] {
+        &self.nonpublic_indexes
+    }
+
     /// Go `completeError`'s lookup: the name of the index whose key part is
     /// the column at `offset` -- the last such index, as Go's loop leaves it.
     pub(crate) fn func_index_name(&self, offset: usize) -> Option<&str> {
@@ -4025,6 +4054,12 @@ impl KvTable {
             let source = source.go_to_lower();
             self.mv_key_part_sources.insert(index.id, source);
         }
+    }
+
+    /// The AUTO_INCREMENT column's offset in a row, if the table has one.
+    #[must_use]
+    pub(crate) fn auto_increment_column_offset(&self) -> Option<usize> {
+        self.auto_increment_offset
     }
 
     /// Go `NextGlobalAutoID`, which SHOW CREATE TABLE prints: the shared
@@ -4815,7 +4850,7 @@ impl KvTable {
         // Go removes the old index entries and writes the new ones. They point
         // AT the handle, so a moved row needs them rewritten even when the
         // indexed values did not change.
-        if !self.indexes.is_empty() {
+        if !self.indexes.is_empty() || !self.nonpublic_indexes.is_empty() {
             let owned_old;
             let old = match old_row {
                 Some(old) => Some(old),
@@ -4954,7 +4989,7 @@ impl KvTable {
             return Ok(());
         };
         let physical_id = tidb_codec::decode_table_id(key.as_bytes());
-        if !self.indexes.is_empty() {
+        if !self.indexes.is_empty() || !self.nonpublic_indexes.is_empty() {
             if let Some(row) = self.read_row(handle, &RowDecodeContext::for_write(ctx))? {
                 self.delete_index_entries(&row, handle, physical_id, &ctx.session_zone())?;
             }
@@ -4991,7 +5026,7 @@ impl KvTable {
             physical_id,
             &handle.record_handle(),
         ));
-        if !self.indexes.is_empty() {
+        if !self.indexes.is_empty() || !self.nonpublic_indexes.is_empty() {
             self.delete_index_entries(old_row, handle, physical_id, &zone)?;
         }
         ctx.staged_writes().note(self.table_id, key.as_bytes());
@@ -5785,6 +5820,104 @@ mod tests {
             matches!(&conflicts[0].error, KvTableError::DuplicateEntry { value, key }
             if value == "same" && key == "partial_conflicts.unique_s")
         );
+    }
+
+    /// Go `GenTempIdxKeyByState` with `index.create`/`index.Delete`: a
+    /// non-public index is written by its backfill state -- the index key
+    /// itself when inapplicable, only the temporary index while a merge
+    /// backfill runs, both once it merges -- and a delete-only index is never
+    /// written by an insert. A delete appends a delete element to the
+    /// temporary index.
+    #[test]
+    fn a_nonpublic_index_is_written_by_its_backfill_state() {
+        use tidb_model::{BackfillState, SchemaState};
+        for (state, backfill, index_written, temp_version) in [
+            (
+                SchemaState::WRITE_ONLY,
+                BackfillState::INAPPLICABLE,
+                true,
+                None,
+            ),
+            (
+                SchemaState::WRITE_REORGANIZATION,
+                BackfillState::RUNNING,
+                false,
+                Some(b'b'),
+            ),
+            (
+                SchemaState::DELETE_ONLY,
+                BackfillState::RUNNING,
+                false,
+                None,
+            ),
+            (
+                SchemaState::WRITE_REORGANIZATION,
+                BackfillState::MERGING,
+                true,
+                Some(b'm'),
+            ),
+        ] {
+            let mut table = test_table();
+            let index = KvIndex {
+                id: 1,
+                name: "ua".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            };
+            table.add_nonpublic_index(index.clone(), state, backfill);
+            let row = [Datum::Int(7), Datum::Null];
+            table.insert_row(&row, &tidb_expr::NoColumns).unwrap();
+            // No reader sees an index a DDL has not made public.
+            assert!(table.index_entries_for_check(1).is_err());
+            let handle = table
+                .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+                .unwrap()[0]
+                .0
+                .clone();
+            let zone = tidb_datatype::SessionTimeZone::utc();
+            let key = table
+                .index_entry_keys(&index, &row, &handle, table.table_id, &zone)
+                .unwrap()
+                .remove(0)
+                .key;
+            let mut temp_key = key.clone();
+            tidb_tablecodec::index_key_to_temp_index_key(&mut temp_key).unwrap();
+            assert_eq!(
+                table.stored_raw_value(&key).is_some(),
+                index_written,
+                "{state:?} {backfill:?}"
+            );
+            let history = table
+                .stored_raw_value(&temp_key)
+                .map(|raw| tidb_tablecodec::decode_temp_index_value(&raw).unwrap());
+            assert_eq!(
+                history
+                    .as_ref()
+                    .map(|history| (history.len(), history[0].key_version)),
+                temp_version.map(|version| (1, version)),
+                "{state:?} {backfill:?}"
+            );
+            table
+                .delete_row_with_context(&handle, &crate::StmtContext::for_dml(false, false, false))
+                .unwrap();
+            assert!(
+                table.stored_raw_value(&key).is_none(),
+                "{state:?} {backfill:?}"
+            );
+            if backfill != BackfillState::INAPPLICABLE {
+                let history = tidb_tablecodec::decode_temp_index_value(
+                    &table.stored_raw_value(&temp_key).unwrap(),
+                )
+                .unwrap();
+                assert!(history.last().unwrap().delete, "{state:?} {backfill:?}");
+            }
+        }
     }
 
     #[test]

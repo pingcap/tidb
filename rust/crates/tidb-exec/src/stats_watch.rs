@@ -448,6 +448,33 @@ impl SharedStats {
     /// Go Domain's memory tick asks the cache owner to enforce its current cost.
     pub fn trigger_evict(&self) {
         self.cache.trigger_evict();
+        self.republish_from_cache();
+    }
+
+    /// Re-reads every published table from the cache. Go's statements `Get`
+    /// their tables from the cache, so an LFU eviction -- which replaces an
+    /// entry with a copy whose column and index statistics were dropped --
+    /// is what the next statement plans with, and the memory is released.
+    /// Eviction runs in the cache's callbacks, so a pass publishes what the
+    /// cache holds by then; a table the cache no longer holds reads as
+    /// pseudo, as Go's `Get` returning nil does.
+    fn republish_from_cache(&self) {
+        let mut guard = self
+            .published
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut next = guard.as_ref().clone();
+        for (table_id, state) in &mut next {
+            if matches!(state, TableStatsState::Loaded(_)) {
+                *state = self
+                    .cache
+                    .get(*table_id)
+                    .map_or(TableStatsState::Pseudo, TableStatsState::Loaded);
+            }
+        }
+        if snapshots_differ_by_object(guard.as_ref(), &next) {
+            *guard = Arc::new(next);
+        }
     }
 }
 
@@ -953,6 +980,29 @@ mod tests {
             reloader.shutdown().unwrap();
             async_loader.shutdown().unwrap();
         }
+    }
+
+    /// What the cache holds after an eviction (a copy with its column and
+    /// index statistics dropped) is what statements read next, as Go's
+    /// readers `Get` from the cache.
+    #[test]
+    fn an_eviction_reaches_the_published_statistics() {
+        let shared = SharedStats::new(StatsSnapshot::from([loaded_at(1, 10)])).unwrap();
+        let (_, replacement) = loaded_at(1, 10);
+        let replacement = replacement.loaded().unwrap().clone();
+        shared.cache.update_stats_cache(CacheUpdate {
+            updated: vec![Arc::clone(&replacement)],
+            deleted: Vec::new(),
+            options: UpdateOptions {
+                skip_move_forward: true,
+            },
+        });
+        shared.trigger_evict();
+        let published = shared.load();
+        assert!(Arc::ptr_eq(
+            published.get(&1).and_then(TableStatsState::loaded).unwrap(),
+            &replacement
+        ));
     }
 
     /// A table another publisher added after the analyzing statement read

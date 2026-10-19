@@ -878,3 +878,74 @@ fn an_unsupported_alter_spec_checks_the_table_before_privileges() {
         (1142, "ALTER command denied to user 'low'@'%' for table 't'")
     );
 }
+
+/// Go's preprocessor resolves the table before the planner's privilege
+/// check: a missing table is 1146 to an account holding any privilege on it,
+/// and a 1142 naming the statement type (and the table as written) to one
+/// holding none (captured from Go on this branch).
+#[test]
+fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
+    let node = MockNode::start();
+    assert!(node.accounts.live.create_user("low", "%", ""));
+    node.accounts
+        .live
+        .grant_db("low", "%", "app", GlobalPriv::Select.mask());
+    assert!(node.accounts.live.create_user("none", "%", ""));
+    let store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
+    let mut low = open_session_on_with_context(
+        &node,
+        session_context_with_identity(
+            23,
+            store
+                .authenticate_native("low", "127.0.0.1", &SALT, &[])
+                .unwrap(),
+        ),
+    );
+    low.execute_write("USE app").unwrap();
+    for sql in [
+        "ALTER TABLE missing ADD COLUMN c INT",
+        "CREATE INDEX i ON missing (a)",
+        "DROP INDEX i ON missing",
+        "TRUNCATE TABLE missing",
+        "CREATE TABLE t3 LIKE missing",
+    ] {
+        let error = low.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1146, "Table 'app.missing' doesn't exist"),
+            "{sql}"
+        );
+    }
+    let mut none = open_session_on_with_context(
+        &node,
+        session_context_with_identity(
+            24,
+            store
+                .authenticate_native("none", "127.0.0.1", &SALT, &[])
+                .unwrap(),
+        ),
+    );
+    for (sql, verb) in [
+        ("ALTER TABLE app.Missing ADD COLUMN c INT", "ALTER"),
+        ("CREATE INDEX i ON app.Missing (a)", "CREATE"),
+        ("DROP INDEX i ON app.Missing", "SELECT"),
+        ("TRUNCATE TABLE app.Missing", "SELECT"),
+    ] {
+        let error = none.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message),
+            (
+                1142,
+                format!("{verb} command denied to user 'none'@'%' for table 'Missing'")
+            ),
+            "{sql}"
+        );
+    }
+    let error = none
+        .execute_write("CREATE TABLE app.t9 LIKE app.Missing")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1146, "Table 'app.Missing' doesn't exist")
+    );
+}

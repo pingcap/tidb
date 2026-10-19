@@ -584,3 +584,134 @@ fn overflowing_decimal_literal_warns_after_the_statement() {
         )]
     );
 }
+
+/// Go `InsertExec.setMessage` / `ReplaceExec.setMessage`: a multi-row VALUES
+/// list or an INSERT ... SELECT reports `Records: N  Duplicates: D
+/// Warnings: W`; a single-row insert reports nothing (captured from Go on
+/// this branch).
+#[test]
+fn multi_row_inserts_report_the_records_message_like_go() {
+    let mut session = Session::new();
+    session.run("create table m1 (a int primary key)").unwrap();
+    for (sql, message) in [
+        (
+            "insert into m1 values (1),(2),(3)",
+            "Records: 3  Duplicates: 0  Warnings: 0",
+        ),
+        ("insert into m1 values (4)", ""),
+        (
+            "insert ignore into m1 values (1),(5)",
+            "Records: 2  Duplicates: 1  Warnings: 1",
+        ),
+        (
+            "replace into m1 values (1),(6)",
+            "Records: 2  Duplicates: 0  Warnings: 0",
+        ),
+        (
+            "insert into m1 select a+10 from m1",
+            "Records: 6  Duplicates: 0  Warnings: 0",
+        ),
+    ] {
+        session.run(sql).unwrap();
+        assert_eq!(session.statement_message(), message, "{sql}");
+    }
+}
+
+/// Go `getColDefaultValue` caches a default across a multi-row VALUES list,
+/// so the missing-default warning appears once; `fillRow` checks each column
+/// before the next, so 1048 for `a` precedes 1364 for `b` (captured from Go
+/// on this branch).
+#[test]
+fn insert_default_warnings_follow_go_order_and_count() {
+    let mut session = Session::new();
+    session.run("set sql_mode = ''").unwrap();
+    session
+        .run("create table m2 (a int, b int not null)")
+        .unwrap();
+    session.run("insert into m2(a) values (1),(2),(3)").unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        [(1364, "Field 'b' doesn't have a default value".to_owned())]
+    );
+    session
+        .run("create table m3 (a int not null, b int not null)")
+        .unwrap();
+    session
+        .run("insert ignore into m3(a) values (null)")
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        [
+            (1048, "Column 'a' cannot be null".to_owned()),
+            (1364, "Field 'b' doesn't have a default value".to_owned()),
+        ]
+    );
+}
+
+/// Go `UpdateExec.updateRows` writes each row before composing the next:
+/// row 1's truncation and NULL warnings precede row 2's; an optimistic
+/// UPDATE fails on row 1's duplicate before row 2's overflow; a duplicate
+/// skipped under IGNORE is not a found row; ODKU reports the updated row's
+/// id in the OK packet (captured from Go on this branch).
+#[test]
+fn update_and_odku_row_outcomes_follow_go() {
+    let mut session = Session::new();
+    session.run("set sql_mode = ''").unwrap();
+    session
+        .run("create table m4 (a int not null, b varchar(2))")
+        .unwrap();
+    session
+        .run("insert into m4 values (1,'x'),(2,'y')")
+        .unwrap();
+    session.run("update m4 set a=null, b='abcd'").unwrap();
+    let truncated = (1406, "Data Too Long, field len 2, data len 4".to_owned());
+    let null = (1048, "Column 'a' cannot be null".to_owned());
+    assert_eq!(
+        warnings_of(&session),
+        [truncated.clone(), null.clone(), truncated, null]
+    );
+    session.run("set sql_mode = default").unwrap();
+
+    session.run("set tidb_txn_mode = 'optimistic'").unwrap();
+    session
+        .run("create table m5 (a int primary key, b int unique, c tinyint)")
+        .unwrap();
+    session
+        .run("insert into m5 values (1,1,1),(2,2,127)")
+        .unwrap();
+    assert_eq!(
+        error_of(&mut session, "update m5 set b=b+1, c=c+1 order by a"),
+        "Duplicate entry '2' for key 'm5.b'"
+    );
+    session.run("set tidb_txn_mode = 'pessimistic'").unwrap();
+
+    session
+        .run("create table m6 (a int primary key, b int unique)")
+        .unwrap();
+    session.run("insert into m6 values (1,1),(2,2)").unwrap();
+    session.set_client_found_rows(true);
+    assert!(matches!(
+        session.run("update ignore m6 set b=2 where a=1").unwrap(),
+        crate::StmtResult::Affected(0)
+    ));
+    assert_eq!(
+        session.statement_message(),
+        "Rows matched: 1  Changed: 0  Warnings: 1"
+    );
+    session.set_client_found_rows(false);
+
+    session
+        .run("create table m7 (id int auto_increment primary key, k int unique, v int)")
+        .unwrap();
+    session
+        .run("insert into m7(k,v) values (1,1),(2,2)")
+        .unwrap();
+    session
+        .run("insert into m7(k,v) values (2,20) on duplicate key update v=values(v)")
+        .unwrap();
+    assert_eq!(session.statement_insert_id(), 2);
+    session
+        .run("insert into m7(id,k,v) values (10,2,5) on duplicate key update v=values(v)")
+        .unwrap();
+    assert_eq!(session.statement_insert_id(), 2);
+}

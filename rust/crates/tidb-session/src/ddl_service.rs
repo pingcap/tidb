@@ -29,6 +29,7 @@ use tidb_exec::real_tikv_ddl::{ClusterDdlReport, DdlWarningLevel};
 use tidb_executor::{DriverError, StmtContext};
 
 use crate::Session;
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `ddl.DDL.DoDDLJob` for one lowered statement: publishes the change,
 /// then brings the caller's own catalog up to it before answering.
@@ -48,6 +49,136 @@ pub trait DdlService {
 }
 
 impl Session {
+    /// Go's checks before a DDL is lowered, in Go's order: the
+    /// preprocessor's name resolution (`tableByName`, masked as a privilege
+    /// error for an account that holds nothing on the table), the planner's
+    /// privilege check, then the executor's target checks (`SchemaByName`
+    /// for CREATE TABLE, the LIKE source's kind, ALTER's base-table check).
+    /// Lowering builds the table and validates its definitions, so running
+    /// it first answered build errors where Go answers 1146/1142/1049/1347.
+    pub fn ddl_target_checks(&mut self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
+        use tidb_ast::{AlterTableAction, DdlStmt};
+        let tidb_ast::Stmt::Ddl(ddl) = stmt else {
+            return Ok(());
+        };
+        // Go refuses these while building the plan, before any privilege
+        // check.
+        if matches!(
+            ddl.as_ref(),
+            DdlStmt::OptimizeTable(_) | DdlStmt::RepairTable(_)
+        ) {
+            return Ok(());
+        }
+        match ddl.as_ref() {
+            // `resolveAlterTableStmt` sets `inCreateOrDropTable` for a RENAME
+            // or FOREIGN KEY spec, which skips resolution.
+            DdlStmt::AlterTable(alter)
+                if !alter.actions.iter().any(|action| {
+                    matches!(
+                        action,
+                        AlterTableAction::RenameTable { .. } | AlterTableAction::AddForeignKey(_)
+                    )
+                }) =>
+            {
+                self.preprocess_table_by_name(&alter.name, "ALTER")?;
+            }
+            // `stmtType()`: CREATE INDEX is TypeCreate; DROP INDEX and
+            // TRUNCATE fall to its default, "SELECT".
+            DdlStmt::CreateIndex(create) => {
+                self.preprocess_table_by_name(&create.table, "CREATE")?
+            }
+            DdlStmt::DropIndex(drop) => self.preprocess_table_by_name(&drop.table, "SELECT")?,
+            DdlStmt::TruncateTable(path) => self.preprocess_table_by_name(path, "SELECT")?,
+            // `checkCreateTableGrammar` resolves the LIKE source with no
+            // privilege masking.
+            DdlStmt::CreateTable(create) => {
+                if let Some(like) = &create.like_table {
+                    self.require_table_exists(like)?;
+                }
+            }
+            _ => {}
+        }
+        self.require_statement_table_privileges(stmt)?;
+        match ddl.as_ref() {
+            DdlStmt::AlterTable(alter) => self.alter_table_target_precheck(alter)?,
+            DdlStmt::CreateTable(create) => {
+                let current_db = self.current_db.clone();
+                let (database, _) =
+                    tidb_executor::driver::split_table_path_pub(&create.name, &current_db)?;
+                let database = database.to_owned();
+                let source = create
+                    .like_table
+                    .as_ref()
+                    .map(|like| -> Result<(String, String), DriverError> {
+                        let (schema, name) =
+                            tidb_executor::driver::split_table_path_pub(like, &current_db)?;
+                        Ok((schema.to_owned(), name.to_owned()))
+                    })
+                    .transpose()?;
+                self.with_catalog_mut(|catalog| {
+                    // Go `executor.CreateTable`'s `SchemaByName` (1049)
+                    // precedes `BuildTableInfoWithStmt`.
+                    if !catalog.has_database(&database) {
+                        return Err(DriverError::Schema(
+                            tidb_executor::SchemaErrorKind::UnknownDatabase(database.clone()),
+                        ));
+                    }
+                    // Go `BuildTableInfoWithLike`: the source must be a base
+                    // table; the message names the TARGET schema.
+                    if let Some((schema, name)) = &source {
+                        if let Some(
+                            tidb_executor::TableEntry::View(_)
+                            | tidb_executor::TableEntry::Sequence(_),
+                        ) = catalog.table_in(schema, name)
+                        {
+                            return Err(DriverError::Schema(
+                                tidb_executor::SchemaErrorKind::WrongObject {
+                                    name: format!("{database}.{name}"),
+                                    expected: "BASE TABLE",
+                                },
+                            ));
+                        }
+                    }
+                    Ok(())
+                })?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Go `preprocessor.tableByName`: 1046 without a schema; a missing table
+    /// is 1146, unless the account holds no privilege at all on it, which
+    /// answers 1142 naming the statement type and the table as written so a
+    /// stranger cannot probe which tables exist.
+    fn preprocess_table_by_name(
+        &mut self,
+        path: &[String],
+        verb: &'static str,
+    ) -> Result<(), DriverError> {
+        let current_db = self.current_db.clone();
+        let (database, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
+        let (database, name) = (go_to_lower(database), name.to_owned());
+        let exists =
+            self.with_catalog_mut(|catalog| Ok(catalog.table_in(&database, &name).is_some()))?;
+        if exists {
+            return Ok(());
+        }
+        if let Some((_, user, host)) = self.privilege_context() {
+            if !self.has_any_scoped_privilege(&database, &name, crate::privilege::any_priv_mask()) {
+                return Err(DriverError::TableAccessDenied {
+                    privilege: verb,
+                    user: user.to_owned(),
+                    host: host.to_owned(),
+                    table: name,
+                });
+            }
+        }
+        Err(DriverError::Schema(
+            tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+        ))
+    }
+
     /// Go's preprocessor name resolution for one table reference: no current
     /// database is 1046 and a missing table 1146. It runs before the
     /// planner's privilege check, so a missing table answers 1146 even to a

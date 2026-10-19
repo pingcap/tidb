@@ -764,6 +764,17 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     /// Opens a locking statement at a fresh for-update timestamp, as Go's
     /// pessimistic repeatable-read provider does for non-point locking reads.
     pub fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        self.fresh_statement_snapshot(true)
+    }
+
+    /// Opens one statement at a fresh timestamp that also becomes the
+    /// for-update timestamp: Go `PessimisticRCTxnContextProvider.getStmtTS`,
+    /// whose oracle future calls `SetForUpdateTS` with the new TSO, for reads
+    /// and locks alike.
+    pub fn fresh_statement_snapshot(
+        &self,
+        locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         let read_ts = {
             let mut state = self
                 .state
@@ -781,7 +792,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
                 }
             }
         };
-        self.snapshot_at_for(read_ts, true)
+        self.snapshot_at_for(read_ts, locking)
     }
 
     /// Changes the resource group stamped on subsequent reads, locks, prewrite,

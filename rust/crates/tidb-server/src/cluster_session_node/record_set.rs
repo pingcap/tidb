@@ -57,6 +57,13 @@ impl ClusterServerSession {
             let locking = shape == StatementReadShape::LockingRead || !prelock_keys.is_empty();
             return match retry_read_ts {
                 Some(ts) => transaction.snapshot_at_for(ts, locking),
+                // Go's pessimistic READ-COMMITTED provider reads every
+                // statement at its own fresh timestamp (`getStmtTS`), so a
+                // statement sees what peers committed after BEGIN; repeatable
+                // read keeps the start timestamp.
+                None if transaction.is_pessimistic() && self.session.is_read_committed() => {
+                    transaction.fresh_statement_snapshot(locking)
+                }
                 None if shape == StatementReadShape::LockingRead
                     && prelock_keys.is_empty()
                     && transaction.is_pessimistic() =>

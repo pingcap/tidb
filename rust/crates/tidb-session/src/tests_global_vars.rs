@@ -2941,3 +2941,59 @@ fn bootstrap_seeds_global_variables_and_set_global_writes_them() {
         ]
     );
 }
+
+/// Go's SET value conversion and validation, captured from Go on this
+/// branch: a hex literal is its bytes; a time variable's error is Go's
+/// `time.Parse` text (1105); an unsigned variable rejects a sign; a float
+/// that overflows is a type error, not a clamp.
+#[test]
+fn set_value_conversion_and_validation_follow_go() {
+    let mut session = Session::new();
+    session.run("set autocommit = 0x30").unwrap();
+    assert_eq!(row_text(session.run("select @@autocommit")), [["0"]]);
+    session.run("set autocommit = 1").unwrap();
+    session.run("set sql_mode = 0x414E5349").unwrap();
+    assert_eq!(
+        row_text(session.run("select @@sql_mode")),
+        [["REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"]]
+    );
+    session.run("set sql_mode = default").unwrap();
+    let error = |session: &mut Session, sql: &str| {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        (error.code, error.message)
+    };
+    for (sql, code, message) in [
+        (
+            "set global tidb_auto_analyze_start_time = 'abc'",
+            1105,
+            r#"parsing time "abc" as "15:04": cannot parse "abc" as "15""#,
+        ),
+        (
+            "set global tidb_auto_analyze_start_time = '1:5'",
+            1105,
+            r#"parsing time "1:5" as "15:04": cannot parse "5" as "04""#,
+        ),
+        (
+            "set global tidb_ttl_job_schedule_window_start_time = 'abc'",
+            1105,
+            r#"parsing time "abc" as "15:04": cannot parse "abc" as "15""#,
+        ),
+        (
+            "set sql_select_limit = '+5'",
+            1232,
+            "Incorrect argument type to variable 'sql_select_limit'",
+        ),
+        (
+            "set tiflash_query_spill_ratio = '1e400'",
+            1232,
+            "Incorrect argument type to variable 'tiflash_query_spill_ratio'",
+        ),
+        (
+            "set timestamp = '1e400'",
+            1232,
+            "Incorrect argument type to variable 'timestamp'",
+        ),
+    ] {
+        assert_eq!(error(&mut session, sql), (code, message.to_owned()), "{sql}");
+    }
+}

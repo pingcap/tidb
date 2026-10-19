@@ -426,6 +426,13 @@ impl Session {
     /// Whether locking reads must acquire only existing keys after reading.
     /// This is Go's IsIsolation(ReadCommitted) decision, retained by the
     /// open transaction. Before a lazy transaction starts, use its setting.
+    /// Go `SessionVars.IsIsolation(ast.ReadCommitted)` for the transaction
+    /// in force (or, before one starts, the session's setting).
+    #[must_use]
+    pub fn is_read_committed(&self) -> bool {
+        self.read_committed_locking()
+    }
+
     pub(crate) fn read_committed_locking(&self) -> bool {
         self.txn.as_ref().map_or_else(
             || {

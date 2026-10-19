@@ -728,7 +728,49 @@ pub fn cluster_table(
     }
     for index in table.indices.iter_deref() {
         let index = index.read();
+        // Go `TableFromMeta` keeps every index that is not `StateNone`
+        // (`tables.go`): one a DDL is still adding or dropping is maintained
+        // by DML according to its state, though no reader sees it. Skipping
+        // it left a Go owner's ADD INDEX without this node's writes.
+        if index.state == SchemaState::NONE {
+            continue;
+        }
         if index.state != SchemaState::PUBLIC {
+            let clustered_primary = (table.pk_is_handle || table.is_common_handle)
+                && index.name.original().eq_ignore_ascii_case("PRIMARY");
+            if clustered_primary {
+                continue;
+            }
+            // A key part over a column that is not public yet (an index
+            // added with its column in one multi-schema change) has no
+            // public offset to write from; such an index stays unwritten
+            // rather than costing the whole table.
+            let Ok(nonpublic) = kv_index(&index, &kv_table.columns) else {
+                continue;
+            };
+            kv_table.add_nonpublic_index(nonpublic, index.state, index.backfill_state);
+            if index.has_condition() {
+                let condition = index.condition_expr().map_err(|error| {
+                    format!(
+                        "its partial index {} has an unparsable condition: {}",
+                        index.name, error.message
+                    )
+                })?;
+                kv_table
+                    .add_partial_index_condition(
+                        index.id,
+                        index.name.original(),
+                        &condition,
+                        &tidb_datatype::SessionTimeZone::utc(),
+                        b'\\',
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "its partial index {} cannot be built: {error:?}",
+                            index.name
+                        )
+                    })?;
+            }
             continue;
         }
         // A clustered PRIMARY is the record handle, not a secondary `_i`

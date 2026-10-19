@@ -73,91 +73,6 @@ pub(crate) fn validation_var_error(name: &str, value: &str, error: ValidationErr
     }
 }
 
-/// Expands Go's short `TypeTime` input for the two TTL schedule globals.
-///
-/// The registry validator is deliberately session-independent, so the
-/// timezone-sensitive part lives at the GLOBAL write boundary where the
-/// issuing [`SessionVars`] is available. Full values already carrying an
-/// offset are preserved; short values use the current offset of the session
-/// zone, just as Go's `time.ParseInLocation` does.
-fn normalize_ttl_schedule_window(
-    name: &str,
-    value: &str,
-    zone: &tidb_executor::SessionTimeZone,
-) -> Result<String, VarError> {
-    if !matches!(
-        name.to_ascii_lowercase().as_str(),
-        "tidb_ttl_job_schedule_window_start_time" | "tidb_ttl_job_schedule_window_end_time"
-    ) {
-        return Ok(value.to_owned());
-    }
-    let text = value.trim();
-    let mut fields = text.split_whitespace();
-    let clock = fields.next().unwrap_or_default();
-    let explicit_offset = fields.next();
-    if fields.next().is_some() || clock.is_empty() {
-        return Err(VarError::ValidationRefused(format!(
-            "invalid TTL job schedule window time: {value}"
-        )));
-    }
-    let Some((hour, minute)) = clock.split_once(':') else {
-        return Err(VarError::ValidationRefused(format!(
-            "invalid TTL job schedule window time: {value}"
-        )));
-    };
-    let (Ok(hour), Ok(minute)) = (hour.parse::<u8>(), minute.parse::<u8>()) else {
-        return Err(VarError::ValidationRefused(format!(
-            "invalid TTL job schedule window time: {value}"
-        )));
-    };
-    if hour >= 24 || minute >= 60 {
-        return Err(VarError::ValidationRefused(format!(
-            "invalid TTL job schedule window time: {value}"
-        )));
-    }
-    let offset_secs = if let Some(offset) = explicit_offset {
-        parse_ttl_offset(offset).ok_or_else(|| {
-            VarError::ValidationRefused(format!("invalid TTL job schedule window time: {value}"))
-        })?
-    } else {
-        i32::try_from(zone.dag_zone().1).map_err(|_| {
-            VarError::ValidationRefused(format!("invalid TTL job schedule window time: {value}"))
-        })?
-    };
-    let sign = if offset_secs < 0 { '-' } else { '+' };
-    let absolute = offset_secs.unsigned_abs();
-    let offset_hours = absolute / 3600;
-    let offset_minutes = (absolute % 3600) / 60;
-    if offset_hours > 23 || offset_minutes > 59 {
-        return Err(VarError::ValidationRefused(format!(
-            "invalid TTL job schedule window time: {value}"
-        )));
-    }
-    Ok(format!(
-        "{hour:02}:{minute:02} {sign}{offset_hours:02}{offset_minutes:02}"
-    ))
-}
-
-fn parse_ttl_offset(value: &str) -> Option<i32> {
-    let bytes = value.as_bytes();
-    if bytes.len() != 5 || !matches!(bytes[0], b'+' | b'-') {
-        return None;
-    }
-    let hours = std::str::from_utf8(&bytes[1..3])
-        .ok()?
-        .parse::<i32>()
-        .ok()?;
-    let minutes = std::str::from_utf8(&bytes[3..5])
-        .ok()?
-        .parse::<i32>()
-        .ok()?;
-    if hours > 23 || minutes > 59 {
-        return None;
-    }
-    let seconds = hours * 3600 + minutes * 60;
-    Some(if bytes[0] == b'-' { -seconds } else { seconds })
-}
-
 /// The shared GLOBAL-scope value table every session of one
 /// [`crate::Session`] factory holds a clone of. Go persists this tier to
 /// `mysql.GLOBAL_VARIABLES`: a cluster node's front end does that through its
@@ -1015,7 +930,6 @@ impl GlobalSysvars {
                     .map_err(VarError::ValidationRefused)?;
             }
         }
-        let value = normalize_ttl_schedule_window(name, &value, zone)?;
         let value = match get_sys_var(name) {
             Some(def) if def.var_type == crate::sysvar::VarType::Time => {
                 crate::sysvar::normalize_time_value(&value, zone)
@@ -4456,9 +4370,10 @@ mod tests {
         let error = vars
             .set_global("tidb_auto_analyze_start_time", "25:00".to_owned())
             .unwrap_err();
+        // Go returns `time.Parse`'s range error verbatim.
         assert_eq!(
             error,
-            VarError::WrongTypeForVar("tidb_auto_analyze_start_time".to_owned())
+            VarError::ValidationRefused(r#"parsing time "25:00": hour out of range"#.to_owned())
         );
 
         let truncated = vars

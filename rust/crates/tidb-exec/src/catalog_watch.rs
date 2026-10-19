@@ -101,6 +101,10 @@ pub struct SharedCatalog {
     published: RwLock<Arc<ClusterCatalog>>,
     historical: Mutex<std::collections::BTreeMap<i64, Arc<ClusterCatalog>>>,
     capacity: AtomicUsize,
+    /// Go `Syncer`'s `s.m`: one reload at a time, held across the load, the
+    /// schema validator's update and the publication, so two reload paths
+    /// never interleave their validator updates.
+    reload: Mutex<()>,
 }
 
 impl SharedCatalog {
@@ -115,7 +119,16 @@ impl SharedCatalog {
                 catalog,
             )])),
             capacity: AtomicUsize::new(16),
+            reload: Mutex::new(()),
         }
+    }
+
+    /// Serializes one reload (load, validator update, publication), as Go's
+    /// `Syncer.Reload` holds `s.m`.
+    pub fn lock_reload(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.reload
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The catalog in force now. A poisoned lock still yields the value: a
@@ -465,6 +478,7 @@ fn run_one_pass(
     // process: without it a prompt reload and a lucky tick look identical in
     // a log, and the live proof would be asserting nothing.
     let trigger = if nudged { "watch" } else { "tick" };
+    let _reload = catalog.lock_reload();
     let current = catalog.load();
     let outcome = pass(&current);
     stats.passes.fetch_add(1, Ordering::AcqRel);

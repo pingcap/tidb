@@ -999,50 +999,31 @@ pub(crate) fn normalize_time_value(
     value: &str,
     zone: &tidb_executor::SessionTimeZone,
 ) -> Result<String, ValidationError> {
-    let mut fields = value.split_whitespace();
-    let clock = fields.next().ok_or(ValidationError::WrongType)?;
-    let explicit_offset = fields.next();
-    if fields.next().is_some() {
-        return Err(ValidationError::WrongType);
-    }
-    let (hour, minute) = clock.split_once(':').ok_or(ValidationError::WrongType)?;
-    let hour = hour.parse::<u8>().map_err(|_| ValidationError::WrongType)?;
-    let minute = minute
-        .parse::<u8>()
-        .map_err(|_| ValidationError::WrongType)?;
-    if hour >= 24 || minute >= 60 {
-        return Err(ValidationError::WrongType);
-    }
-    let offset_minutes = if let Some(offset) = explicit_offset {
-        let bytes = offset.as_bytes();
-        if bytes.len() != 5 || !matches!(bytes[0], b'+' | b'-') {
-            return Err(ValidationError::WrongType);
-        }
-        let hours = std::str::from_utf8(&bytes[1..3])
-            .ok()
-            .and_then(|text| text.parse::<u16>().ok())
-            .ok_or(ValidationError::WrongType)?;
-        let minutes = std::str::from_utf8(&bytes[3..5])
-            .ok()
-            .and_then(|text| text.parse::<u8>().ok())
-            .ok_or(ValidationError::WrongType)?;
-        if hours >= 24 || minutes >= 60 {
-            return Err(ValidationError::WrongType);
-        }
-        let total = i32::from(hours) * 60 + i32::from(minutes);
-        if bytes[0] == b'-' {
-            -total
-        } else {
-            total
-        }
+    // `vardef.LocalDayTimeFormat` / `vardef.FullDayTimeFormat`, chosen by
+    // length as Go does; the parse error IS the SET error (1105).
+    const LOCAL_DAY_TIME_FORMAT: &str = "15:04";
+    const FULL_DAY_TIME_FORMAT: &str = "15:04 -0700";
+    let layout = if value.len() <= LOCAL_DAY_TIME_FORMAT.len() {
+        LOCAL_DAY_TIME_FORMAT
     } else {
-        let now = chrono::Utc::now().naive_utc();
-        zone.offset_from_utc_datetime(&now).fix().local_minus_utc() / 60
+        FULL_DAY_TIME_FORMAT
+    };
+    let clock =
+        tidb_util::go_time_layout::parse_clock(layout, value).map_err(ValidationError::Refused)?;
+    let offset_minutes = match clock.zone_offset {
+        Some(offset) => offset / 60,
+        None => {
+            // `ParseInLocation(vars.Location())`, moved onto today's date.
+            let now = chrono::Utc::now().naive_utc();
+            zone.offset_from_utc_datetime(&now).fix().local_minus_utc() / 60
+        }
     };
     let sign = if offset_minutes < 0 { '-' } else { '+' };
     let absolute = offset_minutes.unsigned_abs();
     Ok(format!(
-        "{hour:02}:{minute:02} {sign}{:02}{:02}",
+        "{:02}:{:02} {sign}{:02}{:02}",
+        clock.hour,
+        clock.minute,
         absolute / 60,
         absolute % 60
     ))
@@ -1517,62 +1498,6 @@ impl SysVarDef {
                 value: "ON".to_owned(),
                 truncated: validated.truncated,
             });
-        }
-        // Go's TTL schedule-window globals parse a short `HH:MM` value in
-        // UTC, then store/display the full-day form with an explicit `+0000`
-        // offset. Keep an already-expanded value canonical and reject invalid
-        // clock text instead of silently storing it as an opaque TypeTime.
-        if matches!(
-            self.name,
-            "tidb_ttl_job_schedule_window_start_time" | "tidb_ttl_job_schedule_window_end_time"
-        ) {
-            let text = validated.value.trim();
-            let mut fields = text.split_whitespace();
-            let parsed = fields.next().and_then(|clock| {
-                let (hour, minute) = clock.split_once(':')?;
-                Some((
-                    hour.parse::<u8>().ok()?,
-                    minute.parse::<u8>().ok()?,
-                    fields.next(),
-                ))
-            });
-            if let Some((hour, minute, offset)) = parsed {
-                let valid_offset = offset.is_none_or(|offset| {
-                    let bytes = offset.as_bytes();
-                    if bytes.len() != 5 || !matches!(bytes[0], b'+' | b'-') {
-                        return false;
-                    }
-                    let Ok(hours) = std::str::from_utf8(&bytes[1..3])
-                        .unwrap_or_default()
-                        .parse::<u8>()
-                    else {
-                        return false;
-                    };
-                    let Ok(minutes) = std::str::from_utf8(&bytes[3..5])
-                        .unwrap_or_default()
-                        .parse::<u8>()
-                    else {
-                        return false;
-                    };
-                    hours < 24 && minutes < 60
-                });
-                if fields.next().is_some() {
-                    return Err(ValidationError::Refused(format!(
-                        "invalid TTL job schedule window time: {original}"
-                    )));
-                }
-                if hour < 24 && minute < 60 {
-                    if valid_offset {
-                        return Ok(Validated {
-                            value: format!("{hour:02}:{minute:02} {}", offset.unwrap_or("+0000")),
-                            truncated: validated.truncated,
-                        });
-                    }
-                }
-            }
-            return Err(ValidationError::Refused(format!(
-                "invalid TTL job schedule window time: {original}"
-            )));
         }
         // Go routes connection, server, and database collations through
         // `checkCollation` (`varsutil.go:57`): resolve the name through
@@ -2285,6 +2210,10 @@ impl SysVarDef {
                 truncated: true,
             });
         }
+        // Go `strconv.ParseUint` takes no sign: `'+5'` is a type error.
+        if value.starts_with('+') {
+            return Err(ValidationError::WrongType);
+        }
         let parsed: u64 = value.parse().map_err(|_| ValidationError::WrongType)?;
         if parsed < self.min_value as u64 {
             return Ok(Validated {
@@ -2398,7 +2327,10 @@ impl SysVarDef {
         if value.is_empty() {
             return Err(ValidationError::WrongType);
         }
-        let parsed: f64 = value.parse().map_err(|_| ValidationError::WrongType)?;
+        // Go `strconv.ParseFloat`: its own syntax (hex floats included), and
+        // an overflowing literal is `ErrRange`, a type error -- not a clamp.
+        let parsed = tidb_datatype::go_strconv::parse_float64(value)
+            .map_err(|_| ValidationError::WrongType)?;
         if parsed < self.min_value as f64 {
             return Ok(Validated {
                 value: self.min_value.to_string(),
@@ -3372,7 +3304,13 @@ mod tests {
         };
         assert_eq!(time.validate("23:59 +0000").unwrap().value, "23:59 +0000");
         assert_eq!(time.validate("3:00 +0000").unwrap().value, "03:00 +0000");
-        assert_eq!(time.validate("0.000"), Err(ValidationError::WrongType));
+        // Go `checkTimeSystemVar` returns `time.ParseInLocation`'s own error.
+        assert_eq!(
+            time.validate("0.000"),
+            Err(ValidationError::Refused(
+                r#"parsing time "0.000" as "15:04": cannot parse ".000" as ":""#.to_owned()
+            ))
+        );
 
         let duration = SysVarDef {
             var_type: VarType::Duration,

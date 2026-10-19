@@ -409,6 +409,13 @@ pub trait OpenClusterTransaction: Send {
         Err("only a pessimistic transaction opens a current locking snapshot".to_owned())
     }
 
+    /// A statement handle at a fresh statement timestamp, which also moves
+    /// the for-update timestamp: Go's pessimistic READ-COMMITTED provider
+    /// (`getStmtTS`) gives every statement its own.
+    fn fresh_statement_snapshot(&self, _locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
+        Err("only a pessimistic transaction reads at a statement timestamp".to_owned())
+    }
+
     /// A read handle at an explicit statement timestamp -- the pessimistic
     /// retry's advanced `for_update_ts`. Only a pessimistic transaction can
     /// serve one.
@@ -1489,6 +1496,11 @@ where
 
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         SessionTransaction::fresh_locking_snapshot(self).map_err(|error| error.to_string())
+    }
+
+    fn fresh_statement_snapshot(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
+        SessionTransaction::fresh_statement_snapshot(self, locking)
+            .map_err(|error| error.to_string())
     }
 
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {

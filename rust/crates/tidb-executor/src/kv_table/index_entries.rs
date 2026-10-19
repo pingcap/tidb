@@ -655,6 +655,27 @@ impl KvTable {
                 check_in_prewrite,
             )?;
         }
+        // Go `addIndices` walks `WritableIndices`, which include an index
+        // a DDL is still adding.
+        let nonpublic = self.nonpublic_indexes.clone();
+        for index in nonpublic.iter() {
+            if !index.is_writable() || index.index.clustered_primary {
+                continue;
+            }
+            if !self.index_condition_holds(&index.index, row, zone)? {
+                continue;
+            }
+            self.create_nonpublic_index_entries(
+                index,
+                row,
+                handle,
+                physical_id,
+                zone,
+                lazy_dup_check,
+                pessimistic,
+                check_in_prewrite,
+            )?;
+        }
         Ok(())
     }
 
@@ -752,6 +773,18 @@ impl KvTable {
             }
             self.remove_index_entries(index, row, handle, physical_id, zone)?;
         }
+        // Go `removeRowIndices` walks `DeletableIndices`: every index that
+        // is not `StateNone`, a DDL's half-built ones included.
+        let nonpublic = self.nonpublic_indexes.clone();
+        for index in nonpublic.iter() {
+            if index.index.clustered_primary {
+                continue;
+            }
+            if !self.index_condition_holds(&index.index, row, zone)? {
+                continue;
+            }
+            self.remove_nonpublic_index_entries(index, row, handle, physical_id, zone)?;
+        }
         Ok(())
     }
 
@@ -782,6 +815,16 @@ impl KvTable {
         check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
         debug_assert!(!lazy_dup_check || pessimistic);
+        self.rewrite_nonpublic_index_entries(
+            old_row,
+            new_row,
+            handle,
+            physical_id,
+            zone,
+            lazy_dup_check,
+            pessimistic,
+            check_in_prewrite,
+        )?;
         let indexes = self.indexes.clone();
         for index in indexes.iter() {
             // A clustered PRIMARY's key IS the record handle; updating the row

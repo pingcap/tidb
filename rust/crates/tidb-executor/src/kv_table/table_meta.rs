@@ -581,6 +581,31 @@ pub struct KvIndex {
     pub clustered_primary: bool,
 }
 
+/// An index Go's DDL is still adding or dropping (an `IndexInfo` in a
+/// state other than public and `StateNone`). Only the write path sees it:
+/// Go's `DeletableIndices` delete from every such index and
+/// `IsIndexWritable` ones are written, each through
+/// `GenTempIdxKeyByState`; no reader, planner or SHOW statement sees it.
+#[derive(Clone, Debug)]
+pub struct NonPublicIndex {
+    /// The index as a write builds its keys and values.
+    pub index: KvIndex,
+    /// Go `IndexInfo.State`.
+    pub state: tidb_model::SchemaState,
+    /// Go `IndexInfo.BackfillState`: whether DML writes go to the
+    /// temporary index, to both, or (inapplicable) to the index itself.
+    pub backfill_state: tidb_model::BackfillState,
+}
+
+impl NonPublicIndex {
+    /// Go `IsIndexWritable`: every state except the two delete-only ones.
+    #[must_use]
+    pub fn is_writable(&self) -> bool {
+        self.state != tidb_model::SchemaState::DELETE_ONLY
+            && self.state != tidb_model::SchemaState::DELETE_REORGANIZATION
+    }
+}
+
 impl KvIndex {
     /// The prefix declared on the key part at `position`, or
     /// [`UNSPECIFIED_LENGTH`] when the key part stores the whole column.

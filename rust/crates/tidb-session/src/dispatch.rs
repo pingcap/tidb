@@ -3506,6 +3506,8 @@ impl Session {
                         self.statement_insert_id = ctx
                             .published_last_insert_id()
                             .unwrap_or_else(|| ctx.given_insert_id());
+                        // Go `InsertExec.setMessage`'s `Records: ...` text.
+                        self.statement_message = ctx.message();
                         let (affected, _) = result?;
                         Ok(StmtOutput::Affected(affected))
                     }

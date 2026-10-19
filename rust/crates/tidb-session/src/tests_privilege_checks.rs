@@ -287,3 +287,33 @@ fn flush_privileges_announces_the_reload_to_peers() {
     session.run("FLUSH PRIVILEGES").unwrap();
     assert_eq!(announced.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
+
+/// Go `buildSet` checks every GLOBAL assignment's privilege before any
+/// assignment runs, removed variables included: a denied SET changes
+/// nothing (captured from Go on this branch).
+#[test]
+fn set_checks_every_global_privilege_before_applying_any() {
+    let (registry, mut root) = setup();
+    root.run("create user nosuper").unwrap();
+    let mut user = session_as(&registry, root.shared_catalog(), "nosuper", "%");
+    let denied = (
+        1227,
+        "Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation"
+            .to_owned(),
+    );
+    assert_eq!(
+        error_of(
+            &mut user,
+            "set sql_mode = 'ANSI', global max_connections = 10"
+        ),
+        denied
+    );
+    assert_eq!(
+        row_text(user.run("select @@sql_mode")),
+        [["ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"]]
+    );
+    assert_eq!(
+        error_of(&mut user, "set global tidb_enable_alter_placement = 1"),
+        denied
+    );
+}

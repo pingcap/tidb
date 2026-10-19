@@ -18475,6 +18475,217 @@ fn an_unsupported_alter_spec_is_refused_after_the_table_checks() {
         ),
     ] {
         let error = session.execute_write(sql).unwrap_err();
-        assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
     }
+}
+
+/// Go's pessimistic READ-COMMITTED provider reads every statement at its
+/// own fresh timestamp (`getStmtTS`), so a peer's commit after BEGIN is
+/// visible to the next statement; repeatable read keeps the start
+/// timestamp.
+#[test]
+fn read_committed_statements_see_commits_made_after_begin() {
+    let (stack, _users) = cop_backed_stack();
+    let mut writer = stack.factory.open_session(session_context(1906)).unwrap();
+    rows(&mut writer, "CREATE DATABASE rc_reads");
+    rows(&mut writer, "USE rc_reads");
+    rows(&mut writer, "CREATE TABLE t (id INT PRIMARY KEY)");
+    rows(&mut writer, "INSERT INTO t VALUES (1)");
+    for (isolation, visible) in [("REPEATABLE-READ", "1"), ("READ-COMMITTED", "2")] {
+        let mut reader = stack.factory.open_session(session_context(1907)).unwrap();
+        rows(&mut reader, "USE rc_reads");
+        rows(
+            &mut reader,
+            &format!("SET transaction_isolation = '{isolation}'"),
+        );
+        reader.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        assert_eq!(
+            displayed(rows(&mut reader, "SELECT COUNT(*) FROM t")),
+            vec![vec!["1"]]
+        );
+        writer.execute_write("INSERT INTO t VALUES (2)").unwrap();
+        assert_eq!(
+            displayed(rows(&mut reader, "SELECT COUNT(*) FROM t")),
+            vec![vec![visible]],
+            "{isolation}"
+        );
+        reader.control_transaction("ROLLBACK").unwrap();
+        writer.execute_write("DELETE FROM t WHERE id = 2").unwrap();
+    }
+}
+
+/// Go's DDL checks in Go's order, with Go's notes (captured from Go on this
+/// branch): the preprocessor resolves a table before anything else (1146,
+/// also for a missing database), CREATE TABLE checks its database before
+/// building (1049), a LIKE source must be a base table (1347), IF [NOT]
+/// EXISTS forms add their notes, `dropIndex` names the missing index, and
+/// placement policies keep Go's IF EXISTS rules and reserved name.
+#[test]
+fn ddl_checks_and_notes_follow_go_order() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1908)).unwrap();
+    rows(&mut session, "CREATE DATABASE ddl_order");
+    rows(&mut session, "USE ddl_order");
+    rows(&mut session, "CREATE TABLE t (a INT, b INT, INDEX ib (b))");
+    rows(&mut session, "CREATE VIEW v AS SELECT 1 a");
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE nodb.t ADD COLUMN c INT",
+            1146,
+            "Table 'nodb.t' doesn't exist",
+        ),
+        (
+            "TRUNCATE TABLE nodb.t",
+            1146,
+            "Table 'nodb.t' doesn't exist",
+        ),
+        (
+            "DROP INDEX i ON nodb.t",
+            1146,
+            "Table 'nodb.t' doesn't exist",
+        ),
+        (
+            "CREATE TABLE nodb.t (a INT, a INT)",
+            1049,
+            "Unknown database 'nodb'",
+        ),
+        (
+            "CREATE TABLE t2 LIKE v",
+            1347,
+            "'ddl_order.v' is not BASE TABLE",
+        ),
+        (
+            "ALTER TABLE v MODIFY COLUMN a INT DEFAULT 'abc'",
+            1347,
+            "'ddl_order.v' is not BASE TABLE",
+        ),
+        (
+            "ALTER TABLE missing MODIFY COLUMN a INT DEFAULT 'abc'",
+            1146,
+            "Table 'ddl_order.missing' doesn't exist",
+        ),
+        ("DROP INDEX nosuch ON t", 1091, "index nosuch doesn't exist"),
+        (
+            "ALTER TABLE t DROP INDEX nosuch",
+            1091,
+            "index nosuch doesn't exist",
+        ),
+        (
+            "ALTER TABLE t DROP INDEX nosuch, ADD COLUMN z INT",
+            1091,
+            "index nosuch doesn't exist",
+        ),
+        (
+            "ALTER TABLE t DROP PRIMARY KEY",
+            1091,
+            "Can't DROP 'PRIMARY'; check that column/key exists",
+        ),
+        (
+            "ALTER PLACEMENT POLICY IF EXISTS nosuch PRIMARY_REGION=\"r1\" REGIONS=\"r1\"",
+            8239,
+            "Unknown placement policy 'nosuch'",
+        ),
+        (
+            "CREATE PLACEMENT POLICY `default` PRIMARY_REGION=\"r1\" REGIONS=\"r1\"",
+            1382,
+            "The 'default' syntax is reserved for purposes internal to the MySQL server",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    rows(
+        &mut session,
+        "CREATE PLACEMENT POLICY p PRIMARY_REGION=\"r1\" REGIONS=\"r1\"",
+    );
+    for (sql, code, message) in [
+        (
+            "CREATE TABLE IF NOT EXISTS t (a INT)",
+            "1050",
+            "Table 'ddl_order.t' already exists",
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS t LIKE t",
+            "1050",
+            "Table 'ddl_order.t' already exists",
+        ),
+        (
+            "DROP INDEX IF EXISTS nosuch ON t",
+            "1091",
+            "index nosuch doesn't exist",
+        ),
+        (
+            "ALTER TABLE t DROP INDEX IF EXISTS nosuch",
+            "1091",
+            "index nosuch doesn't exist",
+        ),
+        (
+            "ALTER TABLE t DROP INDEX IF EXISTS nosuch, ADD COLUMN z INT",
+            "1091",
+            "index nosuch doesn't exist",
+        ),
+        (
+            "CREATE PLACEMENT POLICY IF NOT EXISTS p PRIMARY_REGION=\"r1\" REGIONS=\"r1\"",
+            "8238",
+            "Placement policy 'p' already exists",
+        ),
+        (
+            "DROP PLACEMENT POLICY IF EXISTS nosuch",
+            "8239",
+            "Unknown placement policy 'nosuch'",
+        ),
+    ] {
+        session.execute_write(sql).unwrap();
+        assert_eq!(
+            displayed(rows(&mut session, "SHOW WARNINGS")),
+            vec![vec!["Note", code, message]],
+            "{sql}"
+        );
+    }
+}
+
+/// Go's SetExecutor persists each assignment as it runs, so a later failing
+/// assignment leaves the earlier ones stored (captured from Go on this
+/// branch).
+#[test]
+fn a_failing_set_global_keeps_the_assignments_before_it() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1909)).unwrap();
+    let error = session
+        .execute_write("SET GLOBAL tidb_mem_quota_query = 2147483648, GLOBAL autocommit = 'bogus'")
+        .unwrap_err();
+    assert_eq!(error.code, 1231, "{error:?}");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT @@global.tidb_mem_quota_query")),
+        vec![vec!["2147483648"]]
+    );
+}
+
+/// Go's PREPARE of a statement it does not plan-cache adds only that note:
+/// a FLUSH STATS_DELTA's missing-table warning belongs to EXECUTE (captured
+/// from Go on this branch).
+#[test]
+fn prepare_shows_only_the_plan_cache_note() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1910)).unwrap();
+    session
+        .prepare_general("FLUSH STATS_DELTA test.nosuch")
+        .unwrap();
+    assert_eq!(
+        session
+            .session
+            .warnings()
+            .iter()
+            .map(|warning| warning.code)
+            .collect::<Vec<_>>(),
+        vec![1105]
+    );
 }

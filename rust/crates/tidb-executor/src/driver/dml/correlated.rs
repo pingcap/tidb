@@ -98,6 +98,12 @@ pub(super) enum UpdateExpression {
 }
 
 impl UpdateExpression {
+    /// Whether evaluating this assignment reads the catalog (a correlated
+    /// subquery), so it must see the statement's snapshot before any write.
+    pub(super) fn reads_catalog(&self) -> bool {
+        matches!(self, Self::Applied(_))
+    }
+
     pub(super) fn scalar(expression: Expression) -> Self {
         Self::Scalar(expression)
     }

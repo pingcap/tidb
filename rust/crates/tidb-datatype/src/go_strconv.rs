@@ -244,9 +244,116 @@ fn fmt_f(dst: &mut Vec<u8>, negative: bool, digits: &Digits, prec: i32) {
     }
 }
 
+/// Why Go `strconv.ParseFloat` refused its input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParseFloatError {
+    /// `strconv.ErrSyntax`.
+    Syntax,
+    /// `strconv.ErrRange`: a well-formed value beyond the float64 range.
+    Range,
+}
+
+/// Go `strconv.ParseFloat(text, 64)`: Go's literal syntax (an optional
+/// sign; `inf`, `infinity` or `nan` in any case; a decimal mantissa with an
+/// optional exponent; a `0x` hexadecimal mantissa with a mandatory `p`
+/// exponent; `_` separators only after a base prefix), and `ErrRange` for a
+/// finite literal that rounds to infinity (Rust's own parser answers
+/// infinity there).
+pub fn parse_float64(text: &str) -> Result<f64, ParseFloatError> {
+    let (negative, body) = match text.as_bytes().first() {
+        Some(b'+') => (false, &text[1..]),
+        Some(b'-') => (true, &text[1..]),
+        _ => (false, text),
+    };
+    let lower = body.to_ascii_lowercase();
+    let signed = |value: f64| if negative { -value } else { value };
+    match lower.as_str() {
+        "inf" | "infinity" => return Ok(signed(f64::INFINITY)),
+        "nan" => return Ok(f64::NAN),
+        _ => {}
+    }
+    let value = if let Some(hex) = lower.strip_prefix("0x") {
+        parse_hex_float(hex)?
+    } else {
+        let bytes = lower.as_bytes();
+        let mut index = 0;
+        let mut digits = 0;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+            digits += 1;
+        }
+        if index < bytes.len() && bytes[index] == b'.' {
+            index += 1;
+            while index < bytes.len() && bytes[index].is_ascii_digit() {
+                index += 1;
+                digits += 1;
+            }
+        }
+        if digits == 0 {
+            return Err(ParseFloatError::Syntax);
+        }
+        if index < bytes.len() && bytes[index] == b'e' {
+            index += 1;
+            if index < bytes.len() && matches!(bytes[index], b'+' | b'-') {
+                index += 1;
+            }
+            let start = index;
+            while index < bytes.len() && bytes[index].is_ascii_digit() {
+                index += 1;
+            }
+            if index == start {
+                return Err(ParseFloatError::Syntax);
+            }
+        }
+        if index != bytes.len() {
+            return Err(ParseFloatError::Syntax);
+        }
+        lower.parse::<f64>().map_err(|_| ParseFloatError::Syntax)?
+    };
+    if value.is_infinite() {
+        return Err(ParseFloatError::Range);
+    }
+    Ok(signed(value))
+}
+
+/// The hexadecimal half of Go `readFloat`: `mantissa[.fraction]p[sign]exp`,
+/// `_` allowed between digits.
+fn parse_hex_float(hex: &str) -> Result<f64, ParseFloatError> {
+    let (mantissa, exponent) = hex.split_once('p').ok_or(ParseFloatError::Syntax)?;
+    let mut value = 0f64;
+    let mut scale = 0i64;
+    let mut digits = 0;
+    let mut seen_point = false;
+    for byte in mantissa.bytes() {
+        match byte {
+            b'_' => continue,
+            b'.' if !seen_point => seen_point = true,
+            _ => {
+                let digit = (byte as char).to_digit(16).ok_or(ParseFloatError::Syntax)?;
+                value = value * 16.0 + f64::from(digit);
+                digits += 1;
+                if seen_point {
+                    scale -= 4;
+                }
+            }
+        }
+    }
+    if digits == 0 {
+        return Err(ParseFloatError::Syntax);
+    }
+    let exponent = exponent.replace('_', "");
+    let exponent: i64 = exponent.parse().map_err(|_| ParseFloatError::Syntax)?;
+    let power = i32::try_from(exponent.saturating_add(scale)).unwrap_or(if exponent < 0 {
+        i32::MIN
+    } else {
+        i32::MAX
+    });
+    Ok(value * 2f64.powi(power))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_float;
+    use super::{format_float, parse_float64, ParseFloatError};
 
     #[test]
     fn shortest_forms_match_go() {
@@ -285,5 +392,17 @@ mod tests {
         assert_eq!(format_float(100.0, b'g', 3, 64), "100");
         assert_eq!(format_float(1234.0, b'g', 3, 64), "1.23e+03");
         assert_eq!(format_float(0.0, b'e', 2, 64), "0.00e+00");
+    }
+
+    #[test]
+    fn parse_float64_follows_go_syntax_and_range() {
+        assert_eq!(parse_float64("1.5"), Ok(1.5));
+        assert_eq!(parse_float64("-.5e1"), Ok(-5.0));
+        assert_eq!(parse_float64("0x1p-1"), Ok(0.5));
+        assert_eq!(parse_float64("1e400"), Err(ParseFloatError::Range));
+        assert_eq!(parse_float64("Inf"), Ok(f64::INFINITY));
+        assert_eq!(parse_float64("1_0"), Err(ParseFloatError::Syntax));
+        assert_eq!(parse_float64(""), Err(ParseFloatError::Syntax));
+        assert_eq!(parse_float64("1e"), Err(ParseFloatError::Syntax));
     }
 }

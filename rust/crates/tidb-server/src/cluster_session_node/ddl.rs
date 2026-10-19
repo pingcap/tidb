@@ -2264,6 +2264,7 @@ where
     P: StorePdCapability,
 {
     fn reload_catalog(&self) -> Result<(), String> {
+        let _reload = self.catalog.lock_reload();
         let current = self.catalog.load();
         let at = reload_catalog_from_cluster(&self.opener, self.timeout, &current)
             .map_err(|error| error.to_string())?;

@@ -5563,11 +5563,9 @@ fn drop_index_removes_it_and_owes_the_entry_removal() {
         470_000_004,
     )
     .expect_err("a missing index is an error");
-    // Go `ErrCantDropFieldOrKey` (1091), not a message of this port's own.
-    assert_eq!(
-        refused.to_string(),
-        "Can't DROP 'nosuch'; check that column/key exists"
-    );
+    // Go `dropIndex`: `ErrCantDropFieldOrKey.GenWithStack("index %s doesn't
+    // exist")` (1091), captured from Go on this branch.
+    assert_eq!(refused.to_string(), "index nosuch doesn't exist");
     match plan_ddl(
         &mut store,
         &statement("DROP INDEX IF EXISTS nosuch ON u6.minimal"),

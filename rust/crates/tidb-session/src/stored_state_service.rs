@@ -85,6 +85,7 @@ impl Session {
         service: &dyn SysvarService,
     ) -> Result<Vec<String>, DriverError> {
         let pending = service.begin()?;
+        let before = pending.table().overrides();
         let live = self.swap_globals(pending.table());
         let applied = self.apply_set(sql);
         // A session-scoped assignment mixed into the same `SET` must still
@@ -93,6 +94,12 @@ impl Session {
         // Go's SetExecutor routes every failure through `handleErr`: after a
         // failed SET both error_count and warning_count read 1.
         if let Err(error) = applied {
+            // Go's SetExecutor persists each assignment as it runs, so the
+            // ones before the failing one stay: the scratch table holds
+            // exactly those, and its diff is what Go had written.
+            if pending.table().overrides() != before {
+                pending.commit()?;
+            }
             let error = error.to_mysql_error();
             self.record_ddl_failure(error.code, error.message.clone());
             return Err(DriverError::Mysql(error));

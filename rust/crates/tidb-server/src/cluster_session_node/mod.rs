@@ -6547,25 +6547,12 @@ impl ClusterServerSession {
                 // unsupported-spec 8200). The lowering cannot express any
                 // of the three, so their refusals fire here rather than
                 // collapsing into the generic route refusal.
+                // Go's preprocessor, planner privileges and the executor's
+                // target checks all run before a DDL is built or refused for
+                // its shape (an unsupported ALTER spec's 8200 is raised inside
+                // `executor.AlterTable`'s spec loop, after them).
+                self.session.ddl_target_checks(stmt).map_err(map_error)?;
                 if let Some((code, message)) = schema_shape_refusal(stmt) {
-                    // Go refuses an ALTER specification inside
-                    // `executor.AlterTable`'s spec loop. Before it: the
-                    // preprocessor's name resolution (1146, even for an
-                    // unprivileged user), the planner's privilege check
-                    // (1142), then the executor's base-table check (1347).
-                    if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-                        if let tidb_ast::DdlStmt::AlterTable(alter) = &**ddl {
-                            self.session
-                                .require_table_exists(&alter.name)
-                                .map_err(map_error)?;
-                            self.session
-                                .require_statement_table_privileges(stmt)
-                                .map_err(map_error)?;
-                            self.session
-                                .alter_table_target_precheck(alter)
-                                .map_err(map_error)?;
-                        }
-                    }
                     return Err(SqlQueryError::new(code, *b"HY000", message));
                 }
                 // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
@@ -7979,13 +7966,21 @@ impl QuerySession for ClusterServerSession {
             .session
             .prepare_ast_parsed(sql, parsed)
             .map_err(map_error)?;
+        self.session
+            .note_prepared_plan_cache_refusal(prepared_ast.statement())
+            .map_err(map_error)?;
         let parameter_count = prepared_ast.parameter_count();
         let kind = self.session.statement_kind_parsed(prepared_ast.statement());
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
             // refusal -- an unsupported shape, an unsupported column type --
-            // is reported at PREPARE, where Go reports it too.
+            // is reported at PREPARE, where Go reports it too. Its WARNINGS
+            // (a FLUSH STATS_DELTA's missing tables, lowering notes) are
+            // Go's execution-time ones: PREPARE shows only its plan-cache
+            // note, and EXECUTE routes the statement again.
+            let warnings_before = self.session.warnings().len();
             self.schema_route(prepared_ast.statement())?;
+            self.session.truncate_warnings(warnings_before);
             // Keep ordinary DML's parsed tree as well.  The MySQL binary
             // protocol prepares YCSB's INSERT/UPDATE/DELETE once and then
             // executes that handle thousands of times; throwing this tree
@@ -8672,35 +8667,6 @@ pub fn build_tiflash_replica_poll(
 
 #[cfg(test)]
 mod tests;
-
-impl ClusterServerSession {
-    /// go `session.LogSlowQuery` (`adapter.go:2007`): a statement whose cost
-    /// reached the session's slow threshold lands in the in-memory slow-query
-    /// memory `ADMIN SHOW SLOW` reads back.
-    pub(crate) fn note_slow_query(&mut self, sql: &str, duration: std::time::Duration) {
-        let Some(threshold) = self.slow_log_threshold() else {
-            return;
-        };
-        if duration < threshold {
-            return;
-        }
-        let start = std::time::SystemTime::now()
-            .checked_sub(duration)
-            .unwrap_or_else(std::time::SystemTime::now);
-        let (user, host) = self.session.current_identity().unwrap_or(("", ""));
-        let db = self.session.current_database().to_owned();
-        let digest = tidb_parser::normalize_digest(sql).1.to_string();
-        tidb_session::show_admin::record_slow_query(tidb_session::show_admin::SlowQueryRecord {
-            sql: sql.to_owned(),
-            start,
-            duration,
-            conn_id: self.connection_id(),
-            user: format!("{user}@{host}"),
-            db,
-            digest,
-        });
-    }
-}
 
 mod login_policy;
 mod settings;

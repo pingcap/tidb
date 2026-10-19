@@ -3920,14 +3920,16 @@ fn prepare_cluster_columns(
                     )
                     .map_err(DdlPlanError::Admission)?;
                 }
+                // Go `dropIndex` (multi-schema change included): `index %s
+                // doesn't exist`, as the error and as the IF EXISTS note.
                 if find_index(stored, name).is_none() {
                     if !if_exists {
-                        return Err(DdlPlanError::UnknownIndex(name.clone()));
+                        return Err(DdlPlanError::IndexDoesNotExist(name.clone()));
                     }
                     warnings.push((
                         DdlWarningLevel::Note,
                         1091,
-                        format!("Can't DROP '{name}'; check that column/key exists"),
+                        format!("index {name} doesn't exist"),
                     ));
                     skipped = Some(format!(
                         "index `{name}` does not exist on `{schema}`.`{table}`"
@@ -5630,6 +5632,8 @@ pub enum DdlPlanError {
     DuplicateColumnName(String),
     /// The named index is not on the named table (Go 1091).
     UnknownIndex(String),
+    /// Go `dropIndex`'s 1091 for a missing index: `index %s doesn't exist`.
+    IndexDoesNotExist(String),
     /// The statement names a column the table does not have (Go 1054,
     /// `ErrBadField`). Go answers this for a MODIFY/CHANGE of a missing
     /// column and for a `FIRST`/`AFTER` anchor that is missing or not
@@ -5716,6 +5720,7 @@ impl fmt::Display for DdlPlanError {
                     "Can't DROP '{name}'; check that column/key exists"
                 )
             }
+            Self::IndexDoesNotExist(name) => write!(formatter, "index {name} doesn't exist"),
             // Go `buildIndexColumns`' `GenWithStack("column does not exist: %s")`.
             Self::UnknownIndexColumn { column } => {
                 write!(formatter, "column does not exist: {column}")
@@ -5746,7 +5751,9 @@ impl DdlPlanError {
             Self::DuplicateColumnName(_) => errcode::ErrDupFieldName,
             Self::UnknownIndexColumn { .. } => errcode::ErrKeyColumnDoesNotExits,
             Self::KeyNotExists { .. } => errcode::ErrKeyDoesNotExist,
-            Self::CantDropFieldOrKey(_) | Self::UnknownIndex(_) => errcode::ErrCantDropFieldOrKey,
+            Self::CantDropFieldOrKey(_) | Self::UnknownIndex(_) | Self::IndexDoesNotExist(_) => {
+                errcode::ErrCantDropFieldOrKey
+            }
             Self::UnknownColumn { .. } => errcode::ErrBadField,
             Self::InvalidAutoRandom(_) => errcode::ErrInvalidAutoRandom,
             Self::AutoIdReadFailed => errcode::ErrAutoincReadFailed,
@@ -9062,30 +9069,16 @@ fn apply_partition_change(
     table: &str,
     sql: &str,
 ) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
-    use tidb_executor::{Catalog, KvColumn, KvTable, TableEntry};
+    use tidb_executor::{Catalog, TableEntry};
 
     let spec = stored_partition_spec(stored)?;
 
-    // The change replays the in-process ALTER, which also moves rows, so it
-    // runs over an in-memory table carrying the metadata its checks read.
-    let kv_columns = stored
-        .columns
-        .iter_deref()
-        .map(|column| {
-            let column = column.read();
-            KvColumn {
-                name: column.name.original().to_owned(),
-                id: column.id,
-                field_type: column.field_type.clone(),
-                column_info_version: column.version,
-                default_value: None,
-                origin_default: None,
-                comment: column.comment.clone(),
-                generated: None,
-            }
-        })
-        .collect();
-    let mut kv_table = KvTable::new(stored.id, kv_columns);
+    // The change replays the in-process ALTER over the table Go's
+    // `TableFromMeta` would build -- indexes, defaults, generated columns and
+    // placement included, which partition checks read -- on an empty
+    // in-memory store (the stored rows are not this statement's to move).
+    let mut kv_table = metadata_kv_table(stored, schema, table)?;
+    kv_table.replace_storage(Box::new(tidb_executor::storage::MemTableStorage::new()));
     kv_table.set_max_column_id(stored.max_column_id);
     kv_table.set_max_index_id(stored.max_index_id);
     kv_table.name = table.to_owned();
@@ -9425,13 +9418,34 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             if_not_exists,
             or_replace,
         } => {
+            // Go `CreatePlacementPolicyWithInfo`: the reserved name before
+            // the existence check.
+            if name.eq_ignore_ascii_case("default") {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    tidb_error::mysql::errcode::ErrReservedSyntax,
+                    format!(
+                        "The '{name}' syntax is reserved for purposes internal to the MySQL server"
+                    ),
+                )));
+            }
             let existing = find_policy(snapshot, name)?;
             match (&existing, *if_not_exists, *or_replace) {
                 (Some(found), true, _) => {
-                    return Ok(already(format!(
-                        "placement policy `{}` already exists",
-                        found.name.original()
-                    )));
+                    // Go `CreatePlacementPolicyWithInfo`: Note 8238.
+                    return Ok(already_with_warnings(
+                        format!(
+                            "placement policy `{}` already exists",
+                            found.name.original()
+                        ),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            8238,
+                            format!(
+                                "Placement policy '{}' already exists",
+                                found.name.original()
+                            ),
+                        )],
+                    ));
                 }
                 // Go's `OnExistReplace` keeps the policy OBJECT and swaps its
                 // settings, so references by id stay pointed at it.
@@ -9476,10 +9490,10 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             settings,
             if_exists,
         } => {
+            // Go `AlterPlacementPolicy` answers 8239 for a missing policy
+            // whatever IF EXISTS says.
+            let _ = if_exists;
             let Some(found) = find_policy(snapshot, name)? else {
-                if *if_exists {
-                    return Ok(already(format!("placement policy `{name}` does not exist")));
-                }
                 return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                     8239,
                     format!("Unknown placement policy '{name}'"),
@@ -9508,8 +9522,16 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         }
         DdlStatement::DropPlacementPolicy { name, if_exists } => {
             let Some(found) = find_policy(snapshot, name)? else {
+                // Go `DropPlacementPolicy`: Note 8239 under IF EXISTS.
                 if *if_exists {
-                    return Ok(already(format!("placement policy `{name}` does not exist")));
+                    return Ok(already_with_warnings(
+                        format!("placement policy `{name}` does not exist"),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            8239,
+                            format!("Unknown placement policy '{name}'"),
+                        )],
+                    ));
                 }
                 return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                     8239,
@@ -9733,10 +9755,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             }
             if let Some(existing) = find_table(database, table) {
                 if *if_not_exists {
-                    return Ok(already(format!(
-                        "table `{schema}`.`{}` already exists",
-                        existing.name.original()
-                    )));
+                    // Go `createTableWithInfoJob`: `ErrTableExists` as a note.
+                    return Ok(already_with_warnings(
+                        format!("table `{schema}`.`{}` already exists", existing.name.original()),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            1050,
+                            format!("Table '{schema}.{}' already exists", existing.name.original()),
+                        )],
+                    ));
                 }
                 return Err(DdlPlanError::TableExists {
                     schema: schema.clone(),
@@ -9883,10 +9910,15 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             .map_err(DdlPlanError::Admission)?;
             if let Some(existing) = find_table(database, table) {
                 if *if_not_exists {
-                    return Ok(already(format!(
-                        "table `{schema}`.`{}` already exists",
-                        existing.name.original()
-                    )));
+                    // Go `createTableWithInfoJob`: `ErrTableExists` as a note.
+                    return Ok(already_with_warnings(
+                        format!("table `{schema}`.`{}` already exists", existing.name.original()),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            1050,
+                            format!("Table '{schema}.{}' already exists", existing.name.original()),
+                        )],
+                    ));
                 }
                 return Err(DdlPlanError::TableExists {
                     schema: schema.clone(),
@@ -12175,13 +12207,20 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     }
                     AlterColumnAction::DropIndex { if_exists, name } => {
                         let Some(dropped) = find_index(&info, name) else {
+                            // Go `dropIndex`: the note under IF EXISTS, the
+                            // same text as the error otherwise.
                             if *if_exists {
                                 satisfied.push(format!(
                                     "index `{name}` does not exist on `{schema}`.`{table}`"
                                 ));
+                                warnings.push((
+                                    DdlWarningLevel::Note,
+                                    1091,
+                                    format!("index {name} doesn't exist"),
+                                ));
                                 continue;
                             }
-                            return Err(DdlPlanError::UnknownIndex(name.clone()));
+                            return Err(DdlPlanError::IndexDoesNotExist(name.clone()));
                         };
                         let dropped = dropped.read().clone_like_go();
                         // Go `checkIndexNeededInForeignKeyInOwner`.
@@ -13535,12 +13574,19 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             let Some(dropped) = find_index(stored, index) else {
+                // Go `dropIndex`: `ErrCantDropFieldOrKey.GenWithStack("index
+                // %s doesn't exist")`, appended as a note under IF EXISTS.
                 if *if_exists {
-                    return Ok(already(format!(
-                        "index `{index}` does not exist on `{schema}`.`{table}`"
-                    )));
+                    return Ok(already_with_warnings(
+                        format!("index `{index}` does not exist on `{schema}`.`{table}`"),
+                        vec![(
+                            DdlWarningLevel::Note,
+                            1091,
+                            format!("index {index} doesn't exist"),
+                        )],
+                    ));
                 }
-                return Err(DdlPlanError::UnknownIndex(index.clone()));
+                return Err(DdlPlanError::IndexDoesNotExist(index.clone()));
             };
             let dropped = dropped.read().clone_like_go();
             crate::foreign_key_build::check_index_needed_in_foreign_key(

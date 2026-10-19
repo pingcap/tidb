@@ -182,6 +182,15 @@ pub(crate) fn datum_text(value: &Datum) -> Option<String> {
         }
         Datum::Set(value, _) => Some(String::from_utf8_lossy(value.name().as_bytes()).into_owned()),
         Datum::Duration(value) => Some(value.to_string()),
+        // Go `BinaryLiteral.ToString` is the raw bytes: `SET autocommit =
+        // 0x30` is `'0'` and `SET sql_mode = 0x414E5349` is `'ANSI'`.
+        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
+            Some(String::from_utf8_lossy(literal.as_bytes()).into_owned())
+        }
+        // Go `strconv.FormatFloat(float64(f), 'f', -1, 32)`.
+        Datum::Float32(value) => Some(tidb_datatype::go_strconv::format_float(
+            *value, b'f', -1, 32,
+        )),
         _ => None,
     }
 }
@@ -251,6 +260,21 @@ impl Session {
                 Ok(Some(()))
             }
             SessionStmt::Set(set) => {
+                // Go `buildSet` appends the privilege visit info of EVERY
+                // assignment (SYSTEM_VARIABLES_ADMIN for GLOBAL/INSTANCE,
+                // RESTRICTED_VARIABLES_ADMIN under SEM) and checks them all
+                // before `SetExecutor` runs, so a denied assignment leaves
+                // the earlier ones unapplied -- removed variables included.
+                for assignment in &set.assignments {
+                    if matches!(
+                        assignment.scope,
+                        tidb_ast::SystemVariableScope::Global
+                            | tidb_ast::SystemVariableScope::Instance
+                    ) {
+                        self.require_set_global_privilege()?;
+                    }
+                    self.require_sem_visible_sysvar(&assignment.name)?;
+                }
                 for assignment in &set.assignments {
                     self.apply_assignment(assignment)?;
                 }

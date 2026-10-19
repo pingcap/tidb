@@ -263,6 +263,25 @@ impl Session {
         )
     }
 
+    /// Go `GeneratePlanCacheStmtWithAST`'s refusal note for a protocol-level
+    /// prepare: a statement the plan cache will not hold is answered with
+    /// `skip prepared plan-cache: <reason>`, as `PREPARE ... FROM` is.
+    pub fn note_prepared_plan_cache_refusal(&mut self, statement: &Stmt) -> Result<(), DriverError> {
+        let refusal = {
+            let catalog = self.lock_catalog()?;
+            let mut candidate = statement.clone();
+            self.prepared_statement_cacheable(&mut candidate, &catalog).err()
+        };
+        if let Some(reason) = refusal {
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                format!("skip prepared plan-cache: {reason}"),
+            );
+        }
+        Ok(())
+    }
+
     /// Parses and retains the statement under this session's current SQL mode.
     pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
         let statement = self.parse_statement(sql)?;

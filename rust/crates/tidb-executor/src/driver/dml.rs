@@ -1214,11 +1214,18 @@ fn run_insert_with_physical(
             .flatten()
             .any(|value| value.flags() & tidb_ast::FLAG_HAS_REFERENCE != 0);
     let mut eval_buffer = has_ref_cols.then(|| {
-        let field_types: Vec<FieldType> =
-            column_meta.iter().map(|meta| meta.field_type.clone()).collect();
+        let field_types: Vec<FieldType> = column_meta
+            .iter()
+            .map(|meta| meta.field_type.clone())
+            .collect();
         tidb_chunk::mutrow::MutRow::from_types(&field_types)
     });
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
+    // Go `getColDefaultValue`/`lazilyInitColDefaultValBuf`: with more than one
+    // VALUES list a non-expression default is computed (and its 1364
+    // warning raised) once, then reused for every later row.
+    let cache_defaults = insert.source.is_none() && insert.rows.len() > 1;
+    let mut default_cache: Vec<Option<Datum>> = vec![None; column_list.len()];
     // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
     // against the target columns, and every later row against the one before
     // it. The first check is skipped when both the column list and the first
@@ -1321,40 +1328,46 @@ fn run_insert_with_physical(
                 row[offset] = Datum::Null;
             }
         }
-        // Only a column the statement omits takes its default, and only such
-        // a column can raise ErrNoDefaultForField (Go `fillColValue`).
-        for offset in 0..column_list.len() {
-            if !assigned[offset] {
-                row[offset] = column_default(&column_meta, offset, ctx, eval_chunk.get_row(0))?;
+        // Go `fillRow` walks the columns in table order: an omitted column
+        // takes its default (`fillColValue`, which can raise
+        // ErrNoDefaultForField), then `HandleBadNull` checks the column,
+        // before the next column is looked at -- so `INSERT IGNORE INTO t(a)
+        // VALUES (NULL)` over `(a NOT NULL, b NOT NULL)` warns 1048-for-a,
+        // then 1364-for-b. The statement's own values were cast in
+        // `evalRow` before this, which is why their truncation warnings
+        // (1406) precede every constraint warning (oracle-captured order).
+        for offset in 0..row.len() {
+            if offset < column_list.len() && !assigned[offset] {
+                let cacheable = cache_defaults
+                    && !matches!(
+                        &column_meta[offset].default_value,
+                        Some(crate::column_default::ColumnDefault::Computed(computed))
+                            if computed.is_expr()
+                    );
+                row[offset] = match &default_cache[offset] {
+                    Some(value) if cacheable => value.clone(),
+                    _ => {
+                        let value =
+                            column_default(&column_meta, offset, ctx, eval_chunk.get_row(0))?;
+                        if cacheable {
+                            default_cache[offset] = Some(value.clone());
+                        }
+                        value
+                    }
+                };
             }
-        }
-        // Go casts each value to its column's type BEFORE the row is
-        // written, which is what rounds a decimal to the column's scale and
-        // parses a numeric string. The statement's values were cast above;
-        // this pass casts what the row filled in (defaults and the
-        // auto-increment marker). It runs before `HandleBadNull`: go's row
-        // build emits the truncation warnings (1406) before the constraint
-        // warnings (1048), so `INSERT IGNORE INTO t VALUES (NULL, 'abc')`
-        // warns 1406-for-b and only then 1048-for-a (oracle-captured order).
-        {
-            for (offset, value) in row.iter_mut().enumerate() {
-                if cast_done[offset] {
-                    continue;
-                }
-                // The row is one wider than the table when the statement
-                // wrote `_tidb_rowid`. Go gives that slot a synthetic
-                // `table.Column` built from `NewExtraHandleColInfo()`
-                // (`fillRow`) so every per-column step has an entry; the cast
-                // it performs is `setDatumAutoIDAndCast` against that
-                // column's `TypeLonglong`.
-                // SQL input metadata includes the extra handle after visible
-                // columns; its offset may overlap the table's hidden tail.
+            // Cast what the row filled in (a default or the auto-increment
+            // marker); the statement's own values were cast already. The
+            // row is one wider than the table when the statement wrote
+            // `_tidb_rowid`: Go gives that slot a synthetic column built
+            // from `NewExtraHandleColInfo()`, cast as its `TypeLonglong`.
+            if !cast_done[offset] {
                 let (field_type, name) = (
                     &column_meta[offset].field_type,
                     column_meta[offset].name.as_str(),
                 );
-                *value = cast_value_for_column(
-                    std::mem::replace(value, Datum::Null),
+                row[offset] = cast_value_for_column(
+                    std::mem::replace(&mut row[offset], Datum::Null),
                     field_type,
                     name,
                     new_rows.len(),
@@ -1362,17 +1375,14 @@ fn run_insert_with_physical(
                     insert.ignore,
                 )?;
             }
-        }
-        // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL column is
-        // ErrColumnCantNull, which is a different error from omitting a
-        // column that has no default. Whether it FAILS the statement is
-        // `bad_null_level` above, not the SQL mode alone.
-        for (offset, value) in row.iter_mut().enumerate() {
-            // A generated column's value is not built yet at this point, so
-            // the NULL standing in for it is not the user's NULL.
+            // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL
+            // column is ErrColumnCantNull, a different error from omitting a
+            // column that has no default; `bad_null_level` decides whether
+            // it fails the statement. A generated column's value is not
+            // built yet, so the NULL standing in for it is not the user's.
             if assigned[offset] && !generated_targets[offset] {
                 crate::bad_null::handle_bad_null(
-                    value,
+                    &mut row[offset],
                     &column_meta[offset].field_type,
                     &column_list[offset].0,
                     bad_null_level,
@@ -1620,6 +1630,11 @@ fn run_insert_with_physical(
             false
         };
     let mut inserted = 0;
+    // Go `StmtCtx.CopiedRows`/`UpdatedRows`/`TouchedRows`, which the
+    // `Records: ...` message reads.
+    let mut copied: u64 = 0;
+    let mut duplicates_updated: u64 = 0;
+    let mut duplicates_touched: u64 = 0;
     let mut updates = UpdateRecords::new(fk_triggers);
     let mut removals = DeleteRecords::new(fk_triggers);
     let mut inserted_rows = Vec::new();
@@ -1711,7 +1726,7 @@ fn run_insert_with_physical(
                 } else {
                     row
                 };
-                inserted += apply_on_duplicate(
+                let applied = apply_on_duplicate(
                     catalog,
                     &database,
                     &conflicts[0].handle,
@@ -1726,6 +1741,15 @@ fn run_insert_with_physical(
                     &mut updates,
                     ctx,
                 )?;
+                inserted += applied.affected;
+                duplicates_updated += u64::from(applied.changed);
+                duplicates_touched += u64::from(applied.touched);
+                // Go `doDupRowUpdate` (issue #55965): the OK packet's insert
+                // id is the updated row's AUTO_INCREMENT value when the
+                // statement has affected rows, and 0 otherwise.
+                if let Some(id) = applied.auto_increment {
+                    ctx.record_given_insert_id(if inserted > 0 { id } else { 0 });
+                }
                 continue;
             } else if insert.ignore {
                 let conflict = conflicts.into_iter().next().expect("a conflict was found");
@@ -1793,6 +1817,7 @@ fn run_insert_with_physical(
         match insert_result {
             Ok(_) => {
                 inserted += 1;
+                copied += 1;
                 if !insert.ignore
                     && crate::foreign_key::has_triggers(fk_triggers, &database, &table_name)
                 {
@@ -1828,6 +1853,25 @@ fn run_insert_with_physical(
     }
     updates.finish(catalog, ctx)?;
     removals.finish(catalog, ctx)?;
+    // Go `InsertExec.setMessage` / `ReplaceExec.setMessage`: an
+    // `INSERT ... SELECT` or a multi-row VALUES list reports
+    // `Records: N  Duplicates: D  Warnings: W`.
+    let records = row_count as u64;
+    if insert.source.is_some() || records > 1 {
+        let duplicates = if insert.replace {
+            inserted.saturating_sub(records)
+        } else if insert.ignore {
+            records.saturating_sub(copied)
+        } else if ctx.client_found_rows() {
+            duplicates_touched
+        } else {
+            duplicates_updated
+        };
+        ctx.set_message(format!(
+            "Records: {records}  Duplicates: {duplicates}  Warnings: {}",
+            ctx.warning_count()
+        ));
+    }
     Ok((inserted, first_allocated))
 }
 
@@ -2105,15 +2149,16 @@ fn apply_on_duplicate(
     null_level: crate::bad_null::NullLevel,
     updates: &mut UpdateRecords<'_>,
     ctx: &crate::StmtContext,
-) -> Result<u64, DriverError> {
+) -> Result<OnDuplicateApplied, DriverError> {
     let Some(TableEntry::Kv(table)) = catalog.get_rows_mut_in(database, target_table_name) else {
         unreachable!("ODKU targets a byte-backed table")
     };
+    let auto_increment_offset = table.auto_increment_column_offset();
     let Some(existing) = std::sync::Arc::make_mut(table)
         .get_row_by_handle(handle, &ctx.session_zone())
         .map_err(|e| kv_read_error("row read failed", e))?
     else {
-        return Ok(0);
+        return Ok(OnDuplicateApplied::default());
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let extra_handle = prepared.extra_handle;
@@ -2184,11 +2229,46 @@ fn apply_on_duplicate(
         },
         ctx,
     )?;
-    Ok(if outcome.changed() {
-        2
-    } else {
-        u64::from(outcome.unchanged() && ctx.client_found_rows())
+    Ok(OnDuplicateApplied {
+        affected: if outcome.changed() {
+            2
+        } else {
+            u64::from(outcome.unchanged() && ctx.client_found_rows())
+        },
+        changed: outcome.changed(),
+        touched: outcome.touched(),
+        // Go `doDupRowUpdate` returns before its insert-id step when
+        // `updateRecord` ignored the row.
+        auto_increment: if outcome.touched() {
+            auto_increment_offset
+                .and_then(|offset| updated.get(offset))
+                .map(datum_bits_as_u64)
+        } else {
+            None
+        },
     })
+}
+
+/// What one ON DUPLICATE KEY UPDATE row did.
+#[derive(Default)]
+struct OnDuplicateApplied {
+    /// Its contribution to the affected-row count.
+    affected: u64,
+    /// Go `UpdatedRows`: the update changed the row.
+    changed: bool,
+    /// Go `TouchedRows`: the row was found (changed or not).
+    touched: bool,
+    /// The updated row's AUTO_INCREMENT value, when the table has one.
+    auto_increment: Option<u64>,
+}
+
+/// Go `Datum.GetUint64` on an integer datum: its bits.
+fn datum_bits_as_u64(value: &Datum) -> u64 {
+    match value {
+        Datum::Int(value) => *value as u64,
+        Datum::UInt(value) => *value,
+        _ => 0,
+    }
 }
 
 /// Runs a single-table `UPDATE`, returning MySQL's affected-row count.
@@ -3327,6 +3407,68 @@ fn run_update_with_physical(
     let mut changed = 0u64;
     let mut rewrites = Vec::new();
     let mut records = UpdateRecords::new(fk_triggers);
+    let writes_stored_columns = set_exprs
+        .iter()
+        .any(|(offset, _)| Some(*offset) != extra_handle_slot);
+    let accountant = ctx
+        .statement_memory()
+        .write_accountant(mem_quota::label::UPDATE);
+    let PhysicalWriteRows {
+        rows,
+        field_types: physical_field_types,
+    } = source_rows;
+    // Go `UpdateExec.updateRows` composes each row and writes it before the
+    // next: row 1's write error or `HandleBadNull` warning comes before row
+    // 2's cast warning. Assignments that read the catalog (a correlated
+    // subquery) instead see the whole statement snapshot first.
+    if writes_stored_columns && !set_exprs.iter().any(|(_, expr)| expr.reads_catalog()) {
+        for (row_index, row) in rows.into_iter().enumerate() {
+            let handle = extra_handle_value(&row.id);
+            let mut new_row = UpdateRowEvaluator {
+                field_types: &field_types,
+                column_names: &column_names,
+                set_exprs: &set_exprs,
+                catalog: &*catalog,
+                current_db,
+                ctx,
+                on_update_now: &on_update_now,
+                extra_handle: extra_handle_slot.is_some(),
+            }
+            .compute(
+                &row.stored,
+                handle,
+                Some((&row.output, &physical_field_types)),
+                &mut matched,
+            )?;
+            accountant
+                .account_row(&new_row)
+                .map_err(DriverError::from)?;
+            let outcome = records.write(
+                catalog,
+                &database,
+                &name,
+                &row.id,
+                &row.stored,
+                &mut new_row,
+                partition_ids.as_deref(),
+                update.ignore,
+                GeneratedWrite::Update { row_index },
+                ctx,
+            )?;
+            touched += u64::from(outcome.touched());
+            changed += u64::from(outcome.changed());
+        }
+        records.finish(catalog, ctx)?;
+        ctx.set_message(format!(
+            "Rows matched: {matched}  Changed: {changed}  Warnings: {}",
+            ctx.warning_count()
+        ));
+        return Ok(if ctx.client_found_rows() {
+            touched
+        } else {
+            changed
+        });
+    }
     let row_evaluator = UpdateRowEvaluator {
         field_types: &field_types,
         column_names: &column_names,
@@ -3337,13 +3479,6 @@ fn run_update_with_physical(
         on_update_now: &on_update_now,
         extra_handle: extra_handle_slot.is_some(),
     };
-    let accountant = ctx
-        .statement_memory()
-        .write_accountant(mem_quota::label::UPDATE);
-    let PhysicalWriteRows {
-        rows,
-        field_types: physical_field_types,
-    } = source_rows;
     for row in rows {
         let handle = extra_handle_value(&row.id);
         let new_row = row_evaluator.compute(
@@ -3357,9 +3492,6 @@ fn run_update_with_physical(
             .map_err(DriverError::from)?;
         rewrites.push((row.id, row.stored, new_row));
     }
-    let writes_stored_columns = set_exprs
-        .iter()
-        .any(|(offset, _)| Some(*offset) != extra_handle_slot);
     if !writes_stored_columns {
         // Go assignFlag excludes the extra handle from each writable table range.
         matched = 0;

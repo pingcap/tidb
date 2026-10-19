@@ -258,6 +258,13 @@ impl Session {
         &self.warnings
     }
 
+    /// Drops the warnings appended after the first `len`, for a caller that
+    /// ran a step whose warnings belong to a later statement (routing done at
+    /// PREPARE whose warnings Go raises at EXECUTE).
+    pub fn truncate_warnings(&mut self, len: usize) {
+        self.warnings.truncate(len);
+    }
+
     /// Parses one statement at a statement boundary, giving it the fresh
     /// warning state Go's `ResetContextOfStmt` builds.
     ///

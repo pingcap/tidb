@@ -51,8 +51,11 @@ impl UpdateOutcome {
     pub(crate) fn unchanged(self) -> bool {
         matches!(self, Self::Unchanged)
     }
+    /// Go counts a row as touched (`CLIENT_FOUND_ROWS`) only when
+    /// `updateRecord` did not report it ignored: a duplicate skipped under
+    /// IGNORE is not a found row.
     pub(crate) fn touched(self) -> bool {
-        !matches!(self, Self::ForeignKeySkipped)
+        matches!(self, Self::Changed | Self::Unchanged)
     }
     pub(crate) fn ignored(self) -> bool {
         matches!(self, Self::ForeignKeySkipped)

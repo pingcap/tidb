@@ -55,6 +55,7 @@ pub mod format;
 pub mod generic;
 pub mod globalconn;
 pub mod go_regexp;
+pub mod go_time_layout;
 pub mod intest;
 pub mod intset;
 pub mod israce;

@@ -541,6 +541,7 @@ fn run_ack_loop<C, L, P>(
                             // SQL path resolves the table from its fresh
                             // session schema; refresh the Rust catalog through
                             // the same fresh snapshot before retrying.
+                            let _reload = catalog.lock_reload();
                             let current = catalog.load();
                             match tidb_exec::real_tikv_catalog::load_catalog_from_cluster(
                                 opener, timeout,
