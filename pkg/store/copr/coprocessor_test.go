@@ -1214,7 +1214,7 @@ func testHandleBatchCopResponseRetriesAPIV2ChildLock(t *testing.T) {
 	require.NoError(t, err)
 	unistore.BootstrapWithSingleStore(cluster)
 	primaryKey := codec.EncodeKey([]byte("primary"))
-	var checkedPrimary atomic.Bool
+	var checkedPrimary atomic.Value
 	client := &ignoredLockHintCopClient{Client: mockClient}
 	client.onRequest = func(req *tikvrpc.Request) *tikvrpc.Response {
 		switch req.Type {
@@ -1231,13 +1231,13 @@ func testHandleBatchCopResponseRetriesAPIV2ChildLock(t *testing.T) {
 				resp.BatchResponses = []*coprocessor.StoreBatchTaskResponse{{
 					TaskId: req.Cop().Tasks[0].TaskId, Locked: lock,
 				}}
-			} else if !checkedPrimary.Load() {
+			} else if checkedPrimary.Load() == nil {
 				resp.Data = nil
 				resp.Locked = lock
 			}
 			return &tikvrpc.Response{Resp: resp}
 		case tikvrpc.CmdCheckTxnStatus:
-			checkedPrimary.Store(true)
+			checkedPrimary.Store(append([]byte(nil), req.CheckTxnStatus().PrimaryKey...))
 		}
 		return nil
 	}
@@ -1276,7 +1276,7 @@ func testHandleBatchCopResponseRetriesAPIV2ChildLock(t *testing.T) {
 		}
 	}
 	require.Empty(t, pending, "child task must finish after resolving its lock")
-	require.True(t, checkedPrimary.Load(), "the lock resolver must check the encoded primary")
+	require.Equal(t, primaryKey, checkedPrimary.Load(), "the lock resolver must check the expected encoded primary")
 	require.Equal(t, [][]byte{[]byte("parent"), []byte("child")}, data)
 }
 
