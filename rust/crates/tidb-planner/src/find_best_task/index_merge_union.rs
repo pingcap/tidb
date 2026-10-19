@@ -55,11 +55,15 @@ fn partial_matches_order(
     if items.iter().any(|item| item.desc != first.desc) {
         return None;
     }
-    // A correlated access condition's ranges are rebuilt per outer row, so
-    // plan-time range groups would be stale; such a partial keeps its order
-    // only outright.
-    let allow_groups =
-        !tidb_expr::expr_util::predicates::contain_correlated_column(&ds.pushed_down_conds);
+    // Go `matchProperty` reads the partial's plan-time ranges. A partial
+    // whose own access conditions are correlated has its ranges rebuilt per
+    // outer row (in Go they are full ranges at plan time), so it keeps its
+    // order only outright; a correlated condition elsewhere (a table filter,
+    // an index filter on top of constant ranges) leaves the range groups
+    // valid, as in Go.
+    let allow_groups = |detached: &crate::ranger::detacher::DetachRangeResult| {
+        !tidb_expr::expr_util::predicates::contain_correlated_column(&detached.access_conds)
+    };
     match partial {
         // Go `isMatchPropForIndexMerge`: every MV partial path must match,
         // its equality on the array value fixing that key position.
@@ -89,12 +93,18 @@ fn partial_matches_order(
                 &filled.common_columns,
                 &filled.detached.ranges,
                 items,
-                allow_groups,
+                allow_groups(&filled.detached),
             )
         }
         Partial::Index {
             index_pos, filled, ..
-        } => index_partial_matches_order(ds, *index_pos, filled, items, allow_groups),
+        } => index_partial_matches_order(
+            ds,
+            *index_pos,
+            filled,
+            items,
+            allow_groups(&filled.detached),
+        ),
     }
 }
 
