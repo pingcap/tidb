@@ -430,10 +430,12 @@ mod playground_tests {
             .unwrap_or(0);
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(async {
-            let store =
-                tikv_client::tikv::KvStore::new_with_config(vec![pd], tikv_client::Config::default())
-                    .await
-                    .expect("store");
+            let store = tikv_client::tikv::KvStore::new_with_config(
+                vec![pd],
+                tikv_client::Config::default(),
+            )
+            .await
+            .expect("store");
             tokio::time::sleep(std::time::Duration::from_secs(idle)).await;
             let timestamp = store.current_timestamp().await.expect("timestamp");
             let (stat, result) = store

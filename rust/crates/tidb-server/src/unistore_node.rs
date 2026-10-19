@@ -845,7 +845,11 @@ mod meta_txn_tests {
         assert_eq!(writer.get(b"mt/a").unwrap(), Some(b"1".to_vec()));
 
         let mut peer = storage.begin().unwrap();
-        assert_eq!(peer.get(b"mt/a").unwrap(), None, "uncommitted writes stay private");
+        assert_eq!(
+            peer.get(b"mt/a").unwrap(),
+            None,
+            "uncommitted writes stay private"
+        );
         NewTxnTransaction::rollback(&mut peer).unwrap();
 
         NewTxnTransaction::commit(&mut writer).unwrap();

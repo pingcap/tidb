@@ -509,19 +509,21 @@ pub(crate) fn run_cluster_session_node_with_spill(
             crate::real_tikv_node::connect_schema_notifier(&config),
             sysvar_publication_fence,
         )),
-        Arc::new(RealClusterAnalyze::new(
-            Arc::new(authority.transaction_opener()),
-            Arc::clone(&stats),
-            // Go's ANALYZE reads rows and stats tables through the same
-            // data-plane requests any query uses, each bounded per request
-            // (`TiKVClient.CoprReqTimeout`, coprocessor.go:1791) rather than
-            // by a control-plane budget. This statement walks the whole
-            // catalog plus every row of the table, so its requests take the
-            // data-plane deadline.
-            COPROCESSOR_QUERY_TIMEOUT,
-            config.stats_lease.slow_save_interval(),
-        )
-        .with_row_ids(Arc::clone(&node_auto_ids))),
+        Arc::new(
+            RealClusterAnalyze::new(
+                Arc::new(authority.transaction_opener()),
+                Arc::clone(&stats),
+                // Go's ANALYZE reads rows and stats tables through the same
+                // data-plane requests any query uses, each bounded per request
+                // (`TiKVClient.CoprReqTimeout`, coprocessor.go:1791) rather than
+                // by a control-plane budget. This statement walks the whole
+                // catalog plus every row of the table, so its requests take the
+                // data-plane deadline.
+                COPROCESSOR_QUERY_TIMEOUT,
+                config.stats_lease.slow_save_interval(),
+            )
+            .with_row_ids(Arc::clone(&node_auto_ids)),
+        ),
         Arc::new(RealClusterStatsLock::new(
             Arc::new(authority.transaction_opener()),
             COPROCESSOR_QUERY_TIMEOUT,
@@ -906,17 +908,15 @@ mod status_tests {
                 databases: Vec::new(),
                 schema_version: 1,
             });
-        assert!(
-            start_cluster_status(
-                &config,
-                Arc::clone(&tracker),
-                Arc::clone(&schema),
-                test_settings(),
-                None
-            )
-            .unwrap()
-            .is_none()
-        );
+        assert!(start_cluster_status(
+            &config,
+            Arc::clone(&tracker),
+            Arc::clone(&schema),
+            test_settings(),
+            None
+        )
+        .unwrap()
+        .is_none());
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         config.report_status = true;
         config.status_port = occupied.local_addr().unwrap().port();

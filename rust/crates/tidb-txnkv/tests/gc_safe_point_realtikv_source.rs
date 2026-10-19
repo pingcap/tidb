@@ -38,8 +38,8 @@ use tidb_txnkv::{StorageDriverError, VisibilityError};
 #[test]
 #[ignore = "requires a running playground with GC_SAFE_POINT_PD_ADDR set"]
 fn a_start_ts_below_the_clusters_txn_safe_point_is_classified_not_hung() {
-    let pd_address = std::env::var("GC_SAFE_POINT_PD_ADDR")
-        .expect("runner must provide GC_SAFE_POINT_PD_ADDR");
+    let pd_address =
+        std::env::var("GC_SAFE_POINT_PD_ADDR").expect("runner must provide GC_SAFE_POINT_PD_ADDR");
     let pd = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start the sole real PD authority");
     assert_ne!(pd.cluster_id(), 0);
