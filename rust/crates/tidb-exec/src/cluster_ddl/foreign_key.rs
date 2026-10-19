@@ -410,6 +410,7 @@ fn check_request(
             row_count: active.job.row_count,
             column: None,
             sub_job: add_index::reorg_sub_job(&active.job),
+            clean_up_global_index: false,
         }),
     }
 }

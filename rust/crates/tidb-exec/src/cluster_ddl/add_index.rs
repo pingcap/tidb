@@ -66,6 +66,10 @@ pub struct AddIndexReorg {
     /// The multi-schema sub-job that asked for it (its proxy's
     /// `MultiSchemaInfo.Seq`), `None` for a job of its own.
     pub sub_job: Option<i32>,
+    /// Go `typeCleanUpIndexWorker`: the rows of the dropped partitions in
+    /// `physical_ids` have their entries in the global indexes `index_ids`
+    /// deleted, instead of an index being added.
+    pub clean_up_global_index: bool,
 }
 
 /// What a MODIFY COLUMN's row rewrite reorganizes: Go's column element.
@@ -566,6 +570,28 @@ pub(super) fn table_step(
     should_update_version: bool,
     start_ts: u64,
 ) -> Result<DdlWrite, DdlPlanError> {
+    table_step_with_diff(
+        catalog,
+        active,
+        database_id,
+        info,
+        should_update_version,
+        start_ts,
+        |_| {},
+    )
+}
+
+/// [`table_step`] whose diff `fill` completes, as Go's `updateSchemaVersion`
+/// does per action (the affected physical tables of a partition job).
+pub(super) fn table_step_with_diff(
+    catalog: &ClusterCatalog,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    database_id: i64,
+    info: &TableInfo,
+    should_update_version: bool,
+    start_ts: u64,
+    fill: impl FnOnce(&mut SchemaDiff),
+) -> Result<DdlWrite, DdlPlanError> {
     let mut info = info.clone_like_go();
     let mut mutations = Vec::new();
     info.update_ts = start_ts;
@@ -579,13 +605,14 @@ pub(super) fn table_step(
     let should_update_version = should_update_version && !skips_version(&active.job);
     let (schema_version, diff) = if should_update_version {
         let schema_version = catalog.schema_version + 1;
-        let diff = SchemaDiff {
+        let mut diff = SchemaDiff {
             version: schema_version,
             action_type: active.job.type_,
             schema_id: database_id,
             table_id: info.id,
             ..SchemaDiff::default()
         };
+        fill(&mut diff);
         mutations.push(BufferMutation::set(
             key::schema_version_kv_key(),
             value::encode_int_value(schema_version),
@@ -615,7 +642,7 @@ pub(super) fn action_step(write: DdlWrite) -> PersistedDdlActionStep {
     }
 }
 
-fn reorg_step(job: &Job, reorg: AddIndexReorg) -> PersistedDdlActionStep {
+pub(super) fn reorg_step(job: &Job, reorg: AddIndexReorg) -> PersistedDdlActionStep {
     PersistedDdlActionStep {
         write: job_only_write(job.id, Vec::new()),
         update_raw_args: false,
@@ -1040,6 +1067,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             row_count: active.job.row_count,
             column: None,
             sub_job: reorg_sub_job(&active.job),
+            clean_up_global_index: false,
         };
     let finished = match outcome.map(|outcome| &outcome.result) {
         // Go `getReorgInfo`: the first visit persists the snapshot.

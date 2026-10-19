@@ -48,11 +48,12 @@ pub fn is_alter_table_statement(statement: &DdlStatement) -> bool {
             | DdlStatement::SetTiFlashReplica { .. }
             | DdlStatement::UpdateTiFlashReplicaStatus { .. }
             | DdlStatement::AlterTableCache { .. }
+            | DdlStatement::ModifyEngineAttribute { .. }
     )
 }
 
 /// The actions [`plan_persisted_alter_table_job_step`] runs.
-pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 22] = [
+pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 23] = [
     ActionType::ACTION_MODIFY_TABLE_COMMENT,
     ActionType::ACTION_ALTER_INDEX_VISIBILITY,
     ActionType::ACTION_RENAME_INDEX,
@@ -75,6 +76,7 @@ pub(crate) const ALTER_TABLE_ACTIONS: [ActionType; 22] = [
     ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS,
     ActionType::ACTION_ALTER_CACHE_TABLE,
     ActionType::ACTION_ALTER_NO_CACHE_TABLE,
+    ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE,
 ];
 
 fn already_satisfied(detail: String) -> Option<AddIndexSubmission> {
@@ -113,6 +115,22 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
     // Go's placement jobs lock the policy they name, shared.
     let mut shared_policy: Option<String> = None;
     let (action, schema, table, args) = match statement {
+        // Go `AlterTableEngineAttribute`; the attribute was validated at
+        // lowering.
+        DdlStatement::ModifyEngineAttribute {
+            schema,
+            table,
+            engine_attribute,
+        } => (
+            ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE,
+            schema,
+            table,
+            JobArgsValue::ModifyTableEngineAttribute(Some(GoShared::new(
+                tidb_model::ModifyTableEngineAttributeArgs {
+                    engine_attribute: GoField::new(engine_attribute.clone().into()),
+                },
+            ))),
+        ),
         // Go `AlterTableComment`; the length was validated at lowering.
         DdlStatement::ModifyTableComment {
             schema,
@@ -915,7 +933,7 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
 
 /// Go `checkPlacementPolicyRefValidAndCanNonValidJob`: the policy a job
 /// names must still exist.
-fn check_placement_policy_ref_valid<S: MetaSnapshot>(
+pub(super) fn check_placement_policy_ref_valid<S: MetaSnapshot>(
     snapshot: &mut S,
     reference: &Option<GoShared<tidb_model::PolicyRefInfo>>,
 ) -> Result<(), DdlPlanError> {
@@ -1156,6 +1174,53 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 return Ok(step);
             }
             info.comment = args.read().comment.get().to_string();
+        }
+        // Go `onModifyTableEngineAttribute`: the written attribute is kept
+        // for SHOW CREATE TABLE, and `onAlterTableStorageClassSettings`
+        // re-resolves the table's and every partition's class when it names
+        // one.
+        ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE => {
+            let args = tidb_model::get_modify_table_engine_attribute_args(&mut active.job)
+                .map_err(|error| args_error(active, error))?
+                .ok_or_else(|| nil_args(active))?;
+            let engine_attribute = args.read().engine_attribute.get().to_string();
+            let settings =
+                tidb_executor::ddl::storage_class::storage_class_settings_of(&engine_attribute)
+                    .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
+            if let Some(step) = revertible_point(active) {
+                return Ok(step);
+            }
+            info.engine_attribute = engine_attribute;
+            if let Some(settings) = settings {
+                let (tier, transitions) =
+                    tidb_executor::ddl::storage_class::build_storage_class_for_table(&settings);
+                info.storage_class_tier = tier;
+                info.storage_class_transitions = transitions.into();
+                let has_definitions = info
+                    .partition
+                    .as_ref()
+                    .is_some_and(|partition| !partition.read().definitions.is_empty());
+                if has_definitions {
+                    let spec = stored_partition_spec(&info)
+                        .map_err(|error| cancel_ddl_job(active, error))?;
+                    let definitions = spec.definitions.iter().collect::<Vec<_>>();
+                    let classes =
+                        tidb_executor::ddl::storage_class::build_storage_class_for_partitions(
+                            &settings,
+                            &spec.kind,
+                            &definitions,
+                            &tidb_executor::StmtContext::for_query(),
+                        )
+                        .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
+                    let partition = info.partition.as_ref().expect("checked above").read();
+                    for (ordinal, (tier, transitions)) in classes.into_iter().enumerate() {
+                        partition.definitions.update(ordinal, |definition| {
+                            definition.storage_class_tier = tier;
+                            definition.storage_class_transitions = transitions.into();
+                        });
+                    }
+                }
+            }
         }
         // Go `onRebaseAutoID`.
         ActionType::ACTION_REBASE_AUTO_ID | ActionType::ACTION_REBASE_AUTO_RANDOM_BASE => {

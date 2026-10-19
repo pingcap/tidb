@@ -824,6 +824,17 @@ pub enum AddIndexReorgWork<'a> {
         /// The range's end.
         end: &'a [u8],
     },
+    /// Go `cleanUpIndexWorker.BackfillData` over a dropped partition's rows
+    /// in `[start, end)`: their entries in the reorganization's global
+    /// indexes go.
+    CleanUpGlobalIndex {
+        /// The dropped partition.
+        physical_id: i64,
+        /// The batch's first key.
+        start: &'a [u8],
+        /// The range's end.
+        end: &'a [u8],
+    },
     /// Go `checkModifyColumnData` over the whole table.
     CheckColumn(&'a crate::cluster_ddl::add_index::ColumnDataCheck),
     /// Go `mergeIndexWorker.BackfillData` over one index's temporary
@@ -1433,6 +1444,9 @@ pub enum AddIndexSubmitted {
     Job(i64, Vec<(DdlWarningLevel, u16, String)>),
     /// `IF NOT EXISTS` over an existing index: nothing queued.
     AlreadySatisfied(ClusterDdlReport),
+    /// An ADD PARTITION on a HASH or KEY table, which Go runs as a
+    /// reorganization: still applied in one transaction here.
+    OneTransaction,
 }
 
 /// Go's executor up to `doDDLJob2` for the statement kinds this node submits
@@ -1548,6 +1562,18 @@ pub fn submit_persisted_job_with_retry<
             | DdlStatement::AlterResourceGroup { .. }
             | DdlStatement::DropResourceGroup { .. } => {
                 crate::cluster_ddl::resource_group::prepare_resource_group_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::AddPartitions { .. }
+            | DdlStatement::DropPartitions { .. }
+            | DdlStatement::TruncatePartitions { .. } => {
+                crate::cluster_ddl::partition::prepare_partition_job_submission(
                     &mut snapshot,
                     statement,
                     job_context,
@@ -1704,6 +1730,9 @@ pub fn submit_persisted_job_with_retry<
             return Ok(AddIndexSubmitted::AlreadySatisfied(
                 ClusterDdlReport::AlreadySatisfied { detail, warnings },
             ))
+        }
+        None if matches!(statement, DdlStatement::AddPartitions { .. }) => {
+            return Ok(AddIndexSubmitted::OneTransaction);
         }
         None => {
             return Err(ClusterDdlError::NotCommitted(

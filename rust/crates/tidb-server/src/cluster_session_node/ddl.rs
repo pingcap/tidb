@@ -2488,6 +2488,9 @@ where
                     | DdlStatement::DropResourceGroup { .. }
                     | DdlStatement::LockTables { .. }
                     | DdlStatement::UnlockTables { .. }
+                    | DdlStatement::AddPartitions { .. }
+                    | DdlStatement::DropPartitions { .. }
+                    | DdlStatement::TruncatePartitions { .. }
             )
             || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {
@@ -2522,6 +2525,8 @@ where
                     warnings.extend(job_warnings);
                     return Ok(report);
                 }
+                // An ADD on a HASH/KEY table: the reorganization below.
+                tidb_exec::real_tikv_ddl::AddIndexSubmitted::OneTransaction => {}
             }
         }
         let notifier = self
@@ -3007,6 +3012,21 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 batch.locks.dedup();
                 Ok(AddIndexReorgAnswer::Batch(batch))
             }
+            AddIndexReorgWork::CleanUpGlobalIndex {
+                physical_id,
+                start,
+                end,
+            } => table
+                .clean_up_global_index_batch(
+                    &reorg.index_ids,
+                    physical_id,
+                    start,
+                    end,
+                    reorg.batch_size,
+                    &RowDecodeContext::for_write(context),
+                )
+                .map(AddIndexReorgAnswer::Batch)
+                .map_err(backfill_failure),
             AddIndexReorgWork::Merge {
                 index_id,
                 physical_id,

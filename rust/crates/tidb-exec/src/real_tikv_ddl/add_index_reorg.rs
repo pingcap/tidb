@@ -620,6 +620,11 @@ where
                 start: &current.start_key,
                 end: &current.end_key,
             },
+            None if reorg.clean_up_global_index => AddIndexReorgWork::CleanUpGlobalIndex {
+                physical_id: current.physical_id,
+                start: &current.start_key,
+                end: &current.end_key,
+            },
             None if reorg.column.is_some() => AddIndexReorgWork::UpdateColumn {
                 physical_id: current.physical_id,
                 start: &current.start_key,

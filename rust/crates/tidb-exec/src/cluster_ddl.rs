@@ -369,7 +369,8 @@ impl DdlStatement {
 
 /// One catalog change this node knows how to perform.
 #[derive(Clone, Debug)]
-pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
+pub enum DdlStatement {
+    /// `CREATE DATABASE [IF NOT EXISTS] name`.
     CreateDatabase {
         /// The database name as written.
         name: String,
@@ -619,8 +620,8 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         /// The context a HASH/KEY reorganization runs under.
         context: DdlStatementContext,
     },
-    /// `ALTER TABLE ... DROP PARTITION`, through the ordinary partition DDL
-    /// implementation.
+    /// `ALTER TABLE ... DROP PARTITION` (and FIRST PARTITION LESS THAN),
+    /// checked by the ordinary partition DDL implementation.
     DropPartitions {
         /// The resolved database name.
         schema: String,
@@ -628,9 +629,11 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         table: String,
         /// Canonical SQL for the shared partition DDL implementation.
         sql: String,
+        /// The action as written: the partition names in statement order.
+        action: Box<tidb_ast::AlterPartitionAction>,
     },
-    /// `ALTER TABLE ... TRUNCATE PARTITION`, through the ordinary partition
-    /// DDL implementation with fresh cluster-global physical IDs.
+    /// `ALTER TABLE ... TRUNCATE PARTITION`, Go's
+    /// `ActionTruncateTablePartition`.
     TruncatePartitions {
         /// The resolved database name.
         schema: String,
@@ -638,6 +641,8 @@ pub enum DdlStatement {    /// `CREATE DATABASE [IF NOT EXISTS] name`.
         table: String,
         /// Canonical SQL for the shared partition DDL implementation.
         sql: String,
+        /// The action as written: ALL, or the names in statement order.
+        action: Box<tidb_ast::AlterPartitionAction>,
     },
     /// `ALTER TABLE ... EXCHANGE PARTITION ... WITH TABLE ...`, Go
     /// `ActionExchangeTablePartition`.
@@ -2729,8 +2734,8 @@ fn lower_alter_table_catalog(
         // ... and FIRST PARTITION LESS THAN a DROP PARTITION job of the
         // definitions below the bound.
         tidb_ast::AlterTableAction::Partition(
-            tidb_ast::AlterPartitionAction::Drop { .. }
-            | tidb_ast::AlterPartitionAction::FirstPartitionLessThan { .. },
+            action @ (tidb_ast::AlterPartitionAction::Drop { .. }
+            | tidb_ast::AlterPartitionAction::FirstPartitionLessThan { .. }),
         ) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::DropPartitions {
@@ -2740,6 +2745,7 @@ fn lower_alter_table_catalog(
                     alter.clone(),
                 ))))
                 .restore(),
+                action: Box::new(action.clone()),
             }))
         }
         tidb_ast::AlterTableAction::Partition(
@@ -2756,9 +2762,9 @@ fn lower_alter_table_catalog(
                 context: DdlStatementContext(context.clone()),
             }))
         }
-        tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
-            ..
-        }) => {
+        tidb_ast::AlterTableAction::Partition(
+            action @ tidb_ast::AlterPartitionAction::Truncate { .. },
+        ) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::TruncatePartitions {
                 schema,
@@ -2767,6 +2773,7 @@ fn lower_alter_table_catalog(
                     alter.clone(),
                 ))))
                 .restore(),
+                action: Box::new(action.clone()),
             }))
         }
         tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Exchange {
@@ -6233,6 +6240,7 @@ pub mod drop_object;
 pub mod foreign_key;
 pub mod modify_column;
 pub mod multi_schema;
+pub mod partition;
 pub mod placement_policy;
 pub mod rename_table;
 pub mod resource_group;
@@ -6279,6 +6287,9 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_DROP_RESOURCE_GROUP
             | ActionType::ACTION_LOCK_TABLE
             | ActionType::ACTION_UNLOCK_TABLE
+            | ActionType::ACTION_ADD_TABLE_PARTITION
+            | ActionType::ACTION_DROP_TABLE_PARTITION
+            | ActionType::ACTION_TRUNCATE_TABLE_PARTITION
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
@@ -6374,6 +6385,29 @@ fn plan_persisted_action<S: MetaSnapshot>(
         }
         ActionType::ACTION_UNLOCK_TABLE => {
             table_lock::plan_persisted_unlock_tables_job_step(catalog, active, start_ts)
+        }
+        ActionType::ACTION_ADD_TABLE_PARTITION => {
+            partition::plan_persisted_add_table_partition_job_step(
+                snapshot, catalog, active, start_ts,
+            )
+        }
+        ActionType::ACTION_DROP_TABLE_PARTITION => {
+            partition::plan_persisted_drop_table_partition_job_step(
+                snapshot,
+                catalog,
+                active,
+                start_ts,
+                reorg_outcome,
+            )
+        }
+        ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
+            partition::plan_persisted_truncate_table_partition_job_step(
+                snapshot,
+                catalog,
+                active,
+                start_ts,
+                reorg_outcome,
+            )
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
             rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
@@ -8103,6 +8137,11 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
             return multi_schema::plan_cancel_multi_schema(active);
         }
+        ActionType::ACTION_ADD_TABLE_PARTITION
+        | ActionType::ACTION_DROP_TABLE_PARTITION
+        | ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
+            return partition::plan_cancel_partition(catalog, active, start_ts);
+        }
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
             return alter_table::plan_cancel_alter_table(catalog, active);
         }
@@ -9154,11 +9193,40 @@ fn stored_partition_spec(
     })
 }
 
+/// A definition of the shared partition implementation under the physical
+/// id `id`, as Go's model stores it.
+fn model_partition_definition(
+    definition: tidb_executor::partition_routing::PartitionDef,
+    id: i64,
+) -> tidb_model::partition::PartitionDefinition {
+    let mut converted = tidb_model::partition::PartitionDefinition {
+        id,
+        name: CiString::new(definition.name),
+        comment: definition.comment,
+        placement_policy_ref: definition.placement_policy.map(GoShared::new),
+        storage_class_tier: definition.storage_class.0,
+        storage_class_transitions: definition.storage_class.1.into(),
+        ..tidb_model::partition::PartitionDefinition::default()
+    };
+    converted.less_than = definition.less_than.into();
+    converted.in_values = definition
+        .in_values
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<_>>()
+        .into();
+    converted
+}
+
+/// The partitioning after the in-process partition ALTER `sql` checks and
+/// applies itself to the stored table; its notes and Go's query rewrite (the
+/// FIRST / LAST PARTITION sugar) are left on `context`.
 fn apply_partition_change(
     stored: &TableInfo,
     schema: &str,
     table: &str,
     sql: &str,
+    context: &tidb_executor::StmtContext,
 ) -> Result<tidb_executor::partition_routing::PartitionSpec, DdlPlanError> {
     use tidb_executor::{Catalog, TableEntry};
 
@@ -9199,8 +9267,7 @@ fn apply_partition_change(
             let error = error.to_mysql_error();
             DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
         })?;
-    let context = tidb_executor::StmtContext::for_query();
-    tidb_executor::ddl::run_alter_table_in(sql, &mut catalog, schema, &context).map_err(
+    tidb_executor::ddl::run_alter_table_in(sql, &mut catalog, schema, context).map_err(
         |error| {
             let error = error.to_mysql_error();
             DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
@@ -11020,7 +11087,9 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
         DdlStatement::AddPartitions {
             schema, table, sql, ..
         }
-        | DdlStatement::DropPartitions { schema, table, sql } => {
+        | DdlStatement::DropPartitions {
+            schema, table, sql, ..
+        } => {
             let adding = matches!(statement, DdlStatement::AddPartitions { .. });
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             // Go `AddTablePartitions`: on a HASH/KEY table an ADD is a
@@ -11056,7 +11125,13 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                     );
                 }
             }
-            let transformed = apply_partition_change(stored, schema, table, sql)?;
+            let transformed = apply_partition_change(
+                stored,
+                schema,
+                table,
+                sql,
+                &tidb_executor::StmtContext::for_query(),
+            )?;
             let old_names = stored
                 .partition
                 .as_ref()
@@ -11110,23 +11185,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                                 .next()
                                 .expect("one global id was allocated for every added partition")
                         });
-                    let mut converted = tidb_model::partition::PartitionDefinition {
-                        id,
-                        name: CiString::new(definition.name),
-                        comment: definition.comment,
-                        placement_policy_ref: definition.placement_policy.map(GoShared::new),
-                        storage_class_tier: definition.storage_class.0,
-                        storage_class_transitions: definition.storage_class.1.into(),
-                        ..tidb_model::partition::PartitionDefinition::default()
-                    };
-                    converted.less_than = definition.less_than.into();
-                    converted.in_values = definition
-                        .in_values
-                        .into_iter()
-                        .map(Into::into)
-                        .collect::<Vec<_>>()
-                        .into();
-                    converted
+                    model_partition_definition(definition, id)
                 })
                 .collect::<Vec<_>>();
             let mut info = stored.clone_like_go();
@@ -11474,9 +11533,17 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 ));
             }
         }
-        DdlStatement::TruncatePartitions { schema, table, sql } => {
+        DdlStatement::TruncatePartitions {
+            schema, table, sql, ..
+        } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let transformed = apply_partition_change(stored, schema, table, sql)?;
+            let transformed = apply_partition_change(
+                stored,
+                schema,
+                table,
+                sql,
+                &tidb_executor::StmtContext::for_query(),
+            )?;
             let old_ids = stored
                 .partition
                 .as_ref()
@@ -11516,23 +11583,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                             .next()
                             .expect("one global id was allocated for every truncated partition")
                     };
-                    let mut converted = tidb_model::partition::PartitionDefinition {
-                        id,
-                        name: CiString::new(definition.name),
-                        comment: definition.comment,
-                        placement_policy_ref: definition.placement_policy.map(GoShared::new),
-                        storage_class_tier: definition.storage_class.0,
-                        storage_class_transitions: definition.storage_class.1.into(),
-                        ..tidb_model::partition::PartitionDefinition::default()
-                    };
-                    converted.less_than = definition.less_than.into();
-                    converted.in_values = definition
-                        .in_values
-                        .into_iter()
-                        .map(Into::into)
-                        .collect::<Vec<_>>()
-                        .into();
-                    converted
+                    model_partition_definition(definition, id)
                 })
                 .collect::<Vec<_>>();
             debug_assert!(allocated.next().is_none());

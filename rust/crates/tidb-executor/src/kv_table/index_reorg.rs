@@ -95,29 +95,24 @@ impl KvTable {
         Ok(Some((start, end)))
     }
 
-    /// Go `addIndexTxnWorker.BackfillData` for one batch of `physical_id`'s
-    /// rows in `[start, end)`: at most `batch_count` rows decoded
-    /// (`fetchRowColVals`), the unique ones checked against what the index
-    /// already holds (`batchCheckUniqueKey`: an entry naming the same row is
-    /// skipped, another row's is a duplicate), and every other entry written.
-    pub fn backfill_index_batch(
+    /// Go `fetchRowColVals` over `[start, end)` (`iterateSnapshotKeys`): at
+    /// most `batch_count` decoded rows, with the batch's next key and whether
+    /// the range is exhausted (`getNextKey`).
+    #[allow(clippy::type_complexity)]
+    fn fetch_reorg_rows(
         &mut self,
-        index_id: i64,
-        physical_id: i64,
         start: &[u8],
         end: &[u8],
         batch_count: usize,
         decode_context: &RowDecodeContext,
-    ) -> Result<ReorgBatch, KvTableError> {
-        let index = self
-            .indexes
-            .iter()
-            .find(|index| index.id == index_id)
-            .cloned()
-            .ok_or_else(|| KvTableError::Decode(format!("index {index_id} is not on the table")))?;
-        let zone = decode_context.zone().clone();
+    ) -> Result<
+        (
+            Vec<(Vec<u8>, TableHandle, Vec<tidb_datatype::Datum>)>,
+            ReorgBatch,
+        ),
+        KvTableError,
+    > {
         let decoder = self.row_decoder_projected(None, decode_context)?;
-        // Go `iterateSnapshotKeys` over the record range.
         let mut rows: Vec<(Vec<u8>, TableHandle, Vec<tidb_datatype::Datum>)> = Vec::new();
         let mut task_done = false;
         {
@@ -147,17 +142,99 @@ impl KvTable {
         if rows.is_empty() {
             task_done = true;
         }
-        // Go `getNextKey`.
         let next_key = if task_done {
             end.to_vec()
         } else {
             key_next(&rows.last().expect("a full batch has rows").0)
         };
-        let mut batch = ReorgBatch {
+        let batch = ReorgBatch {
             next_key,
             done: task_done,
             ..ReorgBatch::default()
         };
+        Ok((rows, batch))
+    }
+
+    /// Go `cleanUpIndexWorker.BackfillData` for one batch of a dropped
+    /// partition `physical_id`'s rows in `[start, end)`: each row's entry in
+    /// every global index of `index_ids` is deleted, unless a unique entry
+    /// now names a row of another partition (one written after the drop).
+    /// Go also locks a unique entry it deletes; the delete is this
+    /// transaction's write of the key, which conflicts with a concurrent
+    /// writer of it just the same.
+    pub fn clean_up_global_index_batch(
+        &mut self,
+        index_ids: &[i64],
+        physical_id: i64,
+        start: &[u8],
+        end: &[u8],
+        batch_count: usize,
+        decode_context: &RowDecodeContext,
+    ) -> Result<ReorgBatch, KvTableError> {
+        let indexes = index_ids
+            .iter()
+            .map(|index_id| {
+                self.indexes
+                    .iter()
+                    .find(|index| index.id == *index_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        KvTableError::Decode(format!("index {index_id} is not on the table"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let zone = decode_context.zone().clone();
+        let (rows, mut batch) = self.fetch_reorg_rows(start, end, batch_count, decode_context)?;
+        for (_, handle, row) in &rows {
+            for index in &indexes {
+                batch.scanned += 1;
+                for entry in self.index_entry_keys(index, row, handle, physical_id, &zone)? {
+                    let key = Key::from_bytes(entry.key.clone());
+                    if entry.distinct {
+                        match self.store.get(&key) {
+                            Ok(value) if !value.is_empty() => {
+                                let stored = tidb_tablecodec::decode_handle_in_index_value(&value)
+                                    .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                                if let Some(tidb_txnkv::Handle::Partition(stored)) = &stored {
+                                    if stored.partition_id() != physical_id {
+                                        continue;
+                                    }
+                                }
+                            }
+                            Ok(_) | Err(crate::storage::StorageError::NotFound) => {}
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
+                    self.store.delete(key)?;
+                }
+                batch.added += 1;
+            }
+        }
+        Ok(batch)
+    }
+
+    /// Go `addIndexTxnWorker.BackfillData` for one batch of `physical_id`'s
+    /// rows in `[start, end)`: at most `batch_count` rows decoded
+    /// (`fetchRowColVals`), the unique ones checked against what the index
+    /// already holds (`batchCheckUniqueKey`: an entry naming the same row is
+    /// skipped, another row's is a duplicate), and every other entry written.
+    pub fn backfill_index_batch(
+        &mut self,
+        index_id: i64,
+        physical_id: i64,
+        start: &[u8],
+        end: &[u8],
+        batch_count: usize,
+        decode_context: &RowDecodeContext,
+    ) -> Result<ReorgBatch, KvTableError> {
+        let index = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .cloned()
+            .ok_or_else(|| KvTableError::Decode(format!("index {index_id} is not on the table")))?;
+        let zone = decode_context.zone().clone();
+        let (rows, mut batch) = self.fetch_reorg_rows(start, end, batch_count, decode_context)?;
         // Go `batchCheckUniqueKey`: the batch's distinct keys read once; a key
         // the batch itself files counts for the rows after it.
         let mut filed: HashMap<Vec<u8>, TableHandle> = HashMap::new();

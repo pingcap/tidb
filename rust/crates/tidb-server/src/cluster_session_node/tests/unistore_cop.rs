@@ -20108,6 +20108,337 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
     assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
 }
 
+/// ADD, DROP and TRUNCATE PARTITION run as Go's persisted
+/// `ActionAddTablePartition` (none -> replica-only -> public),
+/// `ActionDropTablePartition` and `ActionTruncateTablePartition` (public ->
+/// write-only -> delete-only -> delete-reorganization -> none) jobs, a schema
+/// version per step; IF [NOT] EXISTS queue nothing and leave Go's note, and
+/// FIRST / LAST PARTITION rewrite the job's query (captured from Go on this
+/// branch).
+#[test]
+fn partition_changes_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1952)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let version = |session: &mut _| -> i64 {
+        displayed(rows(session, "admin show ddl"))[0][0]
+            .parse()
+            .unwrap()
+    };
+    // (job id, db|table|type|state|status, query) of the latest job.
+    let job = |session: &mut _| -> (String, String, String) {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        let query = displayed(rows(
+            session,
+            &format!("admin show ddl job queries {}", row[0]),
+        ))
+        .remove(0)
+        .remove(0);
+        (
+            row[0].clone(),
+            [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|"),
+            query,
+        )
+    };
+    let step = |session: &mut ClusterServerSession, sql: &str| -> (i64, String, String) {
+        let before = version(session);
+        rows(session, sql);
+        let (_, kind, query) = job(session);
+        (version(session) - before, kind, query)
+    };
+    let refused = |session: &mut ClusterServerSession, sql: &str| -> (u16, String) {
+        let error = session.execute_write(sql).unwrap_err();
+        (error.code, error.message)
+    };
+    rows(
+        &mut session,
+        "create table r (a int, b int, unique key ua(a)) partition by range (a) \
+         (partition p0 values less than (10), partition p1 values less than (20))",
+    );
+    rows(&mut session, "insert into r values (1,1),(11,11)");
+    let sql = "alter table r add partition (partition p2 values less than (30), partition p3 values less than (40))";
+    assert_eq!(
+        step(&mut session, sql),
+        (
+            2,
+            "test|r|add partition|public|synced".to_owned(),
+            sql.to_owned()
+        )
+    );
+    let (last, _, _) = job(&mut session);
+    rows(
+        &mut session,
+        "alter table r add partition if not exists (partition p2 values less than (50))",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "show warnings")),
+        [["Note", "1517", "Duplicate partition name p2"]]
+    );
+    assert_eq!(job(&mut session).0, last, "IF NOT EXISTS queues nothing");
+    assert_eq!(
+        refused(
+            &mut session,
+            "alter table r add partition (partition p2 values less than (50))"
+        ),
+        (1517, "Duplicate partition name p2".to_owned())
+    );
+    assert_eq!(
+        refused(
+            &mut session,
+            "alter table r add partition (partition p9 values less than (35))"
+        ),
+        (
+            1493,
+            "VALUES LESS THAN value must be strictly increasing for each partition".to_owned()
+        )
+    );
+    let sql = "alter table r drop partition p3";
+    assert_eq!(
+        step(&mut session, sql),
+        (
+            4,
+            "test|r|drop partition|none|synced".to_owned(),
+            sql.to_owned()
+        )
+    );
+    let (last, _, _) = job(&mut session);
+    rows(&mut session, "alter table r drop partition if exists p3");
+    assert_eq!(
+        displayed(rows(&mut session, "show warnings")),
+        [["Note", "1507", "Error in list of partitions to DROP"]]
+    );
+    assert_eq!(job(&mut session).0, last, "IF EXISTS queues nothing");
+    for sql in [
+        "alter table r truncate partition p0, p1",
+        "alter table r truncate partition all",
+        "alter table r truncate partition p0, p0",
+    ] {
+        assert_eq!(
+            step(&mut session, sql),
+            (
+                4,
+                "test|r|truncate partition|none|synced".to_owned(),
+                sql.to_owned()
+            )
+        );
+    }
+    assert!(rows(&mut session, "select * from r").is_empty());
+    assert_eq!(
+        refused(&mut session, "alter table r truncate partition nosuch"),
+        (1735, "Unknown partition 'nosuch' in table 'r'".to_owned())
+    );
+    rows(&mut session, "insert into r values (1,1),(11,11),(21,21)");
+    assert_eq!(
+        step(&mut session, "alter table r drop partition p0, p1").0,
+        4
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from r")),
+        [["21", "21"]]
+    );
+    assert_eq!(
+        refused(&mut session, "alter table r drop partition p2"),
+        (
+            1508,
+            "Cannot remove all partitions, use DROP TABLE instead".to_owned()
+        )
+    );
+
+    // A HASH table's ADD is a reorganization; DROP is refused and TRUNCATE
+    // is the same job as on RANGE.
+    rows(
+        &mut session,
+        "create table h (a int) partition by hash (a) partitions 2",
+    );
+    rows(&mut session, "insert into h values (1),(2),(3)");
+    rows(&mut session, "alter table h add partition (partition p9)");
+    assert_eq!(
+        displayed(rows(&mut session, "select a from h order by a")),
+        [["1"], ["2"], ["3"]]
+    );
+    assert_eq!(
+        refused(&mut session, "alter table h drop partition p0"),
+        (
+            1512,
+            "DROP PARTITION can only be used on RANGE/LIST partitions".to_owned()
+        )
+    );
+    let sql = "alter table h truncate partition p0";
+    assert_eq!(
+        step(&mut session, sql),
+        (
+            4,
+            "test|h|truncate partition|none|synced".to_owned(),
+            sql.to_owned()
+        )
+    );
+
+    rows(
+        &mut session,
+        "create table l (a int) partition by list (a) (partition p0 values in (1,2), partition pd default)",
+    );
+    assert_eq!(
+        refused(&mut session, "alter table l add partition (partition p1 values in (3))"),
+        (
+            8200,
+            "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".to_owned()
+        )
+    );
+    rows(
+        &mut session,
+        "create table l2 (a int) partition by list (a) (partition p0 values in (1,2))",
+    );
+    let sql =
+        "alter table l2 add partition (partition p1 values in (3), partition p2 values in (4))";
+    assert_eq!(
+        step(&mut session, sql),
+        (
+            2,
+            "test|l2|add partition|public|synced".to_owned(),
+            sql.to_owned()
+        )
+    );
+    assert_eq!(
+        refused(
+            &mut session,
+            "alter table l2 add partition (partition p3 values in (4))"
+        ),
+        (
+            1495,
+            "Multiple definition of same constant in list partitioning".to_owned()
+        )
+    );
+
+    rows(
+        &mut session,
+        "create table i (a int) partition by range (a) interval (10) \
+         first partition less than (10) last partition less than (40)",
+    );
+    assert_eq!(
+        step(&mut session, "alter table i last partition less than (60)"),
+        (
+            2,
+            "test|i|add partition|public|synced".to_owned(),
+            "alter table i ADD PARTITION (PARTITION `P_LT_50` VALUES LESS THAN (50),\n PARTITION `P_LT_60` VALUES LESS THAN (60))".to_owned()
+        )
+    );
+    assert_eq!(
+        step(&mut session, "alter table i first partition less than (30)"),
+        (
+            4,
+            "test|i|drop partition|none|synced".to_owned(),
+            "alter table i DROP PARTITION `P_LT_10`, `P_LT_20`".to_owned()
+        )
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select partition_name from information_schema.partitions \
+             where table_schema = 'test' and table_name = 'i' order by partition_ordinal_position",
+        )),
+        [["P_LT_30"], ["P_LT_40"], ["P_LT_50"], ["P_LT_60"]]
+    );
+
+    rows(&mut session, "create table nt (a int)");
+    for sql in [
+        "alter table nt add partition (partition p0 values less than (10))",
+        "alter table nt drop partition p0",
+        "alter table nt truncate partition p0",
+    ] {
+        assert_eq!(
+            refused(&mut session, sql),
+            (
+                1505,
+                "Partition management on a not partitioned table is not possible".to_owned()
+            ),
+            "{sql}"
+        );
+    }
+
+    // ALTER TABLE ... ENGINE_ATTRIBUTE / STORAGE_CLASS: Go's one-step
+    // `ActionModifyEngineAttribute` job.
+    rows(
+        &mut session,
+        "create table e (a int) partition by range (a) (partition p0 values less than (10))",
+    );
+    for sql in [
+        "alter table e engine_attribute = '{\"storage_class\": \"STANDARD\"}'",
+        "alter table e storage_class = 'IA'",
+    ] {
+        assert_eq!(
+            step(&mut session, sql),
+            (
+                1,
+                "test|e|modify engine attribute|public|synced".to_owned(),
+                sql.to_owned()
+            )
+        );
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "show create table e"))[0][1],
+        "CREATE TABLE `e` (\n  `a` int DEFAULT NULL\n) ENGINE=InnoDB STORAGE_CLASS='IA' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10))"
+    );
+}
+
+/// DROP and TRUNCATE PARTITION clean the old partitions' rows out of the
+/// global indexes in their delete-reorganization step (Go
+/// `cleanGlobalIndexEntriesFromDroppedPartitions`): their unique values are
+/// free again, `ADMIN CHECK TABLE` passes, and the job counts one entry per
+/// row and global index (captured from Go on this branch).
+#[test]
+fn dropped_partitions_leave_the_global_indexes_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1953)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let job = |session: &mut ClusterServerSession| -> String {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [1, 2, 3, 4, 7, 11]
+            .map(|column| row[column].clone())
+            .join("|")
+    };
+    rows(
+        &mut session,
+        "create table g (a int, b int, c int, unique key ub(b) global, key kc(c) global) \
+         partition by range (a) (partition p0 values less than (10), \
+         partition p1 values less than (20), partition p2 values less than (30))",
+    );
+    rows(
+        &mut session,
+        "insert into g values (1,1,1),(2,2,2),(11,11,11),(21,21,21)",
+    );
+    rows(&mut session, "alter table g drop partition p0");
+    assert_eq!(job(&mut session), "test|g|drop partition|none|4|synced");
+    rows(&mut session, "insert into g values (25,1,1)");
+    rows(&mut session, "admin check table g");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select * from g use index(ub) where b = 1"
+        )),
+        [["25", "1", "1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select a from g use index(kc) where c in (1,2) order by a"
+        )),
+        [["25"]]
+    );
+    rows(&mut session, "alter table g truncate partition p1");
+    assert_eq!(job(&mut session), "test|g|truncate partition|none|2|synced");
+    rows(&mut session, "insert into g values (12,11,11)");
+    rows(&mut session, "admin check table g");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select a from g use index(kc) order by a"
+        )),
+        [["12"], ["21"], ["25"]]
+    );
+}
+
 /// LOCK TABLES, UNLOCK TABLES and ADMIN CLEANUP TABLE LOCK run as Go's
 /// persisted `ActionLockTable` / `ActionUnlockTable` jobs: the session's
 /// earlier locks are released one table per step, each new lock goes
