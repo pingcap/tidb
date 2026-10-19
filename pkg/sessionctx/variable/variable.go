@@ -16,7 +16,6 @@ package variable
 
 import (
 	"context"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -799,8 +798,7 @@ func GetSysVars() map[string]*SysVar {
 }
 
 // OrderByDependency orders the vars by dependency. The depended sys vars are in the front.
-// Unknown sys vars are treated as not depended. Each part is sorted by name, so a
-// charset, such as character_set_connection, is set before the collation it resets.
+// Unknown sys vars are treated as not depended.
 func OrderByDependency(names map[string]string) []string {
 	depended, notDepended := make([]string, 0, len(names)), make([]string, 0, len(names))
 	sysVarsLock.RLock()
@@ -812,8 +810,6 @@ func OrderByDependency(names map[string]string) []string {
 			notDepended = append(notDepended, name)
 		}
 	}
-	slices.Sort(depended)
-	slices.Sort(notDepended)
 	return append(depended, notDepended...)
 }
 
