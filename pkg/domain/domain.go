@@ -2938,7 +2938,7 @@ func (do *Domain) serverIDKeeper() {
 // should run it; otherwise it returns without storing a manager instance.
 func (do *Domain) StartTTLJobManager() {
 	failpoint.Inject("skipStartTTLJobManager", func() {
-		return
+		failpoint.Return()
 	})
 	role, configured := do.ttlExternalWorkloadRole()
 	if !do.shouldStartTTLJobManager() {
