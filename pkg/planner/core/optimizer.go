@@ -404,7 +404,7 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		flag |= rule.FlagFullTextIndexResolveProjection
 		flag |= rule.FlagFullTextIndexResolveReject
 	}
-	// InternalSQLScanUserTable is for ttl scan.
+	// InternalSQLScanUserTable is for internal SQL that scans user tables, for example TTL scan and MV MLOG scans.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
 		flag |= rule.FlagCollectPredicateColumnsPoint
 		flag |= rule.FlagSyncWaitStatsLoadPoint

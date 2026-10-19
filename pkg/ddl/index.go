@@ -83,13 +83,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1390,10 +1388,13 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	}
 	loadCloudStorageURI(w, job)
 	// On a NextGen cluster, global sort is the product design for add index /
-	// modify column. Local sort is only tolerated when SEM is disabled, which
-	// exists to make testing easier rather than as a supported production path.
-	// So, like IMPORT INTO, reject add index / modify column with local sort
-	// when SEM is enabled.
+	// modify column; local sort is not supported. So, like IMPORT INTO, reject
+	// add index / modify column with local sort.
+	//
+	// ingest.LitInitialized is required to tell whether the lightning/ingest
+	// environment is available: when it is not (e.g. tests backed by a
+	// non-TiKV store), pickBackfillType falls back to txn-merge backfill, which
+	// does not sort locally and therefore must not be rejected here.
 	//
 	// job.ReorgMeta.IsFastReorg is required here even though fast reorg is
 	// always enabled on NextGen: for jobs involving system-related DBs,
@@ -1402,8 +1403,8 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	// only happen during upgrade (e.g. ADD INDEX on mysql.stats_history) and
 	// fall back to txn backfill, which doesn't sort at all, so they must not be
 	// rejected here.
-	if kerneltype.IsNextGen() && sem.IsEnabled() && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
-		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("add index or modify column with local sort")
+	if kerneltype.IsNextGen() && ingest.LitInitialized && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("add index or modify column with local sort")
 	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
