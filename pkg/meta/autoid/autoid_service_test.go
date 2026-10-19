@@ -346,15 +346,17 @@ func TestBackoffCtxAware(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(start), 2*backoffMin)
 
 	// With a canceled ctx, Backoff should return immediately.
-	bo.Reset()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	synctest.Test(t, func(t *testing.T) {
+		bo := backoffer{}
+		bo.Reset()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-	start = time.Now()
-	err = bo.Backoff(ctx)
-	require.Error(t, err)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, time.Since(start), 10*time.Millisecond, "Backoff should return immediately on canceled ctx")
+		start := time.Now()
+		err := bo.Backoff(ctx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, time.Since(start), "Backoff should return without advancing time for canceled ctx")
+	})
 
 	// With a valid ctx that gets canceled during sleep, Backoff should return early.
 	synctest.Test(t, func(t *testing.T) {
