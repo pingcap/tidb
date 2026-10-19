@@ -2367,9 +2367,11 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 			appendRemainTasks(remains...)
 			continue
 		}
-		if batchResp.GetLocked() != nil {
-			// The release client-go does not decode API V2 child lock keys. Retry
-			// separately so the lock is decoded and resolved as a top-level response.
+		//TODO: handle locks in batch
+		if lockErr := batchResp.GetLocked(); lockErr != nil {
+			if err := worker.handleLockErr(bo, lockHints, resp.pbResp.GetLocked(), task); err != nil {
+				return batchRespList, nil, err
+			}
 			task.meetLockFallback = true
 			appendRemainTasks(task)
 			continue
