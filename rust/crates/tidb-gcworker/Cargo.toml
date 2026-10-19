@@ -15,6 +15,8 @@ chrono.workspace = true
 chrono-tz.workspace = true
 serde_json = { workspace = true }
 tikv-client.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
 tidb-exec = { path = "../tidb-exec" }
@@ -25,3 +27,6 @@ tidb-placement = { path = "../tidb-placement" }
 tidb-session = { path = "../tidb-session" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
+
+[dev-dependencies]
+tidb-unistore = { path = "../tidb-unistore" }

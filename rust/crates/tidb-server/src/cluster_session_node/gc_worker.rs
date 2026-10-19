@@ -26,16 +26,11 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use tidb_gcworker::seams::{
-    AdvanceGcSafePointResult, AdvanceTxnSafePointResult, DelRangeTask, GcError, GcKvClient,
-    GcPdClient, GcResult, GcRuleClient, GcSession, GcSessionFactory, GcStore, ResolveLocksRunner,
+    DelRangeTask, GcError, GcResult, GcRuleClient, GcSession, GcSessionFactory,
 };
+use tidb_gcworker::tikv_store::TikvStoreClient;
 use tidb_gcworker::{GcWorker, GcWorkerDeps, GcWorkerHandle};
 use tidb_util::sqlescape::{escape_sql, SqlArg};
-use tikv_client::async_util::Cancellation;
-use tikv_client::proto::keyspacepb::KeyspaceMeta;
-use tikv_client::proto::{kvrpcpb, metapb, pdpb};
-use tikv_client::transaction::range_task::{RangeTaskHandler, Runner, TaskStat};
-use tikv_client::{PdClient, TimestampExt};
 
 use super::{ClusterServerSession, ClusterSessionFactory, SessionContext};
 use crate::resultset_source::ResultSetSource;
@@ -45,9 +40,6 @@ use tidb_txnkv::pd_capability::PdCapability;
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
 const GC_RPC_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Go `gcTimeout`.
-const GC_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// A started GC worker and the runtime its TiKV and PD calls run on. Dropping
 /// it stops the worker (Go `GCWorker.Close`).
@@ -63,7 +55,6 @@ pub(crate) fn start_gc_worker(
     factory: &Arc<ClusterSessionFactory>,
     pd_endpoints: &[String],
     security: &tidb_pd_client::ClusterSecurity,
-    pd: tidb_pd_client::PdClient,
     opener: Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
 ) -> Result<NodeGcWorker, String> {
     let runtime = Arc::new(
@@ -88,11 +79,8 @@ pub(crate) fn start_gc_worker(
             config,
         ))
         .map_err(|error| error.to_string())?;
-    let client = Arc::new(NodeGcClient {
-        runtime: Arc::clone(&runtime),
-        store,
-        pd,
-    });
+    // The node serves the null keyspace.
+    let client = Arc::new(TikvStoreClient::new(Arc::clone(&runtime), store, None));
     let http_endpoint = opener.pd().http_endpoint();
     let worker = GcWorker::new(GcWorkerDeps {
         store: client.clone(),
@@ -119,222 +107,8 @@ pub(crate) fn start_gc_worker(
     })
 }
 
-/// The store, PD and TiKV halves: client-go's `tikv.Storage` and pd-client,
-/// over the client's `KvStore`, and the node's PD client for `GetAllStores`.
-struct NodeGcClient {
-    runtime: Arc<tokio::runtime::Runtime>,
-    store: tikv_client::tikv::KvStore,
-    pd: tidb_pd_client::PdClient,
-}
-
 fn gc_error(error: impl std::fmt::Display) -> GcError {
     GcError::new(error.to_string())
-}
-
-impl GcStore for NodeGcClient {
-    fn current_version(&self) -> GcResult<u64> {
-        self.runtime
-            .block_on(self.store.current_timestamp())
-            .map(|timestamp| timestamp.version())
-            .map_err(gc_error)
-    }
-
-    fn keyspace_meta(&self) -> Option<KeyspaceMeta> {
-        // The node serves the null keyspace.
-        None
-    }
-}
-
-impl GcPdClient for NodeGcClient {
-    fn get_all_stores(&self) -> GcResult<Vec<metapb::Store>> {
-        self.pd.all_store_metadata().map_err(gc_error)
-    }
-
-    fn update_gc_safe_point(&self, safe_point: u64) -> GcResult<u64> {
-        self.runtime
-            .block_on(self.store.pd_client().update_safepoint_value(safe_point))
-            .map_err(gc_error)
-    }
-
-    fn update_service_gc_safe_point(
-        &self,
-        service_id: &str,
-        ttl: i64,
-        safe_point: u64,
-    ) -> GcResult<u64> {
-        self.runtime
-            .block_on(
-                self.store
-                    .pd_client()
-                    .update_service_gc_safe_point(service_id, ttl, safe_point),
-            )
-            .map_err(gc_error)
-    }
-
-    fn advance_txn_safe_point(&self, target: u64) -> GcResult<AdvanceTxnSafePointResult> {
-        let response: pdpb::AdvanceTxnSafePointResponse = self
-            .runtime
-            .block_on(
-                self.store
-                    .pd_client()
-                    .advance_transaction_safe_point(target),
-            )
-            .map_err(gc_error)?;
-        Ok(AdvanceTxnSafePointResult {
-            old_txn_safe_point: response.old_txn_safe_point,
-            target,
-            new_txn_safe_point: response.new_txn_safe_point,
-            blocker_description: response.blocker_description,
-        })
-    }
-
-    fn advance_gc_safe_point(&self, target: u64) -> GcResult<AdvanceGcSafePointResult> {
-        let response: pdpb::AdvanceGcSafePointResponse = self
-            .runtime
-            .block_on(self.store.pd_client().advance_gc_safe_point(target))
-            .map_err(gc_error)?;
-        Ok(AdvanceGcSafePointResult {
-            old_gc_safe_point: response.old_gc_safe_point,
-            target,
-            new_gc_safe_point: response.new_gc_safe_point,
-        })
-    }
-
-    fn get_all_keyspaces(&self, start_id: u32, limit: u32) -> GcResult<Vec<KeyspaceMeta>> {
-        self.runtime
-            .block_on(self.store.pd_client().get_all_keyspaces(start_id, limit))
-            .map_err(gc_error)
-    }
-}
-
-/// client-go `tikv.ResolveLocksForRange` as a range-task handler.
-#[derive(Clone)]
-struct ResolveLocksForRange {
-    client: tikv_client::TransactionClient,
-    max_version: pdpb::Timestamp,
-    scan_limit: u32,
-}
-
-#[async_trait::async_trait]
-impl RangeTaskHandler for ResolveLocksForRange {
-    async fn handle(
-        &self,
-        cancellation: Cancellation,
-        range: (Vec<u8>, Vec<u8>),
-    ) -> (TaskStat, tikv_client::Result<()>) {
-        self.client
-            .resolve_locks_for_range(cancellation, &self.max_version, range, self.scan_limit)
-            .await
-    }
-}
-
-struct NodeResolveLocksRunner<'a> {
-    runtime: &'a tokio::runtime::Runtime,
-    runner: Runner<tikv_client::PdRpcClient, ResolveLocksForRange>,
-}
-
-impl ResolveLocksRunner for NodeResolveLocksRunner<'_> {
-    fn run_on_range(&self, start: &[u8], end: &[u8]) -> GcResult<()> {
-        self.runtime
-            .block_on(self.runner.run_on_range(start.to_vec(), end.to_vec()))
-            .map_err(gc_error)
-    }
-
-    fn completed_regions(&self) -> usize {
-        self.runner.completed_regions()
-    }
-}
-
-impl GcKvClient for NodeGcClient {
-    fn unsafe_destroy_range(
-        &self,
-        address: &str,
-        start: &[u8],
-        end: &[u8],
-        timeout: Duration,
-    ) -> GcResult<Option<String>> {
-        let request = kvrpcpb::UnsafeDestroyRangeRequest {
-            context: Some(kvrpcpb::Context {
-                disk_full_opt: kvrpcpb::DiskFullOpt::AllowedOnAlmostFull as i32,
-                ..kvrpcpb::Context::default()
-            }),
-            start_key: start.to_vec(),
-            end_key: end.to_vec(),
-        };
-        let response = self
-            .runtime
-            .block_on(self.store.send_request(address, &request, timeout))
-            .map_err(gc_error)?;
-        Ok(response
-            .downcast::<kvrpcpb::UnsafeDestroyRangeResponse>()
-            .ok()
-            .map(|response| response.error))
-    }
-
-    fn delete_range_task(&self, start: &[u8], end: &[u8], concurrency: usize) -> GcResult<()> {
-        self.runtime
-            .block_on(
-                self.store
-                    .delete_range_with_concurrency((start.to_vec(), end.to_vec()), concurrency),
-            )
-            .map(|_| ())
-            .map_err(gc_error)
-    }
-
-    fn resolve_locks_runner(
-        &self,
-        name: &str,
-        concurrency: usize,
-        max_version: u64,
-        scan_limit: u32,
-    ) -> Box<dyn ResolveLocksRunner + '_> {
-        let handler = ResolveLocksForRange {
-            client: (*self.store).clone(),
-            max_version: pdpb::Timestamp::from_version(max_version),
-            scan_limit,
-        };
-        Box::new(NodeResolveLocksRunner {
-            runtime: &self.runtime,
-            runner: Runner::new(name, self.store.pd_client(), concurrency.max(1), handler),
-        })
-    }
-
-    /// Go `doGCForRegion`: `CmdGC` to the region holding `region_key`, with
-    /// Go's `gcTimeout`; the region error, or an error, never both.
-    fn gc_region(&self, region_key: &[u8], safe_point: u64) -> GcResult<Option<String>> {
-        self.runtime.block_on(async {
-            let store = self
-                .store
-                .pd_client()
-                .store_for_key(&region_key.to_vec().into())
-                .await
-                .map_err(gc_error)?;
-            let region = &store.region_with_leader.region;
-            let request = kvrpcpb::GcRequest {
-                context: Some(kvrpcpb::Context {
-                    region_id: region.id,
-                    region_epoch: region.region_epoch,
-                    peer: store.target_peer,
-                    ..kvrpcpb::Context::default()
-                }),
-                safe_point,
-            };
-            let response = store
-                .client
-                .dispatch_with_timeout(&request, Some(GC_TIMEOUT))
-                .await
-                .map_err(gc_error)?
-                .downcast::<kvrpcpb::GcResponse>()
-                .map_err(|_| GcError::new("[tikv:9005]response body is missing"))?;
-            if let Some(region_error) = &response.region_error {
-                return Ok(Some(format!("{region_error:?}")));
-            }
-            if let Some(error) = &response.error {
-                return Err(GcError::new(format!("unexpected gc error: {error:?}")));
-            }
-            Ok(None)
-        })
-    }
 }
 
 /// Internal connection ids of the GC worker's sessions, apart from the

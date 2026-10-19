@@ -38,14 +38,28 @@ use tikv_client::{Error, Result};
 use crate::cluster::Cluster;
 use crate::kv_handler::KvHandler;
 
+/// Go `UnistoreRPCClientSendHook`: a test's look at every request before the
+/// store serves it.
+pub type SendHook = Arc<dyn Fn(&dyn Request) + Send + Sync>;
+
 /// Go `RPCClient`, addressed to one store (client-rust hands out a client
 /// per store address; Go checks the address per request).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RpcClient {
     handler: Arc<Mutex<KvHandler>>,
     cluster: Arc<Cluster>,
     addr: String,
     closed: Arc<AtomicBool>,
+    send_hook: Arc<Mutex<Option<SendHook>>>,
+}
+
+impl std::fmt::Debug for RpcClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcClient")
+            .field("addr", &self.addr)
+            .field("closed", &self.closed)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RpcClient {
@@ -58,7 +72,18 @@ impl RpcClient {
             cluster,
             addr: String::new(),
             closed: Arc::new(AtomicBool::new(false)),
+            send_hook: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Go `UnistoreRPCClientSendHook.Store` (with its failpoint enabled):
+    /// every client sharing this store calls `hook` on each request first;
+    /// `None` removes it.
+    pub fn set_send_hook(&self, hook: Option<SendHook>) {
+        *self
+            .send_hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = hook;
     }
 
     /// The same client addressed to the store at `addr`.
@@ -143,6 +168,14 @@ impl RpcClient {
 impl tikv_client::tikv::Client for RpcClient {
     /// Go `RPCClient.SendRequest`.
     async fn dispatch(&self, req: &dyn Request) -> Result<Box<dyn Any>> {
+        let hook = self
+            .send_hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(hook) = hook {
+            hook(req);
+        }
         if self.closed.load(Ordering::Acquire) {
             // Go answers `context.Canceled`, which stops the backoff.
             return Err(Error::ContextCanceled);

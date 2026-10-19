@@ -504,6 +504,10 @@ impl PdClient for MockPdClient {
         Err(Error::KeyspaceNotFound(keyspace.to_owned()))
     }
 
+    async fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
+        Ok(self.cluster.all_stores())
+    }
+
     async fn all_stores(&self) -> Result<Vec<Store>> {
         Ok(self
             .cluster
@@ -563,6 +567,31 @@ fn decode_boundary(encoded: &[u8]) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::mock::mocktikv::{bootstrap_with_multi_regions, bootstrap_with_single_store};
+
+    /// pd-client `GetAllStores`: PD's store metadata, every store, beside
+    /// `all_stores`'s store clients.
+    #[tokio::test]
+    async fn get_all_stores_answers_pds_store_metadata() {
+        let cluster = Cluster::new(unistore::MockEngine::new());
+        let (store_id, _, _) = bootstrap_with_single_store(&cluster);
+        cluster.add_store(store_id + 100, "tiflash1", Vec::new());
+        let pd = MockPdClient::new(cluster);
+        let mut stores: Vec<_> = pd
+            .get_all_stores()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|store| (store.id, store.address))
+            .collect();
+        stores.sort();
+        assert_eq!(
+            stores,
+            vec![
+                (store_id, format!("store{store_id}")),
+                (store_id + 100, "tiflash1".to_owned())
+            ]
+        );
+    }
 
     #[test]
     fn source_tso_external_timestamp_and_gc_barriers() {

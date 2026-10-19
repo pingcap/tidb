@@ -88,8 +88,22 @@ pub const TIDB_GC_SAFE_POINT: &str = "tidb_gc_safe_point";
 
 const LOAD_ALL_KEYSPACES_FOR_UNIFIED_GC_BATCH_SIZE: u32 = 50;
 
-/// Go `txnSafePointSyncWaitTime` (`tikv.GcStateCacheInterval`).
+/// The default of Go's `txnSafePointSyncWaitTime` (`tikv.GcStateCacheInterval`).
 pub const TXN_SAFE_POINT_SYNC_WAIT_TIME: Duration = tikv_client::tikv::GC_STATE_CACHE_INTERVAL;
+
+/// Go's package variable `txnSafePointSyncWaitTime`, in milliseconds: how
+/// long a job waits for a new txn safe point to reach every TiDB. Tests set
+/// it to 0, as Go's do.
+static TXN_SAFE_POINT_SYNC_WAIT_TIME_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(TXN_SAFE_POINT_SYNC_WAIT_TIME.as_millis() as u64);
+
+/// Go's `txnSafePointSyncWaitTime = d`.
+pub fn set_txn_safe_point_sync_wait_time(wait: Duration) {
+    TXN_SAFE_POINT_SYNC_WAIT_TIME_MS.store(
+        u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
+        std::sync::atomic::Ordering::Release,
+    );
+}
 
 const UNSAFE_DESTROY_RANGE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -284,8 +298,6 @@ pub(crate) struct GcJobContext {
     pub(crate) desc: String,
     pub(crate) keyspace_id: u32,
     pub(crate) deps: GcWorkerDeps,
-    /// Go's package variable `txnSafePointSyncWaitTime`; tests set it to 0.
-    pub(crate) txn_safe_point_sync_wait_time: Mutex<Duration>,
     /// Go's `overrideLoadKeyspacesBatchSize` failpoint.
     pub(crate) load_keyspaces_batch_size: std::sync::atomic::AtomicU32,
     /// Go's `getLoadKeyspacesBatchCount` failpoint observation.
@@ -344,7 +356,6 @@ impl GcWorker {
                 desc,
                 keyspace_id,
                 deps,
-                txn_safe_point_sync_wait_time: Mutex::new(TXN_SAFE_POINT_SYNC_WAIT_TIME),
                 load_keyspaces_batch_size: std::sync::atomic::AtomicU32::new(
                     LOAD_ALL_KEYSPACES_FOR_UNIFIED_GC_BATCH_SIZE,
                 ),
@@ -642,10 +653,9 @@ impl tidb_session::statusvar::Statistics for GcStatistics {
 impl GcJobContext {
     /// Go's `txnSafePointSyncWaitTime`.
     pub(crate) fn sync_wait_time(&self) -> Duration {
-        *self
-            .txn_safe_point_sync_wait_time
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        Duration::from_millis(
+            TXN_SAFE_POINT_SYNC_WAIT_TIME_MS.load(std::sync::atomic::Ordering::Acquire),
+        )
     }
 
     fn session(&self) -> Box<dyn GcSession + '_> {
@@ -1725,8 +1735,8 @@ impl GcJobContext {
         Ok(())
     }
 
-    // Go keeps it for `TestDoGCForOneRegion`, a store-backed test.
-    #[allow(dead_code)]
+    // Go keeps it for `TestDoGCForOneRegion`.
+    #[cfg_attr(not(test), allow(dead_code))]
     /// Go `doGCForRegion`: `Ok(Some(region error))`, or an error, never both.
     pub(crate) fn do_gc_for_region(
         &self,

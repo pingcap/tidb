@@ -471,6 +471,11 @@ impl tikv_client::PdClient for PdClient {
             .collect())
     }
 
+    /// Go `GetAllStores`: the stores' metadata.
+    async fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
+        Ok(self.mock_pd.get_all_stores())
+    }
+
     async fn update_leader(&self, _ver_id: RegionVerId, _leader: metapb::Peer) -> Result<()> {
         Ok(())
     }

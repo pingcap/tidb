@@ -3702,6 +3702,7 @@ dependencies = [
 name = "tidb-gcworker"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "chrono-tz",
  "serde_json",
@@ -3714,8 +3715,10 @@ dependencies = [
  "tidb-placement",
  "tidb-session",
  "tidb-txnkv",
+ "tidb-unistore",
  "tidb-util",
  "tikv-client",
+ "tokio",
 ]
 
 [[package]]

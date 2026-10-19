@@ -12,25 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/store/gcworker/gc_worker_test.go`, the tests that need the
-//! worker's collaborators only: `mysql.tidb` and the delete-range tables in a
-//! fake session, PD's GC state in the client's mock PD (client-go
-//! `mocktikv`), and a recording TiKV client standing in for Go's
-//! `mockGCWorkerClient` and `mockGCWorkerLockResolver`. The tests that read
-//! MVCC data back through a store (`TestDoGCForOneRegion`,
-//! `TestResolveLockRange*`, `TestResolveLocksNearTxnSafePoint`,
-//! `TestRunGCJobAPI`, `TestRunDistGCJobAPI`, `TestGCWithPendingTxn*`,
-//! `TestSkipGCAndOnlyResolveLock`, and the probe checks of `TestLeaderTick`
-//! and `TestRunGCJob`) run against the server's store adapters.
+//! Go `pkg/store/gcworker/gc_worker_test.go`. As Go's `createGCWorkerSuite`
+//! does, the worker runs on the embedded store (`tidb-unistore`, three
+//! stores) through client-rust: its PD answers the GC-state calls, and a
+//! hijacking client over the store's own (Go's `mockGCWorkerClient`)
+//! records `UnsafeDestroyRange`, `DeleteRange` and `ScanLock`. `mysql.tidb`
+//! and the delete-range tables live in a fake session; the oracle is
+//! wall-clock time plus an offset tests add to (Go's `MockOracle`).
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tikv_client::mock::mocktikv::{bootstrap_with_multi_stores, Cluster, MockEngine, MockPdClient};
+use tidb_unistore::cluster::{bootstrap_with_multi_stores, Cluster};
+use tidb_unistore::mock_pd::{AdvanceTxnSafePointResult as PdAdvanceTxnSafePointResult, GcState};
+use tidb_unistore::pd::PdClient as UnistorePdClient;
 use tikv_client::proto::keyspacepb::{keyspace_meta, KeyspaceMeta};
-use tikv_client::proto::metapb;
+use tikv_client::proto::{kvrpcpb, metapb};
+use tikv_client::tikv::{KvStore, MockSafePointKv};
+
+use crate::tikv_store::TikvStoreClient;
 
 use crate::gc_worker::*;
 use crate::seams::*;
@@ -39,10 +41,11 @@ use tikv_client::pd_keyspace::{
     KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_UNIFIED,
 };
 
-/// Go `oracles.MockOracle`: wall-clock time plus an offset tests add to.
+/// Go `oracles.MockOracle`: the store's timestamps plus an offset tests add
+/// to. Transactions the tests run take the store's timestamps without it.
 struct FakeStore {
+    tikv: Arc<TikvStoreClient<UnistorePdClient>>,
     offset_ms: AtomicI64,
-    logical: AtomicU64,
     keyspace: Option<KeyspaceMeta>,
 }
 
@@ -55,100 +58,12 @@ impl FakeStore {
 
 impl GcStore for FakeStore {
     fn current_version(&self) -> GcResult<u64> {
-        let physical =
-            chrono::Utc::now().timestamp_millis() + self.offset_ms.load(Ordering::Acquire);
-        let logical = self.logical.fetch_add(1, Ordering::AcqRel) % (1 << 18);
-        Ok(((physical as u64) << 18) + logical)
+        let offset = self.offset_ms.load(Ordering::Acquire) as u64;
+        Ok(self.tikv.current_version()? + (offset << 18))
     }
 
     fn keyspace_meta(&self) -> Option<KeyspaceMeta> {
         self.keyspace.clone()
-    }
-}
-
-/// PD's GC state, as client-go's mock PD keeps it.
-struct FakePd {
-    cluster: Cluster,
-    pd: MockPdClient,
-    keyspaces: Vec<KeyspaceMeta>,
-}
-
-impl GcPdClient for FakePd {
-    fn get_all_stores(&self) -> GcResult<Vec<metapb::Store>> {
-        Ok(self.cluster.all_stores())
-    }
-
-    fn update_gc_safe_point(&self, safe_point: u64) -> GcResult<u64> {
-        Ok(self.pd.update_gc_safe_point(safe_point))
-    }
-
-    fn update_service_gc_safe_point(
-        &self,
-        service_id: &str,
-        ttl: i64,
-        safe_point: u64,
-    ) -> GcResult<u64> {
-        // Go unistore's `gcStatesManagerSimulator.UpdateServiceGCSafePoint`,
-        // PD's compatibility wrapper: "gc_worker" advances the txn safe
-        // point, other services set or delete a GC barrier, and the answer
-        // is the txn safe point.
-        if service_id == "gc_worker" {
-            if ttl != i64::MAX {
-                return Err(GcError::new(
-                    "ttl of gc_worker's service safe point must be math.MaxInt64",
-                ));
-            }
-            return Ok(self.advance_txn_safe_point(safe_point)?.new_txn_safe_point);
-        }
-        if ttl > 0 {
-            let behind = safe_point < self.pd.gc_state().transaction_safe_point;
-            if let Err(error) = self.pd.set_gc_barrier(service_id, safe_point) {
-                if behind {
-                    return Err(GcError::new(error.to_string()));
-                }
-            }
-        } else {
-            self.pd.delete_gc_barrier(service_id);
-        }
-        Ok(self.pd.gc_state().transaction_safe_point)
-    }
-
-    fn advance_txn_safe_point(&self, target: u64) -> GcResult<AdvanceTxnSafePointResult> {
-        match self.pd.advance_transaction_safe_point(target) {
-            Ok((old, new, blocker)) => Ok(AdvanceTxnSafePointResult {
-                old_txn_safe_point: old,
-                target,
-                new_txn_safe_point: new,
-                blocker_description: blocker,
-            }),
-            // PD reports a decreasing target under this error code.
-            Err(error) => Err(GcError::new(format!(
-                "[PD:gc:ErrDecreasingTxnSafePoint]{error}"
-            ))),
-        }
-    }
-
-    fn advance_gc_safe_point(&self, target: u64) -> GcResult<AdvanceGcSafePointResult> {
-        self.pd
-            .advance_gc_safe_point(target)
-            .map(|(old, new)| AdvanceGcSafePointResult {
-                old_gc_safe_point: old,
-                target,
-                new_gc_safe_point: new,
-            })
-            .map_err(|error| GcError::new(error.to_string()))
-    }
-
-    fn get_all_keyspaces(&self, start_id: u32, limit: u32) -> GcResult<Vec<KeyspaceMeta>> {
-        let mut keyspaces: Vec<_> = self
-            .keyspaces
-            .iter()
-            .filter(|meta| keyspace_id(meta) >= start_id)
-            .cloned()
-            .collect();
-        keyspaces.sort_by_key(keyspace_id);
-        keyspaces.truncate(limit as usize);
-        Ok(keyspaces)
     }
 }
 
@@ -167,53 +82,17 @@ type ScanLockRequest = (Vec<u8>, Vec<u8>, u64);
 /// The failing (start key, store address) of `test_delete_ranges_failure`.
 type FailingRequest = Arc<Mutex<Option<(Vec<u8>, String)>>>;
 
-/// Go `mockGCWorkerClient` and the lock resolver: records what is sent.
-#[derive(Default)]
+/// Go `mockGCWorkerClient`: the store's own TiKV client, with handlers that
+/// record `UnsafeDestroyRange` (and may answer it) and `DeleteRange`; the
+/// `ScanLock` requests it records come from the RPC client's send hook.
 struct FakeKv {
+    inner: Arc<TikvStoreClient<UnistorePdClient>>,
     destroy_handler: Mutex<Option<DestroyHandler>>,
     destroy_requests: Mutex<Vec<DestroyRequest>>,
     delete_range_requests: Mutex<Vec<(Vec<u8>, Vec<u8>)>>,
-    /// Region boundaries, as Go's `splitAtKeys` leaves them.
-    split_keys: Mutex<Vec<Vec<u8>>>,
     /// One `(start, end, txn safe point)` per scan-lock request, as Go's
     /// `scanLockRequestHandler` collects them.
-    scan_lock_requests: Mutex<Vec<ScanLockRequest>>,
-}
-
-struct RecordingRunner<'a> {
-    kv: &'a FakeKv,
-    max_version: u64,
-    completed: std::sync::atomic::AtomicUsize,
-}
-
-impl ResolveLocksRunner for RecordingRunner<'_> {
-    fn run_on_range(&self, start: &[u8], end: &[u8]) -> GcResult<()> {
-        let splits = self.kv.split_keys.lock().unwrap().clone();
-        let mut piece_start = start.to_vec();
-        for split in splits
-            .iter()
-            .filter(|split| split.as_slice() > start && (end.is_empty() || split.as_slice() < end))
-        {
-            self.kv.scan_lock_requests.lock().unwrap().push((
-                piece_start.clone(),
-                split.clone(),
-                self.max_version + 1,
-            ));
-            self.completed.fetch_add(1, Ordering::AcqRel);
-            piece_start = split.clone();
-        }
-        self.kv.scan_lock_requests.lock().unwrap().push((
-            piece_start,
-            end.to_vec(),
-            self.max_version + 1,
-        ));
-        self.completed.fetch_add(1, Ordering::AcqRel);
-        Ok(())
-    }
-
-    fn completed_regions(&self) -> usize {
-        self.completed.load(Ordering::Acquire)
-    }
+    scan_lock_requests: Arc<Mutex<Vec<ScanLockRequest>>>,
 }
 
 impl GcKvClient for FakeKv {
@@ -222,7 +101,7 @@ impl GcKvClient for FakeKv {
         address: &str,
         start: &[u8],
         end: &[u8],
-        _timeout: Duration,
+        timeout: Duration,
     ) -> GcResult<Option<String>> {
         self.destroy_requests.lock().unwrap().push((
             address.to_owned(),
@@ -231,34 +110,33 @@ impl GcKvClient for FakeKv {
         ));
         match &*self.destroy_handler.lock().unwrap() {
             Some(handler) => handler(address, start, end),
-            None => Ok(Some(String::new())),
+            None => self
+                .inner
+                .unsafe_destroy_range(address, start, end, timeout),
         }
     }
 
-    fn delete_range_task(&self, start: &[u8], end: &[u8], _concurrency: usize) -> GcResult<()> {
+    fn delete_range_task(&self, start: &[u8], end: &[u8], concurrency: usize) -> GcResult<()> {
         self.delete_range_requests
             .lock()
             .unwrap()
             .push((start.to_vec(), end.to_vec()));
-        Ok(())
+        self.inner.delete_range_task(start, end, concurrency)
     }
 
     fn resolve_locks_runner(
         &self,
-        _name: &str,
-        _concurrency: usize,
+        name: &str,
+        concurrency: usize,
         max_version: u64,
-        _scan_limit: u32,
+        scan_limit: u32,
     ) -> Box<dyn ResolveLocksRunner + '_> {
-        Box::new(RecordingRunner {
-            kv: self,
-            max_version,
-            completed: std::sync::atomic::AtomicUsize::new(0),
-        })
+        self.inner
+            .resolve_locks_runner(name, concurrency, max_version, scan_limit)
     }
 
-    fn gc_region(&self, _region_key: &[u8], _safe_point: u64) -> GcResult<Option<String>> {
-        Ok(None)
+    fn gc_region(&self, region_key: &[u8], safe_point: u64) -> GcResult<Option<String>> {
+        self.inner.gc_region(region_key, safe_point)
     }
 }
 
@@ -418,10 +296,19 @@ impl GcRuleClient for FakeRules {
     }
 }
 
+/// Go `gcProbe`: a key with two versions, the first collectable.
+struct GcProbe {
+    key: Vec<u8>,
+    v1_ts: u64,
+    v2_ts: u64,
+}
+
 /// Go `mockGCWorkerSuite`.
 struct Suite {
     store: Arc<FakeStore>,
-    pd: Arc<FakePd>,
+    /// The worker's PD and store halves over the embedded store.
+    tikv: Arc<TikvStoreClient<UnistorePdClient>>,
+    cluster: Arc<Cluster>,
     kv: Arc<FakeKv>,
     sessions: Arc<FakeSessions>,
     rules: Arc<FakeRules>,
@@ -446,24 +333,59 @@ fn create_gc_worker_suite_full(
     keyspaces: Vec<KeyspaceMeta>,
     gcv2: Option<Arc<dyn GcV2Manager>>,
 ) -> Suite {
-    let cluster = Cluster::new(MockEngine::new());
+    let runtime = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap(),
+    );
+    let current_keyspace_id = current_keyspace
+        .as_ref()
+        .map_or(NULL_KEYSPACE_ID, keyspace_id);
+    let (rpc, pd, cluster) = tidb_unistore::mock::new(current_keyspace_id, keyspaces).unwrap();
     bootstrap_with_multi_stores(&cluster, 3);
+    let scan_lock_requests: Arc<Mutex<Vec<ScanLockRequest>>> = Arc::default();
+    let recorded = Arc::clone(&scan_lock_requests);
+    rpc.set_send_hook(Some(Arc::new(move |request| {
+        if let Some(scan_lock) = request.as_any().downcast_ref::<kvrpcpb::ScanLockRequest>() {
+            // Resolving locks scans at txn safe point - 1.
+            recorded.lock().unwrap().push((
+                scan_lock.start_key.clone(),
+                scan_lock.end_key.clone(),
+                scan_lock.max_version + 1,
+            ));
+        }
+    })));
+    let kv_store = runtime
+        .block_on(KvStore::new_with_pd_client(
+            Arc::new(pd),
+            Arc::new(MockSafePointKv::new()),
+            tikv_client::Config::default(),
+        ))
+        .unwrap();
+    let tikv = Arc::new(TikvStoreClient::new(
+        runtime,
+        kv_store,
+        current_keyspace.clone(),
+    ));
     let store = Arc::new(FakeStore {
+        tikv: Arc::clone(&tikv),
         offset_ms: AtomicI64::new(0),
-        logical: AtomicU64::new(0),
         keyspace: current_keyspace,
     });
-    let pd = Arc::new(FakePd {
-        pd: MockPdClient::new(cluster.clone()),
-        cluster,
-        keyspaces,
+    let kv = Arc::new(FakeKv {
+        inner: Arc::clone(&tikv),
+        destroy_handler: Mutex::new(None),
+        destroy_requests: Mutex::new(Vec::new()),
+        delete_range_requests: Mutex::new(Vec::new()),
+        scan_lock_requests,
     });
-    let kv = Arc::new(FakeKv::default());
     let sessions = Arc::new(FakeSessions::default());
     let rules = Arc::new(FakeRules::default());
     let mut worker = GcWorker::new(GcWorkerDeps {
         store: store.clone(),
-        pd: pd.clone(),
+        pd: tikv.clone(),
         kv: kv.clone(),
         sessions: sessions.clone(),
         rules: rules.clone(),
@@ -473,7 +395,8 @@ fn create_gc_worker_suite_full(
     worker.tick();
     Suite {
         store,
-        pd,
+        tikv,
+        cluster,
         kv,
         sessions,
         rules,
@@ -486,9 +409,127 @@ impl Suite {
         &self.worker.job
     }
 
+    /// The embedded store's PD.
+    fn mock_pd(&self) -> Arc<tidb_unistore::mock_pd::MockPd> {
+        Arc::clone(self.tikv.store().pd_client().mock_pd())
+    }
+
+    /// Go `s.pdClient.GetGCStatesClient(keyspace).GetGCState`.
+    fn gc_state(&self) -> GcState {
+        let keyspace = self
+            .store
+            .keyspace
+            .as_ref()
+            .map_or(NULL_KEYSPACE_ID, keyspace_id);
+        self.mock_pd()
+            .gc_states()
+            .gc_states_client(keyspace)
+            .get_gc_state(false)
+    }
+
+    /// Go `s.pdClient.GetGCInternalController(keyspace).AdvanceTxnSafePoint`.
+    fn advance_txn_safe_point(&self, target: u64) -> PdAdvanceTxnSafePointResult {
+        let keyspace = self
+            .store
+            .keyspace
+            .as_ref()
+            .map_or(NULL_KEYSPACE_ID, keyspace_id);
+        self.mock_pd()
+            .gc_states()
+            .gc_internal_controller(keyspace)
+            .advance_txn_safe_point(target)
+            .unwrap()
+    }
+
+    /// The worker's collaborators, for the package-level job APIs.
+    fn deps(&self) -> GcWorkerDeps {
+        GcWorkerDeps {
+            store: self.store.clone(),
+            pd: self.tikv.clone(),
+            kv: self.kv.clone(),
+            sessions: self.sessions.clone(),
+            rules: self.rules.clone(),
+            gcv2: None,
+        }
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.tikv.runtime().block_on(future)
+    }
+
+    /// Go `mustPut`.
+    fn must_put(&self, key: &[u8], value: &[u8]) {
+        self.block_on(async {
+            let mut txn = self.tikv.store().begin_optimistic().await.unwrap();
+            txn.put(key.to_vec(), value.to_vec()).await.unwrap();
+            txn.commit().await.unwrap();
+        });
+    }
+
+    fn snapshot_get(&self, key: &[u8], ts: u64) -> tikv_client::Result<Option<Vec<u8>>> {
+        self.block_on(async {
+            let mut snapshot = self.tikv.store().snapshot(
+                <tikv_client::Timestamp as tikv_client::TimestampExt>::from_version(ts),
+                tikv_client::transaction::TransactionOptions::new_optimistic(),
+            );
+            snapshot.get(key.to_vec()).await
+        })
+    }
+
+    /// Go `mustGet`.
+    fn must_get(&self, key: &[u8], ts: u64) -> Vec<u8> {
+        self.snapshot_get(key, ts).unwrap().unwrap_or_default()
+    }
+
+    /// Go `mustGetNone`: unistore's GC rides compaction, so a version still
+    /// there is no failure; only an error other than not-found is.
+    fn must_get_none(&self, key: &[u8], ts: u64) {
+        self.snapshot_get(key, ts).unwrap();
+    }
+
+    /// Go `createGCProbe`: `key` at "v1" then "v2", a timestamp after each.
+    fn create_gc_probe(&self, key: &[u8]) -> GcProbe {
+        self.must_put(key, b"v1");
+        let v1_ts = self.must_alloc_ts();
+        self.must_put(key, b"v2");
+        let v2_ts = self.must_alloc_ts();
+        let probe = GcProbe {
+            key: key.to_vec(),
+            v1_ts,
+            v2_ts,
+        };
+        self.check_not_collected(&probe);
+        probe
+    }
+
+    /// Go `checkCollected`.
+    fn check_collected(&self, probe: &GcProbe) {
+        self.must_get_none(&probe.key, probe.v1_ts);
+        assert_eq!(b"v2".to_vec(), self.must_get(&probe.key, probe.v2_ts));
+    }
+
+    /// Go `checkNotCollected`.
+    fn check_not_collected(&self, probe: &GcProbe) {
+        assert_eq!(b"v1".to_vec(), self.must_get(&probe.key, probe.v1_ts));
+        assert_eq!(b"v2".to_vec(), self.must_get(&probe.key, probe.v2_ts));
+    }
+
+    /// Go `loadTxnSafePoint`.
+    fn load_txn_safe_point(&self) -> u64 {
+        self.gc_state().txn_safe_point
+    }
+
+    /// Go `splitAtKeys`: the cluster split at the raw keys (the store's PD
+    /// keeps no region cache to invalidate).
+    fn split_at_keys(&self, keys: &[Vec<u8>]) {
+        let mut keys = keys.to_vec();
+        keys.sort();
+        self.cluster.split_arbitrary(&keys);
+    }
+
     /// Go sets its package variable `txnSafePointSyncWaitTime`.
     fn set_sync_wait_time(&self, wait: Duration) {
-        *self.job().txn_safe_point_sync_wait_time.lock().unwrap() = wait;
+        set_txn_safe_point_sync_wait_time(wait);
     }
 
     /// Go `mustAllocTs`.
@@ -717,9 +758,13 @@ fn test_prepare_gc() {
     assert!(job.check_use_auto_concurrency().unwrap());
 
     // GC is skipped when the safe point does not move: a GC barrier blocks it.
-    let last_txn_safe_point = s.pd.pd.gc_state().transaction_safe_point;
+    let last_txn_safe_point = s.gc_state().txn_safe_point;
     assert_ne!(0, last_txn_safe_point);
-    s.pd.pd.set_gc_barrier("a", last_txn_safe_point).unwrap();
+    s.mock_pd()
+        .gc_states()
+        .gc_states_client(NULL_KEYSPACE_ID)
+        .set_gc_barrier("a", last_txn_safe_point, Duration::MAX)
+        .unwrap();
     s.store.add_offset(40 * MINUTE);
     let (ok, safe_point) = job.prepare().unwrap();
     assert!(!ok);
@@ -751,7 +796,7 @@ fn test_get_gc_concurrency() {
 
     // A concurrency that differs from the number of stores.
     let concurrency_config = 25;
-    assert_ne!(s.pd.cluster.all_stores().len(), concurrency_config);
+    assert_ne!(s.cluster.get_all_stores().len(), concurrency_config);
     job.save_value_to_sys_table(GC_CONCURRENCY_KEY, &concurrency_config.to_string())
         .unwrap();
 
@@ -762,7 +807,7 @@ fn test_get_gc_concurrency() {
     job.save_value_to_sys_table(GC_AUTO_CONCURRENCY_KEY, BOOLEAN_TRUE)
         .unwrap();
     assert_eq!(
-        s.pd.cluster.all_stores().len(),
+        s.cluster.get_all_stores().len(),
         job.get_gc_concurrency().unwrap().v
     );
 }
@@ -1018,7 +1063,7 @@ fn test_leader_tick() {
             time_from_ts(s.must_alloc_ts()) - chrono::Duration::from_std(very_long).unwrap();
         s.job().save_time(GC_LAST_RUN_TIME_KEY, long_ago).unwrap();
     };
-    let gc_safe_point = |s: &Suite| s.pd.pd.gc_state().gc_safe_point;
+    let gc_safe_point = |s: &Suite| s.gc_state().gc_safe_point;
 
     // Skipped while GC is running.
     let before = gc_safe_point(&s);
@@ -1214,13 +1259,6 @@ fn scan_lock_count(kv: &FakeKv) -> usize {
     kv.scan_lock_requests.lock().unwrap().len()
 }
 
-fn split_at_keys(kv: &FakeKv, keys: &[Vec<u8>]) {
-    let mut splits = kv.split_keys.lock().unwrap();
-    splits.extend(keys.iter().cloned());
-    splits.sort();
-    splits.dedup();
-}
-
 fn req(start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>, u64) {
     (start.to_vec(), end.to_vec(), 100)
 }
@@ -1243,7 +1281,7 @@ fn test_resolve_locks_with_keyspaces_null_keyspace_only_multi_region() {
         return;
     }
     let s = create_gc_worker_suite_with(None, Vec::new());
-    split_at_keys(&s.kv, &[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    s.split_at_keys(&[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
     s.job().resolve_locks(100, 1).unwrap();
     assert_eq!(vec![req(b"", b"")], collect_and_merge_ranges(&s.kv));
     assert_eq!(4, scan_lock_count(&s.kv));
@@ -1264,7 +1302,7 @@ fn test_resolve_locks_with_keyspaces_null_keyspace_in_multi_keyspace_environment
         splits.push(make_key(id, "a"));
     }
     splits.extend([b"t1".to_vec(), b"t2".to_vec(), b"m".to_vec()]);
-    split_at_keys(&s.kv, &splits);
+    s.split_at_keys(&splits);
     s.job().resolve_locks(100, 2).unwrap();
     // The ranges outside every keyspace.
     assert_eq!(
@@ -1288,7 +1326,7 @@ fn test_resolve_locks_with_keyspaces_non_null_keyspace_in_multi_keyspace_environ
             system,
         ],
     );
-    split_at_keys(&s.kv, &[b"a".to_vec()]);
+    s.split_at_keys(&[b"a".to_vec()]);
     s.job().resolve_locks(100, 2).unwrap();
     // The keyspace resolves its own unbounded range; the codec adds the prefix.
     assert_eq!(vec![req(b"", b"")], collect_and_merge_ranges(&s.kv));
@@ -1318,7 +1356,7 @@ fn test_resolve_locks_with_keyspaces_unified_gc_in_mixed_usage() {
         splits.push(make_key(id, ""));
         splits.push(make_key(id, "a"));
     }
-    split_at_keys(&s.kv, &splits);
+    s.split_at_keys(&splits);
     s.job().resolve_locks(100, 2).unwrap();
     assert_eq!(
         vec![
@@ -1343,18 +1381,15 @@ fn test_resolve_locks_with_keyspaces_unified_gc_with_max_keyspace_id() {
         None,
         vec![make_keyspace(MAX_KEYSPACE_ID_FOR_TEST, "max", false)],
     );
-    split_at_keys(
-        &s.kv,
-        &[
-            b"t1".to_vec(),
-            b"t2".to_vec(),
-            b"m".to_vec(),
-            make_key(MAX_KEYSPACE_ID_FOR_TEST, ""),
-            make_key(MAX_KEYSPACE_ID_FOR_TEST, "a"),
-            b"y".to_vec(),
-            b"y\x00\x00\x00".to_vec(),
-        ],
-    );
+    s.split_at_keys(&[
+        b"t1".to_vec(),
+        b"t2".to_vec(),
+        b"m".to_vec(),
+        make_key(MAX_KEYSPACE_ID_FOR_TEST, ""),
+        make_key(MAX_KEYSPACE_ID_FOR_TEST, "a"),
+        b"y".to_vec(),
+        b"y\x00\x00\x00".to_vec(),
+    ]);
     s.job().resolve_locks(100, 2).unwrap();
     assert_eq!(
         vec![req(b"", b"r"), req(b"s", b"x"), req(b"x\xff\xff\xff", b"")],
@@ -1402,7 +1437,7 @@ fn test_unified_gc_in_multi_batches_of_keyspaces(
     s.job()
         .load_keyspaces_batch_size
         .store(load_batch_size, Ordering::Release);
-    split_at_keys(&s.kv, &splits);
+    s.split_at_keys(&splits);
     s.job().resolve_locks(100, 10).unwrap();
     assert_eq!(expected, collect_and_merge_ranges(&s.kv));
     assert_eq!(count as usize * 2 + 6, scan_lock_count(&s.kv));
@@ -1451,10 +1486,10 @@ fn test_run_gc_job() {
     assert!(job.check_use_distributed_gc());
     let safe_point = s.must_alloc_ts();
     // runGCJob does not advance the txn safe point itself.
-    let (_, new, _) = s.pd.pd.advance_transaction_safe_point(safe_point).unwrap();
+    let new = s.advance_txn_safe_point(safe_point).new_txn_safe_point;
     assert_eq!(safe_point, new);
     job.run_gc_job(safe_point, concurrency).unwrap();
-    assert_eq!(safe_point, s.pd.pd.gc_state().gc_safe_point);
+    assert_eq!(safe_point, s.gc_state().gc_safe_point);
 
     job.save_time(GC_SAFE_POINT_KEY, time_from_ts(safe_point))
         .unwrap();
@@ -1462,7 +1497,7 @@ fn test_run_gc_job() {
         time_from_ts(safe_point),
         job.load_time(GC_SAFE_POINT_KEY).unwrap().unwrap()
     );
-    assert_eq!(safe_point, s.pd.pd.gc_state().transaction_safe_point);
+    assert_eq!(safe_point, s.gc_state().txn_safe_point);
 
     // A regressing safe point fails.
     assert!(job.run_gc_job(safe_point - 1, concurrency).is_err());
@@ -1472,11 +1507,58 @@ fn test_run_gc_job() {
         .unwrap();
     assert!(job.check_use_distributed_gc());
 
+    let p = s.create_gc_probe(b"k1");
     let safe_point = s.must_alloc_ts();
-    let (_, new, _) = s.pd.pd.advance_transaction_safe_point(safe_point).unwrap();
+    let new = s.advance_txn_safe_point(safe_point).new_txn_safe_point;
     assert_eq!(safe_point, new);
     job.run_gc_job(safe_point, concurrency).unwrap();
-    assert_eq!(safe_point, s.pd.pd.gc_state().transaction_safe_point);
+    s.check_collected(&p);
+    assert_eq!(safe_point, s.load_txn_safe_point());
+}
+
+/// Go `TestDoGCForOneRegion`, its first arm: `CmdGC` to the region with a
+/// safe point past the probe. The remaining arms inject send failures
+/// through client-go's `tikvStoreSendReqResult` failpoint, which the client
+/// has no counterpart for.
+#[test]
+fn test_do_gc_for_one_region() {
+    let s = create_gc_worker_suite();
+    let p = s.create_gc_probe(b"k1");
+    let region_error = s.job().do_gc_for_region(b"", s.must_alloc_ts()).unwrap();
+    assert_eq!(None, region_error);
+    s.check_collected(&p);
+}
+
+/// Go `TestRunGCJobAPI`: the store has no locks, so the store's own lock
+/// resolver stands in for Go's lock-free mock.
+#[test]
+fn test_run_gc_job_api() {
+    if tidb_config::kerneltype::is_next_gen() {
+        return;
+    }
+    let s = create_gc_worker_suite();
+    let p = s.create_gc_probe(b"k1");
+    let safe_point = s.must_alloc_ts();
+    let deps = s.deps();
+    s.set_sync_wait_time(Duration::ZERO);
+    run_gc_job(deps, safe_point, "mock", 1).unwrap();
+    s.check_collected(&p);
+    assert_eq!(safe_point, s.load_txn_safe_point());
+}
+
+/// Go `TestRunDistGCJobAPI`.
+#[test]
+fn test_run_dist_gc_job_api() {
+    if tidb_config::kerneltype::is_next_gen() {
+        return;
+    }
+    let s = create_gc_worker_suite();
+    let safe_point = s.must_alloc_ts();
+    let deps = s.deps();
+    s.set_sync_wait_time(Duration::ZERO);
+    run_distributed_gc_job(deps, safe_point, "mock", 1).unwrap();
+    assert_eq!(safe_point, s.gc_state().gc_safe_point);
+    assert_eq!(safe_point, s.load_txn_safe_point());
 }
 
 #[test]
@@ -1489,18 +1571,20 @@ fn test_set_service_safe_point() {
             job.set_gc_worker_service_safe_point(safe_point).unwrap()
         );
     };
-    let min_service_safe_point = || s.pd.update_service_gc_safe_point("test", 0, 0).unwrap();
+    let min_service_safe_point = || s.tikv.update_service_gc_safe_point("test", 0, 0).unwrap();
     let must_update = |service: &str, safe_point: u64, expected_min: u64| {
         assert_eq!(
             expected_min,
-            s.pd.update_service_gc_safe_point(service, i64::MAX, safe_point)
+            s.tikv
+                .update_service_gc_safe_point(service, i64::MAX, safe_point)
                 .unwrap()
         );
     };
     let must_remove = |service: &str, safe_point: u64, expected_min: u64| {
         assert_eq!(
             expected_min,
-            s.pd.update_service_gc_safe_point(service, 0, safe_point)
+            s.tikv
+                .update_service_gc_safe_point(service, 0, safe_point)
                 .unwrap()
         );
     };

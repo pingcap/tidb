@@ -308,6 +308,13 @@ pub trait PdClient: Send + Sync + 'static {
 
     async fn all_stores(&self) -> Result<Vec<Store>>;
 
+    /// pd-client `GetAllStores`: every store PD knows, as PD reports it --
+    /// tombstones and every engine included -- where [`Self::all_stores`]
+    /// answers clients for the stores requests can reach.
+    async fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
+        Err(crate::Error::Unimplemented)
+    }
+
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
@@ -1380,6 +1387,10 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         self.region_cache
             .batch_load_regions_from_key(key.clone(), count, backoffer)
             .await
+    }
+
+    async fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
+        self.pd.clone().get_all_stores().await
     }
 
     async fn all_stores(&self) -> Result<Vec<Store>> {

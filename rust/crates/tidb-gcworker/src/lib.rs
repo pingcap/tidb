@@ -24,14 +24,15 @@
 
 mod gc_worker;
 pub mod seams;
+pub mod tikv_store;
 
 #[cfg(test)]
 mod gc_worker_test;
 
 pub use gc_worker::{
     calc_delete_range_concurrency, get_gc_rules, needs_gc_operation_for_store,
-    run_distributed_gc_job, run_gc_job, run_resolve_locks, GcConcurrency, GcWorker, GcWorkerDeps,
-    GcWorkerHandle, MockGcWorker, CONCURRENCY_DIVISOR, NULL_KEYSPACE_ID, REQUESTS_PER_THREAD,
-    TIDB_GC_LAST_RUN_TIME, TIDB_GC_LEADER_DESC, TIDB_GC_LEADER_LEASE, TIDB_GC_LEADER_UUID,
-    TIDB_GC_SAFE_POINT, TXN_SAFE_POINT_SYNC_WAIT_TIME,
+    run_distributed_gc_job, run_gc_job, run_resolve_locks, set_txn_safe_point_sync_wait_time,
+    GcConcurrency, GcWorker, GcWorkerDeps, GcWorkerHandle, MockGcWorker, CONCURRENCY_DIVISOR,
+    NULL_KEYSPACE_ID, REQUESTS_PER_THREAD, TIDB_GC_LAST_RUN_TIME, TIDB_GC_LEADER_DESC,
+    TIDB_GC_LEADER_LEASE, TIDB_GC_LEADER_UUID, TIDB_GC_SAFE_POINT, TXN_SAFE_POINT_SYNC_WAIT_TIME,
 };

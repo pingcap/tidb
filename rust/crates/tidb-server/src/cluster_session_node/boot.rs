@@ -632,12 +632,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // lease, safe points, lock resolution and delete ranges on TiKV.
     let gc_worker = authority
         .pd_client()
-        .map(|pd| {
+        .map(|_| {
             super::gc_worker::start_gc_worker(
                 &factory,
                 &config.pd_endpoints,
                 &config.cluster_security,
-                pd,
                 Arc::new(authority.transaction_opener()),
             )
         })
