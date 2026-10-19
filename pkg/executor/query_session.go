@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -30,8 +31,8 @@ import (
 )
 
 // newImportQuerySession prepares sctx to run the SELECT of an import query at
-// q.ReadTS. sctx gets an InfoCache that holds only the submitted source
-// schema, so it must not go back to its pool afterwards.
+// q.ReadTS. sctx gets an InfoCache that holds only the source tables at
+// q.ReadTS, so it must not go back to its pool afterwards.
 func newImportQuerySession(
 	ctx context.Context, sctx sessionctx.Context,
 	q *importer.QueryPlan, sql string,
@@ -47,7 +48,7 @@ func newImportQuerySession(
 	if err := initImportQuerySessionVars(ctx, sctx, q); err != nil {
 		return nil, nil, err
 	}
-	is, err := buildQueryInfoSchema(q, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
+	is, err := buildQueryInfoSchema(sctx.GetStore(), q, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -120,17 +121,38 @@ func initImportQuerySessionVars(ctx context.Context, sctx sessionctx.Context, q 
 	return nil
 }
 
-func buildQueryInfoSchema(q *importer.QueryPlan, parent infoschema.InfoSchema) (infoschema.InfoSchema, error) {
-	dbs := make([]*model.DBInfo, 0, len(q.Databases))
-	for _, db := range q.Databases {
-		dbInfo := db.Clone()
-		for _, tbl := range q.Tables[db.ID] {
-			tableInfo := tbl.Clone()
-			tableInfo.DBID = db.ID
-			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
-			dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, tableInfo)
+func buildQueryInfoSchema(
+	store kv.Storage, q *importer.QueryPlan, parent infoschema.InfoSchema,
+) (infoschema.InfoSchema, error) {
+	m := meta.NewReader(store.GetSnapshot(kv.NewVersion(q.ReadTS)))
+	dbByID := make(map[int64]*model.DBInfo)
+	dbs := make([]*model.DBInfo, 0, 1)
+	for _, src := range q.Tables {
+		db := dbByID[src.DBID]
+		if db == nil {
+			var err error
+			if db, err = m.GetDatabase(src.DBID); err != nil {
+				return nil, err
+			}
+			if db == nil {
+				return nil, errors.Errorf("source database %d not found at the import query snapshot", src.DBID)
+			}
+			dbByID[src.DBID] = db
+			dbs = append(dbs, db)
 		}
-		dbs = append(dbs, dbInfo)
+		tbl, err := m.GetTable(src.DBID, src.ID)
+		if err != nil {
+			return nil, err
+		}
+		// The submitter resolved the query with this revision.
+		if tbl == nil || tbl.Revision != src.Revision {
+			return nil, errors.Errorf("source table %d changed before the import query snapshot", src.ID)
+		}
+		infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbl)
+		infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
+		tbl.DBID = db.ID
+		tbl.TableCacheStatusType = model.TableCacheStatusDisable
+		db.Deprecated.Tables = append(db.Deprecated.Tables, tbl)
 	}
 	b := infoschema.NewBuilder(parent.GetAutoIDRequirement(), 0, nil, infoschema.NewData(), false).
 		WithCrossKS(true)

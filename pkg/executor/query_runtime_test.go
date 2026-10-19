@@ -141,7 +141,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.False(t, se.GetSessionVars().InTxn())
 		require.True(t, se.GetSessionVars().IsAutocommit())
 	})
-	t.Run("submitted table definitions", func(t *testing.T) {
+	t.Run("source tables at read ts", func(t *testing.T) {
 		tk.MustExec("create resource group rg1 ru_per_sec=1000")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		sql := "import into unused_target from select /*+ STREAM_AGG() */ count(*) from query_src"
