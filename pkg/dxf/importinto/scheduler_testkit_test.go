@@ -571,6 +571,7 @@ func TestQueryGCBarrierKeeper(t *testing.T) {
 		require.NoError(t, keeper.KeepTask(ctx, task, acquireRuntime))
 	}
 	keep(nil, proto.StepInit)
+	keep(&importer.QueryPlan{}, proto.ImportStepQuery)
 	keep(&importer.QueryPlan{ReadTS: ver.Ver}, proto.ImportStepMergeSort)
 	require.Empty(t, barriers())
 	require.Zero(t, acquired)

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 )
 
@@ -41,28 +40,35 @@ type QueryGCBarrierKeeper struct{}
 func (QueryGCBarrierKeeper) KeepTask(
 	ctx context.Context, task *proto.Task, acquireRuntime func() (sqlsvrapi.Runtime, func(), error),
 ) error {
-	// Later steps no longer read at ReadTS.
-	if task.Step != proto.StepInit && task.Step != proto.ImportStepQuery {
-		return nil
-	}
-	var meta struct {
-		Plan struct {
-			Query *importer.QueryPlan
-		}
-	}
-	if err := json.Unmarshal(task.Meta, &meta); err != nil {
-		return errors.Trace(err)
-	}
-	query := meta.Plan.Query
-	if query == nil {
-		return nil
+	readTS, need, err := taskNeedKeepGC(task)
+	if err != nil || !need {
+		return err
 	}
 	taskRuntime, release, err := acquireRuntime()
 	if err != nil {
 		return err
 	}
 	defer release()
-	return gcutil.SetGCBarrier(ctx, taskRuntime.Store(), QueryGCBarrierID(query.ReadTS), query.ReadTS, QueryGCBarrierTTL)
+	return gcutil.SetGCBarrier(ctx, taskRuntime.Store(), QueryGCBarrierID(readTS), readTS, QueryGCBarrierTTL)
+}
+
+// taskNeedKeepGC returns whether task still reads at its ReadTS, and the
+// ReadTS to keep from GC if so.
+func taskNeedKeepGC(task *proto.Task) (uint64, bool, error) {
+	// Later steps no longer read at ReadTS.
+	if task.Step != proto.StepInit && task.Step != proto.ImportStepQuery {
+		return 0, false, nil
+	}
+	var taskMeta TaskMeta
+	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	// ReadTS is unset until the query snapshot is decided.
+	query := taskMeta.Plan.Query
+	if query == nil || query.ReadTS == 0 {
+		return 0, false, nil
+	}
+	return query.ReadTS, true, nil
 }
 
 // QueryGCBarrierID returns the GC barrier ID that protects readTS.
