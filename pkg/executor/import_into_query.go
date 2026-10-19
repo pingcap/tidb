@@ -72,8 +72,6 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	q := &importer.QueryPlan{
 		Timestamp: time.Now().Unix(),
 		Keyspace:  sctx.GetStore().GetKeyspace(),
-		Databases: make(map[int64]*model.DBInfo),
-		Tables:    make(map[int64][]*model.TableInfo),
 	}
 	if q.SessionStates, err = encodeImportQueryStates(sctx); err != nil {
 		return nil, err
@@ -138,8 +136,7 @@ func collectImportQueryTables(
 			continue
 		}
 		seen[tblInfo.ID] = true
-		q.Databases[dbInfo.ID] = dbInfo
-		q.Tables[dbInfo.ID] = append(q.Tables[dbInfo.ID], tblInfo)
+		q.Tables = append(q.Tables, importer.QueryTable{DBID: dbInfo.ID, ID: tblInfo.ID, Revision: tblInfo.Revision})
 
 		// Parse view recursively
 		if tblInfo.IsView() {

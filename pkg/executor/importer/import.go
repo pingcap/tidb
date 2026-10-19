@@ -269,13 +269,19 @@ type QueryPlan struct {
 	SchemaVersion int64
 	Timestamp     int64
 	Keyspace      string
-	Databases     map[int64]*model.DBInfo
-	// DBInfo.Deprecated.Tables and TableInfo.DBID are not serialized.
-	// Persist table definitions grouped by database ID explicitly.
-	Tables map[int64][]*model.TableInfo
+	// Tables lists the source tables, including those behind views. The worker
+	// loads their definitions at ReadTS.
+	Tables []QueryTable
 	// SessionStates are the states of the submitting session that the SELECT
 	// runs with on the worker, such as its variables and current database.
 	SessionStates *sessionstates.SessionStates
+}
+
+// QueryTable identifies a source table definition of an import query.
+type QueryTable struct {
+	DBID     int64
+	ID       int64
+	Revision uint64
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
