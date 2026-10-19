@@ -443,3 +443,119 @@ impl KvTable {
         .map(|plan| &plan.copy_handle)
     }
 }
+
+impl KvTable {
+    /// Go `reorgPartitionWorker.BackfillData` for one batch of the
+    /// reorganized partition `physical_id`'s rows in `[start, end)`: each
+    /// stored record is copied, byte for byte, to the partition the new
+    /// scheme routes it to, under the same handle. A heap table's copy that
+    /// is already there with the same bytes (double written by DML since)
+    /// is skipped; one holding another row (two partitions shared a
+    /// `_tidb_rowid` after an EXCHANGE PARTITION) moves the source row to a
+    /// fresh handle first, in its own partition, so the double writes keep
+    /// finding it. Every source record not rewritten is locked.
+    pub fn reorg_partition_batch(
+        &mut self,
+        physical_id: i64,
+        start: &[u8],
+        end: &[u8],
+        batch_count: usize,
+        ctx: &crate::StmtContext,
+    ) -> Result<super::ReorgBatch, KvTableError> {
+        let decode_context = RowDecodeContext::for_write(ctx);
+        let decoder = self.row_decoder_projected(None, &decode_context)?;
+        // Go `fetchRowColVals`: the records with their raw values.
+        let mut records: Vec<(Vec<u8>, TableHandle, Vec<Datum>, Vec<u8>)> = Vec::new();
+        let mut task_done = false;
+        {
+            let mut iter = self.store.iter(
+                Some(&Key::from_bytes(start.to_vec())),
+                Some(&Key::from_bytes(end.to_vec())),
+            )?;
+            loop {
+                if !iter.valid() {
+                    task_done = true;
+                    break;
+                }
+                if records.len() >= batch_count {
+                    break;
+                }
+                let key = iter.key().as_bytes().to_vec();
+                if key.as_slice() >= end {
+                    task_done = true;
+                    break;
+                }
+                let value = iter.value().to_vec();
+                let (handle, row) = decoder.decode_record(&key, &value)?;
+                records.push((key, handle, row, value));
+                iter.next()?;
+            }
+            iter.close();
+        }
+        if records.is_empty() {
+            task_done = true;
+        }
+        let next_key = if task_done {
+            end.to_vec()
+        } else {
+            let mut next = records.last().expect("a full batch has rows").0.clone();
+            next.push(0);
+            next
+        };
+        let mut batch = super::ReorgBatch {
+            next_key,
+            done: task_done,
+            ..super::ReorgBatch::default()
+        };
+        let zone = ctx.session_zone();
+        let clustered = self.clustered();
+        for (source_key, handle, row, value) in records {
+            batch.scanned += 1;
+            let target = self.locate_reorg_partition(&row, ctx)?.ok_or_else(|| {
+                KvTableError::Decode("the table is not being reorganized".to_owned())
+            })?;
+            let mut handle = handle;
+            let mut rewritten = false;
+            if !clustered {
+                if let Some(copy) = self.partition_copy(target, &handle)? {
+                    if copy == value {
+                        // Already copied, or double written by DML.
+                        batch.locks.push(source_key);
+                        continue;
+                    }
+                    // Go `RemoveRecord` + `AddRecord` in the source
+                    // partition, which gives the row a fresh handle.
+                    self.remove_partition_copy(physical_id, &row, &handle, &zone)?;
+                    let shard = if self.shard_row_id_bits > 0 {
+                        ctx.next_row_id_shard(1) as i64
+                    } else {
+                        0
+                    };
+                    handle = self.handle_of_row(&row, &zone, shard)?;
+                    self.add_partition_copy(
+                        physical_id,
+                        &row,
+                        &handle,
+                        &zone,
+                        false,
+                        false,
+                        false,
+                    )?;
+                    rewritten = true;
+                }
+            }
+            if !rewritten {
+                batch.locks.push(source_key);
+            }
+            // The copy's indexes are built by the next phase, or by any DML
+            // that touches the row.
+            let key = Key::from_bytes(super::encode_row_key_with_handle(
+                target,
+                &handle.record_handle(),
+            ));
+            self.store.set(key, value).map_err(KvTableError::from)?;
+            batch.added += 1;
+        }
+        Ok(batch)
+    }
+}

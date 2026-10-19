@@ -160,6 +160,8 @@ impl<'a> UpdateRecords<'a> {
                 return Err(error);
             }
         }
+        let exchange_check =
+            super::exchange_partition::exchange_partition_check(catalog, database, name)?;
         // Go updateRecord gives IGNORE's FK checks the evaluated candidate
         // before bad-NULL substitution and partition validation. Rejected FK
         // rows must not produce warnings from these later stages.
@@ -169,6 +171,15 @@ impl<'a> UpdateRecords<'a> {
         let level = generation.null_level(ctx);
         for (value, (column, field_type)) in new.iter_mut().zip(entry.columns()) {
             crate::bad_null::handle_bad_null(value, field_type, column, level, ctx)?;
+        }
+        // Go `updateRecord`'s `checkRowForExchangePartition`, and
+        // `partitionedTableUpdateRecord`'s constraint check for a row moving
+        // into the exchanged partition.
+        if let Some(check) = &exchange_check {
+            check.check_standalone_row(new, ctx)?;
+            if let TableEntry::Kv(kv) = entry {
+                check.check_partitioned_row(kv, new, ctx)?;
+            }
         }
         if let (TableEntry::Kv(kv), Some(partitions)) = (entry, partitions) {
             if let Err(error) = kv.validate_update_partitions(old, new, partitions, ctx) {

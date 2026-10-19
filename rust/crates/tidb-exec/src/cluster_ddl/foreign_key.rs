@@ -411,6 +411,8 @@ fn check_request(
             column: None,
             sub_job: add_index::reorg_sub_job(&active.job),
             clean_up_global_index: false,
+            partition_phase: None,
+            schema_id: active.job.schema_id,
         }),
     }
 }

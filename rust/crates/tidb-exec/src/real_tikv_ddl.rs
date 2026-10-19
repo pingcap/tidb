@@ -729,6 +729,22 @@ pub trait IndexBackfiller {
         Err(foreign_key_check_unavailable())
     }
 
+    /// Go `checkExchangePartitionRecordValidation` for an `EXCHANGE
+    /// PARTITION ... WITH VALIDATION`, through the same snapshot and buffer
+    /// as [`Self::stage`].
+    fn stage_exchange_partition_check(
+        &self,
+        _plan: &ExchangePartitionValidation,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        Err(LockSqlError {
+            code: 1105,
+            state: *b"HY000",
+            message: "this path cannot validate an exchanged partition's rows".to_owned(),
+        })
+    }
+
     /// Go `checkCacheTableSize` for an `ALTER TABLE ... CACHE`: the table's
     /// stored keys and values may total at most 64 MiB (`table too large`).
     fn stage_cache_table_check(
@@ -818,6 +834,17 @@ pub enum AddIndexReorgWork<'a> {
     /// `[start, end)` (the reorganization's `column`).
     UpdateColumn {
         /// The physical table.
+        physical_id: i64,
+        /// The batch's first key.
+        start: &'a [u8],
+        /// The range's end.
+        end: &'a [u8],
+    },
+    /// Go `reorgPartitionWorker.BackfillData` over a reorganized partition's
+    /// rows in `[start, end)`: each is copied to the partition the new scheme
+    /// routes it to.
+    PartitionCopy {
+        /// The reorganized partition.
         physical_id: i64,
         /// The batch's first key.
         start: &'a [u8],
@@ -1444,9 +1471,6 @@ pub enum AddIndexSubmitted {
     Job(i64, Vec<(DdlWarningLevel, u16, String)>),
     /// `IF NOT EXISTS` over an existing index: nothing queued.
     AlreadySatisfied(ClusterDdlReport),
-    /// An ADD PARTITION on a HASH or KEY table, which Go runs as a
-    /// reorganization: still applied in one transaction here.
-    OneTransaction,
 }
 
 /// Go's executor up to `doDDLJob2` for the statement kinds this node submits
@@ -1570,16 +1594,50 @@ pub fn submit_persisted_job_with_retry<
                     min_job_id,
                 )
             }
-            DdlStatement::AddPartitions { .. }
-            | DdlStatement::DropPartitions { .. }
-            | DdlStatement::TruncatePartitions { .. } => {
-                crate::cluster_ddl::partition::prepare_partition_job_submission(
+            DdlStatement::ExchangePartition { .. } => {
+                crate::cluster_ddl::exchange_partition::prepare_exchange_partition_job_submission(
                     &mut snapshot,
                     statement,
                     job_context,
                     start_ts,
                     upgrading,
                     min_job_id,
+                )
+            }
+            DdlStatement::AddPartitions { .. }
+            | DdlStatement::DropPartitions { .. }
+            | DdlStatement::TruncatePartitions { .. } => {
+                match crate::cluster_ddl::partition::prepare_partition_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                ) {
+                    // An ADD on a HASH/KEY table is Go's
+                    // `hashPartitionManagement`, a reorganization.
+                    Ok(None) => crate::cluster_ddl::reorganize_partition::prepare_reorganize_partition_job_submission(
+                        &mut snapshot,
+                        statement,
+                        job_context,
+                        start_ts,
+                        upgrading,
+                        min_job_id,
+                        store_count,
+                    ),
+                    other => other,
+                }
+            }
+            DdlStatement::ReorganizePartitions { .. } => {
+                crate::cluster_ddl::reorganize_partition::prepare_reorganize_partition_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                    store_count,
                 )
             }
             DdlStatement::LockTables { .. } | DdlStatement::UnlockTables { .. } => {
@@ -1730,9 +1788,6 @@ pub fn submit_persisted_job_with_retry<
             return Ok(AddIndexSubmitted::AlreadySatisfied(
                 ClusterDdlReport::AlreadySatisfied { detail, warnings },
             ))
-        }
-        None if matches!(statement, DdlStatement::AddPartitions { .. }) => {
-            return Ok(AddIndexSubmitted::OneTransaction);
         }
         None => {
             return Err(ClusterDdlError::NotCommitted(

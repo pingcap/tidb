@@ -379,3 +379,54 @@ fn auto_random_follows_increment_offset_and_conversion_rules() {
         "60002"
     );
 }
+
+/// Go `checkRowForExchangePartition`: while EXCHANGE PARTITION has marked the
+/// standalone table (`ExchangePartitionInfo`, its write-only state), a row
+/// written into it must belong in the exchanged partition, by INSERT or by
+/// UPDATE; a row that does is written as usual.
+#[test]
+fn a_marked_standalone_table_takes_only_rows_of_the_partition() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table pt (a int, b int) partition by range (a) \
+             (partition p0 values less than (10), partition p1 values less than (20))",
+        )
+        .unwrap();
+    session.run("create table nt (a int, b int)").unwrap();
+    session.run("insert into nt values (1, 1)").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let (pt_id, p0_id) = {
+                let Some(tidb_executor::TableEntry::Kv(pt)) = catalog.table_in("test", "pt") else {
+                    panic!("pt is not stored as bytes");
+                };
+                let p0 = pt.partition().expect("pt is partitioned").definitions[0].id;
+                (pt.table_id, p0)
+            };
+            let Some(tidb_executor::TableEntry::Kv(nt)) = catalog.table_mut_in("test", "nt") else {
+                panic!("nt is not stored as bytes");
+            };
+            std::sync::Arc::make_mut(nt).set_exchange_partition_info(Some((pt_id, p0_id)));
+            Ok(())
+        })
+        .unwrap();
+    let mismatch = (
+        1748,
+        "Found a row not matching the given partition set".to_owned(),
+    );
+    assert_eq!(
+        code(&mut session, "insert into nt values (15, 15)"),
+        mismatch
+    );
+    assert_eq!(
+        code(&mut session, "update nt set a = 12 where a = 1"),
+        mismatch
+    );
+    session.run("insert into nt values (5, 5)").unwrap();
+    session.run("update nt set a = 2 where a = 1").unwrap();
+    assert_eq!(
+        sorted(&mut session, "select a, b from nt"),
+        [["2", "1"], ["5", "5"]]
+    );
+}

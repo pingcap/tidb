@@ -2491,6 +2491,8 @@ where
                     | DdlStatement::AddPartitions { .. }
                     | DdlStatement::DropPartitions { .. }
                     | DdlStatement::TruncatePartitions { .. }
+                    | DdlStatement::ExchangePartition { .. }
+                    | DdlStatement::ReorganizePartitions { .. }
             )
             || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {
@@ -2525,8 +2527,6 @@ where
                     warnings.extend(job_warnings);
                     return Ok(report);
                 }
-                // An ADD on a HASH/KEY table: the reorganization below.
-                tidb_exec::real_tikv_ddl::AddIndexSubmitted::OneTransaction => {}
             }
         }
         let notifier = self
@@ -2861,6 +2861,33 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         use tidb_exec::real_tikv_ddl::{AddIndexReorgAnswer, AddIndexReorgWork};
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
         let context = &reorg.context.0;
+        // Go `reorgPartitionWorker.BackfillData`: the table as the job sees
+        // it, with the counters a colliding heap row's fresh handle comes
+        // from, read and bumped in this batch's transaction.
+        if let AddIndexReorgWork::PartitionCopy {
+            physical_id,
+            start,
+            end,
+        } = &work
+        {
+            let ids = DdlTransactionAutoIds {
+                storage: storage.clone(),
+            };
+            let mut table = cluster_table(
+                &reorg.table,
+                &storage,
+                &AutoIdSource::In {
+                    db_id: reorg.schema_id,
+                    ids: &ids,
+                },
+            )
+            .map_err(exchange_validation_internal)?
+            .with_new_collation_mode(tidb_datatype::new_collation_enabled());
+            return table
+                .reorg_partition_batch(*physical_id, start, end, reorg.batch_size, context)
+                .map(AddIndexReorgAnswer::Batch)
+                .map_err(backfill_failure);
+        }
         // Go `checkModifyColumnData` reads the table as it stands.
         if let AddIndexReorgWork::CheckColumn(check) = &work {
             let mut table = cluster_table(&check.table, &storage, &AutoIdSource::Unavailable)
@@ -2915,7 +2942,9 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             .map_err(exchange_validation_internal)?
             .with_new_collation_mode(tidb_datatype::new_collation_enabled());
         match work {
-            AddIndexReorgWork::CheckColumn(_) => unreachable!("answered above"),
+            AddIndexReorgWork::CheckColumn(_) | AddIndexReorgWork::PartitionCopy { .. } => {
+                unreachable!("answered above")
+            }
             // Go `updateColumnWorker.BackfillData`.
             AddIndexReorgWork::UpdateColumn { start, end, .. } => {
                 let spec = reorg.column.as_ref().ok_or_else(|| {
@@ -3000,8 +3029,14 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     combined = Some(match combined {
                         None => batch,
                         Some(mut combined) => {
-                            // Every index walks the same rows.
-                            combined.added = combined.added.max(batch.added);
+                            // Every index walks the same rows. A partition
+                            // reorganization counts each index's entries, as
+                            // Go builds its indexes one element at a time.
+                            combined.added = if reorg.partition_phase.is_some() {
+                                combined.added + batch.added
+                            } else {
+                                combined.added.max(batch.added)
+                            };
                             combined.locks.extend(batch.locks);
                             combined
                         }
@@ -3210,6 +3245,15 @@ impl IndexBackfiller for KvTableIndexBackfiller {
     /// Go `checkForeignKeyConstrain`: the child's existing rows against its
     /// parent, both read through the DDL transaction's snapshot and buffer,
     /// by the same check the in-process `ADD FOREIGN KEY` runs.
+    fn stage_exchange_partition_check(
+        &self,
+        plan: &ExchangePartitionValidation,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), LockSqlError> {
+        ExchangePartitionValidator::validate(self, plan, snapshot, buffer)
+    }
+
     fn stage_foreign_key_check(
         &self,
         plan: &tidb_exec::cluster_ddl::ForeignKeyCheck,

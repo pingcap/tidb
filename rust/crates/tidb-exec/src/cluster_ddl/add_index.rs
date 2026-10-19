@@ -70,6 +70,25 @@ pub struct AddIndexReorg {
     /// `physical_ids` have their entries in the global indexes `index_ids`
     /// deleted, instead of an index being added.
     pub clean_up_global_index: bool,
+    /// The phase of a partition reorganization this runs (Go
+    /// `reorgPartitionDataAndIndex`), `None` for any other job.
+    pub partition_phase: Option<PartitionReorgPhase>,
+    /// The table's database, whose auto-ID counters a partition copy may
+    /// draw a fresh `_tidb_rowid` from.
+    pub schema_id: i64,
+}
+
+/// Go `reorgPartitionDataAndIndex`'s phases, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartitionReorgPhase {
+    /// The dropping partitions' rows copied into the adding ones (the
+    /// reorganization's column element).
+    CopyRows,
+    /// Every index built on the adding partitions.
+    AddingIndexes,
+    /// The new global indexes filled from the partitions the job leaves
+    /// untouched.
+    UntouchedGlobalIndexes,
 }
 
 /// What a MODIFY COLUMN's row rewrite reorganizes: Go's column element.
@@ -113,6 +132,9 @@ pub enum ReorgStageRequest {
     /// Go `checkForeignKeyConstrain`: the child's existing rows against the
     /// parent, answered as a check.
     CheckForeignKey(Box<super::ForeignKeyCheck>),
+    /// Go `checkExchangePartitionRecordValidation`: the standalone table's
+    /// rows against the exchanged partition, answered as a check.
+    CheckExchangePartition(Box<super::ExchangePartitionValidation>),
 }
 
 /// One `mysql.tidb_ddl_reorg` row.
@@ -141,6 +163,12 @@ pub struct ReorgOutcome {
     pub column: Option<ColumnReorgSpec>,
     /// The multi-schema sub-job it ran for (see [`AddIndexReorg::sub_job`]).
     pub sub_job: Option<i32>,
+    /// The partition reorganization phase it ran (see
+    /// [`AddIndexReorg::partition_phase`]).
+    pub partition_phase: Option<PartitionReorgPhase>,
+    /// The job's row count the request started from, which a phase that
+    /// only initialized or skipped carries on to the next.
+    pub row_count: i64,
     /// A row rewrite's warnings (Go `backfillTaskContext.warnings`): each
     /// code's first warning and its count.
     pub warnings: Vec<(u16, String, i64)>,
@@ -1068,6 +1096,8 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             column: None,
             sub_job: reorg_sub_job(&active.job),
             clean_up_global_index: false,
+            partition_phase: None,
+            schema_id: active.job.schema_id,
         };
     let finished = match outcome.map(|outcome| &outcome.result) {
         // Go `getReorgInfo`: the first visit persists the snapshot.

@@ -95,12 +95,26 @@ where
                 ReorgResult::Checked(answer.err().map(|error| (error.code, error.message)))
             })?
         }
+        ReorgStageRequest::CheckExchangePartition(check) => {
+            reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+                let answer = backfiller.stage_exchange_partition_check(check, snapshot, buffer);
+                buffer.reset();
+                Ok((answer, Vec::new()))
+            })
+            // Go `onExchangeTablePartition` rolls the job back on any error
+            // the validation returns.
+            .map(|answer| {
+                ReorgResult::Checked(answer.err().map(|error| (error.code, error.message)))
+            })?
+        }
     };
     Ok(ReorgOutcome {
         job_id: reorg.job_id,
         merging: reorg.merging,
         column: reorg.column.clone(),
         sub_job: reorg.sub_job,
+        partition_phase: reorg.partition_phase,
+        row_count: reorg.row_count,
         warnings,
         result,
     })
@@ -109,6 +123,15 @@ where
 /// The element a reorganization's handle names: the changing column of a
 /// row rewrite, else the first index.
 fn reorg_element(reorg: &AddIndexReorg) -> Option<(i64, &'static [u8])> {
+    // Go `BuildElements(tbl.Meta().Columns[0], indices)`: a partition
+    // reorganization's row copy is its first column's element.
+    if reorg.partition_phase == Some(crate::cluster_ddl::add_index::PartitionReorgPhase::CopyRows) {
+        return reorg
+            .table
+            .columns
+            .get(0)
+            .map(|column| (column.read().id, COLUMN_ELEMENT_KEY));
+    }
     match &reorg.column {
         Some(column) => Some((column.changing_column_id, COLUMN_ELEMENT_KEY)),
         None => reorg.index_ids.first().map(|id| (*id, INDEX_ELEMENT_KEY)),
@@ -620,6 +643,15 @@ where
                 start: &current.start_key,
                 end: &current.end_key,
             },
+            None if reorg.partition_phase
+                == Some(crate::cluster_ddl::add_index::PartitionReorgPhase::CopyRows) =>
+            {
+                AddIndexReorgWork::PartitionCopy {
+                    physical_id: current.physical_id,
+                    start: &current.start_key,
+                    end: &current.end_key,
+                }
+            }
             None if reorg.clean_up_global_index => AddIndexReorgWork::CleanUpGlobalIndex {
                 physical_id: current.physical_id,
                 start: &current.start_key,

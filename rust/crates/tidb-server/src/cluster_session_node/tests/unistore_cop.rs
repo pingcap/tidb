@@ -20381,6 +20381,272 @@ fn partition_changes_run_as_persisted_jobs_like_go() {
     );
 }
 
+/// REORGANIZE PARTITION, ADD PARTITION on a HASH table, COALESCE
+/// PARTITION, ALTER TABLE ... PARTITION BY and REMOVE PARTITIONING run as
+/// Go's persisted reorganization jobs: six schema versions (none ->
+/// delete-only -> write-only -> write-reorganization -> delete-reorganization
+/// -> public -> none), the rows copied and every index rebuilt, the job
+/// counting one row per copy and per index entry (captured from Go on this
+/// branch).
+#[test]
+fn partition_reorganizations_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1955)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let version = |session: &mut ClusterServerSession| -> i64 {
+        displayed(rows(session, "admin show ddl"))[0][0]
+            .parse()
+            .unwrap()
+    };
+    let job = |session: &mut ClusterServerSession| -> String {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [1, 2, 3, 4, 7, 11]
+            .map(|column| row[column].clone())
+            .join("|")
+    };
+    // (versions, warnings) of one statement.
+    let step = |session: &mut ClusterServerSession, sql: &str| -> (i64, Vec<Vec<String>>) {
+        let before = version(session);
+        rows(session, sql);
+        let warnings = displayed(rows(session, "show warnings"));
+        (version(session) - before, warnings)
+    };
+    let related = vec![vec![
+        "Warning".to_owned(),
+        "1105".to_owned(),
+        "The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now".to_owned(),
+    ]];
+    let new = vec![vec![
+        "Warning".to_owned(),
+        "1105".to_owned(),
+        "The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now".to_owned(),
+    ]];
+    rows(
+        &mut session,
+        "create table r (a int, b int, unique key ub(b) global, key ka(a)) partition by range (a) \
+         (partition p0 values less than (10), partition p1 values less than (20), \
+         partition p2 values less than (30))",
+    );
+    rows(
+        &mut session,
+        "insert into r values (1,1),(5,5),(11,11),(15,15),(25,25)",
+    );
+    assert_eq!(
+        step(
+            &mut session,
+            "alter table r reorganize partition p0, p1 into \
+             (partition p01 values less than (15), partition p11 values less than (20))",
+        ),
+        (6, related.clone())
+    );
+    assert_eq!(
+        job(&mut session),
+        "test|r|alter table reorganize partition|none|13|synced"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select a, b from r partition (p01) order by a"
+        )),
+        [["1", "1"], ["5", "5"], ["11", "11"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select a, b from r partition (p11)")),
+        [["15", "15"]]
+    );
+    rows(&mut session, "admin check table r");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select * from r use index(ub) where b = 15"
+        )),
+        [["15", "15"]]
+    );
+
+    rows(
+        &mut session,
+        "create table h (a int, b int) partition by hash (a) partitions 2",
+    );
+    rows(&mut session, "insert into h values (1,1),(2,2),(3,3),(4,4)");
+    assert_eq!(
+        step(&mut session, "alter table h add partition partitions 1"),
+        (6, related.clone())
+    );
+    assert_eq!(
+        job(&mut session),
+        "test|h|alter table reorganize partition|none|4|synced"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select a from h partition (p2)")),
+        [["2"]]
+    );
+    assert_eq!(
+        step(&mut session, "alter table h coalesce partition 2"),
+        (6, related)
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select count(*) from h")),
+        [["4"]]
+    );
+    rows(&mut session, "admin check table h");
+
+    rows(&mut session, "create table n (a int primary key, b int)");
+    rows(&mut session, "insert into n values (1,1),(12,12)");
+    assert_eq!(
+        step(
+            &mut session,
+            "alter table n partition by range (a) \
+             (partition p0 values less than (10), partition p1 values less than (20))",
+        ),
+        (6, new.clone())
+    );
+    assert_eq!(
+        job(&mut session),
+        "test|n|alter table partition by|none|2|synced"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select a from n partition (p1)")),
+        [["12"]]
+    );
+    rows(&mut session, "admin check table n");
+    assert_eq!(
+        step(&mut session, "alter table n remove partitioning"),
+        (6, Vec::<Vec<String>>::new())
+    );
+    assert_eq!(
+        job(&mut session),
+        "test|n|alter table remove partitioning|none|2|synced"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select a from n order by a")),
+        [["1"], ["12"]]
+    );
+    rows(&mut session, "admin check table n");
+
+    assert_eq!(
+        step(
+            &mut session,
+            "alter table r partition by hash(a) partitions 2"
+        ),
+        (6, new)
+    );
+    assert_eq!(
+        job(&mut session),
+        "test|r|alter table partition by|none|15|synced"
+    );
+    rows(&mut session, "admin check table r");
+    assert_eq!(
+        displayed(rows(&mut session, "select count(*) from r")),
+        [["5"]]
+    );
+    let error = session
+        .execute_write(
+            "alter table r reorganize partition p9 into (partition p10 values less than (5))",
+        )
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (8200, "Unsupported reorganize partition")
+    );
+}
+
+/// EXCHANGE PARTITION runs as Go's persisted `ActionExchangeTablePartition`
+/// job: the standalone table is marked (`ExchangePartitionInfo`) under one
+/// version, then the ids swap under the next; a row that fails the
+/// validation rolls the job back after the marking version (captured from
+/// Go on this branch).
+#[test]
+fn exchange_partition_runs_as_a_persisted_job_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1954)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let version = |session: &mut ClusterServerSession| -> i64 {
+        displayed(rows(session, "admin show ddl"))[0][0]
+            .parse()
+            .unwrap()
+    };
+    let job = |session: &mut ClusterServerSession| -> String {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [1, 2, 3, 4, 11].map(|column| row[column].clone()).join("|")
+    };
+    rows(
+        &mut session,
+        "create table pt (a int, b int) partition by range (a) \
+         (partition p0 values less than (10), partition p1 values less than (20))",
+    );
+    rows(&mut session, "create table nt (a int, b int)");
+    rows(&mut session, "insert into pt values (1,1),(11,11)");
+    rows(&mut session, "insert into nt values (2,2),(3,3)");
+    let before = version(&mut session);
+    rows(
+        &mut session,
+        "alter table pt exchange partition p0 with table nt",
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "show warnings")),
+        [[
+            "Warning",
+            "1105",
+            "after the exchange, please analyze related table of the exchange to update statistics"
+        ]]
+    );
+    assert_eq!(version(&mut session) - before, 2);
+    assert_eq!(job(&mut session), "test|pt|exchange partition|none|synced");
+    assert_eq!(
+        displayed(rows(&mut session, "select * from pt order by a")),
+        [["2", "2"], ["3", "3"], ["11", "11"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from nt")),
+        [["1", "1"]]
+    );
+
+    rows(&mut session, "insert into nt values (15,15)");
+    let before = version(&mut session);
+    let error = session
+        .execute_write("alter table pt exchange partition p0 with table nt")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1737, "Found a row that does not match the partition")
+    );
+    assert_eq!(version(&mut session) - before, 2);
+    assert_eq!(
+        job(&mut session),
+        "test|nt|exchange partition|public|rollback done"
+    );
+    // The rollback lifted the restriction: nt takes any row again.
+    rows(&mut session, "insert into nt values (16,16)");
+    rows(&mut session, "delete from nt where a = 16");
+
+    let before = version(&mut session);
+    rows(
+        &mut session,
+        "alter table pt exchange partition p0 with table nt without validation",
+    );
+    assert_eq!(version(&mut session) - before, 2);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select * from pt partition (p0) order by a"
+        )),
+        [["1", "1"], ["15", "15"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from nt order by a")),
+        [["2", "2"], ["3", "3"]]
+    );
+    let error = session
+        .execute_write("alter table pt exchange partition p9 with table nt")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1735, "Unknown partition 'p9' in table 'pt'")
+    );
+}
+
 /// DROP and TRUNCATE PARTITION clean the old partitions' rows out of the
 /// global indexes in their delete-reorganization step (Go
 /// `cleanGlobalIndexEntriesFromDroppedPartitions`): their unique values are

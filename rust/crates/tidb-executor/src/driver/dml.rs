@@ -25,6 +25,7 @@ use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 mod correlated;
 mod defaults;
 pub(crate) mod delete_record;
+pub(crate) mod exchange_partition;
 pub(crate) mod update_record;
 
 use delete_record::DeleteRecords;
@@ -1025,6 +1026,10 @@ fn run_insert_rows(
         generated_targets,
         column_meta,
     } = target_layout;
+    // EXCHANGE PARTITION's write-only state restricts the rows, against the
+    // other table (resolved before the target is borrowed for the write).
+    let exchange_check =
+        exchange_partition::exchange_partition_check(catalog, &database, &table_name)?;
     let TableEntry::Kv(kv) = catalog
         .get_rows_mut_in(&database, &table_name)
         .ok_or(DriverError::unsupported("table not found in catalog"))?
@@ -1532,6 +1537,11 @@ fn run_insert_rows(
                 }
             }
         }
+        // Go `getRow`: an exchanged standalone table's row is checked before
+        // its generated columns are filled.
+        if let Some(check) = &exchange_check {
+            check.check_standalone_row(&row, ctx)?;
+        }
         {
             // The generated columns are computed from the finished row, so
             // the conflict lookup and the foreign-key check below see the
@@ -1551,6 +1561,11 @@ fn run_insert_rows(
             if let Some(handle) = extra_handle {
                 row.push(handle);
             }
+        }
+        // Go `partitionedTableAddRecord`: a row into the exchanged partition
+        // passes the standalone table's constraints.
+        if let Some(check) = &exchange_check {
+            check.check_partitioned_row(kv, &row, ctx)?;
         }
         new_rows.push(row);
         index += 1;

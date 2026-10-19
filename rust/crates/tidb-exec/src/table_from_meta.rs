@@ -745,6 +745,35 @@ pub fn cluster_table(
             .as_ref()
             .map(|affinity| affinity.read().clone()),
     );
+    kv_table.set_new_table_global_indexes(
+        table
+            .partition
+            .as_ref()
+            .map(|partition| partition.read())
+            .filter(|partition| partition.new_table_id != 0)
+            .map(|partition| {
+                let created = partition
+                    .ddl_changed_index
+                    .as_ref()
+                    .map(|changed| {
+                        changed
+                            .read()
+                            .iter()
+                            .filter(|(_, is_new)| **is_new)
+                            .map(|(id, _)| *id)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (partition.new_table_id, created)
+            }),
+    );
+    kv_table.set_exchange_partition_info(table.exchange_partition_info.as_ref().map(|info| {
+        let info = info.read();
+        (
+            info.exchange_partition_table_id,
+            info.exchange_partition_def_id,
+        )
+    }));
     kv_table.set_engine_attribute(table.engine_attribute.clone());
     kv_table.set_storage_class((
         table.storage_class_tier.clone(),

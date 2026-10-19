@@ -978,6 +978,9 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY) {
             self.publish_enable_foreign_key();
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT) {
+            self.publish_enable_check_constraint();
+        }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG) {
             self.publish_enable_fast_reorg();
         }
@@ -1283,6 +1286,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY {
             self.publish_enable_foreign_key();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT {
+            self.publish_enable_check_constraint();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG {
             self.publish_enable_fast_reorg();
         }
@@ -1359,6 +1365,20 @@ impl GlobalSysvars {
                 self.global_bool_value(
                     tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG,
                     tidb_vardef::defaults::DEF_TIDB_ENABLE_FAST_REORG,
+                ),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+    }
+
+    /// Publishes Go's `vardef.EnableCheckConstraint` from the live GLOBAL
+    /// table, as `publish_enable_foreign_key` does.
+    fn publish_enable_check_constraint(&self) {
+        if self.publishes_runtime_settings {
+            tidb_vardef::ENABLE_CHECK_CONSTRAINT.store(
+                self.global_bool_value(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT,
+                    tidb_vardef::defaults::DEF_TIDB_ENABLE_CHECK_CONSTRAINT,
                 ),
                 std::sync::atomic::Ordering::SeqCst,
             );
@@ -1666,6 +1686,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY {
             self.publish_enable_foreign_key();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_CHECK_CONSTRAINT {
+            self.publish_enable_check_constraint();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_DDL_ENABLE_FAST_REORG {
             self.publish_enable_fast_reorg();
         }
@@ -1844,6 +1867,7 @@ impl GlobalSysvars {
         // in the cluster until that node was stopped.
         self.publish_enable_mdl();
         self.publish_enable_foreign_key();
+        self.publish_enable_check_constraint();
         self.publish_enable_fast_reorg();
         if loaded_schema_cache_size {
             if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
@@ -1944,6 +1968,7 @@ impl GlobalSysvars {
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
         self.publish_enable_foreign_key();
+        self.publish_enable_check_constraint();
         self.publish_enable_fast_reorg();
         // Go's effective global value is ON when the row is absent.  The
         // live registry must publish that default after every cluster image

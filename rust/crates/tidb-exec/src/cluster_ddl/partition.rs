@@ -383,7 +383,7 @@ fn bundle_error(error: tidb_placement::PlacementError) -> DdlPlanError {
 
 /// Go `alterTablePartitionBundles`: the table's bundle over its partitions
 /// and `add_definitions`, and each of those partitions' own.
-fn alter_table_partition_bundles<S: MetaSnapshot>(
+pub(super) fn alter_table_partition_bundles<S: MetaSnapshot>(
     snapshot: &mut S,
     info: &TableInfo,
     add_definitions: Vec<tidb_model::partition::PartitionDefinition>,
@@ -532,6 +532,8 @@ fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
             column: None,
             sub_job: reorg_sub_job(&active.job),
             clean_up_global_index: true,
+            partition_phase: None,
+            schema_id: active.job.schema_id,
         };
     match outcome.map(|outcome| &outcome.result) {
         // Go `getReorgInfoFromPartitions`: the first visit persists the
@@ -831,10 +833,10 @@ pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
     }
 }
 
-/// Go `rollbackLikeDropPartition` for an ADD PARTITION: the adding
-/// definitions (never written to) go with their label rules, and the
-/// placement bundles are rebuilt without them.
-fn rollback_like_drop_partition<S: MetaSnapshot>(
+/// Go `rollbackLikeDropPartition`, for an ADD PARTITION and a partition
+/// reorganization: the adding definitions (never used) go with their label
+/// rules, and the placement bundles are rebuilt without them.
+pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
@@ -858,7 +860,7 @@ fn rollback_like_drop_partition<S: MetaSnapshot>(
         before
     };
     // `removePartitionAddingDefinitionsFromTableInfo`.
-    let physical_table_ids = {
+    let mut physical_table_ids = {
         let mut partition = partition.write();
         partition.dropping_definitions = Vec::new().into();
         let ids = partition
@@ -879,8 +881,29 @@ fn rollback_like_drop_partition<S: MetaSnapshot>(
             label_rules::PartitionLabelJob::Drop,
         )
         .map_err(|error| cancel_ddl_job(active, error))?;
-    // Indexes an ADD PARTITION left write-only (none, unless a global flag
-    // changed) go with it.
+    let mut info = info;
+    // ALTER TABLE ... PARTITION BY: the new table id goes too, and a table
+    // that was not partitioned before is again.
+    let part_info = args
+        .read()
+        .part_info
+        .get()
+        .map(|info| info.read().clone_like_go())
+        .unwrap_or_default();
+    if part_info.partition_type != tidb_ast::PartitionType::NONE {
+        if part_info.new_table_id != 0 {
+            physical_table_ids.push(part_info.new_table_id);
+        }
+        let reset = {
+            let partition = partition.read();
+            partition.partition_type == tidb_ast::PartitionType::NONE
+                || partition.ddl_type == tidb_ast::PartitionType::NONE
+        };
+        if reset {
+            info.partition = None;
+        }
+    }
+    // The indexes the job created (write-only by now) go with it.
     let mut old_global_indexes = Vec::new();
     let write_only = info
         .indices
@@ -888,7 +911,6 @@ fn rollback_like_drop_partition<S: MetaSnapshot>(
         .filter(|index| index.read().state == SchemaState::WRITE_ONLY)
         .map(|index| index.read().clone_like_go())
         .collect::<Vec<_>>();
-    let mut info = info;
     for index in write_only {
         super::add_index::remove_index_and_hidden_columns(&mut info, &index);
         if index.global {

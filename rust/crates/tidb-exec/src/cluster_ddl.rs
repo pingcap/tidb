@@ -6237,12 +6237,14 @@ pub mod create_table;
 pub mod drop_column;
 pub mod drop_index;
 pub mod drop_object;
+pub mod exchange_partition;
 pub mod foreign_key;
 pub mod modify_column;
 pub mod multi_schema;
 pub mod partition;
 pub mod placement_policy;
 pub mod rename_table;
+pub mod reorganize_partition;
 pub mod resource_group;
 pub mod table_lock;
 pub mod truncate;
@@ -6290,6 +6292,10 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_ADD_TABLE_PARTITION
             | ActionType::ACTION_DROP_TABLE_PARTITION
             | ActionType::ACTION_TRUNCATE_TABLE_PARTITION
+            | ActionType::ACTION_EXCHANGE_TABLE_PARTITION
+            | ActionType::ACTION_REORGANIZE_PARTITION
+            | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+            | ActionType::ACTION_REMOVE_PARTITIONING
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
@@ -6393,6 +6399,26 @@ fn plan_persisted_action<S: MetaSnapshot>(
         }
         ActionType::ACTION_DROP_TABLE_PARTITION => {
             partition::plan_persisted_drop_table_partition_job_step(
+                snapshot,
+                catalog,
+                active,
+                start_ts,
+                reorg_outcome,
+            )
+        }
+        ActionType::ACTION_REORGANIZE_PARTITION
+        | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+        | ActionType::ACTION_REMOVE_PARTITIONING => {
+            reorganize_partition::plan_persisted_reorganize_partition_job_step(
+                snapshot,
+                catalog,
+                active,
+                start_ts,
+                reorg_outcome,
+            )
+        }
+        ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
+            exchange_partition::plan_persisted_exchange_partition_job_step(
                 snapshot,
                 catalog,
                 active,
@@ -8141,6 +8167,16 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_DROP_TABLE_PARTITION
         | ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
             return partition::plan_cancel_partition(catalog, active, start_ts);
+        }
+        ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
+            return exchange_partition::plan_cancel_exchange_partition(catalog, active, start_ts);
+        }
+        ActionType::ACTION_REORGANIZE_PARTITION
+        | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+        | ActionType::ACTION_REMOVE_PARTITIONING => {
+            return reorganize_partition::plan_cancel_reorganize_partition(
+                catalog, active, start_ts,
+            );
         }
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
             return alter_table::plan_cancel_alter_table(catalog, active);

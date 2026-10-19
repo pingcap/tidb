@@ -607,6 +607,13 @@ pub struct KvTable {
     lock: Option<tidb_model::TableLockInfo>,
     /// Whether Go `TableInfo.Affinity` is non-nil.
     affinity: Option<tidb_model::TableAffinityInfo>,
+    /// Go `TableInfo.ExchangePartitionInfo`: during EXCHANGE PARTITION's
+    /// write-only state, the other table's ID and the exchanged partition's.
+    exchange_partition_info: Option<(i64, i64)>,
+    /// During ALTER TABLE ... PARTITION BY / REMOVE PARTITIONING: the
+    /// table's new ID (`PartitionInfo.NewTableID`) and the global indexes the
+    /// job created (`DDLChangedIndex` true), whose entries are keyed under it.
+    new_table_global_indexes: Option<(i64, Vec<i64>)>,
     /// Go `TableInfo.TableSplitPolicy`.
     table_split_policy: Option<tidb_model::RegionSplitPolicy>,
     /// Go `IndexInfo.RegionSplitPolicy`, keyed by index id: a dropped
@@ -1429,6 +1436,8 @@ impl KvTable {
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
             lock: None,
             affinity: None,
+            exchange_partition_info: None,
+            new_table_global_indexes: None,
             table_split_policy: None,
             index_split_policies: std::collections::BTreeMap::new(),
             engine_attribute: String::new(),
@@ -2550,6 +2559,50 @@ impl KvTable {
 
     pub fn set_affinity(&mut self, affinity: Option<tidb_model::TableAffinityInfo>) {
         self.affinity = affinity;
+    }
+
+    /// Sets Go `TableInfo.ExchangePartitionInfo`: (the other table's ID, the
+    /// exchanged partition's ID).
+    pub fn set_exchange_partition_info(&mut self, info: Option<(i64, i64)>) {
+        self.exchange_partition_info = info;
+    }
+
+    /// Go `TableInfo.ExchangePartitionInfo`: (the other table's ID, the
+    /// exchanged partition's ID).
+    #[must_use]
+    pub const fn exchange_partition_info(&self) -> Option<(i64, i64)> {
+        self.exchange_partition_info
+    }
+
+    /// Sets the new table ID a PARTITION BY / REMOVE PARTITIONING gives the
+    /// table, and the global indexes it created under that ID.
+    pub fn set_new_table_global_indexes(&mut self, indexes: Option<(i64, Vec<i64>)>) {
+        self.new_table_global_indexes = indexes;
+    }
+
+    /// Go `index.GenIndexKey`'s table ID for a global index: the table's,
+    /// or the new one for an index a PARTITION BY / REMOVE PARTITIONING
+    /// created.
+    #[must_use]
+    pub fn global_index_table_id(&self, index_id: i64) -> i64 {
+        match &self.new_table_global_indexes {
+            Some((new_table_id, indexes)) if indexes.contains(&index_id) => *new_table_id,
+            _ => self.table_id,
+        }
+    }
+
+    /// The physical table `row` routes into (Go `locatePartition`), the
+    /// table itself when it is not partitioned.
+    ///
+    /// # Errors
+    ///
+    /// A row no partition accepts.
+    pub fn locate_physical_id(
+        &self,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<i64, KvTableError> {
+        self.record_physical_id(row, ctx)
     }
 
     /// Go `TableInfo.Affinity`.

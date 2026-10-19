@@ -87,6 +87,11 @@ pub static PLAN_REPLAYER_FILE_RETENTION_TIME: AtomicI64 =
 /// Go `vardef.EnableForeignKey`: DDL feature policy, independent of session row checks.
 pub static ENABLE_FOREIGN_KEY: AtomicBool = AtomicBool::new(true);
 
+/// Go `vardef.EnableCheckConstraint` (`tidb_enable_check_constraint`), which
+/// the DDL owner reads.
+pub static ENABLE_CHECK_CONSTRAINT: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_ENABLE_CHECK_CONSTRAINT);
+
 /// Go `vardef.EnableFastReorg` (`tidb_ddl_enable_fast_reorg`), which a DDL job
 /// copies into `ReorgMeta.IsFastReorg`.
 pub static ENABLE_FAST_REORG: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_FAST_REORG);

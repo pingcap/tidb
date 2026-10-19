@@ -183,7 +183,7 @@ impl KvTable {
         let common = !self.common_handle_offsets().is_empty();
         let mut entries = Vec::new();
         let physical_ids = if index.global {
-            vec![self.table_id]
+            vec![self.global_index_table_id(index.id)]
         } else {
             self.record_physical_ids()
         };
@@ -444,7 +444,7 @@ impl KvTable {
             &self.codec_table_info(),
             &self.codec_index_info(index),
             if index.global {
-                self.table_id
+                self.global_index_table_id(index.id)
             } else {
                 physical_id
             },
@@ -1029,7 +1029,7 @@ impl KvTable {
             .encode_key_in_timezone(zone, values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         let physical_ids = if index.global {
-            vec![self.table_id]
+            vec![self.global_index_table_id(index.id)]
         } else {
             self.record_physical_ids()
         };
@@ -1094,7 +1094,7 @@ impl KvTable {
             ));
         }
         let physical_ids = if index.global {
-            vec![self.table_id]
+            vec![self.global_index_table_id(index.id)]
         } else {
             self.record_physical_ids()
         };

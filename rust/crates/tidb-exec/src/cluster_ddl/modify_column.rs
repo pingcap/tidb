@@ -436,6 +436,8 @@ fn check_request(
             column: None,
             sub_job: add_index::reorg_sub_job(&active.job),
             clean_up_global_index: false,
+            partition_phase: None,
+            schema_id: active.job.schema_id,
         },
     )
 }
@@ -2308,6 +2310,8 @@ fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
             column: Some(spec.clone()),
             sub_job: add_index::reorg_sub_job(&active.job),
             clean_up_global_index: false,
+            partition_phase: None,
+            schema_id: active.job.schema_id,
         };
     Ok(match outcome.map(|outcome| &outcome.result) {
         None if active.job.snapshot_version == 0 => ColumnReorgVisit::Step(reorg_request(
