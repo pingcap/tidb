@@ -8772,7 +8772,9 @@ impl tidb_executor::ddl::ReorgHost for ClusterReorgHost<'_> {
 /// the loop, and the last PLACEMENT POLICY another after that. `None` when the
 /// statement is not one multi-option table-option specification.
 #[must_use]
-pub fn split_table_option_alter(alter: &tidb_ast::AlterTableStmt) -> Option<Vec<tidb_ast::AlterTableStmt>> {
+pub fn split_table_option_alter(
+    alter: &tidb_ast::AlterTableStmt,
+) -> Option<Vec<tidb_ast::AlterTableStmt>> {
     use tidb_ast::TableOption;
     let [tidb_ast::AlterTableAction::SetTableOptions { options }] = alter.actions.as_slice() else {
         return None;
@@ -8797,7 +8799,10 @@ pub fn split_table_option_alter(alter: &tidb_ast::AlterTableStmt) -> Option<Vec<
                         options
                             .iter()
                             .filter(|option| {
-                                matches!(option, TableOption::CharacterSet(_) | TableOption::Collate(_))
+                                matches!(
+                                    option,
+                                    TableOption::CharacterSet(_) | TableOption::Collate(_)
+                                )
                             })
                             .cloned()
                             .collect(),
@@ -8808,7 +8813,11 @@ pub fn split_table_option_alter(alter: &tidb_ast::AlterTableStmt) -> Option<Vec<
                 if !ttl_done {
                     ttl_done = true;
                     statements.push(single(
-                        options.iter().filter(|option| is_ttl_table_option(option)).cloned().collect(),
+                        options
+                            .iter()
+                            .filter(|option| is_ttl_table_option(option))
+                            .cloned()
+                            .collect(),
                     ));
                 }
             }

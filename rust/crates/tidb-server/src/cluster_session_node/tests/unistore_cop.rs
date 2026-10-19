@@ -18253,3 +18253,47 @@ fn binding_gc_commits_on_the_maintenance_thread() {
     }
     drop(worker);
 }
+
+/// `planner/core/indexmerge_path`: Go analyzes a multi-valued index as an
+/// independent index task per physical table (its keys, not the row
+/// samples), dumps each partition's FM sketch for the global merge, and the
+/// column task's job lists only its own indexes. Values from the oracle.
+#[test]
+fn analyze_runs_multi_valued_indexes_as_independent_tasks() {
+    if crate::isolate_process_globals() {
+        return;
+    }
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(134)).unwrap();
+    for sql in [
+        "CREATE TABLE test.mvt (a INT, b INT, j JSON, INDEX ia(a), INDEX mv((CAST(j AS SIGNED ARRAY))))",
+        "INSERT INTO test.mvt VALUES (1, 2, '[1,2,3]'), (2, 3, '[2,3]'), (3, 4, '[]')",
+        "ANALYZE TABLE test.mvt",
+        "CREATE TABLE test.mvp (a INT, j JSON, INDEX mv((CAST(j AS SIGNED ARRAY)))) \
+         PARTITION BY HASH(a) PARTITIONS 2",
+        "INSERT INTO test.mvp VALUES (1, '[1,2]'), (2, '[3]'), (3, '[4,5,6]')",
+        "ANALYZE TABLE test.mvp",
+    ] {
+        rows(&mut session, sql);
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT job_info FROM information_schema.analyze_status \
+             WHERE table_name = 'mvt' ORDER BY job_info"
+        )),
+        [
+            ["analyze index mv"],
+            ["analyze table index ia, columns a, b with 256 buckets, 100 topn, 1 samplerate"],
+        ]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT h.distinct_count FROM mysql.stats_histograms h \
+             JOIN information_schema.tables t ON h.table_id = t.tidb_table_id \
+             WHERE t.table_name = 'mvp' AND h.is_index = 1"
+        )),
+        [["3"]]
+    );
+}

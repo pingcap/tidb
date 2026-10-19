@@ -831,18 +831,22 @@ pub fn plan_analyze_stats_write<S: MetaSnapshot>(
 /// `stats_meta` already exists, Go advances only its version markers; if it
 /// does not, Go creates it with count and snapshot zero. In both cases the
 /// independently scanned index must not overwrite table row-count metadata.
+///
+/// `dump_fm` is Go's `needDumpFMS`: a partition's result keeps its FM
+/// sketches for the global-stats merge; a table-level one does not.
 pub fn plan_independent_index_stats_write<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
+    dump_fm: bool,
 ) -> Result<(StatsWritePlan, bool), StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let inserted_meta = plan_independent_index_meta(snapshot, catalog, stats, now, &mut plan)?;
     plan_histograms(snapshot, catalog, stats, now, false, &mut plan)?;
     plan_buckets(snapshot, catalog, stats, now, false, &mut plan)?;
     plan_topn(snapshot, catalog, stats, now, false, &mut plan)?;
-    plan_fm_sketches(snapshot, catalog, stats, now, false, false, &mut plan)?;
+    plan_fm_sketches(snapshot, catalog, stats, now, false, dump_fm, &mut plan)?;
     Ok((plan, inserted_meta))
 }
 

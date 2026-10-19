@@ -420,7 +420,8 @@ pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterT
 /// [`ClusterDdl`], the accounts through
 /// [`crate::cluster_account_seam::ClusterAccountWriter`] -- and each has its
 /// own refusals.
-enum StatementRoute {    /// Changes nothing stored outside this process.
+enum StatementRoute {
+    /// Changes nothing stored outside this process.
     Ordinary,
     /// One catalog change this node can express.
     Ddl(DdlStatement),
@@ -7579,9 +7580,9 @@ impl ClusterServerSession {
         };
         let mut lowered = Vec::with_capacity(parts.len());
         for part in parts {
-            let part = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(
-                tidb_ast::DdlStmt::AlterTable(Box::new(part)),
-            ));
+            let part = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::AlterTable(
+                Box::new(part),
+            )));
             match prepare_cluster_ddl_parsed(&part, self.session.current_database(), context) {
                 Ok(Some(statement)) => lowered.push(statement),
                 Ok(None) => return Ok(None),

@@ -2180,7 +2180,7 @@ fn independent_index_write_preserves_existing_meta_values() {
         indexes: vec![index],
     };
     let (plan, inserted_meta) =
-        plan_independent_index_stats_write(&mut store, &catalog, &independent, now())
+        plan_independent_index_stats_write(&mut store, &catalog, &independent, now(), false)
             .expect("independent index analyze plans");
     assert!(!inserted_meta);
     apply_mutations(&mut store, &plan.mutations);
@@ -2223,7 +2223,7 @@ fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
         indexes: vec![full_histogram(7, true)],
     };
     let (plan, inserted_meta) =
-        plan_independent_index_stats_write(&mut store, &catalog, &stats, now())
+        plan_independent_index_stats_write(&mut store, &catalog, &stats, now(), false)
             .expect("independent index analyze plans");
     assert!(inserted_meta);
     apply_mutations(&mut store, &plan.mutations);

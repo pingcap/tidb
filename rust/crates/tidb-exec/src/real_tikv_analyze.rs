@@ -272,6 +272,10 @@ pub struct ClusterAnalyzeReport {
     /// Whether stats v2 expanded an index-targeted statement to the normal
     /// full statistics collection path.
     pub collected_all_for_index_target: bool,
+    /// Go `getModifiedIndexesInfoForAnalyze`'s skipped columnar indexes,
+    /// one entry per analyzed physical table (lowercase names), each the
+    /// warning `analyzing columnar index is not supported, skip <name>`.
+    pub skipped_columnar_indexes: Vec<String>,
     analyzed_column_ids: Vec<i64>,
     analyzed_index_ids: Vec<i64>,
     historical_stats_table_ids: Vec<i64>,
@@ -343,8 +347,12 @@ impl ResolvedClusterAnalyze {
             .iter_deref()
             .filter_map(|index| {
                 let index = index.read();
+                // The column task's own indexes (Go `AnalyzeColumnsTask.
+                // Indexes`): independent and columnar ones are not among them.
                 (index.state == tidb_model::SchemaState::PUBLIC
-                    && !is_special_global_index(&self.table, &index))
+                    && !is_special_global_index(&self.table, &index)
+                    && !index.mv_index
+                    && !crate::cluster_analyze::is_columnar_index(&index))
                 .then(|| index.name.original().to_owned())
             })
             .collect::<Vec<_>>();
@@ -384,6 +392,28 @@ impl ResolvedClusterAnalyze {
             table: self.statement.table.clone(),
             partition: self.partition_name(options.physical_id),
             job_info,
+        }
+    }
+
+    /// The public multi-valued indexes, which Go analyzes as independent
+    /// index tasks per physical table.
+    fn mv_index_ids(&self) -> Vec<i64> {
+        self.table
+            .indices
+            .iter_deref()
+            .filter_map(|index| {
+                let index = index.read();
+                (index.state == tidb_model::SchemaState::PUBLIC && index.mv_index)
+                    .then_some(index.id)
+            })
+            .collect()
+    }
+
+    /// Go's `AnalyzeIndexTask` job for one physical table's index.
+    fn partition_index_job_spec(&self, physical_id: i64, index_id: i64) -> AnalyzeJobSpec {
+        AnalyzeJobSpec {
+            partition: self.partition_name(physical_id),
+            ..self.independent_index_job_spec(index_id)
         }
     }
 
@@ -1051,9 +1081,27 @@ pub fn commit_cluster_analyze<
         &target_ids,
         resolved.independent_index_ids.len(),
     );
+    // Go appends a multi-valued index's task inside its per-physical-table
+    // loop, after that table's column task, and runs every column task
+    // before every index task; the special global indexes follow.
+    let mv_index_tasks = targets
+        .iter()
+        .flat_map(|options| {
+            resolved
+                .mv_index_ids()
+                .into_iter()
+                .map(move |index_id| (options.physical_id, index_id))
+        })
+        .collect::<Vec<_>>();
     let task_jobs = targets
         .iter()
         .map(|options| AnalyzeJobHandle::pending(jobs, &resolved.table_job_spec(options)))
+        .chain(mv_index_tasks.iter().map(|(physical_id, index_id)| {
+            AnalyzeJobHandle::pending(
+                jobs,
+                &resolved.partition_index_job_spec(*physical_id, *index_id),
+            )
+        }))
         .chain(resolved.independent_index_ids.iter().map(|index_id| {
             AnalyzeJobHandle::pending(jobs, &resolved.independent_index_job_spec(*index_id))
         }))
@@ -1121,6 +1169,7 @@ pub fn commit_cluster_analyze<
         global_stats_warnings: Vec::new(),
         ignored_partition_overrides: false,
         collected_all_for_index_target: false,
+        skipped_columnar_indexes: Vec::new(),
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: Vec::new(),
         historical_stats_table_ids: Vec::new(),
@@ -1129,6 +1178,18 @@ pub fn commit_cluster_analyze<
     });
     for next in reports {
         merge_analyze_report(&mut report, next);
+    }
+    // Go splits the indexes inside its per-physical-table loop, so each
+    // analyzed physical table warns once per columnar index.
+    for _ in &targets {
+        report
+            .skipped_columnar_indexes
+            .extend(resolved.table.indices.iter_deref().filter_map(|index| {
+                let index = index.read();
+                (index.state == tidb_model::SchemaState::PUBLIC
+                    && crate::cluster_analyze::is_columnar_index(&index))
+                .then(|| index.name.lowercase().to_owned())
+            }));
     }
     if resolved.partitioned {
         let table_id = resolved
@@ -1143,7 +1204,7 @@ pub fn commit_cluster_analyze<
         .first()
         .expect("the logical table option is present")
         .effective;
-    for (offset, index_id) in resolved.independent_index_ids.iter().enumerate() {
+    for (offset, (physical_id, index_id)) in mv_index_tasks.iter().enumerate() {
         let position = targets.len() + offset;
         let job = &task_jobs[position];
         job.start(jobs);
@@ -1151,6 +1212,42 @@ pub fn commit_cluster_analyze<
             commit_cluster_independent_index(
                 opener,
                 &resolved.statement,
+                Some(*physical_id),
+                *index_id,
+                independent_options,
+                timeout,
+                stats_lease,
+                record_history,
+                &|count| job.update(jobs, count),
+            )
+        }));
+        let task_result = match task_result {
+            Ok(result) => result,
+            Err(panic) => {
+                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panicked");
+                std::panic::resume_unwind(panic);
+            }
+        };
+        match task_result {
+            Ok(next) => {
+                job.finish(jobs, None, AnalyzeJobKind::Table);
+                merge_analyze_report(&mut report, next);
+            }
+            Err(error) => {
+                fail_analyze_jobs(jobs, &task_jobs[position..], &error.to_string());
+                return Err(error);
+            }
+        }
+    }
+    for (offset, index_id) in resolved.independent_index_ids.iter().enumerate() {
+        let position = targets.len() + mv_index_tasks.len() + offset;
+        let job = &task_jobs[position];
+        job.start(jobs);
+        let task_result = catch_unwind(AssertUnwindSafe(|| {
+            commit_cluster_independent_index(
+                opener,
+                &resolved.statement,
+                None,
                 *index_id,
                 independent_options,
                 timeout,
@@ -2349,6 +2446,7 @@ fn commit_cluster_analyze_target<
                 global_stats_warnings: Vec::new(),
                 ignored_partition_overrides: false,
                 collected_all_for_index_target: statement.index_names.is_some(),
+                skipped_columnar_indexes: Vec::new(),
                 analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
                 analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
                 historical_stats_table_ids: Vec::new(),
@@ -2374,6 +2472,7 @@ fn commit_cluster_analyze_target<
         global_stats_warnings: Vec::new(),
         ignored_partition_overrides: false,
         collected_all_for_index_target: statement.index_names.is_some(),
+        skipped_columnar_indexes: Vec::new(),
         analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
         historical_stats_table_ids: vec![report.stats.table_id],
@@ -2415,6 +2514,7 @@ fn commit_cluster_independent_index<
 >(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     statement: &AnalyzeStatement,
+    physical_id: Option<i64>,
     index_id: i64,
     options: &tidb_executor::analyze::AnalyzeOptions,
     timeout: Duration,
@@ -2448,7 +2548,7 @@ fn commit_cluster_independent_index<
             })?;
         let report = analyze_independent_index_with_progress(
             &mut snapshot,
-            &table,
+            physical_id.unwrap_or(table.id),
             &index,
             options,
             start_ts,
@@ -2460,6 +2560,7 @@ fn commit_cluster_independent_index<
             &catalog,
             &report.stats,
             utc_now_timestamp(),
+            physical_id.is_some_and(|id| id != table.id),
         )
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         (report, write, inserted_meta)
@@ -2479,6 +2580,7 @@ fn commit_cluster_independent_index<
         global_stats_warnings: Vec::new(),
         ignored_partition_overrides: false,
         collected_all_for_index_target: false,
+        skipped_columnar_indexes: Vec::new(),
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: vec![index_id],
         historical_stats_table_ids: vec![report.stats.table_id],

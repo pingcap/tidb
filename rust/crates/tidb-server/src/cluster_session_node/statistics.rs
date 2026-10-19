@@ -552,6 +552,12 @@ impl ClusterServerSession {
                         .to_owned(),
                 );
             }
+            for index in &report.skipped_columnar_indexes {
+                self.session.append_routed_warning(
+                    1105,
+                    format!("analyzing columnar index is not supported, skip {index}"),
+                );
+            }
             if let Some(warning) = &report.option_save_warning {
                 self.session.append_routed_warning(1105, warning.clone());
             }

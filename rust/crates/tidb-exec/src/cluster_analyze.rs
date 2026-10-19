@@ -319,6 +319,13 @@ fn report_from_analyzed(
     }
 }
 
+/// Go `IndexInfo.IsColumnarIndex`: a vector, inverted or full-text index,
+/// which ANALYZE skips with a warning.
+#[must_use]
+pub fn is_columnar_index(index: &IndexInfo) -> bool {
+    index.vector_info.is_some() || index.inverted_info.is_some() || index.full_text_info.is_some()
+}
+
 /// Runs one pinned-Go independent global-index task.
 pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
     snapshot: &mut S,
@@ -327,12 +334,15 @@ pub fn analyze_independent_index<S: RegionPagedMetaSnapshot>(
     options: &AnalyzeOptions,
     version: u64,
 ) -> Result<AnalyzeReport, AnalyzeError> {
-    analyze_independent_index_with_progress(snapshot, table, index, options, version, |_| {})
+    analyze_independent_index_with_progress(snapshot, table.id, index, options, version, |_| {})
 }
 
+/// Go `AnalyzeIndexExec` over one physical table's keys of `index`: the
+/// table itself for a special global index, each partition in turn for a
+/// multi-valued one.
 pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot>(
     snapshot: &mut S,
-    table: &TableInfo,
+    physical_id: i64,
     index: &IndexInfo,
     options: &AnalyzeOptions,
     version: u64,
@@ -343,7 +353,7 @@ pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot
     let topn_count = usize::try_from(options.num_topn)
         .map_err(|_| AnalyzeError::unsupported("invalid ANALYZE TopN count".to_owned()))?;
     let column_count = index.columns.len();
-    let prefix = tidb_codec::table_key::encode_index_seek_key(table.id, index.id, &[]);
+    let prefix = tidb_codec::table_key::encode_index_seek_key(physical_id, index.id, &[]);
     let range_end = finite_successor(&prefix)?;
     let regions = snapshot
         .scan_regions(&prefix, &range_end)
@@ -377,7 +387,7 @@ pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot
     let count = built.count;
     Ok(AnalyzeReport {
         stats: ClusterTableStats {
-            table_id: table.id,
+            table_id: physical_id,
             version,
             snapshot: version,
             last_analyze_version: version,
@@ -484,17 +494,12 @@ fn cluster_analyze_plan(
             // task and creates one independent ordered index task for it.
             continue;
         }
-        if index.mv_index
-            || index.vector_info.is_some()
-            || index.inverted_info.is_some()
-            || index.full_text_info.is_some()
-        {
-            return Err(AnalyzeError::unsupported(format!(
-                "this node does not analyze index `{}` on `{}`: its keys are not the plain \
-                 column encoding a stored histogram bound is read back as",
-                index.name.original(),
-                table.name.original()
-            )));
+        // Go `getModifiedIndexesInfoForAnalyze`: a multi-valued index is
+        // analyzed as an independent index task over its own keys (one per
+        // physical table), and a columnar index is skipped with a warning;
+        // neither belongs to the column-sampling task.
+        if index.mv_index || is_columnar_index(&index) {
+            continue;
         }
         // Selected columns carry the virtual values evaluated after sample
         // decoding. Prefix values are truncated by the shared sample builder.
