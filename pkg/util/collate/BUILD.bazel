@@ -50,6 +50,7 @@ go_test(
     deps = [
         "//pkg/parser/charset",
         "//pkg/testkit/testsetup",
+        "//pkg/util/collate/ucadata",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
