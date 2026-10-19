@@ -633,7 +633,7 @@ async fn resolve_locks_with_context_body(
     // TTL zero is TiKV's unconditional-resolution protocol. It must also
     // remain usable when the timestamp oracle is unavailable.
     let ts = if locks.iter().any(|lock| lock.lock_ttl != 0) {
-        pd_client.clone().get_timestamp().await?
+        context.store_oracle.get_timestamp(&pd_client).await?
     } else {
         Timestamp::from_version(0)
     };
@@ -1953,6 +1953,8 @@ pub struct ResolveLocksContext {
     // Per-operation state; the store-owned context is cloned before attaching it.
     pub(crate) retry_owner: Option<Arc<Mutex<crate::retry::RetryBackoffer>>>,
     async_resolve_pool: AsyncResolveTaskPool,
+    /// client-go `lr.store.GetOracle()`: the store's oracle.
+    pub(crate) store_oracle: crate::oracle::StoreOracle,
 }
 
 impl Default for ResolveLocksContext {
@@ -1971,6 +1973,7 @@ impl Default for ResolveLocksContext {
             force_lite: false,
             retry_owner: None,
             async_resolve_pool: AsyncResolveTaskPool::new(ASYNC_READ_RESOLVE_LOCKS.clone()),
+            store_oracle: crate::oracle::StoreOracle::default(),
         }
     }
 }
@@ -2844,7 +2847,7 @@ impl LockResolver {
         }
 
         if matches!(status.kind, TransactionStatusKind::Locked(..)) {
-            let current = pd_client.clone().get_timestamp().await?;
+            let current = self.ctx.store_oracle.get_timestamp(&pd_client).await?;
             self.last_status_timestamp = Some(current.clone());
             status.check_ttl(current);
         }
@@ -3038,7 +3041,7 @@ impl LockResolver {
                     let txn_not_found = txn_not_found_error(&error)
                         .expect("TxnNotFound guard checked above")
                         .clone();
-                    let current = pd_client.clone().get_timestamp().await?;
+                    let current = self.ctx.store_oracle.get_timestamp(&pd_client).await?;
                     self.last_status_timestamp = Some(current.clone());
                     if lock_until_expired_ms(lock.lock_version, lock.lock_ttl, current) <= 0 {
                         warn!(

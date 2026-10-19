@@ -305,3 +305,56 @@ mod tests {
         );
     }
 }
+
+/// client-go `KVStore.oracle`: the timestamp oracle a store's transactions,
+/// lock resolution and read validation use, replaced by `SetOracle` (tests
+/// install [`oracles::MockOracle`]). Until one is installed, timestamps come
+/// straight from the PD client's TSO, as the store's PD oracle answers them.
+#[derive(Clone, Default)]
+pub struct StoreOracle {
+    installed: std::sync::Arc<std::sync::RwLock<Option<std::sync::Arc<dyn Oracle>>>>,
+}
+
+impl std::fmt::Debug for StoreOracle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoreOracle")
+            .field("installed", &self.installed().is_some())
+            .finish()
+    }
+}
+
+impl StoreOracle {
+    /// client-go `KVStore.SetOracle`.
+    pub fn set(&self, oracle: std::sync::Arc<dyn Oracle>) {
+        *self
+            .installed
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(oracle);
+    }
+
+    /// The installed oracle, if any.
+    pub fn installed(&self) -> Option<std::sync::Arc<dyn Oracle>> {
+        self.installed
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// client-go `getTimestampWithRetry`'s oracle call, global scope.
+    pub async fn get_timestamp<PdC: crate::PdClient + ?Sized>(
+        &self,
+        pd: &std::sync::Arc<PdC>,
+    ) -> crate::Result<crate::Timestamp> {
+        use crate::TimestampExt;
+        match self.installed() {
+            Some(oracle) => oracle
+                .get_timestamp(&OracleOption {
+                    txn_scope: GLOBAL_TXN_SCOPE.to_owned(),
+                })
+                .await
+                .map(crate::Timestamp::from_version)
+                .map_err(|error| crate::Error::StringError(error.to_string())),
+            None => pd.clone().get_timestamp().await,
+        }
+    }
+}

@@ -17,17 +17,18 @@
 //! stores) through client-rust: its PD answers the GC-state calls, and a
 //! hijacking client over the store's own (Go's `mockGCWorkerClient`)
 //! records `UnsafeDestroyRange`, `DeleteRange` and `ScanLock`. `mysql.tidb`
-//! and the delete-range tables live in a fake session; the oracle is
-//! wall-clock time plus an offset tests add to (Go's `MockOracle`).
+//! and the delete-range tables live in a fake session; the store's oracle
+//! is client-go's `MockOracle`, which tests move forward.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_unistore::cluster::{bootstrap_with_multi_stores, Cluster};
 use tidb_unistore::mock_pd::{AdvanceTxnSafePointResult as PdAdvanceTxnSafePointResult, GcState};
 use tidb_unistore::pd::PdClient as UnistorePdClient;
+use tikv_client::oracle::oracles::MockOracle;
 use tikv_client::proto::keyspacepb::{keyspace_meta, KeyspaceMeta};
 use tikv_client::proto::{kvrpcpb, metapb};
 use tikv_client::tikv::{KvStore, MockSafePointKv};
@@ -40,32 +41,6 @@ use tikv_client::pd_keyspace::{
     KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE, KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_KEYSPACE_LEVEL,
     KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_UNIFIED,
 };
-
-/// Go `oracles.MockOracle`: the store's timestamps plus an offset tests add
-/// to. Transactions the tests run take the store's timestamps without it.
-struct FakeStore {
-    tikv: Arc<TikvStoreClient<UnistorePdClient>>,
-    offset_ms: AtomicI64,
-    keyspace: Option<KeyspaceMeta>,
-}
-
-impl FakeStore {
-    fn add_offset(&self, offset: Duration) {
-        self.offset_ms
-            .fetch_add(offset.as_millis() as i64, Ordering::AcqRel);
-    }
-}
-
-impl GcStore for FakeStore {
-    fn current_version(&self) -> GcResult<u64> {
-        let offset = self.offset_ms.load(Ordering::Acquire) as u64;
-        Ok(self.tikv.current_version()? + (offset << 18))
-    }
-
-    fn keyspace_meta(&self) -> Option<KeyspaceMeta> {
-        self.keyspace.clone()
-    }
-}
 
 fn keyspace_id(meta: &KeyspaceMeta) -> u32 {
     match meta.keyspace {
@@ -305,8 +280,9 @@ struct GcProbe {
 
 /// Go `mockGCWorkerSuite`.
 struct Suite {
-    store: Arc<FakeStore>,
-    /// The worker's PD and store halves over the embedded store.
+    /// Go `s.oracle`, installed as the store's oracle.
+    oracle: MockOracle,
+    /// The worker's store, PD and TiKV halves over the embedded store.
     tikv: Arc<TikvStoreClient<UnistorePdClient>>,
     cluster: Arc<Cluster>,
     kv: Arc<FakeKv>,
@@ -364,16 +340,14 @@ fn create_gc_worker_suite_full(
             tikv_client::Config::default(),
         ))
         .unwrap();
+    // Go: `store.GetOracle().Close(); store.SetOracle(s.oracle)`.
+    let oracle = MockOracle::new();
+    kv_store.set_oracle(Arc::new(oracle.clone()));
     let tikv = Arc::new(TikvStoreClient::new(
         runtime,
         kv_store,
         current_keyspace.clone(),
     ));
-    let store = Arc::new(FakeStore {
-        tikv: Arc::clone(&tikv),
-        offset_ms: AtomicI64::new(0),
-        keyspace: current_keyspace,
-    });
     let kv = Arc::new(FakeKv {
         inner: Arc::clone(&tikv),
         destroy_handler: Mutex::new(None),
@@ -384,7 +358,7 @@ fn create_gc_worker_suite_full(
     let sessions = Arc::new(FakeSessions::default());
     let rules = Arc::new(FakeRules::default());
     let mut worker = GcWorker::new(GcWorkerDeps {
-        store: store.clone(),
+        store: tikv.clone(),
         pd: tikv.clone(),
         kv: kv.clone(),
         sessions: sessions.clone(),
@@ -394,7 +368,7 @@ fn create_gc_worker_suite_full(
     .unwrap();
     worker.tick();
     Suite {
-        store,
+        oracle,
         tikv,
         cluster,
         kv,
@@ -417,8 +391,8 @@ impl Suite {
     /// Go `s.pdClient.GetGCStatesClient(keyspace).GetGCState`.
     fn gc_state(&self) -> GcState {
         let keyspace = self
-            .store
-            .keyspace
+            .tikv
+            .keyspace_meta()
             .as_ref()
             .map_or(NULL_KEYSPACE_ID, keyspace_id);
         self.mock_pd()
@@ -430,8 +404,8 @@ impl Suite {
     /// Go `s.pdClient.GetGCInternalController(keyspace).AdvanceTxnSafePoint`.
     fn advance_txn_safe_point(&self, target: u64) -> PdAdvanceTxnSafePointResult {
         let keyspace = self
-            .store
-            .keyspace
+            .tikv
+            .keyspace_meta()
             .as_ref()
             .map_or(NULL_KEYSPACE_ID, keyspace_id);
         self.mock_pd()
@@ -441,10 +415,16 @@ impl Suite {
             .unwrap()
     }
 
+    /// Go `s.oracle.AddOffset`.
+    fn add_offset(&self, offset: Duration) {
+        self.oracle
+            .add_offset_milliseconds(i64::try_from(offset.as_millis()).unwrap());
+    }
+
     /// The worker's collaborators, for the package-level job APIs.
     fn deps(&self) -> GcWorkerDeps {
         GcWorkerDeps {
-            store: self.store.clone(),
+            store: self.tikv.clone(),
             pd: self.tikv.clone(),
             kv: self.kv.clone(),
             sessions: self.sessions.clone(),
@@ -514,6 +494,40 @@ impl Suite {
         assert_eq!(b"v2".to_vec(), self.must_get(&probe.key, probe.v2_ts));
     }
 
+    /// A pessimistic transaction holding `key` (Go: `Begin`, `Set`,
+    /// `LockKeys` with `ForUpdateTS` = start ts), at `start_ts` or a fresh
+    /// timestamp.
+    fn pending_pessimistic_txn(
+        &self,
+        start_ts: Option<u64>,
+        key: &[u8],
+        value: &[u8],
+    ) -> tikv_client::transaction::Transaction<UnistorePdClient> {
+        self.block_on(async {
+            let mut options = tikv_client::transaction::TransactionOptions::new_pessimistic();
+            if let Some(start_ts) = start_ts {
+                options = options.start_timestamp(
+                    <tikv_client::Timestamp as tikv_client::TimestampExt>::from_version(start_ts),
+                );
+            }
+            let mut txn = self.tikv.store().begin_with_options(options).await.unwrap();
+            txn.put(key.to_vec(), value.to_vec()).await.unwrap();
+            txn.lock_keys(vec![key.to_vec()]).await.unwrap();
+            txn
+        })
+    }
+
+    /// Go `leaderTick`, then waiting for the job it starts.
+    fn leader_tick_and_wait(&mut self) {
+        self.worker.leader_tick().unwrap();
+        self.worker
+            .done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("receive from s.gcWorker.done")
+            .unwrap();
+        self.worker.gc_is_running = false;
+    }
+
     /// Go `loadTxnSafePoint`.
     fn load_txn_safe_point(&self) -> u64 {
         self.gc_state().txn_safe_point
@@ -534,7 +548,7 @@ impl Suite {
 
     /// Go `mustAllocTs`.
     fn must_alloc_ts(&self) -> u64 {
-        self.store.current_version().unwrap()
+        self.tikv.current_version().unwrap()
     }
 
     /// Go `INSERT INTO mysql.gc_delete_range VALUES (...)`.
@@ -645,7 +659,7 @@ fn test_get_oracle_time() {
         Duration::from_millis(10),
     );
 
-    s.store.add_offset(Duration::from_secs(10));
+    s.add_offset(Duration::from_secs(10));
     let t2 = s.job().get_oracle_time().unwrap();
     time_equal(
         t2,
@@ -683,17 +697,17 @@ fn test_prepare_gc() {
     // Change the GC run interval.
     job.save_duration(GC_RUN_INTERVAL_KEY, 5 * MINUTE_NANOS)
         .unwrap();
-    s.store.add_offset(4 * MINUTE);
+    s.add_offset(4 * MINUTE);
     assert!(!job.prepare().unwrap().0);
-    s.store.add_offset(2 * MINUTE);
+    s.add_offset(2 * MINUTE);
     assert!(job.prepare().unwrap().0);
 
     // Change the GC life time.
     job.save_duration(GC_LIFE_TIME_KEY, 30 * MINUTE_NANOS)
         .unwrap();
-    s.store.add_offset(5 * MINUTE);
+    s.add_offset(5 * MINUTE);
     assert!(!job.prepare().unwrap().0);
-    s.store.add_offset(40 * MINUTE);
+    s.add_offset(40 * MINUTE);
     assert!(job.prepare().unwrap().0);
     let last_run = job.load_time(GC_LAST_RUN_TIME_KEY).unwrap().unwrap();
     let safe_point = job.load_time(GC_SAFE_POINT_KEY).unwrap().unwrap();
@@ -727,7 +741,7 @@ fn test_prepare_gc() {
     assert_eq!(GC_MAX_CONCURRENCY, concurrency);
 
     // Change the GC enable status.
-    s.store.add_offset(40 * MINUTE);
+    s.add_offset(40 * MINUTE);
     job.save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_FALSE)
         .unwrap();
     assert!(!job.prepare().unwrap().0);
@@ -736,13 +750,13 @@ fn test_prepare_gc() {
     assert!(job.prepare().unwrap().0);
 
     // A GC life time below the minimum.
-    s.store.add_offset(40 * MINUTE);
+    s.add_offset(40 * MINUTE);
     job.save_duration(GC_LIFE_TIME_KEY, MINUTE_NANOS).unwrap();
     assert!(job.prepare().unwrap().0);
     let life_time = job.load_duration(GC_LIFE_TIME_KEY).unwrap().unwrap();
     assert_eq!(GC_MIN_LIFE_TIME, life_time);
 
-    s.store.add_offset(40 * MINUTE);
+    s.add_offset(40 * MINUTE);
     job.save_duration(GC_LIFE_TIME_KEY, 30 * MINUTE_NANOS)
         .unwrap();
     assert!(job.prepare().unwrap().0);
@@ -765,7 +779,7 @@ fn test_prepare_gc() {
         .gc_states_client(NULL_KEYSPACE_ID)
         .set_gc_barrier("a", last_txn_safe_point, Duration::MAX)
         .unwrap();
-    s.store.add_offset(40 * MINUTE);
+    s.add_offset(40 * MINUTE);
     let (ok, safe_point) = job.prepare().unwrap();
     assert!(!ok);
     assert_eq!(0, safe_point);
@@ -1056,8 +1070,8 @@ fn test_leader_tick() {
     s.job()
         .save_value_to_sys_table(GC_MODE_KEY, GC_MODE_CENTRAL)
         .unwrap();
-    s.store
-        .add_offset(Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 2) as u64));
+    let p = s.create_gc_probe(b"k1");
+    s.add_offset(Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 2) as u64));
     let reset_last_run = |s: &Suite| {
         let long_ago =
             time_from_ts(s.must_alloc_ts()) - chrono::Duration::from_std(very_long).unwrap();
@@ -1070,6 +1084,7 @@ fn test_leader_tick() {
     s.worker.gc_is_running = true;
     s.worker.leader_tick().unwrap();
     assert!(s.worker.done_rx.try_recv().is_err());
+    s.check_not_collected(&p);
     s.worker.gc_is_running = false;
     reset_last_run(&s);
 
@@ -1079,6 +1094,7 @@ fn test_leader_tick() {
         .unwrap();
     s.worker.leader_tick().unwrap();
     assert!(!s.worker.gc_is_running);
+    s.check_not_collected(&p);
     s.job()
         .save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_TRUE)
         .unwrap();
@@ -1088,11 +1104,12 @@ fn test_leader_tick() {
     s.worker.last_finish = Instant::now();
     s.worker.leader_tick().unwrap();
     assert!(!s.worker.gc_is_running);
+    s.check_not_collected(&p);
     s.worker.last_finish = Instant::now() - very_long;
     reset_last_run(&s);
     // The skipped tick's prepare advanced PD's txn safe point; move the
     // oracle so the next target is strictly higher.
-    s.store.add_offset(Duration::from_secs(1));
+    s.add_offset(Duration::from_secs(1));
     assert_eq!(before, gc_safe_point(&s));
 
     // GC runs once every check passes.
@@ -1104,14 +1121,15 @@ fn test_leader_tick() {
         .expect("the GC job finishes")
         .unwrap();
     s.worker.gc_is_running = false;
+    s.check_collected(&p);
     let first = gc_safe_point(&s);
     assert!(first > before);
 
     // Again, so the hand-off between threads is right.
     reset_last_run(&s);
     s.worker.last_finish = Instant::now() - very_long;
-    s.store
-        .add_offset(Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 2) as u64));
+    let p = s.create_gc_probe(b"k1");
+    s.add_offset(Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 2) as u64));
     s.worker.leader_tick().unwrap();
     s.worker
         .done_rx
@@ -1119,6 +1137,7 @@ fn test_leader_tick() {
         .expect("the GC job finishes")
         .unwrap();
     s.worker.gc_is_running = false;
+    s.check_collected(&p);
     assert!(gc_safe_point(&s) > first);
 
     // No other signal.
@@ -1127,6 +1146,128 @@ fn test_leader_tick() {
         .done_rx
         .recv_timeout(Duration::from_secs(1))
         .is_err());
+}
+
+/// Go `TestGCWithPendingTxn`. Go's `ServerMinStartTSPath` put into the
+/// safe-point KV is skipped: the worker no longer reads it (Go's own TODO says
+/// the mock PD ignores it).
+#[test]
+fn test_gc_with_pending_txn() {
+    if tidb_config::kerneltype::is_next_gen() {
+        return;
+    }
+    let mut s = create_gc_worker_suite();
+    s.set_sync_wait_time(Duration::ZERO);
+    s.job()
+        .save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_FALSE)
+        .unwrap();
+
+    // Lock the key.
+    let mut txn = s.pending_pessimistic_txn(None, b"tk1", b"v1");
+
+    // Prepare to run gc with txn's startTS as the safepoint ts.
+    let very_long = chrono::Duration::nanoseconds(GC_DEFAULT_LIFE_TIME * 100);
+    s.job()
+        .save_time(
+            GC_LAST_RUN_TIME_KEY,
+            time_from_ts(s.must_alloc_ts()) - very_long,
+        )
+        .unwrap();
+    s.worker.last_finish =
+        Instant::now() - Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 10) as u64);
+    s.add_offset(10 * MINUTE);
+    s.job()
+        .save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_TRUE)
+        .unwrap();
+
+    // Trigger the tick let the gc job start.
+    s.leader_tick_and_wait();
+
+    // Go's TODO: the mock PD keeps no `SafePointKV` data, so the commit fails.
+    assert!(s.block_on(txn.commit()).is_err());
+}
+
+/// Go `TestGCWithPendingTxn2`: two pessimistic locks newer than the job's
+/// safe point survive it, and both transactions commit.
+#[test]
+fn test_gc_with_pending_txn2() {
+    let mut s = create_gc_worker_suite();
+    s.set_sync_wait_time(Duration::ZERO);
+    s.job()
+        .save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_FALSE)
+        .unwrap();
+    let now = s.must_alloc_ts();
+
+    let very_long = chrono::Duration::nanoseconds(GC_DEFAULT_LIFE_TIME * 100);
+    s.job()
+        .save_time(
+            GC_LAST_RUN_TIME_KEY,
+            time_from_ts(s.must_alloc_ts()) - very_long,
+        )
+        .unwrap();
+    s.worker.last_finish =
+        Instant::now() - Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 10) as u64);
+    s.job()
+        .save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_TRUE)
+        .unwrap();
+
+    // Lock key1 at now, key2 ten seconds later.
+    let mut txn = s.pending_pessimistic_txn(Some(now), b"tk1", b"v1");
+    // Go `oracle.ComposeTS(ExtractPhysical(now)+10000, ExtractLogical(now))`.
+    let start_ts = (((now >> 18) + 10_000) << 18) | (now & ((1 << 18) - 1));
+    let mut txn2 = s.pending_pessimistic_txn(Some(start_ts), b"tk2", b"v2");
+
+    // Trigger the tick let the gc job start.
+    s.add_offset(5 * MINUTE);
+    s.leader_tick_and_wait();
+
+    s.block_on(txn.commit()).unwrap();
+    s.block_on(txn2.commit()).unwrap();
+}
+
+/// Go `TestSkipGCAndOnlyResolveLock`: with a life time pushing the new safe
+/// point below the saved one, the tick skips GC, the lock is not resolved,
+/// and the last run time stays.
+#[test]
+fn test_skip_gc_and_only_resolve_lock() {
+    let mut s = create_gc_worker_suite();
+    s.set_sync_wait_time(Duration::ZERO);
+    let job = s.job();
+    job.save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_FALSE)
+        .unwrap();
+    let now = s.must_alloc_ts();
+
+    assert_eq!(now, job.set_gc_worker_service_safe_point(now).unwrap());
+    let very_long = chrono::Duration::nanoseconds(GC_DEFAULT_LIFE_TIME * 100);
+    let last_run_time = time_from_ts(s.must_alloc_ts()) - very_long;
+    let new_gc_life_time: i64 = 24 * 60 * 60 * 1_000_000_000;
+    job.save_time(GC_LAST_RUN_TIME_KEY, last_run_time).unwrap();
+    job.save_time(
+        GC_SAFE_POINT_KEY,
+        time_from_ts(s.must_alloc_ts()) - chrono::Duration::minutes(10),
+    )
+    .unwrap();
+    job.save_duration(GC_LIFE_TIME_KEY, new_gc_life_time)
+        .unwrap();
+    s.worker.last_finish =
+        Instant::now() - Duration::from_nanos((GC_DEFAULT_LIFE_TIME * 10) as u64);
+    s.job()
+        .save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_TRUE)
+        .unwrap();
+
+    // Lock key1.
+    let mut txn = s.pending_pessimistic_txn(Some(now), b"tk1", b"v1");
+
+    // Trigger the tick let the gc job start.
+    s.add_offset(5 * MINUTE);
+    s.worker.leader_tick().unwrap();
+
+    // The lock has not been resolved.
+    s.block_on(txn.commit()).unwrap();
+
+    // GC was skipped.
+    let last = s.job().load_time(GC_LAST_RUN_TIME_KEY).unwrap().unwrap();
+    assert_eq!(last.timestamp(), last_run_time.timestamp());
 }
 
 #[test]

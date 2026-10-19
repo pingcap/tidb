@@ -120,7 +120,10 @@ impl<PdC: PdClient> Clone for Client<PdC> {
 /// derived from a transaction client. Dropping the last client or transaction
 /// reference closes the oracle's refresh worker.
 struct PdReadTimestampValidator {
-    oracle: PdOracle,
+    oracle: Arc<PdOracle>,
+    /// client-go validates read timestamps with `store.oracle`, which
+    /// `SetOracle` replaces.
+    store_oracle: crate::oracle::StoreOracle,
     safe_point: RwLock<Option<Arc<crate::tikv::TxnSafePointCache>>>,
 }
 
@@ -140,9 +143,18 @@ impl ReadTimestampValidator for PdReadTimestampValidator {
         is_stale_read: bool,
         option: &OracleOption,
     ) -> std::result::Result<(), OracleError> {
-        self.oracle
-            .validate_read_timestamp(read_timestamp, is_stale_read, option)
-            .await?;
+        match self.store_oracle.installed() {
+            Some(oracle) => {
+                oracle
+                    .validate_read_timestamp(read_timestamp, is_stale_read, option)
+                    .await?
+            }
+            None => {
+                self.oracle
+                    .validate_read_timestamp(read_timestamp, is_stale_read, option)
+                    .await?
+            }
+        }
         if let Some(safe_point) = self
             .safe_point
             .read()
@@ -155,6 +167,26 @@ impl ReadTimestampValidator for PdReadTimestampValidator {
         }
         Ok(())
     }
+}
+
+/// A new client's read validator and lock-resolution context, sharing one
+/// store oracle (client-go `KVStore.oracle`) over the client's PD oracle.
+async fn store_oracle_parts<PdC: PdClient>(
+    pd: &Arc<PdC>,
+) -> Result<(Arc<PdReadTimestampValidator>, ResolveLocksContext)> {
+    let store_oracle = crate::oracle::StoreOracle::default();
+    let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
+        oracle: Arc::new(
+            PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
+                .await
+                .map_err(|error| crate::Error::StringError(error.to_string()))?,
+        ),
+        store_oracle: store_oracle.clone(),
+        safe_point: RwLock::new(None),
+    });
+    let mut lock_resolver_context = ResolveLocksContext::default();
+    lock_resolver_context.store_oracle = store_oracle;
+    Ok((read_timestamp_validator, lock_resolver_context))
 }
 
 impl Client {
@@ -219,12 +251,7 @@ impl Client {
             None => PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?,
         };
         let pd = Arc::new(pd);
-        let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
-            oracle: PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
-                .await
-                .map_err(|error| crate::Error::StringError(error.to_string()))?,
-            safe_point: RwLock::new(None),
-        });
+        let (read_timestamp_validator, lock_resolver_context) = store_oracle_parts(&pd).await?;
         let (keyspace, keyspace_name) = match configured_keyspace {
             Some(_) => {
                 let meta = pd
@@ -240,7 +267,7 @@ impl Client {
             keyspace,
             keyspace_name,
             latches,
-            lock_resolver_context: ResolveLocksContext::default(),
+            lock_resolver_context,
             enable_async_batch_get: config.enable_async_batch_get,
             enable_async_commit: config.enable_async_commit,
             enable_one_pc: config.enable_1pc,
@@ -265,19 +292,14 @@ impl Client {
         debug!("creating new transactional client (api-v2-no-prefix)");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
-        let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
-            oracle: PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
-                .await
-                .map_err(|error| crate::Error::StringError(error.to_string()))?,
-            safe_point: RwLock::new(None),
-        });
+        let (read_timestamp_validator, lock_resolver_context) = store_oracle_parts(&pd).await?;
         Ok(Client {
             pd,
             read_timestamp_validator,
             keyspace: Keyspace::ApiV2NoPrefix,
             keyspace_name: None,
             latches,
-            lock_resolver_context: ResolveLocksContext::default(),
+            lock_resolver_context,
             enable_async_batch_get: config.enable_async_batch_get,
             enable_async_commit: config.enable_async_commit,
             enable_one_pc: config.enable_1pc,
@@ -293,12 +315,7 @@ impl<PdC: PdClient> Client<PdC> {
     /// keyspace's codec itself, as client-go's codec PD client does.
     pub async fn new_with_pd_client(pd: Arc<PdC>, config: Config) -> Result<Self> {
         let latches = transaction_latches(&config)?;
-        let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
-            oracle: PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
-                .await
-                .map_err(|error| crate::Error::StringError(error.to_string()))?,
-            safe_point: RwLock::new(None),
-        });
+        let (read_timestamp_validator, lock_resolver_context) = store_oracle_parts(&pd).await?;
         let (keyspace, keyspace_name) = match config.keyspace.as_deref().map(build_keyspace_name) {
             Some(name) => {
                 let meta = pd.load_keyspace(&name).await?;
@@ -312,7 +329,7 @@ impl<PdC: PdClient> Client<PdC> {
             keyspace,
             keyspace_name,
             latches,
-            lock_resolver_context: ResolveLocksContext::default(),
+            lock_resolver_context,
             enable_async_batch_get: config.enable_async_batch_get,
             enable_async_commit: config.enable_async_commit,
             enable_one_pc: config.enable_1pc,
@@ -441,7 +458,26 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn current_timestamp(&self) -> Result<Timestamp> {
-        self.pd.clone().get_timestamp().await
+        self.lock_resolver_context
+            .store_oracle
+            .get_timestamp(&self.pd)
+            .await
+    }
+
+    /// client-go `KVStore.SetOracle`: the store's transactions, lock
+    /// resolution and read validation take timestamps from `oracle` from now
+    /// on, those already begun included.
+    pub fn set_oracle(&self, oracle: Arc<dyn crate::oracle::Oracle>) {
+        self.lock_resolver_context.store_oracle.set(oracle);
+    }
+
+    /// client-go `KVStore.GetOracle`: the installed oracle, or the store's PD
+    /// oracle.
+    pub fn get_oracle(&self) -> Arc<dyn crate::oracle::Oracle> {
+        self.lock_resolver_context
+            .store_oracle
+            .installed()
+            .unwrap_or_else(|| self.read_timestamp_validator.oracle.clone())
     }
 
     /// Request garbage collection (GC) of the TiKV cluster.
@@ -976,6 +1012,90 @@ mod latch_config_tests {
             TransactionOptions::new_optimistic(),
         );
         drop(snapshot);
+    }
+
+    /// client-go `KVStore.SetOracle`: the store's timestamps come from the
+    /// installed oracle -- the client's, a transaction's start and commit
+    /// timestamps -- and `GetOracle` answers it.
+    #[tokio::test]
+    async fn set_oracle_supplies_the_stores_timestamps() {
+        use crate::oracle::Oracle as _;
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let client = Client::new_with_pd_client(Arc::new(pd), Config::default())
+            .await
+            .unwrap();
+        let ahead_ms = 10 * 60 * 1000;
+        let oracle = crate::oracle::oracles::MockOracle::new();
+        oracle.add_offset_milliseconds(ahead_ms as i64);
+        client.set_oracle(Arc::new(oracle));
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let ahead =
+            |ts: u64| crate::oracle::extract_physical(ts) as u64 >= now_ms + ahead_ms - 1000;
+
+        assert!(ahead(client.current_timestamp().await.unwrap().version()));
+        let installed = client
+            .get_oracle()
+            .get_timestamp(&crate::oracle::OracleOption::default())
+            .await
+            .unwrap();
+        assert!(ahead(installed));
+        let mut txn = client.begin_optimistic().await.unwrap();
+        assert!(ahead(txn.start_timestamp().version()));
+        txn.put(b"k".to_vec(), b"v".to_vec()).await.unwrap();
+        let commit_ts = txn.commit().await.unwrap().unwrap();
+        assert!(ahead(commit_ts.version()));
+    }
+
+    /// client-go's lock resolver judges a lock's TTL by `store.GetOracle()`:
+    /// a lock alive by PD's clock has expired by an oracle ten minutes ahead,
+    /// so a reader rolls it back at once instead of waiting it out.
+    #[tokio::test]
+    async fn lock_resolution_judges_ttl_by_the_stores_oracle() {
+        use crate::store::KvClient as _;
+        let (rpc, cluster, pd) = crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let pd = Arc::new(pd);
+        let client = Client::new_with_pd_client(pd.clone(), Config::default())
+            .await
+            .unwrap();
+        let start_ts = pd.clone().get_timestamp().await.unwrap().version();
+        let region = pd.region_for_key(&b"k".to_vec().into()).await.unwrap();
+        let prewrite = crate::proto::kvrpcpb::PrewriteRequest {
+            context: Some(crate::proto::kvrpcpb::Context {
+                region_id: region.region.id,
+                region_epoch: region.region.region_epoch.clone(),
+                peer: region.leader.clone(),
+                ..Default::default()
+            }),
+            mutations: vec![crate::proto::kvrpcpb::Mutation {
+                op: crate::proto::kvrpcpb::Op::Put as i32,
+                key: b"k".to_vec(),
+                value: b"v".to_vec(),
+                ..Default::default()
+            }],
+            primary_lock: b"k".to_vec(),
+            start_version: start_ts,
+            lock_ttl: 60_000,
+            ..Default::default()
+        };
+        rpc.dispatch(&prewrite).await.unwrap();
+
+        let oracle = crate::oracle::oracles::MockOracle::new();
+        oracle.add_offset_milliseconds(10 * 60 * 1000);
+        client.set_oracle(Arc::new(oracle));
+        let mut reader = client.begin_optimistic().await.unwrap();
+        let value =
+            tokio::time::timeout(std::time::Duration::from_secs(5), reader.get(b"k".to_vec()))
+                .await
+                .expect("the expired lock is resolved, not waited out")
+                .unwrap();
+        assert_eq!(value, None, "the abandoned prewrite was rolled back");
+        reader.rollback().await.unwrap();
     }
 
     #[test]

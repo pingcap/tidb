@@ -1422,6 +1422,15 @@ impl<PdC: PdClient> Transaction<PdC> {
         self.lock_resolver_context = context;
     }
 
+    /// client-go `txn.store.getTimestampWithRetry`: a timestamp from the
+    /// store's oracle.
+    async fn store_timestamp(&self) -> Result<Timestamp> {
+        self.lock_resolver_context
+            .store_oracle
+            .get_timestamp(&self.rpc)
+            .await
+    }
+
     /// Reset the transaction-owned snapshot's read timestamp without changing
     /// the transaction start timestamp, and discard retry hints that were
     /// valid only for the previous read version.
@@ -3231,7 +3240,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             return Err(error);
         }
         let for_update_timestamp = if self.is_pessimistic() {
-            self.rpc.clone().get_timestamp().await?.version()
+            self.store_timestamp().await?.version()
         } else {
             self.timestamp.version()
         };
@@ -3699,7 +3708,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<()> {
         let for_update_timestamp = if self.is_pessimistic() {
-            self.rpc.clone().get_timestamp().await?.version()
+            self.store_timestamp().await?.version()
         } else {
             self.timestamp.version()
         };
@@ -5279,7 +5288,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             existing_primary.is_none() && lock_type != kvrpcpb::Op::SharedPessimisticLock;
         let for_update_ts = match context.as_deref() {
             Some(context) => Timestamp::from_version(context.for_update_ts),
-            None => self.rpc.clone().get_timestamp().await?,
+            None => self.store_timestamp().await?,
         };
         let requested_wait_timeout = match context.as_deref_mut() {
             Some(context) => context.lock_wait_time(),
@@ -5815,6 +5824,7 @@ impl<PdC: PdClient> Transaction<PdC> {
         let start_ts = self.timestamp.clone();
         let region_backoff = self.options.retry_options.region_backoff.clone();
         let rpc = self.rpc.clone();
+        let store_oracle = self.lock_resolver_context.store_oracle.clone();
         let heartbeat_interval = match self.options.heartbeat_option {
             HeartbeatOption::NoHeartbeat => DEFAULT_HEARTBEAT_INTERVAL,
             HeartbeatOption::Managed => Duration::from_millis(managed_lock_ttl() / 2),
@@ -5850,6 +5860,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             let primary_key = primary_key.clone();
             let region_backoff = region_backoff.clone();
             let rpc = rpc.clone();
+            let store_oracle = store_oracle.clone();
             let keyspace_name = keyspace_name.clone();
             let rpc_interceptor = rpc_interceptor.clone();
             let ru_details = ru_details.clone();
@@ -5891,7 +5902,7 @@ impl<PdC: PdClient> Transaction<PdC> {
                         {
                             break;
                         }
-                        let now = match rpc.clone().get_timestamp().await {
+                        let now = match store_oracle.get_timestamp(&rpc).await {
                             Ok(now) => now,
                             Err(error) => {
                                 warn!(
@@ -6627,6 +6638,15 @@ impl<PdC: PdClient> Clone for Committer<PdC> {
 }
 
 impl<PdC: PdClient> Committer<PdC> {
+    /// client-go `c.store.getTimestampWithRetry`: a timestamp from the
+    /// store's oracle.
+    async fn store_timestamp(&self) -> Result<Timestamp> {
+        self.lock_resolver_context
+            .store_oracle
+            .get_timestamp(&self.rpc)
+            .await
+    }
+
     fn attach_resource_group_name<R: StoreRequest>(&self, request: &mut R) {
         if let Some(resource_group_name) = self.resource_group_name.as_deref() {
             request.set_resource_group_name(resource_group_name);
@@ -7201,7 +7221,7 @@ impl<PdC: PdClient> Committer<PdC> {
     /// and the TTL manager must be closed without sending another heartbeat.
     async fn send_pipelined_heartbeat(&self) -> Result<bool> {
         let primary = self.primary_key.clone().ok_or(Error::NoPrimaryKey)?;
-        let now = self.rpc.clone().get_timestamp().await?;
+        let now = self.store_timestamp().await?;
         let uptime = crate::oracle::extract_physical(now.version()).saturating_sub(
             crate::oracle::extract_physical(self.start_version.version()),
         );
@@ -8548,7 +8568,7 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn get_timestamp_for_commit(&self) -> Result<Timestamp> {
-        let first = self.rpc.clone().get_timestamp().await?;
+        let first = self.store_timestamp().await?;
         let expected = self.settings.commit_wait_until_tso;
         if expected == 0 || first.version() > expected {
             return Ok(first);
@@ -8599,7 +8619,7 @@ impl<PdC: PdClient> Committer<PdC> {
                     });
                 }
                 attempts = attempts.saturating_add(1);
-                last = self.rpc.clone().get_timestamp().await?;
+                last = self.store_timestamp().await?;
             }
             Ok(last)
         }
