@@ -89,7 +89,7 @@ fn call() -> UnaryCallContext {
 fn connect() -> Cluster {
     let pd_address = std::env::var("PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR")
         .expect("runner must provide PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR");
-    let pd = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
+    let pd = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start sole real PD authority");
     assert_ne!(pd.cluster_id(), 0);
     let transport = TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
@@ -104,6 +104,12 @@ fn connect() -> Cluster {
         read_opener.clone(),
         pd.clone(),
         RPC_TIMEOUT,
+        tidb_txnkv::driver::tikv_store::TikvStore::connect(
+            vec![pd_address.clone()],
+            tikv_client::Config::default(),
+        )
+        .expect("the node's store")
+        .visibility(),
     )
     .expect("derive transaction opener without starting another authority");
     let fixture = read_opener

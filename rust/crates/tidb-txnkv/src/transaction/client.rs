@@ -16,7 +16,7 @@
 use super::state::*;
 use super::{CommitProtocol, OptimisticCoordinatorError, SchemaLease, TransactionCommandClient};
 use crate::driver::client_bridge::{self, ClientPd};
-use crate::gc_state::GcStateCache;
+use crate::gc_state::StoreVisibility;
 use crate::lock::{LockRecoveryClient, TimestampSource};
 use crate::region::{RegionQueryLoader, RegionRecoveryLoader};
 use crate::rpc::UnaryCallContext;
@@ -36,7 +36,7 @@ pub struct ClientTransaction<C, L, T> {
     start_ts: u64,
     _start_ts_guard: crate::inner_txn::StartTsGuard,
     authority_id: u64,
-    gc_state: Arc<GcStateCache>,
+    visibility: StoreVisibility,
     snapshot_stats: Arc<tikv_client::SnapshotRuntimeStats>,
     read_ts: u64,
     snapshot_read_options: Option<crate::SnapshotReadOptions>,
@@ -100,7 +100,8 @@ where
             start_ts,
             opened_at,
             false,
-            Arc::new(GcStateCache::seeded(0, Instant::now())),
+            // A store whose txn safe point never rose.
+            Arc::new(|_| Ok(())),
         )
     }
 
@@ -118,7 +119,7 @@ where
         start_ts: u64,
         _opened_at: Instant,
         read_only: bool,
-        gc_state: Arc<GcStateCache>,
+        visibility: StoreVisibility,
     ) -> Result<Self, OptimisticCoordinatorError> {
         if start_ts == 0 {
             return Err(OptimisticCoordinatorError::Timestamp(
@@ -174,7 +175,7 @@ where
             start_ts,
             _start_ts_guard: crate::inner_txn::ACTIVE_START_TS.hold(start_ts),
             authority_id,
-            gc_state,
+            visibility,
             snapshot_stats,
             read_ts: start_ts,
             snapshot_read_options: None,
@@ -392,9 +393,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .map_err(Self::client_read_error)?;
         let trace = self.client.take_read_trace();
         if trace.rpc_count > 0 {
-            self.gc_state
-                .check_visibility(read_ts)
-                .map_err(OptimisticCoordinatorError::Visibility)?;
+            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
         }
         let (region, publication) = trace
             .last_get
@@ -434,9 +433,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .map(|(key, entry)| (Vec::from(key), entry.value))
             .collect();
         if self.client.take_read_trace().rpc_count > 0 {
-            self.gc_state
-                .check_visibility(read_ts)
-                .map_err(OptimisticCoordinatorError::Visibility)?;
+            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
         }
         Ok(values)
     }
@@ -483,9 +480,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .map(|pair| (Vec::from(pair.0), pair.1))
             .collect();
         if self.client.take_read_trace().rpc_count > 0 {
-            self.gc_state
-                .check_visibility(read_ts)
-                .map_err(OptimisticCoordinatorError::Visibility)?;
+            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
         }
         Ok(values)
     }
@@ -542,9 +537,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .map(|pair| (Vec::from(pair.0), pair.1))
             .collect();
         if self.client.take_read_trace().rpc_count > 0 {
-            self.gc_state
-                .check_visibility(read_ts)
-                .map_err(OptimisticCoordinatorError::Visibility)?;
+            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
         }
         Ok(values)
     }

@@ -55,6 +55,7 @@ use tidb_planner::read_only_scan::{
     ReadOnlyScanPlan,
 };
 use tidb_protocol::ColumnInfo;
+use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::{
     rpc::TonicCoprocessorClient, DirectUnaryClient, PdRegionLoader, SharedReadAuthority,
     SharedReadOpener,
@@ -442,6 +443,9 @@ pub struct ProductionReadProcessAuthority {
     admission: ReadSessionAdmissionOwner,
     lifecycle: ProductionReadLifecycle,
     copr_cache: Option<CoprCache>,
+    /// The node's client-rust store (Go `tikvStore`'s `*tikv.KVStore`), whose
+    /// txn safe point the transactions above check reads against.
+    tikv_store: TikvStore,
 }
 
 enum ProductionOpener {
@@ -636,19 +640,26 @@ impl ProductionReadProcessAuthority {
         E: Into<String>,
         F: FnOnce(&RealOptimisticTransactionOpener) -> Result<ConfiguredTable, String>,
     {
+        let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
+        let security = tidb_pd_client::ClusterSecurity::plaintext();
+        let tikv_store = TikvStore::connect_with_security(pd_endpoints.clone(), &security)
+            .map_err(RealTiKvReadError::Transport)?;
         Self::connect_with_catalog_and_security(
             pd_endpoints,
             timeout,
-            Arc::new(tidb_pd_client::ClusterSecurity::plaintext()),
+            Arc::new(security),
+            tikv_store,
             choose_table,
         )
     }
 
     /// Bootstraps PD and store traffic from the same captured cluster security.
+    /// `tikv_store` is the node's client-rust store over the same cluster.
     pub fn connect_with_catalog_and_security<I, E, F>(
         pd_endpoints: I,
         timeout: Duration,
         security: Arc<tidb_pd_client::ClusterSecurity>,
+        tikv_store: TikvStore,
         choose_table: F,
     ) -> Result<Self, RealTiKvReadError>
     where
@@ -689,6 +700,7 @@ impl ProductionReadProcessAuthority {
             read_authority.opener(),
             pd.clone(),
             timeout,
+            tikv_store.visibility(),
         )
         .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?
         // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`, resolved once for
@@ -711,7 +723,15 @@ impl ProductionReadProcessAuthority {
                 transport: ProductionTransportLifecycle::Running(transport_owner),
                 pd: ProductionPdLifecycle::Running(pd),
             },
+            tikv_store,
         })
+    }
+
+    /// The node's client-rust store: region splitting and the GC worker share
+    /// it, as Go's share the one `KVStore`.
+    #[must_use]
+    pub fn tikv_store(&self) -> &TikvStore {
+        &self.tikv_store
     }
 
     /// The process-owned capability that opens worker-local transports.

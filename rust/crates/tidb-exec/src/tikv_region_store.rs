@@ -18,13 +18,14 @@
 //! through the native client's `KvStore`, and Go `getRegionInfo`'s PD HTTP
 //! region statistics.
 //!
-//! The store connects to PD on first use: a node that never splits or lists
-//! regions never opens the extra client.
+//! It runs on the node's one client-rust store, as Go's `tikvStore` hands its
+//! one `KVStore` to region splitting.
 
 use std::sync::OnceLock;
 
 use tidb_executor::region_map::{RegionMeta, RegionStore};
 use tidb_pd_client::ClusterSecurity;
+use tidb_txnkv::driver::tikv_store::TikvStore;
 
 /// Go `tikv.NewBackofferWithVars(ctx, 20000, nil)` in `getTableRegions`.
 const LOAD_REGIONS_BACKOFF_MS: u64 = 20_000;
@@ -33,8 +34,7 @@ const LOAD_REGIONS_BACKOFF_MS: u64 = 20_000;
 pub struct TikvRegionStore {
     pd_endpoints: Vec<String>,
     security: ClusterSecurity,
-    runtime: OnceLock<Result<tokio::runtime::Runtime, String>>,
-    store: OnceLock<Result<tikv_client::tikv::KvStore, String>>,
+    store: TikvStore,
     http: OnceLock<Result<reqwest::blocking::Client, String>>,
 }
 
@@ -61,53 +61,20 @@ struct PdRegionInfo {
 }
 
 impl TikvRegionStore {
-    /// A store over the cluster whose PD answers at `pd_endpoints`.
+    /// Region access over the node's store, whose PD answers at
+    /// `pd_endpoints` (PD's HTTP API answers there too).
     #[must_use]
-    pub fn new(pd_endpoints: Vec<String>, security: ClusterSecurity) -> Self {
+    pub fn new(store: TikvStore, pd_endpoints: Vec<String>, security: ClusterSecurity) -> Self {
         Self {
             pd_endpoints,
             security,
-            runtime: OnceLock::new(),
-            store: OnceLock::new(),
+            store,
             http: OnceLock::new(),
         }
     }
 
-    fn runtime(&self) -> Result<&tokio::runtime::Runtime, String> {
-        self.runtime
-            .get_or_init(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
-                    .thread_name("region-store")
-                    .enable_all()
-                    .build()
-                    .map_err(|error| error.to_string())
-            })
-            .as_ref()
-            .map_err(Clone::clone)
-    }
-
-    fn store(&self) -> Result<&tikv_client::tikv::KvStore, String> {
-        let runtime = self.runtime()?;
-        self.store
-            .get_or_init(|| {
-                let mut config = tikv_client::Config::default();
-                if self.security.is_tls_enabled() {
-                    config = config.with_security(
-                        self.security.ca_path(),
-                        self.security.cert_path(),
-                        self.security.key_path(),
-                    );
-                }
-                runtime
-                    .block_on(tikv_client::tikv::KvStore::new_with_config(
-                        self.pd_endpoints.clone(),
-                        config,
-                    ))
-                    .map_err(|error| error.to_string())
-            })
-            .as_ref()
-            .map_err(Clone::clone)
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.store.runtime().block_on(future)
     }
 
     /// Go `getRegionInfo`: PD's statistics for one region.
@@ -144,26 +111,22 @@ impl RegionStore for TikvRegionStore {
         scatter: bool,
         table_id: Option<i64>,
     ) -> (Vec<u64>, Option<String>) {
-        let store = match self.store() {
-            Ok(store) => store,
-            Err(error) => return (Vec::new(), Some(error)),
-        };
-        let runtime = self.runtime().expect("store() built the runtime");
-        let (region_ids, result) = runtime.block_on(store.split_regions(keys, scatter, table_id));
+        let (region_ids, result) =
+            self.block_on(self.store.store().split_regions(keys, scatter, table_id));
         (region_ids, result.err().map(|error| error.to_string()))
     }
 
     fn wait_scatter_region_finish(&self, region_id: u64, backoff_ms: i64) -> Result<(), String> {
-        let store = self.store()?;
-        self.runtime()?
-            .block_on(store.wait_scatter_region_finish(region_id, backoff_ms))
-            .map_err(|error| error.to_string())
+        self.block_on(
+            self.store
+                .store()
+                .wait_scatter_region_finish(region_id, backoff_ms),
+        )
+        .map_err(|error| error.to_string())
     }
 
     fn check_region_in_scattering(&self, region_id: u64) -> Result<bool, String> {
-        let store = self.store()?;
-        self.runtime()?
-            .block_on(store.check_region_in_scattering(region_id))
+        self.block_on(self.store.store().check_region_in_scattering(region_id))
             .map_err(|error| error.to_string())
     }
 
@@ -172,14 +135,12 @@ impl RegionStore for TikvRegionStore {
         start: &[u8],
         end: &[u8],
     ) -> Result<Vec<RegionMeta>, String> {
-        let store = self.store()?;
-        let cache = store.region_cache();
+        let cache = self.store.store().region_cache();
         let mut backoffer = tikv_client::retry::RetryBackoffer::new(
             tikv_client::async_util::Cancellation::default(),
             LOAD_REGIONS_BACKOFF_MS,
         );
         let regions = self
-            .runtime()?
             .block_on(cache.load_regions_in_key_range(
                 start.to_vec().into(),
                 end.to_vec().into(),

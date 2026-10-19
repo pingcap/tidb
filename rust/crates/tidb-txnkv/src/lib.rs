@@ -149,11 +149,7 @@ pub use fault_injection::{
     new_injected_storage, new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction,
     InjectionConfig, KvSnapshot, KvStorage, KvTransaction,
 };
-pub use gc_state::{
-    GcStateCache, GcStateLoadError, TxnSafePointLoader, TxnSafePointRefresher, VisibilityError,
-    GC_CPU_TIME_INACCURACY_BOUND, GC_STATE_CACHE_INTERVAL, POLL_TXN_SAFE_POINT_INTERVAL,
-    POLL_TXN_SAFE_POINT_QUICK_REPEAT_INTERVAL, UNIFIED_TXN_SAFE_POINT_PATH,
-};
+pub use gc_state::{StoreVisibility, VisibilityError, STALE_GC_STATE_CACHE_MESSAGE};
 pub use handle::{
     CommonHandle, Handle, HandleCompareError, HandleMap, IntHandle, MemAwareHandleMap,
     PartitionHandle,

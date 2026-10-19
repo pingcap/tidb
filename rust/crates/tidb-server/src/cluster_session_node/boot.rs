@@ -75,10 +75,18 @@ pub(crate) fn run_cluster_session_node_with_spill(
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let mut loaded = None;
+    // Go `tikv.NewKVStore` in `driver.TiKVDriver.Open`: the node's one
+    // client-rust store, which loads the txn safe point before serving.
+    let tikv_store = tidb_txnkv::driver::tikv_store::TikvStore::connect_with_security(
+        config.pd_endpoints.clone(),
+        &config.cluster_security,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // The cluster's regions as `SPLIT`, `SHOW TABLE ... REGIONS`,
     // `TABLESAMPLE REGIONS()` and the pre-split after CREATE TABLE reach them.
     let region_store: Arc<dyn tidb_executor::region_map::RegionStore> =
         Arc::new(tidb_exec::tikv_region_store::TikvRegionStore::new(
+            tikv_store.clone(),
             config.pd_endpoints.clone(),
             config.cluster_security.clone(),
         ));
@@ -86,6 +94,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         config.pd_endpoints.clone(),
         COPROCESSOR_QUERY_TIMEOUT,
         Arc::new(config.cluster_security.clone()),
+        tikv_store,
         |opener| {
             // tiup's deploy->patch->start flow boots this node against a
             // FRESH keyspace before any Go TiDB ever ran, so `mysql.*` does
@@ -635,8 +644,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         .map(|_| {
             super::gc_worker::start_gc_worker(
                 &factory,
-                &config.pd_endpoints,
-                &config.cluster_security,
+                authority.tikv_store(),
                 Arc::new(authority.transaction_opener()),
             )
         })

@@ -1700,7 +1700,7 @@ mod tests {
                 fail: fail.clone(),
             },
             Duration::from_secs(3),
-            tidb_txnkv::TxnSafePointRefresher::start_with_source(|| Ok(0)).unwrap(),
+            Arc::new(|_| Ok(())),
         )
         .unwrap();
         let transactions = RealClusterTransactions::new(opener, Duration::from_secs(3));

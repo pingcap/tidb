@@ -51,7 +51,7 @@ fn no_presumption() -> BTreeSet<Vec<u8>> {
 fn two_transactions_serialize_on_one_real_pessimistic_lock() {
     let pd_address = std::env::var("PESSIMISTIC_LOCK_PD_ADDR")
         .expect("runner must provide PESSIMISTIC_LOCK_PD_ADDR");
-    let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
+    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start sole real PD authority");
     let cluster_id = pd_owner.cluster_id();
     assert_ne!(cluster_id, 0);
@@ -68,6 +68,12 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
         shared.opener(),
         pd_owner.clone(),
         RPC_TIMEOUT,
+        tidb_txnkv::driver::tikv_store::TikvStore::connect(
+            vec![pd_address.clone()],
+            tikv_client::Config::default(),
+        )
+        .expect("the node's store")
+        .visibility(),
     )
     .expect("derive transaction opener without starting another authority");
 
@@ -225,7 +231,7 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
 fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
     let pd_address = std::env::var("PESSIMISTIC_LOCK_PD_ADDR")
         .expect("runner must provide PESSIMISTIC_LOCK_PD_ADDR");
-    let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
+    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start sole real PD authority");
     let cluster_id = pd_owner.cluster_id();
     let loader = PdRegionLoader::from_client(pd_owner.clone());
@@ -240,6 +246,12 @@ fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
         shared.opener(),
         pd_owner.clone(),
         RPC_TIMEOUT,
+        tidb_txnkv::driver::tikv_store::TikvStore::connect(
+            vec![pd_address.clone()],
+            tikv_client::Config::default(),
+        )
+        .expect("the node's store")
+        .visibility(),
     )
     .expect("derive transaction opener without starting another authority");
 

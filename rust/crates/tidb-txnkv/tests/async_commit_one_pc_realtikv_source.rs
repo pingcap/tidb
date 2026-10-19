@@ -44,7 +44,7 @@ const ONE_PC_KEY: &[u8] = b"one-pc-proof-a";
 fn opener(protocol: CommitProtocol) -> (RealOptimisticTransactionOpener, u64) {
     let pd_address =
         std::env::var("ASYNC_COMMIT_PD_ADDR").expect("runner must provide ASYNC_COMMIT_PD_ADDR");
-    let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
+    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start sole real PD authority");
     let cluster_id = pd_owner.cluster_id();
     assert_ne!(cluster_id, 0);
@@ -60,6 +60,12 @@ fn opener(protocol: CommitProtocol) -> (RealOptimisticTransactionOpener, u64) {
         shared.opener(),
         pd_owner,
         RPC_TIMEOUT,
+        tidb_txnkv::driver::tikv_store::TikvStore::connect(
+            vec![pd_address.clone()],
+            tikv_client::Config::default(),
+        )
+        .expect("the node's store")
+        .visibility(),
     )
     .expect("derive transaction opener without starting another authority")
     .with_commit_protocol(protocol);

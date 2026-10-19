@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use tidb_pd_client::PdClient;
 
-use crate::gc_state::{GcStateCache, TxnSafePointLoader, TxnSafePointRefresher};
+use crate::gc_state::StoreVisibility;
 use crate::lock::TimestampSource;
 use crate::rpc::TonicCoprocessorClient;
 use crate::{PdRegionLoader, SharedReadOpener, SharedReadRuntime};
@@ -44,9 +44,10 @@ pub struct RealOptimisticTransactionOpener<
     opener: crate::SharedReadOpener<C, L>,
     pd: P,
     timeout: Duration,
-    /// Keeps the shared txn safe point current for as long as any clone of this
-    /// opener — and therefore any transaction it opened — can still read.
-    gc_state: Arc<TxnSafePointRefresher>,
+    /// client-go `KVStore.CheckVisibility`, answered by the node's store,
+    /// which keeps its txn safe point current for as long as any clone of
+    /// this opener -- and so any transaction it opened -- can still read.
+    visibility: StoreVisibility,
     protocol: CommitProtocol,
     /// Resource group every transaction and direct MaxTS snapshot opened
     /// through this capability attaches to its TiKV request contexts.
@@ -59,7 +60,7 @@ impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
             opener: self.opener.clone(),
             pd: self.pd.clone(),
             timeout: self.timeout,
-            gc_state: Arc::clone(&self.gc_state),
+            visibility: Arc::clone(&self.visibility),
             protocol: self.protocol,
             resource_group_name: self.resource_group_name.clone(),
         }
@@ -68,33 +69,23 @@ impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
 
 impl RealOptimisticTransactionOpener {
     /// Derives transaction-opening capability from the already-running shared
-    /// read authority. This starts no PD, RegionCache, or transport worker.
-    /// The PRODUCTION constructor: the gc refresher rides the PD+etcd loader,
-    /// fallback included, exactly as before the opener went generic.
+    /// read authority. This starts no PD, RegionCache, or transport worker;
+    /// the txn safe point comes from the node's store (`visibility`), which
+    /// client-go loads inside `NewKVStore`.
     pub fn from_process_capabilities(
         opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
         pd: PdClient,
         timeout: Duration,
+        visibility: StoreVisibility,
     ) -> Result<Self, OptimisticCoordinatorError> {
         if pd.cluster_id() == 0 {
             return Err(OptimisticCoordinatorError::ZeroClusterId);
         }
-        // client-go loads the txn safe point inside `NewKVStore` and fails
-        // store construction if it cannot: a reader that does not know the
-        // safe point cannot tell a valid snapshot from a collected one.
-        let gc_state = TxnSafePointRefresher::start(TxnSafePointLoader::new(
-            pd.clone(),
-            // The null keyspace: keyspace-level GC is not a scope this client
-            // reads under.
-            None,
-            timeout,
-        ))
-        .map_err(|error| OptimisticCoordinatorError::GcState(error.to_string()))?;
         Ok(Self {
             opener,
             pd,
             timeout,
-            gc_state: Arc::new(gc_state),
+            visibility,
             protocol: CommitProtocol::two_phase_only(),
             resource_group_name: None,
         })
@@ -152,10 +143,6 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
-    /// The generic constructor: the caller supplies the safe-point refresher
-    /// — an embedded store starts one over its own capability
-    /// (`TxnSafePointRefresher::start_with_source`), the production path
-    /// keeps its loader through `from_process_capabilities`.
     /// The PD capability this opener routes through.
     pub fn pd(&self) -> &P {
         &self.pd
@@ -169,11 +156,13 @@ where
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))
     }
 
+    /// The generic constructor: the caller supplies the store's visibility
+    /// check (an embedded node's store, or the cluster's).
     pub fn from_capabilities(
         opener: crate::SharedReadOpener<C, L>,
         pd: P,
         timeout: Duration,
-        gc_state: TxnSafePointRefresher,
+        visibility: StoreVisibility,
     ) -> Result<Self, OptimisticCoordinatorError> {
         if pd.cluster_id() == 0 {
             return Err(OptimisticCoordinatorError::ZeroClusterId);
@@ -182,7 +171,7 @@ where
             opener,
             pd,
             timeout,
-            gc_state: Arc::new(gc_state),
+            visibility,
             protocol: CommitProtocol::two_phase_only(),
             resource_group_name: None,
         })
@@ -216,13 +205,6 @@ where
     pub fn with_resource_group_name(mut self, name: impl Into<Arc<str>>) -> Self {
         self.resource_group_name = Some(name.into());
         self
-    }
-
-    /// The shared txn safe point every transaction from this opener reads
-    /// against.
-    #[must_use]
-    pub fn gc_state_cache(&self) -> Arc<GcStateCache> {
-        self.gc_state.cache()
     }
 
     /// Stable shared process authority identity.
@@ -353,7 +335,7 @@ where
             u64::MAX,
             Instant::now(),
             true,
-            self.gc_state.cache(),
+            Arc::clone(&self.visibility),
         )?;
         snapshot.set_snapshot_read_options(options);
         if let Some(name) = self.resource_group_name.as_deref() {
@@ -392,7 +374,7 @@ where
             u64::MAX,
             Instant::now(),
             true,
-            self.gc_state.cache(),
+            Arc::clone(&self.visibility),
         )?;
         snapshot.set_snapshot_read_options(options);
         if let Some(name) = self.resource_group_name.as_deref() {
@@ -455,7 +437,7 @@ where
             start_ts,
             opened_at,
             read_only,
-            self.gc_state.cache(),
+            Arc::clone(&self.visibility),
         )?;
         transaction.set_commit_protocol(self.protocol);
         if let Some(resource_group_name) = self.resource_group_name.as_deref() {

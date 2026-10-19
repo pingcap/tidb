@@ -41,46 +41,24 @@ use tidb_txnkv::pd_capability::PdCapability;
 /// gives up on it.
 const GC_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// A started GC worker and the runtime its TiKV and PD calls run on. Dropping
-/// it stops the worker (Go `GCWorker.Close`).
+/// A started GC worker. Dropping it stops the worker (Go `GCWorker.Close`).
 pub(crate) struct NodeGcWorker {
-    // Field order is drop order: the worker thread joins before the runtime
-    // its calls block on goes away.
     _handle: GcWorkerHandle,
-    _runtime: Arc<tokio::runtime::Runtime>,
 }
 
-/// Go `gcworker.NewGCWorker(store, pdClient)` and `Start` for this node.
+/// Go `gcworker.NewGCWorker(store, pdClient)` and `Start` for this node, over
+/// the node's one store.
 pub(crate) fn start_gc_worker(
     factory: &Arc<ClusterSessionFactory>,
-    pd_endpoints: &[String],
-    security: &tidb_pd_client::ClusterSecurity,
+    store: &tidb_txnkv::driver::tikv_store::TikvStore,
     opener: Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
 ) -> Result<NodeGcWorker, String> {
-    let runtime = Arc::new(
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("gc-worker-rpc")
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())?,
-    );
-    let mut config = tikv_client::Config::default();
-    if security.is_tls_enabled() {
-        config = config.with_security(
-            security.ca_path(),
-            security.cert_path(),
-            security.key_path(),
-        );
-    }
-    let store = runtime
-        .block_on(tikv_client::tikv::KvStore::new_with_config(
-            pd_endpoints.to_vec(),
-            config,
-        ))
-        .map_err(|error| error.to_string())?;
     // The node serves the null keyspace.
-    let client = Arc::new(TikvStoreClient::new(Arc::clone(&runtime), store, None));
+    let client = Arc::new(TikvStoreClient::new(
+        Arc::clone(store.runtime()),
+        store.store().clone(),
+        None,
+    ));
     let http_endpoint = opener.pd().http_endpoint();
     let worker = GcWorker::new(GcWorkerDeps {
         store: client.clone(),
@@ -103,7 +81,6 @@ pub(crate) fn start_gc_worker(
     .map_err(|error| error.to_string())?;
     Ok(NodeGcWorker {
         _handle: worker.start(),
-        _runtime: runtime,
     })
 }
 

@@ -25,21 +25,22 @@
 //!
 //! The proof does not advance the cluster's real safe point — advancing it is
 //! the GC owner's act, and doing it here could destroy data another test is
-//! reading. It instead reads PD's real GC state, seeds a cache with a safe
-//! point above a fabricated `start_ts`, and requires the *same* classification
+//! reading. It instead reads PD's real GC state and asks the node's store
+//! about a `start_ts` just below it, which takes the *same* classification
 //! path a real overtaken read would take.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tidb_pd_client::PdClient;
-use tidb_txnkv::{GcStateCache, StorageDriverError, VisibilityError};
+use tidb_txnkv::driver::tikv_store::TikvStore;
+use tidb_txnkv::{StorageDriverError, VisibilityError};
 
 #[test]
 #[ignore = "requires a running playground with GC_SAFE_POINT_PD_ADDR set"]
 fn a_start_ts_below_the_clusters_txn_safe_point_is_classified_not_hung() {
     let pd_address = std::env::var("GC_SAFE_POINT_PD_ADDR")
         .expect("runner must provide GC_SAFE_POINT_PD_ADDR");
-    let pd = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
+    let pd = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start the sole real PD authority");
     assert_ne!(pd.cluster_id(), 0);
 
@@ -54,10 +55,12 @@ fn a_start_ts_below_the_clusters_txn_safe_point_is_classified_not_hung() {
 
     // A safe point the cluster has genuinely reached still admits any newer
     // timestamp, so an ordinary read is unaffected by the check being present.
-    let cache = GcStateCache::seeded(live.txn_safe_point, Instant::now());
+    // The node's store loads and keeps the live txn safe point.
+    let store = TikvStore::connect(vec![pd_address], tikv_client::Config::default())
+        .expect("the node's store loads the txn safe point");
     let now_ts = pd.get_timestamp().expect("allocate a real timestamp");
     assert!(
-        cache.check_visibility(now_ts).is_ok(),
+        store.check_visibility(now_ts).is_ok(),
         "a fresh timestamp must be above the live txn safe point {}",
         live.txn_safe_point
     );
@@ -65,7 +68,7 @@ fn a_start_ts_below_the_clusters_txn_safe_point_is_classified_not_hung() {
     // A timestamp older than the safe point is the failure this unit exists
     // for: terminal, named, and never a hang.
     let overtaken = live.txn_safe_point.saturating_sub(1);
-    let error = cache
+    let error = store
         .check_visibility(overtaken)
         .expect_err("a start_ts below the live txn safe point is unreadable");
     assert_eq!(

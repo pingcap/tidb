@@ -39,11 +39,23 @@ pub fn new(
 ) -> Result<(RpcClient, PdClient, Arc<Cluster>), String> {
     let rm = Arc::new(InProcessRegionManager::new_mock_region_manager());
     let tso = Arc::new(Tso::new());
-    let mock_pd = Arc::new(MockPd::new(Arc::clone(&rm), Arc::clone(&tso)));
     let handler = Arc::new(Mutex::new(KvHandler::new(
-        MvccStore::with_pd(tso),
+        MvccStore::with_pd(Arc::clone(&tso)),
         Arc::clone(&rm),
     )));
+    over(handler, rm, tso, current_keyspace_id, cluster_keyspaces)
+}
+
+/// [`new`] over a store that already exists: its handler, the region manager
+/// the handler checks requests against, and the oracle its PD draws from.
+pub fn over(
+    handler: Arc<Mutex<KvHandler>>,
+    rm: Arc<InProcessRegionManager>,
+    tso: Arc<Tso>,
+    current_keyspace_id: u32,
+    cluster_keyspaces: Vec<KeyspaceMeta>,
+) -> Result<(RpcClient, PdClient, Arc<Cluster>), String> {
+    let mock_pd = Arc::new(MockPd::new(Arc::clone(&rm), tso));
     let cluster = Arc::new(Cluster::new(rm));
     let client = RpcClient::new(handler, Arc::clone(&cluster));
     let pd_client = PdClient::new(

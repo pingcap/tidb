@@ -191,7 +191,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let pd_address = std::env::var("OPTIMISTIC_2PC_PD_ADDR")
         .expect("runner must provide OPTIMISTIC_2PC_PD_ADDR");
     let phase_dir = phase_dir();
-    let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
+    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start sole real PD authority");
     let cluster_id = pd_owner.cluster_id();
     assert_ne!(cluster_id, 0);
@@ -209,6 +209,12 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         shared_read_opener.clone(),
         pd_owner.clone(),
         RPC_TIMEOUT,
+        tidb_txnkv::driver::tikv_store::TikvStore::connect(
+            vec![pd_address.clone()],
+            tikv_client::Config::default(),
+        )
+        .expect("the node's store")
+        .visibility(),
     )
     .expect("derive transaction opener without starting another authority");
     assert_eq!(opener.authority_id(), shared_read_opener.authority_id());

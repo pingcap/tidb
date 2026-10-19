@@ -76,8 +76,15 @@ impl InProcessClient {
     /// A client over an existing handler — the store a test seeded.
     #[must_use]
     pub fn over(handler: KvHandler) -> Self {
+        Self::over_shared(Arc::new(Mutex::new(handler)))
+    }
+
+    /// A client over a handler other clients share: Go's `RPCClient` and the
+    /// node's client-go store reach the one unistore server.
+    #[must_use]
+    pub fn over_shared(handler: Arc<Mutex<KvHandler>>) -> Self {
         Self {
-            handler: Arc::new(Mutex::new(handler)),
+            handler,
             request_ids: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -581,7 +588,6 @@ mod tests {
     /// identical client-go committer, only the RPC hop is elided.
     #[test]
     fn the_generic_opener_commits_through_the_in_process_store() {
-        use tidb_txnkv::gc_state::TxnSafePointRefresher;
         use tidb_txnkv::region::RegionCache;
         use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
 
@@ -590,13 +596,12 @@ mod tests {
         let authority =
             tidb_txnkv::SharedReadAuthority::start_with_lock_resolver(client.clone(), cache)
                 .expect("the read authority starts over the in-process plane");
-        let gc_state = TxnSafePointRefresher::start_with_source(|| Ok(0))
-            .expect("the static-zero safe point seeds");
+        // The embedded store never garbage-collects: every start ts is visible.
         let opener = tidb_txnkv::transaction::RealOptimisticTransactionOpener::from_capabilities(
             authority.opener(),
             crate::tso::InProcessPd::new(),
             Duration::from_secs(1),
-            gc_state,
+            Arc::new(|_| Ok(())),
         )
         .expect("the opener derives from in-process capabilities");
 

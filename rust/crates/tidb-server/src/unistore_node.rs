@@ -29,7 +29,7 @@ use std::time::Duration;
 use tidb_distsql::cop_paging::DirectUnaryRuntimeConfig;
 use tidb_distsql::DirectUnaryQueryTransport;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
-use tidb_txnkv::gc_state::TxnSafePointRefresher;
+use tidb_txnkv::driver::tikv_store::{store_runtime, TikvStore};
 use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::region::RegionCache;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
@@ -123,6 +123,35 @@ mod transaction_buffer_tests {
     use tidb_exec::cluster_table_storage::SessionTransaction;
     use tidb_executor::cluster_storage::MutationBuffer;
     use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
+
+    /// Go `mockstore`'s `tikv.NewKVStore` over unistore: the embedded node's
+    /// store loads its txn safe point from the mock PD (nothing GCed yet, so
+    /// every start ts reads) and answers `CheckVisibility` from client-rust's
+    /// cache, so a read below a safe point is Go's GC abort, not a pass.
+    #[test]
+    fn the_embedded_store_checks_visibility_against_its_txn_safe_point() {
+        let pd = InProcessPd::new();
+        let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
+        let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(
+            MvccStore::with_pd(pd.oracle()),
+            Arc::clone(&regions),
+        )));
+        let store = embedded_tikv_store(handler, regions, &pd).unwrap();
+        let visibility = store.visibility();
+        assert_eq!(visibility(1), Ok(()));
+
+        store
+            .store()
+            .update_txn_safe_point_cache(500, std::time::SystemTime::now());
+        assert_eq!(visibility(500), Ok(()));
+        assert_eq!(
+            visibility(499),
+            Err(tidb_txnkv::VisibilityError::TxnAbortedByGc {
+                txn_start_ts: 499,
+                txn_safe_point: 500,
+            })
+        );
+    }
 
     #[test]
     fn lightweight_pessimistic_statement_retries_obey_config() {
@@ -330,16 +359,14 @@ pub(crate) fn in_process_write_stack_with_regions() -> Result<
     // (`mock_region.go`), so its async-commit/1PC `minCommitTS` draws from
     // the same oracle start timestamps do. The embedded store mirrors that:
     // one shared oracle, both faster protocols available.
-    let client = InProcessClient::over(KvHandler::new(
+    let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(
         MvccStore::with_pd(pd.oracle()),
         Arc::clone(&regions),
-    ));
+    )));
+    let client = InProcessClient::over_shared(Arc::clone(&handler));
+    let tikv_store = embedded_tikv_store(handler, Arc::clone(&regions), &pd)?;
     let cache = RegionCache::new(InProcessRegionLoader::new(Arc::clone(&regions)));
     let read_authority = SharedReadAuthority::start_with_lock_resolver(client, cache)
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    // The embedded store never garbage-collects, so the read floor is a
-    // static zero -- Go's unistore behavior for a store with no PD to ask.
-    let gc_state = TxnSafePointRefresher::start_with_source(|| Ok(0))
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     // The bootstrapped cluster protocol -- async commit and 1PC are both ON
     // on TiKV (`session_commit_protocol`) -- and the shared-oracle store can
@@ -348,11 +375,39 @@ pub(crate) fn in_process_write_stack_with_regions() -> Result<
         read_authority.opener(),
         pd.clone(),
         IN_PROCESS_TIMEOUT,
-        gc_state,
+        tikv_store.visibility(),
     )
     .map_err(|error| SqlQueryError::unknown(error.to_string()))?
     .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
     Ok((read_authority, pd, transaction_opener, regions))
+}
+
+/// Go `mockstore.NewMockStore`'s `tikv.NewKVStore` over unistore: the node's
+/// client-rust store reaches the same handler, regions and oracle through
+/// unistore's RPC and PD clients, and loads its txn safe point from the mock
+/// PD's GC states like a real cluster's.
+fn embedded_tikv_store(
+    handler: Arc<std::sync::Mutex<KvHandler>>,
+    regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
+    pd: &InProcessPd,
+) -> Result<TikvStore<tidb_unistore::pd::PdClient>, SqlQueryError> {
+    let (_rpc, pd_client, _cluster) = tidb_unistore::mock::over(
+        handler,
+        regions,
+        pd.oracle(),
+        tidb_unistore::mock_pd::NULL_KEYSPACE_ID,
+        Vec::new(),
+    )
+    .map_err(SqlQueryError::unknown)?;
+    let runtime = store_runtime().map_err(SqlQueryError::unknown)?;
+    let store = runtime
+        .block_on(tikv_client::tikv::KvStore::new_with_pd_client(
+            Arc::new(pd_client),
+            Arc::new(tikv_client::tikv::MockSafePointKv::new()),
+            tikv_client::Config::default(),
+        ))
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    Ok(TikvStore::new(runtime, store))
 }
 
 /// Runs the wide cluster-session surface over the embedded store.
