@@ -602,6 +602,13 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.lock_staged_keys_with_assertions(keys, Default::default(), Default::default(), wait)
     }
 
+    fn fresh_statement_snapshot(&self, _locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
+        if !self.pessimistic {
+            return Err("only a pessimistic transaction reads at a statement timestamp".to_owned());
+        }
+        self.snapshot_at(self.cluster.timestamp())
+    }
+
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.cluster.live.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSnapshot {

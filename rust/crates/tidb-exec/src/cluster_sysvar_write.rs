@@ -53,6 +53,8 @@ pub enum SysvarWriteError {
     Read(SystemTableError),
     /// A row could not be encoded.
     Encode(RowEncodeError),
+    /// The row-ID allocator could not reserve ids.
+    Reserve(String),
 }
 
 impl std::fmt::Display for SysvarWriteError {
@@ -63,6 +65,7 @@ impl std::fmt::Display for SysvarWriteError {
             }
             Self::Read(error) => write!(formatter, "reading the stored sysvars failed: {error}"),
             Self::Encode(error) => write!(formatter, "encoding a sysvar row failed: {error}"),
+            Self::Reserve(error) => write!(formatter, "reserving sysvar row ids failed: {error}"),
         }
     }
 }
@@ -108,11 +111,19 @@ impl SysvarWritePlan {
 /// mutations must commit on that snapshot's transaction: a concurrent
 /// `SET GLOBAL` of the same variable is then a write conflict at prewrite,
 /// never a silent overwrite.
+///
+/// New rows take `_tidb_rowid`s from `reserve_ids(database id, table,
+/// minimum, count)`, which must commit the reservation in its OWN
+/// transaction and answer the first id: Go's internal INSERT allocates
+/// through the autoid allocator (`RunInNewTxn`), so a rolled-back statement
+/// never returns ids and two nodes setting variables at once never conflict
+/// on the allocator key inside their statements.
 pub fn plan_sysvar_write<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     desired: &BTreeMap<String, String>,
     now: Time,
+    reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, String>,
 ) -> Result<SysvarWritePlan, SysvarWriteError> {
     let mut plan = SysvarWritePlan::default();
     let table = locate(catalog)?;
@@ -133,7 +144,24 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
         by_name.insert(name, StoredRow { key, values });
     }
 
-    let mut next_row_id: Option<i64> = None;
+    let missing = desired
+        .keys()
+        .filter(|name| !by_name.contains_key(&name.to_ascii_lowercase()))
+        .count();
+    let mut next_row_id = if missing == 0 {
+        0
+    } else {
+        // Rows that predate a persisted allocator watermark stay below it.
+        let highest = by_name
+            .values()
+            .map(|row| row_id_of(&row.key))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .max()
+            .unwrap_or(0);
+        reserve_ids(system_db_id(catalog)?, table, highest, missing)
+            .map_err(SysvarWriteError::Reserve)?
+    };
     for (name, value) in desired {
         let key = name.to_ascii_lowercase();
         match by_name.remove(&key) {
@@ -147,11 +175,8 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
                 }
             }
             None => {
-                let row_id = match next_row_id {
-                    Some(next) => next,
-                    None => first_free_row_id(snapshot, catalog, table)?,
-                };
-                next_row_id = Some(row_id + 1);
+                let row_id = next_row_id;
+                next_row_id += 1;
                 let mut fresh = defaults_row(table, now)?;
                 fresh.insert(name_id, Datum::Bytes(key.clone().into_bytes()));
                 fresh.insert(value_id, Datum::Bytes(value.clone().into_bytes()));
@@ -166,9 +191,6 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
         plan.mutations
             .extend(delete_row(table, &row.key, &row.values)?);
         plan.changed.push(name);
-    }
-    if let Some(next) = next_row_id {
-        publish_row_id_watermark(catalog, table, next - 1, &mut plan.mutations)?;
     }
     Ok(plan)
 }
@@ -230,54 +252,6 @@ fn column_id(table: &TableInfo, column: &str) -> Result<i64, SysvarWriteError> {
         .find_public_column_by_name(column)
         .map(|stored| stored.read().id)
         .ok_or(SysvarWriteError::MissingTable)
-}
-
-/// Reserves the next `_tidb_rowid` for `mysql.global_variables`, mirroring
-/// [`crate::cluster_account_write`]'s allocator use exactly (same table
-/// shape: `NONCLUSTERED` primary key, so a row needs an explicit handle).
-fn first_free_row_id<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    table: &TableInfo,
-) -> Result<i64, SysvarWriteError> {
-    let stored = snapshot
-        .get(&key::auto_table_id_kv_key(system_db_id(catalog)?, table.id))
-        .map_err(|error| SysvarWriteError::Read(SystemTableError::Snapshot(error.to_string())))?;
-    let current = match stored {
-        Some(bytes) => value::parse_int_value(&bytes).map_err(|error| {
-            SysvarWriteError::Encode(RowEncodeError(format!(
-                "mysql.global_variables's row-ID allocator: {error}"
-            )))
-        })?,
-        None => 0,
-    };
-    let highest = {
-        let view = full_view(table);
-        scan_system_table(snapshot, &view)?
-            .into_iter()
-            .map(|(key, _)| row_id_of(&key))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .max()
-            .unwrap_or(0)
-    };
-    Ok(current.max(highest) + 1)
-}
-
-fn publish_row_id_watermark(
-    catalog: &ClusterCatalog,
-    table: &TableInfo,
-    last_used: i64,
-    mutations: &mut Vec<BufferMutation>,
-) -> Result<(), SysvarWriteError> {
-    mutations.push(
-        BufferMutation::set(
-            key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
-            value::encode_int_value(last_used),
-        )
-        .map_err(|error| SysvarWriteError::Encode(RowEncodeError(error.to_string())))?,
-    );
-    Ok(())
 }
 
 /// The meta-key mutation Go's `SwitchMDL` writes for

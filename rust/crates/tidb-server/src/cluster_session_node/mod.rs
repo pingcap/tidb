@@ -1392,6 +1392,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
+            auto_ids: Some(Arc::clone(&self.auto_ids)),
         });
         let _ = self
             .historical_stats_runtime
@@ -1413,6 +1414,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
+            auto_ids: Some(Arc::clone(&self.auto_ids)),
         }
         .dump_historical_stats_by_snapshot(database_name, table, snapshot_ts)
     }
@@ -1424,6 +1426,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
+            auto_ids: Some(Arc::clone(&self.auto_ids)),
         }
         .clear_outdated_history_stats()
     }
@@ -1435,6 +1438,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
+            auto_ids: Some(Arc::clone(&self.auto_ids)),
         }
         .commit_stats_plan(|snapshot, _| {
             tidb_exec::cluster_stats_write::plan_delete_analyze_jobs(
@@ -1477,6 +1481,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
+            auto_ids: Some(Arc::clone(&self.auto_ids)),
         }
         .commit_stats_plan(|snapshot, _| {
             tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
@@ -1514,6 +1519,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
+            auto_ids: Some(Arc::clone(&self.auto_ids)),
         }
         .commit_stats_plan(|snapshot, _| {
             tidb_exec::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
@@ -1533,6 +1539,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
+            auto_ids: Some(Arc::clone(&self.auto_ids)),
         }
         .gc_stats(stats_lease, ddl_lease);
         self.check_auto_analyze_windows_at(Utc::now());
@@ -1697,6 +1704,7 @@ impl ClusterSessionFactory {
 
     /// Go `statsUsageImpl.DumpColStatsUsageToKV`.
     pub fn dump_col_stats_usage_to_kv(&self, resource_group: &str) -> Result<(), String> {
+        let row_ids = Arc::clone(&self.auto_ids);
         let mut pending = self
             .stats_usage
             .session_stats_list()
@@ -1712,7 +1720,8 @@ impl ClusterSessionFactory {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let plan = {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let mut snapshot =
+                    SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                 tidb_exec::cluster_stats_write::plan_column_stats_usage_dump(
                     &mut snapshot,
                     &self.catalog.load(),
@@ -1749,6 +1758,7 @@ impl ClusterSessionFactory {
             force_dump,
             target_table_ids,
             resource_group,
+            &self.auto_ids,
         )
     }
 
@@ -1762,6 +1772,7 @@ impl ClusterSessionFactory {
         force_dump: bool,
         target_table_ids: &[i64],
         resource_group: &str,
+        row_ids: &Arc<dyn TableAutoIds>,
     ) -> Result<(), String> {
         let mut pending = stats_usage.session_stats_list().begin_table_delta_dump();
         let table_ids = pending.pending_table_ids(target_table_ids);
@@ -1865,7 +1876,8 @@ impl ClusterSessionFactory {
                                 )
                             },
                             |snapshot, _start_ts| {
-                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot)
+                                    .with_row_ids(Arc::clone(&row_ids));
                                 let plan =
                                     tidb_exec::cluster_stats_write::plan_stats_delta_statement(
                                         &mut snapshot,
@@ -1968,7 +1980,7 @@ impl ClusterSessionFactory {
                                     )
                                 },
                                 |snapshot, _start_ts| {
-                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                                     let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
                                 &mut snapshot,
                                 &catalog,
@@ -2557,6 +2569,9 @@ struct ClusterHistoricalStatsHandle {
     transactions: Arc<dyn ClusterTransactions>,
     catalog: Arc<SharedClusterCatalog>,
     global_vars: GlobalSysvars,
+    /// The node's live row-ID allocators for new rows; `None` reserves
+    /// inside each plan instead.
+    auto_ids: Option<Arc<dyn TableAutoIds>>,
 }
 
 #[derive(Clone, Copy)]
@@ -2575,7 +2590,11 @@ impl ClusterHistoricalStatsHandle {
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;
         let read_ts = snapshot.start_ts();
-        let plan = build(&mut SnapshotMetaSnapshot::new(snapshot), read_ts)?;
+        let mut meta = SnapshotMetaSnapshot::new(snapshot);
+        if let Some(ids) = &self.auto_ids {
+            meta = meta.with_row_ids(Arc::clone(ids));
+        }
+        let plan = build(&mut meta, read_ts)?;
         self.transactions
             .commit_optimistic_mutations(
                 plan.mutations,
@@ -3050,6 +3069,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         physical_id: i64,
         is_partition: bool,
     ) -> Result<u64, String> {
+        let row_ids = self.auto_ids.clone();
         let catalog = self.catalog.load();
         let table_info = catalog
             .databases
@@ -3104,6 +3124,9 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                     },
                     |snapshot, _start_ts| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        if let Some(ids) = &row_ids {
+                            snapshot = snapshot.with_row_ids(Arc::clone(ids));
+                        }
                         let plan =
                             tidb_exec::cluster_stats_write::plan_historical_stats_data_block(
                                 &mut snapshot,
@@ -5363,6 +5386,7 @@ impl ClusterServerSession {
                 resource_group,
                 notify_executor_breakpoint,
                 retried > 0,
+                is_dml,
                 &mut run,
             ) {
                 Ok(value) => break Ok(value),
@@ -5457,6 +5481,7 @@ impl ClusterServerSession {
         resource_group: &str,
         notify_executor_breakpoint: bool,
         retrying: bool,
+        is_dml: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         let autocommit = self.explicit.is_none() && self.session.historical_read_ts().is_none();
@@ -5476,6 +5501,7 @@ impl ClusterServerSession {
             prelock_keys,
             resource_group,
             retrying,
+            is_dml,
             run,
             &read_ts,
         );
@@ -5503,6 +5529,7 @@ impl ClusterServerSession {
         prelock_keys: &[Vec<u8>],
         resource_group: &str,
         retrying: bool,
+        is_dml: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
@@ -5642,6 +5669,7 @@ impl ClusterServerSession {
                         retry_read_ts,
                         read_ts,
                         resource_group,
+                        is_dml,
                     ) {
                         Ok(snapshot) => snapshot,
                         Err(error) => break Err(error),
@@ -6972,6 +7000,7 @@ impl ClusterServerSession {
         retired_ids: &[i64],
         adjust_global: bool,
     ) -> Result<(), SqlQueryError> {
+        let row_ids = Arc::clone(&self.auto_ids);
         let transaction = self.notifier_transaction()?;
         let catalog = self.catalog.load();
         let version = transaction.start_ts();
@@ -6988,7 +7017,8 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let mut snapshot =
+                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                         let plan =
                             tidb_exec::cluster_stats_write::plan_insert_table_stats_statement(
                                 &mut snapshot,
@@ -7060,7 +7090,8 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let mut snapshot =
+                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                         let plan = tidb_exec::cluster_stats_write::plan_stats_delta_statement(
                             &mut snapshot,
                             &catalog,
@@ -7083,6 +7114,7 @@ impl ClusterServerSession {
         ids: &[i64],
         best_effort: bool,
     ) -> Result<(), SqlQueryError> {
+        let row_ids = Arc::clone(&self.auto_ids);
         let transaction = self.notifier_transaction()?;
         let catalog = self.catalog.load();
         let version = transaction.start_ts();
@@ -7092,7 +7124,8 @@ impl ClusterServerSession {
                 &self.buffer,
                 self.session.lock_wait_timeout(),
                 |snapshot, _| {
-                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                    let mut snapshot =
+                        SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                     let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
                         &mut snapshot,
                         &catalog,
@@ -7138,6 +7171,7 @@ impl ClusterServerSession {
         partition_id: i64,
         standalone_table_id: i64,
     ) -> Result<(), SqlQueryError> {
+        let row_ids = Arc::clone(&self.auto_ids);
         let transaction = self.notifier_transaction()?;
         let catalog = self.catalog.load();
         let snapshot = transaction
@@ -7178,7 +7212,8 @@ impl ClusterServerSession {
             &self.buffer,
             self.session.lock_wait_timeout(),
             |snapshot, _| {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let mut snapshot =
+                    SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                 let plan = tidb_exec::cluster_stats_write::plan_exchange_partition_stats_update(
                     &mut snapshot,
                     &catalog,
@@ -7201,6 +7236,7 @@ impl ClusterServerSession {
         table: &tidb_model::table_info::TableInfo,
         columns: &[tidb_model::ColumnInfo],
     ) -> Result<(), SqlQueryError> {
+        let row_ids = Arc::clone(&self.auto_ids);
         let transaction = self.notifier_transaction()?;
         let catalog = self.catalog.load();
         let version = transaction.start_ts();
@@ -7241,7 +7277,8 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let mut snapshot =
+                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                         let (inserted, plan) =
                             tidb_exec::cluster_stats_write::plan_insert_column_stats(
                                 &mut snapshot,
@@ -7266,7 +7303,7 @@ impl ClusterServerSession {
                             transaction,
                             &self.buffer, self.session.lock_wait_timeout(),
                             |snapshot, _| {
-                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                                 let plan = tidb_exec::cluster_stats_write::plan_insert_column_default_bucket(
                                     &mut snapshot,
                                     &catalog,
@@ -7290,7 +7327,8 @@ impl ClusterServerSession {
                     &self.buffer,
                     self.session.lock_wait_timeout(),
                     |snapshot, _| {
-                        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                        let mut snapshot =
+                            SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                         let plan = tidb_exec::cluster_stats_write::plan_stats_meta_version_refresh(
                             &mut snapshot,
                             &catalog,
@@ -7378,6 +7416,7 @@ impl ClusterServerSession {
         physical_id: i64,
         version: u64,
     ) -> Result<(), String> {
+        let row_ids = Arc::clone(&self.auto_ids);
         let enabled = self
             .global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
@@ -7415,7 +7454,8 @@ impl ClusterServerSession {
             staged,
             self.session.lock_wait_timeout(),
             |snapshot, _| {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+                let mut snapshot =
+                    SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&row_ids));
                 let plan = tidb_exec::cluster_stats_write::plan_historical_stats_meta_replace(
                     &mut snapshot,
                     catalog,

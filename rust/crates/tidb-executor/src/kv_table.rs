@@ -43,6 +43,8 @@ mod cache;
 mod column_deps;
 mod index_entries;
 mod index_states;
+mod partition_reorg;
+pub use partition_reorg::{PartitionDoubleWrite, PartitionIndexMode};
 mod partition_maintenance;
 pub use partition_maintenance::{PartitionReorg, RecreatedIndex};
 mod row_decoder;
@@ -520,6 +522,8 @@ pub struct KvTable {
     indexes: std::sync::Arc<Vec<KvIndex>>,
     /// Indexes a DDL is still adding or dropping; written by state only.
     nonpublic_indexes: std::sync::Arc<Vec<NonPublicIndex>>,
+    /// An ongoing partition reorganization, whose writes are mirrored.
+    partition_reorg: Option<Box<PartitionDoubleWrite>>,
     /// Go `TableInfo.MaxIndexID`, retained independently of surviving indexes.
     max_index_id: i64,
     /// Compiled `WHERE` predicates for partial indexes, keyed by the Go
@@ -1387,6 +1391,7 @@ impl KvTable {
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
             nonpublic_indexes: std::sync::Arc::new(Vec::new()),
+            partition_reorg: None,
             max_index_id: 0,
             partial_index_conditions: std::collections::BTreeMap::new(),
             common_handle_offsets: Vec::new(),
@@ -1738,20 +1743,7 @@ impl KvTable {
         };
         partition
             .locate(row, &self.columns, ctx)
-            .map_err(|error| match error {
-                crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
-                    KvTableError::NoPartitionForValue(value)
-                }
-                crate::partition_routing::RoutingError::ValueOverflowsBigint(value) => {
-                    KvTableError::PartitionValueOverflowsBigint(value)
-                }
-                crate::partition_routing::RoutingError::Eval(error) => {
-                    KvTableError::PartitionEval(error)
-                }
-                crate::partition_routing::RoutingError::Conversion(error) => {
-                    KvTableError::Decode(error)
-                }
-            })
+            .map_err(routing_error)
     }
 
     /// Encodes the selected row's lock identity without rereading storage.
@@ -4581,6 +4573,16 @@ impl KvTable {
                 set_presume && pessimistic && check_in_prewrite,
             )
             .map_err(KvTableError::from)?;
+        self.double_write_insert(
+            physical_id,
+            row,
+            &handle,
+            &zone,
+            lazy_dup_check,
+            pessimistic,
+            check_in_prewrite,
+            ctx,
+        )?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_table_delta(physical_id, 1, 1);
         }
@@ -4817,6 +4819,45 @@ impl KvTable {
             };
             new_handle = self.handle_of_row(row, &zone, shard)?;
         }
+        // Go `partitionedTableUpdateRecord`'s reorganization half is decided
+        // before the row's own write: a heap row whose reorganized copy
+        // diverged moves to a fresh handle in both partitions.
+        let old_physical_for_reorg = old_key.as_ref().map_or(self.table_id, |key| {
+            tidb_codec::decode_table_id(key.as_bytes())
+        });
+        let reorg_plan = if self.partition_reorg.is_some() {
+            let owned_old;
+            let old_for_reorg = match old_row {
+                Some(old) => Some(old),
+                None => {
+                    owned_old = self.read_row(handle, &RowDecodeContext::for_write(ctx))?;
+                    owned_old.as_deref()
+                }
+            };
+            match old_for_reorg {
+                Some(old) => {
+                    let old: Vec<Datum> = old.to_vec();
+                    self.plan_reorg_update(
+                        old_physical_for_reorg,
+                        new_physical_id,
+                        handle,
+                        &new_handle,
+                        &old,
+                        row,
+                        ctx,
+                    )?
+                    .map(|plan| (plan, old.clone()))
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        if let Some(moved) =
+            self.reorg_moved_handle(reorg_plan.as_ref().map(|(plan, _)| plan), handle)
+        {
+            new_handle = moved.clone();
+        }
         let destination_key = Key::from_bytes(encode_row_key_with_handle(
             new_physical_id,
             &new_handle.record_handle(),
@@ -4962,6 +5003,18 @@ impl KvTable {
                 set_presume && pessimistic && check_in_prewrite,
             )
             .map_err(KvTableError::from)?;
+        if let Some((plan, old)) = reorg_plan {
+            self.apply_reorg_update(
+                plan,
+                handle,
+                &old,
+                row,
+                lazy_dup_check,
+                pessimistic,
+                check_in_prewrite,
+                ctx,
+            )?;
+        }
         if old_physical_id == new_physical_id {
             ctx.update_table_delta(old_physical_id, 0, 1);
         } else {
@@ -4989,15 +5042,23 @@ impl KvTable {
             return Ok(());
         };
         let physical_id = tidb_codec::decode_table_id(key.as_bytes());
-        if !self.indexes.is_empty() || !self.nonpublic_indexes.is_empty() {
+        let mut removed_row = None;
+        if !self.indexes.is_empty()
+            || !self.nonpublic_indexes.is_empty()
+            || self.partition_reorg.is_some()
+        {
             if let Some(row) = self.read_row(handle, &RowDecodeContext::for_write(ctx))? {
                 self.delete_index_entries(&row, handle, physical_id, &ctx.session_zone())?;
+                removed_row = Some(row);
             }
         }
         ctx.staged_writes().note(self.table_id, key.as_bytes());
         self.store
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(KvTableError::from)?;
+        if let Some(row) = removed_row {
+            self.double_write_remove(physical_id, &row, handle, ctx)?;
+        }
         ctx.update_table_delta(physical_id, -1, 1);
         Ok(())
     }
@@ -5033,6 +5094,7 @@ impl KvTable {
         self.store
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(KvTableError::from)?;
+        self.double_write_remove(physical_id, old_row, handle, ctx)?;
         ctx.update_table_delta(physical_id, -1, 1);
         Ok(())
     }
@@ -5098,6 +5160,20 @@ fn fmt_non_ascii_printable_char_to_hex(bytes: &[u8]) -> String {
 /// as Go's `ErrKeyExists` formats them. Every part goes through the one
 /// [`datum_text`] renderer, so a composite key can never disagree with a
 /// single-column one about how a value prints.
+/// A partition route's failure as the write's error.
+fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError {
+    match error {
+        crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
+            KvTableError::NoPartitionForValue(value)
+        }
+        crate::partition_routing::RoutingError::ValueOverflowsBigint(value) => {
+            KvTableError::PartitionValueOverflowsBigint(value)
+        }
+        crate::partition_routing::RoutingError::Eval(error) => KvTableError::PartitionEval(error),
+        crate::partition_routing::RoutingError::Conversion(error) => KvTableError::Decode(error),
+    }
+}
+
 fn clustered_key_text(table: &KvTable, row: &[Datum]) -> String {
     // Go reports the values the handle holds, so a prefix key column shows
     // only its leading part (`TruncateIndexValues`).

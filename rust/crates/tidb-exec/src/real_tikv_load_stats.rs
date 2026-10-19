@@ -109,6 +109,7 @@ pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
     historical_stats_enabled: bool,
     item_history_initialized: impl Fn(i64) -> bool + Sync,
     concurrency_for_partition: usize,
+    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<ClusterLoadStatsReport, ClusterLoadStatsCommitError> {
     // One catalog for the whole statement, as Go plans every item against the
     // session's infoschema: the items only locate the `mysql.stats_*` tables,
@@ -129,6 +130,7 @@ pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
             timeout,
             historical_stats_enabled,
             &item_history_initialized,
+            row_ids,
         )
     };
     let item_count = if resolved.concurrent {
@@ -169,17 +171,18 @@ fn commit_loaded_table<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapab
     timeout: Duration,
     historical_stats_enabled: bool,
     item_history_initialized: &(impl Fn(i64) -> bool + Sync),
+    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<usize, ClusterLoadStatsCommitError> {
     let mut item_count = 0;
     for item in table.columns.iter().chain(&table.indexes) {
-        let version = commit_item(opener, catalog, table, item, timeout)?;
+        let version = commit_item(opener, catalog, table, item, timeout, row_ids)?;
         item_count += 1;
         if historical_stats_enabled && item_history_initialized(table.physical_id) {
             record_history(opener, table.physical_id, version, timeout);
         }
     }
-    commit_usage(opener, catalog, table, timeout)?;
-    let version = commit_final_meta(opener, catalog, table, timeout)?;
+    commit_usage(opener, catalog, table, timeout, row_ids)?;
+    let version = commit_final_meta(opener, catalog, table, timeout, row_ids)?;
     if historical_stats_enabled {
         record_history(opener, table.physical_id, version, timeout);
     }
@@ -298,6 +301,7 @@ fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     table: &LoadedStatsTable,
     item: &ClusterStatsItem,
     timeout: Duration,
+    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
     let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
@@ -309,7 +313,7 @@ fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     let staged = MutationBuffer::new();
     for statement in loaded_stats_item_statements(table.physical_id, item).map_err(other)? {
         lock_pessimistic_statement(&transaction, &staged, |snapshot, start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids_opt(row_ids);
             let plan = plan_loaded_stats_item_statement(
                 &mut snapshot,
                 catalog,
@@ -337,6 +341,7 @@ fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
+    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<(), ClusterLoadStatsCommitError> {
     let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),
@@ -350,7 +355,7 @@ fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
             continue;
         }
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+            let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids_opt(row_ids);
             let plan = plan_loaded_stats_usage_write(
                 &mut snapshot,
                 catalog,
@@ -374,9 +379,10 @@ fn commit_final_meta<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
+    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<u64, ClusterLoadStatsCommitError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
+        let mut snapshot = SnapshotMetaSnapshot::new(snapshot).with_row_ids_opt(row_ids);
         let plan = plan_loaded_stats_meta_write(
             &mut snapshot,
             catalog,

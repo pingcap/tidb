@@ -110,11 +110,22 @@ impl MetaStore {
         let catalog = self.catalog();
         let mut desired: BTreeMap<String, String> = self.sysvars().into_iter().collect();
         mutate(&mut desired);
-        let plan = plan_sysvar_write(self, &catalog, &desired, timestamp())
+        let plan = plan_sysvar_write(self, &catalog, &desired, timestamp(), &mut reserve_after)
             .expect("the sysvar image is writable");
         self.apply(&plan.mutations);
         self.sysvars()
     }
+}
+
+/// An allocator stand-in: ids right after the highest stored one (the
+/// node's real one commits its reservation in a separate transaction).
+fn reserve_after(
+    _db: i64,
+    _table: &tidb_model::TableInfo,
+    minimum: i64,
+    _count: usize,
+) -> Result<i64, String> {
+    Ok(minimum + 1)
 }
 
 fn bootstrapped() -> MetaStore {
@@ -204,8 +215,14 @@ fn a_no_op_write_plans_nothing() {
     let mut store = bootstrapped();
     let catalog = store.catalog();
     let desired: BTreeMap<String, String> = store.sysvars().into_iter().collect();
-    let plan = plan_sysvar_write(&mut store, &catalog, &desired, timestamp())
-        .expect("a matching image plans cleanly");
+    let plan = plan_sysvar_write(
+        &mut store,
+        &catalog,
+        &desired,
+        timestamp(),
+        &mut reserve_after,
+    )
+    .expect("a matching image plans cleanly");
     assert!(
         plan.is_empty(),
         "an image identical to what is already stored should plan no mutations"

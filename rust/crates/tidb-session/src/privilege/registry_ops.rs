@@ -147,6 +147,25 @@ fn wildcard_match(value: &[u8], pattern: &[u8]) -> bool {
 }
 
 impl PrivilegeRegistry {
+    /// One consistent image for a reader that combines tables: a reload
+    /// cannot swap any table while the view lives. Re-entrant per thread
+    /// (a nested reader reuses the outer view), so std's `RwLock`, which may
+    /// deadlock on a recursive read behind a queued writer, is entered once.
+    pub(crate) fn read_view(&self) -> PrivilegeReadView<'_> {
+        let outermost = READ_VIEW_DEPTH.with(|depth| {
+            let current = depth.get();
+            depth.set(current + 1);
+            current == 0
+        });
+        PrivilegeReadView {
+            _guard: outermost.then(|| {
+                self.reload_gate
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            }),
+        }
+    }
+
     pub(super) fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), UserRecord>> {
         self.users
             .lock()
@@ -282,6 +301,7 @@ impl PrivilegeRegistry {
         database: &str,
         mask: u64,
     ) -> bool {
+        let _view = self.read_view();
         if self
             .matching_account(user, host)
             .is_some_and(|account| self.has_global_priv_mask(&account.0, &account.1, mask))
@@ -568,6 +588,12 @@ impl PrivilegeRegistry {
     /// anything the moment this call removes its edges -- the active-role
     /// list is no longer changed, but it stops mattering.
     pub fn replace_from(&self, fresh: &Self) {
+        // Go's reload is one atomic pointer swap; no reader may see some
+        // tables reloaded and others not.
+        let _swap = self
+            .reload_gate
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Publish connection policy before newly admitted user rows.
         *self.global_priv.lock().unwrap() = std::mem::take(&mut *fresh.global_priv.lock().unwrap());
         *self.lock() = std::mem::take(&mut *fresh.lock());
@@ -884,6 +910,7 @@ impl PrivilegeRegistry {
     /// [`AccountLockout`] when the account is auto-locked and its lock window
     /// has not elapsed.
     pub fn verify_account_auto_lock(&self, user: &str, host: &str) -> Result<(), AccountLockout> {
+        let _view = self.read_view();
         let mut guard = self.lock();
         let Some(locking) = guard
             .get_mut(&(user.to_owned(), host.to_owned()))
@@ -956,6 +983,7 @@ impl PrivilegeRegistry {
         host: &str,
         default_password_lifetime: i64,
     ) -> Result<bool, PasswordExpiredLogin> {
+        let _view = self.read_view();
         let Some(expiry) = self.password_expiry(user, host) else {
             return Ok(false);
         };
@@ -1091,6 +1119,7 @@ impl PrivilegeRegistry {
     /// direct-only, but INHERITANCE through an activated role is transitive.
     #[must_use]
     pub fn effective_roles(&self, account: &Account, active: &[Account]) -> Vec<Account> {
+        let _view = self.read_view();
         let edges = self.lock_role_edges();
         let granted = edges.get(account);
         let mut queue: Vec<Account> = active
@@ -1196,6 +1225,7 @@ impl PrivilegeRegistry {
         active_roles: &[Account],
         global_priv: GlobalPriv,
     ) -> bool {
+        let _view = self.read_view();
         self.identities_for_check(user, host, active_roles)
             .into_iter()
             .any(|(role_user, role_host)| self.has_global_priv(&role_user, &role_host, global_priv))
@@ -1310,6 +1340,7 @@ impl PrivilegeRegistry {
         name: &str,
         with_grant: bool,
     ) -> bool {
+        let _view = self.read_view();
         self.identities_for_check(user, host, active_roles)
             .into_iter()
             .any(|(role_user, role_host)| {
@@ -1322,6 +1353,7 @@ impl PrivilegeRegistry {
     /// and dynamic-grant rows each match that host independently.
     #[must_use]
     pub fn has_dynamic_priv_with_default_roles(&self, user: &str, host: &str, name: &str) -> bool {
+        let _view = self.read_view();
         let defaults = self
             .lock_default_roles()
             .iter()
@@ -1505,6 +1537,7 @@ impl PrivilegeRegistry {
         table: &str,
         mask: u64,
     ) -> bool {
+        let _view = self.read_view();
         self.identities_for_check(user, host, active_roles)
             .into_iter()
             .any(|(role_user, role_host)| {
@@ -1543,6 +1576,7 @@ impl PrivilegeRegistry {
         is_tls: bool,
         verified_client: bool,
     ) -> bool {
+        let _view = self.read_view();
         self.admits_account_tls_peer(user, host, is_tls, verified_client, None)
     }
 
@@ -1555,6 +1589,7 @@ impl PrivilegeRegistry {
         verified_client: bool,
         peer: Option<&TlsPeerIdentity>,
     ) -> bool {
+        let _view = self.read_view();
         let rows = self.global_priv.lock().unwrap();
         let Some(row) = rows
             .iter()
@@ -1765,6 +1800,7 @@ impl PrivilegeRegistry {
         active_roles: &[Account],
         database: &str,
     ) -> bool {
+        let _view = self.read_view();
         if tidb_util::sem_compat::is_enabled()
             && tidb_util::sem_compat::is_invisible_schema(database)
             && !self.has_dynamic_priv_with_roles(
@@ -1794,6 +1830,7 @@ impl PrivilegeRegistry {
         table: &str,
         global_priv: GlobalPriv,
     ) -> bool {
+        let _view = self.read_view();
         self.identities_for_check(user, host, active_roles)
             .into_iter()
             .any(|(role_user, role_host)| {
@@ -1914,6 +1951,7 @@ impl PrivilegeRegistry {
         active_roles: &[Account],
         sql_mode: tidb_mysql::SqlMode,
     ) -> Option<String> {
+        let _view = self.read_view();
         if !self.user_exists(user, host) {
             return None;
         }
@@ -2315,10 +2353,60 @@ impl PrivilegeRegistry {
 #[cfg(test)]
 mod tests {
     use super::database_matches;
+    use crate::privilege::{GlobalPriv, PrivilegeRegistry};
 
     #[test]
     fn database_matching_folds_non_ascii_like_go_strings_to_upper() {
         assert!(database_matches("ТЕ%", "тест"));
+    }
+
+    /// Go swaps one immutable privilege image per reload, so a check never
+    /// sees half of one: here access moves between a direct db grant and a
+    /// role's grant on every reload, and a concurrent check must keep
+    /// answering "allowed".
+    #[test]
+    fn a_reload_is_never_seen_half_applied() {
+        let image = |through_role: bool| {
+            let registry = PrivilegeRegistry::default();
+            registry.create_user("u", "%", "");
+            registry.create_user("r", "%", "");
+            if through_role {
+                registry.grant_db("r", "%", "app", GlobalPriv::Select.mask());
+                registry.grant_role(
+                    &("r".to_owned(), "%".to_owned()),
+                    &("u".to_owned(), "%".to_owned()),
+                );
+            } else {
+                registry.grant_db("u", "%", "app", GlobalPriv::Select.mask());
+            }
+            registry
+        };
+        let live = image(false);
+        let roles = [("r".to_owned(), "%".to_owned())];
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reloader = {
+            let live = live.clone();
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut through_role = true;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    live.replace_from(&image(through_role));
+                    through_role = !through_role;
+                }
+            })
+        };
+        for _ in 0..20_000 {
+            assert!(live.has_table_priv_with_roles(
+                "u",
+                "%",
+                &roles,
+                "app",
+                "t",
+                GlobalPriv::Select
+            ));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        reloader.join().unwrap();
     }
 }
 
@@ -2423,5 +2511,22 @@ fn ssl_json(policy: SslType) -> String {
         "{}".into()
     } else {
         format!("{{\"ssl_type\":{value}}}")
+    }
+}
+
+thread_local! {
+    /// How many [`PrivilegeReadView`]s this thread holds.
+    static READ_VIEW_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A reader's hold on one consistent privilege image (see
+/// [`PrivilegeRegistry::read_view`]).
+pub(crate) struct PrivilegeReadView<'a> {
+    _guard: Option<std::sync::RwLockReadGuard<'a, ()>>,
+}
+
+impl Drop for PrivilegeReadView<'_> {
+    fn drop(&mut self) {
+        READ_VIEW_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
     }
 }

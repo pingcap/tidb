@@ -1555,6 +1555,7 @@ mod schema_sync_tests {
                     0,
                 )
                 .unwrap(),
+                &mut |_, _, minimum, _| Ok(minimum + 1),
             )
             .unwrap();
             assert!(matches!(

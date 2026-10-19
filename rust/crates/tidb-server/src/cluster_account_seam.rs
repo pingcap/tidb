@@ -79,6 +79,26 @@ use tidb_txnkv::transaction::{RealOptimisticTransaction, RealOptimisticTransacti
 use crate::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
 use crate::sql_node::{cluster_commit_error, SqlQueryError};
 
+/// Reserves `count` `_tidb_rowid`s of a `mysql.*` table in their own
+/// transaction (Go's autoid allocator, `RunInNewTxn`), never below
+/// `minimum`, answering the first. Shared by every system-table writer.
+pub(crate) fn reserve_system_row_ids<C, L, P>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    timeout: Duration,
+    db: i64,
+    table: &tidb_model::TableInfo,
+    minimum: i64,
+    count: usize,
+) -> Result<i64, String>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    reserve_account_ids(opener, timeout, db, table, minimum, count)
+        .map_err(|error| error.to_string())
+}
+
 fn reserve_account_ids<C, L, P>(
     opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,

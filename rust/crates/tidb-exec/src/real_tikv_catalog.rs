@@ -50,6 +50,8 @@ pub struct TransactionMetaSnapshot<'transaction, C, L, T> {
     /// and a catalog-plus-full-scan read of a real cluster blew it before its
     /// first page came back.
     timeout: Duration,
+    /// The node's live row-ID allocators, for a writer that inserts.
+    row_ids: Option<std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 }
 
 impl<'transaction, C, L, T> TransactionMetaSnapshot<'transaction, C, L, T> {
@@ -61,7 +63,29 @@ impl<'transaction, C, L, T> TransactionMetaSnapshot<'transaction, C, L, T> {
         Self {
             transaction,
             timeout,
+            row_ids: None,
         }
+    }
+
+    /// Lets a writer allocate new rows' ids from `ids` (see
+    /// [`MetaSnapshot::row_ids`]).
+    #[must_use]
+    pub fn with_row_ids(
+        mut self,
+        ids: std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    ) -> Self {
+        self.row_ids = Some(ids);
+        self
+    }
+
+    /// [`Self::with_row_ids`] when `ids` is given.
+    #[must_use]
+    pub fn with_row_ids_opt(
+        mut self,
+        ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    ) -> Self {
+        self.row_ids = ids.cloned();
+        self
     }
 }
 
@@ -96,6 +120,10 @@ where
         self.transaction
             .snapshot_scan(start, end, None, &call)
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+
+    fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
+        self.row_ids.as_deref()
     }
 }
 
@@ -149,6 +177,8 @@ where
 /// this turns one of them back into the loader's interface.
 pub struct SnapshotMetaSnapshot {
     snapshot: Box<dyn ClusterSnapshot>,
+    /// The node's live row-ID allocators, for a writer that inserts.
+    row_ids: Option<std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 }
 
 impl SnapshotMetaSnapshot {
@@ -160,7 +190,31 @@ impl SnapshotMetaSnapshot {
     /// Binds one read handle.
     #[must_use]
     pub fn new(snapshot: Box<dyn ClusterSnapshot>) -> Self {
-        Self { snapshot }
+        Self {
+            snapshot,
+            row_ids: None,
+        }
+    }
+
+    /// Lets a writer allocate new rows' ids from `ids` (see
+    /// [`MetaSnapshot::row_ids`]).
+    #[must_use]
+    pub fn with_row_ids(
+        mut self,
+        ids: std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    ) -> Self {
+        self.row_ids = Some(ids);
+        self
+    }
+
+    /// [`Self::with_row_ids`] when `ids` is given.
+    #[must_use]
+    pub fn with_row_ids_opt(
+        mut self,
+        ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
+    ) -> Self {
+        self.row_ids = ids.cloned();
+        self
     }
 }
 
@@ -194,6 +248,10 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
                 None,
             )
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+
+    fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
+        self.row_ids.as_deref()
     }
 }
 

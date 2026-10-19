@@ -4792,6 +4792,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
+        auto_ids: None,
     };
     let mut job_id = 0;
     handle
@@ -4884,6 +4885,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         transactions: Arc::clone(&factory.transactions),
         catalog: Arc::clone(&factory.catalog),
         global_vars: factory.global_vars.clone(),
+        auto_ids: None,
     };
     let mut job_id = 0;
     handle
@@ -4972,6 +4974,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
+        auto_ids: None,
     };
     for (process_id, instance, created_at) in [
         (1, local_instance, old),
@@ -5718,6 +5721,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
+        auto_ids: None,
     };
     session
         .historical_stats_worker
@@ -5795,6 +5799,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
+        auto_ids: None,
     };
     session
         .historical_stats_worker
@@ -6387,6 +6392,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
         transactions: Arc::clone(&stack.factory.transactions),
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
+        auto_ids: None,
     };
     for table_id in queued {
         session
@@ -18687,5 +18693,50 @@ fn prepare_shows_only_the_plan_cache_note() {
             .map(|warning| warning.code)
             .collect::<Vec<_>>(),
         vec![1105]
+    );
+}
+
+/// Go's pessimistic DML reads at `GetStmtForUpdateTS`, a fresh timestamp
+/// at statement start: an UPDATE or DELETE after BEGIN acts on rows a peer
+/// committed meanwhile (captured from Go on this branch).
+#[test]
+fn pessimistic_dml_acts_on_rows_committed_after_begin() {
+    let (stack, _users) = cop_backed_stack();
+    let mut a = stack.factory.open_session(session_context(1911)).unwrap();
+    let mut b = stack.factory.open_session(session_context(1912)).unwrap();
+    rows(&mut a, "CREATE DATABASE dml_current");
+    rows(&mut a, "USE dml_current");
+    rows(&mut b, "USE dml_current");
+    rows(&mut a, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+    rows(&mut a, "INSERT INTO t VALUES (1, 0)");
+    a.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        displayed(rows(&mut a, "SELECT * FROM t")),
+        vec![vec!["1", "0"]]
+    );
+    b.execute_write("INSERT INTO t VALUES (2, 0)").unwrap();
+    let updated = a
+        .execute_write("UPDATE t SET v = 9 WHERE id > 0")
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.affected_rows, 2);
+    assert_eq!(
+        displayed(rows(&mut a, "SELECT * FROM t")),
+        vec![vec!["1", "9"], vec!["2", "9"]]
+    );
+    a.control_transaction("COMMIT").unwrap();
+
+    a.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    rows(&mut a, "SELECT * FROM t");
+    b.execute_write("INSERT INTO t VALUES (3, 0)").unwrap();
+    let deleted = a
+        .execute_write("DELETE FROM t WHERE v = 0")
+        .unwrap()
+        .unwrap();
+    assert_eq!(deleted.affected_rows, 1);
+    a.control_transaction("COMMIT").unwrap();
+    assert_eq!(
+        displayed(rows(&mut a, "SELECT * FROM t")),
+        vec![vec!["1", "9"], vec!["2", "9"]]
     );
 }

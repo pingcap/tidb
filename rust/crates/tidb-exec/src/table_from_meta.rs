@@ -837,7 +837,105 @@ pub fn cluster_table(
     if let Some(spec) = partition_spec {
         kv_table.set_partition(spec);
     }
+    if let Some(partition) = table.partition.as_ref().filter(|p| p.read().enable) {
+        kv_table.set_partition_reorg(partition_double_write_for(&columns, &partition.read())?);
+    }
     Ok(kv_table)
+}
+
+/// Go `newPartitionedTable`'s reorganization setup: during REORGANIZE
+/// PARTITION, REMOVE PARTITIONING or ALTER TABLE ... PARTITION BY, which
+/// partitions mirror their writes, where the copies go (`reorgPartitionExpr`
+/// over the other definition set), and each side's index set. `None` when
+/// no such DDL is running.
+fn partition_double_write_for(
+    table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
+    partition: &tidb_model::partition::PartitionInfo,
+) -> Result<Option<tidb_executor::kv_table::PartitionDoubleWrite>, String> {
+    use tidb_model::{ActionType, SchemaState};
+    if !matches!(
+        partition.ddl_action,
+        ActionType::ACTION_REORGANIZE_PARTITION
+            | ActionType::ACTION_REMOVE_PARTITIONING
+            | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+    ) || partition.ddl_state == SchemaState::NONE
+    {
+        return Ok(None);
+    }
+    let adding = partition.adding_definitions.snapshot();
+    let dropping = partition.dropping_definitions.snapshot();
+    let changes_are_public = partition.ddl_state == SchemaState::DELETE_REORGANIZATION
+        || partition.ddl_state == SchemaState::PUBLIC;
+    // The routing scheme of the copies: the DDL's own type, expression and
+    // columns for a new table (REMOVE PARTITIONING / PARTITION BY), the
+    // table's for REORGANIZE PARTITION.
+    let copies = |definitions: &[tidb_model::partition::PartitionDefinition]| {
+        let mut info = partition.clone();
+        info.definitions = tidb_model::go_runtime::GoSharedSlice::from_vec(definitions.to_vec());
+        if partition.new_table_id != 0 {
+            info.partition_type = partition.ddl_type;
+            info.expr = partition.ddl_expr.clone();
+            info.columns = partition.ddl_columns.clone();
+        }
+        partition_spec_for(table_columns, &info)
+    };
+    let (spec, reorganize, double_write) = if changes_are_public {
+        (
+            copies(&dropping)?,
+            adding.iter().map(|definition| definition.id).collect(),
+            dropping.iter().map(|definition| definition.id).collect(),
+        )
+    } else {
+        if adding.is_empty() {
+            return Ok(None);
+        }
+        (
+            copies(&adding)?,
+            dropping.iter().map(|definition| definition.id).collect(),
+            adding.iter().map(|definition| definition.id).collect(),
+        )
+    };
+    // `DDLChangedIndex`: true = a new index (adding partitions only), false
+    // = a replaced one (dropping partitions only).
+    let changed = partition
+        .ddl_changed_index
+        .as_ref()
+        .map(|changed| changed.read().clone())
+        .unwrap_or_default();
+    let mode = |adding_side: bool| tidb_executor::kv_table::PartitionIndexMode {
+        // Untouched indexes: the side not yet (or no longer) public writes
+        // its clone in a non-public state.
+        state: match (adding_side, changes_are_public) {
+            (true, false) => Some(partition.ddl_state),
+            (false, true) => Some(SchemaState::WRITE_ONLY),
+            _ => None,
+        },
+        excluded: changed
+            .iter()
+            .filter(|(_, is_new)| **is_new != adding_side)
+            .map(|(id, _)| *id)
+            .collect(),
+        changed: changed
+            .iter()
+            .filter(|(_, is_new)| **is_new == adding_side)
+            .map(|(id, _)| *id)
+            .collect(),
+    };
+    let mut index_modes = std::collections::BTreeMap::new();
+    for definition in &dropping {
+        index_modes.insert(definition.id, mode(false));
+    }
+    for definition in &adding {
+        index_modes.insert(definition.id, mode(true));
+    }
+    Ok(Some(tidb_executor::kv_table::PartitionDoubleWrite {
+        spec,
+        reorganize,
+        double_write,
+        delete_only: partition.ddl_state == SchemaState::DELETE_ONLY
+            || partition.ddl_state == SchemaState::PUBLIC,
+        index_modes,
+    }))
 }
 
 /// Rebuilds one stored `PartitionInfo` into the routing spec the read path

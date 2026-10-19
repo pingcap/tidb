@@ -3811,3 +3811,43 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
         256
     );
 }
+
+/// Go's internal INSERT allocates `mysql.*` row ids from the node's live
+/// allocator, whose reservation commits in its own transaction: a writer
+/// given the node's allocators plans no allocator-key write of its own, so a
+/// rolled-back statement never returns ids and concurrent writers never
+/// conflict on that key.
+#[test]
+fn stats_writes_allocate_from_the_node_allocator_like_go() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let allocators = tidb_exec::table_from_meta::LocalTableAutoIds::default();
+    let mut job_ids = Vec::new();
+    for _ in 0..2 {
+        let (job_id, insert) = {
+            let mut snapshot = tidb_exec::cluster_catalog::WithRowIds::new(&mut store, &allocators);
+            plan_insert_analyze_job(
+                &mut snapshot,
+                &catalog,
+                "test",
+                "t",
+                "",
+                b"analyze table",
+                "127.0.0.1:4000",
+                77,
+                now(),
+            )
+            .expect("pending job plans")
+        };
+        assert!(
+            insert
+                .mutations
+                .iter()
+                .all(|mutation| mutation.key().first() == Some(&b't')),
+            "the plan writes only rows, never the allocator's meta key"
+        );
+        apply_mutations(&mut store, &insert.mutations);
+        job_ids.push(job_id);
+    }
+    assert_eq!(job_ids, vec![1, 2]);
+}

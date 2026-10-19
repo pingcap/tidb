@@ -289,7 +289,12 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     now: Time,
 ) -> Result<(AnalyzeJobId, StatsWritePlan), StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
-    let job_id = first_free_row_id(snapshot, catalog, table)?;
+    let allocated = allocate_row_id(snapshot, catalog, table)?;
+    let from_allocator = allocated.is_some();
+    let job_id = match allocated {
+        Some(id) => id,
+        None => first_free_row_id(snapshot, catalog, table)?,
+    };
     let job_id = u64::try_from(job_id).map_err(|_| {
         StatsWriteError::Encode(RowEncodeError(
             "mysql.analyze_jobs auto-increment id is negative".to_owned(),
@@ -338,13 +343,17 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     let mut rows = StatsRows::open_all(snapshot, table, &["id"])?;
     let mut plan = StatsWritePlan::default();
     rows.store(snapshot, catalog, &values, &mut plan)?;
-    plan.mutations.push(
-        BufferMutation::set(
-            key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
-            value::encode_int_value(job_id as i64),
-        )
-        .map_err(|error| StatsWriteError::Encode(RowEncodeError(error.to_string())))?,
-    );
+    // The node's allocator persisted its own reservation; only the in-plan
+    // reservation moves the counter here.
+    if !from_allocator {
+        plan.mutations.push(
+            BufferMutation::set(
+                key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
+                value::encode_int_value(job_id as i64),
+            )
+            .map_err(|error| StatsWriteError::Encode(RowEncodeError(error.to_string())))?,
+        );
+    }
     Ok((job_id, plan))
 }
 
@@ -3420,6 +3429,9 @@ struct StatsRows<'table> {
     existing: BTreeMap<Vec<String>, (Vec<u8>, RowValues)>,
     /// The next `_tidb_rowid` to hand out, once one has been reserved.
     next_row_id: Option<i64>,
+    /// Whether ids came from the node's allocator, which persisted its own
+    /// reservation, so no watermark goes into this plan.
+    allocated: bool,
 }
 
 impl<'table> StatsRows<'table> {
@@ -3439,6 +3451,7 @@ impl<'table> StatsRows<'table> {
             clustered,
             existing,
             next_row_id: None,
+            allocated: false,
         })
     }
 
@@ -3459,6 +3472,7 @@ impl<'table> StatsRows<'table> {
             clustered,
             existing,
             next_row_id: None,
+            allocated: false,
         })
     }
 
@@ -3544,7 +3558,7 @@ impl<'table> StatsRows<'table> {
         catalog: &ClusterCatalog,
         plan: &mut StatsWritePlan,
     ) -> Result<(), StatsWriteError> {
-        let Some(next) = self.next_row_id else {
+        let Some(next) = self.next_row_id.filter(|_| !self.allocated) else {
             return Ok(());
         };
         plan.mutations.push(
@@ -3562,6 +3576,11 @@ impl<'table> StatsRows<'table> {
         snapshot: &mut S,
         catalog: &ClusterCatalog,
     ) -> Result<i64, StatsWriteError> {
+        if let Some(row_id) = allocate_row_id(snapshot, catalog, self.table)? {
+            self.allocated = true;
+            self.next_row_id = Some(row_id + 1);
+            return Ok(row_id);
+        }
         let row_id = match self.next_row_id {
             Some(next) => next,
             None => first_free_row_id(snapshot, catalog, self.table)?,
@@ -3765,6 +3784,39 @@ fn decode_rows_with_keys(
 /// Every handle currently stored is counted, including the ones this plan is
 /// about to retract: a key deleted and reinserted in one transaction is two
 /// mutations on one key, which the mutation set rejects.
+/// Go's internal INSERT allocation for a `mysql.*` row: the table's own
+/// allocator (`_tidb_rowid` for a heap table, AUTO_INCREMENT otherwise),
+/// whose reservation commits in its own transaction. `None` when the
+/// snapshot carries no allocator, where [`first_free_row_id`] reserves from
+/// the snapshot inside the plan instead.
+fn allocate_row_id<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    table: &TableInfo,
+) -> Result<Option<i64>, StatsWriteError> {
+    let Some(ids) = snapshot.row_ids() else {
+        return Ok(None);
+    };
+    let db_id = system_db_id(catalog)?;
+    let allocator = if matches!(HandleLayout::of(table), HandleLayout::RowId) {
+        ids.row_allocator_for(db_id, table)
+    } else {
+        ids.allocator_for(db_id, table)
+    };
+    let id = allocator.alloc_next().map_err(|error| {
+        StatsWriteError::Encode(RowEncodeError(format!(
+            "{}'s row-ID allocator: {error}",
+            table.name.original()
+        )))
+    })?;
+    i64::try_from(id).map(Some).map_err(|_| {
+        StatsWriteError::Encode(RowEncodeError(format!(
+            "{}'s row-ID allocator overflowed",
+            table.name.original()
+        )))
+    })
+}
+
 fn first_free_row_id<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,

@@ -47,6 +47,13 @@ impl TableAutoId {
     pub fn forget_reservation(&self) {
         self.0.forget_reservation();
     }
+
+    /// The next id, from this node's cached range (reserving a new range in
+    /// its own transaction when the cache is spent) -- Go `Allocator.Alloc`
+    /// with increment and offset 1, as an internal INSERT allocates.
+    pub fn alloc_next(&self) -> Result<u64, String> {
+        self.0.alloc(1, 1).map_err(|error| format!("{error:?}"))
+    }
 }
 
 impl TableAutoId {

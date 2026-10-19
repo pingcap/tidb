@@ -44,6 +44,9 @@ struct PersistedAnalyzeJobs {
     instance: String,
     process_id: u64,
     global_vars: tidb_session::GlobalSysvars,
+    /// The node's live row-ID allocators (Go's internal INSERT allocates
+    /// `mysql.analyze_jobs.id` from the table's AUTO_INCREMENT allocator).
+    row_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>,
 }
 
 impl PersistedAnalyzeJobs {
@@ -77,7 +80,8 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             let catalog = self.catalog.load();
             let snapshot = self.transactions.open_snapshot("default")?;
             let read_ts = snapshot.start_ts();
-            let mut snapshot = super::SnapshotMetaSnapshot::new(snapshot);
+            let mut snapshot =
+                super::SnapshotMetaSnapshot::new(snapshot).with_row_ids(Arc::clone(&self.row_ids));
             let (job_id, plan) = tidb_exec::cluster_stats_write::plan_insert_analyze_job(
                 &mut snapshot,
                 &catalog,
@@ -210,6 +214,7 @@ impl ClusterServerSession {
             global_vars: self.global_vars.clone(),
             analyze: Arc::clone(&self.analyze),
             stats_lock: Arc::clone(&self.stats_lock),
+            row_ids: Arc::clone(&self.auto_ids),
         }
     }
 
@@ -285,6 +290,7 @@ impl ClusterServerSession {
             analyze: Arc::clone(&self.analyze),
             approximate_table_counts: Arc::clone(&self.approximate_table_counts),
             historical_stats_worker: Arc::clone(&self.historical_stats_worker),
+            row_ids: Arc::clone(&self.auto_ids),
         };
         self.session
             .run_analyze_statements(tables, &service)
@@ -316,6 +322,7 @@ struct ClusterAnalyzeService {
     historical_stats_worker: Arc<
         tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
     >,
+    row_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>,
 }
 
 impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
@@ -329,6 +336,7 @@ impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
             true,
             target_ids,
             &self.resource_group,
+            &self.row_ids,
         )
         .map_err(tidb_executor::DriverError::unsupported)
     }
@@ -345,6 +353,7 @@ impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
             instance: self.instance.clone(),
             process_id: self.connection_id,
             global_vars: self.global_vars.clone(),
+            row_ids: Arc::clone(&self.row_ids),
         };
         let report = recover_analyze_panic(|| {
             self.analyze.execute(
@@ -407,6 +416,7 @@ struct ClusterStatsStatementService {
     global_vars: tidb_session::GlobalSysvars,
     analyze: Arc<dyn crate::cluster_analyze_seam::ClusterAnalyze>,
     stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+    row_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>,
 }
 
 impl tidb_session::stats_statement_service::StatsStatementService for ClusterStatsStatementService {
@@ -420,6 +430,7 @@ impl tidb_session::stats_statement_service::StatsStatementService for ClusterSta
             true,
             target_ids,
             &self.resource_group,
+            &self.row_ids,
         )
         .map_err(tidb_executor::DriverError::unsupported)
     }

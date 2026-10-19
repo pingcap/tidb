@@ -433,8 +433,23 @@ where
             self.scratch.overrides().into_iter().collect();
         let mut plan = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            plan_sysvar_write(&mut snapshot, &self.catalog, &desired, utc_now_timestamp())
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+            plan_sysvar_write(
+                &mut snapshot,
+                &self.catalog,
+                &desired,
+                utc_now_timestamp(),
+                &mut |db, table, minimum, count| {
+                    crate::cluster_account_seam::reserve_system_row_ids(
+                        &self.reload_opener,
+                        self.timeout,
+                        db,
+                        table,
+                        minimum,
+                        count,
+                    )
+                },
+            )
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?
         };
         // Go `TiDBEnableMDL`'s `SetGlobal` hook runs `SwitchMDL`
         // (`pkg/ddl/ddl.go:1245`): it REFUSES while any DDL job is running and,

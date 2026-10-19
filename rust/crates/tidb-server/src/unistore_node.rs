@@ -612,6 +612,9 @@ pub(crate) fn unistore_cluster_session_stack(
         })?,
     );
 
+    let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
+        crate::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
+    );
     let factory = ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             opener.clone(),
@@ -631,12 +634,15 @@ pub(crate) fn unistore_cluster_session_stack(
             None,
             sysvar_publication_fence,
         )),
-        Arc::new(crate::cluster_analyze_seam::RealClusterAnalyze::new(
-            Arc::new(opener.clone()),
-            Arc::clone(&stats),
-            IN_PROCESS_TIMEOUT,
-            config.stats_lease.slow_save_interval(),
-        )),
+        Arc::new(
+            crate::cluster_analyze_seam::RealClusterAnalyze::new(
+                Arc::new(opener.clone()),
+                Arc::clone(&stats),
+                IN_PROCESS_TIMEOUT,
+                config.stats_lease.slow_save_interval(),
+            )
+            .with_row_ids(Arc::clone(&node_auto_ids)),
+        ),
         Arc::new(crate::cluster_stats_lock_seam::RealClusterStatsLock::new(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
@@ -645,10 +651,7 @@ pub(crate) fn unistore_cluster_session_stack(
         users.accounts(),
         users.global_vars(),
         Arc::clone(&stats),
-        Arc::new(crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
-            opener.clone(),
-            IN_PROCESS_TIMEOUT,
-        )),
+        Arc::clone(&node_auto_ids),
     )
     .with_cop_scans(cop_scans)
     .with_server_info(server_info)

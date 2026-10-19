@@ -634,7 +634,8 @@ impl KvTable {
         pessimistic: bool,
         check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
-        let indexes = self.indexes.clone();
+        // A partition being reorganized carries its own index set.
+        let (indexes, nonpublic) = self.partition_index_sets(physical_id);
         for index in indexes.iter() {
             // A clustered PRIMARY's key IS the record handle; there is no
             // separate `_i` entry to write.
@@ -657,7 +658,6 @@ impl KvTable {
         }
         // Go `addIndices` walks `WritableIndices`, which include an index
         // a DDL is still adding.
-        let nonpublic = self.nonpublic_indexes.clone();
         for index in nonpublic.iter() {
             if !index.is_writable() || index.index.clustered_primary {
                 continue;
@@ -761,7 +761,7 @@ impl KvTable {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
-        let indexes = self.indexes.clone();
+        let (indexes, nonpublic) = self.partition_index_sets(physical_id);
         for index in indexes.iter() {
             // A clustered PRIMARY's key IS the record handle; deleting the
             // row already removed it.
@@ -775,7 +775,6 @@ impl KvTable {
         }
         // Go `removeRowIndices` walks `DeletableIndices`: every index that
         // is not `StateNone`, a DDL's half-built ones included.
-        let nonpublic = self.nonpublic_indexes.clone();
         for index in nonpublic.iter() {
             if index.index.clustered_primary {
                 continue;
@@ -815,7 +814,9 @@ impl KvTable {
         check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
         debug_assert!(!lazy_dup_check || pessimistic);
+        let (indexes, nonpublic) = self.partition_index_sets(physical_id);
         self.rewrite_nonpublic_index_entries(
+            &nonpublic,
             old_row,
             new_row,
             handle,
@@ -825,7 +826,6 @@ impl KvTable {
             pessimistic,
             check_in_prewrite,
         )?;
-        let indexes = self.indexes.clone();
         for index in indexes.iter() {
             // A clustered PRIMARY's key IS the record handle; updating the row
             // already rewrote it.

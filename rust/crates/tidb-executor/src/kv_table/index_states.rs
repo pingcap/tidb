@@ -350,6 +350,7 @@ impl KvTable {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::kv_table) fn rewrite_nonpublic_index_entries(
         &mut self,
+        indexes: &[NonPublicIndex],
         old_row: &[Datum],
         new_row: &[Datum],
         handle: &TableHandle,
@@ -359,8 +360,7 @@ impl KvTable {
         pessimistic: bool,
         check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
-        let indexes = self.nonpublic_indexes.clone();
-        for index in indexes.iter() {
+        for index in indexes {
             if index.index.clustered_primary {
                 continue;
             }

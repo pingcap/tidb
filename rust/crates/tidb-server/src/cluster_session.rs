@@ -1953,6 +1953,102 @@ mod tests {
         assert_eq!(spec.num(), 2);
     }
 
+    /// Go `partitionedTable` during REORGANIZE PARTITION: before the change
+    /// is public a row written to a current partition is written again into
+    /// the adding partition the new scheme routes it to, and a delete
+    /// removes both; once the change is public the mirror runs the other
+    /// way, from the new partitions into the dropping ones.
+    #[test]
+    fn a_reorganizing_partition_mirrors_its_writes_like_go() {
+        for (state, main, copy) in [
+            (SchemaState::WRITE_REORGANIZATION, 402, 502),
+            (SchemaState::DELETE_REORGANIZATION, 502, 402),
+        ] {
+            let mut partition = tidb_model::partition::PartitionInfo {
+                partition_type: tidb_ast::PartitionType::HASH,
+                expr: "`id`".to_owned(),
+                num: 2,
+                enable: true,
+                ddl_action: tidb_model::ActionType::ACTION_REORGANIZE_PARTITION,
+                ddl_state: state,
+                ..tidb_model::partition::PartitionInfo::default()
+            };
+            let current = vec![
+                partition_definition(401, "p0"),
+                partition_definition(402, "p1"),
+            ];
+            let next = vec![
+                partition_definition(501, "n0"),
+                partition_definition(502, "n1"),
+            ];
+            // Go keeps both sets for the whole job (`DroppingDefinitions` are
+            // the partitions being replaced) and swaps `Definitions` when the
+            // change becomes public.
+            partition.definitions = if state == SchemaState::WRITE_REORGANIZATION {
+                current.clone().into()
+            } else {
+                next.clone().into()
+            };
+            partition.adding_definitions = next.into();
+            partition.dropping_definitions = current.into();
+            let table = TableInfo {
+                id: 400,
+                name: CiString::new("reorg"),
+                columns: vec![column(1, 0, "id", true)].into(),
+                pk_is_handle: true,
+                state: SchemaState::PUBLIC,
+                partition: Some(GoShared::new(partition)),
+                ..TableInfo::default()
+            };
+            let (storage, _, _) = cluster_storage();
+            let mut loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+                .expect("a reorganizing table loads");
+            let handle = loaded
+                .insert_row(&[Datum::Int(3)], &tidb_expr::NoColumns)
+                .expect("the insert succeeds");
+            let key = |id: i64, physical: i64| {
+                tidb_codec::encode_row_key(
+                    physical,
+                    &tidb_txnkv::Handle::from(tidb_txnkv::IntHandle::new(id)).encoded(),
+                )
+            };
+            assert!(
+                loaded.stored_raw_value(&key(3, main)).is_some(),
+                "{state:?} main"
+            );
+            assert!(
+                loaded.stored_raw_value(&key(3, copy)).is_some(),
+                "{state:?} copy"
+            );
+            // A clustered key change within the partition: the copy moves to
+            // the new handle too (Go always removes and adds the copy).
+            let ctx = tidb_executor::StmtContext::for_dml(false, false, false);
+            loaded
+                .update_row_with_context(&handle, &[Datum::Int(5)], &ctx)
+                .expect("the update succeeds");
+            assert!(
+                loaded.stored_raw_value(&key(3, copy)).is_none(),
+                "{state:?} old copy"
+            );
+            assert!(
+                loaded.stored_raw_value(&key(5, copy)).is_some(),
+                "{state:?} new copy"
+            );
+            let moved = tidb_executor::TableHandle::Int(5);
+            loaded
+                .delete_row_with_context(&moved, &ctx)
+                .expect("the delete succeeds");
+            assert!(
+                loaded.stored_raw_value(&key(5, main)).is_none(),
+                "{state:?} main"
+            );
+            assert!(
+                loaded.stored_raw_value(&key(5, copy)).is_none(),
+                "{state:?} copy"
+            );
+        }
+    }
+
     /// A KEY-partitioned table loads too: Go's `generateKeyPartitionExpr`
     /// builds no expression at all, only the stored column list.
     #[test]

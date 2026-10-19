@@ -124,6 +124,9 @@ where
     stats: Arc<SharedStats>,
     timeout: Duration,
     stats_lease: Duration,
+    /// The node's live row-ID allocators, which the statistics rows this
+    /// analyzer writes allocate from (Go's internal INSERT).
+    row_ids: Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>,
 }
 
 impl<C, L, P> RealClusterAnalyze<C, L, P>
@@ -146,7 +149,15 @@ where
             stats,
             timeout,
             stats_lease,
+            row_ids: None,
         }
+    }
+
+    /// Allocates the statistics rows' ids from the node's live allocators.
+    #[must_use]
+    pub fn with_row_ids(mut self, ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds>) -> Self {
+        self.row_ids = Some(ids);
+        self
     }
 
     /// Runs Go's targeted cache update after ANALYZE or LOAD STATS.
@@ -244,9 +255,15 @@ where
             &record_history,
             &record_global_history,
             jobs,
+            self.row_ids.as_ref(),
         )
         .map_err(cluster_analyze_error)?;
-        if let Err(error) = save_cluster_analyze_options(&self.opener, &statement, self.timeout) {
+        if let Err(error) = save_cluster_analyze_options(
+            &self.opener,
+            &statement,
+            self.timeout,
+            self.row_ids.as_ref(),
+        ) {
             report.option_save_warning = Some(error.to_string());
         }
         if let Err(error) = self.refresh_stats(report.cache_update_physical_ids().to_vec()) {
@@ -273,6 +290,7 @@ where
                     .is_some()
             },
             0,
+            self.row_ids.as_ref(),
         )
         .map_err(cluster_load_stats_error)?;
         // Unlike ANALYZE, pinned Go returns `StatsHandle.Update` failure from

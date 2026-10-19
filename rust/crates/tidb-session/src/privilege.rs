@@ -225,6 +225,11 @@ pub struct PrivilegeRegistry {
     /// process-global atomic set from server config, not from SQL; this
     /// registry is the equivalent server-wide home.
     sandbox_mode_enabled: Arc<AtomicBool>,
+    /// Go swaps one immutable `MySQLPrivilege` per reload, so a check reads
+    /// one consistent image. Here a reload holds this gate's write side for
+    /// its whole swap of the separate tables, and every reader that combines
+    /// tables holds the read side ([`PrivilegeRegistry::read_view`]).
+    reload_gate: Arc<std::sync::RwLock<()>>,
 }
 
 impl std::fmt::Debug for PrivilegeRegistry {
@@ -307,6 +312,7 @@ impl PrivilegeRegistry {
             default_roles: Arc::new(Mutex::new(HashMap::new())),
             clock,
             sandbox_mode_enabled: Arc::new(AtomicBool::new(false)),
+            reload_gate: Arc::new(std::sync::RwLock::new(())),
         }
     }
 }

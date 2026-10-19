@@ -76,6 +76,13 @@ pub trait MetaSnapshot {
     /// Reads every key/value pair under `prefix`, in key order.
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError>;
 
+    /// The node's live row-ID allocators, when a writer must allocate ids
+    /// the way Go's internal INSERT does (each reservation in its own
+    /// transaction). `None` for a snapshot that carries none.
+    fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
+        None
+    }
+
     /// Reads every key/value pair in `[start, end)`, in key order.
     ///
     /// Recorded in-memory snapshots can implement only [`Self::scan_prefix`]:
@@ -691,4 +698,36 @@ pub fn prefix_scan_end(prefix: &[u8]) -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+/// A snapshot that carries the node's live row-ID allocators to a writer
+/// (see [`MetaSnapshot::row_ids`]).
+pub struct WithRowIds<'a, S> {
+    inner: &'a mut S,
+    ids: &'a dyn crate::table_from_meta::TableAutoIds,
+}
+
+impl<'a, S: MetaSnapshot> WithRowIds<'a, S> {
+    /// Wraps `inner`, allocating new row ids from `ids`.
+    pub fn new(inner: &'a mut S, ids: &'a dyn crate::table_from_meta::TableAutoIds) -> Self {
+        Self { inner, ids }
+    }
+}
+
+impl<S: MetaSnapshot> MetaSnapshot for WithRowIds<'_, S> {
+    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+        self.inner.get(key)
+    }
+
+    fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        self.inner.scan_prefix(prefix)
+    }
+
+    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        self.inner.scan_range(start, end)
+    }
+
+    fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
+        Some(self.ids)
+    }
 }
