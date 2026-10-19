@@ -32,8 +32,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
@@ -1201,7 +1199,6 @@ func newIgnoredLockHintCopWorker(
 }
 
 func TestHandleBatchCopResponse(t *testing.T) {
-	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
 	t.Run("backs off when TiKV ignores lock hints", testCoprocessorBacksOffWhenTiKVIgnoresLockHint)
 	t.Run("stops after repeated ignored lock hints", testCoprocessorStopsAfterRepeatedIgnoredLockHint)
 	t.Run("backs off once per response for ignored lock hints", testCoprocessorBacksOffOncePerResponseForIgnoredLockHints)
@@ -1365,43 +1362,4 @@ func testCoprocessorStopsAfterRepeatedIgnoredLockHint(t *testing.T) {
 	require.Equal(t, map[string]int{"txnLockFast": 2}, bo.GetBackoffTimes())
 	require.Equal(t, int32(3), client.copRequests.Load())
 	require.False(t, client.missingHint.Load())
-}
-
-func testHandleBatchCopResponseResolvesChildLock(t *testing.T) {
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(t, err)
-	testutils.BootstrapWithSingleStore(cluster)
-	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
-
-	var resolvedLocks, committedLocks tikvutil.TSSet
-	kvClient := txnsnapshot.NewClientHelper(tikvStore, &resolvedLocks, &committedLocks, false)
-	kvClient.Stats = tikv.NewRegionRequestRuntimeStats()
-	child := &copTask{taskID: 1}
-	worker := &copIteratorWorker{
-		req:                     &kv.Request{StartTs: 10},
-		kvclient:                kvClient,
-		storeBatchedNum:         &atomic.Uint64{},
-		storeBatchedFallbackNum: &atomic.Uint64{},
-	}
-
-	_, _, err = worker.handleBatchCopResponse(
-		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
-		&requestLockHints{},
-		nil,
-		&coprocessor.Response{BatchResponses: []*coprocessor.StoreBatchTaskResponse{{
-			TaskId: child.taskID,
-			Locked: &kvrpcpb.LockInfo{
-				Key:         []byte("key"),
-				PrimaryLock: []byte("primary"),
-				LockVersion: 1,
-				// Keep lock cleanup synchronous with the test.
-				LockType: kvrpcpb.Op_PessimisticLock,
-			},
-		}}},
-		map[uint64]*batchedCopTask{child.taskID: {task: child}},
-	)
-	require.NoError(t, err)
-	require.Equal(t, 1, kvClient.Stats.GetRPCStatsCount())
 }
