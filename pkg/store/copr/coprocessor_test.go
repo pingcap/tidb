@@ -32,8 +32,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
@@ -1277,13 +1275,13 @@ func newIgnoredLockHintCopWorker(
 
 func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("updates child buckets on version not match", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
-	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
+	t.Run("retries a child lock", testHandleBatchCopResponseRetriesChildLock)
 	t.Run("backs off when TiKV ignores lock hints", testCoprocessorBacksOffWhenTiKVIgnoresLockHint)
 	t.Run("stops after repeated ignored lock hints", testCoprocessorStopsAfterRepeatedIgnoredLockHint)
-	t.Run("backs off once per response for ignored lock hints", testCoprocessorBacksOffOncePerResponseForIgnoredLockHints)
+	t.Run("backs off for parent and retries children", testCoprocessorBacksOffForParentAndRetriesChildren)
 }
 
-func testCoprocessorBacksOffOncePerResponseForIgnoredLockHints(t *testing.T) {
+func testCoprocessorBacksOffForParentAndRetriesChildren(t *testing.T) {
 	for _, hint := range []struct {
 		name      string
 		committed bool
@@ -1344,11 +1342,15 @@ func testCoprocessorBacksOffOncePerResponseForIgnoredLockHints(t *testing.T) {
 						}
 					}
 					resp := &coprocessor.Response{}
-					expectedRetries, expectedCleanedKeys := test.children, test.children
+					expectedRetries := test.children
+					expectedBackoffs, expectedCleanedKeys := 0, 0
 					if test.parentTxnID != 0 {
 						resp.Locked = newLock(test.parentTxnID, 0)
 						expectedRetries++
 						expectedCleanedKeys++
+						if test.parentTxnID == 42 || test.parentTxnID == 43 {
+							expectedBackoffs++
+						}
 					}
 					task.batchTaskList = make(map[uint64]*batchedCopTask, test.children)
 					for i := range test.children {
@@ -1359,7 +1361,6 @@ func testCoprocessorBacksOffOncePerResponseForIgnoredLockHints(t *testing.T) {
 							lock.PrimaryLock = []byte{'p', byte(test.firstChildTxnID)}
 							if test.sharedLock {
 								lock = &kvrpcpb.LockInfo{SharedLockInfos: []*kvrpcpb.LockInfo{newLock(41, byte(id)), lock}}
-								expectedCleanedKeys++
 							}
 						}
 						task.batchTaskList[id] = &batchedCopTask{task: &copTask{taskID: id}}
@@ -1369,14 +1370,13 @@ func testCoprocessorBacksOffOncePerResponseForIgnoredLockHints(t *testing.T) {
 					vars := kv.NewVariables(&killed)
 					vars.BackoffLockFast = 1
 					vars.BackOffWeight = 1
-					// One hinted-lock backoff fits, but repeated backoffs for the same
-					// response exhaust this budget without making the regression slow.
 					bo := backoff.NewBackofferWithVars(context.Background(), 20, vars)
 					result, err := worker.handleCopResponse(bo, lockHints, nil, &copResponse{pbResp: resp}, nil, nil, task, 0)
 					require.NoError(t, err)
 					require.Len(t, result.remains, expectedRetries)
-					require.Equal(t, 1, bo.GetBackoffTimes()["txnLockFast"])
-					// Suppressing duplicate hint backoffs must still resolve every lock.
+					require.Equal(t, expectedBackoffs, bo.GetBackoffTimes()["txnLockFast"])
+					// Only the parent lock is resolved here. Child locks wait for
+					// their single-task retries, even when they match request hints.
 					require.Eventually(t, func() bool {
 						return cleanedKeys.Load() == int32(expectedCleanedKeys)
 					}, time.Second, time.Millisecond)
@@ -1448,41 +1448,62 @@ func testCoprocessorStopsAfterRepeatedIgnoredLockHint(t *testing.T) {
 	require.False(t, client.missingHint.Load())
 }
 
-func testHandleBatchCopResponseResolvesChildLock(t *testing.T) {
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(t, err)
-	testutils.BootstrapWithSingleStore(cluster)
-	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
-
-	var resolvedLocks, committedLocks tikvutil.TSSet
-	kvClient := txnsnapshot.NewClientHelper(tikvStore, &resolvedLocks, &committedLocks, false)
-	kvClient.Stats = tikv.NewRegionRequestRuntimeStats()
-	child := &copTask{taskID: 1}
-	worker := &copIteratorWorker{
-		req:                     &kv.Request{StartTs: 10},
-		kvclient:                kvClient,
-		storeBatchedNum:         &atomic.Uint64{},
-		storeBatchedFallbackNum: &atomic.Uint64{},
+func testHandleBatchCopResponseRetriesChildLock(t *testing.T) {
+	var statusRequests atomic.Int32
+	client := &ignoredLockHintCopClient{
+		lockTS:        42,
+		lockResponses: 1,
+		onRequest: func(req *tikvrpc.Request) *tikvrpc.Response {
+			if req.Type == tikvrpc.CmdCheckTxnStatus {
+				statusRequests.Add(1)
+				require.Equal(t, []byte("primary"), req.CheckTxnStatus().PrimaryKey)
+				return &tikvrpc.Response{Resp: &kvrpcpb.CheckTxnStatusResponse{}}
+			}
+			return nil
+		},
 	}
+	worker, child := newIgnoredLockHintCopWorker(t, client, false)
+	child.taskID = 1
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
-	_, _, err = worker.handleBatchCopResponse(
-		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+	responses, remains, err := worker.handleBatchCopResponse(
+		bo,
 		&requestLockHints{},
 		nil,
 		&coprocessor.Response{BatchResponses: []*coprocessor.StoreBatchTaskResponse{{
 			TaskId: child.taskID,
 			Locked: &kvrpcpb.LockInfo{
-				Key:         []byte("key"),
-				PrimaryLock: []byte("primary"),
-				LockVersion: 1,
-				// Keep lock cleanup synchronous with the test.
-				LockType: kvrpcpb.Op_PessimisticLock,
+				// Child lock keys have not passed through API V2 decoding.
+				// They must not be handed to the resolver before a single-task retry.
+				Key:         []byte("undecoded-child-key"),
+				PrimaryLock: []byte("undecoded-child-primary"),
+				LockVersion: client.lockTS,
+				LockType:    kvrpcpb.Op_PessimisticLock,
 			},
 		}}},
 		map[uint64]*batchedCopTask{child.taskID: {task: child}},
 	)
 	require.NoError(t, err)
-	require.Equal(t, 1, kvClient.Stats.GetRPCStatsCount())
+	require.Empty(t, responses)
+	require.Len(t, remains, 1)
+	require.Same(t, child, remains[0])
+	require.True(t, child.meetLockFallback)
+	require.Empty(t, child.ToPBBatchTasks())
+	require.Zero(t, statusRequests.Load())
+	require.Empty(t, bo.GetBackoffTimes())
+
+	// On retry, the lock is returned in the top-level response and follows the
+	// normal resolver path, including backoff for an ignored request lock hint.
+	result, err := worker.handleTaskOnce(bo, remains[0])
+	require.NoError(t, err)
+	require.Len(t, result.remains, 1)
+	require.Equal(t, int32(1), statusRequests.Load())
+	require.Equal(t, 1, bo.GetBackoffTimes()["txnLockFast"])
+
+	result, err = worker.handleTaskOnce(bo, result.remains[0])
+	require.NoError(t, err)
+	require.NotNil(t, result.resp)
+	require.Empty(t, result.remains)
+	require.Equal(t, int32(2), client.copRequests.Load())
+	require.False(t, client.missingHint.Load())
 }
