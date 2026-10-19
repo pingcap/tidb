@@ -465,21 +465,46 @@ struct StoreHealthFeedbackRequester<KvC: KvConnect + Clone + Send + Sync + 'stat
     event_listener: Arc<dyn crate::store::ClientEventListener>,
 }
 
+/// client-go `RPCClient.recycleIdleConnArray` for one address: removes the
+/// cached pool when its batch loop retired it as idle, and closes it.
+async fn recycle_idle_kv_client<C: KvClient>(
+    cache: &RwLock<HashMap<String, CachedKvClient<C>>>,
+    address: &str,
+) {
+    let retired = {
+        let mut cache = cache.write().await;
+        match cache.get(address) {
+            Some(cached) if cached.client.is_idle() => cache.remove(address),
+            _ => None,
+        }
+    };
+    if let Some(retired) = retired {
+        retired.client.close();
+    }
+}
+
 impl<KvC: KvConnect + Clone + Send + Sync + 'static> StoreHealthFeedbackRequester<KvC> {
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
         if self.kv_client_closed.load(Ordering::Acquire) {
             return Err(crate::Error::StringError("rpc client is closed".to_owned()));
         }
         if let Some(cached) = self.kv_client_cache.read().await.get(address) {
-            return Ok(cached.client.clone());
+            if !cached.client.is_idle() {
+                return Ok(cached.client.clone());
+            }
         }
         let _lifecycle = self.kv_client_lifecycle.lock().await;
         if self.kv_client_closed.load(Ordering::Acquire) {
             return Err(crate::Error::StringError("rpc client is closed".to_owned()));
         }
         if let Some(cached) = self.kv_client_cache.read().await.get(address) {
-            return Ok(cached.client.clone());
+            if !cached.client.is_idle() {
+                return Ok(cached.client.clone());
+            }
         }
+        // client-go `recycleIdleConnArray`: an idle pool is closed by its
+        // version (`CloseAddrVer`) and the request gets a new one.
+        recycle_idle_kv_client(&self.kv_client_cache, address).await;
         let client = self.kv_connect.connect(address).await?;
         let version = {
             let mut versions = self.kv_client_versions.write().await;
@@ -1805,15 +1830,22 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
             return Err(crate::Error::StringError("rpc client is closed".to_owned()));
         }
         if let Some(cached) = self.kv_client_cache.read().await.get(address) {
-            return Ok(cached.client.clone());
+            if !cached.client.is_idle() {
+                return Ok(cached.client.clone());
+            }
         }
         let _lifecycle = self.kv_client_lifecycle.lock().await;
         if self.kv_client_closed.load(Ordering::Acquire) {
             return Err(crate::Error::StringError("rpc client is closed".to_owned()));
         }
         if let Some(cached) = self.kv_client_cache.read().await.get(address) {
-            return Ok(cached.client.clone());
+            if !cached.client.is_idle() {
+                return Ok(cached.client.clone());
+            }
         }
+        // client-go `recycleIdleConnArray`: an idle pool is closed by its
+        // version (`CloseAddrVer`) and the request gets a new one.
+        recycle_idle_kv_client(&self.kv_client_cache, address).await;
         info!("connect to tikv endpoint: {:?}", address);
         let client = self.kv_connect.connect(address).await?;
         let mut cache = self.kv_client_cache.write().await;
@@ -2450,6 +2482,90 @@ pub mod test {
             second_version
         );
         assert_eq!(connects.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn source_idle_pool_is_recycled_by_the_next_lookup() {
+        // client-go `getConnPool` never hands out an idle pool;
+        // `recycleIdleConnArray` closes it by version and the next request
+        // dials a new one.
+        #[derive(Clone)]
+        struct IdleAwareClient {
+            idle: Arc<AtomicBool>,
+            closed: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl KvClient for IdleAwareClient {
+            async fn dispatch(&self, _req: &dyn Request) -> Result<Box<dyn std::any::Any>> {
+                unreachable!("the test only looks connections up")
+            }
+
+            fn close(&self) {
+                self.closed.store(true, Ordering::SeqCst);
+            }
+
+            fn is_idle(&self) -> bool {
+                self.idle.load(Ordering::SeqCst)
+            }
+        }
+
+        #[derive(Clone)]
+        struct IdleAwareConnect {
+            dialed: Arc<std::sync::Mutex<Vec<IdleAwareClient>>>,
+        }
+
+        #[async_trait]
+        impl KvConnect for IdleAwareConnect {
+            type KvClient = IdleAwareClient;
+
+            async fn connect(&self, _address: &str) -> Result<Self::KvClient> {
+                let client = IdleAwareClient {
+                    idle: Arc::new(AtomicBool::new(false)),
+                    closed: Arc::new(AtomicBool::new(false)),
+                };
+                self.dialed.lock().unwrap().push(client.clone());
+                Ok(client)
+            }
+        }
+
+        let dialed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connect_dialed = dialed.clone();
+        let client = PdRpcClient::new(
+            Config::default(),
+            move |_| IdleAwareConnect {
+                dialed: connect_dialed.clone(),
+            },
+            |sm| async move {
+                Ok(RetryClient::new_with_cluster(
+                    sm,
+                    Config::default().timeout,
+                    MockCluster,
+                ))
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        client.kv_client("foo").await.unwrap();
+        client.kv_client("foo").await.unwrap();
+        assert_eq!(dialed.lock().unwrap().len(), 1, "an active pool is reused");
+        let first_version = client.kv_client_cache.read().await["foo"].version;
+
+        let first = dialed.lock().unwrap()[0].clone();
+        first.idle.store(true, Ordering::SeqCst);
+        let second = client.kv_client("foo").await.unwrap();
+        assert_eq!(dialed.lock().unwrap().len(), 2, "an idle pool is replaced");
+        assert!(
+            first.closed.load(Ordering::SeqCst),
+            "the idle pool is closed"
+        );
+        assert!(!second.is_idle());
+        assert_eq!(
+            client.kv_client_cache.read().await["foo"].version,
+            first_version.wrapping_add(1)
+        );
     }
 
     #[tokio::test]

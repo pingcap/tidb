@@ -1916,6 +1916,7 @@ impl BatchCommandsDispatcher {
                                 // pool state makes the next Rust dispatch take the
                                 // existing connection-error retry/replacement path.
                                 let recycle_started = Instant::now();
+                                dispatcher.client.mark_idle();
                                 KvClient::close(&dispatcher.client);
                                 dispatcher.close_now();
                                 observe_batch_client_recycle(recycle_started.elapsed());
@@ -3528,7 +3529,9 @@ mod tests {
                 Channel::from_static("http://127.0.0.1:1").connect_lazy(),
             )],
             Duration::from_secs(1),
-        );
+        )
+        .with_connection_info("127.0.0.1:1".to_owned(), 1);
+        let cached = client.clone();
         let dispatcher = Arc::new(BatchCommandsDispatcher::new(client, 2));
         let mut config = crate::config::TiKvClient::default();
         config.max_batch_size = 2;
@@ -3542,6 +3545,8 @@ mod tests {
             after_idle.recv().await,
             Ok(Err(Error::StringError(message))) if message == "batch client closed"
         ));
+        // client-go marks the pool idle, so the next lookup recycles it.
+        assert!(KvClient::is_idle(&cached));
     }
 
     #[tokio::test]

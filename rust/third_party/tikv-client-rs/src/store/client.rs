@@ -1206,6 +1206,13 @@ pub trait KvClient {
     /// Retires this concrete pool. Existing callers may still hold a clone,
     /// so implementations must make subsequent use fail deterministically.
     fn close(&self) {}
+
+    /// client-go `connPool.isIdle`: whether the pool retired itself after its
+    /// batch loop idled, so a cached lookup must recycle it rather than use
+    /// it. Clients without a batch loop are never idle.
+    fn is_idle(&self) -> bool {
+        false
+    }
 }
 
 /// Receives store health information attached to BatchCommands responses.
@@ -1234,6 +1241,9 @@ struct ConnectionInfo {
     address: String,
     version: u64,
     closed: AtomicBool,
+    /// client-go `connPool.isIdle`: the batch loop found no request for its
+    /// idle timeout and retired the pool; the next lookup recycles it.
+    idle: AtomicBool,
 }
 
 fn resolve_lock_collapse_request(
@@ -1258,6 +1268,15 @@ fn resolve_lock_collapse_request(
         },
         request.clone(),
     ))
+}
+
+impl KvRpcClient {
+    /// client-go's batch loop marking its pool idle (`connPool.idle`).
+    pub(crate) fn mark_idle(&self) {
+        if let Some(connection) = self.connection.read().unwrap().clone() {
+            connection.idle.store(true, Ordering::Release);
+        }
+    }
 }
 
 impl KvRpcClient {
@@ -1794,11 +1813,20 @@ impl KvClient for KvRpcClient {
             address,
             version,
             closed: AtomicBool::new(false),
+            idle: AtomicBool::new(false),
         }));
         for index in 0..self.rpc_clients.len() {
             self.set_connection_state(index, GrpcConnectionState::Idle);
         }
         self
+    }
+
+    fn is_idle(&self) -> bool {
+        self.connection
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|connection| connection.idle.load(Ordering::Acquire))
     }
 
     fn close(&self) {

@@ -39,6 +39,8 @@ fn main() -> ExitCode {
     // First, before any thread exists: Go's background work runs on growable
     // goroutine stacks, and this gives every thread the same headroom.
     tidb_util::worker_stack::install_as_default_thread_stack();
+    // Go's runtime records its start, which `time.Now()` measures from.
+    tidb_util::monotime::mark_process_start();
     let arguments = std::env::args().collect::<Vec<_>>();
     if arguments
         .iter()

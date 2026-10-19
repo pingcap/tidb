@@ -46,6 +46,9 @@ use tidb_txnkv::pd_capability::PdCapability;
 /// gives up on it.
 const GC_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Go `gcTimeout`.
+const GC_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 /// A started GC worker and the runtime its TiKV and PD calls run on. Dropping
 /// it stops the worker (Go `GCWorker.Close`).
 pub(crate) struct NodeGcWorker {
@@ -296,12 +299,41 @@ impl GcKvClient for NodeGcClient {
         })
     }
 
-    fn gc_region(&self, _region_key: &[u8], _safe_point: u64) -> GcResult<Option<String>> {
-        // Go `doGCForRegion` has no production caller; only its store-backed
-        // test sends the region-level `CmdGC`.
-        Err(GcError::new(
-            "doGCForRegion is not sent by the production GC worker",
-        ))
+    /// Go `doGCForRegion`: `CmdGC` to the region holding `region_key`, with
+    /// Go's `gcTimeout`; the region error, or an error, never both.
+    fn gc_region(&self, region_key: &[u8], safe_point: u64) -> GcResult<Option<String>> {
+        self.runtime.block_on(async {
+            let store = self
+                .store
+                .pd_client()
+                .store_for_key(&region_key.to_vec().into())
+                .await
+                .map_err(gc_error)?;
+            let region = &store.region_with_leader.region;
+            let request = kvrpcpb::GcRequest {
+                context: Some(kvrpcpb::Context {
+                    region_id: region.id,
+                    region_epoch: region.region_epoch,
+                    peer: store.target_peer,
+                    ..kvrpcpb::Context::default()
+                }),
+                safe_point,
+            };
+            let response = store
+                .client
+                .dispatch_with_timeout(&request, Some(GC_TIMEOUT))
+                .await
+                .map_err(gc_error)?
+                .downcast::<kvrpcpb::GcResponse>()
+                .map_err(|_| GcError::new("[tikv:9005]response body is missing"))?;
+            if let Some(region_error) = &response.region_error {
+                return Ok(Some(format!("{region_error:?}")));
+            }
+            if let Some(error) = &response.error {
+                return Err(GcError::new(format!("unexpected gc error: {error:?}")));
+            }
+            Ok(None)
+        })
     }
 }
 
@@ -588,5 +620,80 @@ impl GcRuleClient for NodeGcRules {
                 rule_ids,
             ))
             .map_err(GcError::new)
+    }
+}
+
+#[cfg(test)]
+mod playground_tests {
+    /// Counts the keys of the table `GC_ACC_TABLE_ID` (its record and index
+    /// keys, `t{id}` .. `t{id+1}`) on the cluster at `GC_ACC_PD`, read at a
+    /// fresh timestamp. Run by hand against a playground (see
+    /// `rust/docs/gcworker-execplan.md`): after `DROP TABLE` the rows are
+    /// still there (Go deletes nothing until GC), and after the GC worker
+    /// destroyed the table's delete range there is none, at any timestamp.
+    #[test]
+    #[ignore = "needs a TiKV playground: GC_ACC_PD and GC_ACC_TABLE_ID"]
+    fn playground_table_keys() {
+        use tikv_client::TimestampExt;
+
+        let pd = std::env::var("GC_ACC_PD").expect("GC_ACC_PD");
+        let table_id: i64 = std::env::var("GC_ACC_TABLE_ID")
+            .expect("GC_ACC_TABLE_ID")
+            .parse()
+            .expect("a table id");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let count = runtime.block_on(async {
+            let store = tikv_client::tikv::KvStore::new_with_config(
+                vec![pd],
+                tikv_client::Config::default(),
+            )
+            .await
+            .expect("store");
+            let timestamp = store.current_timestamp().await.expect("timestamp");
+            let mut snapshot = store.snapshot(
+                tikv_client::proto::pdpb::Timestamp::from_version(timestamp.version()),
+                tikv_client::TransactionOptions::new_optimistic().read_only(),
+            );
+            let start = tidb_codec::table_key::encode_table_prefix(table_id);
+            let end = tidb_codec::table_key::encode_table_prefix(table_id + 1);
+            snapshot
+                .scan(start..end, 10_000)
+                .await
+                .expect("scan")
+                .count()
+        });
+        println!("GC_ACC table {table_id} keys: {count}");
+    }
+
+    /// Resolves locks over the whole key space through the client, as the GC
+    /// worker's runner does, after `GC_ACC_IDLE_SECS` of idleness.
+    #[test]
+    #[ignore = "needs a TiKV playground: GC_ACC_PD"]
+    fn playground_resolve_locks() {
+        use tikv_client::TimestampExt;
+
+        let pd = std::env::var("GC_ACC_PD").expect("GC_ACC_PD");
+        let idle: u64 = std::env::var("GC_ACC_IDLE_SECS")
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(0);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let store =
+                tikv_client::tikv::KvStore::new_with_config(vec![pd], tikv_client::Config::default())
+                    .await
+                    .expect("store");
+            tokio::time::sleep(std::time::Duration::from_secs(idle)).await;
+            let timestamp = store.current_timestamp().await.expect("timestamp");
+            let (stat, result) = store
+                .resolve_locks_for_range(
+                    tikv_client::async_util::Cancellation::default(),
+                    &tikv_client::proto::pdpb::Timestamp::from_version(timestamp.version() - 1),
+                    (Vec::new(), Vec::new()),
+                    1024,
+                )
+                .await;
+            println!("GC_ACC resolve after {idle}s idle: {stat:?} {result:?}");
+        });
     }
 }

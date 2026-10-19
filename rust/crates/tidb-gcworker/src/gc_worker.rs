@@ -167,11 +167,14 @@ fn compose_ts(physical: i64, logical: i64) -> u64 {
     ((physical << 18) + logical) as u64
 }
 
-/// Go `time.Time.String()` of a local wall-clock time:
-/// `2006-01-02 15:04:05.999999999 -0700 MST`, the fraction without trailing
-/// zeros and the zone named as the OS names it. Go also appends the
-/// monotonic reading (`m=+0.001`), measured from process start, which Rust
-/// does not record.
+/// Go `time.Now().String()`: the wall clock and the monotonic reading.
+fn go_time_now_string() -> String {
+    go_time_string(Local::now()) + &tidb_util::monotime::monotonic_suffix()
+}
+
+/// Go `time.Time.String()` of a local wall-clock time without a monotonic
+/// reading: `2006-01-02 15:04:05.999999999 -0700 MST`, the fraction without
+/// trailing zeros and the zone named as the OS names it.
 pub(crate) fn go_time_string(time: DateTime<Local>) -> String {
     let fraction = format!("{:09}", time.timestamp_subsec_nanos());
     let fraction = fraction.trim_end_matches('0');
@@ -319,7 +322,7 @@ impl GcWorker {
         let desc = format!(
             "host:{host_name}, pid:{}, start at {}",
             std::process::id(),
-            go_time_string(Local::now())
+            go_time_now_string()
         );
         let worker = Self::with_identity(deps, uuid, desc, keyspace_id);
         tidb_session::statusvar::register_statistics(Arc::new(GcStatistics(Arc::clone(
@@ -2194,7 +2197,7 @@ impl MockGcWorker {
         let desc = format!(
             "host:{host_name}, pid:{}, start at {}",
             std::process::id(),
-            go_time_string(Local::now())
+            go_time_now_string()
         );
         Ok(Self {
             worker: GcWorker::with_identity(deps, format!("{version:x}"), desc, NULL_KEYSPACE_ID),
