@@ -2719,32 +2719,44 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
 	// Column `a` has high NDV while `b` and `c` have low NDV, so the NDV safeguard allows
-	// pruning the IN-list columns `b` and `c` from range construction.
+	// pruning the IN-list columns `b` and `c` from range construction. Each value of `a` has
+	// only 25 rows, so most (a, b, c) point ranges are nearly empty and a seek per range costs
+	// more than scanning and filtering every row under `a`.
 	tk.MustExec("set @@cte_max_recursion_depth = 100000")
 	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
-		select n % 200, n % 3 + 1, n % 2 + 1, n from cte`)
+		select n % 2000, n % 7 + 1, n % 11 + 1, n from cte`)
 	tk.MustExec("analyze table t")
 	tk.MustExec("set @@tidb_cost_model_version = 2")
 
-	// Without an ordering requirement the seek cost of 6 ranges outweighs scanning the extra
-	// rows under a = 1, so the IN-lists are pruned from the ranges and applied as filters.
-	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2)").Check(testkit.Rows(
-		"IndexReader 728.24 root  index:Selection",
-		"└─Selection 728.24 cop[tikv]  in(test.t.b, 1, 2, 3), in(test.t.c, 1, 2)",
-		"  └─IndexRangeScan 250.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1,1], keep order:false"))
+	// The IN-lists cover only part of the values of `b` and `c`, so the residual filters on a
+	// pruned scan must reject rows.
+	const where = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10)"
+
+	// Without an ordering requirement the seek cost of 60 (a, b, c) ranges outweighs scanning the
+	// extra rows, so `c` is pruned from the ranges and applied as a filter, leaving 6 (a, b) ranges.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where).Check(testkit.Rows(
+		"IndexReader 278.05 root  index:Selection",
+		"└─Selection 278.05 cop[tikv]  in(test.t.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)",
+		"  └─IndexRangeScan 278.05 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"))
 
 	// With ORDER BY d the full point ranges satisfy the order through a per-range merge sort,
 	// so pruning must not be chosen: it would force a Sort on top of the pruned scan.
-	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d").Check(testkit.Rows(
-		"IndexReader 728.24 root  index:IndexRangeScan",
-		"└─IndexRangeScan 728.24 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1 1,1 1 1], [1 1 2,1 1 2], [1 2 1,1 2 1], [1 2 2,1 2 2], [1 3 1,1 3 1], [1 3 2,1 3 2], keep order:true"))
-	tk.MustQuery("explain format='brief' select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d limit 5").Check(testkit.Rows(
+	fullRanges := make([]string, 0, 60)
+	for b := 1; b <= 6; b++ {
+		for c := 1; c <= 10; c++ {
+			fullRanges = append(fullRanges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where + " order by d limit 5").Check(testkit.Rows(
 		"Limit 5.00 root  offset:0, count:5",
 		"└─IndexReader 5.00 root  index:Limit",
 		"  └─Limit 5.00 cop[tikv]  offset:0, count:5",
-		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1 1,1 1 1], [1 1 2,1 1 2], [1 2 1,1 2 1], [1 2 2,1 2 2], [1 3 1,1 3 1], [1 3 2,1 3 2], keep order:true"))
+		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:"+strings.Join(fullRanges, ", ")+", keep order:true"))
 
-	// The pruned plan must return the same rows as the ordered, unpruned plan.
-	tk.MustQuery("select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2)").Sort().Check(
-		tk.MustQuery("select a, b, c, d from t where a = 1 and b in (1,2,3) and c in (1,2) order by d").Sort().Rows())
+	// Compare against a full table scan, which applies every predicate as a filter.
+	tk.MustQuery("select a, b, c, d from t where " + where).Sort().Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where).Sort().Rows())
+	// Check the ordered result without sorting it, so a misordered keep-order scan is caught.
+	tk.MustQuery("select a, b, c, d from t where " + where + " order by d limit 5").Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where + " order by d limit 5").Rows())
 }
