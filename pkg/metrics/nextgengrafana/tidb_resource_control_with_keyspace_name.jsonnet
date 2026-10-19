@@ -243,14 +243,12 @@ local RUPanel = graphPanel.new(
   )
 );
 
-// Each sample is the busiest second of one completed UTC minute, stamped at
-// the minute end. Shifting the range one second forward makes it cover
-// exactly the minutes ending in (t - interval, t] under both closed
-// (Prometheus 2.x) and left-open (3.x) range selectors. Only the resource
+// Each sample is the busiest second in a 60-second window ending about 30
+// seconds before it. The value is a plain gauge without a timestamp. Only the resource
 // manager leader publishes samples, so the maximum across instances joins
 // leadership changes into one series.
 local RUPeakSelector = '{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}';
-local RUPeakRange = 'resource_manager_resource_unit_peak_per_second' + RUPeakSelector + '[$__interval] offset -1s';
+local RUPeakRange = 'resource_manager_resource_unit_peak_per_second_rolling_60s' + RUPeakSelector + '[$__interval]';
 local RUMaxPanel = graphPanel.new(
   title="RU Max - 1s",
   datasource=myDS,
@@ -263,7 +261,7 @@ local RUMaxPanel = graphPanel.new(
   legend_current=true,
   legend_rightSide=true,
   legend_alignAsTable=true,
-  description="Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later; seconds that a TiDB did not report count as zero. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
+  description="Maximum combined read and write RU/s of one natural second in a 60-second rolling window ending about 30 seconds before the point, summed over clients. A peak appears 30 to 90 seconds after it happens and may span two adjacent points at a 1-minute step; the two ends of a queried range can be off by up to about 60 seconds. The scrape interval must not exceed 60 seconds or a peak can be missed. Compare with RU, which shows average consumption rates. RU is attributed to the second in which the client settles it, so a long request concentrates its RU in its settlement second; covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
 ).addTarget(
   prometheus.target(
     'max by (keyspace_name, resource_group) (max_over_time(' + RUPeakRange + '))',

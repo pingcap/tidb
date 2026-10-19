@@ -250,7 +250,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Maximum combined read and write RU/s in one natural second across clients. Each point shows the busiest second in the preceding minute, timestamped at the minute end and published about 30 seconds later; seconds that a TiDB did not report count as zero. Compare with RU, which shows average consumption rates. Longer display intervals keep the maximum. Covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
+               "description": "Maximum combined read and write RU/s of one natural second in a 60-second rolling window ending about 30 seconds before the point, summed over clients. A peak appears 30 to 90 seconds after it happens and may span two adjacent points at a 1-minute step; the two ends of a queried range can be off by up to about 60 seconds. The scrape interval must not exceed 60 seconds or a peak can be missed. Compare with RU, which shows average consumption rates. RU is attributed to the second in which the client settles it, so a long request concentrates its RU in its settlement second; covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -288,7 +288,7 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "max by (keyspace_name, resource_group) (max_over_time(resource_manager_resource_unit_peak_per_second{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval] offset -1s))",
+                     "expr": "max by (keyspace_name, resource_group) (max_over_time(resource_manager_resource_unit_peak_per_second_rolling_60s{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\"}[$__interval]))",
                      "format": "time_series",
                      "interval": "1m",
                      "intervalFactor": 1,
