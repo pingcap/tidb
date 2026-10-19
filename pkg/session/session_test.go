@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -364,4 +365,82 @@ func TestMemArbitratorSession(t *testing.T) {
 		buildMemArbitratorDigestID(normalizedSQL, "db1"),
 		buildMemArbitratorDigestID(normalizedSQL, "db2"))
 	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", "db1"))
+}
+
+func TestAdvisoryLockWithoutProcessInfo(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	require.Nil(t, se.ShowProcess())
+	lockName := t.Name()
+	require.Zero(t, se.IsUsedAdvisoryLock(lockName))
+	require.NoError(t, se.GetAdvisoryLock(lockName, 1))
+	ownerID := se.IsUsedAdvisoryLock(lockName)
+	require.NotZero(t, ownerID)
+
+	// Executing SQL must not change the owner of later locks on this session.
+	se.SetConnectionID(12345)
+	se.SetProcessInfo("select 1", time.Now(), mysql.ComQuery, 0)
+	require.NoError(t, se.GetAdvisoryLock(lockName+"-second", 1))
+	require.Equal(t, ownerID, se.IsUsedAdvisoryLock(lockName+"-second"))
+	require.True(t, se.ReleaseAdvisoryLock(lockName))
+	require.True(t, se.ReleaseAdvisoryLock(lockName+"-second"))
+	require.Zero(t, se.IsUsedAdvisoryLock(lockName))
+}
+
+func TestAdvisoryLockUsesProcessInfoOwner(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	const connID uint64 = 12345
+	se.SetConnectionID(connID)
+	se.SetProcessInfo("select 1", time.Now(), mysql.ComQuery, 0)
+	require.NoError(t, se.GetAdvisoryLock(t.Name(), 1))
+	require.Equal(t, connID, se.IsUsedAdvisoryLock(t.Name()))
+	require.True(t, se.ReleaseAdvisoryLock(t.Name()))
+}
+
+func TestAdvisoryLockSetupFailureReleasesSession(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	resource, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	se := resource.(*session)
+	cleaned := false
+	clean := func() {
+		cleaned = true
+		dom.SysSessionPool().Put(resource)
+	}
+	defer func() {
+		if !cleaned {
+			se.RollbackTxn(context.Background())
+			clean()
+		}
+	}()
+
+	injectedErr := errors.New("advisory lock SET failed")
+	original := variable.GetSysVar(vardef.InnodbLockWaitTimeout)
+	override := *original
+	override.SetSession = func(vars *variable.SessionVars, value string) error {
+		if vars == se.GetSessionVars() {
+			return injectedErr
+		}
+		return original.SetSession(vars, value)
+	}
+	variable.RegisterSysVar(&override)
+	defer variable.RegisterSysVar(original)
+
+	lock := &advisoryLock{session: se, ctx: context.Background(), clean: clean}
+	require.ErrorIs(t, lock.GetLock(t.Name(), 1), injectedErr)
+	require.True(t, cleaned, "failed lock setup must return the borrowed session")
 }
