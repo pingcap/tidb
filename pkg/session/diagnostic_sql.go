@@ -14,21 +14,30 @@
 
 package session
 
-import "github.com/pingcap/tidb/pkg/parser/ast"
+import (
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+)
 
 // isDiagnosticSQLAllowed returns whether stmt is safe for the user-facing
 // diagnostic SQL endpoint. Internal restricted SQL is handled by the caller
 // and intentionally does not use this predicate.
 //
 // The diagnostic endpoint is deliberately an allowlist: it accepts a
-// non-ANALYZE EXPLAIN over a SELECT (or a SELECT set operation), USE, and the
-// explicitly listed metadata SHOW statements. A generic read-only check is
+// non-ANALYZE EXPLAIN over a SELECT (or a SELECT set operation), USE, the
+// explicitly listed metadata SHOW statements, and SELECTs over system tables.
+// A generic read-only check is
 // insufficient because SELECT can acquire locks, write a file, assign a
 // variable, or call functions that change session/sequence or advisory-lock
 // state; future SHOW statement types must also be reviewed before they are
 // exposed here.
-func isDiagnosticSQLAllowed(stmt ast.StmtNode) bool {
+func isDiagnosticSQLAllowed(stmt ast.StmtNode, currentDB string, is infoschemactx.MetaOnlyInfoSchema) bool {
 	switch node := stmt.(type) {
+	case *ast.SelectStmt, *ast.SetOprStmt:
+		checker := diagnosticSQLChecker{onlyAllowSystemTables: true, currentDB: ast.NewCIStr(currentDB), infoSchema: is}
+		ast.Walk(node, &checker)
+		return !checker.denied && checker.hasTable
 	case *ast.UseStmt:
 		return true
 	case *ast.ShowStmt:
@@ -62,12 +71,61 @@ func isDiagnosticSQLAllowed(stmt ast.StmtNode) bool {
 }
 
 type diagnosticSQLChecker struct {
-	denied bool
+	denied                bool
+	onlyAllowSystemTables bool
+	hasTable              bool
+	currentDB             ast.CIStr
+	infoSchema            infoschemactx.MetaOnlyInfoSchema
+	cteScopes             []map[string]bool
 }
 
 func (c *diagnosticSQLChecker) Enter(node ast.Node) (skipChildren bool) {
+	if c.onlyAllowSystemTables {
+		switch node.(type) {
+		case *ast.SelectStmt, *ast.SetOprStmt, *ast.SetOprSelectList:
+			c.cteScopes = append(c.cteScopes, make(map[string]bool))
+		}
+	}
+
 	switch n := node.(type) {
+	case *ast.TableName:
+		if !c.onlyAllowSystemTables {
+			break
+		}
+
+		if n.Schema.L == "" {
+			for _, scope := range c.cteScopes {
+				if scope[n.Name.L] {
+					return false
+				}
+			}
+		}
+
+		schema := n.Schema
+		if schema.L == "" {
+			schema = c.currentDB
+		}
+
+		if !metadef.IsMemDB(schema.L) && !metadef.IsSystemDB(schema.L) {
+			c.denied = true
+			break
+		}
+
+		c.hasTable = true
+		if c.infoSchema != nil {
+			// A view in mysql can read ordinary tables. Do not let its schema
+			// name bypass the restriction on the underlying data.
+			if tbl, err := c.infoSchema.TableInfoByName(schema, n.Name); err == nil && tbl.IsView() {
+				c.denied = true
+			}
+		}
 	case *ast.CommonTableExpression:
+		// Match CTE visibility: recursive definitions can see themselves;
+		// non-recursive definitions only become visible after their query.
+		if c.onlyAllowSystemTables && n.IsRecursive {
+			c.cteScopes[len(c.cteScopes)-1][n.Name.L] = true
+		}
+
 		// The SubqueryExpr stored on a CTE is the query definition itself,
 		// rather than an expression that the optimizer can evaluate as a
 		// scalar/EXISTS subquery. Walk its query directly so side effects in
@@ -75,11 +133,15 @@ func (c *diagnosticSQLChecker) Enter(node ast.Node) (skipChildren bool) {
 		if n.Query != nil && n.Query.Query != nil {
 			ast.Walk(n.Query.Query, c)
 		}
+
+		if c.onlyAllowSystemTables {
+			c.cteScopes[len(c.cteScopes)-1][n.Name.L] = true
+		}
 		return true
 	case *ast.SubqueryExpr:
 		// Non-CTE subqueries may be evaluated by the optimizer while it is
 		// compiling EXPLAIN. Reject them before compilation can start.
-		c.denied = true
+		c.denied = !c.onlyAllowSystemTables
 	case *ast.SelectStmt:
 		// Any lock clause can cause TiKV lock-resolution or lock-writing
 		// requests even though the statement is syntactically a SELECT.
@@ -120,7 +182,13 @@ func hasDiagnosticSQLSetVarHint(stmt *ast.SelectStmt) bool {
 	return false
 }
 
-func (c *diagnosticSQLChecker) Leave(ast.Node) (proceed bool) {
+func (c *diagnosticSQLChecker) Leave(node ast.Node) (proceed bool) {
+	if c.onlyAllowSystemTables {
+		switch node.(type) {
+		case *ast.SelectStmt, *ast.SetOprStmt, *ast.SetOprSelectList:
+			c.cteScopes = c.cteScopes[:len(c.cteScopes)-1]
+		}
+	}
 	return !c.denied
 }
 
