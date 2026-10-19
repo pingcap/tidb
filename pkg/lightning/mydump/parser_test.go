@@ -912,3 +912,22 @@ func TestChunkParserTooLargeRow(t *testing.T) {
 		require.ErrorIs(t, err, parsedef.ErrRowTooLarge)
 	})
 }
+
+func TestReadRowLongRowAcrossBlocks(t *testing.T) {
+	// A row larger than the block buffer is assembled from the unparsed
+	// remainder and several newly read blocks. The single appendBuf must keep
+	// the row (and the following row) intact.
+	blockBufSize := int64(64)
+	value := strings.Repeat("abcdefgh", 300) // spans many blocks
+	content := "INSERT INTO t VALUES ('" + value + "',1);INSERT INTO t VALUES ('x',2);"
+
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, mydump.NewStringReader(content), blockBufSize, ioWorkersForCSV)
+
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, []types.Datum{types.NewStringDatum(value), types.NewUintDatum(1)}, parser.LastRow().Row)
+
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, []types.Datum{types.NewStringDatum("x"), types.NewUintDatum(2)}, parser.LastRow().Row)
+
+	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
+}
