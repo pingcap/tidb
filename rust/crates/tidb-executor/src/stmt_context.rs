@@ -61,6 +61,9 @@ pub struct DdlReorgVars {
     pub enable_ddl_analyze: String,
     /// `tidb_analyze_version`, as the job's session variable.
     pub analyze_version: String,
+    /// `tidb_scatter_region` (Go `getScatterScopeFromSessionctx`), as the
+    /// job's session variable.
+    pub scatter_region: String,
     /// Go `ddlutil.GetTimeZone`: the session zone's name and offset.
     pub time_zone_name: String,
     /// See [`Self::time_zone_name`].
@@ -80,6 +83,7 @@ impl Default for DdlReorgVars {
             resource_group_name: String::new(),
             enable_ddl_analyze: "OFF".to_owned(),
             analyze_version: "2".to_owned(),
+            scatter_region: tidb_vardef::defaults::DEF_TIDB_SCATTER_REGION.to_owned(),
             time_zone_name: "UTC".to_owned(),
             time_zone_offset: 0,
         }

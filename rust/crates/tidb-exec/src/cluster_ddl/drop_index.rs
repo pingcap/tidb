@@ -84,22 +84,17 @@ pub fn prepare_drop_index_job_submission<S: MetaSnapshot>(
     crate::foreign_key_build::check_index_needed_in_foreign_key(&catalog, schema, stored, &index)
         .map_err(DdlPlanError::Admission)?;
 
-    let mut job = Job::default();
-    job.version = get_job_ver_in_use();
+    let action = if is_pk {
+        ActionType::ACTION_DROP_PRIMARY_KEY
+    } else {
+        ActionType::ACTION_DROP_INDEX
+    };
+    let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
     job.table_id = stored.id;
     job.schema_name = schema.go_to_lower().into();
     job.schema_state = index.state;
     job.table_name = stored.name.lowercase().to_owned().into();
-    job.type_ = if is_pk {
-        ActionType::ACTION_DROP_PRIMARY_KEY
-    } else {
-        ActionType::ACTION_DROP_INDEX
-    };
-    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
-    job.cdc_write_source = job_context.ddl_cdc_write_source();
-    job.sql_mode = job_context.ddl_sql_mode();
-    job.query = job_context.ddl_query().into();
     let args = GoShared::new(tidb_model::ModifyIndexArgs {
         index_args: vec![tidb_model::IndexArg {
             index_name: CiString::new(index_name),

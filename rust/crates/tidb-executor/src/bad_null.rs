@@ -67,6 +67,12 @@ use crate::driver::DriverError;
 
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: u32 = 1;
+
+/// Go `CheckNotNull`'s `HasNotNullFlag || HasPreventNullInsertFlag`: a column
+/// a DDL is turning NOT NULL already refuses a NULL.
+fn refuses_null(field_type: &FieldType) -> bool {
+    field_type.flags() & (NOT_NULL_FLAG | tidb_datatype::FieldTypeFlags::PREVENT_NULL_INSERT) != 0
+}
 /// Go `mysql.UnsignedFlag`.
 const UNSIGNED_FLAG: u32 = 32;
 
@@ -104,7 +110,7 @@ pub(crate) fn handle_bad_null(
     level: NullLevel,
     ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
-    if !value.is_null() || field_type.flags() & NOT_NULL_FLAG == 0 {
+    if !value.is_null() || !refuses_null(field_type) {
         return Ok(false);
     }
     if level == NullLevel::Error {
@@ -126,7 +132,7 @@ pub(crate) fn handle_bad_null_in_load_data(
     row: usize,
     ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
-    if !value.is_null() || field_type.flags() & NOT_NULL_FLAG == 0 {
+    if !value.is_null() || !refuses_null(field_type) {
         return Ok(false);
     }
     let message = format!(

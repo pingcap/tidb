@@ -54,17 +54,15 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
         return Err(truncate_referenced(&referred));
     }
     let old_partition_ids = add_index::partition_ids(stored);
-    let mut job = Job::default();
-    job.version = get_job_ver_in_use();
+    let mut job = session_job(job_context, ActionType::ACTION_TRUNCATE_TABLE);
     job.schema_id = db_id;
     job.table_id = stored.id;
     job.schema_name = schema.go_to_lower().into();
     job.table_name = stored.name.lowercase().to_owned().into();
-    job.type_ = ActionType::ACTION_TRUNCATE_TABLE;
-    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
-    job.cdc_write_source = job_context.ddl_cdc_write_source();
-    job.sql_mode = job_context.ddl_sql_mode();
-    job.query = job_context.ddl_query().into();
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([(
+        tidb_vardef::tidb_vars::TIDB_SCATTER_REGION.to_owned(),
+        job_context.ddl_reorg_vars().scatter_region.clone().into(),
+    )])));
     let args = GoShared::new(tidb_model::TruncateTableArgs {
         fk_check: GoField::new(fk_check),
         old_partition_ids: GoField::new(GoSharedSlice::from_vec(old_partition_ids)),

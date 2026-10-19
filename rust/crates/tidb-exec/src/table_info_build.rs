@@ -1672,6 +1672,37 @@ pub(crate) fn stamp_modified_origin_default(
     stamp_origin_default(info, context, false)
 }
 
+/// Go `checkDropColumnForStatePublic`: a NOT NULL column without an origin
+/// default gets one -- `generateOriginDefaultValue(col, nil, true)` -- so a
+/// row written while the column is write-only still reads a value.
+pub(crate) fn stamp_dropped_column_origin_default(info: &mut ColumnInfo) -> Refusal<()> {
+    if !info.get_origin_default_value().is_nil()
+        || !info.field_type.has_flag(FieldTypeFlags::NOT_NULL)
+    {
+        return Ok(());
+    }
+    let declared = info.get_default_value();
+    let is_now = matches!(
+        declared.view(),
+        Some(tidb_model::GoAnyView::String(bytes)) if bytes.as_bytes() == b"CURRENT_TIMESTAMP"
+    );
+    let context = tidb_executor::StmtContext::for_query();
+    if info.default_is_expr && !is_now {
+        // With no session Go takes the zero value instead of evaluating the
+        // expression.
+        let mut probe = info.clone_like_go();
+        probe
+            .set_default_value(tidb_model::GoAny::nil())
+            .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()))?;
+        probe.default_is_expr = false;
+        stamp_origin_default(&mut probe, &context, true)?;
+        info.origin_default_value = probe.origin_default_value.clone();
+        info.origin_default_value_bit = probe.origin_default_value_bit.clone();
+        return Ok(());
+    }
+    stamp_origin_default(info, &context, true)
+}
+
 /// Go `generateOriginDefaultValue`'s `DefaultIsExpr` arm: with
 /// `check_unsafe_func` only `DATE_FORMAT(NOW(), ...)` and `STR_TO_DATE` pass
 /// (`ErrBinlogUnsafeSystemFunction`, 1674); the expression is then evaluated

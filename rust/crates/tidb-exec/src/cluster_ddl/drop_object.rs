@@ -26,15 +26,9 @@ fn job_for(
     schema_id: i64,
     schema_name: &str,
 ) -> Job {
-    let mut job = Job::default();
-    job.version = get_job_ver_in_use();
+    let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
     job.schema_name = schema_name.go_to_lower().into();
-    job.type_ = action;
-    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
-    job.cdc_write_source = job_context.ddl_cdc_write_source();
-    job.sql_mode = job_context.ddl_sql_mode();
-    job.query = job_context.ddl_query().into();
     job
 }
 
@@ -195,6 +189,12 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                 database.info.name.original(),
             );
             job.schema_state = database.info.state;
+            job.involving_schema_info =
+                GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
+                    database: database.info.name.lowercase().to_owned().into(),
+                    table: tidb_model::job::INVOLVING_ALL.into(),
+                    ..tidb_model::InvolvingSchemaInfo::default()
+                }]);
             let args = GoShared::new(tidb_model::DropSchemaArgs {
                 fk_check: GoField::new(job_context.foreign_key_checks()),
                 ..tidb_model::DropSchemaArgs::default()

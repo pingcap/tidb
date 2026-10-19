@@ -699,6 +699,10 @@ impl Session {
                 .vars
                 .get_system(tidb_vars::TIDB_ANALYZE_VERSION)
                 .unwrap_or_else(|_| defaults.analyze_version.clone()),
+            scatter_region: self
+                .vars
+                .get_system(tidb_vars::TIDB_SCATTER_REGION)
+                .unwrap_or_else(|_| defaults.scatter_region.clone()),
             time_zone_name,
             time_zone_offset,
         }

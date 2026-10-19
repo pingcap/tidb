@@ -285,15 +285,54 @@ fn insert_job_into_delete_range_table(
                 }
             }
         }
-        // This owner runs neither job kind; their finished arguments
-        // (`TableColumnArgs`, `ModifyColumnArgs`) have no decoder here, so a
-        // job that reached this point would be refused rather than leave
-        // its ranges unrecorded.
-        ActionType::ACTION_DROP_COLUMN | ActionType::ACTION_MODIFY_COLUMN => {
-            return Err(DdlPlanError::Unsupported(format!(
-                "recording the delete ranges of a {} job",
-                job.type_
-            )));
+        ActionType::ACTION_DROP_COLUMN => {
+            let args = tidb_model::get_table_column_args(&mut job)
+                .map_err(args_error)?
+                .ok_or_else(|| missing_args(&job))?;
+            let args = args.read();
+            if !args.index_ids.is_empty() {
+                if args.partition_ids.is_empty() {
+                    batch_delete_indices_range(
+                        job_id,
+                        job.table_id,
+                        &args.index_ids,
+                        alloc,
+                        ranges,
+                    );
+                } else {
+                    for physical_id in &args.partition_ids {
+                        batch_delete_indices_range(
+                            job_id,
+                            *physical_id,
+                            &args.index_ids,
+                            alloc,
+                            ranges,
+                        );
+                    }
+                }
+            }
+        }
+        ActionType::ACTION_MODIFY_COLUMN => {
+            let args = tidb_model::get_finished_modify_column_args(&mut job)
+                .map_err(args_error)?
+                .ok_or_else(|| missing_args(&job))?;
+            let args = args.read();
+            if args.index_ids.is_empty() {
+                return Ok(());
+            }
+            if args.partition_ids.is_empty() {
+                batch_delete_indices_range(job_id, job.table_id, &args.index_ids, alloc, ranges);
+            } else {
+                for physical_id in &args.partition_ids {
+                    batch_delete_indices_range(
+                        job_id,
+                        *physical_id,
+                        &args.index_ids,
+                        alloc,
+                        ranges,
+                    );
+                }
+            }
         }
         _ => {}
     }

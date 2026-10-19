@@ -101,6 +101,58 @@ pub struct IndexOption {
     pub add_columnar_replica_on_demand: i64,
 }
 
+/// Go `ast.ColumnPosition`, as persisted in column job arguments
+/// (`TableColumnArgs.Pos`, `ModifyColumnArgs.Position`).
+///
+/// [`ColumnPosition`] is the statement form; this keeps Go's exported fields
+/// and JSON names (`Tp`, `RelativeColumn`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct JobColumnPosition {
+    /// Go `ColumnPositionType`: 0 none, 1 `FIRST`, 2 `AFTER`.
+    pub tp: i64,
+    /// The `AFTER` column.
+    pub relative_column: Option<Box<ColumnName>>,
+}
+
+impl JobColumnPosition {
+    /// Go `ast.ColumnPositionNone`.
+    pub const NONE: i64 = 0;
+    /// Go `ast.ColumnPositionFirst`.
+    pub const FIRST: i64 = 1;
+    /// Go `ast.ColumnPositionAfter`.
+    pub const AFTER: i64 = 2;
+
+    /// The parser's `&ast.ColumnPosition{...}` for a statement position.
+    #[must_use]
+    pub fn from_statement(position: &ColumnPosition) -> Self {
+        match position {
+            ColumnPosition::Default => Self::default(),
+            ColumnPosition::First => Self {
+                tp: Self::FIRST,
+                relative_column: None,
+            },
+            ColumnPosition::After(name) => Self {
+                tp: Self::AFTER,
+                relative_column: Some(Box::new(ColumnName {
+                    name: CiString::new(name.clone()),
+                    ..ColumnName::default()
+                })),
+            },
+        }
+    }
+
+    /// The statement form the owner positions a column by.
+    #[must_use]
+    pub fn to_statement(&self) -> ColumnPosition {
+        match (self.tp, &self.relative_column) {
+            (Self::FIRST, _) => ColumnPosition::First,
+            (Self::AFTER, Some(column)) => ColumnPosition::After(column.name.original().to_owned()),
+            _ => ColumnPosition::Default,
+        }
+    }
+}
+
 // CHECK constraints cross CREATE TABLE, ALTER TABLE, and column options, so
 // their source-shaped payload and restore contract live at their own shared
 // boundary rather than inside any statement or column envelope.

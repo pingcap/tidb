@@ -444,6 +444,10 @@ pub enum JobArgsValue {
     CheckConstraint(Option<GoShared<CheckConstraintArgs>>),
     /// `*model.AddCheckConstraintArgs`, including a typed nil pointer.
     AddCheckConstraint(Option<GoShared<AddCheckConstraintArgs>>),
+    /// `*model.TableColumnArgs`, including a typed nil pointer.
+    TableColumn(Option<GoShared<TableColumnArgs>>),
+    /// `*model.ModifyColumnArgs`, including a typed nil pointer.
+    ModifyColumn(Option<GoShared<ModifyColumnArgs>>),
 }
 
 impl JobArgsValue {
@@ -478,6 +482,8 @@ impl JobArgsValue {
             Self::AlterTableMode(value) => job.fill_args(value.clone()),
             Self::CheckConstraint(value) => job.fill_args(value.clone()),
             Self::AddCheckConstraint(value) => job.fill_args(value.clone()),
+            Self::TableColumn(value) => job.fill_args(value.clone()),
+            Self::ModifyColumn(value) => job.fill_args(value.clone()),
         }
     }
 
@@ -511,6 +517,8 @@ impl JobArgsValue {
             Self::AlterTableMode(_) => "AlterTableModeArgs",
             Self::CheckConstraint(_) => "CheckConstraintArgs",
             Self::AddCheckConstraint(_) => "AddCheckConstraintArgs",
+            Self::TableColumn(_) => "TableColumnArgs",
+            Self::ModifyColumn(_) => "ModifyColumnArgs",
         };
         model_type(name, GoTypeKind::Struct).pointer_to()
     }
@@ -549,6 +557,8 @@ impl JobArgsValue {
             Self::AlterTableMode(value) => value.as_ref().map(GoShared::identity_address),
             Self::CheckConstraint(value) => value.as_ref().map(GoShared::identity_address),
             Self::AddCheckConstraint(value) => value.as_ref().map(GoShared::identity_address),
+            Self::TableColumn(value) => value.as_ref().map(GoShared::identity_address),
+            Self::ModifyColumn(value) => value.as_ref().map(GoShared::identity_address),
         }
     }
 
@@ -690,6 +700,16 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::AddCheckConstraint(value) => GoTypedPointer::new(
                 model_type("AddCheckConstraintArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::TableColumn(value) => GoTypedPointer::new(
+                model_type("TableColumnArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::ModifyColumn(value) => GoTypedPointer::new(
+                model_type("ModifyColumnArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -835,6 +855,10 @@ pub use schema_table::*;
 #[path = "job_args_alter.rs"]
 mod alter;
 pub use alter::*;
+
+#[path = "job_args_column.rs"]
+mod column;
+pub use column::*;
 
 #[path = "job_args_compat.rs"]
 mod compat;

@@ -1474,6 +1474,56 @@ pub fn submit_persisted_job_with_retry<
                     min_job_id,
                 )
             }
+            statement if crate::cluster_ddl::alter_table::is_alter_table_statement(statement) => {
+                crate::cluster_ddl::alter_table::prepare_alter_table_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::RenameTable { .. } | DdlStatement::RenameTables { .. } => {
+                crate::cluster_ddl::rename_table::prepare_rename_table_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::CreateDatabase { .. } => {
+                crate::cluster_ddl::create_schema::prepare_create_schema_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::AddColumn { .. } => {
+                crate::cluster_ddl::add_column::prepare_add_column_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::DropColumn { .. } => {
+                crate::cluster_ddl::drop_column::prepare_drop_column_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
             DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
                 crate::cluster_ddl::drop_index::prepare_drop_index_job_submission(
                     &mut snapshot,

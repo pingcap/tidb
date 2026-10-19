@@ -834,17 +834,7 @@ where
                     return Ok(ClusterDdlReport::Applied {
                         schema_version: job.last_schema_version,
                         created_id,
-                        warnings: job
-                            .warning
-                            .as_ref()
-                            .map(|warning| {
-                                vec![(
-                                    tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning,
-                                    1105_u16,
-                                    warning.read().message().to_owned(),
-                                )]
-                            })
-                            .unwrap_or_default(),
+                        warnings: reorg_meta_warnings(&job),
                     });
                 }
                 return Err(SqlQueryError::unknown(format!(
@@ -2559,7 +2549,13 @@ where
                     | DdlStatement::DropDatabase { .. }
                     | DdlStatement::TruncateTable { .. }
                     | DdlStatement::CreateTable { .. }
+                    | DdlStatement::AddColumn { .. }
+                    | DdlStatement::DropColumn { .. }
+                    | DdlStatement::CreateDatabase { .. }
+                    | DdlStatement::RenameTable { .. }
+                    | DdlStatement::RenameTables { .. }
             )
+            || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {
             // Go `createIndex` / `dropIndex` / `dropTableObject` /
             // `DropSchema`: a persisted job the owner steps through the
@@ -2628,6 +2624,46 @@ where
         self.refresh_catalog();
         Ok(report)
     }
+}
+
+/// Go `DoDDLJobWrapper` on a synced job: the reorganization's warnings,
+/// each once or summarized by code. The job's own `Warning` (an IF EXISTS
+/// the owner met) never reaches the client.
+fn reorg_meta_warnings(
+    job: &tidb_model::Job,
+) -> Vec<(tidb_exec::real_tikv_ddl::DdlWarningLevel, u16, String)> {
+    let Some(meta) = job.reorg_meta.as_ref() else {
+        return Vec::new();
+    };
+    let meta = meta.read();
+    let (Some(warnings), Some(counts)) = (meta.warnings.as_ref(), meta.warnings_count.as_ref())
+    else {
+        return Vec::new();
+    };
+    let (warnings, counts) = (warnings.read(), counts.read());
+    if warnings.len() != counts.len() {
+        return Vec::new();
+    }
+    warnings
+        .iter()
+        .filter_map(|(key, warning)| {
+            let warning = warning.as_ref()?.read();
+            let count = counts.get(key).copied().unwrap_or_default();
+            let message = if count == 1 {
+                warning.message().to_owned()
+            } else {
+                format!(
+                    "{count} warnings with this error code, first warning: {}",
+                    warning.message()
+                )
+            };
+            Some((
+                tidb_exec::real_tikv_ddl::DdlWarningLevel::Warning,
+                u16::try_from(warning.code().value()).unwrap_or(1105),
+                message,
+            ))
+        })
+        .collect()
 }
 
 impl<C, L, P> tidb_exec::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<C, L, P>

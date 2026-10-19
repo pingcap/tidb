@@ -531,10 +531,22 @@ pub fn cluster_table(
         kv_table.add_hidden_column(column);
     }
     kv_table.set_name(table.name.original());
+    // Go `LoadCheckConstraint` -> `removeInvalidCheckConstraintsInfo`: a
+    // CHECK naming a column that is no longer public (DROP COLUMN leaves it
+    // in the stored metadata) is dropped lazily here.
     let constraints = table
         .constraints
         .iter_deref()
         .map(|constraint| constraint.read().clone())
+        .filter(|constraint| {
+            constraint.constraint_cols.iter().all(|name| {
+                table.columns.iter_deref().any(|column| {
+                    let column = column.read();
+                    column.state == SchemaState::PUBLIC
+                        && column.name.lowercase() == name.lowercase()
+                })
+            })
+        })
         .collect::<Vec<_>>();
     kv_table
         .set_check_constraint_infos(constraints, &tidb_datatype::SessionTimeZone::utc(), b'\\')

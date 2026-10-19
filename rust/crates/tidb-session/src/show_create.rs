@@ -505,12 +505,6 @@ pub(super) fn show_create_table_text(
             table_charset.collation.name()
         ));
     }
-    if !table.comment().is_empty() {
-        out.push_str(&format!(
-            " COMMENT='{}'",
-            tidb_util::format::output_format(table.comment())
-        ));
-    }
     // Go `ShowCreateTable` (`executor/show.go:1373-1375`): the compression
     // setting, printed before the auto-increment option when non-empty.
     if !table.compression().is_empty() {
@@ -563,6 +557,14 @@ pub(super) fn show_create_table_text(
         out.push_str(&format!(
             " /*T! PRE_SPLIT_REGIONS={} */",
             table.pre_split_regions()
+        ));
+    }
+    // Go `ShowCreateTable` (`executor/show.go:1417`): the comment follows
+    // the auto-id and shard options.
+    if !table.comment().is_empty() {
+        out.push_str(&format!(
+            " COMMENT='{}'",
+            tidb_util::format::output_format(table.comment())
         ));
     }
     // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1421`) prints

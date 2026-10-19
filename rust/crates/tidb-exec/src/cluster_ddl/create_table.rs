@@ -64,21 +64,32 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
         Err(DdlPlan::Write(_)) => unreachable!("the builder answers no write"),
     };
     let database = find_database(&catalog, schema).expect("the builder found the database");
-    let mut job = Job::default();
-    job.version = get_job_ver_in_use();
+    let mut job = session_job(job_context, ActionType::ACTION_CREATE_TABLE);
     job.schema_id = database.info.id;
     job.schema_name = database.info.name.lowercase().to_owned().into();
     job.table_name = info.name.lowercase().to_owned().into();
-    job.type_ = ActionType::ACTION_CREATE_TABLE;
-    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
-    job.cdc_write_source = job_context.ddl_cdc_write_source();
-    job.sql_mode = job_context.ddl_sql_mode();
     // Go's partition sugar rewrites `QueryString` before the job copies it.
     job.query = tidb_executor::ddl::job_history::rewritten_query(
         job_context.ddl_query(),
         build.context.ddl_query_rewrite().as_ref(),
     )
     .into();
+    // Go `getSharedInvolvingSchemaInfo`: the referenced parents and the
+    // placement policy, shared, behind the table itself.
+    let shared = shared_involving_schema_info(&info);
+    if !shared.is_empty() {
+        let mut involving = vec![tidb_model::InvolvingSchemaInfo {
+            database: job.schema_name.clone(),
+            table: job.table_name.clone(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        }];
+        involving.extend(shared);
+        job.involving_schema_info = GoSharedSlice::from_vec(involving);
+    }
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::from([(
+        tidb_vardef::tidb_vars::TIDB_SCATTER_REGION.to_owned(),
+        job_context.ddl_reorg_vars().scatter_region.clone().into(),
+    )])));
     let args = GoShared::new(tidb_model::CreateTableArgs {
         table_info: GoField::new(Some(GoShared::new(info))),
         fk_check: GoField::new(build.context.foreign_key_checks()),
@@ -95,6 +106,31 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     )?;
     let [spec] = specs;
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), warnings)))
+}
+
+/// Go `getSharedInvolvingSchemaInfo`.
+fn shared_involving_schema_info(info: &TableInfo) -> Vec<tidb_model::InvolvingSchemaInfo> {
+    let mut involving: Vec<_> = info
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| {
+            let fk = fk.read();
+            tidb_model::InvolvingSchemaInfo {
+                database: fk.ref_schema.lowercase().to_owned().into(),
+                table: fk.ref_table.lowercase().to_owned().into(),
+                mode: tidb_model::InvolvingSchemaInfoMode::SHARED,
+                ..tidb_model::InvolvingSchemaInfo::default()
+            }
+        })
+        .collect();
+    if let Some(policy) = &info.placement_policy_ref {
+        involving.push(tidb_model::InvolvingSchemaInfo {
+            policy: policy.read().name.lowercase().to_owned().into(),
+            mode: tidb_model::InvolvingSchemaInfoMode::SHARED,
+            ..tidb_model::InvolvingSchemaInfo::default()
+        });
+    }
+    involving
 }
 
 /// Go `onCreateTable`.

@@ -904,7 +904,28 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             }
         }
     }
-    let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+    // Go `asyncNotifyEvent(NewAddIndexEvent(...))`, skipped for the memory
+    // and system databases.
+    if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
+        let analyzed = active.job.reorg_meta.as_ref().is_some_and(|meta| {
+            meta.read().analyze_state == tidb_model::reorg::analyze_state::DONE
+        });
+        let added = indexes
+            .iter()
+            .map(|index| index.read().clone_like_go())
+            .collect();
+        append_schema_change_mutations(
+            snapshot,
+            catalog,
+            active.job.id,
+            &[(
+                -1,
+                SchemaChangeEvent::add_indexes(info.clone_like_go(), added, analyzed),
+            )],
+            &mut write.mutations,
+        )?;
+    }
     let finished_args = GoShared::new(tidb_model::ModifyIndexArgs {
         partition_ids: partition_ids(&info).into(),
         op_type: tidb_model::IndexOp::ADD_INDEX,

@@ -4673,6 +4673,45 @@ fn apply_add_column(
     if_not_exists: bool,
     context: &tidb_executor::StmtContext,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
+    let (mut added, destination) = match build_add_column(
+        info,
+        schema,
+        table,
+        column,
+        position,
+        if_not_exists,
+        context,
+    )? {
+        Ok(built) => built,
+        Err(detail) => return Ok(AlterColumnOutcome::AlreadySatisfied(detail)),
+    };
+    let appended = info.columns.len();
+    // Go `AllocateColumnID`: ids only ever grow, so a dropped column's id is
+    // never reused.
+    info.max_column_id += 1;
+    added.id = info.max_column_id;
+    added.offset = info.columns.len() as i64;
+    added.state = tidb_model::SchemaState::PUBLIC;
+    info.columns.push_handle_go(Some(GoShared::new(added)));
+    // Go `onAddColumn`'s write-reorganization step: the column is APPENDED
+    // first and only then moved to where `FIRST`/`AFTER` asked for, which
+    // is why the destination is computed against the appended layout.
+    move_column_info(info, appended, destination);
+    Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go executor `AddColumn` -> `checkAndCreateNewColumn` against `info`: the
+/// column the job adds (no id yet) and where it lands once appended.
+/// `Ok(Err(detail))` is IF NOT EXISTS over an existing column.
+pub(super) fn build_add_column(
+    info: &TableInfo,
+    schema: &str,
+    table: &str,
+    column: &tidb_ast::ColumnDef,
+    position: &tidb_ast::ColumnPosition,
+    if_not_exists: bool,
+    context: &tidb_executor::StmtContext,
+) -> Result<Result<(tidb_model::ColumnInfo, usize), String>, DdlPlanError> {
     // Go `AddColumn`, then `checkAndCreateNewColumn`.
     check_add_column_too_many_columns(info.columns.len() + 1)?;
     let wanted = column.name.go_to_lower();
@@ -4682,7 +4721,7 @@ fn apply_add_column(
         .any(|candidate| candidate.read().name.lowercase() == wanted)
     {
         if if_not_exists {
-            return Ok(AlterColumnOutcome::AlreadySatisfied(format!(
+            return Ok(Err(format!(
                 "column `{}` already exists on `{schema}`.`{table}`",
                 column.name
             )));
@@ -4708,7 +4747,7 @@ fn apply_add_column(
         .map(|column| column.read().clone_like_go())
         .filter(|column| !column.hidden)
         .collect::<Vec<_>>();
-    let mut added = crate::table_info_build::build_added_column(
+    let added = crate::table_info_build::build_added_column(
         column,
         &info.charset,
         &info.collate,
@@ -4731,18 +4770,7 @@ fn apply_add_column(
             "Generated column can refer only to generated columns defined prior to it.",
         ));
     }
-    // Go `AllocateColumnID`: ids only ever grow, so a dropped column's id is
-    // never reused.
-    info.max_column_id += 1;
-    added.id = info.max_column_id;
-    added.offset = info.columns.len() as i64;
-    added.state = tidb_model::SchemaState::PUBLIC;
-    info.columns.push_handle_go(Some(GoShared::new(added)));
-    // Go `onAddColumn`'s write-reorganization step: the column is APPENDED
-    // first and only then moved to where `FIRST`/`AFTER` asked for, which
-    // is why the destination is computed against the appended layout.
-    move_column_info(info, appended, destination);
-    Ok(AlterColumnOutcome::Applied)
+    Ok(Ok((added, destination)))
 }
 
 /// Go `LocateOffsetToMove` (`ddl/column.go:516`): where a column at
@@ -6090,20 +6118,28 @@ fn new_check_constraint_job(
     action: ActionType,
     context: &tidb_executor::StmtContext,
 ) -> Job {
-    let mut job = Job::default();
-    job.version = get_job_ver_in_use();
+    let mut job = session_job(context, action);
     job.schema_id = schema_id;
     job.table_id = table.id;
     job.schema_name = schema.go_to_lower().into();
     job.table_name = table.name.lowercase().to_owned().into();
+    if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
+        job.priority = context.ddl_reorg_priority();
+    }
+    job
+}
+
+/// The job fields Go's executor sets on every statement's job literal
+/// (`Version`, `Type`, `BinlogInfo`, `CDCWriteSource`, `SQLMode`) and those
+/// `DoDDLJobWrapper` adds: `TraceInfo` and `setDDLJobQuery`'s query.
+pub(crate) fn session_job(context: &tidb_executor::StmtContext, action: ActionType) -> Job {
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
     job.type_ = action;
     job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
     job.query = context.ddl_query().into();
     job.sql_mode = context.ddl_sql_mode();
     job.cdc_write_source = context.ddl_cdc_write_source();
-    if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
-        job.priority = context.ddl_reorg_priority();
-    }
     job.trace_info = Some(GoShared::new(TraceInfo {
         session_alias: context.ddl_session_alias().into(),
         trace_id: context.ddl_trace_id().to_vec().into(),
@@ -6161,10 +6197,15 @@ pub enum PersistedDdlJobPlan {
     Reorg(add_index::AddIndexReorg),
 }
 
+pub mod add_column;
 pub mod add_index;
+pub mod alter_table;
+pub mod create_schema;
 pub mod create_table;
+pub mod drop_column;
 pub mod drop_index;
 pub mod drop_object;
+pub mod rename_table;
 pub mod truncate;
 
 /// Actions currently integrated into the persisted owner worker. Seed planners
@@ -6178,6 +6219,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_CREATE_SCHEMA
             | ActionType::ACTION_CREATE_TABLE
             | ActionType::ACTION_CREATE_TABLES
+            | ActionType::ACTION_RENAME_TABLE
             | ActionType::ACTION_RENAME_TABLES
             | ActionType::ACTION_DROP_SCHEMA
             | ActionType::ACTION_DROP_TABLE
@@ -6188,7 +6230,9 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_DROP_INDEX
             | ActionType::ACTION_DROP_PRIMARY_KEY
             | ActionType::ACTION_TRUNCATE_TABLE
-    )
+            | ActionType::ACTION_ADD_COLUMN
+            | ActionType::ACTION_DROP_COLUMN
+    ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
 /// Plans Go's shared worker lifecycle: recover the selected schema barrier,
@@ -6228,8 +6272,8 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 ActionType::ACTION_CREATE_TABLES => {
                     plan_persisted_create_tables_job_step(catalog, active, start_ts)
                 }
-                ActionType::ACTION_RENAME_TABLES => {
-                    plan_persisted_rename_tables_job_step(catalog, active, start_ts)
+                ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
+                    rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
                 }
                 ActionType::ACTION_DROP_SCHEMA => {
                     plan_persisted_drop_schema_job_step(snapshot, catalog, active)
@@ -6253,6 +6297,17 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 }
                 ActionType::ACTION_TRUNCATE_TABLE => {
                     truncate::plan_persisted_truncate_table_job_step(
+                        snapshot, catalog, active, start_ts,
+                    )
+                }
+                ActionType::ACTION_ADD_COLUMN => add_column::plan_persisted_add_column_job_step(
+                    snapshot, catalog, active, start_ts,
+                ),
+                ActionType::ACTION_DROP_COLUMN => {
+                    drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts)
+                }
+                action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
+                    alter_table::plan_persisted_alter_table_job_step(
                         snapshot, catalog, active, start_ts,
                     )
                 }
@@ -7244,332 +7299,6 @@ fn plan_persisted_create_tables_job_step(
     })
 }
 
-/// Plans one execution step of a persisted `ACTION_RENAME_TABLES` job.
-///
-/// Pinned Go `onRenameTables` (`pkg/ddl/table.go:849`), a two-phase job.
-/// Phase one (before `StatePublic`) moves every table from its old schema to
-/// its new one -- delete the old table KV, stamp `tblInfo.Name =
-/// args.NewTableName`, create under the new schema (Go `checkAndRenameTables`)
-/// -- and bumps the schema version once with a `RENAME TABLES` diff (Go
-/// `SetSchemaDiffForRenameTables`: the first rename rides `TableID` /
-/// `SchemaID` / `OldSchemaID`, the rest land in `AffectedOpts`). The job then
-/// sits at `StatePublic` in the queue. Phase two bumps the version once more
-/// with the diff's old IDs pinned to the new schemas (Go
-/// `finishJobRenameTables`), so peers re-resolve the tables, and finishes the
-/// job with `FinishMultipleTableJob`. A missing source table cancels the job
-/// with the recorded error (Go `GetTableInfoAndCancelFaultJob`); Go resolves
-/// the table by name inside the old schema, so a stale job-side ID must not
-/// fail the move.
-fn plan_persisted_rename_tables_job_step(
-    catalog: &ClusterCatalog,
-    active: &mut crate::ddl_job_table::ActiveDdlJob,
-    start_ts: u64,
-) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let ddl_job_id = active.job.id;
-
-    let args = tidb_model::get_rename_tables_args(&mut active.job)
-        .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
-        .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job has nil args".to_owned()))?;
-    let args = args.read();
-    let rename_infos = args.rename_table_infos.get();
-    let first = rename_infos
-        .get(0)
-        .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job has no entries".to_owned()))?;
-    let first = first.read();
-
-    // Resolve every entry: Go looks the table up by name inside the old
-    // schema (`GetTableInfoAndCancelFaultJob`), so a job-side stale ID must
-    // not fail a rename whose name still resolves.
-    struct Move {
-        old_schema_id: i64,
-        new_schema_id: i64,
-        table: tidb_model::TableInfo,
-        new_name: CiString,
-        old_table_id: i64,
-    }
-    let mut resolved: Vec<Move> = Vec::with_capacity(rename_infos.len());
-    let mut failure: Option<DdlPlanError> = None;
-    // Once phase one has moved the tables (`SchemaState == StatePublic`), the
-    // same entries resolve against their NEW schema and NEW names instead (Go
-    // `finishJobRenameTables` reloads the tables under `info.NewSchemaID`).
-    let phase_two = active.job.schema_state == SchemaState::PUBLIC;
-    for index in 0..rename_infos.len() {
-        let info = rename_infos
-            .get(index)
-            .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job arg is nil".to_owned()))?;
-        let info = info.read();
-        let old_schema_id = if info.old_schema_id == 0 {
-            active.job.schema_id
-        } else {
-            info.old_schema_id
-        };
-        let new_schema_id = if info.new_schema_id == 0 {
-            old_schema_id
-        } else {
-            info.new_schema_id
-        };
-        let (lookup_schema_id, lookup_table_id, lookup_name) = if phase_two {
-            (
-                new_schema_id,
-                info.table_id,
-                info.new_table_name.lowercase(),
-            )
-        } else {
-            (
-                old_schema_id,
-                info.table_id,
-                info.old_table_name.lowercase(),
-            )
-        };
-        let table = catalog
-            .databases
-            .iter()
-            .find(|database| database.info.id == lookup_schema_id)
-            .and_then(|database| {
-                database
-                    .tables
-                    .iter()
-                    .find(|table| {
-                        table.id == lookup_table_id || table.name.lowercase() == lookup_name
-                    })
-                    .cloned()
-            });
-        let Some(table) = table else {
-            failure = Some(DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
-                    .generate(if phase_two {
-                        format!("Table '{}' doesn't exist", info.new_table_name.original())
-                    } else {
-                        format!("Table '{}' doesn't exist", info.old_table_name.original())
-                    }),
-            ));
-            break;
-        };
-        if !catalog
-            .databases
-            .iter()
-            .any(|database| database.info.id == new_schema_id)
-        {
-            failure = Some(DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrBadDB)
-                    .generate(format!("Unknown database '(Schema ID {new_schema_id})'")),
-            ));
-            break;
-        }
-        resolved.push(Move {
-            old_schema_id,
-            new_schema_id,
-            table,
-            new_name: info.new_table_name.clone(),
-            old_table_id: info.table_id,
-        });
-    }
-
-    if let Some(error) = failure {
-        return Err(cancel_ddl_job(active, error));
-    }
-
-    let schema_version = catalog.schema_version;
-    let mut mutations = Vec::new();
-
-    if active.job.schema_state != SchemaState::PUBLIC {
-        // Phase one: move the tables and bump the version once.
-        let mut affected = Vec::with_capacity(resolved.len().saturating_sub(1));
-        let mut label_rules = LabelRuleSteps::new();
-        let schema_name = |schema_id: i64| {
-            catalog
-                .databases
-                .iter()
-                .find(|database| database.info.id == schema_id)
-                .map(|database| database.info.name.lowercase().to_owned())
-                .unwrap_or_default()
-        };
-        for (index, move_plan) in resolved.iter().enumerate() {
-            let info_handle = rename_infos
-                .get(index)
-                .ok_or_else(|| DdlPlanError::Encode("RENAME TABLES job arg is nil".to_owned()))?;
-            let info = info_handle.read();
-            if index > 0 {
-                let adjusted_old = if info.old_schema_id_for_schema_diff > 0 {
-                    info.old_schema_id_for_schema_diff
-                } else {
-                    info.old_schema_id
-                };
-                affected.push(tidb_model::AffectedOption {
-                    schema_id: move_plan.new_schema_id,
-                    old_schema_id: adjusted_old,
-                    table_id: move_plan.table.id,
-                    old_table_id: move_plan.table.id,
-                    ..tidb_model::AffectedOption::default()
-                });
-            }
-            mutations.push(BufferMutation::delete(key::table_kv_key(
-                move_plan.old_schema_id,
-                move_plan.table.id,
-            ))?);
-            // Go `checkAndRenameTables`: the rules named for the old names,
-            // then the same rules re-keyed under the new ones.
-            let old_rules = label_rules::get_old_label_rules(
-                label_rules.manager(),
-                &LabelRuleTable::from_table_info(&move_plan.table),
-                &schema_name(move_plan.old_schema_id),
-                move_plan.table.name.lowercase(),
-            )
-            .map_err(|error| pd_step_error(Some("failed to get old label rules from PD"), error))?;
-            let mut table = move_plan.table.clone();
-            table.name = move_plan.new_name.clone();
-            label_rules.push(
-                label_rules::update_label_rules(
-                    &schema_name(move_plan.new_schema_id),
-                    &LabelRuleTable::from_table_info(&table),
-                    &old_rules,
-                    old_rules.old_rule_ids(),
-                    table.id,
-                ),
-                Some("failed to update the label rule to PD"),
-            )?;
-            // Go `checkAndRenameTables`: keep the auto ID anchored to the
-            // original schema across a cross-schema rename.
-            if table.auto_id_schema_id == 0 && move_plan.new_schema_id != move_plan.old_schema_id {
-                table.auto_id_schema_id = move_plan.old_schema_id;
-            }
-            if move_plan.new_schema_id == table.auto_id_schema_id {
-                table.auto_id_schema_id = 0;
-            }
-            table.update_ts = start_ts;
-            mutations.push(BufferMutation::set(
-                key::table_kv_key(move_plan.new_schema_id, table.id),
-                value::serialize_table_info(&table)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            )?);
-        }
-        let _first_guard = &first;
-        let schema_version = schema_version + 1;
-        let diff = SchemaDiff {
-            version: schema_version,
-            action_type: active.job.type_,
-            schema_id: first.new_schema_id,
-            table_id: first.table_id,
-            old_schema_id: first.old_schema_id,
-            ..SchemaDiff::default()
-        };
-        mutations.push(BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?);
-        mutations.push(BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        active.job.last_schema_version = schema_version;
-        active.job.schema_state = SchemaState::PUBLIC;
-        return Ok(PersistedDdlActionStep {
-            write: DdlWrite {
-                ddl_job_id,
-                mutations,
-                schema_version,
-                diff,
-                created_id: None,
-                backfill: Vec::new(),
-                exchange_partition_validation: None,
-                check_constraint_validation: None,
-                column_reorgs: Vec::new(),
-                foreign_key_checks: Vec::new(),
-                cache_table_check: None,
-                partition_reorg: None,
-                mdl_info_update: None,
-                label_rules: label_rules.steps,
-                warnings: Vec::new(),
-                placement_bundles: Vec::new(),
-                placement_rollback_bundles: Vec::new(),
-                affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
-                resource_group_update: None,
-            },
-            update_raw_args: true,
-            run_error: None,
-            reorg: None,
-        });
-    }
-
-    // Phase two (Go `finishJobRenameTables`): bump the version once more
-    // with every old schema pinned to the new schema, then finish the job
-    // over the relocated tables.
-    let mut tables: Vec<tidb_model::TableInfo> = Vec::with_capacity(resolved.len());
-    for move_plan in resolved.iter() {
-        let mut table = move_plan.table.clone();
-        table.name = move_plan.new_name.clone();
-        table.update_ts = start_ts;
-        tables.push(table);
-    }
-    let schema_version = schema_version + 1;
-    let mut diff = SchemaDiff {
-        version: schema_version,
-        action_type: active.job.type_,
-        schema_id: first.new_schema_id,
-        table_id: first.table_id,
-        old_schema_id: first.new_schema_id,
-        ..SchemaDiff::default()
-    };
-    let mut affected = Vec::with_capacity(resolved.len().saturating_sub(1));
-    for move_plan in resolved.iter().skip(1) {
-        affected.push(tidb_model::AffectedOption {
-            schema_id: move_plan.new_schema_id,
-            old_schema_id: move_plan.new_schema_id,
-            table_id: move_plan.table.id,
-            old_table_id: move_plan.table.id,
-            ..tidb_model::AffectedOption::default()
-        });
-    }
-    diff.affected_options = GoSharedPointerSlice::from(affected);
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    active.job.last_schema_version = schema_version;
-    let published: GoSharedPointerSlice<tidb_model::TableInfo> = GoSharedPointerSlice::from(tables);
-    active.job.finish_multiple_table_job(
-        JobState::DONE,
-        SchemaState::PUBLIC,
-        schema_version,
-        &published,
-    );
-
-    Ok(PersistedDdlActionStep {
-        write: DdlWrite {
-            ddl_job_id,
-            mutations,
-            schema_version,
-            diff,
-            created_id: None,
-            backfill: Vec::new(),
-            exchange_partition_validation: None,
-            check_constraint_validation: None,
-            column_reorgs: Vec::new(),
-            foreign_key_checks: Vec::new(),
-            cache_table_check: None,
-            partition_reorg: None,
-            mdl_info_update: None,
-            label_rules: Vec::new(),
-            warnings: Vec::new(),
-            placement_bundles: Vec::new(),
-            placement_rollback_bundles: Vec::new(),
-            affinity_groups: crate::ddl_affinity::AffinityGroupUpdate::default(),
-            resource_group_update: None,
-        },
-        update_raw_args: true,
-        run_error: None,
-        reorg: None,
-    })
-}
-
 /// Plans one execution step of a persisted `ACTION_DROP_SCHEMA` job.
 ///
 /// Pinned Go `onDropSchema` (`pkg/ddl/schema.go:158`): the job walks the
@@ -8130,7 +7859,9 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_CREATE_SCHEMA
         | ActionType::ACTION_CREATE_TABLE
         | ActionType::ACTION_CREATE_TABLES => true,
-        ActionType::ACTION_RENAME_TABLES => active.job.schema_state == SchemaState::NONE,
+        ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
+            active.job.schema_state == SchemaState::NONE
+        }
         ActionType::ACTION_DROP_SCHEMA => {
             let database = catalog
                 .databases
@@ -8164,6 +7895,15 @@ fn plan_cancel_persisted_ddl_job(
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
             return drop_index::plan_cancel_drop_index(catalog, active);
+        }
+        ActionType::ACTION_ADD_COLUMN => {
+            return add_column::plan_cancel_add_column(catalog, active, start_ts);
+        }
+        ActionType::ACTION_DROP_COLUMN => {
+            return drop_column::plan_cancel_drop_column(catalog, active);
+        }
+        action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
+            return alter_table::plan_cancel_alter_table(catalog, active);
         }
         // Go `rollingbackTruncateTable`: `cancelOnlyNotHandledJob` at
         // `StateNone`, after `GetTableInfoAndCancelFaultJob`.

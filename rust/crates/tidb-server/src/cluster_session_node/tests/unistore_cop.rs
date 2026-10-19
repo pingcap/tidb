@@ -19625,6 +19625,481 @@ fn drop_index_runs_as_a_persisted_job_like_go() {
     );
 }
 
+/// ADD COLUMN and DROP COLUMN run as Go's persisted jobs (`onAddColumn`,
+/// `onDropColumn`): the executor's notes and refusals, the jobs, the column
+/// order, the delete ranges of the single-column indexes a drop takes along,
+/// and the CHECK constraints `LoadCheckConstraint` prunes once a column they
+/// read is gone. Captured from the Go oracle.
+#[test]
+fn add_and_drop_column_run_as_persisted_jobs_like_go() {
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+    fn int_key(value: i64) -> Vec<u8> {
+        let mut key = vec![0x03];
+        key.extend_from_slice(&((value as u64) ^ (1 << 63)).to_be_bytes());
+        key
+    }
+    let index = |id: i64, index: i64| tidb_codec::table_key::encode_table_index_prefix(id, index);
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1941)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let id_of = |session: &mut _, sql: &str| -> Vec<i64> {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row[0].parse().unwrap())
+            .collect()
+    };
+    let last_job = |session: &mut _| {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [0, 3, 4, 7, 11].map(|column| row[column].clone()).join("|")
+    };
+    let warnings = |session: &mut _| -> Vec<String> {
+        displayed(rows(session, "SHOW WARNINGS"))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+    rows(
+        &mut session,
+        "create table t (a int, b int, c int not null, key kb(b), key kac(a,c))",
+    );
+    rows(&mut session, "insert into t values (1,1,1),(2,2,2)");
+    let t = id_of(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_name='t'",
+    )[0];
+    for sql in [
+        "alter table t add column d int default 5",
+        "alter table t add column e int first",
+        "alter table t add column f varchar(10) after a",
+    ] {
+        rows(&mut session, sql);
+        let job = last_job(&mut session);
+        assert!(job.ends_with("|add column|public|0|synced"), "{sql}: {job}");
+    }
+    let before = last_job(&mut session);
+    rows(&mut session, "alter table t add column if not exists d int");
+    assert_eq!(
+        warnings(&mut session),
+        ["Note|1060|Duplicate column name 'd'"]
+    );
+    // IF NOT EXISTS over an existing column queues nothing.
+    assert_eq!(last_job(&mut session), before);
+    rows(&mut session, "alter table t drop column b");
+    let job = last_job(&mut session);
+    assert!(job.ends_with("|drop column|none|0|synced"), "{job}");
+    let before = last_job(&mut session);
+    rows(&mut session, "alter table t drop column if exists nosuch");
+    assert_eq!(
+        warnings(&mut session),
+        ["Note|1091|Can't DROP 'nosuch'; check that column/key exists"]
+    );
+    assert_eq!(last_job(&mut session), before);
+    rows(&mut session, "create table only1 (a int)");
+    for (sql, code, message) in [
+        (
+            "alter table t add column d int",
+            1060,
+            "Duplicate column name 'd'",
+        ),
+        (
+            "alter table t add column g int after nosuch",
+            1054,
+            "Unknown column 'nosuch' in 't'",
+        ),
+        (
+            "alter table t drop column nosuch",
+            1091,
+            "Can't DROP 'nosuch'; check that column/key exists",
+        ),
+        (
+            "alter table t drop column a",
+            8200,
+            "can't drop column a with composite index covered or Primary Key covered now",
+        ),
+        (
+            "alter table only1 drop column a",
+            1090,
+            "can't drop only column a in table only1",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    let columns: Vec<String> = displayed(rows(&mut session, "show columns from t"))
+        .into_iter()
+        .map(|row| row[0].clone())
+        .collect();
+    assert_eq!(columns, ["e", "a", "f", "c", "d"]);
+    assert_eq!(
+        displayed(rows(&mut session, "select * from t order by a")),
+        [
+            ["NULL", "1", "NULL", "1", "5"],
+            ["NULL", "2", "NULL", "2", "5"]
+        ]
+    );
+    rows(&mut session, "admin check table t");
+
+    // A NOT NULL column without a default drops cleanly.
+    rows(&mut session, "create table tn (a int, b int not null)");
+    rows(&mut session, "insert into tn values (1, 1)");
+    rows(&mut session, "alter table tn drop column b");
+    assert_eq!(displayed(rows(&mut session, "select * from tn")), [["1"]]);
+
+    // The partitions' entries of a dropped single-column index.
+    rows(
+        &mut session,
+        "create table tp (a int, b int, key kb(b)) partition by hash(a) partitions 2",
+    );
+    let tp_parts = id_of(
+        &mut session,
+        "select tidb_partition_id from information_schema.partitions where table_name='tp' order by 1",
+    );
+    rows(&mut session, "alter table tp drop column b");
+
+    let pending = "select count(*) from mysql.gc_delete_range";
+    let started = std::time::Instant::now();
+    while displayed(rows(&mut session, pending)) != [["0"]] {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "emulator stuck"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let done: Vec<String> = displayed(rows(
+        &mut session,
+        "select element_id, start_key, end_key from mysql.gc_delete_range_done order by job_id, element_id",
+    ))
+    .into_iter()
+    .map(|row| row.join(" "))
+    .collect();
+    let mut drop_b_start = index(t, 1);
+    drop_b_start.extend(int_key(2));
+    drop_b_start.extend(int_key(2));
+    drop_b_start.push(0);
+    assert_eq!(
+        done,
+        [
+            format!("1 {} {}", hex(&drop_b_start), hex(&index(t, 2))),
+            format!(
+                "1 {} {}",
+                hex(&index(tp_parts[0], 1)),
+                hex(&index(tp_parts[0], 2))
+            ),
+            format!(
+                "2 {} {}",
+                hex(&index(tp_parts[1], 1)),
+                hex(&index(tp_parts[1], 2))
+            ),
+        ]
+    );
+
+    // A CHECK reading a dropped column stays in the stored metadata but is
+    // gone from every reader.
+    rows(&mut session, "set global tidb_enable_check_constraint=1");
+    rows(
+        &mut session,
+        "create table tc (a int, b int check (b > 0), c int, constraint cc check (c > a), constraint cb2 check (b < 100))",
+    );
+    let error = session
+        .execute_write("alter table tc drop column a")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            3959,
+            "Check constraint 'cc' uses column 'a', hence column cannot be dropped or renamed."
+        )
+    );
+    rows(&mut session, "alter table tc drop column b");
+    let created = displayed(rows(&mut session, "show create table tc")).remove(0);
+    assert_eq!(
+        created[1],
+        "CREATE TABLE `tc` (\n  `a` int DEFAULT NULL,\n  `c` int DEFAULT NULL,\n  CONSTRAINT `cc` CHECK ((`c` > `a`))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    let error = session
+        .execute_write("insert into tc values (1, 0)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (3819, "Check constraint 'cc' is violated.")
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select * from information_schema.check_constraints where constraint_schema = 'test'"
+        )),
+        [["def", "test", "cc", "(`c` > `a`)"]]
+    );
+}
+
+/// CREATE DATABASE and the ALTER TABLE jobs Go finishes in one step run as
+/// persisted jobs: a no-op queues nothing, CREATE DATABASE leaves no
+/// notifier event, and each job's type and state are Go's. Captured from
+/// the Go oracle.
+#[test]
+fn one_step_alters_and_create_database_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1942)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let last_job = |session: &mut _| {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [0, 3, 4, 7, 11].map(|column| row[column].clone()).join("|")
+    };
+    let job_kind = |job: &str| job.split_once('|').unwrap().1.to_owned();
+    let notifier_rows = |session: &mut _| {
+        displayed(rows(
+            session,
+            "select count(*) from mysql.tidb_ddl_notifier",
+        ))[0][0]
+            .clone()
+    };
+    let notified = notifier_rows(&mut session);
+    rows(&mut session, "create database d1");
+    assert_eq!(
+        job_kind(&last_job(&mut session)),
+        "create schema|public|0|synced"
+    );
+    assert_eq!(notifier_rows(&mut session), notified);
+    let before = last_job(&mut session);
+    rows(&mut session, "create database if not exists d1");
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [[
+            "Note",
+            "1007",
+            "Can't create database 'd1'; database exists"
+        ]]
+    );
+    assert_eq!(last_job(&mut session), before);
+
+    rows(&mut session, "create table p (id int primary key)");
+    rows(
+        &mut session,
+        "create table t (a int, b int, c varchar(10), key ka(a), key kb(b), constraint fk foreign key (a) references p(id))",
+    );
+    for (sql, job) in [
+        (
+            "alter table t comment 'hello'",
+            Some("modify table comment|public|0|synced"),
+        ),
+        (
+            "alter table t alter index kb invisible",
+            Some("alter index visibility|public|0|synced"),
+        ),
+        ("alter table t alter index kb invisible", None),
+        (
+            "alter table t rename index kb to kb2",
+            Some("rename index|public|0|synced"),
+        ),
+        ("alter table t rename index kb2 to kb2", None),
+        (
+            "alter table t drop foreign key fk",
+            Some("drop foreign key|none|0|synced"),
+        ),
+        (
+            "alter table t alter column b set default 7",
+            Some("set default value|public|0|synced"),
+        ),
+        (
+            "alter table t alter column b drop default",
+            Some("set default value|public|0|synced"),
+        ),
+        (
+            "alter table t shard_row_id_bits = 4",
+            Some("shard row ID|public|0|synced"),
+        ),
+        ("alter table t shard_row_id_bits = 4", None),
+        (
+            "alter table t auto_id_cache = 100",
+            Some("modify auto id cache|public|0|synced"),
+        ),
+    ] {
+        let before = last_job(&mut session);
+        rows(&mut session, sql);
+        let after = last_job(&mut session);
+        match job {
+            Some(job) => {
+                assert_ne!(after, before, "{sql}");
+                assert_eq!(job_kind(&after), job, "{sql}");
+            }
+            None => assert_eq!(after, before, "{sql}"),
+        }
+    }
+    for (sql, code, message) in [
+        (
+            "alter table t alter index nosuch visible",
+            1176,
+            "Key 'nosuch' doesn't exist in table 't'",
+        ),
+        (
+            "alter table t rename index nosuch to x",
+            1176,
+            "Key 'nosuch' doesn't exist in table 't'",
+        ),
+        (
+            "alter table t rename index kb2 to ka",
+            1061,
+            "Duplicate key name 'ka'",
+        ),
+        (
+            "alter table t drop foreign key fk",
+            1091,
+            "Can't DROP 'fk'; check that column/key exists",
+        ),
+        (
+            "alter table t alter column nosuch set default 1",
+            1054,
+            "Unknown column 'nosuch' in 't'",
+        ),
+        (
+            "alter table t convert to character set latin1",
+            8200,
+            "Unsupported modify charset from utf8mb4 to latin1",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    let created = displayed(rows(&mut session, "show create table t")).remove(0);
+    assert_eq!(
+        created[1],
+        "CREATE TABLE `t` (\n  `a` int DEFAULT NULL,\n  `b` int,\n  `c` varchar(10) DEFAULT NULL,\n  KEY `ka` (`a`),\n  KEY `kb2` (`b`) /*!80000 INVISIBLE */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */ /*T! SHARD_ROW_ID_BITS=4 */ COMMENT='hello'"
+    );
+}
+
+/// RENAME TABLE runs as Go's persisted `ActionRenameTable` /
+/// `ActionRenameTables` jobs: the foreign keys naming a renamed parent
+/// follow it, a chain inside one statement settles on its last name, and
+/// the refusals are the executor's. Captured from the Go oracle.
+#[test]
+fn rename_tables_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1943)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let last_job = |session: &mut _| {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [0, 1, 2, 3, 4, 7, 11]
+            .map(|column| row[column].clone())
+            .join("|")
+    };
+    let after_id = |job: &str| job.split_once('|').unwrap().1.to_owned();
+    rows(&mut session, "create database d2");
+    rows(&mut session, "create table p (id int primary key)");
+    rows(
+        &mut session,
+        "create table c (id int primary key, pid int, constraint fkc foreign key (pid) references p(id))",
+    );
+    rows(&mut session, "insert into p values (1)");
+    rows(&mut session, "insert into c values (1, 1)");
+    rows(&mut session, "rename table p to p2");
+    assert_eq!(
+        after_id(&last_job(&mut session)),
+        "test|p2|rename table|public|0|synced"
+    );
+    let fk_of_c = |session: &mut _| {
+        let created = displayed(rows(session, "show create table c")).remove(0);
+        created[1]
+            .lines()
+            .find(|line| line.contains("FOREIGN KEY"))
+            .unwrap()
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(
+        fk_of_c(&mut session),
+        "CONSTRAINT `fkc` FOREIGN KEY (`pid`) REFERENCES `p2` (`id`)"
+    );
+    let error = session
+        .execute_write("insert into c values (2, 2)")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            1452,
+            "Cannot add or update a child row: a foreign key constraint fails (`test`.`c`, CONSTRAINT `fkc` FOREIGN KEY (`pid`) REFERENCES `p2` (`id`))"
+        )
+    );
+    rows(&mut session, "alter table p2 rename to p3");
+    assert_eq!(
+        after_id(&last_job(&mut session)),
+        "test|p3|rename table|public|0|synced"
+    );
+    let before = last_job(&mut session);
+    rows(&mut session, "alter table p3 rename to p3");
+    assert_eq!(last_job(&mut session), before);
+    rows(&mut session, "rename table p3 to d2.p4");
+    assert_eq!(
+        after_id(&last_job(&mut session)),
+        "d2|p4|rename table|public|0|synced"
+    );
+    assert_eq!(
+        fk_of_c(&mut session),
+        "CONSTRAINT `fkc` FOREIGN KEY (`pid`) REFERENCES `d2`.`p4` (`id`)"
+    );
+    rows(&mut session, "create table a (x int)");
+    rows(&mut session, "create table b (x int)");
+    rows(&mut session, "rename table a to a1, b to b1, a1 to a2");
+    assert_eq!(
+        after_id(&last_job(&mut session)),
+        "test|a2,b1,a2|rename tables|public|0|synced"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "show tables")),
+        [["a2"], ["b1"], ["c"]]
+    );
+    rows(&mut session, "create view v as select 1");
+    for (sql, code, message) in [
+        (
+            "rename table nosuch to z",
+            1146,
+            "Table 'test.nosuch' doesn't exist",
+        ),
+        (
+            "rename table a2 to b1",
+            1050,
+            "Table 'test.b1' already exists",
+        ),
+        (
+            "rename table a2 to nodb.z",
+            1025,
+            "Error on rename of 'test.a2' to 'nodb.z' (errno: 168 - Database `nodb` doesn't exist)",
+        ),
+        (
+            "rename table v to d2.v",
+            1450,
+            "Changing schema from 'test' to 'd2' is not allowed.",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    rows(&mut session, "rename table v to v2");
+    assert_eq!(
+        after_id(&last_job(&mut session)),
+        "test|v2|rename table|public|0|synced"
+    );
+    assert_eq!(displayed(rows(&mut session, "select * from v2")), [["1"]]);
+    rows(&mut session, "insert into a2 values (1)");
+    assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
+}
+
 /// DROP TABLE / VIEW / SEQUENCE / DATABASE run as Go's persisted jobs, one
 /// per object, each through `onDropTableOrView` / `onDropSchema`; the notes
 /// and refusals are the executor's. Captured from the Go oracle.
