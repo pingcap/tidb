@@ -131,6 +131,31 @@ pub fn convert_to_key_error(err: &KvError) -> KvrpcKeyError {
             }),
             ..KvrpcKeyError::default()
         },
+        KvError::Deadlock {
+            lock_key,
+            lock_ts,
+            deadlock_key_hash,
+            wait_chain,
+        } => KvrpcKeyError {
+            deadlock: Some(kvrpcpb::Deadlock {
+                lock_key: lock_key.clone(),
+                lock_ts: *lock_ts,
+                deadlock_key_hash: *deadlock_key_hash,
+                wait_chain: wait_chain
+                    .iter()
+                    .map(|entry| kvrpcpb::WaitForEntry {
+                        txn: entry.txn,
+                        wait_for_txn: entry.wait_for_txn,
+                        key_hash: entry.key_hash,
+                        key: entry.key.clone(),
+                        resource_group_tag: entry.resource_group_tag.clone(),
+                        ..kvrpcpb::WaitForEntry::default()
+                    })
+                    .collect(),
+                ..kvrpcpb::Deadlock::default()
+            }),
+            ..KvrpcKeyError::default()
+        },
         // Go's `default:` arm: `ErrAlreadyRollback`, `ErrLockNotFound`,
         // `ErrReplaced`, and the rest render as an Abort message.
         KvError::AlreadyRollback => abort("txn already rollbacked"),
@@ -182,6 +207,22 @@ impl RequestCtx {
             resolved_locks: self.rpc_ctx.resolved_locks.clone(),
             committed_locks: self.rpc_ctx.committed_locks.clone(),
         }
+    }
+}
+
+/// What `KvPessimisticLock` leaves for the wait: the waiter parked on the
+/// key and the lock it waits for.
+#[derive(Debug)]
+pub struct PessimisticLockWait {
+    waiter: std::sync::Arc<crate::lockwaiter::Waiter>,
+    locked: Box<tidb_proto::KvrpcLockInfo>,
+}
+
+impl PessimisticLockWait {
+    /// The waiter to wait on.
+    #[must_use]
+    pub fn waiter(&self) -> &std::sync::Arc<crate::lockwaiter::Waiter> {
+        &self.waiter
     }
 }
 
@@ -407,18 +448,131 @@ impl KvHandler {
         }
     }
 
-    /// Go `Server.KvPessimisticLock`, the no-wait slice.
+    /// Go `Server.KvPessimisticLock` without waiting: a conflicting lock
+    /// answers its lock error at once.
     pub fn kv_pessimistic_lock(
         &mut self,
         req: &kvrpcpb::PessimisticLockRequest,
     ) -> kvrpcpb::PessimisticLockResponse {
-        let _req_ctx = region_checked!(self, req, kvrpcpb::PessimisticLockResponse);
+        let (response, wait) = self.kv_pessimistic_lock_begin(req);
+        match wait {
+            Some(wait) => self.kv_pessimistic_lock_finish(
+                req,
+                response,
+                wait,
+                crate::lockwaiter::WaitResult {
+                    wakeup_sleep_time: crate::lockwaiter::WAIT_TIMEOUT,
+                    ..crate::lockwaiter::WaitResult::default()
+                },
+            ),
+            None => response,
+        }
+    }
+
+    /// Go `Server.KvPessimisticLock` up to `waiter.Wait()`: the lock attempt,
+    /// and, on a conflict under a waiting request, the waiter to wait on --
+    /// with the store released, so the lock holder can finish.
+    pub fn kv_pessimistic_lock_begin(
+        &mut self,
+        req: &kvrpcpb::PessimisticLockRequest,
+    ) -> (
+        kvrpcpb::PessimisticLockResponse,
+        Option<PessimisticLockWait>,
+    ) {
+        let (_, region_error) = self.new_request_ctx(req.context.as_ref());
+        if let Some(region_error) = region_error {
+            return (
+                kvrpcpb::PessimisticLockResponse::from_region_error(region_error),
+                None,
+            );
+        }
+        self.pessimistic_lock_attempt(req, req.wait_timeout)
+    }
+
+    /// Go `Server.KvPessimisticLock` after `waiter.Wait()` answered `result`:
+    /// a timeout answers the lock error, a deadlock its error, a wake-up
+    /// under `Force` / `WakeUpModeForceLock` one more no-wait attempt, and
+    /// anything else a write conflict at the store's latest commit ts.
+    pub fn kv_pessimistic_lock_finish(
+        &mut self,
+        req: &kvrpcpb::PessimisticLockRequest,
+        mut response: kvrpcpb::PessimisticLockResponse,
+        wait: PessimisticLockWait,
+        result: crate::lockwaiter::WaitResult,
+    ) -> kvrpcpb::PessimisticLockResponse {
+        let PessimisticLockWait { waiter, locked } = wait;
+        self.store.deadlock_detector.clean_up_wait_for(
+            req.start_version,
+            waiter.lock_ts,
+            waiter.key_hash,
+        );
+        self.store.lock_waiter_manager.clean_up(&waiter);
+        if result.wakeup_sleep_time == crate::lockwaiter::WAIT_TIMEOUT {
+            return response;
+        }
+        let force_lock =
+            req.wake_up_mode == kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeForceLock as i32;
+        if let Some(deadlock) = result.deadlock_resp {
+            response.errors = vec![convert_to_key_error(&KvError::Deadlock {
+                lock_key: locked.key.clone(),
+                lock_ts: locked.lock_version,
+                deadlock_key_hash: deadlock.deadlock_key_hash,
+                wait_chain: deadlock.wait_chain,
+            })];
+            response.region_error = None;
+            if force_lock {
+                response.results = vec![kvrpcpb::PessimisticLockKeyResult {
+                    r#type: kvrpcpb::PessimisticLockKeyResultType::LockResultFailed as i32,
+                    ..kvrpcpb::PessimisticLockKeyResult::default()
+                }];
+            }
+            return response;
+        }
+        #[allow(deprecated)]
+        let force = req.force;
+        if result.wakeup_sleep_time == crate::lockwaiter::WAKE_UP_THIS_WAITER
+            && (force || force_lock)
+        {
+            let (retry, retry_wait) =
+                self.pessimistic_lock_attempt(req, crate::lockwaiter::LOCK_NO_WAIT);
+            debug_assert!(retry_wait.is_none(), "a no-wait attempt parks no waiter");
+            let still_locked = retry
+                .errors
+                .first()
+                .is_some_and(|error| error.locked.is_some());
+            if retry.errors.is_empty() || !still_locked {
+                return retry;
+            }
+            response = retry;
+            tidb_log::warn("wakeup force lock request, try lock still failed", &[]);
+        }
+        // The key was rolled back; the exact commit ts is unknown, so the
+        // store's latest serves, as Go's does.
+        response.errors = vec![convert_to_key_error(&KvError::Conflict {
+            reason: kvrpcpb::write_conflict::Reason::Unknown,
+            start_ts: req.for_update_ts,
+            conflict_ts: waiter.lock_ts,
+            conflict_commit_ts: self.store.latest_ts(),
+            key: Vec::new(),
+        })];
+        response
+    }
+
+    /// Go `Server.KvPessimisticLock`, the no-wait slice.
+    fn pessimistic_lock_attempt(
+        &mut self,
+        req: &kvrpcpb::PessimisticLockRequest,
+        wait_timeout: i64,
+    ) -> (
+        kvrpcpb::PessimisticLockResponse,
+        Option<PessimisticLockWait>,
+    ) {
         let force_lock =
             req.wake_up_mode == kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeForceLock as i32;
         // Go `pessimisticLockInner`'s guard, message verbatim: ForceLock
         // addresses exactly one key.
         if force_lock && req.mutations.len() > 1 {
-            return kvrpcpb::PessimisticLockResponse {
+            let response = kvrpcpb::PessimisticLockResponse {
                 errors: vec![kvrpcpb::KeyError {
                     abort: "Trying to lock more than one key in WakeUpModeForceLock, \
                             which is not supported yet"
@@ -427,6 +581,7 @@ impl KvHandler {
                 }],
                 ..kvrpcpb::PessimisticLockResponse::default()
             };
+            return (response, None);
         }
         let reduced = PessimisticLockReq {
             mutations: req.mutations.clone(),
@@ -441,8 +596,27 @@ impl KvHandler {
             // Go unistore still reads req.Force -- so does this port.
             #[allow(deprecated)]
             force: req.force,
+            wait_timeout,
+            is_first_lock: req.is_first_lock,
+            resource_group_tag: req
+                .context
+                .as_ref()
+                .map(|context| context.resource_group_tag.clone())
+                .unwrap_or_default(),
         };
-        match self.store.pessimistic_lock(&reduced) {
+        let (result, waiter) = self.store.pessimistic_lock_with_waiter(&reduced);
+        let wait = match (&result, waiter) {
+            (Err(KvError::Locked(locked)), Some(waiter)) => Some(PessimisticLockWait {
+                waiter,
+                locked: locked.clone(),
+            }),
+            (_, Some(waiter)) => {
+                self.store.lock_waiter_manager.clean_up(&waiter);
+                None
+            }
+            (_, None) => None,
+        };
+        let response = match result {
             Ok(result) => {
                 // Go's ForceLock arm (`mvcc.go` `PessimisticLock`) answers one
                 // `LockResultNormal` per granted key and, when the request
@@ -509,7 +683,8 @@ impl KvHandler {
                     ..kvrpcpb::PessimisticLockResponse::default()
                 }
             }
-        }
+        };
+        (response, wait)
     }
 
     /// Go `Server.KvPessimisticRollback`.
@@ -1547,5 +1722,157 @@ mod tests {
             ..coprocessor::Request::default()
         });
         assert!(stale_resp.region_error.unwrap().epoch_not_match.is_some());
+    }
+
+    fn pessimistic_lock_request(
+        handler: &KvHandler,
+        key: &[u8],
+        start: u64,
+        wait_timeout: i64,
+        is_first_lock: bool,
+    ) -> kvrpcpb::PessimisticLockRequest {
+        kvrpcpb::PessimisticLockRequest {
+            context: ctx_for(handler, key),
+            mutations: vec![KvrpcMutation {
+                op: KvrpcOp::PessimisticLock as i32,
+                key: key.to_vec(),
+                ..KvrpcMutation::default()
+            }],
+            primary_lock: key.to_vec(),
+            start_version: start,
+            for_update_ts: start,
+            lock_ttl: 3000,
+            wait_timeout,
+            is_first_lock,
+            ..kvrpcpb::PessimisticLockRequest::default()
+        }
+    }
+
+    /// Go `Server.KvPessimisticLock` waiting on a lock, run on its own
+    /// thread with the store released, as Go's handler goroutine waits.
+    fn lock_waiting(
+        handler: &Arc<std::sync::Mutex<KvHandler>>,
+        req: kvrpcpb::PessimisticLockRequest,
+    ) -> std::thread::JoinHandle<kvrpcpb::PessimisticLockResponse> {
+        let (response, wait) = handler.lock().unwrap().kv_pessimistic_lock_begin(&req);
+        let wait = wait.expect("the request parks on the lock");
+        let handler = Arc::clone(handler);
+        std::thread::spawn(move || {
+            let result = wait.waiter().wait();
+            handler
+                .lock()
+                .unwrap()
+                .kv_pessimistic_lock_finish(&req, response, wait, result)
+        })
+    }
+
+    /// Go: the holder's commit wakes the oldest waiter, which answers a write
+    /// conflict at the store's latest commit ts.
+    #[test]
+    fn a_waiting_pessimistic_lock_wakes_into_a_write_conflict_when_the_holder_commits() {
+        let mut handler = KvHandler::default();
+        let held = pessimistic_lock_request(&handler, b"k", 10, 0, true);
+        assert!(handler.kv_pessimistic_lock(&held).errors.is_empty());
+        let handler = Arc::new(std::sync::Mutex::new(handler));
+        let waiting = {
+            let guard = handler.lock().unwrap();
+            pessimistic_lock_request(&guard, b"k", 20, 5000, true)
+        };
+        let waiter = lock_waiting(&handler, waiting);
+        {
+            let mut guard = handler.lock().unwrap();
+            let context = ctx_for(&guard, b"k");
+            let prewrite = guard.kv_prewrite(&kvrpcpb::PrewriteRequest {
+                context: context.clone(),
+                mutations: vec![put(b"k", b"v")],
+                primary_lock: b"k".to_vec(),
+                start_version: 10,
+                for_update_ts: 10,
+                lock_ttl: 3000,
+                pessimistic_actions: vec![
+                    kvrpcpb::prewrite_request::PessimisticAction::DoPessimisticCheck as i32,
+                ],
+                ..kvrpcpb::PrewriteRequest::default()
+            });
+            assert!(prewrite.errors.is_empty(), "{:?}", prewrite.errors);
+            let commit = guard.kv_commit(&kvrpcpb::CommitRequest {
+                context,
+                keys: vec![b"k".to_vec()],
+                start_version: 10,
+                commit_version: 30,
+                ..kvrpcpb::CommitRequest::default()
+            });
+            assert!(commit.error.is_none());
+        }
+        let response = waiter.join().unwrap();
+        let conflict = response.errors[0]
+            .conflict
+            .as_ref()
+            .expect("a write conflict");
+        assert_eq!(
+            (
+                conflict.start_ts,
+                conflict.conflict_ts,
+                conflict.conflict_commit_ts
+            ),
+            (20, 10, 30)
+        );
+    }
+
+    /// Go `WaitTimeout`: the waiter gives up and answers the lock error.
+    #[test]
+    fn a_waiting_pessimistic_lock_times_out_with_the_lock_error() {
+        let mut handler = KvHandler::default();
+        let held = pessimistic_lock_request(&handler, b"k", 10, 0, true);
+        assert!(handler.kv_pessimistic_lock(&held).errors.is_empty());
+        let handler = Arc::new(std::sync::Mutex::new(handler));
+        let waiting = {
+            let guard = handler.lock().unwrap();
+            pessimistic_lock_request(&guard, b"k", 20, 50, true)
+        };
+        let started = std::time::Instant::now();
+        let response = lock_waiting(&handler, waiting).join().unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(50));
+        let locked = response.errors[0].locked.as_ref().expect("the lock error");
+        assert_eq!(locked.lock_version, 10);
+    }
+
+    /// Go's deadlock detector: two transactions waiting for each other's
+    /// keys -- the second to wait answers a deadlock with the wait chain.
+    #[test]
+    fn crossing_waits_answer_a_deadlock_with_its_wait_chain() {
+        let mut handler = KvHandler::default();
+        for (key, start) in [(b"k1", 10), (b"k2", 20)] {
+            let req = pessimistic_lock_request(&handler, key, start, 0, true);
+            assert!(handler.kv_pessimistic_lock(&req).errors.is_empty());
+        }
+        let handler = Arc::new(std::sync::Mutex::new(handler));
+        let (first, second) = {
+            let guard = handler.lock().unwrap();
+            (
+                pessimistic_lock_request(&guard, b"k2", 10, 5000, false),
+                pessimistic_lock_request(&guard, b"k1", 20, 5000, false),
+            )
+        };
+        let first_waiter = lock_waiting(&handler, first);
+        let response = lock_waiting(&handler, second).join().unwrap();
+        let deadlock = response.errors[0].deadlock.as_ref().expect("a deadlock");
+        assert_eq!(deadlock.lock_ts, 10);
+        assert_eq!(deadlock.lock_key, b"k1");
+        assert_eq!(deadlock.wait_chain.len(), 2);
+        // Release the first waiter: transaction 20 rolls back its lock.
+        {
+            let mut guard = handler.lock().unwrap();
+            let context = ctx_for(&guard, b"k2");
+            guard.kv_pessimistic_rollback(&kvrpcpb::PessimisticRollbackRequest {
+                context,
+                start_version: 20,
+                for_update_ts: 20,
+                keys: vec![b"k2".to_vec()],
+                ..kvrpcpb::PessimisticRollbackRequest::default()
+            });
+        }
+        let first_response = first_waiter.join().unwrap();
+        assert!(first_response.errors[0].conflict.is_some());
     }
 }

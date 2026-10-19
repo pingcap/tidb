@@ -111,14 +111,16 @@ pub struct WaitForEntry {
     pub resource_group_tag: Vec<u8>,
 }
 
-/// `boundary: kvproto` — the scalars of `deadlock.DeadlockResponse` this
-/// package reads.
+/// `boundary: kvproto` — `deadlock.DeadlockResponse`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeadlockResponse {
     /// The wait edge that closed the cycle.
     pub entry: WaitForEntry,
     /// The hash of the key whose lock completes the deadlock cycle.
     pub deadlock_key_hash: u64,
+    /// `WaitChain`: the cycle, each entry waiting for the next; the waiter's
+    /// deadlock error carries it.
+    pub wait_chain: Vec<WaitForEntry>,
 }
 
 /// Go `WakeupWaitTime`: the implementation of the variable
@@ -520,6 +522,7 @@ mod tests {
                 ..WaitForEntry::default()
             },
             deadlock_key_hash: 30192,
+            ..DeadlockResponse::default()
         };
         mgr.wake_up_for_deadlock(&resp);
         let res = recv(&waiter);

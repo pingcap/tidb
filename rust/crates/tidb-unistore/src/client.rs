@@ -82,6 +82,27 @@ impl InProcessClient {
         }
     }
 
+    /// Go `Server.KvPessimisticLock` whole: a conflicting lock is waited for
+    /// with the store released, so its holder can commit or roll back.
+    fn pessimistic_lock_waiting(
+        &self,
+        request: &tidb_proto::KvrpcPessimisticLockRequest,
+    ) -> tidb_proto::KvrpcPessimisticLockResponse {
+        let (response, wait) = self
+            .handler
+            .lock()
+            .expect("the store lock")
+            .kv_pessimistic_lock_begin(request);
+        let Some(wait) = wait else {
+            return response;
+        };
+        let result = wait.waiter().wait();
+        self.handler
+            .lock()
+            .expect("the store lock")
+            .kv_pessimistic_lock_finish(request, response, wait, result)
+    }
+
     /// The store beneath, for seeding and inspection.
     pub fn with_store<T>(&self, body: impl FnOnce(&mut MvccStore) -> T) -> T {
         let mut handler = self.handler.lock().expect("the store lock");
@@ -335,17 +356,21 @@ impl tidb_txnkv::rpc::PendingRequest for ImmediatePending {
 /// see the command — with the in-process address and a client-monotone request
 /// identity.
 macro_rules! publish_in_process {
-    ($self:ident, $request:expr, $tag:ident, $method:ident) => {{
+    ($self:ident, $request:expr, $tag:ident, $method:ident) => {
+        publish_in_process!(
+            @with $self,
+            $request,
+            $tag,
+            $self.handler.lock().expect("the store lock").$method($request)
+        )
+    };
+    (@with $self:ident, $request:expr, $tag:ident, $serve:expr) => {{
         // Go's unistore still rides client-go's `sendReq`, whose deferred
         // `storeMetrics.updateRPCMetrics` charges every in-process attempt to
         // `tidb_tikvclient_request_seconds` (`client.go:346-351`); the
         // embedded transport mirrors that observability at its own boundary.
         let send_started = std::time::Instant::now();
-        let response = $self
-            .handler
-            .lock()
-            .expect("the store lock")
-            .$method($request);
+        let response = $serve;
         tidb_txnkv::client_go_metrics::observe_send_request_seconds(
             BatchCommandTag::$tag.cmd_type_label(),
             0,
@@ -446,7 +471,12 @@ impl TransactionCommandClient for InProcessClient {
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcPessimisticLockResponse> {
         let request = with_context(request, context);
-        publish_in_process!(self, &request, PessimisticLock, kv_pessimistic_lock)
+        publish_in_process!(
+            @with self,
+            &request,
+            PessimisticLock,
+            self.pessimistic_lock_waiting(&request)
+        )
     }
 
     fn publish_pessimistic_rollback(

@@ -204,7 +204,20 @@ impl tikv_client::tikv::Client for RpcClient {
         if let Some(request) = any.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
             self.handle_delay(request.start_version, request.context.as_ref())
                 .await;
-            return Ok(Box::new(self.lock().kv_pessimistic_lock(request)));
+            // Go `Server.KvPessimisticLock`: a conflicting lock is waited for
+            // with the store released, so its holder can finish.
+            let (response, wait) = self.lock().kv_pessimistic_lock_begin(request);
+            let Some(wait) = wait else {
+                return Ok(Box::new(response));
+            };
+            let waiter = Arc::clone(wait.waiter());
+            let result = tokio::task::spawn_blocking(move || waiter.wait())
+                .await
+                .map_err(|error| Error::StringError(error.to_string()))?;
+            return Ok(Box::new(
+                self.lock()
+                    .kv_pessimistic_lock_finish(request, response, wait, result),
+            ));
         }
         serve!(kvrpcpb::PessimisticRollbackRequest, kv_pessimistic_rollback);
         serve!(kvrpcpb::CommitRequest, kv_commit);

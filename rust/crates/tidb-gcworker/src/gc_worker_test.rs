@@ -1565,6 +1565,94 @@ fn test_resolve_lock_range_meet_region_enlarge_caused_by_region_merge() {
     );
 }
 
+/// Go `TestResolveLocksNearTxnSafePoint`: of three pessimistic locks at
+/// the txn safe point - 1, at it and + 1, GC resolves only the first. Of three
+/// competing lockers one proceeds at once and two wait in the store's lock
+/// waiter until the holders commit, then answer a write conflict.
+#[test]
+fn test_resolve_locks_near_txn_safe_point() {
+    let s = create_gc_worker_suite();
+    let current_ts = s.must_alloc_ts();
+    let txn_safe_point = go_time_to_ts(time_from_ts(current_ts) - chrono::Duration::minutes(5));
+
+    let mut txns = Vec::new();
+    for (i, start_ts) in [txn_safe_point - 1, txn_safe_point, txn_safe_point + 1]
+        .into_iter()
+        .enumerate()
+    {
+        txns.push(s.block_on(async {
+            let mut txn = s
+                .tikv
+                .store()
+                .begin_with_options(
+                    tikv_client::transaction::TransactionOptions::new_pessimistic()
+                        .start_timestamp(
+                            <tikv_client::Timestamp as tikv_client::TimestampExt>::from_version(
+                                start_ts,
+                            ),
+                        ),
+                )
+                .await
+                .unwrap();
+            txn.lock_keys(vec![format!("k{}", i + 1).into_bytes()])
+                .await
+                .unwrap();
+            txn
+        }));
+    }
+
+    s.job().resolve_locks(txn_safe_point, 1).unwrap();
+
+    // Prevent amending lock behavior by making new write to the keys.
+    let (results_tx, results_rx) = std::sync::mpsc::channel();
+    for i in 0..3 {
+        let store = (**s.tikv.store()).clone();
+        let results_tx = results_tx.clone();
+        s.tikv.runtime().spawn(async move {
+            let mut txn = store.begin_pessimistic().await.unwrap();
+            let result = txn
+                .lock_keys(vec![format!("k{}", i + 1).into_bytes()])
+                .await;
+            results_tx.send((result, txn)).unwrap();
+        });
+    }
+
+    // Only the first transaction in `txns` was rolled back by GC, so one of
+    // the competing lockers proceeds while the other two wait.
+    let (first, mut first_txn) = results_rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("no transaction is resolved, which is not expected");
+    first.unwrap();
+    assert!(
+        results_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+        "more than one transaction is resolved, which is not expected"
+    );
+
+    let mut txns = txns.into_iter();
+    assert!(s.block_on(txns.next().unwrap().commit()).is_err());
+    s.block_on(txns.next().unwrap().commit()).unwrap();
+    s.block_on(txns.next().unwrap().commit()).unwrap();
+
+    let mut others = vec![];
+    for _ in 0..2 {
+        let (result, txn) = results_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("not all transactions are finished");
+        let error = result.expect_err("a write conflict");
+        assert!(
+            format!("{error:?}").to_lowercase().contains("conflict"),
+            "{error:?}"
+        );
+        others.push(txn);
+    }
+
+    // Clear unfinished transactions.
+    s.block_on(first_txn.rollback()).unwrap();
+    for mut txn in others {
+        s.block_on(txn.rollback()).unwrap();
+    }
+}
+
 #[test]
 fn test_unified_gc_needs_to_wait() {
     if tidb_config::kerneltype::is_classic() {

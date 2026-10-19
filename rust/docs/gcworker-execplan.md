@@ -22,7 +22,8 @@ After this plan, the node runs Go's GC worker. Every minute one TiDB becomes GC 
 - [x] (2026-10-19) The suite runs on the embedded store (`client-rust-unistore-execplan.md` Steps 3-5): `TestDoGCForOneRegion` (first arm), `TestRunGCJobAPI`, `TestRunDistGCJobAPI` and the probe half of `TestRunGCJob` are ported. The worker's store/PD/TiKV halves live in `tidb-gcworker` (`tikv_store.rs`).
 - [x] (2026-10-19) With client-rust's store oracle (`MockOracle` on the store): the probe half of `TestLeaderTick`, `TestGCWithPendingTxn`, `TestGCWithPendingTxn2`, `TestSkipGCAndOnlyResolveLock`.
 - [x] (2026-10-19) With client-rust's `RegionLockResolver`: `TestResolveLockRangeInfine`, `TestResolveLockRangeMeetRegionCacheMiss`, `TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge`. The worker's scan-lock limit is now client-go's 1024.
-- [ ] Still waiting: unistore's lock waiting (`TestResolveLocksNearTxnSafePoint`) and the failpoint arms of `TestDoGCForOneRegion`; see that plan's Steps 5c-5d.
+- [x] (2026-10-19) With unistore's lock waiting: `TestResolveLocksNearTxnSafePoint`.
+- [ ] Still waiting: the failpoint arms of `TestDoGCForOneRegion` (client-go's `tikvStoreSendReqResult`); see that plan's Step 5d.
 
 ## Surprises & Discoveries
 
