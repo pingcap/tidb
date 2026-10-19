@@ -1153,6 +1153,10 @@ impl StagedWrites {
 pub(crate) struct RowConflict {
     pub(crate) handle: TableHandle,
     pub(crate) error: KvTableError,
+    /// Whether the candidate's own record key collided (Go's
+    /// `toBeCheckedRow.handleKey`) rather than one of its unique keys; REPLACE
+    /// in `LOAD DATA` counts the two removals differently.
+    pub(crate) on_record_key: bool,
 }
 
 /// A reader's range iterator under a statement budget: each entry it moves
@@ -3880,6 +3884,7 @@ impl KvTable {
                         value,
                         key: self.qualified_key("PRIMARY"),
                     },
+                    on_record_key: true,
                 });
             }
         }
@@ -3928,6 +3933,7 @@ impl KvTable {
                             },
                             key: self.qualified_key(&index.name),
                         },
+                        on_record_key: false,
                     });
                 }
             }

@@ -664,6 +664,13 @@ pub struct Session {
     /// Go's `StatementContext.LastMessage`, retained until the next statement
     /// so the MySQL OK/EOF writer can publish UPDATE's summary text.
     statement_message: String,
+    /// The client file a `LOAD DATA LOCAL` statement was answered with (Go's
+    /// `LoadDataReaderBuilder`), taken by the statement that runs next.
+    local_infile_data: Option<Vec<u8>>,
+    /// Whether the connection accepted this statement's client-file request:
+    /// Go refuses a LOCAL load without the capability BEFORE the statement
+    /// context resets.
+    local_infile_accepted: bool,
     /// Go `StmtCtx.AddSetVarHintRestore`: the session overrides a `SET_VAR`
     /// hint overwrote for the duration of ONE statement, put back when that
     /// statement finishes whether it succeeded or failed.
@@ -1032,6 +1039,8 @@ impl Session {
             last_insert_id: 0,
             statement_insert_id: 0,
             statement_message: String::new(),
+            local_infile_data: None,
+            local_infile_accepted: false,
             set_var_hint_restore: Vec::new(),
             prev_row_count: 0,
             in_set_session_states: false,
@@ -1278,6 +1287,7 @@ mod ddl_jobs;
 pub mod ddl_service;
 pub mod stored_state_service;
 pub mod analyze_service;
+mod load_data;
 pub mod stats_statement_service;
 mod dispatch;
 mod explain_arm;

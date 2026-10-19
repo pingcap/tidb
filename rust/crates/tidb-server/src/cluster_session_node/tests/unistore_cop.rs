@@ -18740,3 +18740,297 @@ fn pessimistic_dml_acts_on_rows_committed_after_begin() {
         vec![vec!["1", "9"], vec!["2", "9"]]
     );
 }
+
+/// Go `LOAD DATA LOCAL`, through the production session's client-file doors
+/// (path, acceptance, transfer), case for case against Go on this branch:
+/// rows, the `Records/Deleted/Skipped/Warnings` message, warnings and errors
+/// (oracle probe over `executor.LoadDataReaderBuilder`).
+#[test]
+fn load_data_local_answers_like_go() {
+    run_load_data_cases(LOAD_DATA_CASES, 1931);
+}
+
+/// Go `LOAD DATA` casts (`getRow` / `completeLoadErr`), restrictive REPLACE
+/// errors, REPLACE over unique keys, and the executor builder's refusals,
+/// against Go on this branch.
+#[test]
+fn load_data_casts_and_refusals_answer_like_go() {
+    run_load_data_cases(LOAD_DATA_CAST_CASES, 1933);
+}
+
+/// Replays `(kind, sql, data, expected, expected warnings)` steps: `ex` runs
+/// a statement, `q` compares a query's rows, `ld` drives a load through the
+/// connection's client-file doors.
+fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id: u64) {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(connection_id))
+        .unwrap();
+    let render = |rows: Vec<Vec<Datum>>| {
+        let rows: Vec<String> = rows
+            .into_iter()
+            .map(|row| {
+                displayed(vec![row.clone()])
+                    .remove(0)
+                    .into_iter()
+                    .zip(row)
+                    .map(|(text, datum)| match datum {
+                        Datum::Null => "<nil>".to_owned(),
+                        // Go's testkit prints a BIT value's raw bytes.
+                        Datum::Bit(bits) => String::from_utf8_lossy(bits.as_bytes()).into_owned(),
+                        _ => text,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        if rows.is_empty() {
+            "[]".to_owned()
+        } else {
+            format!("[[{}]]", rows.join("] ["))
+        }
+    };
+    let error_text =
+        |error: crate::sql_node::SqlQueryError| format!("ERR [{}]{}", error.code, error.message);
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let mut failures = Vec::new();
+    for (kind, sql, data, expected, expected_warnings) in cases {
+        match *kind {
+            "ex" => {
+                if session.execute_write(sql).expect(sql).is_none() {
+                    rows(&mut session, sql);
+                }
+            }
+            "q" => {
+                let actual = render(rows(&mut session, sql));
+                if actual != *expected {
+                    failures.push(format!("{sql}\n  go:   {expected}\n  rust: {actual}"));
+                }
+            }
+            _ => {
+                let stmt = session.parse_statement(sql).unwrap().unwrap();
+                let outcome = (|| {
+                    if session.local_infile_path_parsed(sql, &stmt)?.is_some() {
+                        session.accept_local_infile_parsed(sql, &stmt)?;
+                        session.execute_local_infile_parsed(sql, &stmt, data)
+                    } else {
+                        Ok(session.execute_write_parsed(sql, &stmt)?.expect("a write"))
+                    }
+                })();
+                let actual = match outcome {
+                    Ok(outcome) => format!(
+                        "ok affected={} msg={:?}",
+                        outcome.affected_rows,
+                        String::from_utf8_lossy(&session.statement_info())
+                    ),
+                    Err(error) => error_text(error),
+                };
+                if actual != *expected {
+                    failures.push(format!("{sql}\n  go:   {expected}\n  rust: {actual}"));
+                }
+                let warnings = rows(&mut session, "SHOW WARNINGS");
+                let actual = if warnings.is_empty() {
+                    String::new()
+                } else {
+                    render(warnings)
+                };
+                if actual != *expected_warnings {
+                    failures.push(format!(
+                        "{sql} (warnings)\n  go:   {expected_warnings}\n  rust: {actual}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+const LOAD_DATA_CASES: &[(&str, &str, &[u8], &str, &str)] = &[
+    ("ex", "create table t (a int, b varchar(10))", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t", b"1\x09x\x0a2\x09y\x0a", "ok affected=2 msg=\"Records: 2  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from t", b"", "[[1 x] [2 y]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t", b"1\x0a2\x09b\x09c\x0a3\x09z", "ok affected=3 msg=\"Records: 3  Deleted: 0  Skipped: 0  Warnings: 2\"", "[[Warning 1261 Row 1 doesn't contain data for all columns] [Warning 1262 Row 2 was truncated; it contained more data than there were input columns]]"),
+    ("q", "select * from t", b"", "[[1 <nil>] [2 b] [3 z]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ex", "set sql_mode=''", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t", b"1\x0a2\x09b\x09c\x0aabc\x09z\x0a", "ok affected=3 msg=\"Records: 3  Deleted: 0  Skipped: 0  Warnings: 3\"", "[[Warning 1261 Row 1 doesn't contain data for all columns] [Warning 1262 Row 2 was truncated; it contained more data than there were input columns] [Warning 1292 Truncated incorrect DOUBLE value: 'abc']]"),
+    ("q", "select * from t", b"", "[[1 <nil>] [2 b] [0 z]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ex", "set sql_mode=default", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t", b"abc\x09z\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1292 Truncated incorrect DOUBLE value: 'abc']]"),
+    ("ld", "load data local infile '/x' ignore into table t", b"abc\x09z\x0a1\x0a", "ok affected=2 msg=\"Records: 2  Deleted: 0  Skipped: 0  Warnings: 2\"", "[[Warning 1292 Truncated incorrect DOUBLE value: 'abc'] [Warning 1261 Row 2 doesn't contain data for all columns]]"),
+    ("q", "select * from t", b"", "[[0 z] [0 z] [1 <nil>]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t fields terminated by ',' enclosed by '\"'", b"1,\x22a,b\x22\x0a2,\x22q\x22\x22r\x22\x0a3,\x22NULL\x22\x0a4,NULL\x0a5,\x5cN\x0a6,\x22x\x22y\x22\x0a7,\x22\x5cN\x22\x0a", "ok affected=7 msg=\"Records: 7  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select a, b, b is null from t", b"", "[[1 a,b 0] [2 q\"r 0] [3 NULL 0] [4 <nil> 1] [5 <nil> 1] [6 x\"y 0] [7 <nil> 1]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t fields terminated by ',' enclosed by '\"' defined null by 'NULL' optionally enclosed", b"1,\x22NULL\x22\x0a2,NULL\x0a3,\x5cN\x0a", "ok affected=3 msg=\"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select a, b, b is null from t", b"", "[[1 <nil> 1] [2 <nil> 1] [3 <nil> 1]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t fields terminated by ',' lines starting by 'xx' terminated by '|'", b"zzxx1,a|nothing|xx2,b|yyxx3,c", "ok affected=3 msg=\"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from t", b"", "[[1 a] [2 b] [3 c]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t fields terminated by ',' ignore 1 lines", b"h1,h2\x0a1,a\x0a2,b\x0a", "ok affected=2 msg=\"Records: 2  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from t", b"", "[[1 a] [2 b]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t ignore 5 lines", b"1\x09a\x0a", "ok affected=0 msg=\"Records: 0  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("ex", "create table t2 (a int, b varchar(10), c int)", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t2 fields terminated by ',' (a, @v) set b = concat('<', @v, '>'), c = @v * 2", b"1,3\x0a2,4\x0a3\x0a", "ok affected=3 msg=\"Records: 3  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1261 Row 3 doesn't contain data for all columns]]"),
+    ("q", "select * from t2", b"", "[[1 <3> 6] [2 <4> 8] [3 <nil> <nil>]]", ""),
+    ("q", "select @v", b"", "[[<nil>]]", ""),
+    ("ld", "load data local infile '/x' into table t2 fields terminated by ',' (a, @V) set c = @v + 1", b"9,10\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from t2 where a = 9", b"", "[[9 <nil> 11]]", ""),
+    ("ld", "load data local infile '/x' into table t2 (a, nosuch)", b"1\x0a", "ERR [1054]Unknown column 'nosuch' in 'field list'", "[[Error 1054 Unknown column 'nosuch' in 'field list']]"),
+    ("ld", "load data local infile '/x' into table t2 set nosuch = 1", b"1\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1261 Row 1 doesn't contain data for all columns]]"),
+    ("ex", "create table t3 (id int primary key, v varchar(10))", b"", "", ""),
+    ("ex", "insert into t3 values (1, 'old')", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t3 fields terminated by ','", b"1,new\x0a2,b\x0a", "ok affected=1 msg=\"Records: 2  Deleted: 0  Skipped: 1  Warnings: 1\"", "[[Warning 1062 Duplicate entry '1' for key 't3.PRIMARY']]"),
+    ("q", "select * from t3", b"", "[[1 old] [2 b]]", ""),
+    ("ld", "load data local infile '/x' replace into table t3 fields terminated by ','", b"1,new\x0a2,b\x0a", "ok affected=1 msg=\"Records: 2  Deleted: 1  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from t3", b"", "[[1 new] [2 b]]", ""),
+    ("ld", "load data local infile '/x' ignore into table t3 fields terminated by ','", b"1,x\x0a3,c\x0a3,d\x0a", "ok affected=1 msg=\"Records: 3  Deleted: 0  Skipped: 2  Warnings: 2\"", "[[Warning 1062 Duplicate entry '1' for key 't3.PRIMARY'] [Warning 1062 Duplicate entry '3' for key 't3.PRIMARY']]"),
+    ("q", "select * from t3", b"", "[[1 new] [2 b] [3 c]]", ""),
+    ("ex", "set sql_mode=''", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t3 fields terminated by ','", b"4,a\x0a4,b\x0a", "ok affected=1 msg=\"Records: 2  Deleted: 0  Skipped: 1  Warnings: 1\"", "[[Warning 1062 Duplicate entry '4' for key 't3.PRIMARY']]"),
+    ("q", "select * from t3", b"", "[[1 new] [2 b] [3 c] [4 a]]", ""),
+    ("ex", "set sql_mode=default", b"", "", ""),
+    ("ex", "create table t4 (a int, ts datetime not null, g int as (a + 1))", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t4 (a)", b"5\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1364 Field 'ts' doesn't have a default value]]"),
+    ("q", "select a, ts is not null, g from t4", b"", "[[5 1 6]]", ""),
+    ("ld", "load data local infile '/x' into table t4", b"5\x092020-01-01\x0999\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select a, ts, g from t4", b"", "[[5 0000-00-00 00:00:00 6] [5 2020-01-01 00:00:00 6]]", ""),
+    ("ex", "create table t5 (a int not null, b int not null default 7)", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t5", b"\x5cN\x09\x5cN\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 2\"", "[[Warning 1263 Column set to default value; NULL supplied to NOT NULL column 'a' at row 1] [Warning 1263 Column set to default value; NULL supplied to NOT NULL column 'b' at row 1]]"),
+    ("ex", "set sql_mode=''", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t5", b"\x5cN\x09\x5cN\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 2\"", "[[Warning 1263 Column set to default value; NULL supplied to NOT NULL column 'a' at row 1] [Warning 1263 Column set to default value; NULL supplied to NOT NULL column 'b' at row 1]]"),
+    ("ld", "load data local infile '/x' into table t5 (b)", b"3\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1364 Field 'a' doesn't have a default value]]"),
+    ("q", "select * from t5", b"", "[[0 0] [0 0] [0 3]]", ""),
+    ("ex", "set sql_mode=default", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t", b"1\x09a\x0a\x0a2\x09b\x0d\x0a3\x09c\x5ctd\x5cne\x5c0f\x5cZg\x0a", "ok affected=4 msg=\"Records: 4  Deleted: 0  Skipped: 0  Warnings: 2\"", "[[Warning 1261 Row 2 doesn't contain data for all columns] [Warning 1292 Truncated incorrect DOUBLE value: '']]"),
+    ("q", "select a, hex(b) from t", b"", "[[1 61] [0 <nil>] [2 620D] [3 6309640A6500661A67]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data infile '' into table t", b"", "ERR [8156]The value of INFILE must not be empty when LOAD DATA from LOCAL", "[[Error 8156 The value of INFILE must not be empty when LOAD DATA from LOCAL]]"),
+    ("ld", "load data local infile '' into table t", b"", "ERR [8156]The value of INFILE must not be empty when LOAD DATA from LOCAL", "[[Error 8156 The value of INFILE must not be empty when LOAD DATA from LOCAL]]"),
+    ("ld", "load data local infile '/x' into table t fields defined null by 'a' optionally enclosed", b"", "ERR [8162]%!(EXTRA string=must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED)", "[[Error 8162 %!(EXTRA string=must specify FIELDS [OPTIONALLY] ENCLOSED BY when use NULL DEFINED BY OPTIONALLY ENCLOSED)]]"),
+    ("ld", "load data local infile '/x' into table t lines terminated by ''", b"", "ERR [8162]%!(EXTRA string=LINES TERMINATED BY is empty)", "[[Error 8162 %!(EXTRA string=LINES TERMINATED BY is empty)]]"),
+    ("ld", "load data local infile '/x' into table t fields terminated by ''", b"", "ERR [8162]%!(EXTRA string=load data with empty field terminator)", "[[Error 8162 %!(EXTRA string=load data with empty field terminator)]]"),
+    ("ld", "load data local infile '/x' into table t fields enclosed by 'a' terminated by 'a'", b"", "ERR [8162]%!(EXTRA string=FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other)", "[[Error 8162 %!(EXTRA string=FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other)]]"),
+    ("ld", "load data local infile '/x' into table t fields enclosed by 'a' terminated by 'ab'", b"", "ERR [8162]%!(EXTRA string=FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other)", "[[Error 8162 %!(EXTRA string=FIELDS ENCLOSED BY and TERMINATED BY must not be prefix of each other)]]"),
+    ("ld", "load data local infile '/x' into table t lines starting by 'a|' terminated by '|'", b"", "ERR [8162]STARTING BY 'a|' cannot contain LINES TERMINATED BY '|'", "[[Error 8162 STARTING BY 'a|' cannot contain LINES TERMINATED BY '|']]"),
+    ("ld", "load data local infile '/x' into table t character set gbk", b"1\x09\xc4\xe3\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select a, b, hex(b) from t", b"", "[[1 你 E4BDA0]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t character set latin1", b"1\x09\xe9\x80\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select a, b, hex(b) from t", b"", "[[1 é€ C3A9E282AC]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ex", "create view v as select * from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table v", b"1\x0a", "ERR [1288]The target table v of the LOAD is not updatable", "[[Error 1288 The target table v of the LOAD is not updatable]]"),
+    ("ld", "load data local infile '/x' into table nosuch", b"1\x0a", "ERR [1146]Table 'test.nosuch' doesn't exist", "[[Error 1146 Table 'test.nosuch' doesn't exist]]"),
+    ("ex", "create table tp (a int) partition by range (a) (partition p0 values less than (10))", b"", "", ""),
+    ("ld", "load data local infile '/x' into table tp", b"1\x0a20\x0a", "ok affected=1 msg=\"Records: 2  Deleted: 0  Skipped: 1  Warnings: 1\"", "[[Warning 1526 Table has no partition for value 20]]"),
+    ("q", "select * from tp", b"", "[[1]]", ""),
+    ("ex", "create table ta (id int auto_increment primary key, v int)", b"", "", ""),
+    ("ld", "load data local infile '/x' into table ta (v)", b"10\x0a20\x0a", "ok affected=2 msg=\"Records: 2  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select *, last_insert_id() from ta", b"", "[[1 10 1] [2 20 1]]", ""),
+    ("ld", "load data local infile '/x' into table t fields terminated by ',' enclosed by '\"'", b"1,\x22abc\x0a", "ERR [8160]Failed to read source files. Reason: syntax error: unterminated quoted field. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)", "[[Error 8160 Failed to read source files. Reason: syntax error: unterminated quoted field. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)]]"),
+    ("q", "select * from t", b"", "[]", ""),
+    ("ld", "load data local infile '/x' into table t", b"\xef\xbb\xbf1\x09a\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from t", b"", "[[1 a]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t fields escaped by ''", b"1\x09a\x5ctb\x0a2\x09\x5cN\x0a", "ok affected=2 msg=\"Records: 2  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select a, b, b is null from t", b"", "[[1 a\\tb 0] [2 \\N 0]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' into table t columns terminated by ',' optionally enclosed by '\\''", b"1,'a'\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from t", b"", "[[1 a]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+];
+
+/// Go `getColDefaultValueFromNil`: a NOT NULL column without a default takes
+/// its zero value uncast, with one 1364 per column (and once per statement
+/// for a VALUES list) and no 1292 for the zero date (captured from Go).
+#[test]
+fn insert_ignore_no_default_zero_value_warns_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1932)).unwrap();
+    rows(&mut session, "CREATE DATABASE nodefault_zero");
+    rows(&mut session, "USE nodefault_zero");
+    rows(
+        &mut session,
+        "CREATE TABLE t4 (a int, ts datetime not null, d date not null, s varchar(3) not null)",
+    );
+    let expected = vec![
+        vec!["Warning", "1364", "Field 'ts' doesn't have a default value"],
+        vec!["Warning", "1364", "Field 'd' doesn't have a default value"],
+        vec!["Warning", "1364", "Field 's' doesn't have a default value"],
+    ];
+    for sql in [
+        "INSERT IGNORE INTO t4 (a) VALUES (5)",
+        "INSERT IGNORE INTO t4 (a) VALUES (5), (6)",
+        "INSERT IGNORE INTO t4 (a) SELECT 7",
+    ] {
+        session.execute_write(sql).unwrap();
+        assert_eq!(
+            displayed(rows(&mut session, "SHOW WARNINGS")),
+            expected,
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t4 WHERE a = 7")),
+        vec![vec!["7", "0000-00-00 00:00:00", "0000-00-00", ""]]
+    );
+}
+const LOAD_DATA_CAST_CASES: &[(&str, &str, &[u8], &str, &str)] = &[
+    ("ex", "create table t (a int, b varchar(3), c date, d tinyint unsigned, e decimal(4,1), f enum('x','y'), g bit(2), h json, i year)", b"", "", ""),
+    ("ld", "load data local infile '/x'  into table t", b"1\x09abcdef\x092020-13-01\x09300\x0912345.6\x09z\x097\x09notjson\x093000\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 8\"", "[[Warning 1265 Data truncated for column 'b' at row 1] [Warning 1292 Incorrect date value: '2020-13-01'] [Warning 1690 constant 300 overflows tinyint] [Warning 1690 DECIMAL value is out of range in '(4, 1)'] [Warning 1265 Data truncated for column '%s' at row %d] [Warning 1265 Data truncated for column 'g' at row 1] [Warning 3140 Invalid JSON text: The document root must not be followed by other values.] [Warning 1264 Out of range value for column '%s' at row %d]]"),
+    ("q", "select * from t", b"", "[[1 abc 0000-00-00 255 999.9  \u{0003} <nil> 2155]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x'  into table t", b"x1\x09ab\x090000-00-00\x09-1\x091.26\x09y\x091\x09[1]\x0999\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 5\"", "[[Warning 1292 Truncated incorrect DOUBLE value: 'x1'] [Warning 1292 Incorrect date value: '0000-00-00'] [Warning 1690 BIGINT UNSIGNED value is out of range in '-1'] [Warning 1292 Truncated incorrect DECIMAL value: '1.26'] [Warning 1265 Data truncated for column 'g' at row 1]]"),
+    ("q", "select * from t", b"", "[[0 ab 0000-00-00 0 1.3 y \u{0003} [1] 1999]]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x'  into table t (a)", b"1\x0a2\x093\x0a", "ok affected=2 msg=\"Records: 2  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1262 Row 2 was truncated; it contained more data than there were input columns]]"),
+    ("ld", "load data local infile '/x'  into table t", b"1\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1261 Row 1 doesn't contain data for all columns]]"),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' replace into table t", b"1\x09abcdef\x092020-13-01\x09300\x0912345.6\x09z\x097\x09notjson\x093000\x0a", "ERR [1265]Data truncated for column 'b' at row 1", "[[Error 1265 Data truncated for column 'b' at row 1]]"),
+    ("q", "select * from t", b"", "[]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' replace into table t", b"x1\x09ab\x090000-00-00\x09-1\x091.26\x09y\x091\x09[1]\x0999\x0a", "ERR [1292]Truncated incorrect DOUBLE value: 'x1'", "[[Error 1292 Truncated incorrect DOUBLE value: 'x1']]"),
+    ("q", "select * from t", b"", "[]", ""),
+    ("ex", "delete from t", b"", "", ""),
+    ("ld", "load data local infile '/x' replace into table t (a)", b"1\x0a2\x093\x0a", "ERR [1262]Row 2 was truncated; it contained more data than there were input columns", "[[Error 1262 Row 2 was truncated; it contained more data than there were input columns]]"),
+    ("ld", "load data local infile '/x' replace into table t", b"1\x0a", "ERR [1261]Row 1 doesn't contain data for all columns", "[[Error 1261 Row 1 doesn't contain data for all columns]]"),
+    ("ex", "delete from t", b"", "", ""),
+    ("ex", "create table tn (a int not null, b int)", b"", "", ""),
+    ("ld", "load data local infile '/x' replace into table tn", b"\x5cN\x091\x0a", "ERR [1263]Column set to default value; NULL supplied to NOT NULL column 'a' at row 1", "[[Error 1263 Column set to default value; NULL supplied to NOT NULL column 'a' at row 1]]"),
+    ("ld", "load data local infile '/x' replace into table tn (b)", b"1\x0a", "ERR [1364]Field 'a' doesn't have a default value", "[[Error 1364 Field 'a' doesn't have a default value]]"),
+    ("ex", "set sql_mode=''", b"", "", ""),
+    ("ld", "load data local infile '/x' replace into table t", b"1\x09abcdef\x092020-13-01\x09300\x0912345.6\x09z\x097\x09notjson\x093000\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 8\"", "[[Warning 1265 Data truncated for column 'b' at row 1] [Warning 1292 Incorrect date value: '2020-13-01'] [Warning 1690 constant 300 overflows tinyint] [Warning 1690 DECIMAL value is out of range in '(4, 1)'] [Warning 1265 Data truncated for column '%s' at row %d] [Warning 1265 Data truncated for column 'g' at row 1] [Warning 3140 Invalid JSON text: The document root must not be followed by other values.] [Warning 1264 Out of range value for column '%s' at row %d]]"),
+    ("q", "select * from t", b"", "[[1 abc 0000-00-00 255 999.9  \u{0003} <nil> 2155]]", ""),
+    ("ex", "set sql_mode=default", b"", "", ""),
+    ("ex", "create table tc (a int, check (a > 0))", b"", "", ""),
+    ("ld", "load data local infile '/x' into table tc", b"1\x0a-1\x0a2\x0a", "ok affected=3 msg=\"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from tc", b"", "[[1] [-1] [2]]", ""),
+    ("ld", "load data local infile '/x' replace into table tc", b"-5\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("ex", "create table tu (a int primary key, b int unique key)", b"", "", ""),
+    ("ex", "insert into tu values (1, 1), (2, 2)", b"", "", ""),
+    ("ld", "load data local infile '/x' replace into table tu", b"3\x091\x0a2\x092\x0a4\x095\x0a", "ok affected=3 msg=\"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from tu", b"", "[[3 1] [2 2] [4 5]]", ""),
+    ("ld", "load data local infile '/x' into table t (a, _tidb_rowid)", b"1\x092\x0a", "ERR [1105]load data statement for _tidb_rowid are not supported", "[[Error 1105 load data statement for _tidb_rowid are not supported]]"),
+    ("ld", "load data local infile '/x' into table t (a, a)", b"1\x092\x0a", "ERR [1110]Column 'a' specified twice", "[[Error 1110 Column 'a' specified twice]]"),
+    ("ld", "load data local infile '/x' into table t (@a) set a = @a + nosuch", b"1\x0a", "ERR [1054]Unknown column 'nosuch' in 'expression'", "[[Error 1054 Unknown column 'nosuch' in 'expression']]"),
+    ("ld", "load data local infile '/x' into table t (@a) set a = @a + 1, a = 3", b"1\x0a", "ERR [1110]Column 'a' specified twice", "[[Error 1110 Column 'a' specified twice]]"),
+    ("ld", "load data local infile '/x' into table t (a) set b = 'x', c = '2020-01-01'", b"5\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select a, b, c from t where a = 5", b"", "[[5 x 2020-01-01]]", ""),
+    ("ld", "load data local infile '/x' into table t (a) set b = 1/0", b"6\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 1\"", "[[Warning 1365 Division by 0]]"),
+    ("ld", "load data local infile '/x' into table t.x", b"6\x0a", "ERR [1146]Table 't.x' doesn't exist", "[[Error 1146 Table 't.x' doesn't exist]]"),
+    ("ld", "load data local infile '/x.gz' into table t (a)", b"6\x0a", "ERR [1105]unexpected EOF", "[[Error 1105 unexpected EOF]]"),
+    ("ld", "load data local infile '/x.lz4' into table t (a)", b"6\x0a", "ERR [1105]compression 2 doesn't have related storage compressType", "[[Error 1105 compression 2 doesn't have related storage compressType]]"),
+    ("ld", "load data local infile '/x' format 'sql file' into table t (a)", b"6\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("ex", "create table tg (a int, g int as (a*2) stored, b int)", b"", "", ""),
+    ("ld", "load data local infile '/x' into table tg", b"1\x099\x093\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("ld", "load data local infile '/x' into table tg (a, b)", b"2\x094\x0a", "ok affected=1 msg=\"Records: 1  Deleted: 0  Skipped: 0  Warnings: 0\"", ""),
+    ("q", "select * from tg", b"", "[[1 2 3] [2 4 4]]", ""),
+];

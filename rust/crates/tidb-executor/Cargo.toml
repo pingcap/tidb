@@ -18,6 +18,9 @@ chrono-tz = { workspace = true }
 crc32fast = { workspace = true }
 crossbeam-channel = "0.5"
 flate2 = { workspace = true }
+encoding_rs.workspace = true
+zstd.workspace = true
+snap.workspace = true
 hashbrown = { workspace = true }
 prost = { workspace = true }
 smallvec = { workspace = true }

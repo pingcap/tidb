@@ -246,6 +246,27 @@ pub(crate) fn cast_selected_value_for_column(
     )
 }
 
+/// [`cast_selected_value_for_column`] for a `LOAD DATA` row
+/// ([`CastShape::LoadDataRow`]).
+pub(crate) fn cast_load_data_value_for_column(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    row_index: usize,
+    ctx: &crate::StmtContext,
+    force_ignore_truncate: bool,
+) -> Result<Datum, DriverError> {
+    cast_value_shaped(
+        value,
+        field_type,
+        column,
+        row_index,
+        ctx,
+        CastShape::LoadDataRow,
+        force_ignore_truncate,
+    )
+}
+
 pub(crate) fn cast_value_for_column(
     value: Datum,
     field_type: &FieldType,
@@ -381,6 +402,10 @@ pub(crate) enum CastShape {
     OnDuplicateAssignment,
     /// Generated ODKU diagnostics name the original generated value.
     GeneratedOnDuplicate,
+    /// `InsertValues.getRow` under `LOAD DATA`: warnings stay as `CastValue`
+    /// raised them, and an error goes through `completeLoadErr`, which only
+    /// retitles `ErrDataTooLong` as `Data truncated for column ... at row N`.
+    LoadDataRow,
 }
 
 fn cast_value_shaped(
@@ -498,6 +523,9 @@ fn cast_contextual_value(
     let warning_shape = match shape {
         CastShape::OnDuplicateAssignment | CastShape::GeneratedOnDuplicate => CastShape::InsertRow,
         CastShape::UpdateAssignment | CastShape::InsertSelectRow => CastShape::RawTable,
+        // Go's LOAD DATA casts without truncate-as-warning, so every
+        // conversion problem reaches `handleErr` as an error and is
+        // completed by `completeLoadErr` before it becomes a warning.
         other => other,
     };
     // Every later decision is the one an INSERT's returned error takes.
@@ -667,6 +695,11 @@ fn complete_typed_cast(
             column: column.to_owned(),
             row: row + 1,
         },
+        // Go `completeLoadErr`.
+        1406 if shape == CastShape::LoadDataRow => DriverError::DataTruncatedAtRow {
+            column: column.to_owned(),
+            row: row + 1,
+        },
         1292 if insert
             && matches!(
                 field.code(),
@@ -829,9 +862,10 @@ impl CastShape {
     /// makes it fatal.
     fn name(self, error: DriverError, source: &Datum, field_type: &FieldType) -> DriverError {
         match self {
-            Self::RawTable | Self::OnDuplicateAssignment | Self::GeneratedOnDuplicate => {
-                raw_assignment_error(error, source, field_type)
-            }
+            Self::RawTable
+            | Self::OnDuplicateAssignment
+            | Self::GeneratedOnDuplicate
+            | Self::LoadDataRow => raw_assignment_error(error, source, field_type),
             Self::InsertRow | Self::InsertSelectRow => error,
             Self::UpdateAssignment => match error {
                 // Go's `handleUpdateError` re-titles exactly these two.

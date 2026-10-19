@@ -7655,6 +7655,12 @@ impl QuerySession for ClusterServerSession {
         _sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<String>, SqlQueryError> {
+        // Go `LoadDataExec.Open` asks the client for a LOCAL load's file.
+        if let Stmt::Dml(dml) = stmt {
+            if let tidb_ast::DmlStmt::LoadData(load) = dml.as_ref() {
+                return Ok(load.local.then(|| load.path.clone()));
+            }
+        }
         let Some(statement) = prepare_cluster_load_stats_parsed(stmt) else {
             return Ok(None);
         };
@@ -7673,13 +7679,30 @@ impl QuerySession for ClusterServerSession {
         self.execute_local_infile_parsed(sql, &stmt, data)
     }
 
+    fn accept_local_infile_parsed(&mut self, _sql: &str, stmt: &Stmt) -> Result<(), SqlQueryError> {
+        // The executor is built against the current schema, as the write
+        // door builds every statement.
+        self.rebuild_catalog_if_stale();
+        self.session.accept_local_infile(stmt).map_err(map_error)
+    }
+
     fn execute_local_infile_parsed(
         &mut self,
-        _sql: &str,
+        sql: &str,
         stmt: &Stmt,
         data: &[u8],
     ) -> Result<WriteOutcome, SqlQueryError> {
         self.session.clear_statement_message();
+        if matches!(stmt, Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::LoadData(_)))
+        {
+            // The load is an ordinary write over the client's bytes.
+            self.session.set_local_infile_data(data.to_vec());
+            let outcome = self.observe_routed_write(sql, stmt, |node| {
+                node.execute_ordinary_write_parsed(sql, stmt)
+            });
+            self.session.clear_local_infile();
+            return outcome;
+        }
         if prepare_cluster_load_stats_parsed(stmt).is_none() {
             return Err(SqlQueryError::unknown(
                 "statement did not request a client-local file",

@@ -3599,6 +3599,7 @@ dependencies = [
  "chrono-tz",
  "crc32fast",
  "crossbeam-channel",
+ "encoding_rs",
  "flate2",
  "hashbrown 0.15.5",
  "prometheus 0.14.0",
@@ -3608,6 +3609,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "smallvec",
+ "snap",
  "stacker",
  "tidb-ast",
  "tidb-chunk",
@@ -3640,6 +3642,7 @@ dependencies = [
  "tikv-client",
  "tikv-jemallocator",
  "tracing",
+ "zstd",
 ]
 
 [[package]]

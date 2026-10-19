@@ -442,14 +442,16 @@ impl Session {
         // warning buffer keeps the PREVIOUS statement's rows (oracle:
         // `LOAD DATA LOCAL INFILE ...` answers 1148 with the prior
         // statement's 8154 still in SHOW WARNINGS).
-        if matches!(
-            stmt,
-            Stmt::Dml(dml)
-                if matches!(
-                    dml.as_ref(),
-                    tidb_ast::DmlStmt::LoadData(load) if load.local
-                )
-        ) {
+        if !self.local_infile_accepted
+            && matches!(
+                stmt,
+                Stmt::Dml(dml)
+                    if matches!(
+                        dml.as_ref(),
+                        tidb_ast::DmlStmt::LoadData(load) if load.local
+                    )
+            )
+        {
             self.warnings = previous;
             self.in_show_warning = false;
             return;

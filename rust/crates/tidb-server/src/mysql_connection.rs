@@ -2193,6 +2193,14 @@ fn run_connection_commands<S: QuerySession>(
                                 aborted = true;
                                 break;
                             }
+                            if let Some(stmt) = &parsed {
+                                if let Err(error) = engine.accept_local_infile_parsed(sql, stmt) {
+                                    write_query_error_at(output, sequence, &error, protocol_41)?;
+                                    record_client_warnings(&*output, &*engine);
+                                    aborted = true;
+                                    break;
+                                }
+                            }
                             let mut request = Vec::with_capacity(path.len() + 1);
                             request.push(0xfb);
                             request.extend_from_slice(path.as_bytes());

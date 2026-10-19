@@ -1122,6 +1122,18 @@ pub trait QuerySession {
         self.local_infile_path(sql)
     }
 
+    /// Runs what the statement owes before the connection asks the client
+    /// for its file (Go builds the LOAD DATA executor before
+    /// `LoadDataExec.Open` sends the request); an error answers the
+    /// statement instead of the request.
+    fn accept_local_infile_parsed(
+        &mut self,
+        _sql: &str,
+        _stmt: &Stmt,
+    ) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
+
     /// Finishes a statement after the connection transferred its local file.
     fn execute_local_infile(
         &mut self,

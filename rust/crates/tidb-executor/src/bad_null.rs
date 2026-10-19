@@ -115,6 +115,34 @@ pub(crate) fn handle_bad_null(
     Ok(true)
 }
 
+/// [`handle_bad_null`] for `LOAD DATA`, Go `CheckNotNull`'s
+/// `rowCntInLoadData > 0` arm: the NULL is reported as
+/// `ErrWarnNullToNotnull` (1263) naming the file row, whichever level applies.
+pub(crate) fn handle_bad_null_in_load_data(
+    value: &mut Datum,
+    field_type: &FieldType,
+    column: &str,
+    level: NullLevel,
+    row: usize,
+    ctx: &crate::StmtContext,
+) -> Result<bool, DriverError> {
+    if !value.is_null() || field_type.flags() & NOT_NULL_FLAG == 0 {
+        return Ok(false);
+    }
+    let message = format!(
+        "Column set to default value; NULL supplied to NOT NULL column '{column}' at row {row}"
+    );
+    if level == NullLevel::Error {
+        return Err(DriverError::DdlCoded {
+            errno: 1263,
+            message,
+        });
+    }
+    ctx.append_warning_parts(1263, &message);
+    *value = zero_value(field_type);
+    Ok(true)
+}
+
 /// Go `table.GetZeroValue`: the value a column takes when its NULL is
 /// tolerated rather than refused.
 ///

@@ -3630,32 +3630,7 @@ impl Session {
                             message: "Unsupported type *ast.CallStmt".to_owned(),
                         })
                     }
-                    DmlStmt::LoadData(load) => {
-                        // go `LoadDataExec`: a server-disk INFILE is refused
-                        // with the 8154 error AND its own 8154 warning row; a
-                        // LOCAL load without the client capability errors
-                        // 1148 on the wire with NO new warning row (go
-                        // refuses in `handleLoadData` before any statement
-                        // context reset, so the buffer keeps the PREVIOUS
-                        // statement's rows -- oracle-captured on g-syntax).
-                        let refused_8154 = format!(
-                            "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
-                            load.path
-                        );
-                        // The statement-error door appends the 8154 row (go
-                        // shows ONE row; the arm itself adds nothing).
-                        if !load.local {
-                            return Err(DriverError::DdlCoded {
-                                errno: 8154,
-                                message: refused_8154,
-                            });
-                        }
-                        Err(DriverError::DdlCoded {
-                            errno: 1148,
-                            message: "The used command is not allowed with this MySQL version"
-                                .to_owned(),
-                        })
-                    }
+                    DmlStmt::LoadData(load) => self.run_load_data_stmt(load, &stmt),
                     DmlStmt::Batch(batch) => self.run_non_transactional_dml(batch),
                     other => Err(DriverError::unsupported(format!(
                         "this DML statement kind ({}) is not supported yet",

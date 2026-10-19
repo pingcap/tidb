@@ -107,6 +107,11 @@ impl ReplaySession for UnistoreSession {
         }
         .map_err(driver_error)?;
         if let Some(path) = local_infile_path {
+            if let Some(stmt) = &parsed {
+                self.session
+                    .accept_local_infile_parsed(sql, stmt)
+                    .map_err(driver_error)?;
+            }
             let data =
                 std::fs::read(difftest_result_tests::replay::integrationtest_dir().join(&path))
                     .map_err(|error| {

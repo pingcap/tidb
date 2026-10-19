@@ -802,6 +802,95 @@ fn run_insert_with_physical(
     fk_triggers: &[FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<(u64, Option<u64>), DriverError> {
+    run_insert_rows(
+        insert,
+        catalog,
+        current_db,
+        ctx,
+        physical_source,
+        fk_triggers,
+        runtime,
+        None,
+    )
+}
+
+/// The rows a `LOAD DATA` statement hands Go's `InsertValues`: each already
+/// laid out in the statement's insert-column order, to be cast and filled by
+/// `getRow` as an `INSERT ... SELECT` row is.
+pub struct LoadDataRows<'a> {
+    /// Go `encodeWorker.parserData2TableData`: the next row, or `None` at
+    /// the end of the batch. It is pulled once per row so that a row's
+    /// parse warnings precede its cast warnings, as Go encodes row by row.
+    pub next_row: &'a mut dyn FnMut() -> Result<Option<Vec<Datum>>, DriverError>,
+    /// Go `LoadDataController.Restrictive`: a strict SQL mode without
+    /// `IGNORE`. Otherwise every value-level error is a warning
+    /// (`setNonRestrictiveFlags`).
+    pub restrictive: bool,
+    /// How many file rows earlier batches encoded: Go's `rowCount` names a
+    /// row by its place in the whole file.
+    pub first_row: usize,
+}
+
+/// Go's statement counters a `LOAD DATA` message reports.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LoadDataCounts {
+    /// `StmtCtx.RecordRows`.
+    pub records: u64,
+    /// `StmtCtx.DeletedRows`.
+    pub deleted: u64,
+    /// `StmtCtx.CopiedRows`.
+    pub copied: u64,
+    /// `StmtCtx.AffectedRows`.
+    pub affected: u64,
+}
+
+/// Go `commitWorker.checkAndInsertOneBatch`: writes `LOAD DATA`'s rows
+/// through the INSERT executor -- `batchCheckAndInsert` for IGNORE and
+/// REPLACE, `addRecord` otherwise -- and answers Go's counters and the
+/// first allocated id. `insert` names the table, the insert columns and the
+/// duplicate action; it has no values of its own.
+pub fn run_load_data_insert(
+    insert: &tidb_ast::InsertStmt,
+    rows: LoadDataRows<'_>,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(LoadDataCounts, Option<u64>), DriverError> {
+    let mut counts = LoadDataCounts::default();
+    // Go's LOAD DATA `InsertValues` carries no foreign-key checks.
+    let (_, first_allocated) = run_insert_rows(
+        insert,
+        catalog,
+        current_db,
+        ctx,
+        None,
+        &[],
+        None,
+        Some((rows, &mut counts)),
+    )?;
+    Ok((counts, first_allocated))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_insert_rows(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    fk_triggers: &[FkTriggerNode],
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+    load: Option<(LoadDataRows<'_>, &mut LoadDataCounts)>,
+) -> Result<(u64, Option<u64>), DriverError> {
+    let (mut load_rows, mut load_counts) = match load {
+        Some((rows, counts)) => (Some(rows), Some(counts)),
+        None => (None, None),
+    };
+    let load_restrictive = load_rows.as_ref().map(|rows| rows.restrictive);
+    let load_first_row = load_rows.as_ref().map_or(0, |rows| rows.first_row);
+    // Go reads value-level leniency off IGNORE for an INSERT and off
+    // `Restrictive` for LOAD DATA, whose duplicate action is separate.
+    let lenient = load_restrictive.map_or(insert.ignore, |restrictive| !restrictive);
     if insert.replace && !insert.on_duplicate.is_empty() {
         return Err(DriverError::unsupported("partitions are not supported yet"));
     }
@@ -886,6 +975,8 @@ fn run_insert_with_physical(
     // pre-insert catalog and materializes those rows before the table is
     // borrowed mutably.
     let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
+        // LOAD DATA's rows arrive one at a time below.
+        _ if load_rows.is_some() => Some(Vec::new()),
         Some(_) => {
             let physical = physical_source.ok_or_else(|| {
                 DriverError::unsupported("INSERT SELECT has no retained physical child")
@@ -991,11 +1082,17 @@ fn run_insert_with_physical(
     // strict mode warns 1048 and stores `0`. Go's rule also needs
     // `tidb_enable_strict_not_null_check`, which the statement context
     // carries.
-    let bad_null_level = crate::bad_null::NullLevel::from_is_error(
-        !ctx.ignore_err()
-            && (ctx.strict() || insert.rows.len() == 1)
-            && ctx.strict_not_null_check(),
-    );
+    // LOAD DATA keeps the default error level unless it is not restrictive
+    // (`setNonRestrictiveFlags`); neither the one-row rule nor
+    // `tidb_enable_strict_not_null_check` reaches it.
+    let bad_null_level = crate::bad_null::NullLevel::from_is_error(match load_restrictive {
+        Some(restrictive) => restrictive,
+        None => {
+            !ctx.ignore_err()
+                && (ctx.strict() || insert.rows.len() == 1)
+                && ctx.strict_not_null_check()
+        }
+    });
 
     enum PreparedInsertValue {
         Generated,
@@ -1140,7 +1237,7 @@ fn run_insert_with_physical(
             }
             prepared_value_rows.push(prepared);
         }
-    } else {
+    } else if load_restrictive.is_none() {
         // INSERT SELECT still performs the same arity check, but has no AST
         // values to lower.
         for (index, values) in value_rows.iter().enumerate() {
@@ -1234,8 +1331,18 @@ fn run_insert_with_physical(
     // predecessor is then what still rejects `VALUES (), (1)`. An empty row
     // assigns nothing, so the default, auto-increment and NOT NULL rules
     // below fill the whole row.
-    for index in 0..row_count {
+    let mut index = 0;
+    loop {
+        let load_row = match load_rows.as_mut() {
+            Some(load) => match (load.next_row)()? {
+                Some(row) => Some(row),
+                None => break,
+            },
+            None if index >= row_count => break,
+            None => None,
+        };
         let width = match source_rows.as_ref() {
+            _ if load_row.is_some() => load_row.as_ref().map_or(0, Vec::len),
             Some(_) => value_rows.get(index).map_or(0, Vec::len),
             None => insert.rows[index].len(),
         };
@@ -1258,6 +1365,7 @@ fn run_insert_with_physical(
         let mut cast_done = vec![false; column_list.len()];
         for (position, &offset) in target_offsets.iter().enumerate().take(width) {
             let value = match source_rows.as_ref() {
+                Some(_) if load_row.is_some() => load_row.as_ref().unwrap()[position].clone(),
                 Some(_) => value_rows[index][position].clone(),
                 None => match &prepared_value_rows[index][position] {
                     PreparedInsertValue::Generated => continue,
@@ -1274,19 +1382,34 @@ fn run_insert_with_physical(
             };
             // Go `evalRow` re-completes a VALUES row's cast warnings;
             // `getRow` leaves a selected row's as `CastValue` raised them.
-            let cast = if source_rows.is_some() {
+            let cast = if load_restrictive.is_some() {
+                crate::driver::write_cast::cast_load_data_value_for_column
+            } else if source_rows.is_some() {
                 crate::driver::write_cast::cast_selected_value_for_column
             } else {
                 cast_value_for_column
             };
-            let value = cast(
+            let value = match cast(
                 value,
                 &column_meta[offset].field_type,
                 column_meta[offset].name.as_str(),
-                new_rows.len(),
+                load_first_row + new_rows.len(),
                 ctx,
-                insert.ignore,
-            )?;
+                lenient,
+            ) {
+                Ok(value) => value,
+                // Go `InsertValues.handleErr` hands a LOAD DATA row's cast
+                // error to the duplicate-key error group
+                // (`HandleErrorWithAlias(kv.ErrKeyExists, ...)`), a warning
+                // unless the load is restrictive; the value stays the
+                // failed conversion's zero datum.
+                Err(error) if lenient && load_restrictive.is_some() => {
+                    let rendered = error.to_mysql_error();
+                    ctx.append_warning_parts(rendered.code, &rendered.message);
+                    Datum::Null
+                }
+                Err(error) => return Err(error),
+            };
             if let Some(buffer) = eval_buffer.as_mut() {
                 buffer.set_datum(offset, &value);
             }
@@ -1355,6 +1478,14 @@ fn run_insert_with_physical(
                         value
                     }
                 };
+                // Go `getColDefaultValueFromNil`'s zero value for a NOT NULL
+                // column without a default is final: `fillColValue` stores
+                // it uncast (only a stored default goes through `CastValue`,
+                // inside `GetColDefaultValue`), so a zero DATETIME raises no
+                // 1292 beside its 1364.
+                if column_meta[offset].default_value.is_none() && column_meta[offset].not_null {
+                    cast_done[offset] = true;
+                }
             }
             // Cast what the row filled in (a default or the auto-increment
             // marker); the statement's own values were cast already. The
@@ -1372,7 +1503,7 @@ fn run_insert_with_physical(
                     name,
                     new_rows.len(),
                     ctx,
-                    insert.ignore,
+                    lenient,
                 )?;
             }
             // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL
@@ -1381,13 +1512,24 @@ fn run_insert_with_physical(
             // it fails the statement. A generated column's value is not
             // built yet, so the NULL standing in for it is not the user's.
             if assigned[offset] && !generated_targets[offset] {
-                crate::bad_null::handle_bad_null(
-                    &mut row[offset],
-                    &column_meta[offset].field_type,
-                    &column_list[offset].0,
-                    bad_null_level,
-                    ctx,
-                )?;
+                if load_restrictive.is_some() {
+                    crate::bad_null::handle_bad_null_in_load_data(
+                        &mut row[offset],
+                        &column_meta[offset].field_type,
+                        &column_list[offset].0,
+                        bad_null_level,
+                        load_first_row + new_rows.len() + 1,
+                        ctx,
+                    )?;
+                } else {
+                    crate::bad_null::handle_bad_null(
+                        &mut row[offset],
+                        &column_meta[offset].field_type,
+                        &column_list[offset].0,
+                        bad_null_level,
+                        ctx,
+                    )?;
+                }
             }
         }
         {
@@ -1411,7 +1553,14 @@ fn run_insert_with_physical(
             }
         }
         new_rows.push(row);
+        index += 1;
     }
+    // A LOAD DATA batch's size is what its source produced.
+    let row_count = if load_restrictive.is_some() {
+        index
+    } else {
+        row_count
+    };
     let extra_handle_offset = extra_handle_offset.map(|_| kv.columns().len());
     // Go `InsertValues.insertRows`/`insertRowsFromSelect`, the consume that
     // sits immediately before `base.exec(ctx, rows)`:
@@ -1635,6 +1784,10 @@ fn run_insert_with_physical(
     let mut copied: u64 = 0;
     let mut duplicates_updated: u64 = 0;
     let mut duplicates_touched: u64 = 0;
+    let mut load_deleted: u64 = 0;
+    // Go's LOAD DATA sets `ErrGroupNoMatchedPartition` to a warning, which
+    // its IGNORE and REPLACE batch check (`getKeysNeedCheck`) honours.
+    let partition_warns = insert.ignore || (load_restrictive.is_some() && insert.replace);
     let mut updates = UpdateRecords::new(fk_triggers);
     let mut removals = DeleteRecords::new(fk_triggers);
     let mut inserted_rows = Vec::new();
@@ -1658,7 +1811,7 @@ fn run_insert_with_physical(
             if let Err(error) = target(catalog, &database, &table_name)
                 .validate_insert_partitions(row, partitions, ctx)
             {
-                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+                handle_partition_write_error(kv_write_error(error), partition_warns, ctx)?;
                 continue;
             }
         }
@@ -1675,7 +1828,7 @@ fn run_insert_with_physical(
             ) {
                 Ok(conflicts) => conflicts,
                 Err(error) => {
-                    handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+                    handle_partition_write_error(kv_write_error(error), partition_warns, ctx)?;
                     continue;
                 }
             }
@@ -1696,7 +1849,14 @@ fn run_insert_with_physical(
                         .get_row_by_handle(handle, &ctx.session_zone())
                         .map_err(|e| kv_read_error("row read failed", e))?;
                     if existing.as_deref() == Some(row) {
-                        inserted += 1;
+                        // Go `batchCheckAndInsert`: an identical row behind the
+                        // record key counts as copied, one behind a unique key
+                        // (`removeRow(inReplace=true)`) as affected.
+                        if load_restrictive.is_some() && conflict.on_record_key {
+                            copied += 1;
+                        } else {
+                            inserted += 1;
+                        }
                         unchanged = true;
                         break;
                     }
@@ -1709,7 +1869,13 @@ fn run_insert_with_physical(
                         insert.ignore,
                         ctx,
                     )?;
-                    inserted += 1;
+                    // Go's LOAD DATA removes a record-key duplicate with
+                    // `removeRow(inReplace=false)`, a deleted row.
+                    if load_restrictive.is_some() && conflict.on_record_key {
+                        load_deleted += 1;
+                    } else {
+                        inserted += 1;
+                    }
                 }
                 if unchanged {
                     continue;
@@ -1826,6 +1992,16 @@ fn run_insert_with_physical(
             }
             Err(error) => {
                 let rendered = kv_write_error(error);
+                // Go's `batchCheckAndInsert` counts the row copied before
+                // `addRecord` and, in LOAD DATA, skips a violated CHECK
+                // without a warning.
+                if load_restrictive.is_some()
+                    && insert.ignore
+                    && matches!(rendered, DriverError::CheckConstraintViolated(_))
+                {
+                    copied += 1;
+                    continue;
+                }
                 // Under IGNORE a skipped row counts in NEITHER the stored
                 // rows nor the affected count -- Go's per-row skip writes
                 // nothing and rewinds nothing; earlier conforming rows of
@@ -1857,6 +2033,15 @@ fn run_insert_with_physical(
     // `INSERT ... SELECT` or a multi-row VALUES list reports
     // `Records: N  Duplicates: D  Warnings: W`.
     let records = row_count as u64;
+    if let Some(counts) = load_counts.as_deref_mut() {
+        *counts = LoadDataCounts {
+            records,
+            deleted: load_deleted,
+            copied,
+            affected: inserted,
+        };
+        return Ok((inserted, first_allocated));
+    }
     if insert.source.is_some() || records > 1 {
         let duplicates = if insert.replace {
             inserted.saturating_sub(records)
