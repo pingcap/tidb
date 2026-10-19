@@ -147,3 +147,89 @@ fn set_global_runs_on_the_scratch_table_and_a_failure_counts_as_an_error() {
     // Go's SetExecutor appends the failure to the statement context.
     assert_eq!(row_text(session.run("SELECT @@error_count")), [["1"]]);
 }
+
+mod analyze {
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    use tidb_exec::cluster_analyze::AnalyzeStatement;
+    use tidb_exec::real_tikv_analyze::ClusterAnalyzeReport;
+
+    use crate::analyze_service::AnalyzeService;
+    use crate::*;
+
+    #[derive(Default)]
+    struct Recording(RefCell<Vec<String>>);
+
+    impl AnalyzeService for Recording {
+        fn flush_stats_delta(&self, tables: &[AnalyzeStatement]) -> Result<(), DriverError> {
+            self.0.borrow_mut().push(format!("flush {}", tables.len()));
+            Ok(())
+        }
+
+        fn execute(
+            &self,
+            statement: &AnalyzeStatement,
+            _historical_stats_enabled: bool,
+        ) -> Result<ClusterAnalyzeReport, DriverError> {
+            self.0
+                .borrow_mut()
+                .push(format!("execute {}", statement.table));
+            Err(DriverError::Mysql(tidb_executor::MysqlError::new(
+                1105,
+                "sampling failed",
+            )))
+        }
+
+        fn publish_temporary_table_stats(
+            &self,
+            _table_id: i64,
+            _statistics: Arc<tidb_stats::Table>,
+        ) {
+            self.0.borrow_mut().push("publish temporary".to_owned());
+        }
+
+        fn dump_historical_stats(&self, table_id: i64) {
+            self.0.borrow_mut().push(format!("history {table_id}"));
+        }
+    }
+
+    fn statements(sql: &str) -> Vec<AnalyzeStatement> {
+        tidb_exec::real_tikv_analyze::prepare_cluster_analyze(sql, "test")
+            .unwrap()
+            .unwrap()
+    }
+
+    /// Deltas are flushed before sampling, and the first table that fails
+    /// ends the statement: Go stores nothing for the tables after it.
+    #[test]
+    fn analyze_flushes_first_and_stops_at_the_first_failure() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE test.an1 (a INT)").unwrap();
+        session.run("CREATE TABLE test.an2 (a INT)").unwrap();
+        let service = Recording::default();
+        let error = session
+            .run_analyze_statements(&statements("ANALYZE TABLE an1, an2"), &service)
+            .expect_err("the service's failure reaches the client");
+        assert_eq!(error.to_mysql_error().message, "sampling failed");
+        assert_eq!(*service.0.borrow(), ["flush 2", "execute an1"]);
+    }
+
+    /// A temporary table's rows live in the session's overlay, so the
+    /// session analyzes it and the service only publishes the result.
+    #[test]
+    fn a_temporary_table_is_analyzed_by_the_session() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TEMPORARY TABLE test.an_tmp (a INT)")
+            .unwrap();
+        session
+            .run("INSERT INTO test.an_tmp VALUES (1), (2)")
+            .unwrap();
+        let service = Recording::default();
+        session
+            .run_analyze_statements(&statements("ANALYZE TABLE an_tmp"), &service)
+            .unwrap();
+        assert_eq!(*service.0.borrow(), ["flush 1", "publish temporary"]);
+    }
+}

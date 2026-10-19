@@ -1292,7 +1292,7 @@ impl Session {
     /// (`variable.SetMemQuotaAnalyze` drives one `GlobalAnalyzeMemoryTracker`,
     /// `pkg/executor/select.go:141`), so the value in force is whatever the
     /// last `SET GLOBAL` stored. Its default, `-1`, is no bound.
-    fn analyze_memory_quota(&self) -> SampleMemoryQuota {
+    pub(crate) fn analyze_memory_quota(&self) -> SampleMemoryQuota {
         self.vars()
             .get_global(MEM_QUOTA_ANALYZE_VARIABLE)
             .ok()

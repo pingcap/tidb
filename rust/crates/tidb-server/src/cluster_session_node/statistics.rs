@@ -11,20 +11,17 @@
 //! below).
 
 use std::sync::Arc;
-use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
+use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::cluster_stats_write::StatsWritePlan;
 use tidb_exec::mysql_bootstrap::utc_now_timestamp;
 use tidb_exec::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
-use tidb_session::privilege::GlobalPriv;
 
 use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
 use tidb_hack::GoToLower;
 
-use super::{
-    ClusterServerSession, ClusterTransactions, SharedClusterCatalog, ER_TABLEACCESS_DENIED_ERROR,
-};
+use super::{ClusterServerSession, ClusterTransactions, SharedClusterCatalog};
 
 struct PersistedAnalyzeJobs {
     transactions: Arc<dyn ClusterTransactions>,
@@ -363,242 +360,23 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        // Go checks the privileges of EVERY named table before running any
-        // of them: `buildAnalyze` appends the visitInfo for each and
-        // `CheckPrivilege` runs over the whole plan, so `ANALYZE TABLE ok, no`
-        // stores nothing at all.
-        for statement in tables {
-            self.require_insert_and_select_privileges(&statement.schema, &statement.table)?;
-        }
-        // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` for every
-        // physical table named by the analyze plan before sampling. Persist
-        // this session's pending deltas through the same statistics-handle
-        // path so a static analyze still leaves the logical table's
-        // realtime count available to dynamic pseudo estimation.
-        self.session.publish_table_delta();
-        let catalog = self.catalog.load();
-        let mut target_ids = Vec::new();
-        for statement in tables {
-            let Some((_, table)) = catalog.find_table(&statement.schema, &statement.table) else {
-                continue;
-            };
-            match &table.partition {
-                Some(partition) => {
-                    target_ids.extend(
-                        partition
-                            .read()
-                            .definitions
-                            .snapshot()
-                            .into_iter()
-                            .filter(|definition| {
-                                statement.partitions.is_empty()
-                                    || statement.partitions.iter().any(|name| {
-                                        name.eq_ignore_ascii_case(definition.name.original())
-                                    })
-                            })
-                            .map(|definition| definition.id),
-                    );
-                }
-                None => target_ids.push(table.id),
-            }
-        }
-        drop(catalog);
-        let resource_group = self.session.active_resource_group().to_owned();
-        super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
-            self.stats_usage.as_ref(),
-            self.transactions.as_ref(),
-            self.catalog.as_ref(),
-            self.stats.as_ref(),
-            &self.global_vars,
-            true,
-            &target_ids,
-            &resource_group,
-        )
-        .map_err(SqlQueryError::unknown)?;
-        // Go's analyze memory quota is process-wide and read at execution:
-        // `variable.SetMemQuotaAnalyze` drives one `GlobalAnalyzeMemoryTracker`
-        // (`pkg/executor/select.go:141`), so the value in force is whatever
-        // `SET GLOBAL tidb_mem_quota_analyze` last stored. Its default, `-1`,
-        // is no bound.
-        let memory_quota = self.analyze_memory_quota();
-        self.session.begin_routed_statement_warnings();
-        let mut successful_table_ids = std::collections::BTreeSet::new();
-        for statement in tables {
-            let mut statement = statement.clone();
-            statement.persist_options = self
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS)
-                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
-            statement.default_columns = if self
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
-                .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
-            {
-                tidb_exec::cluster_analyze::AnalyzeColumnChoice::Predicate
-            } else {
-                tidb_exec::cluster_analyze::AnalyzeColumnChoice::All
-            };
-            statement.skip_column_types = self
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
-                .map(|value| tidb_session::varsutil::parse_analyze_skip_column_types(&value))
-                .unwrap_or_default();
-            statement.dynamic_partition_prune = !self
-                .session
-                .vars()
-                .get_system("tidb_partition_prune_mode")
-                .is_ok_and(|value| value.eq_ignore_ascii_case("static"));
-            statement.skip_missing_partition_stats = self
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS)
-                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
-            statement.analyze_snapshot = self
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT)
-                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
-            statement.enable_async_merge_global_stats = self
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS)
-                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
-            statement.partition_merge_concurrency = self
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY)
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1);
-            statement.scan_concurrency = self
-                .session
-                .vars()
-                .get_system(analyze_scan_concurrency_variable(statement.auto_analyze))
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY);
-            statement.eval_context = self.session.analyze_statement_context().into();
-            statement.options.memory_quota = memory_quota;
-            let statement = &statement;
-            // Go resolves and samples temporary tables through the session's
-            // temporary-table infoschema/storage overlay. The cluster
-            // analyzer sees only shared metadata and TiKV rows, so it cannot
-            // analyze LOCAL tables at all and would sample the wrong storage
-            // for GLOBAL tables. Reuse the ordinary session analyzer for this
-            // one storage class, then return to the common loop.
-            if let Some((table_id, statistics)) = self
-                .session
-                .analyze_temporary_table(statement)
-                .map_err(super::map_error)?
-            {
-                let mut published = (*self.stats.load()).clone();
-                published.insert(
-                    table_id,
-                    tidb_exec::stats_watch::TableStatsState::Loaded(statistics),
-                );
-                self.stats.store_after_analyze(published);
-                continue;
-            }
-            let historical_stats_enabled = || {
-                self.session
-                    .vars()
-                    .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-                    .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
-            };
-            let jobs = PersistedAnalyzeJobs {
-                transactions: Arc::clone(&self.transactions),
-                catalog: Arc::clone(&self.catalog),
-                instance: self.session.analyze_job_instance(),
-                process_id: self.connection_id,
-                global_vars: self.global_vars.clone(),
-            };
-            let analyzed = recover_analyze_panic(|| {
-                self.analyze.execute(
-                    statement,
-                    &resource_group,
-                    self.approximate_table_counts.as_ref(),
-                    statement_memory.sql_killer(),
-                    &historical_stats_enabled,
-                    &jobs,
-                )
-            })
-            .map_err(|error| SqlQueryError::unknown(error.rendered_message()))
-            .and_then(|result| result);
-            self.session.drain_context_warnings(&statement.eval_context);
-            let report = analyzed?;
-            if report.predicate_columns_empty {
-                self.session.append_routed_warning(
-                    1105,
-                    format!(
-                        "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
-                        statement.schema.go_to_lower(),
-                        statement.table.go_to_lower()
-                    ),
-                );
-            }
-            if report.ignored_partition_overrides {
-                self.session.append_routed_warning(
-                    1105,
-                    "Ignore columns and options when analyze partition in dynamic mode".to_owned(),
-                );
-            }
-            if report.collected_all_for_index_target {
-                self.session.append_routed_warning(
-                    1105,
-                    "The version 2 would collect all statistics not only the selected indexes"
-                        .to_owned(),
-                );
-            }
-            for index in &report.skipped_columnar_indexes {
-                self.session.append_routed_warning(
-                    1105,
-                    format!("analyzing columnar index is not supported, skip {index}"),
-                );
-            }
-            if let Some(warning) = &report.option_save_warning {
-                self.session.append_routed_warning(1105, warning.clone());
-            }
-            for (code, warning) in &report.global_stats_warnings {
-                self.session.append_routed_warning(*code, warning.clone());
-            }
-            // go `builder.go:3194`: the sample-rate notice is a NOTE, not a
-            // warning — SHOW WARNINGS reports Level=Note.
-            for (code, note) in &report.sample_rate_notes {
-                self.session.append_routed_note(*code, note.clone());
-            }
-            successful_table_ids.extend(report.historical_stats_table_ids());
-            eprintln!(
-                "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
-                 \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\
-                 \"sample_rate\":{},\"histograms\":{},\"buckets\":{},\"topn\":{}}}",
-                serde_json::to_string(&statement.schema).unwrap_or_else(|_| "\"\"".to_owned()),
-                serde_json::to_string(&statement.table).unwrap_or_else(|_| "\"\"".to_owned()),
-                report.table_id,
-                report.version,
-                report.scanned_rows,
-                report.sampled_rows,
-                report.sample_rate,
-                report.histogram_count,
-                report.bucket_count,
-                report.topn_count,
-            );
-        }
-        // Go collects `results.TableID.GetStatisticsID()` only from successful
-        // results and enqueues that set after every save worker has finished.
-        if self
-            .session
-            .vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
-        {
-            for table_id in successful_table_ids {
-                self.historical_stats_worker
-                    .send_tbl_to_dump_historical_stats(table_id);
-            }
-        }
+        let service = ClusterAnalyzeService {
+            statement_memory,
+            resource_group: self.session.active_resource_group().to_owned(),
+            instance: self.session.analyze_job_instance(),
+            connection_id: self.connection_id,
+            stats_usage: Arc::clone(&self.stats_usage),
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            stats: Arc::clone(&self.stats),
+            global_vars: self.global_vars.clone(),
+            analyze: Arc::clone(&self.analyze),
+            approximate_table_counts: Arc::clone(&self.approximate_table_counts),
+            historical_stats_worker: Arc::clone(&self.historical_stats_worker),
+        };
+        self.session
+            .run_analyze_statements(tables, &service)
+            .map_err(super::map_error)?;
         // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
         Ok(WriteOutcome {
             affected_rows: 0,
@@ -629,48 +407,139 @@ impl ClusterServerSession {
         schema: &str,
         table: &str,
     ) -> Result<(), SqlQueryError> {
-        for required in [GlobalPriv::Insert, GlobalPriv::Select] {
-            if self.session.has_table_privilege(schema, table, required) {
-                continue;
-            }
-            let (user, host) = self.session.authenticated_identity().unwrap_or(("", ""));
-            return Err(SqlQueryError::new(
-                ER_TABLEACCESS_DENIED_ERROR,
-                *b"42000",
-                format!(
-                    "{} command denied to user '{user}'@'{host}' for table '{}'",
-                    required.print_name(),
-                    table
-                ),
-            ));
-        }
-        Ok(())
-    }
-
-    /// `tidb_mem_quota_analyze` as this node currently holds it.
-    ///
-    /// A variable that is missing or unreadable is Go's default: no bound. It
-    /// is not a reason to refuse an `ANALYZE`, since Go runs every one of them
-    /// unbounded by default anyway.
-    fn analyze_memory_quota(&self) -> SampleMemoryQuota {
         self.session
-            .vars()
-            .get_global(MEM_QUOTA_ANALYZE_VARIABLE)
-            .ok()
-            .and_then(|value| value.trim().parse::<i64>().ok())
-            .map_or_else(
-                SampleMemoryQuota::unlimited,
-                SampleMemoryQuota::from_setting,
-            )
+            .require_insert_and_select_privileges(schema, table)
+            .map_err(super::map_error)
     }
 }
 
-// Go executor/adapter.go temporarily applies the system-process scan setting
-// to auto ANALYZE; user statements retain their own session setting.
-pub(super) fn analyze_scan_concurrency_variable(auto_analyze: bool) -> &'static str {
-    if auto_analyze {
-        tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
-    } else {
-        tidb_vardef::tidb_vars::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY
+/// The cluster analyzer as the session's [`AnalyzeService`]: owned handles,
+/// because the session runs the statement while the node is borrowed.
+///
+/// [`AnalyzeService`]: tidb_session::analyze_service::AnalyzeService
+struct ClusterAnalyzeService {
+    statement_memory: tidb_executor::StatementMemory,
+    resource_group: String,
+    instance: String,
+    connection_id: u64,
+    stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+    transactions: Arc<dyn super::ClusterTransactions>,
+    catalog: Arc<super::SharedClusterCatalog>,
+    stats: Arc<super::SharedStats>,
+    global_vars: tidb_session::GlobalSysvars,
+    analyze: Arc<dyn crate::cluster_analyze_seam::ClusterAnalyze>,
+    approximate_table_counts: Arc<super::ClusterApproximateTableCountProvider>,
+    historical_stats_worker: Arc<
+        tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
+    >,
+}
+
+impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
+    fn flush_stats_delta(
+        &self,
+        tables: &[AnalyzeStatement],
+    ) -> Result<(), tidb_executor::DriverError> {
+        let catalog = self.catalog.load();
+        let mut target_ids = Vec::new();
+        for statement in tables {
+            let Some((_, table)) = catalog.find_table(&statement.schema, &statement.table) else {
+                continue;
+            };
+            match &table.partition {
+                Some(partition) => {
+                    target_ids.extend(
+                        partition
+                            .read()
+                            .definitions
+                            .snapshot()
+                            .into_iter()
+                            .filter(|definition| {
+                                statement.partitions.is_empty()
+                                    || statement.partitions.iter().any(|name| {
+                                        name.eq_ignore_ascii_case(definition.name.original())
+                                    })
+                            })
+                            .map(|definition| definition.id),
+                    );
+                }
+                None => target_ids.push(table.id),
+            }
+        }
+        drop(catalog);
+        super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
+            self.stats_usage.as_ref(),
+            self.transactions.as_ref(),
+            self.catalog.as_ref(),
+            self.stats.as_ref(),
+            &self.global_vars,
+            true,
+            &target_ids,
+            &self.resource_group,
+        )
+        .map_err(tidb_executor::DriverError::unsupported)
+    }
+
+    fn execute(
+        &self,
+        statement: &AnalyzeStatement,
+        historical_stats_enabled: bool,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, tidb_executor::DriverError>
+    {
+        let jobs = PersistedAnalyzeJobs {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            instance: self.instance.clone(),
+            process_id: self.connection_id,
+            global_vars: self.global_vars.clone(),
+        };
+        let report = recover_analyze_panic(|| {
+            self.analyze.execute(
+                statement,
+                &self.resource_group,
+                self.approximate_table_counts.as_ref(),
+                self.statement_memory.sql_killer(),
+                &|| historical_stats_enabled,
+                &jobs,
+            )
+        })
+        .map_err(|error| SqlQueryError::unknown(error.rendered_message()))
+        .and_then(|result| result)
+        .map_err(|error| {
+            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
+                error.code,
+                error.state,
+                error.message,
+            ))
+        })?;
+        eprintln!(
+            "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
+             \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\
+             \"sample_rate\":{},\"histograms\":{},\"buckets\":{},\"topn\":{}}}",
+            serde_json::to_string(&statement.schema).unwrap_or_else(|_| "\"\"".to_owned()),
+            serde_json::to_string(&statement.table).unwrap_or_else(|_| "\"\"".to_owned()),
+            report.table_id,
+            report.version,
+            report.scanned_rows,
+            report.sampled_rows,
+            report.sample_rate,
+            report.histogram_count,
+            report.bucket_count,
+            report.topn_count,
+        );
+        Ok(report)
+    }
+
+    fn publish_temporary_table_stats(&self, table_id: i64, statistics: Arc<tidb_stats::Table>) {
+        let mut published = (*self.stats.load()).clone();
+        published.insert(
+            table_id,
+            tidb_exec::stats_watch::TableStatsState::Loaded(statistics),
+        );
+        self.stats.store_after_analyze(published);
+    }
+
+    fn dump_historical_stats(&self, table_id: i64) {
+        self.historical_stats_worker
+            .send_tbl_to_dump_historical_stats(table_id);
     }
 }

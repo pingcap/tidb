@@ -1272,6 +1272,7 @@ pub mod cursor;
 mod ddl_jobs;
 pub mod ddl_service;
 pub mod stored_state_service;
+pub mod analyze_service;
 mod dispatch;
 mod explain_arm;
 mod gcutil;
