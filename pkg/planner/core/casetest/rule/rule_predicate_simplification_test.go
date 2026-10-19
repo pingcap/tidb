@@ -162,6 +162,18 @@ func TestPredicateSimplificationEnumInListWithCompare(t *testing.T) {
 	tk.MustQuery("select group_concat(id order by id) from orders where status in (1,2) and status < 'shipped'").Check(testkit.Rows("1,2"))
 	tk.MustQuery("select group_concat(id order by id) from orders where status <= 'paid' and (status = 1 or status = 2)").Check(testkit.Rows("1,2"))
 	tk.MustQuery("select group_concat(id order by id) from orders where status in (2,3) and status >= 'new'").Check(testkit.Rows("2,3"))
+	tk.MustQuery("select group_concat(id order by id) from orders where status in (1,2) and status = 'paid'").Check(testkit.Rows("2"))
+	tk.MustQuery("select group_concat(id order by id) from orders where status in (1,2) and status != 'paid'").Check(testkit.Rows("1"))
+	tk.MustQuery("select group_concat(id order by id) from orders where status in (2,3) and status <> 'new'").Check(testkit.Rows("2,3"))
+	tk.MustExec("create table sets (id int primary key, s set('a','b','c'))")
+	tk.MustExec("insert into sets values (1,'a'),(2,'b'),(3,'c')")
+	tk.MustQuery("select group_concat(id order by id) from sets where s in (1,2) and s <= 'b'").Check(testkit.Rows("1,2"))
+	tk.MustQuery("select group_concat(id order by id) from sets where s in (1,2) and s != 'b'").Check(testkit.Rows("1"))
+	// The enum value '2' has index 1 and '1' has index 2, so a string and a number that look equal differ.
+	tk.MustExec("create table digits (id int primary key, e enum('2','1','3'))")
+	tk.MustExec("insert into digits values (1,'2'),(2,'1'),(3,'3')")
+	tk.MustQuery("select group_concat(id order by id) from digits where e in ('1','2') and e != 1").Check(testkit.Rows("2"))
+	tk.MustQuery("select group_concat(id order by id) from digits where e != 1 and e in ('1','2')").Check(testkit.Rows("2"))
 	tk.MustExec("create view vw as select * from orders where status in (1,2) and status <= 'paid'")
 	tk.MustQuery("select count(*) from vw").Check(testkit.Rows("2"))
 }
