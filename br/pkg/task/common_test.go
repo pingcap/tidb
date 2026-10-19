@@ -165,6 +165,13 @@ func TestFilterRestoreFilesSkipsMaterializedObjects(t *testing.T) {
 					13: {{Name: "mv_write.sst"}},
 				},
 			},
+			{
+				DB:   dbInfo,
+				Info: &model.TableInfo{ID: 14, Name: ast.NewCIStr("_mv_shadow"), MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 13}},
+				FilesOfPhysicals: map[int64][]*backup.File{
+					14: {{Name: "shadow_write.sst"}},
+				},
+			},
 		},
 	}
 	cfg := &RestoreConfig{
@@ -182,6 +189,7 @@ func TestFilterRestoreFilesSkipsMaterializedObjects(t *testing.T) {
 	require.Same(t, baseTable, tableMap[11])
 	require.NotContains(t, tableMap, int64(12))
 	require.NotContains(t, tableMap, int64(13))
+	require.NotContains(t, tableMap, int64(14))
 	require.Nil(t, baseTable.Info.MaterializedViewBase)
 	require.Equal(t, map[int64][]*backup.File{
 		11: {{Name: "base_table_write.sst"}},
