@@ -29,9 +29,10 @@ use crate::*;
 
 /// Samples and persists the statistics an `ANALYZE` builds.
 pub trait AnalyzeService {
-    /// Go `AnalyzeExec.Next`'s `FLUSH STATS_DELTA` for every physical table
-    /// the statement names, before sampling.
-    fn flush_stats_delta(&self, tables: &[AnalyzeStatement]) -> Result<(), DriverError>;
+    /// Go `AnalyzeExec.Next`'s `FLUSH STATS_DELTA` before sampling, over the
+    /// physical ids the session resolved (never empty: empty would mean
+    /// every table).
+    fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), DriverError>;
     /// Runs and persists one table's analysis.
     fn execute(
         &self,
@@ -63,7 +64,10 @@ impl Session {
         // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` before
         // sampling; this session's pending deltas are published first.
         self.publish_table_delta();
-        service.flush_stats_delta(tables)?;
+        let target_ids = self.analyze_stats_delta_target_ids(tables);
+        if !target_ids.is_empty() {
+            service.flush_stats_delta(&target_ids)?;
+        }
         let memory_quota = self.analyze_memory_quota();
         self.begin_routed_statement_warnings();
         let mut successful_table_ids = BTreeSet::new();
@@ -94,32 +98,65 @@ impl Session {
         Ok(())
     }
 
-    /// Go's privilege gate on `ANALYZE TABLE` and the statistics statements:
+    /// Go `collectStatsDeltaFlushObjectsForAnalyze`: one table-scope object
+    /// per analyzed table, whatever partitions the statement names, resolved
+    /// as `FLUSH STATS_DELTA` resolves it (the table and every partition).
+    fn analyze_stats_delta_target_ids(&self, tables: &[AnalyzeStatement]) -> Vec<i64> {
+        let catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut seen = BTreeSet::new();
+        let mut ids = Vec::new();
+        for statement in tables {
+            if !seen.insert((
+                go_to_lower(&statement.schema),
+                go_to_lower(&statement.table),
+            )) {
+                continue;
+            }
+            let Some(tidb_executor::TableEntry::Kv(table)) =
+                catalog.table_in(&statement.schema, &statement.table)
+            else {
+                continue;
+            };
+            ids.push(table.table_id);
+            if let Some(partition) = table.partition() {
+                ids.extend(partition.definitions.iter().map(|definition| definition.id));
+            }
+        }
+        ids
+    }
+
+    /// Go's privilege gate on `ANALYZE TABLE` and `LOCK/UNLOCK STATS`:
     /// INSERT *and* SELECT on the table, INSERT first
-    /// (`requireInsertAndSelectPriv`), each with its own 1142.
+    /// (`requireInsertAndSelectPriv`), each with its own 1142 naming the
+    /// table as written (`tbl.Name.O`). `RequestVerification` answers the
+    /// memory databases before any grant is read.
     pub fn require_insert_and_select_privileges(
         &self,
         schema: &str,
         table: &str,
     ) -> Result<(), DriverError> {
+        let Some((_, user, host)) = self.privilege_context() else {
+            return Ok(());
+        };
         for required in [GlobalPriv::Insert, GlobalPriv::Select] {
-            if self.has_table_privilege(schema, table, required) {
-                continue;
+            let granted = crate::table_privilege::mem_db_verdict_mask(schema, required.bit())
+                .unwrap_or_else(|| self.has_scoped_privilege(schema, table, required));
+            if !granted {
+                return Err(DriverError::TableAccessDenied {
+                    privilege: required.print_name(),
+                    user: user.to_owned(),
+                    host: host.to_owned(),
+                    table: table.to_owned(),
+                });
             }
-            let (user, host) = self.authenticated_identity().unwrap_or(("", ""));
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                1142,
-                format!(
-                    "{} command denied to user '{user}'@'{host}' for table '{}'",
-                    required.print_name(),
-                    table
-                ),
-            )));
         }
         Ok(())
     }
 
-    fn historical_stats_enabled(&self) -> bool {
+    pub(crate) fn historical_stats_enabled(&self) -> bool {
         self.vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
             .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))

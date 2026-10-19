@@ -770,7 +770,7 @@ fn select_index_tasks(
                     .find_map(|index| {
                         let index = index.read();
                         (index.state == tidb_model::SchemaState::PUBLIC
-                            && index.name.lowercase().eq_ignore_ascii_case(name))
+                            && index.name.lowercase() == name.go_to_lower())
                         .then(|| index.clone())
                     })
                     .ok_or_else(|| {
@@ -819,7 +819,7 @@ fn select_index_tasks(
             .filter_map(|name| {
                 selected
                     .iter()
-                    .find(|index| index.name.lowercase().eq_ignore_ascii_case(name))
+                    .find(|index| index.name.lowercase() == name.go_to_lower())
                     .map(|index| index.id)
             })
             .collect(),
@@ -834,9 +834,7 @@ fn analyze_partition_ids(
         if requested.is_empty() {
             return Ok(Vec::new());
         }
-        return Err(ClusterAnalyzeError::Other(
-            "Partition management on a not partitioned table is not possible".to_owned(),
-        ));
+        return Err(ClusterAnalyzeError::PartitionManagementOnNonpartitioned);
     };
     let partition = partition.read();
     let definitions = partition.definitions.snapshot();
@@ -849,10 +847,7 @@ fn analyze_partition_ids(
             definitions
                 .iter()
                 .find(|definition| {
-                    definition
-                        .name
-                        .lowercase()
-                        .eq_ignore_ascii_case(requested_name)
+                    definition.name.lowercase() == requested_name.go_to_lower()
                 })
                 .map(|definition| definition.id)
                 .ok_or_else(|| {
@@ -990,6 +985,9 @@ pub enum ClusterAnalyzeError {
     MissingTable(String),
     /// Go `executor.ErrAnalyzeMissIndex` (8109): the named index is absent.
     MissingIndex(String),
+    /// Go `dbterror.ErrPartitionMgmtOnNonpartitioned` (1505): a PARTITION
+    /// clause on a table that has none.
+    PartitionManagementOnNonpartitioned,
 }
 
 impl fmt::Display for ClusterAnalyzeError {
@@ -1012,6 +1010,8 @@ impl fmt::Display for ClusterAnalyzeError {
             Self::Other(detail) => formatter.write_str(detail),
             Self::MissingTable(name) => write!(formatter, "Table '{name}' doesn't exist"),
             Self::MissingIndex(detail) => formatter.write_str(detail),
+            Self::PartitionManagementOnNonpartitioned => formatter
+                .write_str("Partition management on a not partitioned table is not possible"),
         }
     }
 }
@@ -2747,11 +2747,7 @@ fn add_mandatory_columns(
             for dependency in column.dependences.snapshot() {
                 if let Some(base) = table.cols().iter_deref().find(|candidate| {
                     dependency.as_utf8().is_ok_and(|dependency| {
-                        candidate
-                            .read()
-                            .name
-                            .lowercase()
-                            .eq_ignore_ascii_case(dependency)
+                        candidate.read().name.lowercase() == dependency.go_to_lower()
                     })
                 }) {
                     let id = base.read().id;

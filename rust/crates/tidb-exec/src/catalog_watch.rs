@@ -171,16 +171,26 @@ impl SharedCatalog {
         Ok(found)
     }
 
-    /// Replaces the published catalog atomically.
-    pub fn store(&self, catalog: ClusterCatalog) {
+    /// Admits `catalog` and publishes it unless a newer schema version is
+    /// already published; returns whether it was published.
+    ///
+    /// Go `InfoCache.Insert` keeps schemas ordered by version and
+    /// `GetLatest` answers the highest, so a reload that finishes late (a
+    /// slow full load racing a DDL's inline reload) can never take the node
+    /// back to an older schema. The older catalog still enters the
+    /// historical cache, as Go's insert keeps it for snapshot reads.
+    pub fn store(&self, catalog: ClusterCatalog) -> bool {
         // Publication and retained-version admission share the same lock order
-        // as historical lookup. Every published schema enters the cache.
+        // as historical lookup, and holding the cache lock across the version
+        // comparison serializes concurrent publishers.
         let catalog = Arc::new(catalog);
         let mut versions = self
             .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        versions.insert(catalog.schema_version, Arc::clone(&catalog));
+        versions
+            .entry(catalog.schema_version)
+            .or_insert_with(|| Arc::clone(&catalog));
         while versions.len() > self.capacity.load(Ordering::Relaxed) {
             versions.pop_first();
         }
@@ -188,7 +198,12 @@ impl SharedCatalog {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
+        if catalog.schema_version < guard.schema_version {
+            return false;
+        }
+        versions.insert(catalog.schema_version, Arc::clone(&catalog));
         *guard = catalog;
+        true
     }
 }
 
@@ -709,6 +724,19 @@ mod tests {
         // new one. That is the whole consistency contract of the swap.
         assert_eq!(held.schema_version, 1);
         assert_eq!(shared.load().schema_version, 2);
+    }
+
+    /// Go `InfoCache.GetLatest` answers the highest version: a reload that
+    /// finishes after a newer one was published is cached, not published.
+    #[test]
+    fn a_late_older_catalog_never_replaces_a_newer_one() {
+        let shared = SharedCatalog::new(catalog_at(5));
+        assert!(shared.store(catalog_at(8)));
+        assert!(!shared.store(catalog_at(7)));
+        assert_eq!(shared.load().schema_version, 8);
+        assert!(shared.historical.lock().unwrap().contains_key(&7));
+        assert!(shared.store(catalog_at(8)));
+        assert_eq!(shared.load().schema_version, 8);
     }
 
     #[test]

@@ -7,6 +7,7 @@
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
+use crate::stats_statement_service::FlushStatsDeltaTargets;
 use crate::{DriverError, StmtOutput};
 
 /// Go `SimpleExec.executeFlush`.
@@ -18,7 +19,7 @@ use crate::{DriverError, StmtOutput};
 pub(crate) fn flush_stmt(
     flush: &tidb_ast::FlushStmt,
     catalog: &mut tidb_executor::Catalog,
-    current_db: &str,
+    stats_delta_targets: Option<FlushStatsDeltaTargets>,
 ) -> Result<StmtOutput, DriverError> {
     match &flush.target {
         tidb_ast::FlushTarget::Tables { read_lock, .. } => {
@@ -41,33 +42,13 @@ pub(crate) fn flush_stmt(
         // Go dumps buffered statistics deltas to stats_meta. The embedded
         // tier derives the net count from its row image and applies the
         // committed modification count captured by DML.
-        tidb_ast::FlushTarget::StatsDelta { objects, .. } => {
-            if objects
-                .iter()
-                .any(|object| matches!(object, tidb_ast::StatsObject::Global))
-            {
-                catalog.flush_stats_delta();
-            } else {
-                let mut table_ids = Vec::new();
-                for object in objects {
-                    match object {
-                        tidb_ast::StatsObject::Global => unreachable!(),
-                        tidb_ast::StatsObject::Database(database) => {
-                            append_stats_table_ids(catalog, database, None, &mut table_ids);
-                        }
-                        tidb_ast::StatsObject::Table { database, table } => {
-                            append_stats_table_ids(
-                                catalog,
-                                database.as_deref().unwrap_or(current_db),
-                                Some(table),
-                                &mut table_ids,
-                            );
-                        }
-                    }
-                }
-                catalog.flush_stats_delta_for(&table_ids);
+        tidb_ast::FlushTarget::StatsDelta { .. } => match stats_delta_targets {
+            Some(FlushStatsDeltaTargets::All) => catalog.flush_stats_delta(),
+            Some(FlushStatsDeltaTargets::Tables(ids)) if !ids.is_empty() => {
+                catalog.flush_stats_delta_for(&ids);
             }
-        }
+            _ => {}
+        },
         tidb_ast::FlushTarget::ClientErrorsSummary => {
             tidb_error::tidb::infoschema::flush_stats();
         }
@@ -77,26 +58,6 @@ pub(crate) fn flush_stmt(
         | tidb_ast::FlushTarget::Logs(_) => {}
     }
     Ok(StmtOutput::Done(true))
-}
-
-fn append_stats_table_ids(
-    catalog: &tidb_executor::Catalog,
-    database: &str,
-    table_name: Option<&str>,
-    table_ids: &mut Vec<i64>,
-) {
-    let names = table_name.map_or_else(
-        || catalog.table_names(database).unwrap_or_default(),
-        |name| vec![name.to_owned()],
-    );
-    for name in names {
-        if let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in(database, &name) {
-            table_ids.push(table.table_id);
-            if let Some(partition) = table.partition() {
-                table_ids.extend(partition.physical_ids());
-            }
-        }
-    }
 }
 
 /// Go `ShowDDLExec`'s six columns. The rows come from the session, which owns

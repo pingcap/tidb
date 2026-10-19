@@ -26,8 +26,7 @@
 use std::sync::Arc;
 
 use tidb_executor::load_stats::{
-    parse_stats_json, statistics_table_from_json, table_statistics_from_table, JsonTable,
-    TIDB_GLOBAL_STATS,
+    statistics_table_from_json, table_statistics_from_table, JsonTable, TIDB_GLOBAL_STATS,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
@@ -58,12 +57,9 @@ impl Session {
         let data = reader(path).map_err(|error| {
             DriverError::unsupported(format!("Load Stats: read {path}: {error}"))
         })?;
-        let json = parse_stats_json(&String::from_utf8_lossy(&data))
-            .map_err(|error| DriverError::unsupported(error.to_string()))?;
-        // Go skips a dump of `null`: no table name and no version.
-        if json.table_name.is_empty() && json.version == 0 {
+        let Some(json) = crate::stats_statement_service::parse_load_stats_dump(&data)? else {
             return Ok(StmtOutput::Affected(0));
-        }
+        };
         self.with_catalog_mut(|catalog| load_stats_from_json(catalog, &json))?;
         Ok(StmtOutput::Affected(0))
     }

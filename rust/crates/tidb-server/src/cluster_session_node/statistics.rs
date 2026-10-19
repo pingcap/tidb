@@ -19,9 +19,24 @@ use tidb_exec::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJ
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 
 use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
-use tidb_hack::GoToLower;
 
 use super::{ClusterServerSession, ClusterTransactions, SharedClusterCatalog};
+use tidb_session::stats_statement_service::FlushStatsDeltaTargets;
+
+/// Go answers the statistics statements with an OK packet carrying no rows.
+const NO_ROWS: WriteOutcome = WriteOutcome {
+    affected_rows: 0,
+    last_insert_id: 0,
+};
+
+/// A cluster seam's error as the session's.
+fn into_driver_error(error: SqlQueryError) -> tidb_executor::DriverError {
+    tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
+        error.code,
+        error.state,
+        error.message,
+    ))
+}
 
 struct PersistedAnalyzeJobs {
     transactions: Arc<dyn ClusterTransactions>,
@@ -182,164 +197,61 @@ impl ClusterServerSession {
     }
 
     /// Applies client-transferred LOAD STATS bytes through the cluster handle.
-    pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
-        if data.is_empty() {
-            return Ok(WriteOutcome {
-                affected_rows: 0,
-                last_insert_id: 0,
-            });
-        }
-        let json = tidb_executor::load_stats::parse_stats_json(
-            std::str::from_utf8(data).map_err(|error| SqlQueryError::unknown(error.to_string()))?,
-        )
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        // Go `LoadStatsInfo.Update`: JSON `null` is a successful no-op.
-        if json.table_name.is_empty() && json.version == 0 {
-            return Ok(WriteOutcome {
-                affected_rows: 0,
-                last_insert_id: 0,
-            });
-        }
-        let historical_stats_enabled = self
-            .session
-            .vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
-        let report = self.analyze.load_stats(&json, historical_stats_enabled)?;
-        eprintln!(
-            "{{\"event\":\"cluster_stats_loaded\",\"tables\":{},\"items\":{}}}",
-            report.table_count, report.item_count
-        );
-        Ok(WriteOutcome {
-            affected_rows: 0,
-            last_insert_id: 0,
-        })
-    }
-
-    /// Go `SimpleExec.executeDropStats`' id resolution: the physical ids
-    /// whose statistics the statement drops. `Ok(None)` is a statement that
-    /// is not DROP STATS.
+    /// The statistics handle as the session's [`StatsStatementService`].
     ///
-    /// Without a partition clause every named table drops its partitions and
-    /// itself (a non-partitioned table's own id twice, as Go's loop yields
-    /// it); `GLOBAL` drops the first table's own id; a partition list drops
-    /// the first table's named partitions.
-    pub(super) fn drop_stats_ids(
-        &mut self,
-        stmt: &tidb_ast::Stmt,
-    ) -> Result<Option<Vec<i64>>, SqlQueryError> {
-        let tidb_ast::Stmt::Admin(admin) = stmt else {
-            return Ok(None);
-        };
-        let tidb_ast::AdminStmt::DropStats(drop) = admin.as_ref() else {
-            return Ok(None);
-        };
-        let current_database = self.session.current_database().to_owned();
-        let catalog = self.catalog.load();
-        let mut tables = Vec::with_capacity(drop.tables.len());
-        for path in &drop.tables {
-            let (schema, name) = match path.as_slice() {
-                [name] => (current_database.clone(), name.clone()),
-                [schema, name] => (schema.clone(), name.clone()),
-                _ => {
-                    return Err(SqlQueryError::unknown(
-                        "DROP STATS of a malformed table name",
-                    ))
-                }
-            };
-            if schema.is_empty() {
-                return Err(super::map_error(tidb_executor::DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::NoDatabaseSelected,
-                )));
-            }
-            let Some((_, table)) = catalog.find_table(&schema, &name) else {
-                return Err(super::map_error(tidb_executor::DriverError::Schema(
-                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{schema}.{name}")),
-                )));
-            };
-            tables.push(table);
+    /// [`StatsStatementService`]: tidb_session::stats_statement_service::StatsStatementService
+    fn stats_statement_service(&self) -> ClusterStatsStatementService {
+        ClusterStatsStatementService {
+            resource_group: self.session.current_resource_group().to_owned(),
+            stats_usage: Arc::clone(&self.stats_usage),
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            stats: Arc::clone(&self.stats),
+            global_vars: self.global_vars.clone(),
+            analyze: Arc::clone(&self.analyze),
+            stats_lock: Arc::clone(&self.stats_lock),
         }
-        let partition_ids = |table: &tidb_model::table_info::TableInfo,
-                             names: &[String]|
-         -> Result<Vec<i64>, SqlQueryError> {
-            let Some(partition) = table.get_partition_info() else {
-                if !names.is_empty() {
-                    return Err(super::map_error(
-                        tidb_executor::DriverError::PartitionManagementOnNonpartitioned,
-                    ));
-                }
-                return Ok(vec![table.id]);
-            };
-            let definitions = partition.read().definitions.snapshot();
-            if names.is_empty() {
-                return Ok(definitions.iter().map(|definition| definition.id).collect());
-            }
-            names
-                .iter()
-                .map(|name| {
-                    definitions
-                        .iter()
-                        .find(|definition| definition.name.lowercase() == name.go_to_lower())
-                        .map(|definition| definition.id)
-                        .ok_or_else(|| {
-                            SqlQueryError::unknown(format!(
-                                "can not found the specified partition name {name} in the table definition"
-                            ))
-                        })
-                })
-                .collect()
-        };
-        let mut ids = Vec::new();
-        if drop.global {
-            ids.push(tables[0].id);
-        } else if drop.partitions.is_empty() {
-            for table in &tables {
-                ids.extend(partition_ids(table, &[])?);
-                ids.push(table.id);
-            }
-        } else {
-            ids = partition_ids(tables[0], &drop.partitions)?;
-        }
-        // The soft delete is idempotent per id; plan each once.
-        let mut seen = std::collections::BTreeSet::new();
-        ids.retain(|id| seen.insert(*id));
-        Ok(Some(ids))
     }
 
-    /// Runs Go's `executeDropStats` write: the statistics handle commits its
-    /// own transaction, so the user's is not moved.
+    pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
+        let service = self.stats_statement_service();
+        self.session
+            .run_load_stats(data, &service)
+            .map_err(super::map_error)?;
+        Ok(NO_ROWS)
+    }
+
+    pub(super) fn run_flush_stats_delta(
+        &mut self,
+        targets: &FlushStatsDeltaTargets,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let service = self.stats_statement_service();
+        self.session
+            .run_flush_stats_delta(targets, &service)
+            .map_err(super::map_error)?;
+        Ok(NO_ROWS)
+    }
+
     pub(super) fn run_drop_stats(
         &mut self,
         physical_ids: &[i64],
     ) -> Result<WriteOutcome, SqlQueryError> {
-        self.analyze.drop_stats(physical_ids)?;
-        Ok(WriteOutcome {
-            affected_rows: 0,
-            last_insert_id: 0,
-        })
+        let service = self.stats_statement_service();
+        self.session
+            .run_drop_stats(physical_ids, &service)
+            .map_err(super::map_error)?;
+        Ok(NO_ROWS)
     }
 
-    /// Runs one persisted statistics-lock operation in the internal
-    /// transaction owned by the statistics handle.
     pub(super) fn run_stats_lock(
         &mut self,
         statement: &ClusterStatsLockStatement,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        // Unlike DDL and ANALYZE, Go does not move the user's transaction:
-        // the stats handle borrows a separate restricted session and commits
-        // only its `mysql.stats_*` changes.
-        self.session.begin_routed_statement_warnings();
-        for target in &statement.targets {
-            self.require_insert_and_select_privileges(&target.schema, &target.table)?;
-        }
-        let report = self.stats_lock.execute(statement)?;
-        if !report.warning.is_empty() {
-            self.session.append_routed_warning(1105, report.warning);
-        }
-        Ok(WriteOutcome {
-            affected_rows: 0,
-            last_insert_id: 0,
-        })
+        let service = self.stats_statement_service();
+        self.session
+            .run_stats_lock(statement, &service)
+            .map_err(super::map_error)?;
+        Ok(NO_ROWS)
     }
 
     /// Performs one `ANALYZE TABLE`, one table at a time.
@@ -383,34 +295,6 @@ impl ClusterServerSession {
             last_insert_id: 0,
         })
     }
-
-    /// Go's privilege gate on `ANALYZE TABLE`: INSERT *and* SELECT on the
-    /// table.
-    ///
-    /// `pkg/planner/core/planbuilder.go:3205` calls
-    /// `requireInsertAndSelectPriv(as.TableNames)`, which appends
-    /// `mysql.InsertPriv` and then `mysql.SelectPriv` for each table, each
-    /// carrying its own `ErrTableaccessDenied`. INSERT is appended first, so
-    /// an account holding neither is told about INSERT -- captured from a
-    /// real TiDB, for a user with no privileges and for a SELECT-only user
-    /// alike:
-    ///
-    /// ```text
-    /// ERROR 1142 (42000): INSERT command denied to user 'zzlow'@'%' for table 'zzt'
-    /// ```
-    ///
-    /// This is not a formality on a read: the TopN entries an `ANALYZE`
-    /// writes into `mysql.stats_top_n` are ACTUAL COLUMN VALUES, readable by
-    /// anyone who can read the statistics.
-    fn require_insert_and_select_privileges(
-        &self,
-        schema: &str,
-        table: &str,
-    ) -> Result<(), SqlQueryError> {
-        self.session
-            .require_insert_and_select_privileges(schema, table)
-            .map_err(super::map_error)
-    }
 }
 
 /// The cluster analyzer as the session's [`AnalyzeService`]: owned handles,
@@ -435,37 +319,7 @@ struct ClusterAnalyzeService {
 }
 
 impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
-    fn flush_stats_delta(
-        &self,
-        tables: &[AnalyzeStatement],
-    ) -> Result<(), tidb_executor::DriverError> {
-        let catalog = self.catalog.load();
-        let mut target_ids = Vec::new();
-        for statement in tables {
-            let Some((_, table)) = catalog.find_table(&statement.schema, &statement.table) else {
-                continue;
-            };
-            match &table.partition {
-                Some(partition) => {
-                    target_ids.extend(
-                        partition
-                            .read()
-                            .definitions
-                            .snapshot()
-                            .into_iter()
-                            .filter(|definition| {
-                                statement.partitions.is_empty()
-                                    || statement.partitions.iter().any(|name| {
-                                        name.eq_ignore_ascii_case(definition.name.original())
-                                    })
-                            })
-                            .map(|definition| definition.id),
-                    );
-                }
-                None => target_ids.push(table.id),
-            }
-        }
-        drop(catalog);
+    fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
         super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
             self.transactions.as_ref(),
@@ -473,7 +327,7 @@ impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
             self.stats.as_ref(),
             &self.global_vars,
             true,
-            &target_ids,
+            target_ids,
             &self.resource_group,
         )
         .map_err(tidb_executor::DriverError::unsupported)
@@ -530,16 +384,75 @@ impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
     }
 
     fn publish_temporary_table_stats(&self, table_id: i64, statistics: Arc<tidb_stats::Table>) {
-        let mut published = (*self.stats.load()).clone();
-        published.insert(
-            table_id,
-            tidb_exec::stats_watch::TableStatsState::Loaded(statistics),
-        );
-        self.stats.store_after_analyze(published);
+        self.stats.publish_analyzed_table(table_id, statistics);
     }
 
     fn dump_historical_stats(&self, table_id: i64) {
         self.historical_stats_worker
             .send_tbl_to_dump_historical_stats(table_id);
+    }
+}
+
+/// The statistics handle as the session's [`StatsStatementService`]: owned
+/// handles, because the session runs the statement while the node is
+/// borrowed.
+///
+/// [`StatsStatementService`]: tidb_session::stats_statement_service::StatsStatementService
+struct ClusterStatsStatementService {
+    resource_group: String,
+    stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
+    transactions: Arc<dyn super::ClusterTransactions>,
+    catalog: Arc<super::SharedClusterCatalog>,
+    stats: Arc<super::SharedStats>,
+    global_vars: tidb_session::GlobalSysvars,
+    analyze: Arc<dyn crate::cluster_analyze_seam::ClusterAnalyze>,
+    stats_lock: Arc<dyn crate::cluster_stats_lock_seam::ClusterStatsLock>,
+}
+
+impl tidb_session::stats_statement_service::StatsStatementService for ClusterStatsStatementService {
+    fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
+        super::ClusterSessionFactory::dump_stats_delta_to_kv_parts(
+            self.stats_usage.as_ref(),
+            self.transactions.as_ref(),
+            self.catalog.as_ref(),
+            self.stats.as_ref(),
+            &self.global_vars,
+            true,
+            target_ids,
+            &self.resource_group,
+        )
+        .map_err(tidb_executor::DriverError::unsupported)
+    }
+
+    fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
+        self.analyze
+            .drop_stats(physical_ids)
+            .map_err(into_driver_error)
+    }
+
+    fn lock_stats(
+        &self,
+        statement: &ClusterStatsLockStatement,
+    ) -> Result<String, tidb_executor::DriverError> {
+        self.stats_lock
+            .execute(statement)
+            .map(|report| report.warning)
+            .map_err(into_driver_error)
+    }
+
+    fn load_stats(
+        &self,
+        json: &tidb_executor::load_stats::JsonTable,
+        historical_stats_enabled: bool,
+    ) -> Result<(), tidb_executor::DriverError> {
+        let report = self
+            .analyze
+            .load_stats(json, historical_stats_enabled)
+            .map_err(into_driver_error)?;
+        eprintln!(
+            "{{\"event\":\"cluster_stats_loaded\",\"tables\":{},\"items\":{}}}",
+            report.table_count, report.item_count
+        );
+        Ok(())
     }
 }

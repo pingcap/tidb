@@ -18297,3 +18297,184 @@ fn analyze_runs_multi_valued_indexes_as_independent_tasks() {
         [["3"]]
     );
 }
+
+/// Go rolls back a transaction whose COMMIT fails: the client sees the
+/// error and nothing it staged is published, not even by the next
+/// statement (captured from Go on this branch). Two failure owners: the
+/// store's prewrite (a presumed-absent key) and the session's own commit (a
+/// locking read whose catalog moved under it).
+#[test]
+fn a_failed_commit_publishes_nothing_later() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1901)).unwrap();
+    rows(&mut session, "CREATE DATABASE failed_commit");
+    rows(&mut session, "USE failed_commit");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "INSERT INTO t VALUES (1, 10)");
+    rows(&mut session, "SET tidb_txn_mode = 'optimistic'");
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO t VALUES (1, 99)")
+        .unwrap();
+    let error = session.control_transaction("COMMIT").unwrap_err();
+    assert_eq!(error.code, 1062, "{error:?}");
+    session
+        .execute_write("INSERT INTO t VALUES (2, 20)")
+        .unwrap();
+
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "SELECT * FROM t WHERE id = 1 FOR UPDATE");
+    session
+        .execute_write("INSERT INTO t VALUES (3, 30)")
+        .unwrap();
+    {
+        // A republish of the connection's catalog lands while the
+        // transaction is open, as a schema or statistics reload does.
+        let shared = session.session.shared_catalog();
+        let mut catalog = shared.lock().unwrap();
+        let charset = catalog.database_charset("failed_commit").unwrap();
+        assert!(catalog.set_database_charset("failed_commit", charset));
+    }
+    session
+        .control_transaction("COMMIT")
+        .expect_err("the session's locking-read commit refuses a moved catalog");
+    session
+        .execute_write("INSERT INTO t VALUES (4, 40)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
+        vec![vec!["1", "10"], vec!["2", "20"], vec!["4", "40"]]
+    );
+}
+
+/// Go's executor ignores the completion type, and refuses `START
+/// TRANSACTION READ ONLY` before its implicit commit, so the open
+/// transaction survives the refusal (captured from Go on this branch).
+#[test]
+fn completion_types_and_a_refused_read_only_begin_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1902)).unwrap();
+    rows(&mut session, "CREATE DATABASE txn_shapes");
+    rows(&mut session, "USE txn_shapes");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO t VALUES (3, 30)")
+        .unwrap();
+    session.control_transaction("COMMIT AND CHAIN").unwrap();
+    session.control_transaction("ROLLBACK RELEASE").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
+        vec![vec!["3", "30"]]
+    );
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO t VALUES (4, 40)")
+        .unwrap();
+    let error = session
+        .control_transaction("START TRANSACTION READ ONLY")
+        .unwrap_err();
+    assert_eq!(error.code, 1235, "{error:?}");
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
+        vec![vec!["3", "30"]]
+    );
+}
+
+/// With table locks disabled Go's preprocessor still resolves every named
+/// table under its own schema, then answers OK with warning 1235
+/// (captured from Go on this branch).
+#[test]
+fn disabled_lock_tables_resolves_every_table_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1903)).unwrap();
+    rows(&mut session, "CREATE DATABASE lock_disabled");
+    rows(&mut session, "USE lock_disabled");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY)");
+    session
+        .execute_write("LOCK TABLES mysql.user READ, t WRITE")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1235",
+            "LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."
+        ]]
+    );
+    let error = session
+        .execute_write("LOCK TABLES t READ, nosuch READ")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1146, "Table 'lock_disabled.nosuch' doesn't exist")
+    );
+}
+
+/// Go matches partition names by their Unicode lower-case form in LOCK
+/// STATS and ANALYZE, and refuses a PARTITION clause on a table that has
+/// none with 1505 (captured from Go on this branch).
+#[test]
+fn stats_partition_names_and_the_nonpartitioned_refusal_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1904)).unwrap();
+    rows(&mut session, "CREATE DATABASE stats_parts");
+    rows(&mut session, "USE stats_parts");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY)");
+    rows(
+        &mut session,
+        "CREATE TABLE pt (a INT) PARTITION BY RANGE (a) \
+         (PARTITION pÄ VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+    );
+    session.execute_write("LOCK STATS pt PARTITION PÄ").unwrap();
+    session
+        .execute_write("UNLOCK STATS pt PARTITION pä")
+        .unwrap();
+    session
+        .execute_write("ANALYZE TABLE pt PARTITION PÄ")
+        .unwrap();
+    let error = session
+        .execute_write("ANALYZE TABLE t PARTITION p0")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            1505,
+            "Partition management on a not partitioned table is not possible"
+        )
+    );
+}
+
+/// Go refuses an unsupported ALTER specification only after the table
+/// lookup (1146) and the base-table check (1347) (captured from Go on this
+/// branch).
+#[test]
+fn an_unsupported_alter_spec_is_refused_after_the_table_checks() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1905)).unwrap();
+    rows(&mut session, "CREATE DATABASE alter_order");
+    rows(&mut session, "USE alter_order");
+    rows(&mut session, "CREATE TABLE t (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "CREATE VIEW vv AS SELECT 1");
+    for (sql, code, message) in [
+        (
+            "ALTER TABLE nosuch REBUILD PARTITION p0",
+            1146,
+            "Table 'alter_order.nosuch' doesn't exist",
+        ),
+        (
+            "ALTER TABLE vv REBUILD PARTITION p0",
+            1347,
+            "'alter_order.vv' is not BASE TABLE",
+        ),
+        (
+            "ALTER TABLE t REBUILD PARTITION p0",
+            8200,
+            "Unsupported rebuild partition",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
+    }
+}

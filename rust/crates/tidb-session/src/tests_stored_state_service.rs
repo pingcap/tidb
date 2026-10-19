@@ -162,8 +162,10 @@ mod analyze {
     struct Recording(RefCell<Vec<String>>);
 
     impl AnalyzeService for Recording {
-        fn flush_stats_delta(&self, tables: &[AnalyzeStatement]) -> Result<(), DriverError> {
-            self.0.borrow_mut().push(format!("flush {}", tables.len()));
+        fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), DriverError> {
+            self.0
+                .borrow_mut()
+                .push(format!("flush {}", target_ids.len()));
             Ok(())
         }
 
@@ -230,6 +232,24 @@ mod analyze {
         session
             .run_analyze_statements(&statements("ANALYZE TABLE an_tmp"), &service)
             .unwrap();
-        assert_eq!(*service.0.borrow(), ["flush 1", "publish temporary"]);
+        // Nothing to flush: an empty target list would mean every table.
+        assert_eq!(*service.0.borrow(), ["publish temporary"]);
+    }
+
+    /// Go `collectStatsDeltaFlushObjectsForAnalyze` flushes the whole table
+    /// -- itself and every partition -- even when one partition is analyzed.
+    #[test]
+    fn analyzing_a_partition_flushes_the_whole_table() {
+        let mut session = Session::new();
+        session
+            .run(
+                "CREATE TABLE test.an_pt (a INT) PARTITION BY RANGE (a) \
+                 (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+            )
+            .unwrap();
+        let service = Recording::default();
+        let _ = session
+            .run_analyze_statements(&statements("ANALYZE TABLE an_pt PARTITION p0"), &service);
+        assert_eq!(*service.0.borrow(), ["flush 3", "execute an_pt"]);
     }
 }

@@ -844,3 +844,37 @@ fn lock_tables_run_as_a_cluster_lock_job() {
     );
     tidb_config::config_tree::config::store_global_config((*previous).clone());
 }
+
+/// Go resolves the table before the planner's privilege check: an
+/// unsupported ALTER specification on a missing table answers 1146 even to
+/// a user without ALTER, and 1142 on a table that exists (captured from Go
+/// on this branch).
+#[test]
+fn an_unsupported_alter_spec_checks_the_table_before_privileges() {
+    let node = MockNode::start();
+    assert!(node.accounts.live.create_user("low", "%", ""));
+    node.accounts
+        .live
+        .grant_db("low", "%", "app", GlobalPriv::Select.mask());
+    // The mock node's `app` schema already holds a table `t`.
+    let store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
+    let identity = store
+        .authenticate_native("low", "127.0.0.1", &SALT, &[])
+        .expect("the SELECT-only account authenticates");
+    let mut low = open_session_on_with_context(&node, session_context_with_identity(22, identity));
+    low.execute_write("USE app").unwrap();
+    let missing = low
+        .execute_write("ALTER TABLE nosuch REBUILD PARTITION p0")
+        .unwrap_err();
+    assert_eq!(
+        (missing.code, missing.message.as_str()),
+        (1146, "Table 'app.nosuch' doesn't exist")
+    );
+    let denied = low
+        .execute_write("ALTER TABLE t REBUILD PARTITION p0")
+        .unwrap_err();
+    assert_eq!(
+        (denied.code, denied.message.as_str()),
+        (1142, "ALTER command denied to user 'low'@'%' for table 't'")
+    );
+}

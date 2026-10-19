@@ -692,6 +692,27 @@ impl Session {
         self.control_transaction_stmt(&stmt)
     }
 
+    /// Go `SimpleExec.executeBegin`'s first check, for a caller that runs
+    /// the implicit commit itself: a `READ ONLY` clause under
+    /// `tidb_enable_noop_functions = OFF` is refused BEFORE `NewTxn` commits
+    /// the open transaction. The WARN mode's warning is left to
+    /// [`Self::control_transaction_stmt`], so it is appended once.
+    pub fn refuse_begin_noop_clause(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
+        let Stmt::Session(session_stmt) = stmt else {
+            return Ok(());
+        };
+        let SessionStmt::Begin(begin) = &**session_stmt else {
+            return Ok(());
+        };
+        if begin.read_only
+            && begin.as_of.is_none()
+            && self.noop_funcs_mode(false) == crate::noop::NoopFuncsMode::Off
+        {
+            return self.gate_noop_clause("READ ONLY", false);
+        }
+        Ok(())
+    }
+
     /// [`Self::control_transaction`] over a statement this session already
     /// parsed. The text form parses and delegates here, so both callers ask
     /// the same question of the same code.

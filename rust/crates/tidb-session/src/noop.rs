@@ -26,7 +26,7 @@ use crate::{sysvar, DriverError, Session, WarningLevel};
 /// Go `variable.NoopFuncsMode`: how a clause TiDB only implements as a
 /// no-op is treated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NoopFuncsMode {
+pub(crate) enum NoopFuncsMode {
     /// `OFF` (the default): the statement is refused.
     Off,
     /// `ON`: the clause is accepted and does nothing.
@@ -40,7 +40,7 @@ impl Session {
     /// `tidb_enable_noop_functions` or -- for a `SET GLOBAL` being validated
     /// -- from the shared table, which is the scope Go's `checkReadOnly`
     /// consults through `GlobalVarsAccessor`.
-    fn noop_funcs_mode(&self, global: bool) -> NoopFuncsMode {
+    pub(crate) fn noop_funcs_mode(&self, global: bool) -> NoopFuncsMode {
         let value = if global {
             self.vars.get_global("tidb_enable_noop_functions")
         } else {

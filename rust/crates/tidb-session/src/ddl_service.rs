@@ -48,6 +48,52 @@ pub trait DdlService {
 }
 
 impl Session {
+    /// Go's preprocessor name resolution for one table reference: no current
+    /// database is 1046 and a missing table 1146. It runs before the
+    /// planner's privilege check, so a missing table answers 1146 even to a
+    /// user who holds no privilege on it.
+    pub fn require_table_exists(&mut self, path: &[String]) -> Result<(), DriverError> {
+        let current_db = self.current_db.clone();
+        let (database, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
+        let (database, name) = (database.to_owned(), name.to_owned());
+        self.with_catalog_mut(|catalog| {
+            if catalog.table_in(&database, &name).is_some() {
+                Ok(())
+            } else {
+                Err(DriverError::Schema(
+                    tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+                ))
+            }
+        })
+    }
+
+    /// Go `executor.AlterTable`'s checks before its specification loop: the
+    /// table must exist (1146) and be a base table (1347), for a caller that
+    /// answers a specification refusal itself.
+    pub fn alter_table_target_precheck(
+        &mut self,
+        alter: &tidb_ast::AlterTableStmt,
+    ) -> Result<(), DriverError> {
+        let current_db = self.current_db.clone();
+        let (database, name) =
+            tidb_executor::driver::split_table_path_pub(&alter.name, &current_db)?;
+        let (database, name) = (database.to_owned(), name.to_owned());
+        self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
+            None => Err(DriverError::Schema(
+                tidb_executor::SchemaErrorKind::UnknownTable(format!("{database}.{name}")),
+            )),
+            Some(tidb_executor::TableEntry::View(_) | tidb_executor::TableEntry::Sequence(_)) => {
+                Err(DriverError::Schema(
+                    tidb_executor::SchemaErrorKind::WrongObject {
+                        name: format!("{database}.{name}"),
+                        expected: "BASE TABLE",
+                    },
+                ))
+            }
+            Some(_) => Ok(()),
+        })
+    }
+
     /// The checks Go makes before its implicit-commit boundary: the DDL's
     /// privileges and snapshot rules are decided while the connection's
     /// transaction is still intact, so a denial neither publishes staged

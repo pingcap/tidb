@@ -121,6 +121,9 @@ pub trait ClusterAccountWriter: Send + Sync {
     fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String>;
     /// Announce a committed automatic lock/unlock; counter-only writes stay local.
     fn notify_login_lock_change(&self, _user: &str, _host: &str) {}
+    /// Go `NotifyUpdateAllUsersPrivilege`'s etcd PUT after FLUSH PRIVILEGES:
+    /// every peer's privilege watch reloads all accounts.
+    fn notify_all_privileges_changed(&self) {}
 }
 
 /// One account statement in flight: the cluster read that opened it, waiting
@@ -199,6 +202,10 @@ where
 {
     fn notify_login_lock_change(&self, user: &str, host: &str) {
         notify_privilege_update(self.notifier.as_deref(), &[format!("'{user}'@'{host}'")]);
+    }
+
+    fn notify_all_privileges_changed(&self) {
+        notify_privilege_update(self.notifier.as_deref(), &[]);
     }
 
     fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {

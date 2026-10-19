@@ -24,7 +24,7 @@ use tidb_datatype::Datum;
 use tidb_exec::cluster_stats_load::{
     histogram_row_item, ClusterStatsItem, ClusterTableStats, StatsTableSchema,
 };
-use tidb_executor::{DriverError, KvTable, SchemaErrorKind, TableEntry};
+use tidb_executor::{DriverError, KvTable};
 use tidb_util::sqlescape::{must_escape_sql_text, SqlArg};
 
 use crate::{Session, StmtOutput};
@@ -261,40 +261,7 @@ impl Session {
         &mut self,
         stmt: &tidb_ast::DropStatsStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let mut tables = Vec::with_capacity(stmt.tables.len());
-        for path in &stmt.tables {
-            let (database, name) = match path.as_slice() {
-                [name] => (self.current_db.clone(), name.clone()),
-                [database, name] => (database.clone(), name.clone()),
-                _ => {
-                    return Err(DriverError::unsupported(
-                        "DROP STATS of a malformed table name",
-                    ))
-                }
-            };
-            if database.is_empty() {
-                return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
-            }
-            let table =
-                self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
-                    Some(TableEntry::Kv(table)) => Ok(Arc::clone(table)),
-                    _ => Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                        "{database}.{name}"
-                    )))),
-                })?;
-            tables.push(table);
-        }
-        let mut stats_ids = Vec::new();
-        if stmt.global {
-            stats_ids.push(tables[0].table_id);
-        } else if stmt.partitions.is_empty() {
-            for table in &tables {
-                stats_ids.extend(physical_ids_and_partition_names(table, &[])?);
-                stats_ids.push(table.table_id);
-            }
-        } else {
-            stats_ids = physical_ids_and_partition_names(&tables[0], &stmt.partitions)?;
-        }
+        let (tables, stats_ids) = self.resolve_drop_stats(stmt)?;
         if !self.stats_storage_present() {
             return Err(DriverError::unsupported(
                 "DROP STATS of a cluster node's statistics storage is not ported",
@@ -432,43 +399,6 @@ impl Session {
         })
         .unwrap_or(false)
     }
-}
-
-/// Go `GetPhysicalIDsAndPartitionNames`' ids: a non-partitioned table is its
-/// own id (and names no partition), a partitioned one every partition or the
-/// named ones.
-fn physical_ids_and_partition_names(
-    table: &KvTable,
-    partition_names: &[String],
-) -> Result<Vec<i64>, DriverError> {
-    let Some(partition) = table.partition() else {
-        if !partition_names.is_empty() {
-            return Err(DriverError::PartitionManagementOnNonpartitioned);
-        }
-        return Ok(vec![table.table_id]);
-    };
-    if partition_names.is_empty() {
-        return Ok(partition
-            .definitions
-            .iter()
-            .map(|definition| definition.id)
-            .collect());
-    }
-    partition_names
-        .iter()
-        .map(|name| {
-            partition
-                .definitions
-                .iter()
-                .find(|definition| definition.name.eq_ignore_ascii_case(name))
-                .map(|definition| definition.id)
-                .ok_or_else(|| {
-                    DriverError::unsupported(format!(
-                        "can not found the specified partition name {name} in the table definition"
-                    ))
-                })
-        })
-        .collect()
 }
 
 /// Every statistics id one table owns: its partitions and its own id.

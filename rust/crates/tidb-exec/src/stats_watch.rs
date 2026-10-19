@@ -278,6 +278,30 @@ impl SharedStats {
         *guard = Arc::new(self.snapshot_with_cache_objects(snapshot));
     }
 
+    /// Publishes one table's freshly analyzed statistics (an explicit
+    /// temporary-table ANALYZE) into the cache and the statement index, under
+    /// the publish lock.
+    ///
+    /// Building the next snapshot from an earlier `load()` and storing it
+    /// back would treat every table another publisher added in between as
+    /// deleted, leaving it pseudo until its meta version moved again.
+    pub fn publish_analyzed_table(&self, table_id: i64, table: Arc<Table>) {
+        let mut guard = match self.published.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        self.cache.update_stats_cache(CacheUpdate {
+            updated: vec![Arc::clone(&table)],
+            deleted: Vec::new(),
+            options: UpdateOptions {
+                skip_move_forward: true,
+            },
+        });
+        let mut next = guard.as_ref().clone();
+        next.insert(table_id, TableStatsState::Loaded(table));
+        *guard = Arc::new(self.snapshot_with_cache_objects(next));
+    }
+
     /// Go sync-load's `updateCachedItem`: copy the cached table, replace only
     /// the requested column/index, and atomically publish a new cache image.
     /// Applies Go sync-load's cache update with the current schema metadata.
@@ -928,6 +952,26 @@ mod tests {
             assert!(init.is_complete());
             reloader.shutdown().unwrap();
             async_loader.shutdown().unwrap();
+        }
+    }
+
+    /// A table another publisher added after the analyzing statement read
+    /// the snapshot stays loaded when the analyzed table is published.
+    #[test]
+    fn publishing_an_analyzed_table_keeps_tables_published_meanwhile() {
+        let shared = SharedStats::new(StatsSnapshot::from([loaded_at(1, 10)])).unwrap();
+        shared.store(StatsSnapshot::from([loaded_at(1, 10), loaded_at(2, 20)]));
+        let (_, analyzed) = loaded_at(3, 30);
+        shared.publish_analyzed_table(3, analyzed.loaded().unwrap().clone());
+        let published = shared.load();
+        for table_id in [1, 2, 3] {
+            assert!(
+                published
+                    .get(&table_id)
+                    .and_then(TableStatsState::loaded)
+                    .is_some(),
+                "table {table_id} lost"
+            );
         }
     }
 

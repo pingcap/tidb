@@ -486,6 +486,10 @@ pub struct Session {
     global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     catalog: SharedCatalog,
     account_storage_delegated: bool,
+    /// Go `Domain.NotifyUpdateAllUsersPrivilege`'s announcement half: tells
+    /// every node of the cluster to reload privileges after FLUSH
+    /// PRIVILEGES. `None` for a session with no peers to tell.
+    privilege_change_notifier: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Go `session.values`: heterogeneous values addressed by session-context
     /// stringer keys. Values must be thread-safe because the native session
     /// moves between connection workers.
@@ -979,6 +983,7 @@ impl Session {
         Session {
             catalog,
             account_storage_delegated: false,
+            privilege_change_notifier: None,
             context_values: HashMap::new(),
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             external_executor_breakpoint_scope: false,
@@ -1273,6 +1278,7 @@ mod ddl_jobs;
 pub mod ddl_service;
 pub mod stored_state_service;
 pub mod analyze_service;
+pub mod stats_statement_service;
 mod dispatch;
 mod explain_arm;
 mod gcutil;

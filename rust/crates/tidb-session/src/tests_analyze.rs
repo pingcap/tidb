@@ -1680,3 +1680,54 @@ fn drop_stats_soft_deletes_storage_and_reloads_the_table() {
         .to_string()
         .contains("doesn't exist"));
 }
+
+/// Go `executeFlushStatsDeltaOnCurrentInstance` warns for each named object
+/// it cannot find and flushes the rest (captured from Go on this branch).
+#[test]
+fn flush_stats_delta_warns_for_missing_objects_like_go() {
+    let mut session = Session::new();
+    session.run("create table t1 (x int)").unwrap();
+    session.run("flush stats_delta test.nosuch").unwrap();
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [["Warning", "1146", "Table 'test.nosuch' doesn't exist"]]
+    );
+    session.run("flush stats_delta nosuchdb.*").unwrap();
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [["Warning", "1049", "Unknown database 'nosuchdb'"]]
+    );
+    session
+        .run("flush stats_delta test.nosuch, test.t1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("show warnings")),
+        [["Warning", "1146", "Table 'test.nosuch' doesn't exist"]]
+    );
+}
+
+/// Go `GetPhysicalIDsAndPartitionNames` matches a partition by its Unicode
+/// lower-case name (`def.Name.L == name.L`): `pä` and `PÄ` both name `pÄ`.
+#[test]
+fn drop_stats_matches_partition_names_by_unicode_lower_case() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table pt (a int) partition by range (a) \
+             (partition pÄ values less than (10), partition p1 values less than (20))",
+        )
+        .unwrap();
+    for name in ["pä", "PÄ"] {
+        session
+            .run(&format!("drop stats pt partition {name}"))
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("show warnings")),
+            [[
+                "Warning",
+                "1681",
+                "'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release."
+            ]]
+        );
+    }
+}

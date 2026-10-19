@@ -2266,14 +2266,20 @@ impl Session {
                     self.flush_keys_examined();
                 }
                 if matches!(flush.target, tidb_ast::FlushTarget::Privileges) {
-                    self.reload_privileges_from_tables()?;
+                    self.flush_privileges()?;
                 }
-                let current_db = self.current_db.clone();
+                let stats_delta_targets = match &flush.target {
+                    tidb_ast::FlushTarget::StatsDelta { objects, .. } => {
+                        Some(self.flush_stats_delta_objects(objects))
+                    }
+                    _ => None,
+                };
                 let shared = self.shared_catalog();
                 let mut catalog = shared
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                return crate::show_admin::flush_stmt(flush, &mut catalog, &current_db).map(Some);
+                return crate::show_admin::flush_stmt(flush, &mut catalog, stats_delta_targets)
+                    .map(Some);
             }
             tidb_ast::AdminStmt::ShowDdl => {
                 return Ok(Some(crate::show_admin::show_ddl_output(

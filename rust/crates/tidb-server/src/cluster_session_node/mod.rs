@@ -451,10 +451,7 @@ enum StatementRoute {
     DropStats(Vec<i64>),
 }
 
-enum FlushStatsDeltaTargets {
-    All,
-    Tables(Vec<i64>),
-}
+use tidb_session::stats_statement_service::FlushStatsDeltaTargets;
 
 struct ClusterDataLockWaits {
     transactions: Arc<dyn ClusterTransactions>,
@@ -3608,6 +3605,10 @@ impl ClusterSessionFactory {
         }
         session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));
         session.set_plan_cache_schema_version(loaded.schema_version as u64);
+        let accounts = Arc::clone(&self.accounts);
+        session.set_privilege_change_notifier(Arc::new(move || {
+            accounts.notify_all_privileges_changed();
+        }));
         if let Some(syncer) = &self.global_config_syncer {
             session.set_global_config_syncer(Arc::clone(syncer));
         }
@@ -4985,12 +4986,24 @@ impl ClusterServerSession {
         // phantom "Write conflict" at `BEGIN` (sysbench abandons a
         // transaction on an ignorable 1213 and just issues the next BEGIN,
         // which is exactly this shape).
+        // Go `executeBegin` refuses a `READ ONLY` clause before `NewTxn`
+        // commits the open transaction, so a refused BEGIN leaves it open.
+        if matches!(control, Some(TransactionControl::Begin { .. })) {
+            self.session
+                .refuse_begin_noop_clause(stmt)
+                .map_err(map_error)?;
+        }
         if matches!(control, Some(TransactionControl::Begin { .. }))
             && self.session.in_transaction()
         {
-            self.session
-                .control_transaction("COMMIT")
-                .map_err(map_error)?;
+            // A commit that fails has ended the transaction (Go rolls it
+            // back); the staged writes must go with it rather than wait for
+            // the next statement's leftover-transaction commit to publish
+            // them.
+            if let Err(error) = self.session.control_transaction("COMMIT") {
+                self.discard_explicit()?;
+                return Err(map_error(error));
+            }
             self.commit_explicit()?;
         }
         // The refresh happens BEFORE the driver session pins its own schema
@@ -5001,10 +5014,20 @@ impl ClusterServerSession {
         if matches!(control, Some(TransactionControl::Begin { .. })) {
             self.rebuild_catalog_now();
         }
-        let state = self
-            .session
-            .control_transaction_stmt(stmt)
-            .map_err(map_error)?;
+        let state = match self.session.control_transaction_stmt(stmt) {
+            Ok(state) => state,
+            Err(error) => {
+                // A failed COMMIT has already ended the session's transaction
+                // (Go rolls it back and reports the error). Left open, the
+                // store transaction would be published by the next
+                // statement's `commit_if_session_left_transaction`, so a
+                // COMMIT the client saw fail would take effect after all.
+                if self.explicit.is_some() && !self.session.in_transaction() {
+                    self.discard_explicit()?;
+                }
+                return Err(map_error(error));
+            }
+        };
         let Some(in_transaction) = state else {
             return Ok(None);
         };
@@ -5208,39 +5231,6 @@ impl ClusterServerSession {
     #[must_use]
     pub fn skipped_tables(&self) -> &[SkippedTable] {
         &self.skipped
-    }
-
-    fn run_flush_stats_delta(
-        &mut self,
-        targets: &FlushStatsDeltaTargets,
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        if matches!(targets, FlushStatsDeltaTargets::Tables(ids) if ids.is_empty()) {
-            return Ok(WriteOutcome {
-                affected_rows: 0,
-                last_insert_id: 0,
-            });
-        }
-        self.session.publish_table_delta();
-        let resource_group = self.session.current_resource_group().to_owned();
-        let target_ids = match targets {
-            FlushStatsDeltaTargets::All => &[][..],
-            FlushStatsDeltaTargets::Tables(ids) => ids.as_slice(),
-        };
-        ClusterSessionFactory::dump_stats_delta_to_kv_parts(
-            self.stats_usage.as_ref(),
-            self.transactions.as_ref(),
-            self.catalog.as_ref(),
-            self.stats.as_ref(),
-            &self.global_vars,
-            true,
-            target_ids,
-            &resource_group,
-        )
-        .map_err(SqlQueryError::unknown)?;
-        Ok(WriteOutcome {
-            affected_rows: 0,
-            last_insert_id: 0,
-        })
     }
 
     /// Bind finite primary keys after refreshing the catalog and opening any
@@ -6027,7 +6017,7 @@ impl ClusterServerSession {
                     .session
                     .vars()
                     .get_system("tidb_txn_mode")
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|_| "pessimistic".to_owned()),
             )
             .is_pessimistic(),
         };
@@ -6460,72 +6450,6 @@ impl ClusterServerSession {
         self.schema_route_for_change(stmt, change)
     }
 
-    fn flush_stats_delta_targets(
-        &mut self,
-        stmt: &tidb_ast::Stmt,
-    ) -> Result<Option<FlushStatsDeltaTargets>, SqlQueryError> {
-        let tidb_ast::Stmt::Admin(admin) = stmt else {
-            return Ok(None);
-        };
-        let tidb_ast::AdminStmt::Flush(flush) = admin.as_ref() else {
-            return Ok(None);
-        };
-        let tidb_ast::FlushTarget::StatsDelta { objects, .. } = &flush.target else {
-            return Ok(None);
-        };
-        if objects
-            .iter()
-            .any(|object| matches!(object, tidb_ast::StatsObject::Global))
-        {
-            return Ok(Some(FlushStatsDeltaTargets::All));
-        }
-
-        let current_database = self.session.current_database().to_owned();
-        let shared = self.session.shared_catalog();
-        let catalog = shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut ids = Vec::new();
-        let mut warnings = Vec::new();
-        let append_table =
-            |database: &str, table: &str, ids: &mut Vec<i64>, warnings: &mut Vec<(u16, String)>| {
-                let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in(database, table)
-                else {
-                    warnings.push((1146, format!("Table '{database}.{table}' doesn't exist")));
-                    return;
-                };
-                ids.push(table.table_id);
-                if let Some(partition) = table.partition() {
-                    ids.extend(partition.definitions.iter().map(|definition| definition.id));
-                }
-            };
-        for object in objects {
-            match object {
-                tidb_ast::StatsObject::Global => unreachable!("handled above"),
-                tidb_ast::StatsObject::Database(database) => {
-                    if let Some(tables) = catalog.table_names(database) {
-                        for table in tables {
-                            append_table(database, &table, &mut ids, &mut warnings);
-                        }
-                    } else {
-                        warnings.push((1049, format!("Unknown database '{database}'")));
-                    }
-                }
-                tidb_ast::StatsObject::Table { database, table } => {
-                    let database = database.as_deref().unwrap_or(&current_database);
-                    append_table(database, table, &mut ids, &mut warnings);
-                }
-            }
-        }
-        ids.sort_unstable();
-        ids.dedup();
-        drop(catalog);
-        for (code, message) in warnings {
-            self.session.append_routed_warning(code, message);
-        }
-        Ok(Some(FlushStatsDeltaTargets::Tables(ids)))
-    }
-
     fn schema_route_for_change(
         &mut self,
         stmt: &tidb_ast::Stmt,
@@ -6536,13 +6460,13 @@ impl ClusterServerSession {
             StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
             StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
             StoredStateChange::Statistics => {
-                if let Some(targets) = self.flush_stats_delta_targets(stmt)? {
+                if let Some(targets) = self.session.flush_stats_delta_targets(stmt) {
                     return Ok(StatementRoute::FlushStatsDelta(targets));
                 }
                 if prepare_cluster_load_stats_parsed(stmt).is_some() {
                     return Ok(StatementRoute::LoadStats);
                 }
-                if let Some(physical_ids) = self.drop_stats_ids(stmt)? {
+                if let Some(physical_ids) = self.session.drop_stats_ids(stmt).map_err(map_error)? {
                     return Ok(StatementRoute::DropStats(physical_ids));
                 }
                 match prepare_cluster_analyze_parsed(stmt, self.session.current_database()) {
@@ -6624,6 +6548,24 @@ impl ClusterServerSession {
                 // of the three, so their refusals fire here rather than
                 // collapsing into the generic route refusal.
                 if let Some((code, message)) = schema_shape_refusal(stmt) {
+                    // Go refuses an ALTER specification inside
+                    // `executor.AlterTable`'s spec loop. Before it: the
+                    // preprocessor's name resolution (1146, even for an
+                    // unprivileged user), the planner's privilege check
+                    // (1142), then the executor's base-table check (1347).
+                    if let tidb_ast::Stmt::Ddl(ddl) = stmt {
+                        if let tidb_ast::DdlStmt::AlterTable(alter) = &**ddl {
+                            self.session
+                                .require_table_exists(&alter.name)
+                                .map_err(map_error)?;
+                            self.session
+                                .require_statement_table_privileges(stmt)
+                                .map_err(map_error)?;
+                            self.session
+                                .alter_table_target_precheck(alter)
+                                .map_err(map_error)?;
+                        }
+                    }
                     return Err(SqlQueryError::new(code, *b"HY000", message));
                 }
                 // Go `DDLExec.executeLockTables`/`executeUnlockTables` with
@@ -6665,15 +6607,18 @@ impl ClusterServerSession {
                 // (`pkg/ddl/tests/serial/serial_test.go:1057`).
                 if let tidb_ast::Stmt::Ddl(ddl) = stmt {
                     let notice = match &**ddl {
+                        // Go's preprocessor resolves every named table, each
+                        // under its own schema, before the warning: the first
+                        // missing one is 1146 and no current database 1046.
                         tidb_ast::DdlStmt::LockTables(locks) => {
-                            let table = locks
-                                .first()
-                                .and_then(|lock| lock.table.last())
-                                .cloned()
-                                .unwrap_or_default();
+                            for lock in locks.iter() {
+                                self.session
+                                    .require_table_exists(&lock.table)
+                                    .map_err(map_error)?;
+                            }
                             Some((
-                                self.session.current_database().to_owned(),
-                                table,
+                                String::new(),
+                                String::new(),
                                 "LOCK TABLES is not supported. To enable this experimental \
                                  feature, set 'enable-table-lock' in the configuration file."
                                     .to_owned(),

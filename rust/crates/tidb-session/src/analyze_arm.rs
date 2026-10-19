@@ -368,7 +368,7 @@ fn select_index_tasks(
                 table
                     .indexes()
                     .iter()
-                    .find(|index| index.name.eq_ignore_ascii_case(name))
+                    .find(|index| go_to_lower(&index.name) == go_to_lower(name))
                     .ok_or_else(|| {
                         DriverError::unsupported(format!(
                             "Index '{name}' in field list does not exist in table '{}'",
@@ -398,7 +398,7 @@ fn select_index_tasks(
                 .filter_map(|name| {
                     selected
                         .iter()
-                        .find(|index| index.name.eq_ignore_ascii_case(name))
+                        .find(|index| go_to_lower(&index.name) == go_to_lower(name))
                         .map(|index| index.id)
                 })
                 .collect(),
@@ -427,9 +427,7 @@ fn analyze_partition_ids(
         if requested.is_empty() {
             return Ok(Vec::new());
         }
-        return Err(DriverError::unsupported(
-            "Partition management on a not partitioned table is not possible".to_owned(),
-        ));
+        return Err(DriverError::PartitionManagementOnNonpartitioned);
     };
     if requested.is_empty() {
         return Ok(partition
@@ -443,7 +441,7 @@ fn analyze_partition_ids(
         let definition = partition
             .definitions
             .iter()
-            .find(|definition| definition.name.eq_ignore_ascii_case(requested_name))
+            .find(|definition| go_to_lower(&definition.name) == go_to_lower(requested_name))
             .ok_or_else(|| {
                 DriverError::unsupported(format!(
                     "can not found the specified partition name {requested_name} in the table definition"
@@ -492,7 +490,7 @@ fn selected_column_ids(
                 let column = table
                     .columns()
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(name))
+                    .find(|column| go_to_lower(&column.name) == go_to_lower(name))
                     .ok_or_else(|| {
                         DriverError::unsupported(format!(
                             "column `{name}` does not exist in `{schema}`.`{table_name}`"
@@ -542,7 +540,7 @@ fn selected_column_ids(
                     if let Some(base) = table
                         .columns()
                         .iter()
-                        .find(|base| base.name.eq_ignore_ascii_case(dependency))
+                        .find(|base| go_to_lower(&base.name) == go_to_lower(dependency))
                     {
                         selected_ids.insert(base.id);
                     }
@@ -618,7 +616,7 @@ fn skip_column_types(
             for dependency in &generated.dependencies {
                 if let Some(base) = columns
                     .iter()
-                    .find(|base| base.name.eq_ignore_ascii_case(dependency))
+                    .find(|base| go_to_lower(&base.name) == go_to_lower(dependency))
                 {
                     roots.insert(base.id);
                     mandatory.insert(base.id);

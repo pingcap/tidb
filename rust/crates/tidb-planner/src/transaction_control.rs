@@ -88,21 +88,12 @@ pub fn classify_transaction_control_stmt(statement: &Stmt) -> Option<Transaction
                 Some(TransactionControl::Begin { mode: begin.mode })
             }
         }
-        SessionStmt::Commit(tidb_ast::CompletionType::Default) => Some(TransactionControl::Commit),
+        // Go's executor never reads the completion type: `COMMIT AND CHAIN`
+        // and `ROLLBACK RELEASE` end the transaction like the bare forms.
+        SessionStmt::Commit(_) => Some(TransactionControl::Commit),
         SessionStmt::Rollback {
-            savepoint: None,
-            completion: tidb_ast::CompletionType::Default,
+            savepoint: None, ..
         } => Some(TransactionControl::Rollback),
-        SessionStmt::Commit(completion) if completion != tidb_ast::CompletionType::Default => Some(
-            TransactionControl::Unsupported("transaction completion mode"),
-        ),
-        SessionStmt::Rollback { completion, .. }
-            if completion != tidb_ast::CompletionType::Default =>
-        {
-            Some(TransactionControl::Unsupported(
-                "transaction completion mode",
-            ))
-        }
         SessionStmt::Rollback {
             savepoint: Some(name),
             ..

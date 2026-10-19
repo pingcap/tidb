@@ -415,6 +415,11 @@ pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError
             SqlQueryError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
         }
         ClusterAnalyzeError::MissingIndex(detail) => SqlQueryError::new(8109, *b"HY000", detail),
+        ClusterAnalyzeError::PartitionManagementOnNonpartitioned => {
+            let error =
+                tidb_executor::DriverError::PartitionManagementOnNonpartitioned.to_mysql_error();
+            SqlQueryError::new(error.code, error.state, error.message)
+        }
     }
 }
 

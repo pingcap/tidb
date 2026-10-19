@@ -63,7 +63,7 @@ pub fn execute_catalog_stats_lock(
             let definition = partition
                 .definitions
                 .iter()
-                .find(|definition| definition.name.eq_ignore_ascii_case(written_name))
+                .find(|definition| definition.name.go_to_lower() == written_name.go_to_lower())
                 .ok_or_else(|| DriverError::UnknownPartition {
                     partition: written_name.go_to_lower(),
                     table: table.name.clone(),

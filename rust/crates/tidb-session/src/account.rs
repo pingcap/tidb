@@ -383,6 +383,22 @@ impl Session {
     /// so a row written there directly -- `INSERT INTO mysql.role_edges` --
     /// takes effect, and the live registry every session shares is replaced
     /// in place.
+    /// Installs the announcement FLUSH PRIVILEGES makes to the cluster's
+    /// other nodes after reloading this one.
+    pub fn set_privilege_change_notifier(&mut self, notifier: Arc<dyn Fn() + Send + Sync>) {
+        self.privilege_change_notifier = Some(notifier);
+    }
+
+    /// Go `executeFlush`'s `NotifyUpdateAllUsersPrivilege`: reload this
+    /// node, then announce the change so every peer reloads too.
+    pub(crate) fn flush_privileges(&mut self) -> Result<(), DriverError> {
+        self.reload_privileges_from_tables()?;
+        if let Some(notify) = &self.privilege_change_notifier {
+            notify();
+        }
+        Ok(())
+    }
+
     pub(crate) fn reload_privileges_from_tables(&mut self) -> Result<(), DriverError> {
         let Some(registry) = self.privileges.clone() else {
             return Ok(());

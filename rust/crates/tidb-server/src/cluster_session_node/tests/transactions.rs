@@ -1041,19 +1041,12 @@ fn deferral_does_not_reach_a_statement_inside_a_transaction() {
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 2);
 }
 
-/// A transaction-control statement this node cannot honor is refused BEFORE
-/// the driver session is touched, so the two halves of the transaction state
-/// can never disagree.
-///
-/// `Session::control_transaction` sets `in_transaction` for every BEGIN
-/// spelling, including the ones classified `Unsupported`. Honoring the
-/// refusal after that call -- which is what an empty match arm did -- left
-/// the session inside a transaction that this node never opened: no
-/// `self.explicit`, so every following statement took a FRESH snapshot, its
-/// writes stayed in the buffer instead of being staged, and its COMMIT
-/// published with no conflict check.
+/// Go's executor never reads the completion type (captured from Go on this
+/// branch: `COMMIT AND CHAIN` commits, `ROLLBACK RELEASE` rolls back). Both
+/// halves -- the session's transaction and the node's staged writes -- end
+/// together, so nothing is stranded in a transaction no statement belongs to.
 #[test]
-fn an_unsupported_transaction_control_leaves_the_session_untouched() {
+fn completion_types_end_both_halves_like_a_plain_commit() {
     let (mut session, cluster) = open_session();
 
     assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
@@ -1061,27 +1054,23 @@ fn an_unsupported_transaction_control_leaves_the_session_untouched() {
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("insert");
     assert_eq!(cluster.rows(), 0, "the write is staged, not published");
-
-    // `COMMIT AND CHAIN` is the sharpest case: the driver session accepts it
-    // as a plain COMMIT, so without an early refusal the session would end
-    // its transaction while `self.explicit` stayed open -- the staged write
-    // stranded in a transaction no statement belongs to any more.
-    let error = session
-        .control_transaction("COMMIT AND CHAIN")
-        .expect_err("a completion mode this node cannot honor is refused");
-    assert!(
-        format!("{error:?}").contains("completion mode"),
-        "got {error:?}"
+    assert_eq!(
+        session.control_transaction("COMMIT AND CHAIN").unwrap(),
+        Some(false)
     );
-    // Neither half moved: the session is still in its transaction, and the
-    // write is still staged rather than published.
-    assert!(session.session.in_transaction());
-    assert_eq!(cluster.rows(), 0);
-    assert_eq!(cluster.publications.load(Ordering::Acquire), 0);
+    assert!(!session.session.in_transaction());
+    assert_eq!(cluster.rows(), 1);
+    assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
 
-    // The transaction is still the one that was opened, and its COMMIT
-    // publishes exactly the write it staged.
-    session.control_transaction("COMMIT").unwrap();
+    assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
+        .expect("insert");
+    assert_eq!(
+        session.control_transaction("ROLLBACK RELEASE").unwrap(),
+        Some(false)
+    );
+    assert!(!session.session.in_transaction());
     assert_eq!(cluster.rows(), 1);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
 }

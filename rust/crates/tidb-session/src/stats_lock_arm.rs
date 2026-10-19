@@ -19,7 +19,6 @@
 //! user's transaction. This module therefore stages the shared catalog
 //! directly rather than the user's optional transaction working copy.
 
-use crate::privilege::GlobalPriv;
 use crate::{Session, StmtOutput, WarningLevel};
 use tidb_executor::{Catalog, DriverError};
 
@@ -49,9 +48,7 @@ impl Session {
         for target in &statement.tables {
             let (database, table) =
                 tidb_executor::driver::split_table_path_pub(&target.name, &current_database)?;
-            for required in [GlobalPriv::Insert, GlobalPriv::Select] {
-                self.require_named_table_privilege(database, table, required)?;
-            }
+            self.require_insert_and_select_privileges(database, table)?;
         }
         let context = self.statement_context(true);
         let message = {

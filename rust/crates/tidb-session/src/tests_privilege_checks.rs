@@ -243,3 +243,47 @@ fn show_columns_show_create_and_column_privileges_follow_the_grants() {
         [["select,update"]]
     );
 }
+
+/// Go `requireInsertAndSelectPriv` names the table as written
+/// (`tbl.Name.O`), and `RequestVerification` refuses INSERT on a memory
+/// database before any grant is read -- even `ALL ON *.*` (captured from Go
+/// on this branch).
+#[test]
+fn stats_lock_names_the_table_as_written_and_refuses_memory_databases() {
+    let (registry, mut root) = setup();
+    root.run("create user foo").unwrap();
+    root.run("create table test.T1 (x int)").unwrap();
+    root.run("grant select on test.* to foo").unwrap();
+    let mut foo = session_as(&registry, root.shared_catalog(), "foo", "%");
+    foo.run("use test").unwrap();
+    assert_eq!(
+        error_of(&mut foo, "lock stats T1"),
+        (
+            1142,
+            "INSERT command denied to user 'foo'@'%' for table 'T1'".to_owned()
+        )
+    );
+    root.run("grant all on *.* to foo").unwrap();
+    let mut foo = session_as(&registry, root.shared_catalog(), "foo", "%");
+    assert_eq!(
+        error_of(&mut foo, "lock stats information_schema.TABLES"),
+        (
+            1142,
+            "INSERT command denied to user 'foo'@'%' for table 'TABLES'".to_owned()
+        )
+    );
+}
+
+/// Go `executeFlush` for PRIVILEGES calls `NotifyUpdateAllUsersPrivilege`,
+/// which reloads this node AND announces the change to every peer.
+#[test]
+fn flush_privileges_announces_the_reload_to_peers() {
+    let mut session = Session::new();
+    let announced = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = std::sync::Arc::clone(&announced);
+    session.set_privilege_change_notifier(std::sync::Arc::new(move || {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    session.run("FLUSH PRIVILEGES").unwrap();
+    assert_eq!(announced.load(std::sync::atomic::Ordering::SeqCst), 1);
+}

@@ -204,10 +204,7 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
             let definition = partition
                 .definitions
                 .map_visible(|definition| {
-                    definition
-                        .name
-                        .lowercase()
-                        .eq_ignore_ascii_case(written)
+                    (definition.name.lowercase() == written.go_to_lower())
                         .then(|| (definition.id, definition.name.original().to_owned()))
                 })
                 .into_iter()
@@ -421,12 +418,12 @@ fn user_table<'a>(
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase().eq_ignore_ascii_case(schema))
+        .find(|database| database.info.name.lowercase() == schema.go_to_lower())
         .and_then(|database| {
             database
                 .tables
                 .iter()
-                .find(|stored| stored.name.lowercase().eq_ignore_ascii_case(table))
+                .find(|stored| stored.name.lowercase() == table.go_to_lower())
         })
         .ok_or_else(|| ClusterStatsLockError::MissingTable {
             schema: schema.to_owned(),
