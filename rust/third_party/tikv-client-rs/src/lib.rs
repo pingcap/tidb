@@ -258,6 +258,8 @@ pub use crate::pd::backoff as pd_backoff;
 /// Shared PD request batch collection and completion.
 pub use crate::pd::batch as pd_batch;
 pub use crate::pd::circuitbreaker as pd_circuitbreaker;
+/// pd-client's keyspace GC configuration.
+pub use crate::pd::keyspace as pd_keyspace;
 pub use crate::pd::metrics as pd_metrics;
 #[doc(inline)]
 pub use crate::pd::opt as pd_options;

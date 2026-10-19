@@ -482,6 +482,73 @@ impl Cluster {
         }
     }
 
+    /// PD `UpdateGCSafePointV2`: a keyspace's GC safe point, never lowered.
+    pub fn update_gc_safe_point_v2(
+        &self,
+        keyspace_id: u32,
+        safe_point: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::UpdateGcSafePointV2Response>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::UpdateGcSafePointV2Request);
+            req.keyspace = Some(pdpb::update_gc_safe_point_v2_request::Keyspace::KeyspaceId(
+                keyspace_id,
+            ));
+            req.safe_point = safe_point;
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// PD `UpdateServiceGCSafePoint`: sets (or, with a zero TTL, removes)
+    /// one service's safe point and answers the minimal one.
+    pub fn update_service_gc_safe_point(
+        &self,
+        service_id: &str,
+        ttl: i64,
+        safe_point: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::UpdateServiceGcSafePointResponse>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        let service_id = service_id.as_bytes().to_vec();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::UpdateServiceGcSafePointRequest);
+            req.service_id = service_id;
+            req.ttl = ttl;
+            req.safe_point = safe_point;
+            req.send(&mut client, timeout).await
+        }
+    }
+
+    /// PD `UpdateServiceSafePointV2`: `update_service_gc_safe_point` for a
+    /// keyspace.
+    pub fn update_service_safe_point_v2(
+        &self,
+        keyspace_id: u32,
+        service_id: &str,
+        ttl: i64,
+        safe_point: u64,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::UpdateServiceSafePointV2Response>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.rpc_client();
+        let service_id = service_id.as_bytes().to_vec();
+        async move {
+            let mut client = client.await?;
+            let mut req = pd_request!(cluster_id, pdpb::UpdateServiceSafePointV2Request);
+            req.keyspace =
+                Some(pdpb::update_service_safe_point_v2_request::Keyspace::KeyspaceId(keyspace_id));
+            req.service_id = service_id;
+            req.ttl = ttl;
+            req.safe_point = safe_point;
+            req.send(&mut client, timeout).await
+        }
+    }
+
     pub fn get_gc_state(
         &self,
         keyspace_id: u32,
@@ -561,6 +628,26 @@ impl Cluster {
             let mut req = pd_request!(cluster_id, pdpb::GetOperatorRequest);
             req.region_id = region_id;
             req.send(&mut client, timeout).await
+        }
+    }
+
+    /// PD `GetAllKeyspaces`: up to `limit` keyspaces whose ids are at least
+    /// `start_id`, in id order.
+    pub fn get_all_keyspaces(
+        &self,
+        start_id: u32,
+        limit: u32,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<Vec<keyspacepb::KeyspaceMeta>>> + Send + 'static {
+        let cluster_id = self.id;
+        let client = self.keyspace_client.clone();
+        async move {
+            let mut client = client.ok_or(Error::ContextCanceled)?;
+            let mut req = pd_request!(cluster_id, keyspacepb::GetAllKeyspacesRequest);
+            req.start_keyspace =
+                Some(keyspacepb::get_all_keyspaces_request::StartKeyspace::StartId(start_id));
+            req.limit = limit;
+            Ok(req.send(&mut client, timeout).await?.keyspaces)
         }
     }
 
@@ -1438,6 +1525,46 @@ impl PdMessage for pdpb::GetMinTsRequest {
 }
 
 #[async_trait]
+impl PdMessage for pdpb::UpdateGcSafePointV2Request {
+    type Client = RoutedPdClient;
+    type Response = pdpb::UpdateGcSafePointV2Response;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.update_gc_safe_point_v2(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::UpdateServiceGcSafePointRequest {
+    type Client = RoutedPdClient;
+    type Response = pdpb::UpdateServiceGcSafePointResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.update_service_gc_safe_point(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for pdpb::UpdateServiceSafePointV2Request {
+    type Client = RoutedPdClient;
+    type Response = pdpb::UpdateServiceSafePointV2Response;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.update_service_safe_point_v2(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
+impl PdMessage for keyspacepb::GetAllKeyspacesRequest {
+    type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
+    type Response = keyspacepb::GetAllKeyspacesResponse;
+
+    async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
+        Ok(client.get_all_keyspaces(req).await?.into_inner())
+    }
+}
+
+#[async_trait]
 impl PdMessage for keyspacepb::LoadKeyspaceRequest {
     type Client = keyspacepb::keyspace_client::KeyspaceClient<Channel>;
     type Response = keyspacepb::LoadKeyspaceResponse;
@@ -1536,6 +1663,30 @@ impl PdResponse for pdpb::GetExternalTimestampResponse {
 }
 
 impl PdResponse for pdpb::GetMinTsResponse {
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
+    }
+}
+
+impl PdResponse for pdpb::UpdateGcSafePointV2Response {
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
+    }
+}
+
+impl PdResponse for pdpb::UpdateServiceGcSafePointResponse {
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
+    }
+}
+
+impl PdResponse for pdpb::UpdateServiceSafePointV2Response {
+    fn header(&self) -> Option<&pdpb::ResponseHeader> {
+        self.header.as_ref()
+    }
+}
+
+impl PdResponse for keyspacepb::GetAllKeyspacesResponse {
     fn header(&self) -> Option<&pdpb::ResponseHeader> {
         self.header.as_ref()
     }

@@ -382,6 +382,24 @@ impl PdClient for MockPdClient {
         Ok(self.update_gc_safe_point(safe_point))
     }
 
+    async fn update_service_gc_safe_point(
+        self: Arc<Self>,
+        service_id: &str,
+        ttl: i64,
+        safe_point: u64,
+    ) -> Result<u64> {
+        Ok(self.update_service_safe_point(service_id, ttl, safe_point))
+    }
+
+    /// client-go's mock PD knows no keyspace.
+    async fn get_all_keyspaces(
+        &self,
+        _start_id: u32,
+        _limit: u32,
+    ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        Ok(Vec::new())
+    }
+
     async fn get_gc_state(self: Arc<Self>) -> Result<pdpb::GcState> {
         let state = self.gc_state();
         Ok(pdpb::GcState {

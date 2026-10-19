@@ -794,14 +794,7 @@ fn compatible_safe_point_path(meta: Option<&keyspacepb::KeyspaceMeta>) -> String
     let Some(meta) = meta else {
         return UNIFIED_TXN_SAFE_POINT_PATH.to_owned();
     };
-    let keyspace_level = match meta.config.get("gc_management_type") {
-        Some(value) => value == "keyspace_level",
-        None => meta
-            .config
-            .get("safe_point_version")
-            .is_some_and(|value| value == "v2"),
-    };
-    if !keyspace_level {
+    if !crate::pd::is_keyspace_using_keyspace_level_gc(Some(meta)) {
         return UNIFIED_TXN_SAFE_POINT_PATH.to_owned();
     }
     let id = match meta.keyspace.as_ref() {

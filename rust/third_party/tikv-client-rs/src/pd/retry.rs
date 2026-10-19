@@ -169,6 +169,45 @@ pub trait RetryClientTrait {
         Err(Error::Unimplemented)
     }
 
+    /// PD `UpdateGCSafePointV2`.
+    async fn update_gc_safe_point_v2(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _safe_point: u64,
+    ) -> Result<u64> {
+        Err(Error::Unimplemented)
+    }
+
+    /// PD `UpdateServiceGCSafePoint`: the minimal service safe point.
+    async fn update_service_gc_safe_point(
+        self: Arc<Self>,
+        _service_id: String,
+        _ttl: i64,
+        _safe_point: u64,
+    ) -> Result<u64> {
+        Err(Error::Unimplemented)
+    }
+
+    /// PD `UpdateServiceSafePointV2`: the keyspace's minimal service safe point.
+    async fn update_service_safe_point_v2(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _service_id: String,
+        _ttl: i64,
+        _safe_point: u64,
+    ) -> Result<u64> {
+        Err(Error::Unimplemented)
+    }
+
+    /// PD `GetAllKeyspaces`.
+    async fn get_all_keyspaces(
+        &self,
+        _start_id: u32,
+        _limit: u32,
+    ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        Err(Error::Unimplemented)
+    }
+
     /// Loads PD's modern transaction/GC safe-point state for one keyspace.
     async fn get_gc_state(self: Arc<Self>, _keyspace_id: u32) -> Result<pdpb::GetGcStateResponse> {
         Err(Error::Unimplemented)
@@ -706,6 +745,61 @@ impl RetryClientTrait for RetryClient<Cluster> {
             cluster
                 .update_safepoint(safepoint, self.timeout)
                 .map(|result| result.map(|resp| resp.new_safe_point))
+        })
+    }
+
+    async fn update_gc_safe_point_v2(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        safe_point: u64,
+    ) -> Result<u64> {
+        retry!(self, "update_gc_safe_point_v2", |cluster| {
+            cluster
+                .update_gc_safe_point_v2(keyspace_id, safe_point, self.timeout)
+                .map(|result| result.map(|resp| resp.new_safe_point))
+        })
+    }
+
+    async fn update_service_gc_safe_point(
+        self: Arc<Self>,
+        service_id: String,
+        ttl: i64,
+        safe_point: u64,
+    ) -> Result<u64> {
+        retry!(self, "update_service_gc_safe_point", |cluster| {
+            cluster
+                .update_service_gc_safe_point(&service_id, ttl, safe_point, self.timeout)
+                .map(|result| result.map(|resp| resp.min_safe_point))
+        })
+    }
+
+    async fn update_service_safe_point_v2(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        service_id: String,
+        ttl: i64,
+        safe_point: u64,
+    ) -> Result<u64> {
+        retry!(self, "update_service_safe_point_v2", |cluster| {
+            cluster
+                .update_service_safe_point_v2(
+                    keyspace_id,
+                    &service_id,
+                    ttl,
+                    safe_point,
+                    self.timeout,
+                )
+                .map(|result| result.map(|resp| resp.min_safe_point))
+        })
+    }
+
+    async fn get_all_keyspaces(
+        &self,
+        start_id: u32,
+        limit: u32,
+    ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        retry!(self, "get_all_keyspaces", |cluster| {
+            cluster.get_all_keyspaces(start_id, limit, self.timeout)
         })
     }
 

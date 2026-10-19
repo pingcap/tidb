@@ -34,6 +34,10 @@ use tikv_client::proto::metapb;
 
 use crate::gc_worker::*;
 use crate::seams::*;
+use tikv_client::pd_keyspace::{
+    KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE, KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_KEYSPACE_LEVEL,
+    KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_UNIFIED,
+};
 
 /// Go `oracles.MockOracle`: wall-clock time plus an offset tests add to.
 struct FakeStore {

@@ -15,7 +15,8 @@ After this plan, the node runs Go's GC worker. Every minute one TiDB becomes GC 
 - [x] (2026-10-19) Scouting: the Go package inventory, the Rust producer side and emulator, the vendored client's GC surface, and the server's integration points (see Context).
 - [x] (2026-10-19) Milestones 1 and 2: `rust/crates/tidb-gcworker` ports every function of `gc_worker.go` (`seams.rs` the collaborators, `gc_worker.rs` the worker), and `gc_worker_test.rs` ports the 28 tests that need no MVCC store, on the client's mock PD and recording doubles (`cargo nextest run -p tidb-gcworker`: 28 passed).
 - [ ] Store-backed tests, with the server adapters: `TestDoGCForOneRegion`, `TestResolveLockRangeInfine`, `TestResolveLockRangeMeetRegionCacheMiss`, `TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge`, `TestResolveLocksNearTxnSafePoint`, `TestRunGCJobAPI`, `TestRunDistGCJobAPI`, `TestGCWithPendingTxn`, `TestGCWithPendingTxn2`, `TestSkipGCAndOnlyResolveLock`, and the probe checks of `TestLeaderTick` / `TestRunGCJob`.
-- [ ] Milestone 3: the vendored client's missing PD calls, the production adapters, start/stop on the real-TiKV node, the status variables.
+- [x] (2026-10-19) Milestone 3, client half: `ngaut/client-rust` 87b45a1 adds `update_service_gc_safe_point` (V2 for a keyspace client), `get_all_keyspaces`, keyspace routing of `UpdateGCSafePoint` to V2, and `pd_keyspace::is_keyspace_using_keyspace_level_gc`, which the crate now uses; 006593d pins protoc 36.2 (generated code byte-identical). Synced into `rust/third_party/tikv-client-rs`. The per-store `UnsafeDestroyRange` needs no client change: `PdClient::kv_client(address)` with `dispatch_with_timeout` is client-go's `GetTiKVClient().SendRequest`.
+- [ ] Milestone 3, server half: the production adapters, start/stop on the real-TiKV node, the status variables.
 - [ ] Milestone 4: real TiKV acceptance (playground), then the package receipt.
 
 ## Surprises & Discoveries

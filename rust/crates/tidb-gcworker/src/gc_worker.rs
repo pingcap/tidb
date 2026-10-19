@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset, Local};
 use tidb_log::{Field, Value};
+use tikv_client::pd_keyspace::is_keyspace_using_keyspace_level_gc;
 use tikv_client::proto::keyspacepb::{keyspace_meta, KeyspaceMeta, KeyspaceState};
 use tikv_client::proto::metapb;
 
@@ -100,15 +101,6 @@ pub const REQUESTS_PER_THREAD: usize = 100_000;
 
 const NANOS_PER_SECOND: i64 = 1_000_000_000;
 
-/// Go `pd.KeyspaceConfigGCManagementType`.
-pub const KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE: &str = "gc_management_type";
-/// Go `pd.KeyspaceConfigGCManagementTypeKeyspaceLevel`.
-pub const KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_KEYSPACE_LEVEL: &str = "keyspace_level";
-/// Go `pd.KeyspaceConfigGCManagementTypeUnified`.
-pub const KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_UNIFIED: &str = "unified";
-const KEYSPACE_CONFIG_SAFE_POINT_VERSION: &str = "safe_point_version";
-const KEYSPACE_CONFIG_SAFE_POINT_VERSION_V2: &str = "v2";
-
 /// Go `constants.MaxKeyspaceID`.
 const MAX_KEYSPACE_ID: u32 = 0x00ff_ffff;
 /// Go `constants.NullKeyspaceID`.
@@ -138,21 +130,6 @@ pub(crate) fn gc_variable_comment(key: &str) -> &'static str {
         // Go indexes a map; a missing key is the empty string.
         _ => "",
     }
-}
-
-/// Go `pd.IsKeyspaceUsingKeyspaceLevelGC`.
-pub fn is_keyspace_using_keyspace_level_gc(meta: Option<&KeyspaceMeta>) -> bool {
-    let Some(meta) = meta else {
-        return false;
-    };
-    // Go treats gc_management_type as authoritative when present, and falls
-    // back to safe_point_version only for legacy keyspace metadata.
-    if let Some(management_type) = meta.config.get(KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE) {
-        return management_type == KEYSPACE_CONFIG_GC_MANAGEMENT_TYPE_KEYSPACE_LEVEL;
-    }
-    meta.config
-        .get(KEYSPACE_CONFIG_SAFE_POINT_VERSION)
-        .is_some_and(|version| version == KEYSPACE_CONFIG_SAFE_POINT_VERSION_V2)
 }
 
 fn keyspace_id_of(meta: &KeyspaceMeta) -> u32 {

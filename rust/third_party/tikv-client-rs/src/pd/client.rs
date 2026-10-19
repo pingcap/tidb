@@ -189,6 +189,27 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// pd-client `UpdateServiceGCSafePoint`: sets (or, with a zero TTL,
+    /// removes) one service's safe point and answers the minimal one; a
+    /// keyspace client uses `UpdateServiceSafePointV2`.
+    async fn update_service_gc_safe_point(
+        self: Arc<Self>,
+        _service_id: &str,
+        _ttl: i64,
+        _safe_point: u64,
+    ) -> Result<u64> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// pd-client `GetAllKeyspaces`: up to `limit` keyspaces from `start_id`.
+    async fn get_all_keyspaces(
+        &self,
+        _start_id: u32,
+        _limit: u32,
+    ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        Err(crate::Error::Unimplemented)
+    }
+
     /// Modern PD GC-state API used by root `tikv` visibility checks.
     async fn get_gc_state(self: Arc<Self>) -> Result<pdpb::GcState> {
         Err(crate::Error::Unimplemented)
@@ -1370,8 +1391,46 @@ impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
         self.pd.clone().update_safepoint(safepoint).await
     }
 
+    /// pd-client `UpdateGCSafePoint`: a keyspace client updates its own
+    /// keyspace's safe point (`UpdateGCSafePointV2`).
     async fn update_safepoint_value(self: Arc<Self>, safepoint: u64) -> Result<u64> {
+        let keyspace_id = self.gc_keyspace_id()?;
+        if keyspace_id != crate::request::NULL_KEYSPACE_ID {
+            return self
+                .pd
+                .clone()
+                .update_gc_safe_point_v2(keyspace_id, safepoint)
+                .await;
+        }
         self.pd.clone().update_safepoint_value(safepoint).await
+    }
+
+    async fn update_service_gc_safe_point(
+        self: Arc<Self>,
+        service_id: &str,
+        ttl: i64,
+        safe_point: u64,
+    ) -> Result<u64> {
+        let keyspace_id = self.gc_keyspace_id()?;
+        if keyspace_id != crate::request::NULL_KEYSPACE_ID {
+            return self
+                .pd
+                .clone()
+                .update_service_safe_point_v2(keyspace_id, service_id.to_owned(), ttl, safe_point)
+                .await;
+        }
+        self.pd
+            .clone()
+            .update_service_gc_safe_point(service_id.to_owned(), ttl, safe_point)
+            .await
+    }
+
+    async fn get_all_keyspaces(
+        &self,
+        start_id: u32,
+        limit: u32,
+    ) -> Result<Vec<keyspacepb::KeyspaceMeta>> {
+        self.pd.get_all_keyspaces(start_id, limit).await
     }
 
     async fn get_gc_state(self: Arc<Self>) -> Result<pdpb::GcState> {

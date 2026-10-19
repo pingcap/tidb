@@ -10,7 +10,7 @@ use std::{
 
 const GENERATED_DIR: &str = "kvproto/src/generated";
 const DESCRIPTOR_FILE: &str = "file_descriptor_set.bin";
-const PROTOC_VERSION: &str = "libprotoc 35.1";
+const PROTOC_VERSION: &str = "libprotoc 36.2";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     verify_protoc_version()?;
@@ -109,9 +109,10 @@ mod tests {
 
     #[test]
     fn protoc_version_is_pinned_for_cross_platform_descriptors() {
-        assert!(protoc_version_is_supported("libprotoc 35.1\n"));
+        assert!(protoc_version_is_supported("libprotoc 36.2\n"));
         assert!(!protoc_version_is_supported("libprotoc 3.20.3\n"));
-        assert!(!protoc_version_is_supported("libprotoc 35.2\n"));
+        assert!(!protoc_version_is_supported("libprotoc 35.1\n"));
+        assert!(!protoc_version_is_supported("libprotoc 36.3\n"));
     }
 
     #[test]
