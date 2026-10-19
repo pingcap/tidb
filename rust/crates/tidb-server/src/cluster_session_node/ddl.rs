@@ -2386,6 +2386,25 @@ where
         statement: &DdlStatement,
         job_context: &tidb_executor::StmtContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
+        self.execute_targets(statement, job_context, &[])
+    }
+}
+
+impl<C, L, P> RealClusterDdl<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    /// [`ClusterDdl::execute`] for one target of a statement naming
+    /// `targets` (Go's `DropTableArgs.Identifiers`: every table the DROP
+    /// names, which the owner's foreign-key check ignores).
+    fn execute_targets(
+        &self,
+        statement: &DdlStatement,
+        job_context: &tidb_executor::StmtContext,
+        targets: &[(String, String)],
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
         // Go `dropTableObject`: each target is its own job, a missing name is
         // collected and reported once the list ends.
         #[derive(Clone, Copy, PartialEq)]
@@ -2441,7 +2460,12 @@ where
                         name: name.to_owned(),
                     },
                 };
-                match self.execute(&target, job_context) {
+                let statement_targets: &[(String, String)] = if object == DropObject::Table {
+                    names
+                } else {
+                    &[]
+                };
+                match self.execute_targets(&target, job_context, statement_targets) {
                     Ok(report) => {
                         last = report;
                         Ok(true)
@@ -2507,12 +2531,27 @@ where
             self.refresh_catalog();
             return Ok(report);
         }
-        if matches!(statement, DdlStatement::CreateIndex { .. }) {
-            // Go `createIndex`: a persisted job the owner steps through
-            // delete-only, write-only and the reorganization.
-            match tidb_exec::real_tikv_ddl::submit_add_index_job_with_retry(
+        let single_view =
+            matches!(statement, DdlStatement::DropView { names, .. } if names.len() == 1);
+        if single_view
+            || matches!(
+                statement,
+                DdlStatement::CreateIndex { .. }
+                    | DdlStatement::DropIndex { .. }
+                    | DdlStatement::DropPrimaryKey { .. }
+                    | DdlStatement::DropTable { .. }
+                    | DdlStatement::DropSequence { .. }
+                    | DdlStatement::DropDatabase { .. }
+            )
+        {
+            // Go `createIndex` / `dropIndex` / `dropTableObject` /
+            // `DropSchema`: a persisted job the owner steps through the
+            // object's schema states.
+            match tidb_exec::real_tikv_ddl::submit_persisted_job_with_retry(
                 Arc::clone(&self.opener),
                 statement,
+                job_context,
+                targets,
                 self.timeout,
                 self.server_state.is_upgrading_state(),
                 self.min_job_id_refresher.current_min_job_id(),

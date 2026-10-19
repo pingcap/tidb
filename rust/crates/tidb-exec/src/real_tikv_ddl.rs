@@ -1390,16 +1390,19 @@ pub enum AddIndexSubmitted {
     AlreadySatisfied(ClusterDdlReport),
 }
 
-/// Go `executor.createIndex` -> `doDDLJob2`: submits one persisted ADD
-/// INDEX / ADD PRIMARY KEY job without executing it; the owner steps it
-/// through `onCreateIndex`'s states.
-pub fn submit_add_index_job_with_retry<
+/// Go's executor up to `doDDLJob2` for the statement kinds this node submits
+/// as persisted jobs (ADD / DROP INDEX and PRIMARY KEY, DROP TABLE / VIEW /
+/// SEQUENCE / DATABASE): one job queued without executing it; the owner
+/// steps it through Go's schema states.
+pub fn submit_persisted_job_with_retry<
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
 >(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     statement: &DdlStatement,
+    job_context: &tidb_executor::StmtContext,
+    targets: &[(String, String)],
     timeout: Duration,
     upgrading: bool,
     min_job_id: i64,
@@ -1421,14 +1424,40 @@ pub fn submit_add_index_job_with_retry<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
-        crate::cluster_ddl::add_index::prepare_add_index_job_submission(
-            &mut snapshot,
-            statement,
-            start_ts,
-            upgrading,
-            min_job_id,
-            store_count,
-        )
+        match statement {
+            DdlStatement::DropTable { .. }
+            | DdlStatement::DropView { .. }
+            | DdlStatement::DropSequence { .. }
+            | DdlStatement::DropDatabase { .. } => {
+                crate::cluster_ddl::drop_object::prepare_drop_object_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    targets,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
+                crate::cluster_ddl::drop_index::prepare_drop_index_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
+            _ => crate::cluster_ddl::add_index::prepare_add_index_job_submission(
+                &mut snapshot,
+                statement,
+                start_ts,
+                upgrading,
+                min_job_id,
+                store_count,
+            ),
+        }
     };
     let _ = preparation.rollback();
     let mut spec = match prepared? {
@@ -1443,7 +1472,7 @@ pub fn submit_add_index_job_with_retry<
         }
         None => {
             return Err(ClusterDdlError::NotCommitted(
-                "the statement is not an ADD INDEX job".to_owned(),
+                "the statement is not submitted as a persisted job".to_owned(),
             ))
         }
     };

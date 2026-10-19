@@ -6115,6 +6115,8 @@ pub enum PersistedDdlJobPlan {
 }
 
 pub mod add_index;
+pub mod drop_index;
+pub mod drop_object;
 
 /// Actions currently integrated into the persisted owner worker. Seed planners
 /// outside this set are not made live by the common lifecycle.
@@ -6130,8 +6132,12 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_RENAME_TABLES
             | ActionType::ACTION_DROP_SCHEMA
             | ActionType::ACTION_DROP_TABLE
+            | ActionType::ACTION_DROP_VIEW
+            | ActionType::ACTION_DROP_SEQUENCE
             | ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
+            | ActionType::ACTION_DROP_INDEX
+            | ActionType::ACTION_DROP_PRIMARY_KEY
     )
 }
 
@@ -6176,7 +6182,9 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 ActionType::ACTION_DROP_SCHEMA => {
                     plan_persisted_drop_schema_job_step(snapshot, catalog, active)
                 }
-                ActionType::ACTION_DROP_TABLE => {
+                ActionType::ACTION_DROP_TABLE
+                | ActionType::ACTION_DROP_VIEW
+                | ActionType::ACTION_DROP_SEQUENCE => {
                     plan_persisted_drop_table_job_step(snapshot, catalog, active)
                 }
                 ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
@@ -6187,6 +6195,9 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                         start_ts,
                         reorg_outcome.as_ref(),
                     )
+                }
+                ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
+                    drop_index::plan_persisted_drop_index_job_step(catalog, active, start_ts)
                 }
                 _ => unreachable!("supported action checked above"),
             }
@@ -7687,6 +7698,52 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let mut label_rules = LabelRuleSteps::new();
     let schema_version = schema_version + 1;
+    if db_info.state == SchemaState::PUBLIC
+        && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        // Go `checkDatabaseHasForeignKeyReferredInOwner`.
+        let fk_check = tidb_model::get_drop_schema_args(&mut active.job)
+            .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
+            .is_some_and(|args| args.read().fk_check.get());
+        if fk_check {
+            let schema_name = db_info.name.original().to_owned();
+            let tables: Vec<(String, String)> = catalog
+                .databases
+                .iter()
+                .find(|database| database.info.id == db_info.id)
+                .map(|database| {
+                    database
+                        .tables
+                        .iter()
+                        .map(|table| (schema_name.clone(), table.name.original().to_owned()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (_, table_name) in &tables {
+                if let Some(referred) =
+                    crate::foreign_key_build::check_table_has_foreign_key_referred(
+                        catalog,
+                        &schema_name,
+                        table_name,
+                        &tables,
+                        true,
+                    )
+                {
+                    return Err(cancel_ddl_job(
+                        active,
+                        coded_refusal(
+                            tidb_error::tidb::errcode::ErrForeignKeyCannotDropParent,
+                            format!(
+                                "Cannot drop table '{table_name}' referenced by a foreign key constraint '{}' on table '{}'.",
+                                referred.child_fk_name.original(),
+                                referred.child_table.original()
+                            ),
+                        ),
+                    ));
+                }
+            }
+        }
+    }
     if db_info.state == SchemaState::PUBLIC {
         // Go `onDropSchema`: as the schema leaves the public state, every
         // table's and partition's label rule goes, under the job's schema
@@ -7854,6 +7911,48 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
 
     let schema_version = schema_version + 1;
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    if table.state == SchemaState::PUBLIC && active.job.type_ == ActionType::ACTION_DROP_TABLE {
+        // Go `checkDropTableHasForeignKeyReferredInOwner`.
+        let args = tidb_model::get_drop_table_args(&mut active.job)
+            .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
+            .unwrap_or_else(|| GoShared::new(tidb_model::DropTableArgs::default()));
+        let (ignored, fk_check) = {
+            let args = args.read();
+            let ignored: Vec<(String, String)> = args
+                .identifiers
+                .iter()
+                .map(|ident| {
+                    (
+                        ident.schema.original().to_owned(),
+                        ident.name.original().to_owned(),
+                    )
+                })
+                .collect();
+            (ignored, args.fk_check)
+        };
+        let schema_name = active.job.schema_name.to_string();
+        let table_name = active.job.table_name.to_string();
+        if let Some(referred) = crate::foreign_key_build::check_table_has_foreign_key_referred(
+            catalog,
+            &schema_name,
+            &table_name,
+            &ignored,
+            fk_check && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::Relaxed),
+        ) {
+            return Err(cancel_ddl_job(
+                active,
+                coded_refusal(
+                    tidb_error::tidb::errcode::ErrTruncateIllegalForeignKey,
+                    format!(
+                        "Cannot truncate a table referenced in a foreign key constraint (`{}`.`{}` CONSTRAINT `{}`)",
+                        referred.child_schema.original(),
+                        referred.child_table.original(),
+                        referred.child_fk_name.original()
+                    ),
+                ),
+            ));
+        }
+    }
     match table.state {
         SchemaState::PUBLIC => table.state = SchemaState::WRITE_ONLY,
         SchemaState::WRITE_ONLY => table.state = SchemaState::DELETE_ONLY,
@@ -7889,7 +7988,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             key::auto_random_table_id_kv_key(database_id, table.id),
         ];
         if table.is_sequence() {
-            allocator_keys.push(key::sequence_kv_key(database_id, table.id));
+            allocator_keys.push(sequence_value_kv_key(database_id, table.id));
         }
         for allocator in allocator_keys {
             if snapshot.get(&allocator)?.is_some() {
@@ -8139,7 +8238,9 @@ fn plan_cancel_persisted_ddl_job(
                 })?;
             database.info.state == SchemaState::PUBLIC
         }
-        ActionType::ACTION_DROP_TABLE => {
+        ActionType::ACTION_DROP_TABLE
+        | ActionType::ACTION_DROP_VIEW
+        | ActionType::ACTION_DROP_SEQUENCE => {
             let table = checked_job_table(catalog, active, false)?;
             table.state == SchemaState::PUBLIC
         }
@@ -8150,6 +8251,9 @@ fn plan_cancel_persisted_ddl_job(
         }
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
             return add_index::plan_cancel_add_index(catalog, active, start_ts);
+        }
+        ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
+            return drop_index::plan_cancel_drop_index(catalog, active);
         }
         _ => {
             return Err(DdlPlanError::Encode(format!(
@@ -8556,12 +8660,13 @@ impl MdlInfoUpdate {
             column_id("table_ids")?,
             Datum::Bytes(self.table_ids.as_bytes().to_vec()),
         );
-        if !self.omit_owner_id {
-            values.insert(
-                column_id("owner_id")?,
-                Datum::Bytes(owner_id.as_bytes().to_vec()),
-            );
-        }
+        // Go omits `owner_id` from a system database's `REPLACE INTO`, so
+        // the column takes its `DEFAULT ''`.
+        let owner_id = if self.omit_owner_id { "" } else { owner_id };
+        values.insert(
+            column_id("owner_id")?,
+            Datum::Bytes(owner_id.as_bytes().to_vec()),
+        );
         Ok(values)
     }
 

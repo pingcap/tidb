@@ -468,7 +468,7 @@ fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
 
 /// Go `updateVersionAndTableInfo`: the table write and, when the state moved,
 /// the version bump with its diff.
-fn table_step(
+pub(super) fn table_step(
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     database_id: i64,
@@ -513,7 +513,7 @@ fn table_step(
     Ok(write)
 }
 
-fn action_step(write: DdlWrite) -> PersistedDdlActionStep {
+pub(super) fn action_step(write: DdlWrite) -> PersistedDdlActionStep {
     PersistedDdlActionStep {
         write,
         update_raw_args: true,
@@ -1065,7 +1065,8 @@ fn plan_rollback_add_index(
             active.job.fill_finished_args(Some(finished));
             Ok(PersistedDdlActionStep {
                 write,
-                update_raw_args: false,
+                // Go `needUpdateRawArgs`: the delete range reads these.
+                update_raw_args: true,
                 run_error: None,
                 reorg: None,
             })
@@ -1081,7 +1082,7 @@ fn plan_rollback_add_index(
 
 /// Go `DropIndexColumnFlag`, `RemoveDependentHiddenColumns` and
 /// `removeIndexInfo`.
-fn remove_index_and_hidden_columns(info: &mut TableInfo, index: &IndexInfo) {
+pub(super) fn remove_index_and_hidden_columns(info: &mut TableInfo, index: &IndexInfo) {
     let hidden: Vec<String> = index
         .columns
         .iter_deref()

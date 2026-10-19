@@ -513,6 +513,37 @@ pub(crate) fn get_table_referred_foreign_keys(
     referred
 }
 
+/// Go `checkTableHasForeignKeyReferred`: the first key, from a table that
+/// still exists and is not among `ignored` (schema, table) pairs, that cites
+/// `schema`.`table`. `None` when `fk_check` is off.
+pub(crate) fn check_table_has_foreign_key_referred(
+    catalog: &ClusterCatalog,
+    schema: &str,
+    table: &str,
+    ignored: &[(String, String)],
+    fk_check: bool,
+) -> Option<ReferredFKInfo> {
+    if !fk_check {
+        return None;
+    }
+    get_table_referred_foreign_keys(catalog, schema, table)
+        .into_iter()
+        .filter(|referred| {
+            !ignored.iter().any(|(ignored_schema, ignored_table)| {
+                tidb_hack::go_to_lower(ignored_schema) == referred.child_schema.lowercase()
+                    && tidb_hack::go_to_lower(ignored_table) == referred.child_table.lowercase()
+            })
+        })
+        .find(|referred| {
+            catalog
+                .find_table(
+                    referred.child_schema.lowercase(),
+                    referred.child_table.lowercase(),
+                )
+                .is_some()
+        })
+}
+
 /// Go `checkIndexNeededInForeignKey` (`foreign_key.go:443`): an index a key
 /// of this table, or a key citing it, needs cannot be dropped unless another
 /// index (or the integer primary key) still covers the key's columns.

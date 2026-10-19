@@ -367,7 +367,12 @@ impl PushedScanFilter {
             }
             self.fast_paths
                 .push(FastScanFilter::from_expression(&filter));
-            if let Some(predicate) = scan_predicate_from_expression(&filter) {
+            // Only a description the later offer itself admitted: it was
+            // built under the statement context, where Go's
+            // `expr_pushdown_blacklist` refused what TiKV must not see.
+            if let Some(predicate) = scan_predicate_from_expression(&filter)
+                .filter(|predicate| additional.predicates.contains(predicate))
+            {
                 self.predicates.push(predicate);
             }
             self.filters.push(filter);
@@ -1004,6 +1009,50 @@ mod tests {
             };
         }
         buffer.reset();
+    }
+
+    /// Go `PushDownExprs` consults `mysql.expr_pushdown_blacklist` for every
+    /// Selection offered to a scan. A later offer's conditions joined to an
+    /// earlier one keep that verdict: a blacklisted function stays a local
+    /// condition and never reaches the coprocessor request.
+    #[test]
+    fn a_later_selection_offer_keeps_the_pushdown_blacklist() {
+        use tidb_expr::expression::Expression;
+        let gt = |column_id: i64, index: i64, value: i64| {
+            let mut column = tidb_expr::column::Column::new(column_id, long());
+            column.index = index;
+            Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
+                tidb_ast::CiString::new("gt"),
+                long(),
+                vec![
+                    Expression::Column(column),
+                    Expression::Constant(tidb_expr::constant::Constant::new(
+                        Datum::Int(value),
+                        long(),
+                    )),
+                ],
+            ))
+        };
+        let mut blacklist = tidb_expr::infer_pushdown::ExprPushDownBlacklist::new();
+        blacklist.insert(
+            "gt".to_owned(),
+            tidb_expr::infer_pushdown::blacklist_store_mask("tikv"),
+        );
+        let blocked = crate::StmtContext::for_query()
+            .with_pushdown_blacklists((Arc::new(blacklist), Arc::default()));
+        let open = crate::StmtContext::for_query();
+        let mut first = super::PushedScanFilter::from_physical_conditions(vec![gt(1, 0, 5)], &open);
+        assert_eq!(first.predicates.len(), 1);
+        let later = super::PushedScanFilter::from_physical_conditions(vec![gt(2, 1, 6)], &blocked);
+        assert!(later.predicates.is_empty(), "the blacklist refuses `gt`");
+        first.conjoin(&later);
+        assert_eq!(first.filters().len(), 2, "both conditions still filter");
+        assert_eq!(
+            first.predicates.len(),
+            1,
+            "the refused one is not described"
+        );
+        assert!(!first.fully_described());
     }
 
     /// A pushed predicate must filter the transaction's own staged rows too.

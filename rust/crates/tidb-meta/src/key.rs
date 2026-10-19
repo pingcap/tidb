@@ -426,13 +426,6 @@ pub fn auto_random_table_id_kv_key(db_id: i64, table_id: i64) -> Vec<u8> {
     encode_hash_data_key(&db_key(db_id), &auto_random_table_id_key(table_id))
 }
 
-/// The raw KV key holding one sequence's current value. Go
-/// `Mutator.sequenceKey` in the database hash.
-#[must_use]
-pub fn sequence_kv_key(db_id: i64, sequence_id: i64) -> Vec<u8> {
-    encode_hash_data_key(&db_key(db_id), &sequence_key(sequence_id))
-}
-
 /// The raw KV key holding one placement policy. Go `Mutator.GetPolicy`.
 #[must_use]
 pub fn policy_kv_key(policy_id: i64) -> Vec<u8> {

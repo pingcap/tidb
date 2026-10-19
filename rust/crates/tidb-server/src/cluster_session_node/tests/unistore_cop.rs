@@ -19532,3 +19532,201 @@ fn delete_ranges_are_recorded_and_worked_off_like_go() {
     ];
     assert_eq!(done, expected);
 }
+
+/// DROP INDEX / DROP PRIMARY KEY run as Go's persisted job through
+/// `onDropIndex`'s states; the refusals are the executor's. Captured from
+/// the Go oracle on this branch.
+#[test]
+fn drop_index_runs_as_a_persisted_job_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1939)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "create table t (a int, b int, c int, key ib(b), key ic(c), primary key (a) nonclustered)",
+    );
+    rows(&mut session, "insert into t values (1,1,1),(2,2,2)");
+    let mut last_job = |session: &mut _| {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [3, 4, 7, 11, 12]
+            .map(|column| row[column].clone())
+            .join("|")
+    };
+    for (sql, job) in [
+        ("alter table t drop index ib", "drop index|none|0|synced|"),
+        ("drop index ic on t", "drop index|none|0|synced|"),
+        (
+            "alter table t drop primary key",
+            "drop primary key|none|0|synced|",
+        ),
+    ] {
+        rows(&mut session, sql);
+        assert_eq!(last_job(&mut session), job, "{sql}");
+    }
+    for sql in [
+        "alter table t drop index if exists ib",
+        "drop index if exists ib on t",
+    ] {
+        rows(&mut session, sql);
+        assert_eq!(
+            displayed(rows(&mut session, "SHOW WARNINGS")),
+            vec![vec![
+                "Note".to_owned(),
+                "1091".to_owned(),
+                "index ib doesn't exist".to_owned()
+            ]],
+            "{sql}"
+        );
+    }
+    rows(&mut session, "create table tc (a int primary key, b int)");
+    rows(
+        &mut session,
+        "create table p (id int primary key, k int, key kk(k))",
+    );
+    rows(
+        &mut session,
+        "create table c (id int primary key, pk int, key fk_idx(pk), foreign key fkc (pk) references p(id))",
+    );
+    for (sql, code, message) in [
+        (
+            "alter table t drop index ib",
+            1091,
+            "index ib doesn't exist",
+        ),
+        (
+            "alter table t drop primary key",
+            1091,
+            "Can't DROP 'PRIMARY'; check that column/key exists",
+        ),
+        (
+            "alter table tc drop primary key",
+            8200,
+            "Unsupported drop primary key when the table is using clustered index",
+        ),
+        (
+            "alter table c drop index fk_idx",
+            1553,
+            "Cannot drop index 'fk_idx': needed in a foreign key constraint",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    rows(&mut session, "admin check table t");
+    let created = displayed(rows(&mut session, "show create table t")).remove(0);
+    assert_eq!(
+        created[1],
+        "CREATE TABLE `t` (\n  `a` int NOT NULL,\n  `b` int DEFAULT NULL,\n  `c` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+}
+
+/// DROP TABLE / VIEW / SEQUENCE / DATABASE run as Go's persisted jobs, one
+/// per object, each through `onDropTableOrView` / `onDropSchema`; the notes
+/// and refusals are the executor's. Captured from the Go oracle.
+#[test]
+fn drop_objects_run_as_persisted_jobs_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1940)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let jobs = |session: &mut _, count: usize| -> Vec<String> {
+        displayed(rows(session, &format!("admin show ddl jobs {count}")))
+            .into_iter()
+            .map(|row| [3, 2, 4, 11].map(|column| row[column].clone()).join("|"))
+            .collect()
+    };
+    let notes = |session: &mut _| -> Vec<String> {
+        displayed(rows(session, "SHOW WARNINGS"))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+    rows(&mut session, "create table t1 (a int)");
+    rows(&mut session, "create table t2 (a int)");
+    rows(&mut session, "drop table t1, t2");
+    assert_eq!(
+        jobs(&mut session, 2),
+        ["drop table|t2|none|synced", "drop table|t1|none|synced"]
+    );
+    rows(&mut session, "drop table if exists t1, t3");
+    assert_eq!(
+        notes(&mut session),
+        [
+            "Note|1051|Unknown table 'test.t1'",
+            "Note|1051|Unknown table 'test.t3'"
+        ]
+    );
+    rows(&mut session, "create view v as select 1");
+    rows(&mut session, "drop view v");
+    assert_eq!(jobs(&mut session, 1), ["drop view|v|none|synced"]);
+    rows(&mut session, "drop view if exists v");
+    assert_eq!(notes(&mut session), ["Note|1051|Unknown table 'test.v'"]);
+    rows(&mut session, "create sequence s");
+    rows(&mut session, "drop sequence s");
+    assert_eq!(jobs(&mut session, 1), ["drop sequence|s|none|synced"]);
+    rows(&mut session, "drop sequence if exists s");
+    assert_eq!(
+        notes(&mut session),
+        ["Note|4139|Unknown SEQUENCE: 'test.s'"]
+    );
+    rows(&mut session, "create database d");
+    rows(&mut session, "drop database d");
+    assert_eq!(jobs(&mut session, 1), ["drop schema||none|synced"]);
+    rows(&mut session, "drop database if exists d");
+    assert!(notes(&mut session).is_empty());
+    rows(&mut session, "create table tv (a int)");
+    rows(&mut session, "create view vv as select 1");
+    for (sql, code, message) in [
+        ("drop table t1", 1051, "Unknown table 'test.t1'"),
+        (
+            "drop database d",
+            1008,
+            "Can't drop database 'd'; database doesn't exist",
+        ),
+        ("drop view tv", 1347, "'test.tv' is not VIEW"),
+        ("drop table vv", 1051, "Unknown table 'test.vv'"),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    // Foreign keys: a parent outside the statement's targets stays.
+    rows(&mut session, "create table p (id int primary key)");
+    rows(
+        &mut session,
+        "create table c (id int primary key, pid int, constraint fkc foreign key (pid) references p(id))",
+    );
+    let error = session.execute_write("drop table p").unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            3730,
+            "Cannot drop table 'p' referenced by a foreign key constraint 'fkc' on table 'c'."
+        )
+    );
+    rows(&mut session, "drop table p, c");
+    rows(&mut session, "create database dp");
+    rows(&mut session, "create table dp.pp (id int primary key)");
+    rows(
+        &mut session,
+        "create table c2 (id int primary key, pid int, constraint fk2 foreign key (pid) references dp.pp(id))",
+    );
+    let error = session.execute_write("drop database dp").unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            3730,
+            "Cannot drop table 'pp' referenced by a foreign key constraint 'fk2' on table 'c2'."
+        )
+    );
+    rows(&mut session, "set foreign_key_checks = 0");
+    rows(&mut session, "drop database dp");
+}
