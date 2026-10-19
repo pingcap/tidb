@@ -6834,21 +6834,10 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        let mut pending = self.accounts.begin().map_err(SqlQueryError::unknown)?;
-        pending.set_write_hints(self.account_write_hints(sql));
-        let scratch = pending.registry();
-        let live = self.session.swap_privileges(scratch);
-        let applied = self
+        let changed = self
             .session
-            .run_with_delegated_account_storage(sql)
-            .map_err(map_error);
-        // Restoring the live table is unconditional: a statement that failed
-        // must not leave the connection reading the scratch copy.
-        if let Some(live) = live {
-            self.session.swap_privileges(live);
-        }
-        applied?;
-        let changed = pending.commit()?;
+            .run_account_statement_with(sql, &ClusterAccountService(Arc::clone(&self.accounts)))
+            .map_err(map_error)?;
         if !changed.is_empty() {
             eprintln!(
                 "{{\"event\":\"cluster_accounts_changed\",\"users\":{}}}",
@@ -6861,35 +6850,6 @@ impl ClusterServerSession {
             affected_rows: 0,
             last_insert_id: 0,
         })
-    }
-
-    /// What Go's executor for this account statement writes that the account
-    /// image alone cannot say: a GRANT stamps the session user as `Grantor`,
-    /// and `SET DEFAULT ROLE` deletes and re-inserts the account's rows.
-    fn account_write_hints(
-        &self,
-        sql: &str,
-    ) -> tidb_exec::cluster_account_write::AccountWriteHints {
-        let mut hints = tidb_exec::cluster_account_write::AccountWriteHints::default();
-        let Ok(stmt) = self.session.parse_statement(sql) else {
-            return hints;
-        };
-        match &stmt {
-            Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Grant(_)) => {
-                hints.grantor = Some(
-                    self.session
-                        .current_identity()
-                        .map_or_else(String::new, |(user, host)| format!("{user}@{host}")),
-                );
-            }
-            Stmt::Session(session)
-                if matches!(session.as_ref(), tidb_ast::SessionStmt::SetDefaultRole(_)) =>
-            {
-                hints.rewrite_default_roles = true;
-            }
-            _ => {}
-        }
-        hints
     }
 
     /// Performs one `SET GLOBAL` change.
@@ -6907,24 +6867,10 @@ impl ClusterServerSession {
     /// `SET GLOBAL` inside a transaction neither commits it nor loses its
     /// `@@tidb_current_ts` (unlike a DDL or account statement, which commit).
     fn run_global_var_statement(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
-        let pending = self.sysvars.begin().map_err(SqlQueryError::unknown)?;
-        let scratch = pending.table();
-        let live = self.session.swap_globals(scratch);
-        let applied = self.session.apply_set(sql).map_err(map_error);
-        // Restoring the live table is unconditional: a statement that failed
-        // must not leave the connection reading the scratch copy, and a
-        // session-scoped assignment mixed into the same `SET` must still
-        // land on the connection's own live-seeded copies.
-        self.session.swap_globals(live);
-        // go's SetExecutor routes every failure through `handleErr`, which
-        // appends it to the statement context: after a failed SET both
-        // error_count and warning_count read 1 (captured: `SET bogus_var=1`).
-        if let Err(error) = &applied {
-            self.session
-                .record_ddl_failure(error.code, error.message.clone());
-        }
-        applied?;
-        let changed = pending.commit()?;
+        let changed = self
+            .session
+            .run_global_var_statement_with(sql, &ClusterSysvarService(Arc::clone(&self.sysvars)))
+            .map_err(map_error)?;
         if !changed.is_empty() {
             eprintln!(
                 "{{\"event\":\"cluster_sysvars_changed\",\"variables\":{}}}",
@@ -8633,6 +8579,82 @@ fn global_lock_wait_timeout(vars: &GlobalSysvars) -> Duration {
 /// The cluster's [`ClusterDdl`] as the session's [`tidb_session::ddl_service::DdlService`]:
 /// the same publish-and-refresh call, with its client error carried across the
 /// crate boundary as the already-classified `(code, state, message)` triple.
+/// The cluster account writer as the session's [`AccountService`].
+///
+/// [`AccountService`]: tidb_session::stored_state_service::AccountService
+struct ClusterAccountService(Arc<dyn ClusterAccountWriter>);
+
+struct ClusterPendingAccountChange(Box<dyn crate::cluster_account_seam::PendingAccountChange>);
+
+impl tidb_session::stored_state_service::AccountService for ClusterAccountService {
+    fn begin(
+        &self,
+    ) -> Result<
+        Box<dyn tidb_session::stored_state_service::PendingAccountChange>,
+        tidb_executor::DriverError,
+    > {
+        let pending = self
+            .0
+            .begin()
+            .map_err(tidb_executor::DriverError::unsupported)?;
+        Ok(Box::new(ClusterPendingAccountChange(pending)))
+    }
+}
+
+impl tidb_session::stored_state_service::PendingAccountChange for ClusterPendingAccountChange {
+    fn registry(&self) -> PrivilegeRegistry {
+        self.0.registry()
+    }
+
+    fn set_write_hints(&mut self, hints: tidb_exec::cluster_account_write::AccountWriteHints) {
+        self.0.set_write_hints(hints);
+    }
+
+    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_executor::DriverError> {
+        self.0.commit().map_err(sql_query_error_to_driver)
+    }
+}
+
+/// The cluster sysvar writer as the session's [`SysvarService`].
+///
+/// [`SysvarService`]: tidb_session::stored_state_service::SysvarService
+struct ClusterSysvarService(Arc<dyn ClusterSysvarWriter>);
+
+struct ClusterPendingSysvarChange(Box<dyn crate::cluster_sysvar_seam::PendingSysvarChange>);
+
+impl tidb_session::stored_state_service::SysvarService for ClusterSysvarService {
+    fn begin(
+        &self,
+    ) -> Result<
+        Box<dyn tidb_session::stored_state_service::PendingSysvarChange>,
+        tidb_executor::DriverError,
+    > {
+        let pending = self
+            .0
+            .begin()
+            .map_err(tidb_executor::DriverError::unsupported)?;
+        Ok(Box::new(ClusterPendingSysvarChange(pending)))
+    }
+}
+
+impl tidb_session::stored_state_service::PendingSysvarChange for ClusterPendingSysvarChange {
+    fn table(&self) -> GlobalSysvars {
+        self.0.table()
+    }
+
+    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_executor::DriverError> {
+        self.0.commit().map_err(sql_query_error_to_driver)
+    }
+}
+
+fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_executor::DriverError {
+    tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
+        error.code,
+        error.state,
+        error.message,
+    ))
+}
+
 struct ClusterDdlService(Arc<dyn ClusterDdl>);
 
 impl tidb_session::ddl_service::DdlService for ClusterDdlService {

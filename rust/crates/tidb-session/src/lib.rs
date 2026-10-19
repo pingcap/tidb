@@ -1271,6 +1271,7 @@ mod classify;
 pub mod cursor;
 mod ddl_jobs;
 pub mod ddl_service;
+pub mod stored_state_service;
 mod dispatch;
 mod explain_arm;
 mod gcutil;
@@ -3247,6 +3248,7 @@ mod tests_user_vars;
 mod tests_views;
 #[cfg(test)]
 mod tests_ddl_service;
+mod tests_stored_state_service;
 #[cfg(test)]
 mod tests_builtin_survey;
 #[cfg(test)]
