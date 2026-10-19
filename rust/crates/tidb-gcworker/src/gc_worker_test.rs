@@ -1186,6 +1186,10 @@ fn test_gc_with_pending_txn() {
     s.job()
         .save_value_to_sys_table(GC_ENABLE_KEY, BOOLEAN_TRUE)
         .unwrap();
+    // Go's SQL writes since the begin take milliseconds, which puts the
+    // job's millisecond-truncated safe point (oracle now - life time) past
+    // the txn's start ts. The in-memory session takes none; wait one.
+    std::thread::sleep(Duration::from_millis(2));
 
     // Trigger the tick let the gc job start.
     s.leader_tick_and_wait();
