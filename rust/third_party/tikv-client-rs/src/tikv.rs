@@ -2933,6 +2933,39 @@ mod tests {
         );
     }
 
+    /// client-go checks the store's txn safe point after a snapshot read
+    /// returns (`KVSnapshot.Get`: `s.get(...)`, then `s.store.CheckVisibility`),
+    /// so a read below the safe point is sent and then aborted by GC.
+    #[tokio::test]
+    async fn a_store_transaction_checks_visibility_after_its_read() {
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let store = KvStore::new_with_pd_client(
+            Arc::new(pd),
+            Arc::new(MockSafePointKv::new()),
+            Config::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut transaction = store.begin_optimistic().await.unwrap();
+        let stats = Arc::new(crate::SnapshotRuntimeStats::new());
+        transaction.set_snapshot_runtime_stats(Some(stats.clone()));
+        store.update_txn_safe_point_cache(
+            transaction.start_timestamp().version() + 1,
+            SystemTime::now(),
+        );
+
+        let error = transaction.get(b"k".to_vec()).await.unwrap_err();
+        assert!(
+            matches!(error, Error::TransactionAbortedByGc(_)),
+            "{error:?}"
+        );
+        assert_eq!(stats.rpc_count(crate::SnapshotRpcCommand::Get), 1);
+        transaction.rollback().await.unwrap();
+    }
+
     #[tokio::test]
     async fn a_store_over_any_pd_client_runs_transactions_and_store_requests() {
         // client-go `NewTestTiKVStore` builds a KVStore over a mock PD client,

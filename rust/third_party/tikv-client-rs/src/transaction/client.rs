@@ -124,7 +124,19 @@ struct PdReadTimestampValidator {
     /// client-go validates read timestamps with `store.oracle`, which
     /// `SetOracle` replaces.
     store_oracle: crate::oracle::StoreOracle,
+    /// The owning `KvStore`'s txn safe point, which its transactions check
+    /// after each snapshot read (client-go `KVStore.CheckVisibility`).
     safe_point: RwLock<Option<Arc<crate::tikv::TxnSafePointCache>>>,
+}
+
+/// client-go `KVStore.CheckVisibility` as a snapshot's post-read check.
+struct StoreVisibility(Arc<crate::tikv::TxnSafePointCache>);
+
+#[async_trait]
+impl crate::SnapshotVisibilityValidator for StoreVisibility {
+    async fn check_visibility(&self, start_timestamp: u64) -> Result<()> {
+        self.0.check_visibility(start_timestamp)
+    }
 }
 
 impl Drop for PdReadTimestampValidator {
@@ -154,16 +166,6 @@ impl ReadTimestampValidator for PdReadTimestampValidator {
                     .validate_read_timestamp(read_timestamp, is_stale_read, option)
                     .await?
             }
-        }
-        if let Some(safe_point) = self
-            .safe_point
-            .read()
-            .expect("read timestamp validator lock poisoned")
-            .as_ref()
-        {
-            safe_point
-                .check_visibility(read_timestamp)
-                .map_err(|error| Box::new(error) as OracleError)?;
         }
         Ok(())
     }
@@ -824,6 +826,18 @@ impl<PdC: PdClient> Client<PdC> {
         );
         transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
         transaction.set_read_timestamp_validator(self.read_timestamp_validator.clone());
+        // client-go checks the store's txn safe point after a read returns
+        // (`KVSnapshot.Get` / `BatchGet`, `Scanner.Next`), not before it is
+        // sent, so a GC that overtakes a slow read still aborts it.
+        if let Some(safe_point) = self
+            .read_timestamp_validator
+            .safe_point
+            .read()
+            .expect("read timestamp validator lock poisoned")
+            .clone()
+        {
+            transaction.set_snapshot_visibility_validator(Arc::new(StoreVisibility(safe_point)));
+        }
         transaction.set_enable_async_batch_get(self.enable_async_batch_get);
         transaction
     }

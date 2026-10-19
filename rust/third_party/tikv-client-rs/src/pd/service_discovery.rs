@@ -298,8 +298,7 @@ impl TsoStream {
         first: pdpb::TsoRequest,
         forwarding: &TsoForwarding,
     ) -> Result<Self, Status> {
-        let (requests, receiver) =
-            tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
+        let (requests, receiver) = tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
         requests
             .send(first)
             .await
@@ -319,8 +318,7 @@ impl TsoStream {
         forwarding.record_success(&route);
         // Go's `recvLoop` owns the receiving half and publishes each response
         // as it arrives, so the dispatcher never polls the stream itself.
-        let (published, collected) =
-            tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
+        let (published, collected) = tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
         let mut responses = responses;
         let collector = tokio::spawn(async move {
             while let Some(response) = responses.next().await {
@@ -347,8 +345,7 @@ impl TsoStream {
         first: pdpb::TsoRequest,
         forwarding: &TsoForwarding,
     ) -> Result<(Self, pdpb::TsoResponse), Status> {
-        let (requests, receiver) =
-            tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
+        let (requests, receiver) = tokio::sync::mpsc::channel(MAX_PENDING_REQUESTS_IN_TSO_STREAM);
         // Servers may withhold response headers until the first request.
         requests
             .send(first)

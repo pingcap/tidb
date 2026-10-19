@@ -3416,7 +3416,11 @@ async fn rpc_concurrency_adopts_the_option_and_sizes_gos_token_pool() {
     owner
         .check(&options, Duration::ZERO, &cancellation, Instant::now())
         .await;
-    assert_eq!(capacity.available_permits(), 4, "two concurrency, 2x tokens");
+    assert_eq!(
+        capacity.available_permits(),
+        4,
+        "two concurrency, 2x tokens"
+    );
 
     // A later change is rate-limited: Go checks at most once per interval, so
     // a second adoption inside the window keeps the previous pool.
@@ -3432,8 +3436,14 @@ async fn rpc_concurrency_adopts_the_option_and_sizes_gos_token_pool() {
 
     // Once the interval has elapsed, the same option is adopted.
     let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
-    owner.check(&options, Duration::ZERO, &cancellation, later).await;
-    assert_eq!(capacity.available_permits(), 8, "four concurrency, 2x tokens");
+    owner
+        .check(&options, Duration::ZERO, &cancellation, later)
+        .await;
+    assert_eq!(
+        capacity.available_permits(),
+        8,
+        "four concurrency, 2x tokens"
+    );
 }
 
 /// Concurrent RPCs and an additional collection wait pursue opposite goals, so
@@ -3505,7 +3515,9 @@ async fn a_nonpositive_concurrency_keeps_one_ongoing_request() {
 
     options.set_tso_client_rpc_concurrency(-4);
     let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
-    owner.check(&options, Duration::ZERO, &cancellation, later).await;
+    owner
+        .check(&options, Duration::ZERO, &cancellation, later)
+        .await;
     assert_eq!(capacity.available_permits(), 1);
 }
 
@@ -3529,7 +3541,9 @@ async fn cancellation_abandons_a_pending_token_reduction() {
     options.set_tso_client_rpc_concurrency(1);
     cancellation.cancel();
     let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
-    owner.check(&options, Duration::ZERO, &cancellation, later).await;
+    owner
+        .check(&options, Duration::ZERO, &cancellation, later)
+        .await;
     drop(held);
     assert_eq!(
         capacity.available_permits(),

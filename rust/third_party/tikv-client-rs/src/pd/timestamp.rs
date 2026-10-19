@@ -495,9 +495,9 @@ impl RpcConcurrency {
     ) {
         let immediately_update = self.concurrency > 1 && !max_batch_wait.is_zero();
         if !immediately_update
-            && self
-                .last_check
-                .is_some_and(|last| now.duration_since(last) < DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL)
+            && self.last_check.is_some_and(|last| {
+                now.duration_since(last) < DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL
+            })
         {
             return;
         }
@@ -523,7 +523,8 @@ impl RpcConcurrency {
             effective
         };
         if new_token_count > self.token_count {
-            self.capacity.add_permits(new_token_count - self.token_count);
+            self.capacity
+                .add_permits(new_token_count - self.token_count);
             self.token_count = new_token_count;
         } else if new_token_count < self.token_count {
             let drain = (self.token_count - new_token_count) as u32;
