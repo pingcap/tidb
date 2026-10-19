@@ -34,7 +34,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "insufficient data points",
 			setup: func(s *SubtaskSummary) {
 				s.Progresses = []Progress{
-					{Bytes: 100, UpdateTime: time.Unix(1000, 0)},
+					{Processed: 100, UpdateTime: time.Unix(1000, 0)},
 				}
 			},
 			endTime:     time.Unix(1010, 0),
@@ -47,8 +47,8 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
 				s.Progresses = []Progress{
-					{Bytes: 0, UpdateTime: baseTime},
-					{Bytes: 100, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Processed: 0, UpdateTime: baseTime},
+					{Processed: 100, UpdateTime: baseTime.Add(1 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1010, 0),
@@ -61,10 +61,10 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
 				s.Progresses = []Progress{
-					{Bytes: 0, UpdateTime: baseTime},
-					{Bytes: 50, UpdateTime: baseTime.Add(1 * time.Second)},
-					{Bytes: 100, UpdateTime: baseTime.Add(2 * time.Second)},
-					{Bytes: 150, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Processed: 0, UpdateTime: baseTime},
+					{Processed: 50, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Processed: 100, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Processed: 150, UpdateTime: baseTime.Add(3 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1002, 500000000),
@@ -77,10 +77,10 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
 				s.Progresses = []Progress{
-					{Bytes: 0, UpdateTime: baseTime},
-					{Bytes: 30, UpdateTime: baseTime.Add(1 * time.Second)},
-					{Bytes: 60, UpdateTime: baseTime.Add(2 * time.Second)},
-					{Bytes: 90, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Processed: 0, UpdateTime: baseTime},
+					{Processed: 30, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Processed: 60, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Processed: 90, UpdateTime: baseTime.Add(3 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1004, 0),
@@ -93,11 +93,11 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
 				s.Progresses = []Progress{
-					{Bytes: 0, UpdateTime: baseTime},
-					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
-					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},
-					{Bytes: 180, UpdateTime: baseTime.Add(3 * time.Second)},
-					{Bytes: 240, UpdateTime: baseTime.Add(4 * time.Second)},
+					{Processed: 0, UpdateTime: baseTime},
+					{Processed: 60, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Processed: 120, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Processed: 180, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Processed: 240, UpdateTime: baseTime.Add(4 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1004, 500000000),
@@ -110,11 +110,11 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
 				s.Progresses = []Progress{
-					{Bytes: 0, UpdateTime: baseTime},
-					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
-					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},
-					{Bytes: 180, UpdateTime: baseTime.Add(3 * time.Second)},
-					{Bytes: 240, UpdateTime: baseTime.Add(4 * time.Second)},
+					{Processed: 0, UpdateTime: baseTime},
+					{Processed: 60, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Processed: 120, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Processed: 180, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Processed: 240, UpdateTime: baseTime.Add(4 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1004, 0),
@@ -127,11 +127,11 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1001, 0)
 				s.Progresses = []Progress{
-					{Bytes: 0, UpdateTime: baseTime},
-					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
-					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},
-					{Bytes: 180, UpdateTime: baseTime.Add(3 * time.Second)},
-					{Bytes: 240, UpdateTime: baseTime.Add(4 * time.Second)},
+					{Processed: 0, UpdateTime: baseTime},
+					{Processed: 60, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Processed: 120, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Processed: 180, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Processed: 240, UpdateTime: baseTime.Add(4 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1006, 500000000),

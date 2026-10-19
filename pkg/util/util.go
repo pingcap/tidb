@@ -194,7 +194,7 @@ func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int, displayDelete
 
 		b.WriteString(`\x`)
 		// turns non-printable-ASCII character into hex-string
-		b.WriteString(fmt.Sprintf("%02X", str[i]))
+		fmt.Fprintf(&b, "%02X", str[i])
 	}
 	return b.String()
 }

@@ -221,7 +221,7 @@ rm -rf $mysql_tester_log
 if [ "$runs_on_port" -eq 0 ]
 then
     ports=($(find_multiple_available_ports 4000 2))
-    port=${ports[0]}
+    port=6999
     status=${ports[1]}
 fi
 

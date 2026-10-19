@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -53,10 +54,13 @@ func TestTiDBOptOn(t *testing.T) {
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
 
+	require.Same(t, &vars.SQLKiller, vars.KVVars.KillSignalHandler)
 	require.Equal(t, vardef.DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, vardef.DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupConcurrency)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupJoinConcurrency)
+	require.False(t, vardef.DefTiDBEnableAdaptiveLimitScan)
+	require.False(t, vars.EnableAdaptiveLimitScan)
 	require.Equal(t, vardef.DefTiDBHashJoinConcurrency, vars.hashJoinConcurrency)
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
@@ -80,6 +84,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, vardef.DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, vardef.DefDMLBatchSize, vars.DMLBatchSize)
+	require.Equal(t, vardef.DefTiDBMLogPurgeBatchSize, vars.MLogPurgeBatchSize)
 	require.Equal(t, int64(vardef.DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, vardef.DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, vardef.DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -91,6 +96,8 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(vardef.DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, vardef.DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
+	require.Equal(t, vardef.DefTiDBEnableSharedLockUpgrade, vars.EnableSharedLockUpgrade)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -156,7 +163,7 @@ func TestVarsutil(t *testing.T) {
 		err          error
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
+		{"America/New_York", "America/New_York", true, 5 * time.Hour, nil},
 		// TODO: Check it out and reopen this case.
 		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
@@ -209,6 +216,11 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(vardef.TiDBBatchInsert, "1")
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
+
+	require.False(t, v.EnableAlternativeLogicalPlans)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAlternativeLogicalPlans, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableAlternativeLogicalPlans)
 
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
@@ -374,11 +386,16 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 5.0, v.GetConcurrencyFactor())
 
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "follower")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
-	require.NoError(t, err)
-	require.Equal(t, "follower", val)
-	require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+	} else {
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
+		require.NoError(t, err)
+		require.Equal(t, "follower", val)
+		require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
+	}
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
@@ -386,11 +403,16 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader", val)
 	require.Equal(t, kv.ReplicaReadLeader, v.replicaRead)
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader-and-follower")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
-	require.NoError(t, err)
-	require.Equal(t, "leader-and-follower", val)
-	require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+	} else {
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
+		require.NoError(t, err)
+		require.Equal(t, "leader-and-follower", val)
+		require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
+	}
 
 	for _, c := range []struct {
 		a string
@@ -531,6 +553,14 @@ func TestValidate(t *testing.T) {
 		{vardef.TiDBAllowFallbackToTiKV, "tikv", true},
 		{vardef.TiDBAllowFallbackToTiKV, "tidb", true},
 		{vardef.TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
+		{vardef.TiDBMLogPurgeMinRate, "0", true},
+		{vardef.TiDBMLogPurgeMinRate, "1", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "1.1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "-1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "0", false},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "1", false},
 	}
 
 	for _, tc := range testCases {
@@ -554,6 +584,14 @@ func TestValidate(t *testing.T) {
 		{vardef.TiDBIsolationReadEngines, "tikv", false},
 		{vardef.TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{vardef.TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{vardef.TiDBMLogPurgeMinRate, "0", true},
+		{vardef.TiDBMLogPurgeMinRate, "1", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "1.1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "-1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "0", false},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "1", false},
 	}
 
 	for _, tc := range testCases {

@@ -4,7 +4,7 @@ filter provides a library to filter replicate on schema/table by given rules
 
 ### Rules
 rules like replication rules in MySQL, ref document:
-hhttps://dev.mysql.com/doc/refman/8.0/en/replication-rules-db-options.html
+https://dev.mysql.com/doc/refman/8.0/en/replication-rules-db-options.html
 https://dev.mysql.com/doc/refman/8.0/en/replication-rules-table-options.html
 
 ####   Priority and Key Points

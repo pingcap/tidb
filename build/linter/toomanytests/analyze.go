@@ -64,6 +64,8 @@ func checkRule(pkg string) int {
 	switch pkg {
 	case "pkg/planner/core":
 		return 210
+	case "pkg/util/topsql/reporter":
+		return 90 // TopRU has generated_cases + multi-scenario tests
 	default:
 		return 50
 	}

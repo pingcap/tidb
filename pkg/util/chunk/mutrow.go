@@ -302,18 +302,36 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 	if d.IsNull() {
 		return
 	}
+	// For all fixed-size types, col.data may be zero-length when the column was
+	// originally null-allocated (a varlen column with empty buffer). Grow the
+	// buffer to the required size before writing.
 	switch d.Kind() {
 	case types.KindInt64, types.KindUint64, types.KindFloat64:
+		if len(col.data) < 8 {
+			col.data = make([]byte, 8)
+		}
 		binary.LittleEndian.PutUint64(mr.c.columns[colIdx].data, d.GetUint64())
 	case types.KindFloat32:
+		if len(col.data) < 4 {
+			col.data = make([]byte, 4)
+		}
 		binary.LittleEndian.PutUint32(mr.c.columns[colIdx].data, math.Float32bits(d.GetFloat32()))
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 		setMutRowBytes(col, d.GetBytes())
 	case types.KindMysqlTime:
+		if len(col.data) < sizeTime {
+			col.data = make([]byte, sizeTime)
+		}
 		*(*types.Time)(unsafe.Pointer(&col.data[0])) = d.GetMysqlTime()
 	case types.KindMysqlDuration:
+		if len(col.data) < 8 {
+			col.data = make([]byte, 8)
+		}
 		*(*int64)(unsafe.Pointer(&col.data[0])) = int64(d.GetMysqlDuration().Duration)
 	case types.KindMysqlDecimal:
+		if len(col.data) < types.MyDecimalStructSize {
+			col.data = make([]byte, types.MyDecimalStructSize)
+		}
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *d.GetMysqlDecimal()
 	case types.KindMysqlJSON:
 		setMutRowJSON(col, d.GetMysqlJSON())

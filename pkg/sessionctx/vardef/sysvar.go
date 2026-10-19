@@ -212,6 +212,8 @@ const (
 	LocalInFile = "local_infile"
 	// PerformanceSchema is the name for 'performance_schema' system variable.
 	PerformanceSchema = "performance_schema"
+	// PerformanceSchemaSessionConnectAttrsSize is the name for 'performance_schema_session_connect_attrs_size' system variable.
+	PerformanceSchemaSessionConnectAttrsSize = "performance_schema_session_connect_attrs_size"
 	// Flush is the name for 'flush' system variable.
 	Flush = "flush"
 	// SlaveAllowBatching is the name for 'slave_allow_batching' system variable.
@@ -306,6 +308,8 @@ const (
 	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
+	// TiDBMaxKeysRead is the name of the 'tidb_max_keys_read' system variable.
+	TiDBMaxKeysRead = "tidb_max_keys_read"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
 	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.

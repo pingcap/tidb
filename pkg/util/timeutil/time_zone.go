@@ -198,6 +198,26 @@ func Zone(loc *time.Location) (string, int64) {
 	return name, int64(offset)
 }
 
+// ZoneName return the zone name of the location. If the name is empty, it will
+// return the offset in format like "+08:00" or "-06:00".
+// Note: the input loc cannot be a Location constructed by time.FixedZone with
+// any name, otherwise the name will be returned directly, and might be
+// un-parsable by ParseTimeZone
+func ZoneName(loc *time.Location) string {
+	name, offset := Zone(loc)
+	if name != "" {
+		return name
+	}
+	sign := '+'
+	if offset < 0 {
+		sign = '-'
+		offset = -offset
+	}
+	hours := offset / int64(time.Hour/time.Second)
+	minutes := offset % int64(time.Hour/time.Second) / int64(time.Minute/time.Second)
+	return fmt.Sprintf("%c%02d:%02d", sign, hours, minutes)
+}
+
 // ConstructTimeZone constructs timezone by name first. When the timezone name
 // is set, the daylight saving problem must be considered. Otherwise the
 // timezone offset in seconds east of UTC is used to constructed the timezone.

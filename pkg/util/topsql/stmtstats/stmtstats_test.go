@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
+	"go.uber.org/atomic"
 )
 
 // String is only used for debugging.
@@ -203,6 +205,56 @@ func TestCreateStatementStats(t *testing.T) {
 	assert.True(t, stats.Finished())
 }
 
+func TestStatementStatsResetRUStateOnVersionChangePreservesStmtStats(t *testing.T) {
+	cases := []struct {
+		name           string
+		execCtxVersion rmclient.RUVersion
+		currentVersion rmclient.RUVersion
+		expectNilExec  bool
+	}{
+		{
+			name:           "clear old version exec context",
+			execCtxVersion: rmclient.RUVersionV1,
+			currentVersion: rmclient.RUVersionV2,
+			expectNilExec:  true,
+		},
+		{
+			name:           "keep current version exec context",
+			execCtxVersion: rmclient.RUVersionV2,
+			currentVersion: rmclient.RUVersionV2,
+			expectNilExec:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := &StatementStats{
+				data: StatementStatsMap{
+					newSQLPlanDigest([]byte("sql"), []byte("plan")): NewStatementStatsItem(),
+				},
+				finished: atomic.NewBool(false),
+				finishedRUBuffer: RUIncrementMap{
+					{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")}: &RUIncrement{TotalRU: 1},
+				},
+				execCtx: &ExecutionContext{
+					Key:       RUKey{User: "u1", SQLDigest: BinaryDigest("sql"), PlanDigest: BinaryDigest("plan")},
+					RUVersion: tc.execCtxVersion,
+				},
+			}
+
+			stats.ResetRUStateOnVersionChange(tc.currentVersion)
+
+			if tc.expectNilExec {
+				require.Nil(t, stats.execCtx)
+			} else {
+				require.NotNil(t, stats.execCtx)
+			}
+			require.Empty(t, stats.finishedRUBuffer)
+			require.Len(t, stats.Take(), 1)
+		})
+	}
+}
+
 // TestExecCounterAddExecCountTake verifies exec counter add exec count take and guards against regressions in begin-based RU accounting.
 func TestExecCounterAddExecCountTake(t *testing.T) {
 	stats := CreateStatementStats()
@@ -270,27 +322,41 @@ func TestNetworkBytesAccumulation(t *testing.T) {
 // TestOnExecutionBeginFinishRU verifies one begin/finish pair emits exactly
 // one RU key with the expected exec-count, RU total, and duration.
 func TestOnExecutionBeginFinishRU(t *testing.T) {
-	stats := CreateStatementStats()
-	stats.OnExecutionBegin([]byte("sql1"), []byte("plan1"), &ExecBeginInfo{
-		User:         "user1",
-		TopRUEnabled: true,
-	})
-	ru := util.NewRUDetailsWith(10.0, 20.0, time.Millisecond)
-	stats.OnExecutionFinished([]byte("sql1"), []byte("plan1"), &ExecFinishInfo{
-		User:         "user1",
-		TopRUEnabled: true,
-		RUDetails:    ru,
-		ExecDuration: time.Second,
-	})
+	for _, tc := range []struct {
+		name       string
+		version    rmclient.RUVersion
+		expectedRU float64
+	}{
+		{"v1", rmclient.RUVersionV1, 30},
+		{"v2", rmclient.RUVersionV2, 42},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := CreateStatementStats()
+			t.Cleanup(stats.SetFinished)
+			stats.OnExecutionBegin([]byte("sql1"), []byte("plan1"), &ExecBeginInfo{
+				User:         "user1",
+				TopRUEnabled: true,
+				RUVersion:    tc.version,
+			})
+			ru := util.NewRUDetailsWith(10.0, 20.0, time.Millisecond)
+			stats.OnExecutionFinished([]byte("sql1"), []byte("plan1"), &ExecFinishInfo{
+				User:         "user1",
+				TopRUEnabled: true,
+				RUDetails:    ru,
+				TotalRUV2:    42,
+				ExecDuration: time.Second,
+			})
 
-	m := stats.MergeRUInto()
-	require.Len(t, m, 1)
-	key := RUKey{User: "user1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
-	incr, ok := m[key]
-	require.True(t, ok)
-	require.Equal(t, uint64(1), incr.ExecCount)
-	require.Equal(t, 30.0, incr.TotalRU)
-	require.Equal(t, uint64(time.Second.Nanoseconds()), incr.ExecDuration)
+			m := stats.MergeRUInto()
+			require.Len(t, m, 1)
+			key := RUKey{User: "user1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+			incr, ok := m[key]
+			require.True(t, ok)
+			require.Equal(t, uint64(1), incr.ExecCount)
+			require.Equal(t, tc.expectedRU, incr.TotalRU)
+			require.Equal(t, uint64(time.Second.Nanoseconds()), incr.ExecDuration)
+		})
+	}
 }
 
 // TestMergeRUIntoInFlightSamplingAndFinishDedup verifies tick sampling plus

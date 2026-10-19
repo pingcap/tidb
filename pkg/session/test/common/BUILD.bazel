@@ -6,9 +6,10 @@ go_test(
     srcs = [
         "common_test.go",
         "main_test.go",
+        "prepare_dedup_cache_test.go",
     ],
     flaky = True,
-    shard_count = 7,
+    shard_count = 12,
     deps = [
         "//pkg/config",
         "//pkg/expression",

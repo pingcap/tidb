@@ -1,11 +1,11 @@
 name: Bazel Lint Crossbuild
 on:
-  push:
-    branches:
-      - master
   pull_request:
     branches:
       - master
+
+permissions:
+  contents: read
 
 jobs:
   master:
@@ -17,7 +17,9 @@ jobs:
           - macos
           - ubuntu
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
       - name: Build Prepare
         uses: ./.github/actions/tidb_build
         with:

@@ -710,19 +710,21 @@ type DBNameExtractor struct {
 	DBs map[string]struct{}
 }
 
+var _ ast.InPlaceVisitor = (*DBNameExtractor)(nil)
+
 // Enter is called when entering a node in the AST.
 // It extracts the database name from TableName AST node and saving it in DBs map.
-func (e *DBNameExtractor) Enter(n ast.Node) (ast.Node, bool) {
+func (e *DBNameExtractor) Enter(n ast.Node) bool {
 	if table, ok := n.(*ast.TableName); ok {
 		if e.DBs == nil {
 			e.DBs = make(map[string]struct{})
 		}
 		e.DBs[table.Schema.L] = struct{}{}
 	}
-	return n, false
+	return false
 }
 
 // Leave is called when leaving a node in the AST.
-func (*DBNameExtractor) Leave(n ast.Node) (ast.Node, bool) {
-	return n, true
+func (*DBNameExtractor) Leave(ast.Node) bool {
+	return true
 }

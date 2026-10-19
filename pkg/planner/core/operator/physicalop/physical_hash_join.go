@@ -303,7 +303,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			if i != 0 {
 				buffer.WriteString(", ")
 			}
-			buffer.WriteString(runtimeFilter.ExplainInfo(true))
+			buffer.WriteString(runtimeFilter.ExplainInfo(true, evalCtx))
 		}
 	}
 	return buffer.String()
@@ -562,6 +562,8 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
 	case base.RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	case base.FullOuterJoin:
+		pbJoinType = tipb.JoinType_TypeFullOuterJoin
 	case base.SemiJoin:
 		pbJoinType = tipb.JoinType_TypeSemiJoin
 	case base.AntiSemiJoin:
@@ -613,6 +615,7 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 		Children:                []*tipb.Executor{lChildren, rChildren},
 		IsNullAwareSemiJoin:     &isNullAwareSemiJoin,
 		RuntimeFilterList:       rfListPB,
+		IsNullEq:                p.IsNullEQ,
 	}
 
 	executorID := p.ExplainID().String()

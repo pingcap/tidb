@@ -2,7 +2,8 @@
   {
     "name": "TestSchemaCannotFindColumnRegression",
     "cases": [
-      "SELECT /* issue:66272 */ id AS t0_id FROM t1 JOIN t3 USING (id) WHERE (((t3.right_v = 749) AND (t3.id = 10)) AND (t1.left_v = 93)) AND (t3.right_v = ALL (SELECT t3.right_v AS c0 FROM t3 WHERE t3.right_v = 749))"
+      "SELECT /* issue:66272 */ id AS t0_id FROM t1 JOIN t3 USING (id) WHERE (((t3.right_v = 749) AND (t3.id = 10)) AND (t1.left_v = 93)) AND (t3.right_v = ALL (SELECT t3.right_v AS c0 FROM t3 WHERE t3.right_v = 749))",
+      "SELECT /* issue:65892 */ v_issue65892_lookup.c1, v_issue65892_topn.c1 FROM v_issue65892_lookup JOIN v_issue65892_topn ON v_issue65892_lookup.c0 = v_issue65892_topn.c0 WHERE v_issue65892_lookup.c1 > 44 AND v_issue65892_lookup.c1 < 76 AND v_issue65892_topn.c1 > 44 AND v_issue65892_topn.c1 < 76"
     ]
   }
 ]

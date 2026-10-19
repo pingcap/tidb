@@ -21,6 +21,7 @@ import (
 	"runtime"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/israce"
@@ -65,6 +66,9 @@ func PrintTiDBInfo() {
 	}
 	if componentVersion != "" {
 		fields = append(fields, zap.String("TiDB Component Version", componentVersion))
+	}
+	if kerneltype.IsNextGen() {
+		fields = append(fields, zap.Stringer("Deploy Mode", deploymode.Get()))
 	}
 	fields = append(fields, zap.String("Kernel Type", kerneltype.Name()))
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {

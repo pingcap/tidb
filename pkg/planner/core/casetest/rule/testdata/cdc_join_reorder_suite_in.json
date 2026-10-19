@@ -255,5 +255,54 @@
       "explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub inner join t4 on sub.id=t4.id",
       "explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from (select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1 inner join t4 on sub1.id=t4.id) sub2 inner join t5 on sub2.id=t5.id"
     ]
+  },
+  {
+    "name": "TestDPJoinReorder",
+    "cases": [
+      // =============================================
+      // Group 1: Inner joins - DP enumeration basics
+      // =============================================
+
+      // 2-table inner join: simplest nontrivial DP case.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a ORDER BY t1.a",
+      // 3-table chain: t1-t2-t3.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // 4-table chain: t1-t2-t3-t4.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a ORDER BY t1.a",
+      // 5-table chain: exercises all subset sizes up to 5.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t3.a = t4.a JOIN t5 ON t4.a = t5.a ORDER BY t1.a",
+      // Star join: t2 as hub connected to t1, t3, t4.
+      "SELECT * FROM t2 JOIN t1 ON t2.a = t1.a JOIN t3 ON t2.a = t3.a JOIN t4 ON t2.a = t4.a ORDER BY t2.a",
+
+      // =============================================
+      // Group 2: Inner joins with multi-column predicates
+      // =============================================
+
+      // Multi-condition inner join.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a AND t1.b < t2.b JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // Mixed join columns (a and b).
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.b = t3.b ORDER BY t1.a",
+
+      // =============================================
+      // Group 3: Cartesian product fallback
+      // =============================================
+
+      // All-inner group with disconnected components: DP should attempt Cartesian fallback.
+      "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a JOIN t3 ON t3.b > 0 ORDER BY t1.a, t3.a",
+      // 4-table disconnected components with cartesian penalty disabled:
+      // DP should still finish each EQ-connected subset and stitch the final cartesian join as a bushy tree.
+      "SELECT /*+ set_var(tidb_opt_cartesian_join_order_threshold=0) */ * FROM (t1 JOIN t2 ON t1.a = t2.a), (t3 JOIN t4 ON t3.a = t4.a) ORDER BY t1.a, t3.a",
+
+      // =============================================
+      // Group 4: Mixed outer joins with DP
+      // =============================================
+
+      // LEFT JOIN + INNER: allInnerJoin=false, DP processes non-inner edges via ConflictDetector.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t1.a",
+      // RIGHT JOIN + INNER: similar non-inner edge handling.
+      "SELECT * FROM t1 RIGHT JOIN t2 ON t1.a = t2.a JOIN t3 ON t2.a = t3.a ORDER BY t2.a",
+      // 4-table LEFT + INNER + LEFT chain.
+      "SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a JOIN t3 ON t1.a = t3.a LEFT JOIN t4 ON t3.a = t4.a ORDER BY t1.a"
+    ]
   }
 ]

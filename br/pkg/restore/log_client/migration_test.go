@@ -446,6 +446,107 @@ func TestFilterOut(t *testing.T) {
 	}
 }
 
+func TestRetainLatestMVCCCompactionCoverage(t *testing.T) {
+	comment := func(from, until, shardIndex, shardTotal, minimalCompactionSize uint64, calculateShiftTS bool) string {
+		shard := `,"shard":null`
+		if shardTotal > 1 {
+			shard = fmt.Sprintf(`,"shard":{"index":%d,"total":%d}`, shardIndex, shardTotal)
+		}
+		return fmt.Sprintf(
+			`{"config":{"from-ts":%d,"until-ts":%d,"cal-shift-ts":%t,"minimal-compaction-size":%d%s}}`,
+			from,
+			until,
+			calculateShiftTS,
+			minimalCompactionSize,
+			shard,
+		)
+	}
+	compaction := func(from, until, shardIndex, shardTotal, minimalCompactionSize uint64, calculateShiftTS bool) *backuppb.LogFileCompaction {
+		return &backuppb.LogFileCompaction{
+			CompactionFromTs:  from,
+			CompactionUntilTs: until,
+			Comments:          comment(from, until, shardIndex, shardTotal, minimalCompactionSize, calculateShiftTS),
+		}
+	}
+	makeMig := func(cs ...*backuppb.LogFileCompaction) *backuppb.Migration {
+		return &backuppb.Migration{Compactions: cs}
+	}
+
+	cases := []struct {
+		name    string
+		migs    []*backuppb.Migration
+		wantErr bool
+	}{
+		{
+			name: "unsharded complete",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 1, 0, true)),
+			),
+		},
+		{
+			name: "sharded complete",
+			migs: pack(
+				makeMig(
+					compaction(100, 200, 1, 2, 0, true),
+					compaction(100, 200, 2, 2, 0, true),
+				),
+			),
+		},
+		{
+			name: "segmented complete",
+			migs: pack(
+				makeMig(compaction(100, 150, 1, 1, 0, true)),
+				makeMig(
+					compaction(150, 200, 1, 2, 0, true),
+					compaction(150, 200, 2, 2, 0, true),
+				),
+			),
+		},
+		{
+			name: "ts gap",
+			migs: pack(
+				makeMig(compaction(100, 150, 1, 1, 0, true)),
+				makeMig(compaction(151, 200, 1, 1, 0, true)),
+			),
+			wantErr: true,
+		},
+		{
+			name: "incomplete shard",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 2, 0, true)),
+			),
+			wantErr: true,
+		},
+		{
+			name: "minimal compaction size is not zero",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 1, 1, true)),
+			),
+			wantErr: true,
+		},
+		{
+			name: "cal shift ts is not enabled",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 1, 0, false)),
+			),
+			wantErr: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			builder := logclient.NewMigrationBuilder(100, 100, 200)
+			err := builder.ValidateRetainLatestMVCCCompactionCoverage(c.migs)
+			if c.wantErr {
+				require.Error(t, err)
+				require.ErrorContains(t, err, "retain-latest-mvcc-version")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 type efOP func(*backuppb.IngestedSSTs)
 
 func extFullBkup(ops ...efOP) *backuppb.IngestedSSTs {

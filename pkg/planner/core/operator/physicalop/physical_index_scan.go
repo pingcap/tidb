@@ -361,7 +361,9 @@ func (p *PhysicalIndexScan) GetScanRowSize() float64 {
 //	PhysicalIndexScan.IdxCols       []*expression.Column
 //	PhysicalIndexScan.Columns       []*model.ColumnInfo
 func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(p.IdxCols), len(p.Index.Columns)+1)
+	// IdxCols may exceed the declared index columns when handle columns were appended
+	// (one for an int handle, possibly several for a common handle).
+	indexCols := make([]*expression.Column, len(p.IdxCols), max(len(p.IdxCols), len(p.Index.Columns))+1)
 	copy(indexCols, p.IdxCols)
 
 	for i := len(p.IdxCols); i < len(p.Index.Columns); i++ {
@@ -378,16 +380,27 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	}
 	p.NeedCommonHandle = p.Table.IsCommonHandle
 
-	if p.NeedCommonHandle {
+	// fillIndexPath may have appended the full common-handle suffix to IdxCols for
+	// non-unique indexes, in which case indexCols already ends with the handle columns
+	// and appending idxExprCols' handle segment would duplicate them. Otherwise append
+	// the segment verbatim — it must stay complete even when a handle column repeats a
+	// declared index column, because the executor addresses the handle at the offsets
+	// right after the declared index columns (see buildIndexScanOutputOffsets).
+	if p.NeedCommonHandle && len(p.IdxCols) <= len(p.Index.Columns) {
 		for i := len(p.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
 		}
 	}
 	setHandle := len(indexCols) > len(p.Index.Columns)
 	if !setHandle {
-		for i, col := range p.Columns {
+		for _, col := range p.Columns {
 			if (mysql.HasPriKeyFlag(col.GetFlag()) && p.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				indexCols = append(indexCols, p.DataSourceSchema.Columns[i])
+				handleCol := expression.ColInfo2Col(p.DataSourceSchema.Columns, col)
+				intest.Assert(handleCol != nil, "handle column %d should exist in DataSourceSchema", col.ID)
+				if handleCol == nil {
+					continue
+				}
+				indexCols = append(indexCols, handleCol)
 				setHandle = true
 				break
 			}
@@ -543,11 +556,12 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())
 	tableColumns := p.Table.Cols()
 	for _, col := range p.Schema().Columns {
-		if col.ID == model.ExtraHandleID {
+		switch col.ID {
+		case model.ExtraHandleID:
 			columns = append(columns, model.NewExtraHandleColInfo())
-		} else if col.ID == model.ExtraPhysTblID {
+		case model.ExtraPhysTblID:
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
-		} else {
+		default:
 			columns = append(columns, model.FindColumnInfoByID(tableColumns, col.ID))
 		}
 	}
@@ -558,7 +572,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+		Columns:          pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false /* Doesn't support IndexScan on TiFlash for now */),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIDs,
 	}
@@ -698,8 +712,6 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 
 // ConvertToPartialIndexScan converts a DataSource to a PhysicalIndexScan for IndexMerge.
 func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
-	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
-		"partial paths of index merge path should not match property using merge sort")
 	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -709,8 +721,13 @@ func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 			is.Columns = tmpColumns
 			is.SetSchema(tmpSchema)
 		}
-		// Add sort items for index scan for merge-sort operation between partitions.
+		// Add sort items for index scan for merge-sort operation between partitions or range groups.
 		is.ByItems = byItems
+		// Copy GroupedRanges for merge sort within this partial path (for IN conditions).
+		if len(path.GroupedRanges) > 0 {
+			is.GroupedRanges = path.GroupedRanges
+			is.GroupByColIdxs = path.GroupByColIdxs
+		}
 	}
 
 	// Add a `Selection` for `IndexScan` with global index.

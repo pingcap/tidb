@@ -22,6 +22,7 @@ check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 LOG_FILE1="$TEST_DIR/lightning-duplicate-resolution1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-resolution2.log"
+WAIT_LIGHTNING_START_SECONDS=30
 
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
 export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckDupe=return(10)"
@@ -29,7 +30,7 @@ run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_res
   --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "$CUR/config1.toml" &
 
 counter=0
-while [ $counter -lt 10 ]; do
+while [ $counter -lt $WAIT_LIGHTNING_START_SECONDS ]; do
     if grep -Fq "start to sleep several seconds before checking other dupe" "$LOG_FILE1"; then
         echo "lightning 1 already starts waiting for dupe"
         break
@@ -39,7 +40,7 @@ while [ $counter -lt 10 ]; do
     sleep 1
 done
 
-if [ $counter -ge 10 ]; then
+if [ $counter -ge $WAIT_LIGHTNING_START_SECONDS ]; then
   echo "fail to wait for lightning 1 starts"
   exit 1
 fi

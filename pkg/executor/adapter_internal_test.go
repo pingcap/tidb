@@ -16,23 +16,75 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/opt"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 type stmtStatsTestContext struct {
 	*mock.Context
 	stmtStats *stmtstats.StatementStats
+}
+
+type maxExecutionTimeTestContext struct {
+	*mock.Context
+	processInfo *sessmgr.ProcessInfo
+}
+
+func (c *maxExecutionTimeTestContext) ShowProcess() *sessmgr.ProcessInfo {
+	return c.processInfo
+}
+
+type sharedLockMemBufferForTest struct {
+	kv.MemBuffer
+	getLocal func(key []byte) ([]byte, error)
+	rLocks   int
+	rUnlocks int
+}
+
+func (m *sharedLockMemBufferForTest) GetLocal(_ context.Context, key []byte) ([]byte, error) {
+	return m.getLocal(key)
+}
+
+func (m *sharedLockMemBufferForTest) RLock() {
+	m.rLocks++
+}
+
+func (m *sharedLockMemBufferForTest) RUnlock() {
+	m.rUnlocks++
+}
+
+type sharedLockTxnForTest struct {
+	kv.Transaction
+	memBuffer kv.MemBuffer
+}
+
+func (t *sharedLockTxnForTest) GetMemBuffer() kv.MemBuffer {
+	return t.memBuffer
 }
 
 func (c *stmtStatsTestContext) GetStmtStats() *stmtstats.StatementStats {
@@ -78,6 +130,48 @@ func newExecStmtWithStmtStatsForTest(goCtx context.Context, t *testing.T) (*Exec
 	}, stats
 }
 
+func newFinishedRecordSetForTest() *recordSet {
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	return &recordSet{
+		schema: expression.NewSchema(&expression.Column{RetType: ft}),
+		stmt:   &ExecStmt{Ctx: mock.NewContext()},
+	}
+}
+
+func TestRecordSetNewChunkAfterFinish(t *testing.T) {
+	rs := newFinishedRecordSetForTest()
+
+	req := rs.NewChunk(nil)
+	require.NotNil(t, req)
+	require.Equal(t, 1, req.NumCols())
+
+	req = rs.NewChunk(chunk.NewAllocator())
+	require.NotNil(t, req)
+	require.Equal(t, 1, req.NumCols())
+}
+
+func TestRecordSetNextAfterFinish(t *testing.T) {
+	rs := newFinishedRecordSetForTest()
+
+	err := rs.Next(context.Background(), chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1))
+	require.Error(t, err)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+func TestCheckMaxExecutionTimeExceededPreservesPendingKillReason(t *testing.T) {
+	sctx := &maxExecutionTimeTestContext{
+		Context: mock.NewContext(),
+		processInfo: &sessmgr.ProcessInfo{
+			Time:             time.Now().Add(-time.Hour),
+			MaxExecutionTime: 1,
+		},
+	}
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	err := checkMaxExecutionTimeExceeded(sctx)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
 func ruKeyForStmt(t *testing.T, stmt *ExecStmt) stmtstats.RUKey {
 	t.Helper()
 
@@ -91,7 +185,93 @@ func ruKeyForStmt(t *testing.T, stmt *ExecStmt) stmtstats.RUKey {
 	}
 }
 
-// TestObserveStmtBeginOnTopProfiling verifies observe stmt begin on top profiling and guards against regressions in begin-based RU accounting.
+func TestMoveWrittenSharedLockKeysToExclusive(t *testing.T) {
+	injectedErr := errors.New("injected get local error")
+
+	tests := []struct {
+		name              string
+		exclusiveKeys     []kv.Key
+		sharedKeys        []kv.Key
+		writtenKeys       map[string]struct{}
+		getLocalErrors    map[string]error
+		wantExclusiveKeys []kv.Key
+		wantSharedKeys    []kv.Key
+		wantErr           error
+	}{
+		{
+			name:              "no shared keys",
+			exclusiveKeys:     []kv.Key{kv.Key("exclusive")},
+			wantExclusiveKeys: []kv.Key{kv.Key("exclusive")},
+		},
+		{
+			name:          "deduplicate exclusive and promote written keys",
+			exclusiveKeys: []kv.Key{kv.Key("exclusive")},
+			sharedKeys: []kv.Key{
+				kv.Key("exclusive"),
+				kv.Key("written"),
+				kv.Key("shared"),
+			},
+			writtenKeys: map[string]struct{}{
+				"written": {},
+			},
+			wantExclusiveKeys: []kv.Key{kv.Key("exclusive"), kv.Key("written")},
+			wantSharedKeys:    []kv.Key{kv.Key("shared")},
+		},
+		{
+			name: "propagate get local error",
+			sharedKeys: []kv.Key{
+				kv.Key("bad"),
+			},
+			getLocalErrors: map[string]error{
+				"bad": injectedErr,
+			},
+			wantErr: injectedErr,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			memBuffer := &sharedLockMemBufferForTest{
+				getLocal: func(key []byte) ([]byte, error) {
+					if err, ok := tt.getLocalErrors[string(key)]; ok {
+						return nil, err
+					}
+					if _, ok := tt.writtenKeys[string(key)]; ok {
+						return []byte("value"), nil
+					}
+					return nil, kv.ErrNotExist
+				},
+			}
+			txn := &sharedLockTxnForTest{memBuffer: memBuffer}
+
+			exclusiveKeys, sharedKeys, err := moveWrittenSharedLockKeysToExclusive(
+				context.Background(),
+				txn,
+				tt.exclusiveKeys,
+				tt.sharedKeys,
+			)
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				require.Nil(t, exclusiveKeys)
+				require.Nil(t, sharedKeys)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.wantExclusiveKeys, exclusiveKeys)
+				require.Equal(t, tt.wantSharedKeys, sharedKeys)
+			}
+			if len(tt.sharedKeys) > 0 {
+				require.Equal(t, 1, memBuffer.rLocks)
+				require.Equal(t, 1, memBuffer.rUnlocks)
+			} else {
+				require.Zero(t, memBuffer.rLocks)
+				require.Zero(t, memBuffer.rUnlocks)
+			}
+		})
+	}
+}
+
+// TestObserveStmtBeginOnTopProfiling verifies SQL and plan registration on profiling begin.
 func TestObserveStmtBeginOnTopProfiling(t *testing.T) {
 	topsqlstate.DisableTopSQL()
 	for topsqlstate.TopRUEnabled() {
@@ -227,9 +407,9 @@ func TestObserveStmtFinishedOnTopProfilingKeeps(t *testing.T) {
 	}
 }
 
-// TestObserveStmtFinishedOnTopProfilingIgnores verifies unexpected RUDetails context
-// types do not panic and keep begin-based RU accounting stable.
-// Flow: begin(topRU-on, bad RUDetails type) -> finish -> no panic -> begin-based RU stays stable
+// TestObserveStmtFinishedOnTopProfilingIgnores verifies unexpected RUDetails
+// context types do not panic and keep TopRU sampling stable.
+// Flow: begin(topRU-on, bad RUDetails type) -> finish -> no panic -> zero RU delta
 func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopRU()
@@ -250,3 +430,64 @@ func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 	require.Equal(t, uint64(1), incr.ExecCount)
 	require.InDelta(t, 0.0, incr.TotalRU, 1e-9)
 }
+
+func TestRUDetailsForStatementLogPreservesUnfinalizedRU(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
+	stmt := &ExecStmt{Ctx: ctx}
+	ruDetails := util.NewRUDetailsWith(11, 7, 20*time.Millisecond)
+
+	unfinalized := stmt.ruDetailsForStatementLog(ruDetails, nil)
+	require.Same(t, ruDetails, unfinalized)
+	require.Equal(t, 11.0, unfinalized.RRU())
+	require.Equal(t, 7.0, unfinalized.WRU())
+
+	finalizedZero := stmt.ruDetailsForStatementLog(ruDetails, []float64{0})
+	require.NotSame(t, ruDetails, finalizedZero)
+	require.Zero(t, finalizedZero.RRU())
+	require.Zero(t, finalizedZero.WRU())
+	require.Equal(t, 20*time.Millisecond, finalizedZero.RUWaitDuration())
+}
+
+type mockResourceGroupProvider struct {
+	rmclient.ResourceGroupProvider
+	config *rmclient.Config
+}
+
+func newMockResourceGroupProvider(t *testing.T, config *rmclient.Config) *mockResourceGroupProvider {
+	t.Helper()
+	baseProvider, ok := infosync.NewMockResourceManagerClient(1).(rmclient.ResourceGroupProvider)
+	require.True(t, ok)
+	return &mockResourceGroupProvider{
+		ResourceGroupProvider: baseProvider,
+		config:                config,
+	}
+}
+
+func newMockDomainWithRUVersion(t *testing.T, version rmclient.RUVersion) *domain.Domain {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cfg := rmclient.DefaultConfig()
+	cfg.RUVersionPolicy = &rmclient.RUVersionPolicy{Default: version}
+	provider := newMockResourceGroupProvider(t, cfg)
+	controller, err := rmclient.NewResourceGroupController(ctx, 1, provider, nil, 1)
+	require.NoError(t, err)
+
+	do := domain.NewMockDomain()
+	do.SetResourceGroupsController(controller)
+	return do
+}
+
+func (m *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	value, err := json.Marshal(m.config)
+	if err != nil {
+		return nil, err
+	}
+	return &meta_storagepb.GetResponse{
+		Kvs: []*meta_storagepb.KeyValue{{Value: value}},
+	}, nil
+}
+
+var _ rmclient.ResourceGroupProvider = (*mockResourceGroupProvider)(nil)

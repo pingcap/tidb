@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -152,7 +153,8 @@ type pitrCollector struct {
 	enabled bool
 	// restoreUUID is the identity of this restoration.
 	// This will be kept among restarting from checkpoints.
-	restoreUUID uuid.UUID
+	restoreUUID      uuid.UUID
+	operationContext operation.Context
 	// maxCopyConcurrency is the maximum number of concurrent copy operations.
 	maxCopyConcurrency int
 
@@ -415,7 +417,7 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 		return nil
 	}
 
-	est := stream.MigrationExtension(c.taskStorage)
+	est := stream.MigrationExtension(c.taskStorage).WithOperationContext(c.operationContext)
 
 	m := stream.NewMigration()
 	m.IngestedSstPaths = append(m.IngestedSstPaths, c.metaPath())
@@ -476,9 +478,10 @@ func (c *pitrCollector) resetCommitting() {
 
 // PiTRCollDep is the dependencies of a PiTR collector.
 type PiTRCollDep struct {
-	PDCli   pd.Client
-	EtcdCli *clientv3.Client
-	Storage *pb.StorageBackend
+	PDCli            pd.Client
+	EtcdCli          *clientv3.Client
+	Storage          *pb.StorageBackend
+	OperationContext operation.Context
 
 	maxCopyConcurrency int
 }
@@ -514,6 +517,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 
 	coll := &pitrCollector{
 		enabled:            true,
+		operationContext:   deps.OperationContext,
 		maxCopyConcurrency: deps.maxCopyConcurrency,
 	}
 

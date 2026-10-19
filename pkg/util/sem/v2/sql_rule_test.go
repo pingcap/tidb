@@ -53,7 +53,7 @@ func TestSQLRules(t *testing.T) {
 		{
 			rule:     ImportWithExternalIDRule,
 			stmt:     "IMPORT INTO xxxx FROM 's3://xxx/xxx?external-id=xxx'",
-			expected: true,
+			expected: false,
 		},
 		{
 			rule:     SelectIntoFileRule,

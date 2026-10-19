@@ -16,10 +16,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// SplitFileThresholdDefault is the minimum file size considered for per-batch
+// split accumulation. Small files are excluded to avoid excessive split/scatter
+// calls and to protect BTreeMap performance.
+const SplitFileThresholdDefault = 1024 * 1024 // 1 MB
+
 type LogSplitStrategy struct {
 	*split.BaseSplitStrategy
 	checkpointSkipMap        *LogFilesSkipMap
 	checkpointFileProgressFn func(uint64, uint64)
+	splitFileThreshold       uint64
 
 	lastMemUsageUpdate time.Time
 }
@@ -32,6 +38,7 @@ func NewLogSplitStrategy(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
+	splitFileThreshold uint64,
 ) (*LogSplitStrategy, error) {
 	downstreamIdset := make(map[int64]struct{})
 	for _, rule := range rules {
@@ -61,33 +68,31 @@ func NewLogSplitStrategy(
 		BaseSplitStrategy:        split.NewBaseSplitStrategy(rules),
 		checkpointSkipMap:        skipMap,
 		checkpointFileProgressFn: updateStatsFn,
+		splitFileThreshold:       splitFileThreshold,
 	}, nil
 }
 
-const splitFileThreshold = 1024 * 1024 // 1 MB
-
 func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
-	// skip accumulate file less than 1MB. to prevent too much split & scatter occurs
-	// and protect the performance of BTreeMap
-	if file.Length > splitFileThreshold {
-		ls.AccumulateCount += 1
-		splitHelper, exist := ls.TableSplitter[file.TableId]
-		if !exist {
-			splitHelper = split.NewSplitHelper()
-			ls.TableSplitter[file.TableId] = splitHelper
-		}
-
-		splitHelper.Merge(split.Valued{
-			Key: split.Span{
-				StartKey: file.StartKey,
-				EndKey:   file.EndKey,
-			},
-			Value: split.Value{
-				Size:   file.Length,
-				Number: file.NumberOfEntries,
-			},
-		})
+	if file.Length <= ls.splitFileThreshold {
+		return
 	}
+	ls.AccumulateCount += 1
+	splitHelper, exist := ls.TableSplitter[file.TableId]
+	if !exist {
+		splitHelper = split.NewSplitHelper()
+		ls.TableSplitter[file.TableId] = splitHelper
+	}
+
+	splitHelper.Merge(split.Valued{
+		Key: split.Span{
+			StartKey: file.StartKey,
+			EndKey:   file.EndKey,
+		},
+		Value: split.Value{
+			Size:   file.Length,
+			Number: file.NumberOfEntries,
+		},
+	})
 
 	ls.maybeUpdateMemUsage()
 }

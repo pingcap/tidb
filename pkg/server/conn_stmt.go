@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -207,7 +208,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		err = stmt.CheckLongDataSize()
+		if err == nil {
+			err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		}
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {
@@ -229,16 +233,9 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []param.BinaryParam, useCursor bool) (err error) {
+	// Binary execution bypasses Parse and ExecutePreparedStmt, including their timing resets.
+	cc.ctx.GetSessionVars().DurationParse = 0
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
-
-	fn := func() bool {
-		if cc.bufReadConn != nil {
-			return cc.bufReadConn.IsAlive() != 0
-		}
-		return true
-	}
-	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
-	defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 
 	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
@@ -289,6 +286,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 
 	// first, try to clear the left cursor if there is one
 	if useCursor && stmt.GetCursorActive() {
+		resultset.ReportCursorRUV2Delta(stmt.GetResultSet())
 		if stmt.GetResultSet() != nil && stmt.GetResultSet().GetRowIterator() != nil {
 			stmt.GetResultSet().GetRowIterator().Close()
 		}
@@ -316,7 +314,15 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		sql = planCacheStmt.StmtText
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
+	clearConnectionAlive := func() {}
+	if shouldInstallConnectionAlive(execStmt, vars) {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
+	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
+	if rs == nil || err != nil {
+		clearConnectionAlive()
+	}
 	var lazy bool
 	if rs != nil {
 		defer func() {
@@ -440,6 +446,7 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 		}
 	}()
 	crs := resultset.WrapWithRowContainerCursor(rs, reader)
+	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	if cl, ok := crs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
@@ -460,8 +467,15 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 
 	vars := (&cc.ctx).GetSessionVars()
 	crs := resultset.WrapWithLazyCursor(drs, vars.InitChunkSize, vars.MaxChunkSize)
+	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return true, err
+}
+
+func (*clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
+	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+	return resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
 }
 
 // writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between

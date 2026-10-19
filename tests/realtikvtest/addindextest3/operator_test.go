@@ -54,6 +54,7 @@ func init() {
 }
 
 func getRealAddIndexJob(t *testing.T, tk *testkit.TestKit) *model.Job {
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int);")
 	var realJob *model.Job

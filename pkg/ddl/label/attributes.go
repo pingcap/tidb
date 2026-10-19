@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	pd "github.com/tikv/pd/client/http"
 )
 
 const (
+	keyspaceKey  = "keyspace"
 	dbKey        = "db"
 	tableKey     = "table"
 	partitionKey = "partition"
@@ -99,19 +101,25 @@ func NewLabels(attrs []string) ([]pd.RegionLabel, error) {
 // RestoreRegionLabels converts Attributes to a string.
 func RestoreRegionLabels(labels *[]pd.RegionLabel) string {
 	var sb strings.Builder
-	for i, label := range *labels {
+	written := 0
+	for _, label := range *labels {
 		switch label.Key {
 		case dbKey, tableKey, partitionKey:
 			continue
+		case keyspaceKey:
+			if kerneltype.IsNextGen() {
+				continue
+			}
 		default:
 		}
 
-		if i > 0 {
+		if written > 0 {
 			sb.WriteByte(',')
 		}
 		sb.WriteByte('"')
 		sb.WriteString(RestoreRegionLabel(&label))
 		sb.WriteByte('"')
+		written++
 	}
 	return sb.String()
 }

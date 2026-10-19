@@ -52,11 +52,15 @@ func TestExplainAnalyzeMemory(t *testing.T) {
 	checkMemoryInfo(t, tk, "explain analyze select k from t use index(k)")
 	checkMemoryInfo(t, tk, "explain analyze select * from t use index(k)")
 	checkMemoryInfo(t, tk, "explain analyze select v+k from t")
+	for _, pipelined := range []string{"0", "1"} {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=" + pipelined)
+		checkMemoryInfo(t, tk, "explain analyze select sum(v) over () from t")
+	}
 }
 
 func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
-	memCol := 6
-	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg"}
+	memCol := 7
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg", "Window"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
@@ -77,6 +81,9 @@ func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 
 		if shouldHasMem {
 			require.NotEqual(t, "N/A", strs[memCol])
+			if strings.Contains(strs[0], "Window") {
+				require.NotEqual(t, "0 Bytes", strs[memCol])
+			}
 		} else {
 			require.Equal(t, "N/A", strs[memCol])
 		}
@@ -114,6 +121,13 @@ func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
 	}
 	for _, sql := range SQLs {
 		tk.MustQuery(sql)
+		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
+		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
+	}
+	for _, pipelined := range []string{"0", "1"} {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=" + pipelined)
+		tk.MustQuery("select rank() over (order by v) from t")
 		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
 		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
 		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
@@ -184,6 +198,64 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 
 		require.Equal(t, expected[id], strs[actRowsCol], fmt.Sprintf("error comparing %s", sql))
 	}
+}
+
+func checkAnalyzeRUFormat(t *testing.T, tk *testkit.TestKit, sql string, expectedActRows []string) {
+	t.Helper()
+	rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
+	require.Equal(t, len(expectedActRows), len(rows))
+	for id, row := range rows {
+		require.Len(t, row, 7)
+		require.NotEmpty(t, row[0])
+		require.NotEmpty(t, row[1])
+		require.Equal(t, expectedActRows[id], row[2], fmt.Sprintf("error comparing %s", sql))
+		require.NotEmpty(t, row[3])
+		require.NotEmpty(t, row[4])
+		require.NotEmpty(t, row[5])
+		require.Equal(t, "", row[6])
+	}
+}
+
+func TestExplainAnalyzeRUFormatIgnoresLiteralLength(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_ru_literal_length")
+	tk.MustExec("create table t_ru_literal_length(a varchar(20))")
+	tk.MustExec("insert into t_ru_literal_length values ('x')")
+
+	explainAnalyzeRUTotal := func(sql string) float64 {
+		t.Helper()
+		rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
+		require.NotEmpty(t, rows)
+
+		const (
+			cumRUCol    = 4
+			cumRUPctCol = 5
+		)
+		var totalRU *float64
+		for _, row := range rows {
+			require.Len(t, row, 7)
+			if row[cumRUPctCol] != "100.00%" {
+				continue
+			}
+			ru, err := strconv.ParseFloat(row[cumRUCol].(string), 64)
+			require.NoError(t, err)
+			require.Nil(t, totalRU)
+			totalRU = &ru
+		}
+		require.NotNil(t, totalRU)
+		return *totalRU
+	}
+
+	shortRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaa'")
+	longRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaaaaaaaaa'")
+	require.Equal(t, shortRU, longRU)
 }
 
 func TestCheckActRowsWithUnistore(t *testing.T) {
@@ -260,6 +332,9 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)
 	}
+
+	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows", []string{"4", "4"})
+	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows where b > 0", []string{"1", "1", "4"})
 }
 
 func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
@@ -496,6 +571,7 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatTiDBJSON,
 		types.ExplainFormatCostTrace,
 		types.ExplainFormatPlanCache,
+		types.ExplainFormatRU,
 	}
 
 	tk.MustExec("select * from t")

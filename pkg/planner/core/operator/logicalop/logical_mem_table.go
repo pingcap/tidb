@@ -91,7 +91,8 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 		infoschema.TableDataLockWaits,
 		infoschema.TableDeadlocks,
 		infoschema.ClusterTableDeadlocks,
-		infoschema.TableTables:
+		infoschema.TableTables,
+		infoschema.TablePartitions:
 	default:
 		return p, nil
 	}
@@ -223,7 +224,5 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************

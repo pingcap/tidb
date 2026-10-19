@@ -87,6 +87,8 @@ insert into tl values (1, repeat('x', 512*1024));
 -- error 1114
 insert into tl values (1, repeat('x', 512*1024));
 rollback;
+set @@global.tidb_tmp_table_max_size = default;
+set @@session.tidb_tmp_table_max_size = default;
 
 # TestGlobalTemporaryTable
 drop table if exists g_tmp;

@@ -2607,6 +2607,7 @@ Error 1292 (22007): Incorrect timestamp value: '9999-01-01'
 select * from t;
 a
 9999-01-01
+set @@sql_mode=default;
 drop table t;
 CREATE TABLE t (a date, b timestamp AS (a));
 set @@sql_mode='';
@@ -2614,3 +2615,4 @@ insert into t (a) values('9999-01-01');
 select * from t;
 a	b
 9999-01-01	0000-00-00 00:00:00
+set @@sql_mode=default;

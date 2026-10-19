@@ -433,7 +433,7 @@ HashJoin	root		inner join, equal:[eq(explain_cte.t1.bench_type, explain_cte.t1.b
   └─CTEFullScan	root	CTE:all_data	data:CTE_0
 CTE_0	root		Non-Recursive CTE
 └─TableReader(Seed Part)	root		data:Selection
-  └─Selection	cop[tikv]		or(and(eq(explain_cte.t1.version, "5.4.0"), not(isnull(explain_cte.t1.bench_type))), and(eq(explain_cte.t1.version, "6.0.0"), not(isnull(explain_cte.t1.bench_type))))
+  └─Selection	cop[tikv]		not(isnull(explain_cte.t1.bench_type)), or(eq(explain_cte.t1.version, "5.4.0"), eq(explain_cte.t1.version, "6.0.0"))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists tbl;
 create table tbl (id int);

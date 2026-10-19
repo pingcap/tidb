@@ -454,6 +454,8 @@ func TestMppUnionAll(t *testing.T) {
 		// Create virtual tiflash replica info.
 		testkit.SetTiFlashReplica(t, dom, "test", "t")
 		testkit.SetTiFlashReplica(t, dom, "test", "t1")
+		tk.MustExec("set @@tidb_allow_mpp=1")
+		tk.MustExec("set @@tidb_enforce_mpp=1")
 
 		var input []string
 		var output []struct {

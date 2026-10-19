@@ -15,15 +15,19 @@
 package ddl
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -39,6 +43,9 @@ func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if err := jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -87,8 +94,49 @@ func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if err := jobCtx.oldDDLCtx.syncTTLTableToExternalWorkload(jobCtx.ctx, tblInfo); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func (dc *ddlCtx) externalWorkloadManager() (extworkload.Manager, bool) {
+	if dc == nil {
+		return nil, false
+	}
+	manager := dc.extWorkload
+	return manager, extworkload.IsEnabled(manager)
+}
+
+func cancelJobOnExternalTTLWorkloadError(job *model.Job, err error) error {
+	job.State = model.JobStateCancelled
+	return errors.Trace(err)
+}
+
+// tblInfo must be non-nil.
+func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
+	manager, ok := dc.externalWorkloadManager()
+	if !ok || tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
+		return nil
+	}
+	return manager.RegisterTTLTableInfo(ctx, tblInfo.ID, vardef.EnableTTLJob.Load())
+}
+
+// tblInfo must be non-nil.
+func (dc *ddlCtx) syncTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
+	if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
+		return dc.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID)
+	}
+	return dc.registerTTLTableToExternalWorkload(ctx, tblInfo)
+}
+
+func (dc *ddlCtx) deleteTTLTableFromExternalWorkload(ctx context.Context, tableID int64) error {
+	manager, ok := dc.externalWorkloadManager()
+	if !ok {
+		return nil
+	}
+	return manager.DeleteTTLTableInfo(ctx, tableID)
 }
 
 // checkTTLInfoValid checks the TTL settings for a table.
@@ -100,6 +148,10 @@ func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyChe
 	}
 
 	if err := checkTTLIntervalExpr(tblInfo.TTLInfo); err != nil {
+		return err
+	}
+
+	if err := checkTTLJobInterval(tblInfo.TTLInfo.JobInterval); err != nil {
 		return err
 	}
 
@@ -120,6 +172,17 @@ func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyChe
 func checkTTLIntervalExpr(ttlInfo *model.TTLInfo) error {
 	_, err := cache.EvalExpireTime(time.Now(), ttlInfo.IntervalExprStr, ast.TimeUnitType(ttlInfo.IntervalTimeUnit))
 	return errors.Trace(err)
+}
+
+func checkTTLJobInterval(jobInterval string) error {
+	if !deploymode.IsStarter() {
+		return nil
+	}
+
+	if jobInterval != model.StarterDefaultTTLJobInterval {
+		return dbterror.ErrUnsupportedTTLJobIntervalInStarter.FastGenByArgs(model.StarterDefaultTTLJobInterval)
+	}
+	return nil
 }
 
 func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
@@ -174,6 +237,11 @@ func checkPrimaryKeyForTTLTable(tblInfo *model.TableInfo) error {
 // if both of TTL and TTL_ENABLE are set, the `ttlInfo.Enable` will be equal with `ttlEnable`.
 // if both of TTL and TTL_JOB_INTERVAL are set, the `ttlInfo.JobInterval` will be equal with `ttlCronJobSchedule`.
 func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string, err error) {
+	defaultJobInterval := model.DefaultTTLJobInterval
+	if deploymode.IsStarter() {
+		defaultJobInterval = model.StarterDefaultTTLJobInterval
+	}
+
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionTTL:
@@ -191,7 +259,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      model.DefaultTTLJobInterval,
+				JobInterval:      defaultJobInterval,
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue
@@ -205,6 +273,9 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 			ttlInfo.Enable = *ttlEnable
 		}
 		if ttlCronJobSchedule != nil {
+			if err := checkTTLJobInterval(*ttlCronJobSchedule); err != nil {
+				return nil, nil, nil, err
+			}
 			ttlInfo.JobInterval = *ttlCronJobSchedule
 		}
 	}

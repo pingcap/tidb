@@ -219,6 +219,92 @@ a	b	c
 12	14	26
 update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b;
 Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.
+drop table if exists tp, tx;
+create table tp (a int, b int, c int, key (b), key (c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table tx (a int, b int, c int, key (b), key (c));
+insert into tp values (1, 1, 1);
+insert into tx values (11, 11, 11);
+alter table tp exchange partition p1 with table tx;
+update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+select *, _tidb_rowid from tp order by a;
+a	b	c	_tidb_rowid
+1	100	1	1
+11	11	200	1
+update tp t1, tp t2 set t1.b = 300, t2.b = 400 where t1.a = 1 and t2.a = 11;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+select *, _tidb_rowid from tp order by a;
+a	b	c	_tidb_rowid
+1	300	1	1
+11	400	200	1
+update tp t1, tp t2 set t1.c = t2.b, t2.c = t1.b where t1.a = 1 and t2.a = 11;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+select *, _tidb_rowid from tp order by a;
+a	b	c	_tidb_rowid
+1	300	400	1
+11	400	300	1
+update tp t1, tp t2 set t1.b = 1, t2.c = 2 where t1.a = 1 and t2.a = 1;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+select *, _tidb_rowid from tp order by a;
+a	b	c	_tidb_rowid
+1	1	2	1
+11	400	300	1
+admin check table tp;
+drop table if exists tp, tx;
+create table tp (a int, b int, c int, s int as (b + c) stored, v int as (b * 10 + c) virtual, key (s), key (v)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table tx (a int, b int, c int, s int as (b + c) stored, v int as (b * 10 + c) virtual, key (s), key (v));
+insert into tp (a, b, c) values (1, 1, 1);
+insert into tx (a, b, c) values (11, 11, 11);
+alter table tp exchange partition p1 with table tx;
+update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+select *, _tidb_rowid from tp order by a;
+a	b	c	s	v	_tidb_rowid
+1	100	1	101	1001	1
+11	11	200	211	310	1
+update tp t1, tp t2 set t1.b = 300, t2.b = 400 where t1.a = 1 and t2.a = 11;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+select *, _tidb_rowid from tp order by a;
+a	b	c	s	v	_tidb_rowid
+1	300	1	301	3001	1
+11	400	200	600	4200	1
+admin check table tp;
+drop table if exists tp, tx;
+create table tp (a int, b int, c int, primary key (a) clustered) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table tx (a int, b int, c int, primary key (a) clustered);
+insert into tp values (1, 1, 1);
+insert into tx values (11, 11, 11);
+alter table tp exchange partition p1 with table tx;
+update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+select * from tp order by a;
+a	b	c
+1	100	1
+11	11	200
+drop table tp, tx;
+drop table if exists tl, t3;
+create table tl (a int, b int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));
+create table t3 (a int, x int);
+insert into tl values (1, 1);
+insert into t3 values (1, 0), (5, 0);
+update t3 left join tl on t3.a = tl.a set t3.x = 1, tl.b = 10;
+affected rows: 3
+info: Rows matched: 3  Changed: 3  Warnings: 0
+select * from t3 order by a;
+a	x
+1	1
+5	1
+select * from tl;
+a	b
+1	10
+drop table tl, t3;
 set tidb_enable_clustered_index = on;
 drop table if exists t;
 create table t(id varchar(200) primary key, v int);
@@ -955,3 +1041,136 @@ a	b	dt	_tidb_rowid
 15	333	2025-12-16	3
 16	333	2025-12-16	4
 DROP TABLE t, tp;
+DROP TABLE IF EXISTS t, t2, t3, tx;
+CREATE TABLE t2 (b INT, x INT);
+INSERT INTO t2 VALUES (1, 100), (1, 200);
+CREATE TABLE t (a INT, b INT, e INT, UNIQUE KEY ue (e, a))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+a	e - a IN (100, 200)
+1	1
+11	1
+ADMIN CHECK TABLE t;
+TRUNCATE TABLE t;
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT a, e FROM t ORDER BY a;
+a	e
+1	1
+11	11
+ADMIN CHECK TABLE t;
+TRUNCATE TABLE t;
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+UPDATE t, (SELECT 1 b, 100 x UNION ALL SELECT 1, 200) d SET t.e = t.a + d.x WHERE t.b = d.b;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+a	e - a IN (100, 200)
+1	1
+11	1
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+CREATE TABLE t (a INT, b INT, e INT, KEY ke (e, a))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+a	e - a IN (100, 200)
+1	1
+11	1
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+CREATE TABLE t (a INT, b INT, e INT, UNIQUE KEY ue (e) GLOBAL, KEY ke (e, b) GLOBAL)
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+a	e - a IN (100, 200)
+1	1
+11	1
+SELECT COUNT(*) FROM t USE INDEX (ue) WHERE e IS NOT NULL;
+COUNT(*)
+2
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+CREATE TABLE t (a INT, b INT, e INT, KEY ke (e))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20));
+INSERT INTO t VALUES (1, 1, NULL);
+CREATE TABLE tx (a INT, b INT, e INT, KEY ke (e));
+INSERT INTO tx VALUES (11, 1, NULL);
+ALTER TABLE t EXCHANGE PARTITION p1 WITH TABLE tx;
+SELECT a, _tidb_rowid FROM t ORDER BY a;
+a	_tidb_rowid
+1	1
+11	1
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+UPDATE t SET b = b + 1;
+affected rows: 2
+info: Rows matched: 2  Changed: 2  Warnings: 0
+SELECT a, b, e - a IN (100, 200), _tidb_rowid FROM t ORDER BY a;
+a	b	e - a IN (100, 200)	_tidb_rowid
+1	2	1	1
+11	2	1	1
+ADMIN CHECK TABLE t;
+DROP TABLE t, tx;
+CREATE TABLE t (a INT, e INT) PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1, 2));
+INSERT INTO t VALUES (1, 0);
+CREATE TABLE t3 (a INT, x INT);
+INSERT INTO t3 VALUES (1, 0), (3, 0);
+UPDATE t3 LEFT JOIN t ON t3.a = t.a SET t3.x = 1, t.e = 1;
+affected rows: 3
+info: Rows matched: 3  Changed: 3  Warnings: 0
+SELECT * FROM t;
+a	e
+1	1
+SELECT * FROM t3 ORDER BY a;
+a	x
+1	1
+3	1
+DROP TABLE t, t2, t3;
+DROP TABLE IF EXISTS tp, tx, ts;
+CREATE TABLE tp (a INT, b INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20));
+CREATE TABLE tx (a INT, b INT);
+INSERT INTO tx VALUES (25, 0);
+ALTER TABLE tp EXCHANGE PARTITION p0 WITH TABLE tx WITHOUT VALIDATION;
+CREATE TABLE ts (b INT, x INT);
+INSERT INTO ts VALUES (0, 0);
+UPDATE IGNORE tp PARTITION (p0) JOIN ts ON tp.b = ts.b SET tp.b = tp.b + 1, ts.x = 1;
+affected rows: 1
+info: Rows matched: 2  Changed: 1  Warnings: 1
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1526	Table has no partition for value 25
+SELECT * FROM tp;
+a	b
+25	0
+SELECT * FROM ts;
+b	x
+0	1
+UPDATE tp PARTITION (p0) JOIN ts ON tp.b = ts.b SET tp.b = tp.b + 1, ts.x = 2;
+Error 1526 (HY000): Table has no partition for value 25
+DROP TABLE tp, tx, ts;
+CREATE TABLE t (a INT, b INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 0), (11, 0);
+BEGIN OPTIMISTIC;
+UPDATE t PARTITION (p0) x, t PARTITION (p1) y SET x.b = x.b, y.b = 1;
+affected rows: 1
+info: Rows matched: 2  Changed: 1  Warnings: 0
+COMMIT;
+SELECT * FROM t ORDER BY a;
+a	b
+1	0
+11	1
+DROP TABLE t;

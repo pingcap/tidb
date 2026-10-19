@@ -15,9 +15,7 @@
 package runaway
 
 import (
-	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -38,21 +36,110 @@ const (
 
 	// watchSyncInterval is the interval to sync the watch record.
 	watchSyncInterval = time.Second
-	// watchSyncBatchLimit is the max number of rows fetched per sync query.
-	watchSyncBatchLimit = 256
+	// watchSyncOverlap is how far back CheckPoint rewinds from the captured
+	// UpperBound after a non-empty scan, so the next scan re-inspects the
+	// tail of the previous window. It budgets the lag between "now" on this
+	// syncer node and the moment a row with `start_time ≈ now` becomes
+	// visible to a subsequent snapshot read (commit/read-TS delay and
+	// wall-clock skew). De-duplication across the overlap is handled by
+	// `AddWatch` in memory.
+	watchSyncOverlap = 3 * watchSyncInterval
+	// watchSyncBatchLimit caps the number of rows returned per scan query.
+	// This prevents unbounded memory usage when the time window spans a
+	// large number of rows (e.g. the very first scan from NullTime).
+	// When the limit is hit, CheckPoint advances to the last row's key
+	// column time so the next 1-second sync cycle continues from there.
+	watchSyncBatchLimit = maxWatchRecordChannelSize * 2
 	// watchTableName is the name of system table which save runaway watch items.
 	runawayWatchTableName = "tidb_runaway_watch"
 	// watchDoneTableName is the name of system table which save done runaway watch items.
 	runawayWatchDoneTableName = "tidb_runaway_watch_done"
+
+	runawayWatchFullTableName     = "mysql." + runawayWatchTableName
+	runawayWatchDoneFullTableName = "mysql." + runawayWatchDoneTableName
 )
 
-func getRunawayWatchTableName() string {
-	return fmt.Sprintf("mysql.%s", runawayWatchTableName)
+// Column layout of `mysql.tidb_runaway_watch`, in DDL order (see
+// `CreateTiDBRunawayWatchTable` in pkg/meta/metadef/system_tables_def.go).
+// `watchColRule` is the DB column literally named `rule`; it persists
+// `QuarantineRecord.ExceedCause` (see watchRecordColumns).
+const (
+	watchColID = iota
+	watchColResourceGroupName
+	watchColStartTime
+	watchColEndTime
+	watchColWatch
+	watchColWatchText
+	watchColSource
+	watchColAction
+	watchColSwitchGroupName
+	watchColRule
+)
+
+// Column layout of `mysql.tidb_runaway_watch_done`, in DDL order (see
+// `CreateTiDBRunawayWatchDoneTable` in pkg/meta/metadef/system_tables_def.go).
+// The done table prepends its own `id`/`record_id` and appends `done_time`;
+// `watchDoneColID` (the done-row PK) and `watchDoneColDoneTime` are declared
+// but not projected onto QuarantineRecord.
+const (
+	watchDoneColID = iota
+	watchDoneColRecordID
+	watchDoneColResourceGroupName
+	watchDoneColStartTime
+	watchDoneColEndTime
+	watchDoneColWatch
+	watchDoneColWatchText
+	watchDoneColSource
+	watchDoneColAction
+	watchDoneColSwitchGroupName
+	watchDoneColRule
+	watchDoneColDoneTime
+)
+
+// quarantineColumns projects QuarantineRecord fields onto the columns of a
+// runaway watch system table. Each systemTableReader carries its own instance
+// so the decoder never has to assume a shared layout between tables. The two
+// naming divergences (`ID`↔`record_id` on the done table; `ExceedCause`↔`rule`
+// on both) are resolved by the initializers below.
+type quarantineColumns struct {
+	ID                int
+	ResourceGroupName int
+	StartTime         int
+	EndTime           int
+	Watch             int
+	WatchText         int
+	Source            int
+	Action            int
+	SwitchGroupName   int
+	ExceedCause       int
 }
 
-func getRunawayWatchDoneTableName() string {
-	return fmt.Sprintf("mysql.%s", runawayWatchDoneTableName)
-}
+var (
+	watchRecordColumns = quarantineColumns{
+		ID:                watchColID,
+		ResourceGroupName: watchColResourceGroupName,
+		StartTime:         watchColStartTime,
+		EndTime:           watchColEndTime,
+		Watch:             watchColWatch,
+		WatchText:         watchColWatchText,
+		Source:            watchColSource,
+		Action:            watchColAction,
+		SwitchGroupName:   watchColSwitchGroupName,
+		ExceedCause:       watchColRule,
+	}
+	watchDoneRecordColumns = quarantineColumns{
+		ID:                watchDoneColRecordID,
+		ResourceGroupName: watchDoneColResourceGroupName,
+		StartTime:         watchDoneColStartTime,
+		EndTime:           watchDoneColEndTime,
+		Watch:             watchDoneColWatch,
+		WatchText:         watchDoneColWatchText,
+		Source:            watchDoneColSource,
+		Action:            watchDoneColAction,
+		SwitchGroupName:   watchDoneColSwitchGroupName,
+		ExceedCause:       watchDoneColRule,
+	}
+)
 
 // Syncer is used to sync the runaway records.
 type syncer struct {
@@ -76,14 +163,12 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 	return &syncer{
 		sysSessionPool: sysSessionPool,
 		infoCache:      infoCache,
-		newWatchReader: &systemTableReader{
-			getRunawayWatchTableName(),
-			"id",
-			0},
-		deletionWatchReader: &systemTableReader{
-			getRunawayWatchDoneTableName(),
-			"id",
-			0},
+		newWatchReader: newSystemTableReader(
+			runawayWatchFullTableName, "start_time", watchColStartTime, watchRecordColumns,
+		),
+		deletionWatchReader: newSystemTableReader(
+			runawayWatchDoneFullTableName, "done_time", watchDoneColDoneTime, watchDoneRecordColumns,
+		),
 		syncInterval:   metrics.RunawaySyncerIntervalHistogram.WithLabelValues(lblSync),
 		syncDuration:   metrics.RunawaySyncerDurationHistogram.WithLabelValues(lblSync),
 		watchCPGauge:   metrics.RunawaySyncerCheckpointGauge.WithLabelValues(lblWatch),
@@ -116,159 +201,184 @@ func (s *syncer) checkTableExist(tableName ast.CIStr) bool {
 	if is == nil {
 		return false
 	}
-	_, err := is.TableByName(context.Background(), systemSchemaCIStr, tableName)
-	// If the table not exists, an `ErrTableNotExists` error will be returned.
-	return err == nil
+	return is.TableExists(systemSchemaCIStr, tableName)
 }
 
 func (s *syncer) getWatchRecordByID(id int64) ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id), false)
+	return s.readQuarantineRecords(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id))
 }
 
 func (s *syncer) getWatchRecordByGroup(groupName string) ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName), false)
+	return s.readQuarantineRecords(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName))
 }
 
 func (s *syncer) getNewWatchRecords() ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectStmt, true)
+	return s.scanNewRecordsInRange(s.newWatchReader)
 }
 
 func (s *syncer) getNewWatchDoneRecords() ([]*QuarantineRecord, error) {
-	return s.getWatchDoneRecord(s.deletionWatchReader, s.deletionWatchReader.genSelectStmt, true)
+	return s.scanNewRecordsInRange(s.deletionWatchReader)
 }
 
-func (s *syncer) getWatchRecord(reader *systemTableReader, sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
-	return getRunawayWatchRecord(s.sysSessionPool, reader, sqlGenFn, push)
-}
-
-func (s *syncer) getWatchDoneRecord(reader *systemTableReader, sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
-	return getRunawayWatchDoneRecord(s.sysSessionPool, reader, sqlGenFn, push)
-}
-
-func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableReader,
-	sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
-	rs, err := reader.Read(sysSessionPool, sqlGenFn)
+// scanNewRecordsInRange runs a time-windowed scan over reader's table in the
+// half-open `[CheckPoint, UpperBound)` range and advances CheckPoint:
+//
+//   - Full batch: CheckPoint moves to the last row's key-column time so the
+//     next cycle continues from there. AddWatch/removeWatch de-duplicates the
+//     `>=` boundary row. If every row in the batch shares the same key-column
+//     timestamp (microsecond collision), fall through to the partial-batch
+//     advancement to avoid livelocking on the same page.
+//   - Partial batch (at least one row): CheckPoint moves to
+//     `UpperBound - watchSyncOverlap` so rows that become visible slightly
+//     later are re-inspected on the next cycle.
+//
+// Only this method writes reader.lastScanKeyTime; point-query paths leave
+// scan state untouched so manual Remove* calls cannot perturb the cursor.
+//
+// TODO: the same-microsecond fallback can silently skip rows with key
+// `>= UpperBound - watchSyncOverlap` that weren't returned in the batch.
+// An insert rate high enough to pack >2k rows into a single microsecond is
+// not realistic today; revisit if it ever becomes one.
+func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*QuarantineRecord, error) {
+	// Capture UpperBound before reading so the checkpoint advances
+	// deterministically from it rather than from a post-decode `time.Now()`.
+	reader.UpperBound = time.Now().UTC()
+	sql, params := reader.genSelectStmt()
+	rows, err := ExecRCRestrictedSQL(s.sysSessionPool, sql, params)
 	if err != nil {
 		return nil, err
 	}
-	ret := make([]*QuarantineRecord, 0, len(rs))
-	for _, r := range rs {
-		startTime, err := r.GetTime(2).GoTime(time.UTC)
-		if err != nil {
+	records := make([]*QuarantineRecord, 0, len(rows))
+	for _, r := range rows {
+		rec, ok := decodeQuarantineRecord(r, reader.RecordColumns)
+		if !ok {
 			continue
 		}
-		var endTime time.Time
-		if !r.IsNull(3) {
-			endTime, err = r.GetTime(3).GoTime(time.UTC)
-			if err != nil {
-				continue
-			}
+		if t, e := r.GetTime(reader.KeyColIdx).GoTime(time.UTC); e == nil {
+			reader.lastScanKeyTime = t
 		}
-		qr := &QuarantineRecord{
-			ID:                r.GetInt64(0),
-			ResourceGroupName: r.GetString(1),
-			StartTime:         startTime,
-			EndTime:           endTime,
-			Watch:             rmpb.RunawayWatchType(r.GetInt64(4)),
-			WatchText:         r.GetString(5),
-			Source:            r.GetString(6),
-			Action:            rmpb.RunawayAction(r.GetInt64(7)),
-			SwitchGroupName:   r.GetString(8),
-			ExceedCause:       r.GetString(9),
-		}
-		ret = append(ret, qr)
+		records = append(records, rec)
 	}
-	if push && len(rs) > 0 {
-		reader.CheckPoint = rs[len(rs)-1].GetInt64(0)
+	switch {
+	case len(records) >= watchSyncBatchLimit:
+		if reader.lastScanKeyTime.After(reader.CheckPoint) {
+			reader.CheckPoint = reader.lastScanKeyTime
+		} else {
+			reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
+		}
+	case len(records) > 0:
+		reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
+	}
+	return records, nil
+}
+
+// readQuarantineRecords is the point-query entry point. It must not mutate
+// reader scan state — only scanNewRecordsInRange advances the sync cursor.
+func (s *syncer) readQuarantineRecords(
+	reader *systemTableReader,
+	genFn sqlGenFn,
+) ([]*QuarantineRecord, error) {
+	sql, params := genFn()
+	rows, err := ExecRCRestrictedSQL(s.sysSessionPool, sql, params)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]*QuarantineRecord, 0, len(rows))
+	for _, r := range rows {
+		if rec, ok := decodeQuarantineRecord(r, reader.RecordColumns); ok {
+			ret = append(ret, rec)
+		}
 	}
 	return ret, nil
 }
 
-func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTableReader,
-	sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
-	rs, err := reader.Read(sysSessionPool, sqlGenFn)
+// decodeQuarantineRecord decodes one chunk.Row via cols. Returns (nil, false)
+// if start_time or end_time fail to parse — a defensive guard against schema
+// evolution or externally inserted rows (never triggers in production).
+func decodeQuarantineRecord(r chunk.Row, cols quarantineColumns) (*QuarantineRecord, bool) {
+	startTime, err := r.GetTime(cols.StartTime).GoTime(time.UTC)
 	if err != nil {
-		return nil, err
+		return nil, false
 	}
-	ret := make([]*QuarantineRecord, 0, len(rs))
-	for _, r := range rs {
-		startTime, err := r.GetTime(3).GoTime(time.UTC)
+	var endTime time.Time
+	if !r.IsNull(cols.EndTime) {
+		endTime, err = r.GetTime(cols.EndTime).GoTime(time.UTC)
 		if err != nil {
-			continue
+			return nil, false
 		}
-		var endTime time.Time
-		if !r.IsNull(4) {
-			endTime, err = r.GetTime(4).GoTime(time.UTC)
-			if err != nil {
-				continue
-			}
-		}
-		qr := &QuarantineRecord{
-			ID:                r.GetInt64(1),
-			ResourceGroupName: r.GetString(2),
-			StartTime:         startTime,
-			EndTime:           endTime,
-			Watch:             rmpb.RunawayWatchType(r.GetInt64(5)),
-			WatchText:         r.GetString(6),
-			Source:            r.GetString(7),
-			Action:            rmpb.RunawayAction(r.GetInt64(8)),
-			SwitchGroupName:   r.GetString(9),
-			ExceedCause:       r.GetString(10),
-		}
-		ret = append(ret, qr)
 	}
-	if push && len(rs) > 0 {
-		reader.CheckPoint = rs[len(rs)-1].GetInt64(0)
-	}
-	return ret, nil
+	return &QuarantineRecord{
+		ID:                r.GetInt64(cols.ID),
+		ResourceGroupName: r.GetString(cols.ResourceGroupName),
+		StartTime:         startTime,
+		EndTime:           endTime,
+		Watch:             rmpb.RunawayWatchType(r.GetInt64(cols.Watch)),
+		WatchText:         r.GetString(cols.WatchText),
+		Source:            r.GetString(cols.Source),
+		Action:            rmpb.RunawayAction(r.GetInt64(cols.Action)),
+		SwitchGroupName:   r.GetString(cols.SwitchGroupName),
+		ExceedCause:       r.GetString(cols.ExceedCause),
+	}, true
 }
 
-// SystemTableReader is used to read table `runaway_watch` and `runaway_watch_done`.
+// systemTableReader reads `tidb_runaway_watch` or `tidb_runaway_watch_done`.
+// RecordColumns gives the per-table column-index layout; CheckPoint and
+// UpperBound define the half-open `[CheckPoint, UpperBound)` window used by
+// the paginated scan in genSelectStmt.
 type systemTableReader struct {
-	TableName  string
-	KeyCol     string
-	CheckPoint int64
+	TableName     string
+	KeyCol        string
+	KeyColIdx     int // column index of KeyCol in SELECT * result, for pagination
+	RecordColumns quarantineColumns
+	CheckPoint    time.Time
+	UpperBound    time.Time
+	// Precomputed SQL templates derived from TableName/KeyCol. Only the
+	// parameters change across calls, so building them once avoids
+	// per-scan string allocations.
+	selectByIDSQL    string
+	selectByGroupSQL string
+	selectWindowSQL  string
+	// lastScanKeyTime is the key-column time of the last valid row produced
+	// by the most recent scanNewRecordsInRange call. Only scanNewRecordsInRange
+	// writes to it; point-query paths leave it alone so manual Remove* calls
+	// cannot perturb sync-cursor advancement.
+	lastScanKeyTime time.Time
 }
 
-func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
-	return func() (string, []any) {
-		var builder strings.Builder
-		params := make([]any, 0, 1)
-		builder.WriteString("select * from ")
-		builder.WriteString(r.TableName)
-		builder.WriteString(" where id = %?")
-		params = append(params, id)
-		return builder.String(), params
+func newSystemTableReader(tableName, keyCol string, keyColIdx int, cols quarantineColumns) *systemTableReader {
+	return &systemTableReader{
+		TableName:        tableName,
+		KeyCol:           keyCol,
+		KeyColIdx:        keyColIdx,
+		RecordColumns:    cols,
+		CheckPoint:       NullTime,
+		UpperBound:       NullTime,
+		selectByIDSQL:    fmt.Sprintf("select * from %s where id = %%?", tableName),
+		selectByGroupSQL: fmt.Sprintf("select * from %s where resource_group_name = %%?", tableName),
+		selectWindowSQL: fmt.Sprintf(
+			"select * from %s where %s >= %%? and %s < %%? order by %s limit %%?",
+			tableName, keyCol, keyCol, keyCol,
+		),
 	}
 }
 
-func (r *systemTableReader) genSelectByGroupStmt(groupName string) func() (string, []any) {
+// sqlGenFn returns the SQL statement and parameters for one read issued by the
+// syncer. Point-query callers (by ID / by resource group) build a closure via
+// genSelectBy*Stmt; the window-scan path calls genSelectStmt directly.
+type sqlGenFn func() (string, []any)
+
+func (r *systemTableReader) genSelectByIDStmt(id int64) sqlGenFn {
 	return func() (string, []any) {
-		var builder strings.Builder
-		params := make([]any, 0, 1)
-		builder.WriteString("select * from ")
-		builder.WriteString(r.TableName)
-		builder.WriteString(" where resource_group_name = %?")
-		params = append(params, groupName)
-		return builder.String(), params
+		return r.selectByIDSQL, []any{id}
+	}
+}
+
+func (r *systemTableReader) genSelectByGroupStmt(groupName string) sqlGenFn {
+	return func() (string, []any) {
+		return r.selectByGroupSQL, []any{groupName}
 	}
 }
 
 func (r *systemTableReader) genSelectStmt() (string, []any) {
-	var builder strings.Builder
-	params := make([]any, 0, 2)
-	builder.WriteString("select * from ")
-	builder.WriteString(r.TableName)
-	builder.WriteString(" where ")
-	builder.WriteString(r.KeyCol)
-	builder.WriteString(" > %? order by ")
-	builder.WriteString(r.KeyCol)
-	builder.WriteString(" limit %?")
-	params = append(params, r.CheckPoint, watchSyncBatchLimit)
-	return builder.String(), params
-}
-
-func (*systemTableReader) Read(sysSessionPool util.SessionPool, genFn func() (string, []any)) ([]chunk.Row, error) {
-	sql, params := genFn()
-	return ExecRCRestrictedSQL(sysSessionPool, sql, params)
+	return r.selectWindowSQL, []any{r.CheckPoint, r.UpperBound, watchSyncBatchLimit}
 }

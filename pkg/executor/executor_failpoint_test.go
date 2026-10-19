@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
@@ -628,12 +629,12 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	mustExec("insert into t select b, a from t")
 	require.True(t, writeSLI.IsInvalid())
 	require.True(t, writeSLI.IsSmallTxn())
-	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 2, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test for delete
 	mustExec("delete from t")
-	require.Equal(t, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 0, writeKeys: 4, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 4, writeKeys: 4, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test insert not in small txn
@@ -806,13 +807,15 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 
 	// Test for stale read.
-	tk.MustExec("set @a=now(6);")
-	waitUntilReadTSSafe(tk, "@a")
-	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @a=now(6);")
+		waitUntilReadTSSafe(tk, "@a")
+		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+		rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
+		require.Len(t, rows, 3)
+		explain = fmt.Sprintf("%v", rows[0])
+		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	}
 
 	// Test for tikv_client_read_timeout session variable.
 	tk.MustExec("set @@tikv_client_read_timeout=1;")
@@ -835,13 +838,15 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 
 	// Test for stale read.
-	tk.MustExec("set @a=now(6);")
-	waitUntilReadTSSafe(tk, "@a")
-	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @a=now(6);")
+		waitUntilReadTSSafe(tk, "@a")
+		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+		rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
+		require.Len(t, rows, 3)
+		explain = fmt.Sprintf("%v", rows[0])
+		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	}
 }
 
 func TestGetMvccByEncodedKeyRegionError(t *testing.T) {

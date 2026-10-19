@@ -297,11 +297,11 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 func getPlanString(info *sessmgr.ProcessInfo) string {
 	var buf strings.Builder
 	rows, _ := plancodec.DecodeBinaryPlan4Connection(info.BriefBinaryPlan, types.ExplainFormatROW, true)
-	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info"))
+	fmt.Fprintf(&buf, "|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info")
 	for _, row := range rows {
 		buf.WriteString("\n|")
 		for _, col := range row {
-			buf.WriteString(fmt.Sprintf("%v|", col))
+			fmt.Fprintf(&buf, "%v|", col)
 		}
 	}
 	return buf.String()
@@ -332,7 +332,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *sessmgr.ProcessIn
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
 	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
 		info := list[i]
-		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
+		fmt.Fprintf(&buf, "SQL %v: \n", i)
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
 		if fields == nil {
 			continue

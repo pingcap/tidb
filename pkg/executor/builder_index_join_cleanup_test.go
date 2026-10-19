@@ -81,7 +81,7 @@ func TestBuildExecutorForIndexJoinHashJoinErrorCleansChildren(t *testing.T) {
 	hashJoinPlan.SetSchema(expression.MergeSchema(lookupSchema, otherSchema))
 	hashJoinPlan.SetChildren(lookupMockPlan, otherMockPlan)
 
-	execBuilder := newExecutorBuilder(ctx, nil, nil)
+	execBuilder := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	execBuilder.forDataReaderBuilder = true
 	execBuilder.dataReaderTS = 1
 	readerBuilder, err := execBuilder.newDataReaderBuilder(hashJoinPlan)
@@ -106,7 +106,7 @@ func TestBuildExecutorForIndexJoinHashJoinErrorCleansChildren(t *testing.T) {
 func TestBuildCTEStorageProducerCleansStoragesOnRecursiveBuildError(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.CTEStorageMap = map[int]*CTEStorages{}
-	builder := newExecutorBuilder(ctx, nil, nil)
+	builder := newExecutorBuilder(context.Background(), ctx, nil, nil)
 
 	stats := &property.StatsInfo{RowCount: 1}
 	schema := expression.NewSchema(&expression.Column{

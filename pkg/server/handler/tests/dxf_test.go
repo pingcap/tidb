@@ -24,13 +24,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	server2 "github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/server/internal/testutil"
+	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/session"
+	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -57,6 +67,23 @@ func TestDXFAPI(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
+	setupTaskManager := func(t *testing.T) (*storage.TaskManager, context.Context) {
+		t.Helper()
+		tm, err := storage.GetTaskManager()
+		require.NoError(t, err)
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+		require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+		for _, sql := range []string{
+			"delete from mysql.tidb_background_subtask",
+			"delete from mysql.tidb_background_subtask_history",
+			"delete from mysql.tidb_global_task",
+			"delete from mysql.tidb_global_task_history",
+		} {
+			_, err = tm.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+		}
+		return tm, ctx
+	}
 
 	t.Run("schedule status api", func(t *testing.T) {
 		// invalid method
@@ -129,25 +156,315 @@ func TestDXFAPI(t *testing.T) {
 		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
 
-	t.Run("import-into history job info api", func(t *testing.T) {
-		setupTaskManager := func(t *testing.T) (*storage.TaskManager, context.Context) {
-			t.Helper()
-			tm, err := storage.GetTaskManager()
+	t.Run("nodes api", func(t *testing.T) {
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET method", func() (*http.Response, error) {
+			return ts.PostStatus("/dxf/nodes", "", bytes.NewBuffer([]byte("")))
+		})
+
+		tm, ctx := setupTaskManager(t)
+		_, err := tm.ExecuteSQLWithNewSession(ctx, "delete from mysql.dist_framework_meta")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := tm.ExecuteSQLWithNewSession(ctx, "delete from mysql.dist_framework_meta")
 			require.NoError(t, err)
-			ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 			require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
-			for _, sql := range []string{
-				"delete from mysql.tidb_background_subtask",
-				"delete from mysql.tidb_background_subtask_history",
-				"delete from mysql.tidb_global_task",
-				"delete from mysql.tidb_global_task_history",
-			} {
-				_, err = tm.ExecuteSQLWithNewSession(ctx, sql)
-				require.NoError(t, err)
-			}
-			return tm, ctx
+		})
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/nodes")
+		})
+		require.JSONEq(t, "[]", string(body))
+
+		_, err = tm.ExecuteSQLWithNewSession(ctx, `
+			insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
+			values (":4002", "background", 8, -1), (":4001", "", 4, -1)`)
+		require.NoError(t, err)
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/nodes")
+		})
+		var nodes []map[string]any
+		require.NoError(t, json.Unmarshal(body, &nodes))
+		require.Equal(t, []map[string]any{
+			{"host": ":4001", "role": "", "cpu_count": float64(4)},
+			{"host": ":4002", "role": "background", "cpu_count": float64(8)},
+		}, nodes)
+	})
+
+	t.Run("max concurrent task api", func(t *testing.T) {
+		restore := proto.SetMaxConcurrentTaskForTest(proto.DefaultMaxConcurrentTask)
+		defer restore()
+		const maxConcurrentTaskPath = "/dxf/schedule/max_concurrent_task"
+		checkMaxConcurrentTaskOutput := func(body []byte, expected int) {
+			out := struct {
+				MaxConcurrentTask int    `json:"max_concurrent_task"`
+				Persistence       string `json:"persistence"`
+			}{}
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Equal(t, expected, out.MaxConcurrentTask)
+			require.Equal(t, "memory_only", out.Persistence)
+			require.NotContains(t, string(body), "scope")
 		}
 
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET and POST method", func() (*http.Response, error) {
+			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL(maxConcurrentTaskPath), nil)
+			require.NoError(t, err)
+			return http.DefaultClient.Do(req)
+		})
+		for _, c := range [][2]string{
+			{maxConcurrentTaskPath, "invalid value "},
+			{maxConcurrentTaskPath + "?value=aa", "invalid value "},
+			{maxConcurrentTaskPath + "?value=15", "out of range"},
+			{fmt.Sprintf("%s?value=%d", maxConcurrentTaskPath, proto.MaxConcurrentTaskUpperBound+1), "out of range"},
+		} {
+			path, errMsg := c[0], c[1]
+			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
+				return ts.PostStatus(path, "", bytes.NewBuffer([]byte("")))
+			})
+		}
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(maxConcurrentTaskPath)
+		})
+		checkMaxConcurrentTaskOutput(body, proto.DefaultMaxConcurrentTask)
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.PostStatus(maxConcurrentTaskPath+"?value=128", "", bytes.NewBuffer([]byte("")))
+		})
+		checkMaxConcurrentTaskOutput(body, 128)
+		require.Equal(t, 128, proto.GetMaxConcurrentTask())
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(maxConcurrentTaskPath)
+		})
+		checkMaxConcurrentTaskOutput(body, 128)
+	})
+
+	t.Run("task cleanup batch size api", func(t *testing.T) {
+		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(proto.DefaultTaskCleanupBatchSize))
+		const taskCleanupBatchSizePath = "/dxf/schedule/task_cleanup_batch_size"
+		checkTaskCleanupBatchSizeOutput := func(body []byte, expected int) {
+			out := struct {
+				TaskCleanupBatchSize int    `json:"task_cleanup_batch_size"`
+				Persistence          string `json:"persistence"`
+			}{}
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Equal(t, expected, out.TaskCleanupBatchSize)
+			require.Equal(t, "memory_only", out.Persistence)
+			require.NotContains(t, string(body), "scope")
+		}
+
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET and POST method", func() (*http.Response, error) {
+			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL(taskCleanupBatchSizePath), nil)
+			require.NoError(t, err)
+			return http.DefaultClient.Do(req)
+		})
+		for _, c := range [][2]string{
+			{taskCleanupBatchSizePath, "invalid value "},
+			{taskCleanupBatchSizePath + "?value=aa", "invalid value "},
+			{taskCleanupBatchSizePath + "?value=0", "out of range"},
+			{fmt.Sprintf("%s?value=%d", taskCleanupBatchSizePath, proto.TaskCleanupBatchSizeUpperBound+1), "out of range"},
+		} {
+			path, errMsg := c[0], c[1]
+			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
+				return ts.PostStatus(path, "", bytes.NewBuffer([]byte("")))
+			})
+			require.Equal(t, proto.DefaultTaskCleanupBatchSize, proto.GetTaskCleanupBatchSize())
+		}
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(taskCleanupBatchSizePath)
+		})
+		checkTaskCleanupBatchSizeOutput(body, proto.DefaultTaskCleanupBatchSize)
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.PostStatus(taskCleanupBatchSizePath+"?value=128", "", bytes.NewBuffer([]byte("")))
+		})
+		checkTaskCleanupBatchSizeOutput(body, 128)
+		require.Equal(t, 128, proto.GetTaskCleanupBatchSize())
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(taskCleanupBatchSizePath)
+		})
+		checkTaskCleanupBatchSizeOutput(body, 128)
+	})
+
+	t.Run("task history api", func(t *testing.T) {
+		const (
+			sensitiveHistoryMessage = "sensitive history task failure"
+			historyErrorCode        = "DXF:History:Named"
+		)
+		seedHistoryTasks := func(t *testing.T) []int64 {
+			t.Helper()
+			tm, ctx := setupTaskManager(t)
+			taskSpecs := []struct {
+				key      string
+				keyspace string
+				taskErr  error
+			}{
+				{key: "history-key-1", keyspace: "ks1"},
+				{key: "history-key-2", keyspace: "ks2"},
+				{key: "history-key-3", keyspace: "ks1"},
+				{key: "history-key-4", keyspace: "ks3"},
+				{
+					key:      "history-key-5",
+					keyspace: "ks1",
+					taskErr:  errors.Normalize(sensitiveHistoryMessage, errors.RFCCodeText(historyErrorCode)),
+				},
+			}
+			ids := make([]int64, 0, len(taskSpecs))
+			tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
+			for _, spec := range taskSpecs {
+				id, err := tm.CreateTask(ctx, spec.key, proto.ImportInto, spec.keyspace, 8, "", 0, proto.ExtraParams{}, []byte("test"))
+				require.NoError(t, err)
+				task, err := tm.GetTaskByID(ctx, id)
+				require.NoError(t, err)
+				require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+				if spec.taskErr != nil {
+					require.NoError(t, tm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
+				} else {
+					require.NoError(t, tm.SucceedTask(ctx, task))
+				}
+				task, err = tm.GetTaskByID(ctx, id)
+				require.NoError(t, err)
+				ids = append(ids, id)
+				tasksToTransfer = append(tasksToTransfer, task)
+			}
+			require.NoError(t, tm.TransferTasks2History(ctx, tasksToTransfer))
+			return ids
+		}
+
+		parseTaskHistoryResp := func(t *testing.T, body []byte) struct {
+			Items []struct {
+				ID              int64
+				Key             string
+				Keyspace        string
+				State           string
+				ErrorCode       string
+				ErrorCategory   string
+				StartTime       string
+				StateUpdateTime string
+				EndTime         string
+			}
+			HasMore          bool
+			NextPageToken    int64
+			ApproxTotalCount int64
+		} {
+			t.Helper()
+			out := struct {
+				Items []struct {
+					ID              int64
+					Key             string
+					Keyspace        string
+					State           string
+					ErrorCode       string
+					ErrorCategory   string
+					StartTime       string
+					StateUpdateTime string
+					EndTime         string
+				}
+				HasMore          bool
+				NextPageToken    int64
+				ApproxTotalCount int64
+			}{}
+			require.NoError(t, json.Unmarshal(body, &out))
+			return out
+		}
+
+		t.Run("validation", func(t *testing.T) {
+			runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET method", func() (*http.Response, error) {
+				return ts.PostStatus("/dxf/task/history", "", bytes.NewBuffer([]byte("")))
+			})
+			runAndCheckReqFn(t, http.StatusBadRequest, "invalid page_size", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?page_size=0")
+			})
+			runAndCheckReqFn(t, http.StatusBadRequest, "invalid page_size", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?page_size=201")
+			})
+			runAndCheckReqFn(t, http.StatusBadRequest, "invalid page_size", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?page_size=aa")
+			})
+			runAndCheckReqFn(t, http.StatusBadRequest, "invalid page_token", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?page_token=0")
+			})
+			runAndCheckReqFn(t, http.StatusBadRequest, "invalid page_token", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?page_token=aa")
+			})
+			runAndCheckReqFn(t, http.StatusBadRequest, "invalid keyspace", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?keyspace=ks.1")
+			})
+		})
+
+		t.Run("success", func(t *testing.T) {
+			ids := seedHistoryTasks(t)
+
+			body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?page_size=2")
+			})
+			require.NotContains(t, string(body), `"Error":`)
+			require.NotContains(t, string(body), sensitiveHistoryMessage)
+			firstPage := parseTaskHistoryResp(t, body)
+			require.Len(t, firstPage.Items, 2)
+			require.EqualValues(t, 5, firstPage.ApproxTotalCount)
+			require.True(t, firstPage.HasMore)
+			require.Greater(t, firstPage.NextPageToken, int64(0))
+			require.Equal(t, ids[4], firstPage.Items[0].ID)
+			require.Equal(t, ids[3], firstPage.Items[1].ID)
+			require.Equal(t, "history-key-5", firstPage.Items[0].Key)
+			require.Equal(t, "failed", firstPage.Items[0].State)
+			require.Equal(t, historyErrorCode, firstPage.Items[0].ErrorCode)
+			require.Equal(t, "failed", firstPage.Items[0].ErrorCategory)
+			require.Empty(t, firstPage.Items[1].ErrorCode)
+			require.Empty(t, firstPage.Items[1].ErrorCategory)
+			require.NotEmpty(t, firstPage.Items[0].StartTime)
+			require.NotEmpty(t, firstPage.Items[0].StateUpdateTime)
+			require.NotEmpty(t, firstPage.Items[0].EndTime)
+
+			body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+				return ts.FetchStatus(fmt.Sprintf("/dxf/task/history?page_size=2&page_token=%d", firstPage.NextPageToken))
+			})
+			secondPage := parseTaskHistoryResp(t, body)
+			require.Len(t, secondPage.Items, 2)
+			require.EqualValues(t, 5, secondPage.ApproxTotalCount)
+			require.True(t, secondPage.HasMore)
+			require.Greater(t, secondPage.NextPageToken, int64(0))
+			require.Equal(t, ids[2], secondPage.Items[0].ID)
+			require.Equal(t, ids[1], secondPage.Items[1].ID)
+
+			body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+				return ts.FetchStatus(fmt.Sprintf("/dxf/task/history?page_size=2&page_token=%d", secondPage.NextPageToken))
+			})
+			lastPage := parseTaskHistoryResp(t, body)
+			require.Len(t, lastPage.Items, 1)
+			require.EqualValues(t, 5, lastPage.ApproxTotalCount)
+			require.False(t, lastPage.HasMore)
+			require.Zero(t, lastPage.NextPageToken)
+			require.Equal(t, ids[0], lastPage.Items[0].ID)
+
+			body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+				return ts.FetchStatus("/dxf/task/history?page_size=2&keyspace=ks1")
+			})
+			filteredPage := parseTaskHistoryResp(t, body)
+			require.Len(t, filteredPage.Items, 2)
+			require.EqualValues(t, 3, filteredPage.ApproxTotalCount)
+			require.True(t, filteredPage.HasMore)
+			require.Greater(t, filteredPage.NextPageToken, int64(0))
+			for _, item := range filteredPage.Items {
+				require.Equal(t, "ks1", item.Keyspace)
+			}
+
+			body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+				return ts.FetchStatus(fmt.Sprintf("/dxf/task/history?page_size=2&keyspace=ks1&page_token=%d", filteredPage.NextPageToken))
+			})
+			filteredLastPage := parseTaskHistoryResp(t, body)
+			require.Len(t, filteredLastPage.Items, 1)
+			require.EqualValues(t, 3, filteredLastPage.ApproxTotalCount)
+			require.False(t, filteredLastPage.HasMore)
+			require.Zero(t, filteredLastPage.NextPageToken)
+			require.Equal(t, "ks1", filteredLastPage.Items[0].Keyspace)
+		})
+	})
+
+	t.Run("import-into history job info api", func(t *testing.T) {
 		t.Run("validation", func(t *testing.T) {
 			runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET method", func() (*http.Response, error) {
 				return ts.PostStatus("/dxf/import-into/history/job/ks1/9527", "", bytes.NewBuffer([]byte("")))
@@ -265,7 +582,90 @@ func TestDXFAPI(t *testing.T) {
 		require.Equal(t, 8, out.RequiredSlots)
 		require.Equal(t, 6, out.MaxRuntimeSlots)
 		require.Equal(t, []string{"encode"}, out.TargetSteps)
+
+		task, err := tm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 6, task.ExtraParams.MaxRuntimeSlots)
+		require.Equal(t, []proto.Step{proto.ImportStepEncodeAndSort}, task.ExtraParams.TargetSteps)
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.PostStatus(fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=6", id), "", bytes.NewBuffer([]byte("")))
+		})
+		out = struct {
+			RequiredSlots   int      `json:"required_slots"`
+			MaxRuntimeSlots int      `json:"max_runtime_slots"`
+			TargetSteps     []string `json:"target_steps"`
+		}{}
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.Equal(t, 8, out.RequiredSlots)
+		require.Equal(t, 6, out.MaxRuntimeSlots)
+		require.Empty(t, out.TargetSteps)
+
+		task, err = tm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 6, task.ExtraParams.MaxRuntimeSlots)
+		require.Empty(t, task.ExtraParams.TargetSteps)
 	})
+}
+
+func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("DXF maintenance APIs are only supported in the SYSTEM keyspace of the nextgen kernel")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	const (
+		systemKeyspaceID = 1
+		userKeyspaceID   = 2
+	)
+	keyspaces := []*keyspacepb.KeyspaceMeta{
+		{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: systemKeyspaceID}, Name: keyspace.System},
+		{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: userKeyspaceID}, Name: "user_keyspace"},
+	}
+	oldSystemStore := kvstore.GetSystemStorage()
+	systemStore, err := mockstore.NewMockStore(mockstore.WithKeyspacesAndCurrentKeyspaceID(keyspaces, systemKeyspaceID))
+	require.NoError(t, err)
+	kvstore.SetSystemStorage(systemStore)
+	t.Cleanup(func() {
+		kvstore.SetSystemStorage(oldSystemStore)
+		require.NoError(t, systemStore.Close())
+	})
+	systemDomain, err := session.BootstrapSession(systemStore)
+	require.NoError(t, err)
+	t.Cleanup(systemDomain.Close)
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.store, err = mockstore.NewMockStore(mockstore.WithKeyspacesAndCurrentKeyspaceID(keyspaces, userKeyspaceID))
+	require.NoError(t, err)
+	t.Cleanup(func() { ts.stopServer(t) })
+	ts.tidbdrv = server2.NewTiDBDriver(ts.store)
+	cfg := serverutil.NewTestConfig()
+	cfg.Store = config.StoreTypeTiKV
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Status.ReportStatus = true
+	server2.RunInGoTestChan = make(chan struct{})
+	ts.server, err = server2.NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	ts.server.SetDomain(systemDomain)
+	go func() {
+		require.NoError(t, ts.server.Run(systemDomain))
+	}()
+	<-server2.RunInGoTestChan
+	ts.domain, err = session.GetDomain(ts.store)
+	require.NoError(t, err)
+	ts.Port = testutil.GetPortFromTCPAddr(ts.server.ListenAddr())
+	ts.StatusPort = testutil.GetPortFromTCPAddr(ts.server.StatusListenerAddr())
+
+	for _, path := range []string{
+		"/dxf/nodes",
+		"/dxf/schedule/task_cleanup_batch_size",
+		"/dxf/schedule/max_concurrent_task",
+	} {
+		resp, err := ts.FetchStatus(path)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
 }
 
 func TestDXFScheduleTuneAPI(t *testing.T) {

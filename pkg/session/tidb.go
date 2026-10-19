@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
@@ -49,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -62,11 +65,16 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
+type domainCreateOptions struct {
+	extWorkloadMgr          extworkload.Manager
+	serverInfoSyncerOptions []serverinfo.SyncerOption
+}
+
 // Get or create the domain for store.
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, nil)
+	return dm.getWithEtcdClient(store, nil, nil, domainCreateOptions{})
 }
 
 // GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
@@ -74,10 +82,21 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 // Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
 // the actual schema filter of the returned `Domain` is the one when the domain were created.
 func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, filter)
+	return dm.getWithEtcdClient(store, nil, filter, domainCreateOptions{})
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
+func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, domainCreateOptions{
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{serverinfo.WithoutStatusEndpointClaim()},
+	})
+}
+
+func (dm *domainMap) getWithEtcdClient(
+	store kv.Storage,
+	etcdClient *clientv3.Client,
+	schemaFilter issyncer.Filter,
+	opts domainCreateOptions,
+) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -112,7 +131,9 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			},
 			etcdClient,
 			schemaFilter,
+			opts.serverInfoSyncerOptions...,
 		)
+		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
@@ -200,14 +221,47 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
-	failpoint.Inject("finishStmtError", func() {
-		failpoint.Return(errors.New("occur an error after finishStmt"))
-	})
 	sessVars := se.sessionVars
-	if !sql.IsReadOnly(sessVars) {
-		// All the history should be added here.
+	failpoint.Inject("finishStmtError", func(val failpoint.Value) {
+		failCurrentSession := true
+		switch v := val.(type) {
+		case int:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case int64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case uint64:
+			failCurrentSession = v == sessVars.ConnectionID
+		case float64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		}
+		if failCurrentSession {
+			failpoint.Return(errors.New("occur an error after finishStmt"))
+		}
+	})
+	readOnly := sql.IsReadOnly(sessVars)
+	if !readOnly && meetsErr == nil {
+		checkConnectionAlive := shouldCheckConnectionAliveBeforeCommit(sessVars, sql)
+		if checkConnectionAlive {
+			sessVars.SQLKiller.CheckConnectionAlive()
+		}
+		// Honor timeout signals before commit, even if the context is not yet canceled.
+		// Leave other signals to executors unless a connection check is needed.
+		if checkConnectionAlive || sessVars.SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded {
+			meetsErr = handlePendingSQLKillerSignal(sessVars)
+		}
+	}
+	if !readOnly {
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(sql, sessVars.StmtCtx)
+			// Add only retry-safe write statements to StmtHistory.
+			// LOAD DATA LOCAL INFILE uses a one-shot client file stream via
+			// the 0xfb protocol; retrying would desync the connection.
+			// Disable retry instead of recording it. Only LOCAL is affected;
+			// non-LOCAL reads from server/remote storage and can be safely retried.
+			if isLoadDataLocal(sql) {
+				sessVars.TxnCtx.CouldRetry = false
+			} else {
+				GetHistory(se).Add(sql, sessVars.StmtCtx)
+			}
 		}
 
 		// Handle the stmt commit/rollback.
@@ -219,7 +273,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 			}
 		}
 	}
-	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
+	err := executor.NormalizeStmtCancellationError(sessVars, autoCommitAfterStmt(ctx, se, meetsErr, sql))
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
@@ -237,6 +291,56 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	return checkStmtLimit(ctx, se, true)
 }
 
+// handlePendingSQLKillerSignal avoids checking connection liveness when no signal is pending.
+func handlePendingSQLKillerSignal(sessVars *variable.SessionVars) error {
+	if sessVars.SQLKiller.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
+		return nil
+	}
+	return sessVars.SQLKiller.HandleSignal()
+}
+
+// isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.
+func isLoadDataLocal(sql sqlexec.Statement) bool {
+	if s, ok := sql.GetStmtNode().(*ast.LoadDataStmt); ok {
+		return s.FileLocRef == ast.FileLocClient
+	}
+	return false
+}
+
+// Avoid probing the socket on fast OLTP DML. This matches SQLKiller's normal
+// connection-alive throttle, while still covering long statements that reach
+// the disconnect-before-commit race without hitting another checkpoint.
+const minConnectionAliveCheckBeforeCommitDuration = time.Second
+
+func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
+	if !sessVars.StartTime.IsZero() && time.Since(sessVars.StartTime) < minConnectionAliveCheckBeforeCommitDuration {
+		return false
+	}
+	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
+	if err != nil || stmt == nil {
+		return false
+	}
+	switch stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldRollbackTxnOnError(txn kv.Transaction, err error) bool {
+	if !txn.Valid() {
+		return false
+	}
+	if kv.ErrSharedLockLost.Equal(err) {
+		return true
+	}
+	return txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(err)
+}
+
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	isInternal := false
 	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
@@ -248,8 +352,16 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+		} else if shouldRollbackTxnOnError(&se.txn, meetsErr) {
+			if kv.ErrSharedLockLost.Equal(meetsErr) {
+				logutil.BgLogger().Info(
+					"rollbackTxn for shared lock loss",
+					zap.Uint64("txn", se.txn.StartTS()),
+					zap.Error(meetsErr),
+				)
+			} else {
+				logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+			}
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
 		}

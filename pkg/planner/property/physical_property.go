@@ -323,6 +323,13 @@ type PhysicalProperty struct {
 	// The partialOrderInfo property will pass through to the datasource and try to matchPartialOrderProperty such as:
 	// index: (a, b(10) )
 	PartialOrderInfo *PartialOrderInfo
+
+	// AdvisorySortItems contains sort items that are preferred but not required.
+	// When SortItems is empty and AdvisorySortItems is not, DataSource can try to
+	// generate paths that satisfy these sort items, enabling Limit pushdown to
+	// partial paths of IndexMerge.
+	// Currently only set when TopN is directly above a DataSource.
+	AdvisorySortItems []SortItem
 }
 
 // PartialOrderInfo records information needed for partial order optimization.
@@ -346,6 +353,23 @@ func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
 	return true, p.SortItems[0].Desc
 }
 
+const emptyPartialOrderInfoSize = int64(unsafe.Sizeof(PartialOrderInfo{}))
+
+// MemoryUsage returns the memory usage of PartialOrderInfo.
+func (p *PartialOrderInfo) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPartialOrderInfoSize + int64(cap(p.SortItems))*size.SizeOfPointer
+	for _, item := range p.SortItems {
+		if item != nil {
+			sum += item.MemoryUsage()
+		}
+	}
+	return
+}
+
 // PartialOrderMatchResult records the result of matching partial order property with an access path.
 // It is stored in candidatePath to allow each path to have its own match result.
 type PartialOrderMatchResult struct {
@@ -361,6 +385,21 @@ type PartialOrderMatchResult struct {
 
 	// PrefixLen is the prefix length in bytes for prefix index, only used for executor part
 	PrefixLen int
+}
+
+const emptyPartialOrderMatchResultSize = int64(unsafe.Sizeof(PartialOrderMatchResult{}))
+
+// MemoryUsage returns the memory usage of PartialOrderMatchResult.
+func (p *PartialOrderMatchResult) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = emptyPartialOrderMatchResultSize
+	if p.PrefixCol != nil {
+		sum += p.PrefixCol.MemoryUsage()
+	}
+	return
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -579,7 +618,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8 + (16+8)*len(p.AdvisorySortItems) + 8
 	if p.PartialOrderInfo != nil {
 		hashcodeSize += (16 + 8) * len(p.PartialOrderInfo.SortItems)
 	} else {
@@ -652,6 +691,15 @@ func (p *PhysicalProperty) HashCode() []byte {
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
+	// encode SortItemsHints into physical prop's hashcode.
+	for _, item := range p.AdvisorySortItems {
+		p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+		if item.Desc {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
+	}
 	return p.hashcode
 }
 
@@ -673,6 +721,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		CTEProducerStatus:     p.CTEProducerStatus,
 		NoCopPushDown:         p.NoCopPushDown,
 		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
+		AdvisorySortItems:     p.AdvisorySortItems,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
@@ -709,6 +758,12 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 	}
 	for _, mppCol := range p.MPPPartitionCols {
 		sum += mppCol.MemoryUsage()
+	}
+	for _, sortItem := range p.AdvisorySortItems {
+		sum += sortItem.MemoryUsage()
+	}
+	if p.PartialOrderInfo != nil {
+		sum += p.PartialOrderInfo.MemoryUsage()
 	}
 	return
 }

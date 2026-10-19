@@ -177,6 +177,6 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 		// For inner joins like `t1 join t2 join t3`, we can reorder them freely, so we allow cartesian join here.
 		return nil, nil, false
 	}
-	join, otherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
-	return join, otherConds, isCartesian
+	join, remainOtherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, s.otherConds)
+	return join, remainOtherConds, isCartesian
 }

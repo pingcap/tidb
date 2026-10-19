@@ -94,9 +94,9 @@ func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
-		strBytes := hack.Slice(str)
+		strBytes := []byte(str)
 		stringutil.LowerOneString(strBytes)
-		param.setStrVal(str)
+		param.setStrVal(string(strBytes))
 		return
 	}
 
@@ -109,9 +109,9 @@ func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int6
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
-		strBytes := hack.Slice(str)
+		strBytes := []byte(str)
 		escape = int64(stringutil.LowerOneStringExcludeEscapeChar(strBytes, byte(escape)))
-		param.setStrVal(str)
+		param.setStrVal(string(strBytes))
 		return escape
 	}
 

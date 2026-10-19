@@ -244,7 +244,7 @@ func (s *CDCNameSet) MessageToUser() string {
 		changefeedMsgBuf.WriteString("cluster/namespace: ")
 		changefeedMsgBuf.WriteString(clusterID)
 		changefeedMsgBuf.WriteString(" changefeed(s): ")
-		changefeedMsgBuf.WriteString(fmt.Sprintf("%v", changefeedID))
+		fmt.Fprintf(&changefeedMsgBuf, "%v", changefeedID)
 		changefeedMsgBuf.WriteString(", ")
 	}
 	return changefeedMsgBuf.String()

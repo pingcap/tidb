@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-go install github.com/google/go-jsonnet/cmd/jsonnet@latest
+go install github.com/google/go-jsonnet/cmd/jsonnet@v0.22.0
 
 # ref https://github.com/grafana/grafonnet-lib/issues/338, use the forked 
 # repo which implements the addOverride and addTransformation funtion for 

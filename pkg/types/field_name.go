@@ -69,6 +69,13 @@ func (name *FieldName) MemoryUsage() (sum int64) {
 	return
 }
 
+// Clone returns a shallow copy of the FieldName struct.
+// All fields are value types (CIStr, bool), so a shallow copy is a full copy.
+func (name *FieldName) Clone() *FieldName {
+	cloned := *name
+	return &cloned
+}
+
 // NameSlice is the slice of the *fieldName
 type NameSlice []*FieldName
 

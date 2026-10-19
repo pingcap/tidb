@@ -54,9 +54,9 @@ func TestCascadesTemplate(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='plan_tree' " + tt).Rows())
 			})
-			res := tk.MustQuery("explain format=brief " + tt)
+			res := tk.MustQuery("explain format='plan_tree' " + tt)
 			res.Check(testkit.Rows(output[i].Plan...))
 		}
 	})
@@ -73,6 +73,8 @@ func TestDeriveStats(t *testing.T) {
 	tk.MustExec("insert into t2 values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3),(1,1)")
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
+	// ANALYZE allocates a plan ID, while the expected memo strings start at plan ID 1.
+	tk.Session().GetSessionVars().PlanID.Store(0)
 
 	ctx := context.Background()
 	p := parser.New()

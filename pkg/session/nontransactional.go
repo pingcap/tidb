@@ -83,12 +83,15 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	// NT-DML should not use the bulk DML mode.
 	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
 	sessVars.BulkDMLEnabled = false
+	originalInNonTransactionalDML := sessVars.InNonTransactionalDML
+	sessVars.InNonTransactionalDML = true
 	// NT-DML is used to be large and unusual, so we don't mix it with other DMLs, give it the prefix "NTDML-".
 	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
 	ctx = stmtctx.WithStmtLabel(ctx, stmtType)
 	defer func() {
 		sessVars.ReadStaleness = originalReadStaleness
 		sessVars.BulkDMLEnabled = originalBulkDMLEnabled
+		sessVars.InNonTransactionalDML = originalInNonTransactionalDML
 	}()
 	nodeW := resolve.NewNodeW(stmt)
 	err := core.Preprocess(ctx, se, nodeW)
@@ -860,7 +863,7 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 	// ignoreError must be set.
 	var sb strings.Builder
 	for _, job := range failedJobs {
-		sb.WriteString(fmt.Sprintf("%s, %s;\n", job.String(redactLog), job.err.Error()))
+		fmt.Fprintf(&sb, "%s, %s;\n", job.String(redactLog), job.err.Error())
 	}
 
 	errStr := sb.String()

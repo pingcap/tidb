@@ -80,3 +80,22 @@ explain format='true_card_cost' select * from t;
 --replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>
 explain analyze format='true_card_cost' select * from t where a<3;
 
+
+# TestHashAggMemCostGating
+## High-NDV GROUP BY on a clustered-PK table with wide payload columns: a
+## TableFullScan with keep order:true delivers rows in PK prefix order for
+## free, and the hash-table memory cost makes StreamAgg cheaper than HashAgg.
+drop table if exists t_idx;
+create table t_idx (b int, c int, d varchar(200), e varchar(200), primary key (b, c) clustered);
+insert into t_idx select n*100+m*10+p, n*100+m*10+p, repeat('d',200), repeat('e',200) from (select 0 n union all select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9) a, (select 0 m union all select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9) b, (select 0 p union all select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9) c;
+analyze table t_idx;
+explain format='brief' select b, max(d), max(e) from t_idx group by b;
+
+## GROUP BY over a hash-join output (no free ordering on the group key): the
+## memory penalty is gated off because the StreamAgg alternative would need
+## an explicit Sort, so the planner picks HashAgg rather than Sort+StreamAgg.
+drop table if exists t_join_a, t_join_b;
+create table t_join_a (k int, v int, c varchar(200));
+create table t_join_b (k int, w int, d varchar(200));
+explain format='brief' select t_join_a.v, max(t_join_a.c), max(t_join_b.d) from t_join_a join t_join_b on t_join_a.k = t_join_b.k group by t_join_a.v;
+

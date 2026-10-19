@@ -332,6 +332,27 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
+		// BR v26.x and TiKV v8.x: major version difference > 2, should fail
+		build.ReleaseVersion = "v26.3.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.Error(t, err)
+		require.Regexp(t, "major version mismatch", err.Error())
+	}
+
+	{
+		// nightly-dirty (test build) skips all version checks
+		build.ReleaseVersion = build.ReleaseVersionForTest
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+	}
+
+	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.4.0"}}
 		}
@@ -566,6 +587,30 @@ func TestDetectServerInfo(t *testing.T) {
 			require.True(t, info.ServerVersion.Equal(*tc.expectedSemVer), cmt)
 		}
 		require.NoError(t, mock.ExpectationsWereMet(), cmt)
+	}
+}
+
+func TestParseServerInfoNextGen(t *testing.T) {
+	cases := []struct {
+		versionStr      string
+		expectedNextGen bool
+	}{
+		// Next-gen (premium keyspace) clusters use the cloud version format.
+		{"8.0.11-TiDB-CLOUD.202603.0", true},
+		{"8.0.11-TiDB-CLOUD.202603.3-1c7827b003-dirty", true},
+		{"Release Version: CLOUD.202603.2\nEdition: Community", true},
+		{"Release Version: CLOUD.202603.5-1c7827b003-dirty\nEdition: Community", true},
+		// Classical clusters must not be flagged as next-gen, including the
+		// look-alike version that embeds an extra "-X-" marker.
+		{"5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", false},
+		{"8.0.18", false},
+		{"10.4.10-MariaDB-1:10.4.10+maria~bionic", false},
+		{"8.0.11-TiDB-X-CLOUD.202603.0", false},
+	}
+
+	for _, tc := range cases {
+		info := ParseServerInfo(tc.versionStr)
+		require.Equalf(t, tc.expectedNextGen, info.NextGen, "version=%q", tc.versionStr)
 	}
 }
 
