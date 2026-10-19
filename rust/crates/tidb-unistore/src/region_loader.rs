@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `MockPD`'s region half (`tikv/mock_region.go`): every region query
-//! the embedded store's client asks, answered from the store's
-//! [`InProcessRegionManager`] -- one region at bootstrap, and whatever
-//! `SPLIT` cut since.
+//! Go `MockPD`'s region half (`tikv/mock_region.go`) as client-go's codec PD
+//! client sees it: every region query the embedded store's region cache
+//! asks, with raw keys encoded on the way in and region bounds decoded on
+//! the way out, answered from the store's [`InProcessRegionManager`].
 //!
 //! Paired with [`crate::client::InProcessClient`], this completes the read
 //! transport's generic pair: `DirectUnaryQueryTransport<C, R>` can now be
@@ -23,17 +23,20 @@
 //!
 //! # Narrowings, by name
 //!
-//! * Store labels, buckets, down/pending peers: none exist in-process.
+//! * Buckets and down/pending peers: none exist in-process.
+//! * An empty end-key query answers the last region; Go's
+//!   `GetRegionByEndKey` answers none for it.
 
 use std::sync::Arc;
 
+use tidb_proto::metapb;
 use tidb_txnkv::region::{
-    BatchLoadOptions, BatchRegionLoader, KeyRange, RegionLoadError, RegionLoader, RegionLocation,
-    RegionMetadata, RegionQuery, RegionQueryLoader, RegionQueryOptions, RegionRecoveryLoader,
-    StoreMetadata,
+    BatchLoadOptions, BatchRegionLoader, KeyRange, Peer, PeerRole, RegionLoadError, RegionLoader,
+    RegionLocation, RegionMetadata, RegionQuery, RegionQueryLoader, RegionQueryOptions,
+    RegionRecoveryLoader, RegionVerId, Store, StoreMetadata,
 };
 
-use crate::client::IN_PROCESS_ADDRESS;
+use crate::region_manager::encode_region_key;
 pub use crate::region_manager::InProcessRegionManager;
 
 /// The cluster id Go's bootstrap uses.
@@ -51,6 +54,30 @@ pub struct InProcessRegionLoader {
     manager: Arc<InProcessRegionManager>,
 }
 
+/// client-go's `decodeRegionMetaKeyInPlace`: an empty bound stays empty.
+fn decode_region_key(key: &[u8]) -> Result<Vec<u8>, RegionLoadError> {
+    if key.is_empty() {
+        return Ok(Vec::new());
+    }
+    tidb_codec::decode_bytes(key)
+        .map(|(_, raw)| raw)
+        .map_err(|error| RegionLoadError::new("DecodeRegionKey", error.to_string()))
+}
+
+fn peer_role(role: i32) -> PeerRole {
+    match role {
+        0 => PeerRole::Voter,
+        1 => PeerRole::Learner,
+        2 => PeerRole::IncomingVoter,
+        3 => PeerRole::DemotingVoter,
+        role => PeerRole::Unknown(role),
+    }
+}
+
+fn region_not_found(what: impl std::fmt::Display) -> RegionLoadError {
+    RegionLoadError::new("RegionNotFound", format!("region {what} not found"))
+}
+
 impl InProcessRegionLoader {
     /// A loader answering from `manager`, the store's regions.
     #[must_use]
@@ -63,6 +90,103 @@ impl InProcessRegionLoader {
     pub fn manager(&self) -> &Arc<InProcessRegionManager> {
         &self.manager
     }
+
+    /// A region and its leader as the region cache holds them: raw bounds,
+    /// every peer's store resolved.
+    fn location(
+        &self,
+        region: &metapb::Region,
+        leader: &metapb::Peer,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        let epoch = region.region_epoch.clone().unwrap_or_default();
+        let mut stores: Vec<Store> = Vec::new();
+        for peer in &region.peers {
+            if stores.iter().any(|store| store.id == peer.store_id) {
+                continue;
+            }
+            if let Ok(address) = self.manager.get_store_addr_by_store_id(peer.store_id) {
+                stores.push(Store {
+                    id: peer.store_id,
+                    address,
+                    epoch: 1,
+                });
+            }
+        }
+        Ok(RegionLocation {
+            region: RegionVerId::new(region.id, epoch.conf_ver, epoch.version),
+            start_key: decode_region_key(&region.start_key)?,
+            end_key: decode_region_key(&region.end_key)?,
+            peers: region
+                .peers
+                .iter()
+                .map(|peer| Peer {
+                    id: peer.id,
+                    store_id: peer.store_id,
+                    role: peer_role(peer.role),
+                    is_witness: peer.is_witness,
+                    store_epoch: 1,
+                })
+                .collect(),
+            leader_peer_id: Some(leader.id),
+            stores,
+            buckets: None,
+            down_peer_ids: Vec::new(),
+            pending_peer_ids: Vec::new(),
+        })
+    }
+
+    /// Go `MockPD.GetRegion` through the codec client: the region holding
+    /// the raw `key`.
+    pub fn region_by_key(&self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        let (region, leader) = self
+            .manager
+            .get_region_by_key(&encode_region_key(key))
+            .ok_or_else(|| region_not_found(format!("for key {key:?}")))?;
+        self.location(&region, &leader)
+    }
+
+    /// Go `MockPD.GetPrevRegion` through the codec client: the region whose
+    /// `(start, end]` holds the raw `key`; an empty key is the last region.
+    pub fn region_by_end_key(&self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        let found = if key.is_empty() {
+            self.manager.scan_regions(b"", b"", 0).pop()
+        } else {
+            self.manager.get_region_by_end_key(&encode_region_key(key))
+        };
+        let (region, leader) =
+            found.ok_or_else(|| region_not_found(format!("for end key {key:?}")))?;
+        self.location(&region, &leader)
+    }
+
+    /// Go `MockPD.GetRegionByID`.
+    pub fn region_by_id(&self, id: u64) -> Result<RegionLocation, RegionLoadError> {
+        let region = self
+            .manager
+            .get_region(id)
+            .ok_or_else(|| region_not_found(id))?;
+        let leader = region.peers[0].clone();
+        self.location(&region, &leader)
+    }
+
+    /// Go `MockPD.ScanRegions` through the codec client: raw bounds, an
+    /// empty end unbounded.
+    pub fn scan_regions(
+        &self,
+        start: &[u8],
+        end: &[u8],
+        limit: usize,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        let end = if end.is_empty() {
+            Vec::new()
+        } else {
+            encode_region_key(end)
+        };
+        self.manager
+            .scan_regions(&encode_region_key(start), &end, limit)
+            .iter()
+            .map(|(region, leader)| self.location(region, leader))
+            .collect()
+    }
 }
 
 impl RegionLoader for InProcessRegionLoader {
@@ -71,7 +195,7 @@ impl RegionLoader for InProcessRegionLoader {
     }
 
     fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
-        Ok(self.manager.region_by_key(key))
+        self.region_by_key(key)
     }
 }
 
@@ -86,7 +210,7 @@ impl BatchRegionLoader for InProcessRegionLoader {
         // once, in key order.
         let mut found: Vec<RegionLocation> = Vec::new();
         for range in ranges {
-            for region in self.manager.scan_regions(&range.start, &range.end, 0) {
+            for region in self.scan_regions(&range.start, &range.end, 0)? {
                 if !found.iter().any(|seen| seen.region.id == region.region.id) {
                     found.push(region);
                 }
@@ -107,11 +231,9 @@ impl RegionQueryLoader for InProcessRegionLoader {
         _options: RegionQueryOptions,
     ) -> Result<RegionLocation, RegionLoadError> {
         match query {
-            RegionQuery::Key(key) => Ok(self.manager.region_by_key(key)),
-            RegionQuery::EndKey(key) => Ok(self.manager.region_by_end_key(key)),
-            RegionQuery::Id(id) => self.manager.region_by_id(id).ok_or_else(|| {
-                RegionLoadError::new("RegionNotFound", format!("region {id} not found"))
-            }),
+            RegionQuery::Key(key) => self.region_by_key(key),
+            RegionQuery::EndKey(key) => self.region_by_end_key(key),
+            RegionQuery::Id(id) => self.region_by_id(id),
         }
     }
 
@@ -121,20 +243,25 @@ impl RegionQueryLoader for InProcessRegionLoader {
         limit: usize,
         _options: RegionQueryOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
-        Ok(self.manager.scan_regions(&range.start, &range.end, limit))
+        self.scan_regions(&range.start, &range.end, limit)
     }
 
     fn load_store(&mut self, store_id: u64) -> Result<Option<StoreMetadata>, RegionLoadError> {
-        if store_id == IN_PROCESS_STORE_ID {
-            Ok(Some(StoreMetadata {
-                id: IN_PROCESS_STORE_ID,
-                address: IN_PROCESS_ADDRESS.to_owned(),
-                labels: Vec::new(),
+        // Go `MockPD.GetStore`; an unknown store is Go's tombstone answer.
+        Ok(self
+            .manager
+            .get_all_stores()
+            .into_iter()
+            .find(|store| store.id == store_id)
+            .map(|store| StoreMetadata {
+                id: store.id,
+                address: store.address,
+                labels: store
+                    .labels
+                    .into_iter()
+                    .map(|label| (label.key, label.value))
+                    .collect(),
             }))
-        } else {
-            // An unknown store is Go's tombstone answer.
-            Ok(None)
-        }
     }
 }
 
@@ -148,14 +275,7 @@ impl RegionRecoveryLoader for InProcessRegionLoader {
             Option<tidb_txnkv::region::StoreMetadata>,
         >,
     ) -> Result<RegionLocation, RegionLoadError> {
-        self.manager
-            .region_by_id(metadata.region.id)
-            .ok_or_else(|| {
-                RegionLoadError::new(
-                    "RegionNotFound",
-                    format!("region {} not found", metadata.region.id),
-                )
-            })
+        self.region_by_id(metadata.region.id)
     }
 }
 
@@ -172,12 +292,12 @@ mod tests {
         assert_eq!(location.region.id, IN_PROCESS_REGION_ID);
         assert!(location.start_key.is_empty() && location.end_key.is_empty());
         assert_eq!(location.leader_peer_id, Some(IN_PROCESS_PEER_ID));
-        assert_eq!(location.stores[0].address, IN_PROCESS_ADDRESS);
+        assert_eq!(location.stores[0].address, "store1");
         let store = loader
             .load_store(IN_PROCESS_STORE_ID)
             .expect("loads")
             .expect("exists");
-        assert_eq!(store.address, IN_PROCESS_ADDRESS);
+        assert_eq!(store.address, "store1");
         assert!(loader.load_store(99).expect("loads").is_none(), "tombstone");
     }
 }

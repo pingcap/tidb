@@ -16,30 +16,43 @@
 //! handlers: proto requests in, proto responses out, errors converted into
 //! the `kvrpcpb.KeyError` shapes a TiKV client parses.
 //!
-//! SEED of `server.go` (1,274 lines): the transactional command set lands —
-//! get, scan, batch-get, prewrite, commit, batch-rollback, pessimistic
-//! lock/rollback, txn heartbeat, check-txn-status, resolve-lock. Raw KV,
-//! coprocessor dispatch, MPP, and the debug service are later courses.
+//! Every handler opens Go's `requestCtx` first: the request's region context
+//! is checked against the store's region manager, and a store mismatch, an
+//! unknown region or a stale epoch answers the region error TiKV would,
+//! which the client retries on fresh regions. Reads are bounded by the
+//! addressed region.
+//!
+//! Handlers here: the transactional set (get, scan, batch-get, prewrite,
+//! commit, cleanup, batch-rollback, pessimistic lock/rollback, txn heartbeat,
+//! check-txn-status, check-secondary-locks, resolve-lock, buffer batch-get),
+//! the GC set (scan-lock, physical scan-lock, GC, delete-range, unsafe
+//! destroy-range), MVCC debugging (by key, by start ts), split-region, the
+//! coprocessor with its store-batch tasks, and Go's stub answers (lock
+//! observers, store safe ts, lock-wait history, raw TTL, import).
 //!
 //! # Narrowings, by name
 //!
-//! * `newRequestCtx` / `regionCtx` / `reqCtx.regErr`: region-epoch
-//!   validation against the region manager. This handler serves ONE region
-//!   covering the whole keyspace, so the epoch cannot mismatch and the
-//!   region-error arm of every response stays empty — exactly what Go
-//!   produces for an unsplit bootstrap store. The region manager arrives
-//!   with the region course.
-//! * `svr.mvccStore.Prewrite`'s async/1PC response fields
-//!   (`asyncMinCommitTS`, `onePCCommitTS`) follow the async course.
-//! * `extractRegionError` / `pberror.PBError`: no region errors exist here
-//!   yet, so `convertToPBError`'s region arm is vacuous.
+//! * `Server.Stop` / `refCount` / `ErrRetryable("server is closed")`: the
+//!   handler lives as long as its owner; there is no stopped state.
+//! * `KvFlush` (`MVCCStore.Flush`, pipelined DML's bulk load), MPP, batch
+//!   coprocessor, the raw KV and debug services, and the deadlock detector
+//!   RPCs: not ported.
+//! * `KvPessimisticLock`'s lock waiting: see `mvcc_store`'s header.
+//! * `extractRegionError` / `pberror.PBError`: the store raises no
+//!   region errors of its own, so `convertToPBError`'s region arm is vacuous.
 
+use std::sync::Arc;
+
+use tidb_proto::coprocessor;
+use tidb_proto::errorpb;
 use tidb_proto::kvrpcpb;
 use tidb_proto::KvrpcKeyError;
 
 use crate::mvcc_store::{
-    CheckTxnStatusReq, KvError, MvccStore, PessimisticLockReq, PrewriteReq, ReadContext, ScanReq,
+    CheckTxnStatusReq, KvError, MvccInfo, MvccStore, PessimisticLockReq, PrewriteReq, ReadContext,
+    ScanReq,
 };
+use crate::region_manager::{InProcessRegionManager, RegionCtx};
 
 /// Go `convertToKeyError` (`server.go:1174`): every store error becomes the
 /// `KeyError` arm a client's resolver switches on; anything unrecognized is
@@ -139,17 +152,135 @@ fn abort(message: &str) -> KvrpcKeyError {
     }
 }
 
-/// The in-process KV service over one whole-keyspace region.
-#[derive(Debug, Default)]
+/// Go `requestCtx`: what a handler learned about the region it serves.
+struct RequestCtx {
+    /// `regCtx`, when the region checks passed.
+    reg_ctx: Option<RegionCtx>,
+    /// `rpcCtx`.
+    rpc_ctx: kvrpcpb::Context,
+}
+
+impl RequestCtx {
+    /// `regCtx.RawStart()`.
+    fn raw_start(&self) -> &[u8] {
+        self.reg_ctx.as_ref().map_or(&[], RegionCtx::raw_start)
+    }
+
+    /// `regCtx.RawEnd()`.
+    fn raw_end(&self) -> &[u8] {
+        self.reg_ctx.as_ref().map_or(&[], RegionCtx::raw_end)
+    }
+
+    /// The read paths' slice of the request: Go reads the isolation level
+    /// and the lock sets straight off `rpcCtx`, and bounds its reader by
+    /// the region.
+    fn read_context(&self) -> ReadContext {
+        ReadContext {
+            isolation_level: self.rpc_ctx.isolation_level,
+            region_raw_start: self.raw_start().to_vec(),
+            region_raw_end: self.raw_end().to_vec(),
+            resolved_locks: self.rpc_ctx.resolved_locks.clone(),
+            committed_locks: self.rpc_ctx.committed_locks.clone(),
+        }
+    }
+}
+
+/// Go's handler prologue: `newRequestCtx`, then `if reqCtx.regErr != nil
+/// { return &Response{RegionError: reqCtx.regErr}, nil }`.
+macro_rules! region_checked {
+    ($self:ident, $req:ident, $response:ty) => {{
+        let (req_ctx, region_error) = $self.new_request_ctx($req.context.as_ref());
+        if let Some(region_error) = region_error {
+            return <$response>::from_region_error(region_error);
+        }
+        req_ctx
+    }};
+}
+
+/// A response carrying only a region error.
+trait FromRegionError {
+    fn from_region_error(region_error: errorpb::Error) -> Self;
+}
+
+macro_rules! from_region_error {
+    ($($response:ty),* $(,)?) => {
+        $(impl FromRegionError for $response {
+            fn from_region_error(region_error: errorpb::Error) -> Self {
+                Self {
+                    region_error: Some(region_error),
+                    ..Self::default()
+                }
+            }
+        })*
+    };
+}
+
+from_region_error!(
+    kvrpcpb::GetResponse,
+    kvrpcpb::ScanResponse,
+    kvrpcpb::BatchGetResponse,
+    kvrpcpb::PrewriteResponse,
+    kvrpcpb::CommitResponse,
+    kvrpcpb::CleanupResponse,
+    kvrpcpb::BatchRollbackResponse,
+    kvrpcpb::PessimisticLockResponse,
+    kvrpcpb::PessimisticRollbackResponse,
+    kvrpcpb::TxnHeartBeatResponse,
+    kvrpcpb::CheckTxnStatusResponse,
+    kvrpcpb::CheckSecondaryLocksResponse,
+    kvrpcpb::ResolveLockResponse,
+    kvrpcpb::ScanLockResponse,
+    kvrpcpb::DeleteRangeResponse,
+    kvrpcpb::BufferBatchGetResponse,
+    kvrpcpb::MvccGetByKeyResponse,
+    kvrpcpb::MvccGetByStartTsResponse,
+    coprocessor::Response,
+);
+
+/// Go `Server`: the KV service over the embedded store and its regions.
+#[derive(Debug)]
 pub struct KvHandler {
-    /// The store beneath.
+    /// Go `mvccStore`.
     pub store: MvccStore,
+    /// Go `regionManager`.
+    pub regions: Arc<InProcessRegionManager>,
+}
+
+impl Default for KvHandler {
+    /// A fresh store over Go's single-store bootstrap.
+    fn default() -> Self {
+        Self::new(MvccStore::new(), Arc::new(InProcessRegionManager::new()))
+    }
 }
 
 impl KvHandler {
+    /// Go `NewServer(rm, pdClient, store, innerServer)`.
+    #[must_use]
+    pub fn new(store: MvccStore, regions: Arc<InProcessRegionManager>) -> Self {
+        Self { store, regions }
+    }
+
+    /// Go `newRequestCtx`: the region and store checks every handler opens
+    /// with; the second half is `reqCtx.regErr`.
+    fn new_request_ctx(
+        &self,
+        ctx: Option<&kvrpcpb::Context>,
+    ) -> (RequestCtx, Option<errorpb::Error>) {
+        let rpc_ctx = ctx.cloned().unwrap_or_default();
+        let (reg_ctx, mut reg_err) = match self.regions.get_region_from_ctx(&rpc_ctx) {
+            Ok(region) => (Some(region), None),
+            Err(region_error) => (None, Some(region_error)),
+        };
+        if let Err(region_error) = self.regions.get_store_info_from_ctx(&rpc_ctx) {
+            reg_err = Some(region_error);
+        }
+        (RequestCtx { reg_ctx, rpc_ctx }, reg_err)
+    }
+
     /// Go `Server.KvGet` (`server.go`).
     pub fn kv_get(&mut self, req: &kvrpcpb::GetRequest) -> kvrpcpb::GetResponse {
-        let ctx = read_context(req.context.as_ref());
+        let req_ctx = region_checked!(self, req, kvrpcpb::GetResponse);
+        let ctx = req_ctx.read_context();
         match self
             .store
             .get_with_commit_ts(&ctx, &req.key, req.version, req.need_commit_ts)
@@ -169,7 +300,8 @@ impl KvHandler {
 
     /// Go `Server.KvScan`.
     pub fn kv_scan(&mut self, req: &kvrpcpb::ScanRequest) -> kvrpcpb::ScanResponse {
-        let ctx = read_context(req.context.as_ref());
+        let req_ctx = region_checked!(self, req, kvrpcpb::ScanResponse);
+        let ctx = req_ctx.read_context();
         let pairs = self.store.scan_with(
             &ctx,
             &ScanReq {
@@ -189,7 +321,8 @@ impl KvHandler {
 
     /// Go `Server.KvBatchGet`.
     pub fn kv_batch_get(&mut self, req: &kvrpcpb::BatchGetRequest) -> kvrpcpb::BatchGetResponse {
-        let ctx = read_context(req.context.as_ref());
+        let req_ctx = region_checked!(self, req, kvrpcpb::BatchGetResponse);
+        let ctx = req_ctx.read_context();
         let pairs = self
             .store
             .batch_get_with_commit_ts(&ctx, &req.keys, req.version, req.need_commit_ts)
@@ -204,6 +337,7 @@ impl KvHandler {
 
     /// Go `Server.KvPrewrite`.
     pub fn kv_prewrite(&mut self, req: &kvrpcpb::PrewriteRequest) -> kvrpcpb::PrewriteResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::PrewriteResponse);
         let reduced = PrewriteReq {
             mutations: req.mutations.clone(),
             primary_lock: req.primary_lock.clone(),
@@ -245,6 +379,7 @@ impl KvHandler {
 
     /// Go `Server.KvCommit`.
     pub fn kv_commit(&mut self, req: &kvrpcpb::CommitRequest) -> kvrpcpb::CommitResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::CommitResponse);
         match self
             .store
             .commit(&req.keys, req.start_version, req.commit_version)
@@ -262,6 +397,7 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::BatchRollbackRequest,
     ) -> kvrpcpb::BatchRollbackResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::BatchRollbackResponse);
         match self.store.rollback(&req.keys, req.start_version) {
             Ok(()) => kvrpcpb::BatchRollbackResponse::default(),
             Err(err) => kvrpcpb::BatchRollbackResponse {
@@ -276,6 +412,7 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::PessimisticLockRequest,
     ) -> kvrpcpb::PessimisticLockResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::PessimisticLockResponse);
         let force_lock =
             req.wake_up_mode == kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeForceLock as i32;
         // Go `pessimisticLockInner`'s guard, message verbatim: ForceLock
@@ -380,8 +517,18 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::PessimisticRollbackRequest,
     ) -> kvrpcpb::PessimisticRollbackResponse {
-        self.store
-            .pessimistic_rollback(&req.keys, req.start_version, req.for_update_ts);
+        let req_ctx = region_checked!(self, req, kvrpcpb::PessimisticRollbackResponse);
+        if req.keys.is_empty() {
+            self.store.pessimistic_rollback_with_scan_first(
+                req_ctx.raw_start(),
+                req_ctx.raw_end(),
+                req.start_version,
+                req.for_update_ts,
+            );
+        } else {
+            self.store
+                .pessimistic_rollback(&req.keys, req.start_version, req.for_update_ts);
+        }
         kvrpcpb::PessimisticRollbackResponse::default()
     }
 
@@ -390,6 +537,7 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::TxnHeartBeatRequest,
     ) -> kvrpcpb::TxnHeartBeatResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::TxnHeartBeatResponse);
         match self
             .store
             .txn_heart_beat(&req.primary_lock, req.start_version, req.advise_lock_ttl)
@@ -410,6 +558,7 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::CheckTxnStatusRequest,
     ) -> kvrpcpb::CheckTxnStatusResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::CheckTxnStatusResponse);
         let reduced = CheckTxnStatusReq {
             primary_key: req.primary_key.clone(),
             lock_ts: req.lock_ts,
@@ -444,6 +593,7 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::CheckSecondaryLocksRequest,
     ) -> kvrpcpb::CheckSecondaryLocksResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::CheckSecondaryLocksResponse);
         match self
             .store
             .check_secondary_locks(&req.keys, req.start_version)
@@ -465,16 +615,306 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::ResolveLockRequest,
     ) -> kvrpcpb::ResolveLockResponse {
-        match self
-            .store
-            .resolve_lock(&req.keys, req.start_version, req.commit_version)
-        {
+        let req_ctx = region_checked!(self, req, kvrpcpb::ResolveLockResponse);
+        let (raw_start, raw_end) = (req_ctx.raw_start(), req_ctx.raw_end());
+        let result = if req.txn_infos.is_empty() {
+            self.store.resolve_lock_in_region(
+                raw_start,
+                raw_end,
+                &req.keys,
+                req.start_version,
+                req.commit_version,
+            )
+        } else {
+            req.txn_infos.iter().try_for_each(|txn_info| {
+                self.store.resolve_lock_in_region(
+                    raw_start,
+                    raw_end,
+                    &[],
+                    txn_info.txn,
+                    txn_info.status,
+                )
+            })
+        };
+        match result {
             Ok(()) => kvrpcpb::ResolveLockResponse::default(),
             Err(err) => kvrpcpb::ResolveLockResponse {
                 error: Some(convert_to_key_error(&err)),
                 ..kvrpcpb::ResolveLockResponse::default()
             },
         }
+    }
+
+    /// Go `Server.KvCleanup`: an already-committed transaction answers its
+    /// commit ts instead of an error.
+    pub fn kv_cleanup(&mut self, req: &kvrpcpb::CleanupRequest) -> kvrpcpb::CleanupResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::CleanupResponse);
+        match self
+            .store
+            .cleanup(&req.key, req.start_version, req.current_ts)
+        {
+            Ok(()) => kvrpcpb::CleanupResponse::default(),
+            Err(KvError::AlreadyCommitted(commit_ts)) => kvrpcpb::CleanupResponse {
+                commit_version: commit_ts,
+                ..kvrpcpb::CleanupResponse::default()
+            },
+            Err(err) => kvrpcpb::CleanupResponse {
+                error: Some(convert_to_key_error(&err)),
+                ..kvrpcpb::CleanupResponse::default()
+            },
+        }
+    }
+
+    /// Go `Server.KvBufferBatchGet`.
+    pub fn kv_buffer_batch_get(
+        &mut self,
+        req: &kvrpcpb::BufferBatchGetRequest,
+    ) -> kvrpcpb::BufferBatchGetResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::BufferBatchGetResponse);
+        kvrpcpb::BufferBatchGetResponse {
+            pairs: self
+                .store
+                .read_buffer_from_lock(req.version, &req.keys)
+                .into_iter()
+                .map(pair_to_proto)
+                .collect(),
+            ..kvrpcpb::BufferBatchGetResponse::default()
+        }
+    }
+
+    /// Go `Server.KvScanLock`: the region's locks up to `max_version`; the
+    /// request's own key range is not consulted.
+    pub fn kv_scan_lock(&mut self, req: &kvrpcpb::ScanLockRequest) -> kvrpcpb::ScanLockResponse {
+        let req_ctx = region_checked!(self, req, kvrpcpb::ScanLockResponse);
+        let limit = usize::try_from(req.limit).unwrap_or(usize::MAX);
+        kvrpcpb::ScanLockResponse {
+            locks: self.store.scan_lock(
+                req_ctx.raw_start(),
+                req_ctx.raw_end(),
+                req.max_version,
+                limit,
+            ),
+            ..kvrpcpb::ScanLockResponse::default()
+        }
+    }
+
+    /// Go `Server.PhysicalScanLock`: no region context.
+    pub fn physical_scan_lock(
+        &mut self,
+        req: &kvrpcpb::PhysicalScanLockRequest,
+    ) -> kvrpcpb::PhysicalScanLockResponse {
+        let limit = usize::try_from(req.limit).unwrap_or(usize::MAX);
+        kvrpcpb::PhysicalScanLockResponse {
+            locks: self
+                .store
+                .physical_scan_lock(&req.start_key, req.max_ts, limit),
+            ..kvrpcpb::PhysicalScanLockResponse::default()
+        }
+    }
+
+    /// Go `Server.KvGC`: the safe point rises; Go checks no region here.
+    pub fn kv_gc(&mut self, req: &kvrpcpb::GcRequest) -> kvrpcpb::GcResponse {
+        self.store.update_safe_point(req.safe_point);
+        kvrpcpb::GcResponse::default()
+    }
+
+    /// Go `Server.KvDeleteRange`: a failed delete is logged, not answered.
+    pub fn kv_delete_range(
+        &mut self,
+        req: &kvrpcpb::DeleteRangeRequest,
+    ) -> kvrpcpb::DeleteRangeResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::DeleteRangeResponse);
+        if let Err(err) = self.store.delete_range(&req.start_key, &req.end_key) {
+            tidb_log::error(
+                "delete range failed",
+                &[tidb_log::Field::new(
+                    "error",
+                    tidb_log::Value::Str(format!("{err:?}")),
+                )],
+            );
+        }
+        kvrpcpb::DeleteRangeResponse::default()
+    }
+
+    /// Go `Server.UnsafeDestroyRange`: no region context.
+    pub fn unsafe_destroy_range(
+        &mut self,
+        req: &kvrpcpb::UnsafeDestroyRangeRequest,
+    ) -> kvrpcpb::UnsafeDestroyRangeResponse {
+        self.store
+            .delete_file_in_range(&req.start_key, &req.end_key);
+        kvrpcpb::UnsafeDestroyRangeResponse::default()
+    }
+
+    /// Go `Server.MvccGetByKey`.
+    pub fn mvcc_get_by_key(
+        &mut self,
+        req: &kvrpcpb::MvccGetByKeyRequest,
+    ) -> kvrpcpb::MvccGetByKeyResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::MvccGetByKeyResponse);
+        kvrpcpb::MvccGetByKeyResponse {
+            info: Some(mvcc_info_to_proto(self.store.mvcc_get_by_key(&req.key))),
+            ..kvrpcpb::MvccGetByKeyResponse::default()
+        }
+    }
+
+    /// Go `Server.MvccGetByStartTs`: the region's first key written by the
+    /// start ts; none answers no info and no key.
+    pub fn mvcc_get_by_start_ts(
+        &mut self,
+        req: &kvrpcpb::MvccGetByStartTsRequest,
+    ) -> kvrpcpb::MvccGetByStartTsResponse {
+        let req_ctx = region_checked!(self, req, kvrpcpb::MvccGetByStartTsResponse);
+        match self
+            .store
+            .mvcc_get_by_start_ts(req_ctx.raw_start(), req_ctx.raw_end(), req.start_ts)
+        {
+            Some((info, key)) => kvrpcpb::MvccGetByStartTsResponse {
+                info: Some(mvcc_info_to_proto(info)),
+                key,
+                ..kvrpcpb::MvccGetByStartTsResponse::default()
+            },
+            None => kvrpcpb::MvccGetByStartTsResponse::default(),
+        }
+    }
+
+    /// Go `Server.SplitRegion`: the region manager checks the region itself.
+    pub fn split_region(
+        &mut self,
+        req: &kvrpcpb::SplitRegionRequest,
+    ) -> kvrpcpb::SplitRegionResponse {
+        self.regions.split_region(req)
+    }
+
+    /// Go `Server.Coprocessor`: the region-checked request runs on the
+    /// coprocessor handler, then its store-batch tasks run each as its own
+    /// request.
+    pub fn coprocessor(&mut self, req: &coprocessor::Request) -> coprocessor::Response {
+        let _req_ctx = region_checked!(self, req, coprocessor::Response);
+        let mut resp = crate::cophandler::handle_cop_request(&mut self.store, req);
+        resp.batch_responses = self.store_batch_coprocessor(req);
+        resp
+    }
+
+    /// Go `Server.StoreBatchCoprocessor`: each task is the request again
+    /// with the task's ranges and region, and no tasks of its own.
+    pub fn store_batch_coprocessor(
+        &mut self,
+        req: &coprocessor::Request,
+    ) -> Vec<coprocessor::StoreBatchTaskResponse> {
+        let mut batch_resps = Vec::with_capacity(req.tasks.len());
+        for task in &req.tasks {
+            let mut task_req = req.clone();
+            task_req.tasks = Vec::new();
+            task_req.is_cache_enabled = false;
+            task_req.ranges = task.ranges.clone();
+            let context = task_req.context.get_or_insert_with(Default::default);
+            context.region_id = task.region_id;
+            context.region_epoch = task.region_epoch.clone();
+            context.peer = task.peer.clone();
+            let resp = self.coprocessor(&task_req);
+            batch_resps.push(coprocessor::StoreBatchTaskResponse {
+                task_id: task.task_id,
+                region_error: resp.region_error,
+                locked: resp.locked,
+                other_error: resp.other_error,
+                exec_details_v2: resp.exec_details_v2,
+                data: resp.data,
+                ..coprocessor::StoreBatchTaskResponse::default()
+            });
+        }
+        batch_resps
+    }
+
+    /// Go `Server.CheckLockObserver`: no observer is implemented, so the
+    /// store reports clean.
+    pub fn check_lock_observer(
+        &mut self,
+        _req: &kvrpcpb::CheckLockObserverRequest,
+    ) -> kvrpcpb::CheckLockObserverResponse {
+        kvrpcpb::CheckLockObserverResponse {
+            is_clean: true,
+            ..kvrpcpb::CheckLockObserverResponse::default()
+        }
+    }
+
+    /// Go `Server.RegisterLockObserver`.
+    pub fn register_lock_observer(
+        &mut self,
+        _req: &kvrpcpb::RegisterLockObserverRequest,
+    ) -> kvrpcpb::RegisterLockObserverResponse {
+        kvrpcpb::RegisterLockObserverResponse::default()
+    }
+
+    /// Go `Server.RemoveLockObserver`.
+    pub fn remove_lock_observer(
+        &mut self,
+        _req: &kvrpcpb::RemoveLockObserverRequest,
+    ) -> kvrpcpb::RemoveLockObserverResponse {
+        kvrpcpb::RemoveLockObserverResponse::default()
+    }
+
+    /// Go `Server.GetStoreSafeTS`: zero.
+    pub fn get_store_safe_ts(
+        &mut self,
+        _req: &kvrpcpb::StoreSafeTsRequest,
+    ) -> kvrpcpb::StoreSafeTsResponse {
+        kvrpcpb::StoreSafeTsResponse::default()
+    }
+
+    /// Go `Server.GetLockWaitHistory`: empty.
+    pub fn get_lock_wait_history(
+        &mut self,
+        _req: &kvrpcpb::GetLockWaitHistoryRequest,
+    ) -> kvrpcpb::GetLockWaitHistoryResponse {
+        kvrpcpb::GetLockWaitHistoryResponse::default()
+    }
+
+    /// Go `Server.RawGetKeyTTL`: empty (Go's TODO).
+    pub fn raw_get_key_ttl(
+        &mut self,
+        _req: &kvrpcpb::RawGetKeyTtlRequest,
+    ) -> kvrpcpb::RawGetKeyTtlResponse {
+        kvrpcpb::RawGetKeyTtlResponse::default()
+    }
+
+    /// Go `Server.KvImport`: empty (Go's TODO).
+    pub fn kv_import(&mut self, _req: &kvrpcpb::ImportRequest) -> kvrpcpb::ImportResponse {
+        kvrpcpb::ImportResponse::default()
+    }
+}
+
+/// Go `MvccGetByKey`'s proto: the writes in the store's order and the
+/// parallel `Values` list of each write's start ts and short value.
+fn mvcc_info_to_proto(info: MvccInfo) -> kvrpcpb::MvccInfo {
+    let writes: Vec<kvrpcpb::MvccWrite> = info
+        .writes
+        .into_iter()
+        .map(|write| kvrpcpb::MvccWrite {
+            r#type: write.op,
+            start_ts: write.start_ts,
+            commit_ts: write.commit_ts,
+            short_value: write.short_value,
+            ..kvrpcpb::MvccWrite::default()
+        })
+        .collect();
+    let values = writes
+        .iter()
+        .map(|write| kvrpcpb::MvccValue {
+            start_ts: write.start_ts,
+            value: write.short_value.clone(),
+        })
+        .collect();
+    kvrpcpb::MvccInfo {
+        lock: info.lock.map(|lock| kvrpcpb::MvccLock {
+            r#type: lock.op,
+            start_ts: lock.start_ts,
+            primary: lock.primary,
+            short_value: lock.short_value,
+            ..kvrpcpb::MvccLock::default()
+        }),
+        writes,
+        values,
     }
 }
 
@@ -489,17 +929,6 @@ fn pair_to_proto(pair: crate::mvcc_store::KvPair) -> kvrpcpb::KvPair {
     }
 }
 
-/// Go reads these three straight off `reqCtx.rpcCtx` (the request's
-/// `kvrpcpb.Context`); an absent context is the zero value — SI with empty
-/// lists.
-fn read_context(context: Option<&kvrpcpb::Context>) -> ReadContext {
-    context.map_or_else(ReadContext::default, |ctx| ReadContext {
-        isolation_level: ctx.isolation_level,
-        resolved_locks: ctx.resolved_locks.clone(),
-        committed_locks: ctx.committed_locks.clone(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,6 +936,23 @@ mod tests {
 
     // All WRITTEN: server.go's own coverage is the RPC integration suites.
     // These pin the proto shapes a client parses.
+
+    /// The bootstrap region's context, as a client addresses it.
+    fn region_ctx() -> Option<kvrpcpb::Context> {
+        Some(kvrpcpb::Context {
+            region_id: crate::region_manager::BOOTSTRAP_REGION_ID,
+            region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+                conf_ver: 1,
+                version: 1,
+            }),
+            peer: Some(tidb_proto::metapb::Peer {
+                id: crate::region_manager::BOOTSTRAP_PEER_ID,
+                store_id: crate::region_manager::STORE_ID,
+                ..tidb_proto::metapb::Peer::default()
+            }),
+            ..kvrpcpb::Context::default()
+        })
+    }
 
     fn put(key: &[u8], value: &[u8]) -> KvrpcMutation {
         KvrpcMutation {
@@ -524,6 +970,7 @@ mod tests {
         let mut handler = KvHandler::default();
         let key = b"k".to_vec();
         let resp = handler.kv_prewrite(&kvrpcpb::PrewriteRequest {
+            context: region_ctx(),
             mutations: vec![put(&key, b"v")],
             primary_lock: key.clone(),
             start_version: 10,
@@ -532,6 +979,7 @@ mod tests {
         });
         assert!(resp.errors.is_empty(), "{:?}", resp.errors);
         let resp = handler.kv_commit(&kvrpcpb::CommitRequest {
+            context: region_ctx(),
             keys: vec![key.clone()],
             start_version: 10,
             commit_version: 11,
@@ -539,6 +987,7 @@ mod tests {
         });
         assert!(resp.error.is_none());
         let resp = handler.kv_get(&kvrpcpb::GetRequest {
+            context: region_ctx(),
             key: key.clone(),
             version: 12,
             ..kvrpcpb::GetRequest::default()
@@ -556,6 +1005,7 @@ mod tests {
         let key = b"k".to_vec();
         let start_ts = 5_u64 << 18;
         handler.kv_prewrite(&kvrpcpb::PrewriteRequest {
+            context: region_ctx(),
             mutations: vec![put(&key, b"v")],
             primary_lock: key.clone(),
             start_version: start_ts,
@@ -563,6 +1013,7 @@ mod tests {
             ..kvrpcpb::PrewriteRequest::default()
         });
         let resp = handler.kv_get(&kvrpcpb::GetRequest {
+            context: region_ctx(),
             key: key.clone(),
             version: start_ts + 1,
             ..kvrpcpb::GetRequest::default()
@@ -571,6 +1022,7 @@ mod tests {
         assert_eq!(locked.lock_version, start_ts);
         // Status check at an expired current ts rolls the lock back...
         let resp = handler.kv_check_txn_status(&kvrpcpb::CheckTxnStatusRequest {
+            context: region_ctx(),
             primary_key: key.clone(),
             lock_ts: start_ts,
             current_ts: 40 << 18,
@@ -583,6 +1035,7 @@ mod tests {
         );
         // ...and the retried read now answers cleanly: not found.
         let resp = handler.kv_get(&kvrpcpb::GetRequest {
+            context: region_ctx(),
             key,
             version: 41 << 18,
             ..kvrpcpb::GetRequest::default()
@@ -596,18 +1049,21 @@ mod tests {
         let mut handler = KvHandler::default();
         let key = b"k".to_vec();
         handler.kv_prewrite(&kvrpcpb::PrewriteRequest {
+            context: region_ctx(),
             mutations: vec![put(&key, b"v1")],
             primary_lock: key.clone(),
             start_version: 10,
             ..kvrpcpb::PrewriteRequest::default()
         });
         handler.kv_commit(&kvrpcpb::CommitRequest {
+            context: region_ctx(),
             keys: vec![key.clone()],
             start_version: 10,
             commit_version: 20,
             ..kvrpcpb::CommitRequest::default()
         });
         let resp = handler.kv_prewrite(&kvrpcpb::PrewriteRequest {
+            context: region_ctx(),
             mutations: vec![put(&key, b"v2")],
             primary_lock: key.clone(),
             start_version: 15,
@@ -619,5 +1075,477 @@ mod tests {
             conflict.reason,
             kvrpcpb::write_conflict::Reason::Optimistic as i32
         );
+    }
+
+    /// The context a client sends for the region holding the raw `key`.
+    fn ctx_for(handler: &KvHandler, key: &[u8]) -> Option<kvrpcpb::Context> {
+        let region = crate::region_loader::InProcessRegionLoader::new(Arc::clone(&handler.regions))
+            .region_by_key(key)
+            .unwrap();
+        let leader = region
+            .peers
+            .iter()
+            .find(|peer| Some(peer.id) == region.leader_peer_id)
+            .unwrap();
+        Some(kvrpcpb::Context {
+            region_id: region.region.id,
+            region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+                conf_ver: region.region.epoch.conf_ver,
+                version: region.region.epoch.version,
+            }),
+            peer: Some(tidb_proto::metapb::Peer {
+                id: leader.id,
+                store_id: leader.store_id,
+                ..tidb_proto::metapb::Peer::default()
+            }),
+            ..kvrpcpb::Context::default()
+        })
+    }
+
+    fn split_at(handler: &mut KvHandler, key: &[u8]) {
+        let context = ctx_for(handler, key);
+        let resp = handler.split_region(&kvrpcpb::SplitRegionRequest {
+            context,
+            split_keys: vec![key.to_vec()],
+            ..kvrpcpb::SplitRegionRequest::default()
+        });
+        assert!(resp.region_error.is_none(), "{:?}", resp.region_error);
+    }
+
+    fn prewrite(handler: &mut KvHandler, mutations: Vec<KvrpcMutation>, start: u64) {
+        let primary = mutations[0].key.clone();
+        let context = ctx_for(handler, &primary);
+        let resp = handler.kv_prewrite(&kvrpcpb::PrewriteRequest {
+            context,
+            mutations,
+            primary_lock: primary,
+            start_version: start,
+            lock_ttl: 3000,
+            ..kvrpcpb::PrewriteRequest::default()
+        });
+        assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+    }
+
+    fn commit(handler: &mut KvHandler, keys: &[&[u8]], start: u64, commit_ts: u64) {
+        let context = ctx_for(handler, keys[0]);
+        let resp = handler.kv_commit(&kvrpcpb::CommitRequest {
+            context,
+            keys: keys.iter().map(|key| key.to_vec()).collect(),
+            start_version: start,
+            commit_version: commit_ts,
+            ..kvrpcpb::CommitRequest::default()
+        });
+        assert!(resp.error.is_none(), "{:?}", resp.error);
+    }
+
+    fn put_committed(
+        handler: &mut KvHandler,
+        key: &[u8],
+        value: &[u8],
+        start: u64,
+        commit_ts: u64,
+    ) {
+        prewrite(handler, vec![put(key, value)], start);
+        commit(handler, &[key], start, commit_ts);
+    }
+
+    fn get(handler: &mut KvHandler, key: &[u8], version: u64) -> kvrpcpb::GetResponse {
+        let context = ctx_for(handler, key);
+        handler.kv_get(&kvrpcpb::GetRequest {
+            context,
+            key: key.to_vec(),
+            version,
+            ..kvrpcpb::GetRequest::default()
+        })
+    }
+
+    fn scan_lock(
+        handler: &mut KvHandler,
+        key: &[u8],
+        max_version: u64,
+        limit: u32,
+    ) -> Vec<Vec<u8>> {
+        let context = ctx_for(handler, key);
+        let resp = handler.kv_scan_lock(&kvrpcpb::ScanLockRequest {
+            context,
+            max_version,
+            limit,
+            ..kvrpcpb::ScanLockRequest::default()
+        });
+        assert!(resp.region_error.is_none() && resp.error.is_none());
+        resp.locks.into_iter().map(|lock| lock.key).collect()
+    }
+
+    /// Go `newRequestCtx`: after a split the old epoch is stale, an absent
+    /// context names no region, and the new regions serve their keys.
+    #[test]
+    fn a_stale_or_unknown_region_answers_the_region_error_tikv_would() {
+        let mut handler = KvHandler::default();
+        put_committed(&mut handler, b"x", b"v", 10, 11);
+        split_at(&mut handler, b"m");
+
+        let stale = handler.kv_get(&kvrpcpb::GetRequest {
+            context: region_ctx(),
+            key: b"x".to_vec(),
+            version: 20,
+            ..kvrpcpb::GetRequest::default()
+        });
+        let region_error = stale.region_error.expect("a stale epoch");
+        let current = &region_error.epoch_not_match.unwrap().current_regions[0];
+        assert_eq!(current.id, crate::region_manager::BOOTSTRAP_REGION_ID);
+        assert_eq!(
+            current.end_key,
+            crate::region_manager::encode_region_key(b"m")
+        );
+
+        let unaddressed = handler.kv_get(&kvrpcpb::GetRequest {
+            key: b"x".to_vec(),
+            version: 20,
+            ..kvrpcpb::GetRequest::default()
+        });
+        assert_eq!(
+            unaddressed
+                .region_error
+                .unwrap()
+                .region_not_found
+                .unwrap()
+                .region_id,
+            0
+        );
+
+        let resp = get(&mut handler, b"x", 20);
+        assert!(resp.region_error.is_none());
+        assert_eq!(resp.value, b"v");
+    }
+
+    /// Go `KvScanLock`: the addressed region's locks started at or before
+    /// `max_version`, the limit counting every lock visited.
+    #[test]
+    fn scan_lock_answers_the_regions_locks_up_to_max_version() {
+        let mut handler = KvHandler::default();
+        split_at(&mut handler, b"m");
+        prewrite(&mut handler, vec![put(b"a", b"1")], 10);
+        prewrite(&mut handler, vec![put(b"b", b"2")], 20);
+        prewrite(&mut handler, vec![put(b"n", b"3")], 10);
+
+        assert_eq!(scan_lock(&mut handler, b"a", 15, 10), vec![b"a".to_vec()]);
+        assert_eq!(
+            scan_lock(&mut handler, b"a", 100, 10),
+            vec![b"a".to_vec(), b"b".to_vec()]
+        );
+        assert_eq!(scan_lock(&mut handler, b"a", 100, 1), vec![b"a".to_vec()]);
+        assert!(scan_lock(&mut handler, b"a", 100, 0).is_empty());
+        assert_eq!(scan_lock(&mut handler, b"n", 100, 10), vec![b"n".to_vec()]);
+        let physical = handler.physical_scan_lock(&kvrpcpb::PhysicalScanLockRequest {
+            max_ts: 100,
+            start_key: b"b".to_vec(),
+            limit: 10,
+            ..kvrpcpb::PhysicalScanLockRequest::default()
+        });
+        let keys: Vec<_> = physical.locks.into_iter().map(|lock| lock.key).collect();
+        assert_eq!(keys, vec![b"b".to_vec(), b"n".to_vec()]);
+    }
+
+    /// Go `KvResolveLock` with `TxnInfos`: every lock of each transaction
+    /// inside the addressed region resolves; other regions keep theirs.
+    #[test]
+    fn resolve_lock_with_txn_infos_resolves_only_inside_the_region() {
+        let mut handler = KvHandler::default();
+        split_at(&mut handler, b"m");
+        prewrite(&mut handler, vec![put(b"a", b"1")], 10);
+        prewrite(&mut handler, vec![put(b"n", b"2")], 10);
+        let context = ctx_for(&handler, b"a");
+        let resp = handler.kv_resolve_lock(&kvrpcpb::ResolveLockRequest {
+            context,
+            txn_infos: vec![kvrpcpb::TxnInfo {
+                txn: 10,
+                status: 11,
+                ..kvrpcpb::TxnInfo::default()
+            }],
+            ..kvrpcpb::ResolveLockRequest::default()
+        });
+        assert!(resp.error.is_none() && resp.region_error.is_none());
+        assert!(scan_lock(&mut handler, b"a", 100, 10).is_empty());
+        assert_eq!(scan_lock(&mut handler, b"n", 100, 10), vec![b"n".to_vec()]);
+        assert_eq!(get(&mut handler, b"a", 20).value, b"1");
+    }
+
+    /// Go `KvGC`: the safe point only rises, and compaction keeps the newest
+    /// version at or below it, drops a committed delete there, and drops
+    /// rollback records older than it.
+    #[test]
+    fn kv_gc_raises_the_safe_point_and_compacts_old_versions() {
+        let mut handler = KvHandler::default();
+        put_committed(&mut handler, b"t1", b"v1", 10, 20);
+        put_committed(&mut handler, b"t1", b"v2", 30, 40);
+        let gc = |handler: &mut KvHandler, safe_point| {
+            handler.kv_gc(&kvrpcpb::GcRequest {
+                safe_point,
+                ..kvrpcpb::GcRequest::default()
+            })
+        };
+        gc(&mut handler, 35);
+        assert_eq!(handler.store.safe_point(), 35);
+        let commits = |handler: &KvHandler, key: &[u8]| -> Vec<u64> {
+            handler
+                .store
+                .mvcc_get_by_key(key)
+                .writes
+                .iter()
+                .map(|write| write.commit_ts)
+                .collect()
+        };
+        assert_eq!(commits(&handler, b"t1"), vec![40, 20]);
+        put_committed(&mut handler, b"t1", b"v3", 50, 60);
+        gc(&mut handler, 70);
+        assert_eq!(commits(&handler, b"t1"), vec![60]);
+
+        prewrite(
+            &mut handler,
+            vec![KvrpcMutation {
+                op: KvrpcOp::Del as i32,
+                key: b"t1".to_vec(),
+                ..KvrpcMutation::default()
+            }],
+            75,
+        );
+        commit(&mut handler, &[b"t1"], 75, 80);
+        let context = ctx_for(&handler, b"t2");
+        handler.kv_batch_rollback(&kvrpcpb::BatchRollbackRequest {
+            context,
+            keys: vec![b"t2".to_vec()],
+            start_version: 85,
+            ..kvrpcpb::BatchRollbackRequest::default()
+        });
+        assert_eq!(commits(&handler, b"t2"), vec![85], "the rollback record");
+        gc(&mut handler, 90);
+        assert!(commits(&handler, b"t1").is_empty(), "the delete is gone");
+        assert!(commits(&handler, b"t2").is_empty(), "the rollback is gone");
+        gc(&mut handler, 10);
+        assert_eq!(handler.store.safe_point(), 90, "never lowered");
+    }
+
+    /// Go `dbWriter.DeleteRange`: later reads find nothing, the snapshot the
+    /// key was written at still reads it; an empty end key deletes nothing.
+    #[test]
+    fn delete_range_hides_keys_from_later_reads_but_not_older_snapshots() {
+        let mut handler = KvHandler::default();
+        put_committed(&mut handler, b"t1", b"v1", 10, 20);
+        put_committed(&mut handler, b"t2", b"v2", 10, 20);
+        put_committed(&mut handler, b"t3", b"v3", 10, 20);
+        let context = ctx_for(&handler, b"t1");
+        let resp = handler.kv_delete_range(&kvrpcpb::DeleteRangeRequest {
+            context: context.clone(),
+            start_key: b"t1".to_vec(),
+            end_key: b"t3".to_vec(),
+            ..kvrpcpb::DeleteRangeRequest::default()
+        });
+        assert!(resp.region_error.is_none() && resp.error.is_empty());
+        assert!(get(&mut handler, b"t1", 30).value.is_empty());
+        assert!(get(&mut handler, b"t2", 30).value.is_empty());
+        assert_eq!(get(&mut handler, b"t1", 20).value, b"v1");
+        assert_eq!(get(&mut handler, b"t3", 30).value, b"v3");
+
+        handler.kv_delete_range(&kvrpcpb::DeleteRangeRequest {
+            context,
+            start_key: b"t3".to_vec(),
+            ..kvrpcpb::DeleteRangeRequest::default()
+        });
+        assert_eq!(get(&mut handler, b"t3", 30).value, b"v3");
+    }
+
+    /// Go `UnsafeDestroyRange` (`DeleteFileInRange`): every version in the
+    /// range goes, and so do the range's records in the extra keyspace.
+    #[test]
+    fn unsafe_destroy_range_removes_the_range_and_its_extra_keyspace() {
+        let mut handler = KvHandler::default();
+        put_committed(&mut handler, b"t1", b"v1", 10, 20);
+        put_committed(&mut handler, b"t5", b"v5", 10, 20);
+        let context = ctx_for(&handler, b"t2");
+        handler.kv_batch_rollback(&kvrpcpb::BatchRollbackRequest {
+            context,
+            keys: vec![b"t2".to_vec()],
+            start_version: 30,
+            ..kvrpcpb::BatchRollbackRequest::default()
+        });
+        handler.unsafe_destroy_range(&kvrpcpb::UnsafeDestroyRangeRequest {
+            start_key: b"t1".to_vec(),
+            end_key: b"t3".to_vec(),
+            ..kvrpcpb::UnsafeDestroyRangeRequest::default()
+        });
+        assert!(handler.store.mvcc_get_by_key(b"t1").writes.is_empty());
+        assert!(handler.store.mvcc_get_by_key(b"t2").writes.is_empty());
+        assert_eq!(
+            get(&mut handler, b"t1", 20).value,
+            b"",
+            "even old snapshots"
+        );
+        assert_eq!(get(&mut handler, b"t5", 30).value, b"v5");
+    }
+
+    /// Go `KvCleanup`: an already-committed transaction answers its commit
+    /// ts, not an error.
+    #[test]
+    fn cleanup_answers_an_already_committed_transactions_commit_ts() {
+        let mut handler = KvHandler::default();
+        put_committed(&mut handler, b"k", b"v", 10, 20);
+        let context = ctx_for(&handler, b"k");
+        let resp = handler.kv_cleanup(&kvrpcpb::CleanupRequest {
+            context,
+            key: b"k".to_vec(),
+            start_version: 10,
+            ..kvrpcpb::CleanupRequest::default()
+        });
+        assert!(resp.error.is_none());
+        assert_eq!(resp.commit_version, 20);
+    }
+
+    /// Go `PessimisticRollbackWithScanFirst`: no keys rolls back the
+    /// transaction's pessimistic locks in the addressed region only.
+    #[test]
+    fn pessimistic_rollback_without_keys_rolls_back_the_regions_locks() {
+        let mut handler = KvHandler::default();
+        split_at(&mut handler, b"m");
+        for key in [b"a".as_slice(), b"b", b"n"] {
+            let context = ctx_for(&handler, key);
+            let resp = handler.kv_pessimistic_lock(&kvrpcpb::PessimisticLockRequest {
+                context,
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::PessimisticLock as i32,
+                    key: key.to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: b"a".to_vec(),
+                start_version: 10,
+                for_update_ts: 10,
+                lock_ttl: 3000,
+                ..kvrpcpb::PessimisticLockRequest::default()
+            });
+            assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+        }
+        let context = ctx_for(&handler, b"a");
+        handler.kv_pessimistic_rollback(&kvrpcpb::PessimisticRollbackRequest {
+            context,
+            start_version: 10,
+            for_update_ts: 10,
+            ..kvrpcpb::PessimisticRollbackRequest::default()
+        });
+        assert!(scan_lock(&mut handler, b"a", 100, 10).is_empty());
+        assert_eq!(scan_lock(&mut handler, b"n", 100, 10), vec![b"n".to_vec()]);
+    }
+
+    /// Go `KvBufferBatchGet`: the transaction's own buffered puts and
+    /// deletes, read back from its locks.
+    #[test]
+    fn buffer_batch_get_reads_a_transactions_own_locks() {
+        let mut handler = KvHandler::default();
+        prewrite(
+            &mut handler,
+            vec![
+                put(b"a", b"v"),
+                KvrpcMutation {
+                    op: KvrpcOp::Del as i32,
+                    key: b"b".to_vec(),
+                    ..KvrpcMutation::default()
+                },
+            ],
+            10,
+        );
+        prewrite(&mut handler, vec![put(b"c", b"w")], 20);
+        let context = ctx_for(&handler, b"a");
+        let resp = handler.kv_buffer_batch_get(&kvrpcpb::BufferBatchGetRequest {
+            context,
+            keys: vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()],
+            version: 10,
+            ..kvrpcpb::BufferBatchGetRequest::default()
+        });
+        let pairs: Vec<_> = resp
+            .pairs
+            .into_iter()
+            .map(|pair| (pair.key, pair.value))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![(b"a".to_vec(), b"v".to_vec()), (b"b".to_vec(), Vec::new())]
+        );
+    }
+
+    /// Go `MvccGetByStartTs`: only the addressed region is searched; the
+    /// answer carries Go's parallel `Values` list.
+    #[test]
+    fn mvcc_get_by_start_ts_searches_only_the_region() {
+        let mut handler = KvHandler::default();
+        split_at(&mut handler, b"m");
+        put_committed(&mut handler, b"n", b"v", 10, 20);
+        let context = ctx_for(&handler, b"a");
+        let left = handler.mvcc_get_by_start_ts(&kvrpcpb::MvccGetByStartTsRequest {
+            context,
+            start_ts: 10,
+            ..kvrpcpb::MvccGetByStartTsRequest::default()
+        });
+        assert!(left.info.is_none() && left.key.is_empty());
+        let context = ctx_for(&handler, b"n");
+        let right = handler.mvcc_get_by_start_ts(&kvrpcpb::MvccGetByStartTsRequest {
+            context,
+            start_ts: 10,
+            ..kvrpcpb::MvccGetByStartTsRequest::default()
+        });
+        assert_eq!(right.key, b"n");
+        let info = right.info.unwrap();
+        assert_eq!(info.writes.len(), 1);
+        assert_eq!(info.values[0].start_ts, 10);
+        assert_eq!(info.values[0].value, b"v");
+    }
+
+    /// Go `StoreBatchCoprocessor`: each task runs as its own request with
+    /// the task's region, so a stale task answers its region error alone.
+    #[test]
+    fn store_batch_tasks_run_as_their_own_region_checked_requests() {
+        let mut handler = KvHandler::default();
+        let stale = region_ctx().unwrap();
+        split_at(&mut handler, b"m");
+        let left = ctx_for(&handler, b"a").unwrap();
+        let resp = handler.coprocessor(&coprocessor::Request {
+            context: Some(left.clone()),
+            tp: crate::cophandler::REQ_TYPE_CHECKSUM,
+            tasks: vec![
+                coprocessor::StoreBatchTask {
+                    region_id: left.region_id,
+                    region_epoch: left.region_epoch.clone(),
+                    peer: left.peer.clone(),
+                    task_id: 1,
+                    ..coprocessor::StoreBatchTask::default()
+                },
+                coprocessor::StoreBatchTask {
+                    region_id: stale.region_id,
+                    region_epoch: stale.region_epoch.clone(),
+                    peer: stale.peer.clone(),
+                    task_id: 2,
+                    ..coprocessor::StoreBatchTask::default()
+                },
+            ],
+            ..coprocessor::Request::default()
+        });
+        assert!(resp.region_error.is_none());
+        assert!(!resp.data.is_empty());
+        let batch: Vec<_> = resp
+            .batch_responses
+            .iter()
+            .map(|task| {
+                (
+                    task.task_id,
+                    task.region_error.is_some(),
+                    task.data.is_empty(),
+                )
+            })
+            .collect();
+        assert_eq!(batch, vec![(1, false, false), (2, true, true)]);
+
+        let stale_resp = handler.coprocessor(&coprocessor::Request {
+            context: Some(stale),
+            tp: crate::cophandler::REQ_TYPE_CHECKSUM,
+            ..coprocessor::Request::default()
+        });
+        assert!(stale_resp.region_error.unwrap().epoch_not_match.is_some());
     }
 }

@@ -22,7 +22,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tidb_executor::region_map::{RegionMeta, RegionStore};
-use tidb_txnkv::region::RegionVerId;
+use tidb_proto::{kvrpcpb, metapb};
+use tidb_txnkv::region::{RegionLocation, RegionVerId};
+use tidb_unistore::region_loader::InProcessRegionLoader;
 use tidb_unistore::region_manager::InProcessRegionManager;
 
 /// [`RegionStore`] over the embedded store's region manager.
@@ -64,33 +66,58 @@ impl RegionStore for UnistoreRegionStore {
     ) -> (Vec<u64>, Option<String>) {
         // client-go `SplitRegions`: the keys sorted and de-duplicated,
         // grouped by the region holding each, a key that already starts its
-        // region dropped; one `CmdSplitRegion` per region.
+        // region dropped; one `CmdSplitRegion` per region, addressed to it.
         keys.sort();
         keys.dedup();
-        let mut groups: BTreeMap<Vec<u8>, (u64, Vec<Vec<u8>>)> = BTreeMap::new();
+        let loader = InProcessRegionLoader::new(Arc::clone(&self.manager));
+        let mut groups: BTreeMap<Vec<u8>, (RegionLocation, Vec<Vec<u8>>)> = BTreeMap::new();
         for key in keys {
-            let region = self.manager.region_by_key(&key);
+            let region = match loader.region_by_key(&key) {
+                Ok(region) => region,
+                Err(error) => return (Vec::new(), Some(error.to_string())),
+            };
             if region.start_key == key {
                 continue;
             }
             groups
                 .entry(region.start_key.clone())
-                .or_insert_with(|| (region.region.id, Vec::new()))
+                .or_insert_with(|| (region, Vec::new()))
                 .1
                 .push(key);
         }
         let mut region_ids = Vec::new();
-        for (region_id, keys) in groups.into_values() {
-            match self.manager.split_region(region_id, &keys) {
-                Ok((produced, stale)) => {
-                    (self.invalidate)(stale);
-                    // client-go keeps every region of the response but the
-                    // last for scattering: one per region the split created.
-                    let created = produced.len().saturating_sub(1);
-                    region_ids.extend(produced[..created].iter().map(|region| region.region.id));
-                }
-                Err(error) => return (region_ids, Some(error)),
+        for (region, keys) in groups.into_values() {
+            let request = kvrpcpb::SplitRegionRequest {
+                context: Some(kvrpcpb::Context {
+                    region_id: region.region.id,
+                    region_epoch: Some(metapb::RegionEpoch {
+                        conf_ver: region.region.epoch.conf_ver,
+                        version: region.region.epoch.version,
+                    }),
+                    peer: region
+                        .peers
+                        .iter()
+                        .find(|peer| Some(peer.id) == region.leader_peer_id)
+                        .map(|peer| metapb::Peer {
+                            id: peer.id,
+                            store_id: peer.store_id,
+                            ..metapb::Peer::default()
+                        }),
+                    ..kvrpcpb::Context::default()
+                }),
+                split_keys: keys,
+                ..kvrpcpb::SplitRegionRequest::default()
+            };
+            let response = self.manager.split_region(&request);
+            if let Some(region_error) = response.region_error {
+                return (region_ids, Some(region_error.message));
             }
+            // client-go drops the split region from its cache.
+            (self.invalidate)(region.region);
+            // client-go keeps every region of the response but the last for
+            // scattering: one per region the split created.
+            let created = response.regions.len().saturating_sub(1);
+            region_ids.extend(response.regions[..created].iter().map(|region| region.id));
         }
         (region_ids, None)
     }
@@ -109,9 +136,9 @@ impl RegionStore for UnistoreRegionStore {
         start: &[u8],
         end: &[u8],
     ) -> Result<Vec<RegionMeta>, String> {
-        Ok(self
-            .manager
+        Ok(InProcessRegionLoader::new(Arc::clone(&self.manager))
             .scan_regions(start, end, 0)
+            .map_err(|error| error.to_string())?
             .into_iter()
             .map(|region| {
                 let leader = region.leader_peer_id.unwrap_or_default();

@@ -43,12 +43,14 @@ struct Store {
 impl Store {
     fn new() -> Self {
         let oracle = Arc::new(tidb_unistore::tso::Tso::new());
-        let client = InProcessClient::over(tidb_unistore::kv_handler::KvHandler {
-            store: tidb_unistore::mvcc_store::MvccStore::with_pd(oracle.clone()),
-        });
+        let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
+        let client = InProcessClient::over(tidb_unistore::kv_handler::KvHandler::new(
+            tidb_unistore::mvcc_store::MvccStore::with_pd(oracle.clone()),
+            Arc::clone(&regions),
+        ));
         let storage = SharedReadRuntime::new_injected(
             client.clone(),
-            RegionCache::new(InProcessRegionLoader::default()),
+            RegionCache::new(InProcessRegionLoader::new(regions)),
         );
         let oracle = Oracle(oracle);
         let pd = ClientPd::new(storage.clone(), oracle.clone());

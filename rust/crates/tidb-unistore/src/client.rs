@@ -53,9 +53,9 @@ use tidb_txnkv::{
 use crate::kv_handler::KvHandler;
 use crate::mvcc_store::MvccStore;
 
-/// The address every in-process response reports; Go's client reports its
-/// store path the same way.
-pub const IN_PROCESS_ADDRESS: &str = "unistore-in-process";
+/// The address every in-process response reports: the one store Go's
+/// `BootstrapWithSingleStore` creates, `store<id>`.
+pub const IN_PROCESS_ADDRESS: &str = "store1";
 
 /// Go `RPCClient` over the embedded store.
 #[derive(Clone, Debug)]
@@ -92,14 +92,18 @@ impl InProcessClient {
         &mut self,
         request: &DirectUnaryRequest,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        let decoded =
-            coprocessor::Request::decode(request.encoded_request.as_slice()).map_err(|err| {
+        let mut decoded = coprocessor::Request::decode(request.encoded_request.as_slice())
+            .map_err(|err| {
                 DirectUnaryClientError::InvalidRequest(format!(
                     "invalid coprocessor request body: {err}"
                 ))
             })?;
+        // The routed context replaces the body's, as the gRPC client's
+        // `replace_top_level_context` does (client-go `SetContext`).
+        decoded.context = Some(request.context.clone());
         let mut handler = self.handler.lock().expect("the store lock");
-        let response = crate::cophandler::handle_cop_request(&mut handler.store, &decoded);
+        // Go `rpc.go` `CmdCop`: `usSvr.Coprocessor`, region checks first.
+        let response = handler.coprocessor(&decoded);
         let mut encoded = Vec::new();
         response.encode(&mut encoded).map_err(|err| {
             DirectUnaryClientError::InvalidRequest(format!(
@@ -191,6 +195,44 @@ impl tidb_txnkv::LockWaitInfoClient for InProcessClient {
     }
 }
 
+/// Go `tikvrpc.SetContext`: client-go puts the region context into the
+/// request before `SendRequest`, which is where unistore's handlers read it.
+fn with_context<R: RequestContext + Clone>(request: &R, context: &tidb_proto::KvrpcContext) -> R {
+    let mut request = request.clone();
+    *request.context_mut() = Some(context.clone());
+    request
+}
+
+/// The typed requests' `context` field.
+trait RequestContext {
+    fn context_mut(&mut self) -> &mut Option<tidb_proto::KvrpcContext>;
+}
+
+macro_rules! request_context {
+    ($($request:ident),* $(,)?) => {
+        $(impl RequestContext for tidb_proto::$request {
+            fn context_mut(&mut self) -> &mut Option<tidb_proto::KvrpcContext> {
+                &mut self.context
+            }
+        })*
+    };
+}
+
+request_context!(
+    KvrpcGetRequest,
+    KvrpcBatchGetRequest,
+    KvrpcScanRequest,
+    KvrpcPrewriteRequest,
+    KvrpcCommitRequest,
+    KvrpcBatchRollbackRequest,
+    KvrpcPessimisticLockRequest,
+    KvrpcPessimisticRollbackRequest,
+    KvrpcTxnHeartBeatRequest,
+    KvrpcCheckTxnStatusRequest,
+    KvrpcCheckSecondaryLocksRequest,
+    KvrpcResolveLockRequest,
+);
+
 /// Go `rpc.go`'s typed lock-recovery arms, over the same handler: the four
 /// calls the read path's lock resolver makes, each an in-process dispatch.
 impl tidb_txnkv::lock::LockRecoveryClient for InProcessClient {
@@ -198,44 +240,48 @@ impl tidb_txnkv::lock::LockRecoveryClient for InProcessClient {
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcCheckTxnStatusRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        let request = with_context(request, context);
         let mut handler = self.handler.lock().expect("the store lock");
-        Ok(handler.kv_check_txn_status(request))
+        Ok(handler.kv_check_txn_status(&request))
     }
 
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcCheckSecondaryLocksRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> Result<tidb_proto::KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        let request = with_context(request, context);
         let mut handler = self.handler.lock().expect("the store lock");
-        Ok(handler.kv_check_secondary_locks(request))
+        Ok(handler.kv_check_secondary_locks(&request))
     }
 
     fn resolve_lock_for_read(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcResolveLockRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        let request = with_context(request, context);
         let mut handler = self.handler.lock().expect("the store lock");
-        Ok(handler.kv_resolve_lock(request))
+        Ok(handler.kv_resolve_lock(&request))
     }
 
     fn pessimistic_rollback_for_lock(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcPessimisticRollbackRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        let request = with_context(request, context);
         let mut handler = self.handler.lock().expect("the store lock");
-        Ok(handler.kv_pessimistic_rollback(request))
+        Ok(handler.kv_pessimistic_rollback(&request))
     }
 }
 
@@ -330,10 +376,11 @@ impl TransactionCommandClient for InProcessClient {
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcGetRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcGetResponse> {
-        publish_in_process!(self, request, Get, kv_get)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, Get, kv_get)
     }
 
     fn publish_transaction_batch_get(
@@ -343,8 +390,7 @@ impl TransactionCommandClient for InProcessClient {
         context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcBatchGetResponse> {
-        let mut request = request.clone();
-        request.context = Some(context.clone());
+        let request = with_context(request, context);
         publish_in_process!(self, &request, BatchGet, kv_batch_get)
     }
 
@@ -352,70 +398,77 @@ impl TransactionCommandClient for InProcessClient {
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcScanRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcScanResponse> {
-        publish_in_process!(self, request, Scan, kv_scan)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, Scan, kv_scan)
     }
 
     fn publish_prewrite(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcPrewriteRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcPrewriteResponse> {
-        publish_in_process!(self, request, Prewrite, kv_prewrite)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, Prewrite, kv_prewrite)
     }
 
     fn publish_commit(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcCommitRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcCommitResponse> {
-        publish_in_process!(self, request, Commit, kv_commit)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, Commit, kv_commit)
     }
 
     fn publish_batch_rollback(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcBatchRollbackRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcBatchRollbackResponse> {
-        publish_in_process!(self, request, BatchRollback, kv_batch_rollback)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, BatchRollback, kv_batch_rollback)
     }
 
     fn publish_pessimistic_lock(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcPessimisticLockRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcPessimisticLockResponse> {
-        publish_in_process!(self, request, PessimisticLock, kv_pessimistic_lock)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, PessimisticLock, kv_pessimistic_lock)
     }
 
     fn publish_pessimistic_rollback(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcPessimisticRollbackRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcPessimisticRollbackResponse> {
-        publish_in_process!(self, request, PessimisticRollback, kv_pessimistic_rollback)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, PessimisticRollback, kv_pessimistic_rollback)
     }
 
     fn publish_txn_heart_beat(
         &mut self,
         _address: &str,
         request: &tidb_proto::KvrpcTxnHeartBeatRequest,
-        _context: &tidb_proto::KvrpcContext,
+        context: &tidb_proto::KvrpcContext,
         _call: &UnaryCallContext,
     ) -> PublishedCommand<tidb_proto::KvrpcTxnHeartBeatResponse> {
-        publish_in_process!(self, request, TxnHeartBeat, kv_txn_heart_beat)
+        let request = with_context(request, context);
+        publish_in_process!(self, &request, TxnHeartBeat, kv_txn_heart_beat)
     }
 }
 
@@ -444,6 +497,23 @@ impl tidb_txnkv::rpc::AsyncRequestDispatcher for InProcessClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bootstrap region's context, as the region cache routes it.
+    fn bootstrap_context() -> tidb_proto::KvrpcContext {
+        tidb_proto::KvrpcContext {
+            region_id: crate::region_manager::BOOTSTRAP_REGION_ID,
+            region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+                conf_ver: 1,
+                version: 1,
+            }),
+            peer: Some(tidb_proto::metapb::Peer {
+                id: crate::region_manager::BOOTSTRAP_PEER_ID,
+                store_id: crate::region_manager::STORE_ID,
+                ..tidb_proto::metapb::Peer::default()
+            }),
+            ..tidb_proto::KvrpcContext::default()
+        }
+    }
     use tidb_proto::tipb;
 
     #[test]
@@ -573,7 +643,7 @@ mod tests {
                 version: 20,
                 ..KvrpcBatchGetRequest::default()
             },
-            &KvrpcContext::default(),
+            &bootstrap_context(),
             &call,
         );
         let PublishedCommand::Response(response) = published else {
@@ -589,6 +659,10 @@ mod tests {
     }
 
     fn cop_read_fixture() -> (InProcessClient, coprocessor::Request) {
+        cop_read_fixture_over(InProcessClient::new())
+    }
+
+    fn cop_read_fixture_over(client: InProcessClient) -> (InProcessClient, coprocessor::Request) {
         // The final joint: the SAME encoded body the gRPC client would carry
         // to TiKV goes through the trait and comes back as an encoded
         // coprocessor.Response with rows in it.
@@ -596,7 +670,6 @@ mod tests {
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
-        let client = InProcessClient::new();
         client.with_store(|store| {
             let key = encode_row_key_with_handle(5, &RecordHandle::Int(1));
             let value = tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(7)]).expect("row");
@@ -662,7 +735,7 @@ mod tests {
             predicted_read_bytes: 0,
             read_replica_scope: String::new(),
             txn_scope: String::new(),
-            context: tidb_proto::KvrpcContext::default(),
+            context: bootstrap_context(),
             encoded_request,
         };
         let response = client
@@ -742,5 +815,90 @@ mod tests {
             );
             assert_eq!(result.next_raw().unwrap(), None);
         }
+    }
+
+    /// A region split after the region cache loaded the whole keyspace: the
+    /// store answers the cached epoch with `EpochNotMatch` (encoded bounds,
+    /// as TiKV's), and the read path re-routes over the two regions.
+    #[test]
+    fn the_read_path_recovers_from_a_split_through_the_stores_epoch_error() {
+        use crate::region_loader::InProcessRegionLoader;
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_distsql::{
+            InjectedQueryRuntime, KvRequestMetadata, QueryResultContext, RequestKeyRange,
+            RequestKeyRanges, RequestType, SelectInput, StoreType, TransportRequest,
+            WarningCollector,
+        };
+        use tidb_proto::kvrpcpb;
+        let regions = Arc::new(crate::region_manager::InProcessRegionManager::new());
+        let (client, cop) = cop_read_fixture_over(InProcessClient::over(KvHandler::new(
+            MvccStore::new(),
+            Arc::clone(&regions),
+        )));
+        let cache =
+            tidb_txnkv::region::RegionCache::new(InProcessRegionLoader::new(Arc::clone(&regions)));
+        let authority: tidb_txnkv::SharedReadAuthority<InProcessClient, InProcessRegionLoader> =
+            tidb_txnkv::SharedReadAuthority::start(client, cache).expect("the authority starts");
+        let read = || {
+            let transport = tidb_distsql::DirectUnaryQueryTransport::from_read_authority(
+                &authority.opener(),
+                tidb_distsql::DirectUnaryRuntimeConfig::default(),
+                tidb_txnkv::lock::FixedTimestampSource::new(42),
+            )
+            .unwrap();
+            let mut metadata = KvRequestMetadata::default();
+            metadata.request_type = RequestType::Dag;
+            metadata.data = Some(cop.data.clone());
+            metadata.start_ts = cop.start_ts;
+            metadata.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(
+                cop.ranges
+                    .iter()
+                    .map(|range| RequestKeyRange {
+                        start_key: range.start.clone().into(),
+                        end_key: range.end.clone().into(),
+                    })
+                    .collect(),
+            )));
+            metadata.keep_order = true;
+            metadata.concurrency = 1;
+            metadata.paging.enabled = false;
+            metadata.store_type = StoreType::TiKv;
+            metadata.read_replica_scope = "global".to_owned();
+            metadata.txn_scope = "global".to_owned();
+            metadata.tikv_client_read_timeout_ms = 1000;
+            let request =
+                TransportRequest::new(metadata, Arc::new(tidb_distsql::CancelHandle::default()));
+            let mut runtime = InjectedQueryRuntime::new(transport);
+            let mut result = runtime
+                .select_with_runtime_stats(
+                    &request,
+                    SelectInput::default(),
+                    QueryResultContext::new(Vec::new(), WarningCollector::new()),
+                    vec![],
+                    0,
+                    false,
+                )
+                .unwrap();
+            let mut rows = Vec::new();
+            while let Some(data) = result.next_raw().unwrap() {
+                let selected = tidb_proto::tipb::SelectResponse::decode(data.as_slice()).unwrap();
+                for chunk in selected.chunks {
+                    if let Some(data) = chunk.rows_data.as_deref() {
+                        rows.extend(tidb_codec::decode(data, 1).unwrap());
+                    }
+                }
+            }
+            rows
+        };
+        assert_eq!(read(), vec![tidb_datatype::Datum::Int(7)]);
+
+        let split_key = encode_row_key_with_handle(5, &RecordHandle::Int(1));
+        let response = regions.split_region(&kvrpcpb::SplitRegionRequest {
+            context: Some(bootstrap_context()),
+            split_keys: vec![split_key],
+            ..kvrpcpb::SplitRegionRequest::default()
+        });
+        assert_eq!(response.regions.len(), 2);
+        assert_eq!(read(), vec![tidb_datatype::Datum::Int(7)]);
     }
 }

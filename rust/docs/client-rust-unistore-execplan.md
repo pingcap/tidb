@@ -21,7 +21,7 @@ After this plan, client-rust builds a `KvStore` over any PD client and TiKV clie
 - [x] (2026-10-19) Scouting: Go's wiring, client-rust's generic and hard-wired parts, and `tidb-unistore`'s gaps (see Context).
 - [x] (2026-10-19) Step 1, client-rust: `transaction::Client<PdC: PdClient = PdRpcClient>` and a constructor over any PD client; `PdClient::close` with a default (ngaut/client-rust 126987a).
 - [x] (2026-10-19) Step 2, client-rust: `KvStore<PdC = PdRpcClient>` and its store runtime over any PD client, with the safe-point KV as a seam (client-go `NewKVStore(uuid, pdClient, spkv, tikvclient)`, with a mock safe-point KV for tests as `NewTestTiKVStore` uses); `PdClient::kv_client(address)` for store-level requests (ngaut/client-rust 398b52d, synced; the workspace compiles unchanged).
-- [ ] Step 3, tidb-unistore: Go unistore's request context (`newRequestCtx`: region id and epoch checks, region errors); the missing server handlers (`KvScanLock`, `KvGC` / `UpdateSafePoint`, `KvDeleteRange`, `UnsafeDestroyRange` / `DeleteFileInRange`, `KvCleanup`, split region); the `MvccStore` primitives behind them.
+- [x] (2026-10-19) Step 3, tidb-unistore: Go unistore's request context (`newRequestCtx`: store, region id and epoch checks answering TiKV's region errors; reads bounded by the region) on every handler; the region manager restructured to Go's `MockRegionManager` (`metapb.Region` with memcomparable bounds, end-key ordered, `GetRegionFromCtx`, `SplitRegion` across regions, `Split`/`SplitRaw`/`SplitArbitrary`, stores) with `cluster.go`'s bootstrap helpers, and the loader as client-go's codec side; the missing handlers (`KvScanLock`, `PhysicalScanLock`, `KvGC`, `KvDeleteRange`, `UnsafeDestroyRange`, `KvCleanup`, `KvBufferBatchGet`, `MvccGetByKey`/`MvccGetByStartTs`, `SplitRegion`, `Coprocessor` with `StoreBatchCoprocessor`, Go's stub answers) and the `MvccStore` operations behind them (`ScanLock`, `UpdateSafePoint` with the GC compaction filter, `DeleteFileInRange`, `dbWriter.DeleteRange`, `PessimisticRollbackWithScanFirst`, `ReadBufferFromLock`, region-bounded `ResolveLock` with `TxnInfos`). Still unported in the Go package: `Flush`, MPP and batch coprocessor, the raw and debug services, `SplitTable`/`SplitIndex`/`SplitKeys`.
 - [ ] Step 4, tidb-unistore: Go's `MockPD` (region and store lookups, TSO) with the `gcStatesManagerSimulator` (txn and GC safe points, service safe points, barriers) and keyspaces, as a client-rust `PdClient`; Go's `RPCClient` as a client-rust `KvClient`.
 - [ ] Step 5, server: the GC adapter generic over the client's `KvStore`; Go's store-backed GC tests (listed in `gcworker-execplan.md`) ported onto the embedded store.
 - [ ] Step 6: move TiDB paths from `tidb-txnkv` onto client-rust one at a time, each with its tests and a gate.
@@ -31,7 +31,18 @@ After this plan, client-rust builds a `KvStore` over any PD client and TiKV clie
 - Observation: Go's embedded store does not run the GC worker (`mockStorage.StartGCWorker` is a no-op; only `tikvStore.StartGCWorker` builds one). Go's GC tests construct the worker directly over a mock store.
 - Observation: client-rust's own mocktikv (the counterpart of client-go's) panics on `UnsafeDestroyRange`, as client-go's does, so it cannot stand in for Go's unistore in the delete-range tests.
 
+- Observation: the embedded node's handler served one whole-keyspace region however the store had been split, and the in-process client dropped the region context the transport routed (only batch-get copied it into the request). Go's client-go puts it in every request (`tikvrpc.SetContext`), and the gRPC path here does too (`rpc/batch/prewrite.rs`, `replace_top_level_context`).
+  Evidence: after adding Go's epoch checks, the transport test failed with `RegionMiss` until the in-process client applied the routed context.
+- Observation: Go's `BootstrapWithSingleStore` names the store `store1`; the embedded store called itself `unistore-in-process`. It now uses Go's name.
+
 ## Decision Log
+
+- Decision: `KvGC` runs badger's compaction over the whole in-memory engine at once: versions above the safe point stay, the newest at or below it stays unless Go's `GCCompactionFilter` drops it, older ones go.
+  Rationale: badger compacts in the background at its own pace; reads at or after the safe point see the same data either way, and TiDB never reads below the GC safe point. Doing it at `KvGC` keeps the engine deterministic for tests.
+  Date/Author: 2026-10-19, Claude.
+- Decision: `dbWriter.DeleteRange`'s badger delete marker is recorded as a committed delete (empty value, no start ts) one version above the key's newest.
+  Rationale: reads from then on find nothing and older snapshots still read their versions, as with badger's marker; the engine has no separate tombstone kind.
+  Date/Author: 2026-10-19, Claude.
 
 - Decision: client-rust is the one Rust client-go; the embedded store goes behind its seams. The alternatives were a second GC client over `tidb-unistore` inside TiDB, or extending `tidb-txnkv`; both were rejected because they deepen the duplicated client stack.
   Rationale: owner direction ("client-rust should be the rust version of client-go"; chose "client reaches unistore"; "keep align with go, remove the Structural mismatches").

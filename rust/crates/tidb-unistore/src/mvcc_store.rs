@@ -62,6 +62,7 @@ use tidb_proto::{KvrpcLockInfo, KvrpcMutation, KvrpcOp, KvrpcTxnAction};
 
 use crate::lockstore::MemStore;
 use crate::mvcc::{decode_lock, encode_extra_txn_status_key, DbUserMeta, Lock, LockHdr};
+use crate::tikv_util::exceed_end_key;
 
 /// The version-keyed committed store standing in for badger. Keys are
 /// `(user key, version)`, iterated newest-first per key exactly as badger's
@@ -110,6 +111,48 @@ impl MemEngine {
             .map(|(_, (value, meta))| (value.as_slice(), meta))
     }
 
+    /// Badger's compaction under the GC safe point (`db.UpdateSafeTs` with
+    /// `SafePoint.CreateCompactionFilter`), run over the whole engine at
+    /// once: versions above the safe point stay; of those at or below it,
+    /// only the newest survives versioning, and then only if Go's
+    /// `GCCompactionFilter` keeps it.
+    fn compact(&mut self, safe_point: u64) {
+        let mut dropped: Vec<(Vec<u8>, u64)> = Vec::new();
+        let mut current: Option<&[u8]> = None;
+        let mut kept_below = false;
+        for ((key, inverted), (value, meta)) in &self.entries {
+            if current != Some(key.as_slice()) {
+                current = Some(key.as_slice());
+                kept_below = false;
+            }
+            if !*inverted > safe_point {
+                continue;
+            }
+            if kept_below || gc_compaction_filter(safe_point, key, value, meta) != GcDecision::Keep
+            {
+                dropped.push((key.clone(), *inverted));
+            }
+            kept_below = true;
+        }
+        for entry in dropped {
+            self.entries.remove(&entry);
+        }
+    }
+
+    /// Badger `DeleteFilesInRange` over an engine with no files: every
+    /// version of every key in `[start, end)` goes.
+    fn delete_range_entries(&mut self, start: &[u8], end: &[u8]) {
+        let doomed: Vec<(Vec<u8>, u64)> = self
+            .entries
+            .range((start.to_vec(), 0)..)
+            .take_while(|((key, _), _)| key.as_slice() < end)
+            .map(|(entry, _)| entry.clone())
+            .collect();
+        for entry in doomed {
+            self.entries.remove(&entry);
+        }
+    }
+
     /// Go `dbreader.GetKeyByStartTs` (`db_reader.go:297`): the first key in
     /// `[start, end)` carrying ANY version written by `start_ts`.
     fn key_by_start_ts(&self, start_key: &[u8], end_key: &[u8], start_ts: u64) -> Option<Vec<u8>> {
@@ -119,6 +162,45 @@ impl MemEngine {
             .find(|(_, (_, meta))| meta.start_ts() == start_ts)
             .map(|((entry_key, _), _)| entry_key.clone())
     }
+}
+
+/// Badger's `CompactionFilter` decisions Go's GC filter answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GcDecision {
+    /// `badger.DecisionKeep`.
+    Keep,
+    /// `badger.DecisionMarkTombstone`.
+    MarkTombstone,
+    /// `badger.DecisionDrop`.
+    Drop,
+}
+
+/// Go `GCCompactionFilter.Filter` (`mvcc.go`) for the newest version at or
+/// below the safe point: a data key's committed delete goes, and so does an
+/// extra (rollback / op-lock) record older than the safe point.
+#[must_use]
+pub fn gc_compaction_filter(
+    safe_point: u64,
+    key: &[u8],
+    value: &[u8],
+    user_meta: &DbUserMeta,
+) -> GcDecision {
+    match key.first() {
+        // `metaPrefix`, `tablePrefix`.
+        Some(b'm' | b't') => {
+            if user_meta.commit_ts() < safe_point && value.is_empty() {
+                return GcDecision::MarkTombstone;
+            }
+        }
+        // `metaExtraPrefix`, `tableExtraPrefix`.
+        Some(b'n' | b'u') => {
+            if user_meta.start_ts() < safe_point {
+                return GcDecision::Drop;
+            }
+        }
+        _ => {}
+    }
+    GcDecision::Keep
 }
 
 /// The `kverrors` subset the optimistic slice raises, each Go error by name.
@@ -267,6 +349,8 @@ pub struct MvccStore {
     /// for the async-commit / 1PC `minCommitTS`. Absent, those protocols
     /// refuse by name, exactly as before a PD is wired.
     pub pd: Option<std::sync::Arc<crate::tso::Tso>>,
+    /// Go `safePoint`: the GC safe point `KvGC` raised, never lowered.
+    safe_point: u64,
 }
 
 impl Default for MvccStore {
@@ -292,6 +376,7 @@ impl MvccStore {
             lock_store: MemStore::new(8 << 20),
             engine: MemEngine::default(),
             pd: None,
+            safe_point: 0,
         }
     }
 
@@ -894,6 +979,199 @@ impl MvccStore {
         Some((info, key))
     }
 
+    /// Go `MVCCStore.ScanLock`: the locks in the region `[raw_start,
+    /// raw_end)` whose start ts is at most `max_ts`, at most `limit` of them
+    /// (the limit counts every lock visited, Go's check before each append).
+    #[must_use]
+    pub fn scan_lock(
+        &self,
+        raw_start: &[u8],
+        raw_end: &[u8],
+        max_ts: u64,
+        limit: usize,
+    ) -> Vec<KvrpcLockInfo> {
+        let mut locks = Vec::new();
+        let mut it = self.lock_store.new_iterator();
+        it.seek(raw_start);
+        while it.valid() {
+            if exceed_end_key(it.key(), raw_end) || locks.len() == limit {
+                return locks;
+            }
+            append_scanned_lock(&mut locks, it.key(), it.value(), max_ts);
+            it.next();
+        }
+        locks
+    }
+
+    /// Go `MVCCStore.PhysicalScanLock`: [`Self::scan_lock`] from `start_key`
+    /// to the end of the lock store, no region bound.
+    #[must_use]
+    pub fn physical_scan_lock(
+        &self,
+        start_key: &[u8],
+        max_ts: u64,
+        limit: usize,
+    ) -> Vec<KvrpcLockInfo> {
+        let mut locks = Vec::new();
+        let mut it = self.lock_store.new_iterator();
+        it.seek(start_key);
+        while it.valid() {
+            if locks.len() == limit {
+                break;
+            }
+            append_scanned_lock(&mut locks, it.key(), it.value(), max_ts);
+            it.next();
+        }
+        locks
+    }
+
+    /// Go `MVCCStore.scanPessimisticLocks`: the region's pessimistic locks of
+    /// transaction `start_ts` taken at or before `for_update_ts`.
+    fn scan_pessimistic_locks(
+        &self,
+        raw_start: &[u8],
+        raw_end: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) -> Vec<KvrpcLockInfo> {
+        let mut locks = Vec::new();
+        let mut it = self.lock_store.new_iterator();
+        it.seek(raw_start);
+        while it.valid() {
+            if exceed_end_key(it.key(), raw_end) {
+                return locks;
+            }
+            let lock = decode_lock(it.value());
+            if lock.hdr.op == KvrpcOp::PessimisticLock as u8
+                && lock.hdr.start_ts == start_ts
+                && lock.hdr.for_update_ts <= for_update_ts
+            {
+                locks.push(lock.to_lock_info(it.key().to_vec()));
+            }
+            it.next();
+        }
+        locks
+    }
+
+    /// Go `MVCCStore.PessimisticRollbackWithScanFirst`: a pessimistic
+    /// rollback with no keys rolls back every pessimistic lock of the
+    /// transaction the region holds.
+    pub fn pessimistic_rollback_with_scan_first(
+        &mut self,
+        raw_start: &[u8],
+        raw_end: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) {
+        let keys: Vec<Vec<u8>> = self
+            .scan_pessimistic_locks(raw_start, raw_end, start_ts, for_update_ts)
+            .into_iter()
+            .map(|lock| lock.key)
+            .collect();
+        self.pessimistic_rollback(&keys, start_ts, for_update_ts);
+    }
+
+    /// Go `MVCCStore.ReadBufferFromLock`: a pipelined transaction's own
+    /// buffered writes, read back from its locks -- a put answers its value,
+    /// a delete an empty value; other transactions' locks are skipped.
+    ///
+    /// # Panics
+    ///
+    /// As Go does, on a put lock without a value or a lock that is neither a
+    /// put nor a delete.
+    #[must_use]
+    pub fn read_buffer_from_lock(&self, start_ts: u64, keys: &[Vec<u8>]) -> Vec<KvPair> {
+        let mut pairs = Vec::with_capacity(keys.len());
+        for key in keys {
+            let buf = self.lock_bytes(key);
+            if buf.is_empty() {
+                continue;
+            }
+            let lock = decode_lock(&buf);
+            if lock.hdr.start_ts != start_ts {
+                continue;
+            }
+            let value = if lock.hdr.op == KvrpcOp::Put as u8 {
+                value_from_lock(&lock)
+                    .expect("Op_Put has a nil value")
+                    .to_vec()
+            } else if lock.hdr.op == KvrpcOp::Del as u8 {
+                Vec::new()
+            } else {
+                panic!("unexpected op. Optimistic txn should only contain put and delete locks");
+            };
+            pairs.push(KvPair {
+                key: key.clone(),
+                value,
+                error: None,
+                commit_ts: 0,
+            });
+        }
+        pairs
+    }
+
+    /// Go `MVCCStore.UpdateSafePoint`: the safe point only rises, and the
+    /// engine's versions below it are compacted away (see
+    /// [`MemEngine::compact`]).
+    pub fn update_safe_point(&mut self, safe_point: u64) {
+        // Go `SafePoint.UpdateTS`.
+        if self.safe_point < safe_point {
+            self.safe_point = safe_point;
+        }
+        // Go `db.UpdateSafeTs(safePoint)` hands compaction the request's
+        // safe point as given.
+        self.engine.compact(safe_point);
+    }
+
+    /// The GC safe point `update_safe_point` holds.
+    #[must_use]
+    pub fn safe_point(&self) -> u64 {
+        self.safe_point
+    }
+
+    /// Go `MVCCStore.DeleteFileInRange`: the data in `[start, end)` and in
+    /// its extra keyspace (each bound's first byte plus one) goes.
+    pub fn delete_file_in_range(&mut self, start: &[u8], end: &[u8]) {
+        self.engine.delete_range_entries(start, end);
+        let shifted = |key: &[u8]| {
+            let mut key = key.to_vec();
+            if let Some(first) = key.first_mut() {
+                *first = first.wrapping_add(1);
+            }
+            key
+        };
+        self.engine
+            .delete_range_entries(&shifted(start), &shifted(end));
+    }
+
+    /// Go `dbWriter.DeleteRange` (`write.go`): every key in `[start, end)`
+    /// is deleted one version above its newest, so reads from then on find
+    /// nothing while older snapshots still read their versions.
+    ///
+    /// Badger writes a delete marker at that version; the engine records it
+    /// as a committed delete (an empty value) with no start ts.
+    pub fn delete_range(&mut self, start: &[u8], end: &[u8]) -> Result<(), KvError> {
+        if end.is_empty() {
+            // Go `collectRangeKeys` panics here.
+            return Err(KvError::Message("invalid end key".to_owned()));
+        }
+        let mut newest: Vec<(Vec<u8>, u64)> = Vec::new();
+        for ((key, inverted), _) in self.engine.entries.range((start.to_vec(), 0)..) {
+            if exceed_end_key(key, end) {
+                break;
+            }
+            if newest.last().map(|(last, _)| last) != Some(key) {
+                newest.push((key.clone(), !*inverted));
+            }
+        }
+        for (key, version) in newest {
+            let deleted_at = version + 1;
+            self.engine
+                .set(&key, deleted_at, &[], DbUserMeta::new(0, deleted_at));
+        }
+        Ok(())
+    }
+
     /// Go `store.lockStore.Get(key, buf)`: the lock bytes, empty when no
     /// lock — Go's `len(buf) == 0` test, kept as the emptiness of the copy.
     fn lock_bytes(&self, key: &[u8]) -> Vec<u8> {
@@ -915,6 +1193,14 @@ impl MvccStore {
 /// Go `InternalKeyPrefix` (`region.go:44`): scans never cross into the
 /// store's internal keyspace.
 pub const INTERNAL_KEY_PREFIX: &[u8] = &[0xff];
+
+/// Go `MVCCStore.appendScannedLock`: a lock started at or before `max_ts`.
+fn append_scanned_lock(locks: &mut Vec<KvrpcLockInfo>, key: &[u8], value: &[u8], max_ts: u64) {
+    let lock = decode_lock(value);
+    if lock.hdr.start_ts <= max_ts {
+        locks.push(lock.to_lock_info(key.to_vec()));
+    }
+}
 
 /// One `kvrpcpb.KvPair` reduced to what this slice produces: a key with a
 /// value, or a key with the blocking lock as its error.
@@ -996,6 +1282,12 @@ pub struct MvccInfo {
 pub struct ReadContext {
     /// `IsolationLevel`, the `kvrpcpb` value: 0 SI, 1 RC, 2 RCCheckTS.
     pub isolation_level: i32,
+    /// `regCtx.RawStart()`: the addressed region's raw start; empty for a
+    /// direct store call, which reads from the keyspace's start.
+    pub region_raw_start: Vec<u8>,
+    /// `regCtx.RawEnd()`: the addressed region's raw end; empty for a direct
+    /// store call, which reads up to `InternalKeyPrefix`.
+    pub region_raw_end: Vec<u8>,
     /// `ResolvedLocks`: locks with these start timestamps are IGNORED —
     /// the reader has proof they were rolled back or committed elsewhere.
     pub resolved_locks: Vec<u64>,
@@ -1230,15 +1522,22 @@ impl MvccStore {
     #[must_use]
     pub fn scan_with(&self, ctx: &ReadContext, req: &ScanReq) -> Vec<KvPair> {
         let (start_key, end_key) = if req.reverse {
-            // boundary: `reqCtx.regCtx.RawStart()` — no region context; an
-            // empty reverse end stays empty, the keyspace floor.
-            (req.end_key.clone(), req.start_key.clone())
-        } else {
-            let end = if req.end_key.is_empty() {
-                INTERNAL_KEY_PREFIX.to_vec()
+            let start = if req.end_key.is_empty() {
+                ctx.region_raw_start.clone()
             } else {
                 req.end_key.clone()
             };
+            (start, req.start_key.clone())
+        } else {
+            let mut end = if req.end_key.is_empty() {
+                ctx.region_raw_end.clone()
+            } else {
+                req.end_key.clone()
+            };
+            if end.is_empty() {
+                // Go: "Don't scan internal keys."
+                end = INTERNAL_KEY_PREFIX.to_vec();
+            }
             (req.start_key.clone(), end)
         };
         let mut limit = req.limit;
@@ -1601,8 +1900,8 @@ impl MvccStore {
     /// after `check_txn_status` told it the transaction's fate.
     ///
     /// An EMPTY key list means "find them yourself": Go scans the region's
-    /// lock store for locks bearing the start ts. The region bounds narrow
-    /// to the whole keyspace here (no region context in this slice, named).
+    /// lock store for locks bearing the start ts; this whole-keyspace form is
+    /// [`Self::resolve_lock_in_region`] with no region.
     /// A key whose lock has since vanished or changed hands is silently
     /// skipped — resolution races are the normal case, not an error.
     pub fn resolve_lock(
@@ -1611,11 +1910,27 @@ impl MvccStore {
         start_ts: u64,
         commit_ts: u64,
     ) -> Result<(), KvError> {
+        self.resolve_lock_in_region(&[], &[], lock_keys, start_ts, commit_ts)
+    }
+
+    /// Go `MVCCStore.ResolveLock` over the region `[raw_start, raw_end)`: an
+    /// empty key list resolves every lock of the transaction inside it.
+    pub fn resolve_lock_in_region(
+        &mut self,
+        raw_start: &[u8],
+        raw_end: &[u8],
+        lock_keys: &[Vec<u8>],
+        start_ts: u64,
+        commit_ts: u64,
+    ) -> Result<(), KvError> {
         let mut keys = lock_keys.to_vec();
         if keys.is_empty() {
             let mut it = self.lock_store.new_iterator();
-            it.seek(&[]);
+            it.seek(raw_start);
             while it.valid() {
+                if exceed_end_key(it.key(), raw_end) {
+                    break;
+                }
                 let lock = decode_lock(it.value());
                 if lock.hdr.start_ts == start_ts {
                     keys.push(it.key().to_vec());
@@ -4133,6 +4448,7 @@ mod tests {
                 isolation_level: tidb_proto::KvrpcIsolationLevel::Si as i32,
                 resolved_locks: resolved.to_vec(),
                 committed_locks: committed.to_vec(),
+                ..ReadContext::default()
             },
             key,
             version,
@@ -4195,6 +4511,7 @@ mod tests {
             isolation_level: tidb_proto::KvrpcIsolationLevel::Si as i32,
             resolved_locks: vec![80],
             committed_locks: vec![30, 50],
+            ..ReadContext::default()
         };
         let pairs = store.batch_get_with(&ctx, &keys, 100);
         assert_eq!(pairs.len(), expected.len());

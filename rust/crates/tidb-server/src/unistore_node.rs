@@ -330,9 +330,10 @@ pub(crate) fn in_process_write_stack_with_regions() -> Result<
     // (`mock_region.go`), so its async-commit/1PC `minCommitTS` draws from
     // the same oracle start timestamps do. The embedded store mirrors that:
     // one shared oracle, both faster protocols available.
-    let client = InProcessClient::over(KvHandler {
-        store: MvccStore::with_pd(pd.oracle()),
-    });
+    let client = InProcessClient::over(KvHandler::new(
+        MvccStore::with_pd(pd.oracle()),
+        Arc::clone(&regions),
+    ));
     let cache = RegionCache::new(InProcessRegionLoader::new(Arc::clone(&regions)));
     let read_authority = SharedReadAuthority::start_with_lock_resolver(client, cache)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
