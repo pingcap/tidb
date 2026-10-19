@@ -372,9 +372,7 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
     match error {
         ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterDdlError::Commit(error) => lock_sql_error(&error),
-        ClusterDdlError::IndexBackfill(error)
-        | ClusterDdlError::ColumnReorg(error)
-        | ClusterDdlError::ExchangeValidation(error) => lock_sql_error(&error),
+        ClusterDdlError::IndexBackfill(error) => lock_sql_error(&error),
         ClusterDdlError::Plan(error) => {
             let error = error.to_sql_error();
             SqlQueryError::new(

@@ -122,8 +122,6 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 position,
                 context,
                 rename_from.as_deref(),
-                None,
-                true,
             )?;
             let old_name = rename_from.as_deref().unwrap_or(column.name.as_str());
             let old = tidb_model::column::find_column_info(&stored.columns, old_name)

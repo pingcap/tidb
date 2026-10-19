@@ -24,9 +24,8 @@
 //! snapshot the plan reads (Go's `meta.Mutator.GetBDRRole`).
 
 use tidb_ast::BdrRole;
-use tidb_model::{ActionType, SchemaDiff};
 
-use crate::cluster_ddl::{AlterColumnAction, DdlPlanError, DdlStatement};
+use crate::cluster_ddl::DdlPlanError;
 use crate::ddl_job_submit::{submit_error, JobSubmitError};
 
 fn role_of(stored: &[u8]) -> Option<BdrRole> {
@@ -80,51 +79,4 @@ pub(crate) fn admit_modify_column(
         return Err(restricted(stored));
     }
     Ok(())
-}
-
-/// Go `SubmitBatch`'s admission of the planned change: a change not from
-/// TiCDC, under a set role, on a schema that is not a system schema, is
-/// refused when `bdr.IsDenied` refuses its action -- each sub-action of a
-/// multi-schema change.
-pub(crate) fn admit_submit(
-    stored: &[u8],
-    cdc_write_source: u64,
-    schema: &str,
-    statement: &DdlStatement,
-    diff: &SchemaDiff,
-) -> Result<(), DdlPlanError> {
-    let role = role_of(stored);
-    if cdc_write_source != 0 || role.is_none() || is_system_schema(schema) {
-        return Ok(());
-    }
-    let first_index_unique = first_index_unique(statement);
-    let denied = |action: ActionType| {
-        tidb_model::ddl_bdr::is_action_denied(role, action, first_index_unique)
-    };
-    let refused = if diff.action_type == ActionType::ACTION_MULTI_SCHEMA_CHANGE {
-        diff.sub_action_types.iter().copied().any(denied)
-    } else {
-        denied(diff.action_type)
-    };
-    if refused {
-        return Err(restricted(stored));
-    }
-    Ok(())
-}
-
-/// Whether the index an ADD INDEX change adds is unique (a primary key is).
-/// Go's merged ADD INDEX sub-job carries every added index in order, and the
-/// submitter reads the first one's.
-fn first_index_unique(statement: &DdlStatement) -> Option<bool> {
-    match statement {
-        DdlStatement::CreateIndex { index, .. } => Some(index.unique || index.primary),
-        DdlStatement::MultiSchemaChange { actions, .. } => actions
-            .iter()
-            .filter_map(|action| match action {
-                AlterColumnAction::AddIndex { index, .. } => Some(index.unique || index.primary),
-                _ => None,
-            })
-            .reduce(|first, _| first),
-        _ => None,
-    }
 }

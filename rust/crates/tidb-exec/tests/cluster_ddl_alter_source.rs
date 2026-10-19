@@ -7,9 +7,10 @@
 
 #![allow(missing_docs)]
 
-use tidb_exec::cluster_ddl::{lower_ddl, plan_ddl, DdlPlan, DdlPlanError};
-use tidb_meta::key;
+use crate::cluster_ddl_source::plan_ddl;
+use tidb_exec::cluster_ddl::{lower_ddl, DdlPlan, DdlPlanError};
 use tidb_exec::real_tikv_ddl::DdlWarningLevel;
+use tidb_meta::key;
 
 // The fixture helpers stay with the file that owns the bootstrap; the
 // aggregated harness makes every `tests/*.rs` a sibling module.
@@ -737,7 +738,6 @@ fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
     apply(&mut store, &write);
     let table_id = write.created_id.expect("CREATE TABLE allocates an id");
     let write = plan(&mut store, "ALTER TABLE u6.plain DROP PRIMARY KEY", 600);
-    assert!(write.backfill.is_empty());
     apply(&mut store, &write);
     let (start, end) = super::cluster_ddl_source::index_range(table_id, 1);
     assert_eq!(
@@ -784,12 +784,12 @@ fn a_missing_table_is_1146_everywhere_except_drop_table() {
 
     // DROP TABLE keeps Go's own, different answer.
     let error = plan_ddl(&mut store, &statement("DROP TABLE u6.nosuch"), 200)
-        .expect_err("refused");
-    assert!(
-        matches!(error, DdlPlanError::UnknownTable { ref table, .. } if table == "nosuch"),
-        "{error:?}"
+        .expect_err("refused")
+        .to_sql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1051, "Unknown table 'u6.nosuch'")
     );
-    assert_eq!(error.to_string(), "Unknown table 'u6.nosuch'");
 
 
 }
@@ -900,54 +900,6 @@ fn rename_owner_batch_persistent_target_identifier_limit() {
 }
 
 #[test]
-fn rename_owner_batch_parent_updates_and_publishes_child() {
-    let mut store = bootstrapped();
-    let parent = plan(
-        &mut store,
-        "CREATE TABLE u6.parent (id INT PRIMARY KEY)",
-        100,
-    );
-    apply(&mut store, &parent);
-    let child = plan(
-        &mut store,
-        "CREATE TABLE u6.child (id INT, FOREIGN KEY fk(id) REFERENCES u6.parent(id))",
-        200,
-    );
-    apply(&mut store, &child);
-    let child_id = child.created_id.unwrap();
-    let before = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store).unwrap();
-    let write = plan(&mut store, "RENAME TABLE u6.parent TO u6.renamed", 300);
-    let stored = stored_table(&write, child_id);
-    assert_eq!(stored["fk_info"][0]["ref_table"]["O"], "renamed");
-    assert!(
-        write
-            .diff
-            .affected_options
-            .iter_deref()
-            .any(|option| option.read().table_id == child_id),
-        "changed children must reload on peers"
-    );
-    apply(&mut store, &write);
-    let reloaded = tidb_exec::catalog_reload::reload_cluster_catalog(&mut store, &before).unwrap();
-    let child = reloaded
-        .catalog()
-        .unwrap()
-        .find_table("u6", "child")
-        .unwrap()
-        .1;
-    assert_eq!(
-        child
-            .foreign_keys
-            .get(0)
-            .unwrap()
-            .read()
-            .ref_table
-            .original(),
-        "renamed"
-    );
-}
-
-#[test]
 fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
     let mut store = bootstrapped();
     let parent = plan(&mut store, "CREATE TABLE u6.parent (id INT PRIMARY KEY, pid INT, FOREIGN KEY self_fk(pid) REFERENCES u6.parent(id))", 100);
@@ -1007,228 +959,6 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
             .ref_table
             .original(),
         "renamed"
-    );
-}
-
-#[test]
-fn rename_owner_batch_cross_schema_diff_retires_original_entries() {
-    let mut store = bootstrapped();
-    let database = plan(&mut store, "CREATE DATABASE destination", 90);
-    apply(&mut store, &database);
-    for (sql, ts) in [
-        ("CREATE TABLE u6.one (id INT)", 100),
-        ("CREATE TABLE u6.two (id INT)", 200),
-    ] {
-        let write = plan(&mut store, sql, ts);
-        apply(&mut store, &write);
-    }
-    let before = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store).unwrap();
-    let write = plan(
-        &mut store,
-        "RENAME TABLE u6.one TO destination.one, u6.two TO destination.two",
-        300,
-    );
-    assert_eq!(
-        write.diff.old_schema_id, 112,
-        "direct publication must retire the old schema"
-    );
-    assert_eq!(
-        write
-            .diff
-            .affected_options
-            .get(0)
-            .unwrap()
-            .read()
-            .old_schema_id,
-        112
-    );
-    apply(&mut store, &write);
-    let reloaded = tidb_exec::catalog_reload::reload_cluster_catalog(&mut store, &before).unwrap();
-    let peer = reloaded.catalog().unwrap();
-    for name in ["one", "two"] {
-        assert!(peer.find_table("u6", name).is_none());
-        assert!(peer.find_table("destination", name).is_some());
-    }
-}
-
-/// Go `onLockTables` / `onUnlockTables` (`ddl/table_lock.go`) over the
-/// stored tables: the lock lands public with the job's start TS and the
-/// holder's `SessionInfo`; re-locking releases the session's earlier lock in
-/// the same job, which names the first table and lists the other as an
-/// affected option; unlocking clears it, and an unlock with nothing held
-/// publishes nothing.
-#[test]
-fn lock_and_unlock_tables_edit_the_stored_lock() {
-    use tidb_exec::cluster_ddl::DdlStatement;
-    use tidb_model::{SessionInfo, TableLockTpInfo};
-    let mut store = bootstrapped();
-    let mut created = Vec::new();
-    for (sql, ts) in [
-        ("CREATE TABLE u6.t1 (id BIGINT PRIMARY KEY)", 100),
-        ("CREATE TABLE u6.t2 (id BIGINT PRIMARY KEY)", 110),
-    ] {
-        let write = plan(&mut store, sql, ts);
-        apply(&mut store, &write);
-        created.push(write.created_id.expect("CREATE TABLE allocates an id"));
-    }
-    let session = SessionInfo {
-        server_id: "node-1".to_owned(),
-        session_id: 7,
-    };
-    let lock = |table_id: i64, tp| TableLockTpInfo {
-        schema_id: 112,
-        table_id,
-        tp,
-    };
-    let write_of = |plan: DdlPlan| match plan {
-        DdlPlan::Write(write) => *write,
-        DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write: {detail}"),
-    };
-    let t1_write = lock(created[0], tidb_ast::TableLockType::WRITE);
-    let write = write_of(
-        plan_ddl(
-            &mut store,
-            &DdlStatement::LockTables {
-                lock_tables: vec![t1_write],
-                unlock_tables: Vec::new(),
-                session: session.clone(),
-            },
-            200,
-        )
-        .expect("the lock plans"),
-    );
-    apply(&mut store, &write);
-    assert_eq!(
-        write.diff.action_type,
-        tidb_model::ActionType::ACTION_LOCK_TABLE
-    );
-    assert_eq!(
-        stored_table(&write, created[0])["Lock"],
-        serde_json::json!({
-            "Tp": 4,
-            "Sessions": [{"ServerID": "node-1", "SessionID": 7}],
-            "State": 2,
-            "TS": 200,
-        })
-    );
-
-    let t2_read = lock(created[1], tidb_ast::TableLockType::READ);
-    let write = write_of(
-        plan_ddl(
-            &mut store,
-            &DdlStatement::LockTables {
-                lock_tables: vec![t2_read],
-                unlock_tables: vec![t1_write],
-                session: session.clone(),
-            },
-            300,
-        )
-        .expect("the re-lock plans"),
-    );
-    apply(&mut store, &write);
-    assert_eq!(
-        stored_table(&write, created[0])["Lock"],
-        serde_json::Value::Null
-    );
-    assert_eq!(
-        stored_table(&write, created[1])["Lock"]["Tp"],
-        serde_json::json!(1)
-    );
-    assert_eq!(write.diff.table_id, created[1]);
-    assert_eq!(
-        write
-            .diff
-            .affected_options
-            .iter_deref()
-            .map(|option| option.read().table_id)
-            .collect::<Vec<_>>(),
-        [created[0]]
-    );
-
-    let write = write_of(
-        plan_ddl(
-            &mut store,
-            &DdlStatement::UnlockTables {
-                unlock_tables: vec![t2_read],
-                session: session.clone(),
-                is_cleanup: false,
-            },
-            400,
-        )
-        .expect("the unlock plans"),
-    );
-    apply(&mut store, &write);
-    assert_eq!(
-        write.diff.action_type,
-        tidb_model::ActionType::ACTION_UNLOCK_TABLE
-    );
-    assert_eq!(
-        stored_table(&write, created[1])["Lock"],
-        serde_json::Value::Null
-    );
-    assert!(matches!(
-        plan_ddl(
-            &mut store,
-            &DdlStatement::UnlockTables {
-                unlock_tables: vec![t2_read],
-                session,
-                is_cleanup: false,
-            },
-            500,
-        )
-        .expect("the empty unlock plans"),
-        DdlPlan::AlreadySatisfied { .. }
-    ));
-}
-
-/// Go `handleDatabasePlacement` and `onModifySchemaDefaultPlacement`: a
-/// schema's placement reference is stored on its `DBInfo`, a new table
-/// without its own takes it (`BuildTableInfoWithStmt`), and `default`
-/// removes it.
-#[test]
-fn schema_placement_is_stored_inherited_and_removed() {
-    let mut store = bootstrapped();
-    let write = plan(&mut store, "CREATE PLACEMENT POLICY p1 FOLLOWERS=4", 100);
-    apply(&mut store, &write);
-    let policy_id = write
-        .created_id
-        .expect("CREATE PLACEMENT POLICY allocates an id");
-    let write = plan(&mut store, "CREATE DATABASE d1 PLACEMENT POLICY p1", 110);
-    apply(&mut store, &write);
-    let db_id = write.created_id.expect("CREATE DATABASE allocates an id");
-    let stored_db = |write: &tidb_exec::cluster_ddl::DdlWrite| -> serde_json::Value {
-        serde_json::from_slice(stored_value(write, &key::database_kv_key(db_id)))
-            .expect("a stored DBInfo")
-    };
-    assert_eq!(
-        stored_db(&write)["policy_ref_info"],
-        serde_json::json!({"id": policy_id, "name": {"O": "p1", "L": "p1"}})
-    );
-
-    let write = plan(&mut store, "CREATE TABLE d1.t (id BIGINT PRIMARY KEY)", 120);
-    apply(&mut store, &write);
-    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
-    let table: serde_json::Value =
-        serde_json::from_slice(stored_value(&write, &key::table_kv_key(db_id, table_id)))
-            .expect("a stored TableInfo");
-    assert_eq!(
-        table["policy_ref_info"]["name"]["L"],
-        serde_json::json!("p1")
-    );
-
-    let write = plan(
-        &mut store,
-        "ALTER DATABASE d1 PLACEMENT POLICY = default",
-        130,
-    );
-    apply(&mut store, &write);
-    assert_eq!(
-        write.diff.action_type,
-        tidb_model::ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT
-    );
-    assert_eq!(
-        stored_db(&write)["policy_ref_info"],
-        serde_json::Value::Null
     );
 }
 

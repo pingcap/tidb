@@ -34,25 +34,21 @@ use std::time::Duration;
 
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
 use tidb_model::Job;
-use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticCoordinatorError, RealOptimisticTransactionOpener,
-    TransactionCause,
-};
+use tidb_txnkv::transaction::{OptimisticCoordinatorError, RealOptimisticTransactionOpener};
 use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_ddl, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
+    lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
     prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation,
     DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation,
-    IndexBackfill, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan,
+    MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan,
 };
 
 use crate::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use crate::ddl_job_table::DdlJobTable;
-use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
+use crate::pessimistic_lock_error::LockSqlError;
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
 
@@ -74,7 +70,6 @@ struct PlacementDeliveryReceipt {
 fn deliver_placement_bundles(
     endpoint: &str,
     bundles: &[tidb_placement::Bundle],
-    rollback_bundles: &[tidb_placement::Bundle],
     timeout: Duration,
 ) -> Result<Option<PlacementDeliveryReceipt>, ClusterDdlError> {
     if bundles.is_empty() {
@@ -83,21 +78,15 @@ fn deliver_placement_bundles(
     crate::placement_delivery::put_rule_bundles(endpoint, bundles, timeout).map_err(|error| {
         ClusterDdlError::NotCommitted(format!("failed to notify PD the placement rules: {error}"))
     })?;
-    let rollback = if rollback_bundles.is_empty() {
-        // Non-exchange DDL keeps the existing retry behavior: IDs allocated
-        // by an optimistic attempt are withdrawn if the catalog transaction
-        // loses its race. Exchange supplies exact pre-change bundles because
-        // its groups already existed under the swapped physical IDs.
-        bundles
-            .iter()
-            .map(|bundle| tidb_placement::Bundle {
-                id: bundle.id.clone(),
-                ..tidb_placement::Bundle::default()
-            })
-            .collect()
-    } else {
-        rollback_bundles.to_vec()
-    };
+    // IDs allocated by an optimistic attempt are withdrawn if the catalog
+    // transaction loses its race.
+    let rollback = bundles
+        .iter()
+        .map(|bundle| tidb_placement::Bundle {
+            id: bundle.id.clone(),
+            ..tidb_placement::Bundle::default()
+        })
+        .collect();
     Ok(Some(PlacementDeliveryReceipt {
         endpoint: endpoint.to_owned(),
         rollback,
@@ -280,40 +269,6 @@ pub enum ClusterDdlError {
     Backfill(String),
     /// An index value failed evaluation or violated a SQL constraint.
     IndexBackfill(LockSqlError),
-    /// A MODIFY / CHANGE COLUMN found a row the new type cannot hold.
-    ColumnReorg(LockSqlError),
-    /// Go `precheckForVarcharToChar` found a row that does not fit; the
-    /// statement is planned again with that MODIFY / CHANGE -- the
-    /// multi-schema sub-job at `action_offset`, or the single statement --
-    /// as a reorganization.
-    ColumnPrecheckFailed {
-        /// The failing sub-job's offset, `None` for a single MODIFY.
-        action_offset: Option<usize>,
-    },
-    /// Go `checkForeignKeyConstrain` refused an `ADD FOREIGN KEY`; the job
-    /// is rolled back with `rollback`, then answers with `error`.
-    ForeignKeyCheckFailed {
-        /// The check's error.
-        error: LockSqlError,
-        /// The rolled-back job's catalog write.
-        rollback: Box<DdlStatement>,
-    },
-    /// The change needs an index backfill and this path has no backfiller.
-    ///
-    /// Publishing the meta half alone would create an index that exists and is
-    /// EMPTY: every query the planner routes through it silently loses the rows
-    /// whose entries were never written. The refusal is what keeps that
-    /// unreachable on a path that cannot walk the table.
-    BackfillUnavailable,
-    /// `EXCHANGE PARTITION ... WITH VALIDATION` rejected a row or failed
-    /// while reading/evaluating the validation scan.
-    ExchangeValidation(LockSqlError),
-    /// The change needs exchange validation and this path cannot read rows.
-    ExchangeValidationUnavailable,
-    /// The change needs CHECK validation and this path cannot read rows.
-    CheckConstraintValidationUnavailable,
-    /// A persisted DDL statement was sent to the non-scheduler execution path.
-    PersistedJobRequired,
     /// A CHECK schema phase is durable but not yet acknowledged by every
     /// registered node, so advancing would violate the two-version invariant.
     SchemaSync(String),
@@ -347,29 +302,7 @@ impl fmt::Display for ClusterDdlError {
                 "the index entries for the rows this table already holds could not be \
                  built, so nothing was published: {detail}"
             ),
-            Self::BackfillUnavailable => write!(
-                formatter,
-                "this path cannot perform an index change: it would publish an index \
-                 that exists but holds no entry for any row the table already has"
-            ),
-            Self::IndexBackfill(error)
-            | Self::ColumnReorg(error)
-            | Self::ForeignKeyCheckFailed { error, .. }
-            | Self::ExchangeValidation(error) => formatter.write_str(&error.message),
-            Self::ColumnPrecheckFailed { .. } => {
-                formatter.write_str("a VARCHAR -> CHAR precheck found a row that does not fit")
-            }
-            Self::ExchangeValidationUnavailable => write!(
-                formatter,
-                "this path cannot validate EXCHANGE PARTITION rows before publishing the ID swap"
-            ),
-            Self::CheckConstraintValidationUnavailable => write!(
-                formatter,
-                "this path cannot validate existing rows before enabling a CHECK constraint"
-            ),
-            Self::PersistedJobRequired => {
-                formatter.write_str("this DDL must be submitted to the persisted DDL job queue")
-            }
+            Self::IndexBackfill(error) => formatter.write_str(&error.message),
             Self::SchemaSync(detail) => write!(
                 formatter,
                 "CHECK schema phase is committed but not synchronized: {detail}"
@@ -389,14 +322,6 @@ impl std::error::Error for ClusterDdlError {
             | Self::Undetermined(_)
             | Self::Backfill(_)
             | Self::IndexBackfill(_)
-            | Self::ColumnReorg(_)
-            | Self::ColumnPrecheckFailed { .. }
-            | Self::ForeignKeyCheckFailed { .. }
-            | Self::BackfillUnavailable
-            | Self::ExchangeValidation(_)
-            | Self::ExchangeValidationUnavailable
-            | Self::CheckConstraintValidationUnavailable
-            | Self::PersistedJobRequired
             | Self::SchemaSync(_) => None,
         }
     }
@@ -467,214 +392,6 @@ impl SchemaVersionNotifier for tidb_pd_client::EtcdClient {
     }
 }
 
-/// Reads the catalog, plans one change against that snapshot, and publishes it.
-///
-/// The planning read and the mutation share one transaction and therefore one
-/// `start_ts`, which is what lets the write set be derived from observed values
-/// (`NextGlobalID + 1`, `SchemaVersionKey + 1`) instead of guessed ones.
-///
-/// `notifier` is the etcd leg. `None` keeps the tick-only behaviour, which is
-/// what a node started without a reachable etcd falls back to.
-pub fn commit_cluster_ddl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
-    statement: &DdlStatement,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    // Go `kv.RunInNewTxn(..., retryable=true, ...)` (`pkg/kv/txn.go`), which
-    // is how every DDL meta write runs there (`pkg/ddl/ddl.go`): a write
-    // conflict rolls the attempt back, backs off with full jitter
-    // (`kv.BackOff`), and re-runs with a FRESH transaction -- up to
-    // `kv.MaxRetryCnt` (100) attempts. A fresh attempt re-reads the catalog
-    // and RE-PLANS, so the version it publishes describes the catalog that
-    // now exists; that is what makes the retry safe where re-committing the
-    // stale plan would not be. Two sessions creating `sbtest1`/`sbtest2`
-    // concurrently (sysbench's parallel `prepare`) is the canonical shape:
-    // Go serializes them through the DDL job queue and both succeed, so a
-    // client must never see the conflict. `Undetermined` is NOT retried --
-    // Go's `IsTxnRetryableError` is false there, and re-running a change
-    // that may have committed could apply it twice.
-    let mut attempt: u32 = 0;
-    loop {
-        match commit_cluster_ddl_once(opener, statement, timeout, notifier) {
-            Err(ClusterDdlError::ConcurrentSchemaChange { .. })
-                if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
-            {
-                std::thread::sleep(tidb_txnkv::retry_backoff_delay(attempt));
-                attempt += 1;
-            }
-            outcome => return outcome,
-        }
-    }
-}
-
-fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
-    statement: &DdlStatement,
-    timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-) -> Result<ClusterDdlReport, ClusterDdlError> {
-    let call = UnaryCallContext::with_timeout(timeout);
-    // How many mutations a change needs is only known after the catalog has
-    // been read — a DROP DATABASE deletes one key per stored table — so the
-    // transaction opens at this path's own ceiling and the commit checks the
-    // real mutation set against it. A database with more tables than that fits
-    // is refused at commit, loudly, rather than dropped in pieces.
-    let mut transaction = opener.begin()?;
-    let start_ts = transaction.start_ts();
-    let plan = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        plan_ddl(&mut snapshot, statement, start_ts)?
-    };
-    let write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warnings } => {
-            transaction.finish_without_writes()?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings });
-        }
-        DdlPlan::Write(write) => write,
-    };
-    // This path publishes meta keys only. A change that also owes index
-    // entries has to go through `commit_cluster_ddl_with_backfill`, which
-    // reads the table's rows on the SAME transaction; committing the meta half
-    // here would leave an index that answers queries with nothing.
-    if !write.backfill.is_empty() {
-        transaction.finish_without_writes()?;
-        return Err(ClusterDdlError::BackfillUnavailable);
-    }
-    if write.exchange_partition_validation.is_some() {
-        transaction.finish_without_writes()?;
-        return Err(ClusterDdlError::ExchangeValidationUnavailable);
-    }
-    if write.check_constraint_validation.is_some() {
-        transaction.finish_without_writes()?;
-        return Err(ClusterDdlError::CheckConstraintValidationUnavailable);
-    }
-    if !write.column_reorgs.is_empty()
-        || !write.foreign_key_checks.is_empty()
-        || write.cache_table_check.is_some()
-        || write.partition_reorg.is_some()
-    {
-        transaction.finish_without_writes()?;
-        return Err(ClusterDdlError::BackfillUnavailable);
-    }
-    // Go sends the placement bundles INSIDE the DDL job, before the schema
-    // version is published, and fails the job when PD refuses
-    // (`PutRuleBundlesWithDefaultRetry`). Delivering before the commit is the
-    // transactional analogue: if PD will not take the rules, the catalog must
-    // not claim them. The reverse order would publish a table whose rows live
-    // somewhere other than where it says they do.
-    //
-    // An embedded store answers `None` for the endpoint and has no PD to tell,
-    // so delivery is skipped rather than attempted against an address that
-    // does not exist.
-    let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
-        match deliver_placement_bundles(
-            &endpoint,
-            &write.placement_bundles,
-            &write.placement_rollback_bundles,
-            timeout,
-        ) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                transaction.finish_without_writes()?;
-                return Err(error);
-            }
-        }
-    } else {
-        None
-    };
-    let label_receipt = match deliver_label_rules(&write) {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            transaction.finish_without_writes()?;
-            return Err(compensate_external_delivery(
-                error,
-                placement_receipt.as_ref(),
-                None,
-                timeout,
-            ));
-        }
-    };
-    // Go `createTableAffinityGroupsInPD`: inside the job, before the version
-    // is published, cancelling the job when PD refuses. Idempotent, so a
-    // retried attempt re-creates the same groups harmlessly.
-    if let Err(error) = write.affinity_groups.apply_create() {
-        transaction.finish_without_writes()?;
-        return Err(compensate_external_delivery(
-            ClusterDdlError::NotCommitted(error),
-            placement_receipt.as_ref(),
-            label_receipt.as_ref(),
-            timeout,
-        ));
-    }
-    // Go's resource-group jobs write the resource manager before the version
-    // is published, failing the job when it refuses.
-    if let Some(update) = &write.resource_group_update {
-        if let Err(error) = update.apply() {
-            transaction.finish_without_writes()?;
-            return Err(compensate_external_delivery(
-                ClusterDdlError::NotCommitted(error),
-                placement_receipt.as_ref(),
-                label_receipt.as_ref(),
-                timeout,
-            ));
-        }
-    }
-    let planned_version = write.schema_version;
-    // The bundles above are keyed by ids THIS attempt allocated. In Go the ids
-    // a bundle carries are already durable when the job worker delivers it --
-    // job submission committed them under `lockGlobalIDKey`
-    // (`pkg/ddl/jobsubmit/submit.go`) -- so a retried job re-delivers the SAME
-    // groups. Here a rolled-back attempt's ids die with it, and the retry
-    // re-plans with fresh ones; the delivered bundles must go back too, or PD
-    // keeps rules for ids the catalog never published and some later object
-    // inherits them.
-    let outcome = match transaction.commit(write.mutations, &call) {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            return Err(compensate_external_delivery(
-                ClusterDdlError::Transaction(error),
-                placement_receipt.as_ref(),
-                label_receipt.as_ref(),
-                timeout,
-            ));
-        }
-    };
-    match outcome {
-        OptimisticCommitOutcome::Committed(_) => {
-            // Go `deleteTableAffinityGroupsInPD`: best-effort cleanup, once
-            // the change that stopped needing the groups is durable.
-            write.affinity_groups.apply_delete();
-            notify_schema_version(notifier, planned_version);
-            Ok(ClusterDdlReport::Applied {
-                schema_version: planned_version,
-                created_id: write.created_id,
-                warnings: write.warnings.clone(),
-            })
-        }
-        OptimisticCommitOutcome::RolledBack(rolled_back) => Err(compensate_external_delivery(
-            classify(planned_version, &rolled_back.cause),
-            placement_receipt.as_ref(),
-            label_receipt.as_ref(),
-            timeout,
-        )),
-        OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => {
-            Err(compensate_external_delivery(
-                classify(planned_version, &cleanup_failed.cause),
-                placement_receipt.as_ref(),
-                label_receipt.as_ref(),
-                timeout,
-            ))
-        }
-        // An undetermined commit may have PUBLISHED the catalog that claims
-        // these bundles; withdrawing them here could strip a live table's
-        // placement, so they stay.
-        OptimisticCommitOutcome::Undetermined(undetermined) => Err(ClusterDdlError::Undetermined(
-            format!("{:?}", undetermined.cause),
-        )),
-    }
-}
-
 /// Stages the index entries an index change owes for the rows a table already
 /// holds.
 ///
@@ -688,38 +405,9 @@ fn commit_cluster_ddl_once<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
 ///
 /// [`ClusterTableStorage`]: tidb_executor::cluster_storage::ClusterTableStorage
 pub trait IndexBackfiller {
-    /// Reads the table's rows through `snapshot` and stages every entry the
-    /// change adds or removes into `buffer`.
-    ///
-    /// The caller publishes the buffer in the same transaction the snapshot
-    /// reads at, so an implementation must not commit anything itself.
-    fn stage(
-        &self,
-        plan: &IndexBackfill,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
-    ) -> Result<(), LockSqlError>;
-
-    /// Checks or rewrites the rows a MODIFY / CHANGE COLUMN owes, through the
-    /// same snapshot and buffer as [`Self::stage`]. Returns
-    /// [`ColumnStageOutcome::PrecheckFailed`] when a VARCHAR -> CHAR precheck
-    /// found a row that does not fit, which Go answers by reorganizing.
-    fn stage_column(
-        &self,
-        _plan: &crate::cluster_ddl::ColumnReorg,
-        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        _buffer: &MutationBuffer,
-    ) -> Result<ColumnStageOutcome, LockSqlError> {
-        Err(LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: "this path cannot check or rewrite a column's rows".to_owned(),
-        })
-    }
-
     /// Go `checkForeignKeyConstrain` for an `ADD FOREIGN KEY`: the child's
     /// existing rows against its parent, through the same snapshot and
-    /// buffer as [`Self::stage`].
+    /// buffer as the other stages.
     fn stage_foreign_key_check(
         &self,
         _plan: &crate::cluster_ddl::ForeignKeyCheck,
@@ -731,7 +419,7 @@ pub trait IndexBackfiller {
 
     /// Go `checkExchangePartitionRecordValidation` for an `EXCHANGE
     /// PARTITION ... WITH VALIDATION`, through the same snapshot and buffer
-    /// as [`Self::stage`].
+    /// as the other stages.
     fn stage_exchange_partition_check(
         &self,
         _plan: &ExchangePartitionValidation,
@@ -754,22 +442,6 @@ pub trait IndexBackfiller {
         _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
         Err(cache_table_check_unavailable())
-    }
-
-    /// Go `doPartitionReorgWork` and the drop of the replaced data: every row
-    /// of the source physical tables copied into the partition the new
-    /// definitions route it to, the indexes rebuilt for them.
-    fn stage_partition_reorg(
-        &self,
-        _step: &crate::cluster_ddl::PartitionReorgStep,
-        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        _buffer: &MutationBuffer,
-    ) -> Result<(), LockSqlError> {
-        Err(LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: "this path cannot move a table's rows between partitions".to_owned(),
-        })
     }
 
     /// One unit of ADD INDEX's transactional reorganization through a batch
@@ -906,28 +578,6 @@ fn foreign_key_check_unavailable() -> LockSqlError {
     }
 }
 
-/// What staging a column's data step found.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ColumnStageOutcome {
-    /// The rows were checked or rewritten into the buffer.
-    Staged,
-    /// Go `precheckForVarcharToChar` found a row the checked kinds cannot
-    /// keep; the change must be reorganized instead.
-    PrecheckFailed,
-}
-
-/// Executes Go's `checkExchangePartitionRecordValidation` from the DDL
-/// transaction's own row snapshot.
-pub trait ExchangePartitionValidator {
-    /// Proves every standalone-table row routes to the named partition.
-    fn validate(
-        &self,
-        plan: &ExchangePartitionValidation,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
-    ) -> Result<(), LockSqlError>;
-}
-
 /// Executes Go's existing-row CHECK validation from the DDL transaction's
 /// own row snapshot before the candidate metadata is published.
 pub trait CheckConstraintValidator {
@@ -959,19 +609,12 @@ pub trait DdlSchemaSync {
     fn clean_job_versions(&self, ddl_job_id: i64) -> Result<(), String>;
 }
 
+/// One step of a persisted job, as Go's owner runs it.
 #[derive(Clone)]
-enum DdlPhase<'statement> {
-    /// A direct change, and what Go's submitter copies from the issuing
-    /// session into its job.
-    Initial(
-        &'statement DdlStatement,
-        &'statement tidb_executor::StmtContext,
-    ),
-    Persisted {
-        ddl_job_id: i64,
-        check_owner: &'statement dyn Fn() -> Result<(), String>,
-        schema_state: crate::cluster_ddl::DdlJobSchemaState,
-    },
+struct DdlPhase<'worker> {
+    ddl_job_id: i64,
+    check_owner: &'worker dyn Fn() -> Result<(), String>,
+    schema_state: crate::cluster_ddl::DdlJobSchemaState,
 }
 
 struct CommittedDdlPhase {
@@ -1046,127 +689,40 @@ enum DdlPhaseOutcome {
         mdl_info: Option<MdlInfoUpdate>,
         publish_version: bool,
     },
-    AlreadySatisfied(ClusterDdlReport),
     Committed(CommittedDdlPhase),
     /// The job's next step needs a reorganization run first.
     Reorg(Box<crate::cluster_ddl::add_index::AddIndexReorg>),
 }
 
-/// Publishes one catalog change together with the index entries it owes.
-///
-/// One `SessionTransaction` serves all three halves at one `start_ts`: the
-/// catalog read that plans the change, the row walk that builds the entries,
-/// and the prewrite that publishes both. That is the whole reason this is not
-/// [`commit_cluster_ddl`] with an extra step — an index built from rows read at
-/// a different timestamp than it is written at can point at a row that does not
-/// exist yet, or miss one that does.
-///
-/// **What this node does NOT do, stated rather than hidden.** Go runs
-/// `ActionAddIndex` through `delete only` -> `write only` -> `reorg` -> `public`
-/// precisely so that a concurrent `INSERT` on another node maintains the
-/// half-built index while the reorg scans. There is no job queue and no schema
-/// state machine here; the index becomes public at the one commit, and a row
-/// committed by another writer between this transaction's `start_ts` and its
-/// commit is indexed by neither half. This is the same single-writer assumption
-/// [`crate::cluster_ddl`]'s module doc already states for `DROP TABLE`, widened
-/// from "no concurrent DDL" to "no concurrent WRITE to the table being
-/// indexed", and it is the one thing to fix before this tier serves a second
-/// writer.
-pub fn commit_cluster_ddl_with_backfill<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
+/// Answers a statement Go's executor finishes without submitting a job: the
+/// ALTER forms it accepts and changes nothing for (`plan_ddl`). The catalog
+/// is read at one snapshot and nothing is written.
+pub fn answer_ddl_without_job<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     statement: &DdlStatement,
     timeout: Duration,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-    backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
-    check_constraint_validator: &dyn CheckConstraintValidator,
-    schema_sync: &dyn DdlSchemaSync,
-    auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
-    // What Go's submitter copies from the issuing session into the job:
-    // the statement text, SQL mode and `tidb_cdc_write_source`.
-    job_context: &tidb_executor::StmtContext,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
-    if matches!(
-        statement,
-        DdlStatement::AddCheckConstraint { .. }
-            | DdlStatement::DropCheckConstraint { .. }
-            | DdlStatement::AlterCheckConstraint { .. }
-    ) {
-        return Err(ClusterDdlError::PersistedJobRequired);
+    let transaction = SessionTransaction::begin(
+        opener,
+        timeout,
+        crate::session_commit_protocol::bootstrap_commit_protocol(),
+    )?;
+    let plan = transaction
+        .snapshot()
+        .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
+        .and_then(|snapshot| {
+            crate::cluster_ddl::plan_ddl(&mut SnapshotMetaSnapshot::new(snapshot), statement)
+                .map_err(ClusterDdlError::from)
+        });
+    transaction
+        .rollback()
+        .map_err(ClusterDdlError::NotCommitted)?;
+    match plan? {
+        DdlPlan::AlreadySatisfied { detail, warnings } => {
+            Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings })
+        }
+        DdlPlan::Write(_) => unreachable!("a statement without a job writes nothing"),
     }
-
-    let phase = |statement: &DdlStatement| {
-        commit_cluster_ddl_phase_with_retry(
-            Arc::clone(&opener),
-            DdlPhase::Initial(statement, job_context),
-            timeout,
-            notifier,
-            backfiller,
-            exchange_validator,
-            check_constraint_validator,
-            schema_sync.owner_id(),
-            auto_ids,
-        )
-    };
-    // Go `precheckForVarcharToChar`: a row that does not fit sends the job
-    // on as `ModifyTypeReorg` (`modify_column.go`), here another plan of the
-    // same statement with that MODIFY's kind fixed. Each retry fixes one
-    // more sub-job, so the loop ends.
-    let mut current = std::borrow::Cow::Borrowed(statement);
-    let outcome = loop {
-        match phase(current.as_ref()) {
-            Err(ClusterDdlError::ColumnPrecheckFailed { action_offset }) => {
-                let mut reorganized = current.as_ref().clone();
-                reorganize_after_failed_precheck(&mut reorganized, action_offset);
-                current = std::borrow::Cow::Owned(reorganized);
-            }
-            // Go `onCreateForeignKey`: the refused check rolls the job back,
-            // and the statement answers with the check's error once that is
-            // done.
-            Err(ClusterDdlError::ForeignKeyCheckFailed { error, rollback }) => {
-                phase(&rollback)?;
-                return Err(ClusterDdlError::IndexBackfill(error));
-            }
-            outcome => break outcome,
-        }
-    };
-    match outcome? {
-        DdlPhaseOutcome::SchemaSync { .. }
-        | DdlPhaseOutcome::Paused
-        | DdlPhaseOutcome::Reorg(_) => {
-            unreachable!("direct DDL has no persisted job")
-        }
-        DdlPhaseOutcome::AlreadySatisfied(report) => Ok(report),
-        DdlPhaseOutcome::Committed(committed) => Ok(committed.report),
-    }
-}
-
-/// Marks the MODIFY / CHANGE whose precheck failed -- the single statement,
-/// or the multi-schema sub-job at `action_offset` -- as `ModifyTypeReorg`.
-fn reorganize_after_failed_precheck(statement: &mut DdlStatement, action_offset: Option<usize>) {
-    let modify_column_type = match (statement, action_offset) {
-        (
-            DdlStatement::ModifyColumn {
-                modify_column_type, ..
-            },
-            None,
-        ) => modify_column_type,
-        (DdlStatement::MultiSchemaChange { actions, .. }, Some(offset)) => {
-            match &mut actions[offset] {
-                crate::cluster_ddl::AlterColumnAction::Modify {
-                    modify_column_type, ..
-                } => modify_column_type,
-                _ => unreachable!("only a MODIFY / CHANGE sub-job prechecks its rows"),
-            }
-        }
-        _ => unreachable!("only a MODIFY / CHANGE COLUMN prechecks its rows"),
-    };
-    debug_assert!(modify_column_type.is_none());
-    *modify_column_type = Some(tidb_executor::ddl::modify_column_type::ModifyColumnType::Reorg);
 }
 
 /// The reason the shared persisted worker released its job to the scheduler.
@@ -1190,7 +746,6 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
     schema_sync: &dyn DdlSchemaSync,
     check_owner: &dyn Fn() -> Result<(), String>,
@@ -1204,7 +759,7 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
             tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen());
         let outcome = commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
-            DdlPhase::Persisted {
+            DdlPhase {
                 ddl_job_id,
                 check_owner,
                 schema_state: schema_state.clone(),
@@ -1212,10 +767,8 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
             timeout,
             notifier,
             backfiller,
-            exchange_validator,
             check_constraint_validator,
             schema_sync.owner_id(),
-            None,
         )?;
         match outcome {
             DdlPhaseOutcome::Paused => return Ok(PersistedDdlJobOutcome::Paused),
@@ -1301,9 +854,6 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
                         wait_retry(Duration::from_secs(1)).map_err(ClusterDdlError::SchemaSync)?;
                     }
                 }
-            }
-            DdlPhaseOutcome::AlreadySatisfied(_) => {
-                unreachable!("persisted actions always write their state")
             }
         }
     }
@@ -1473,6 +1023,273 @@ pub enum AddIndexSubmitted {
     AlreadySatisfied(ClusterDdlReport),
 }
 
+/// Go's executor halves for every statement this node submits as a
+/// persisted job: the statement checked and its job built and prepared for
+/// insertion (`doDDLJob2` up to the insert), against `snapshot`.
+/// `has_null` answers Go `checkForNullValue`'s query in the submitting
+/// transaction.
+///
+/// # Errors
+///
+/// The statement's refusal.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
+    snapshot: &mut S,
+    statement: &DdlStatement,
+    job_context: &tidb_executor::StmtContext,
+    targets: &[(String, String)],
+    start_ts: u64,
+    upgrading: bool,
+    min_job_id: i64,
+    store_count: usize,
+    has_null: &mut dyn FnMut(&tidb_model::TableInfo, i64) -> Result<bool, DdlPlanError>,
+) -> Result<Option<crate::cluster_ddl::add_index::AddIndexSubmission>, DdlPlanError> {
+    let snapshot = &mut *snapshot;
+    match statement {
+        DdlStatement::MultiSchemaChange { .. } => {
+            crate::cluster_ddl::multi_schema::prepare_multi_schema_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+                store_count,
+                has_null,
+            )
+        }
+        DdlStatement::AddForeignKey { .. } => {
+            crate::cluster_ddl::foreign_key::prepare_add_foreign_key_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+                store_count,
+            )
+        }
+        DdlStatement::DropTable { .. }
+        | DdlStatement::DropView { .. }
+        | DdlStatement::DropSequence { .. }
+        | DdlStatement::DropDatabase { .. } => {
+            crate::cluster_ddl::drop_object::prepare_drop_object_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                targets,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::CreatePlacementPolicy { .. }
+        | DdlStatement::AlterPlacementPolicy { .. }
+        | DdlStatement::DropPlacementPolicy { .. } => {
+            crate::cluster_ddl::placement_policy::prepare_placement_policy_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::CreateResourceGroup { .. }
+        | DdlStatement::AlterResourceGroup { .. }
+        | DdlStatement::DropResourceGroup { .. } => {
+            crate::cluster_ddl::resource_group::prepare_resource_group_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::ExchangePartition { .. } => {
+            crate::cluster_ddl::exchange_partition::prepare_exchange_partition_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::AddPartitions { .. }
+        | DdlStatement::DropPartitions { .. }
+        | DdlStatement::TruncatePartitions { .. } => {
+            match crate::cluster_ddl::partition::prepare_partition_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            ) {
+                // An ADD on a HASH/KEY table is Go's
+                // `hashPartitionManagement`, a reorganization.
+                Ok(None) => crate::cluster_ddl::reorganize_partition::prepare_reorganize_partition_job_submission(
+                    snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                    store_count,
+                ),
+                other => other,
+            }
+        }
+        DdlStatement::ReorganizePartitions { .. } => {
+            crate::cluster_ddl::reorganize_partition::prepare_reorganize_partition_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+                store_count,
+            )
+        }
+        DdlStatement::LockTables { .. } | DdlStatement::UnlockTables { .. } => {
+            crate::cluster_ddl::table_lock::prepare_table_lock_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::ModifySchemaCharsetAndCollate { .. }
+        | DdlStatement::ModifySchemaDefaultPlacement { .. } => {
+            crate::cluster_ddl::alter_schema::prepare_alter_schema_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::CreateView { .. }
+        | DdlStatement::CreateSequence { .. }
+        | DdlStatement::CreateTableLike { .. }
+        | DdlStatement::AlterSequence { .. } => {
+            crate::cluster_ddl::create_object::prepare_create_object_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::CreateTable { .. } => {
+            crate::cluster_ddl::create_table::prepare_create_table_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::TruncateTable { .. } => {
+            crate::cluster_ddl::truncate::prepare_truncate_table_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        statement if crate::cluster_ddl::alter_table::is_alter_table_statement(statement) => {
+            crate::cluster_ddl::alter_table::prepare_alter_table_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::RenameTable { .. } | DdlStatement::RenameTables { .. } => {
+            crate::cluster_ddl::rename_table::prepare_rename_table_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::CreateDatabase { .. } => {
+            crate::cluster_ddl::create_schema::prepare_create_schema_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::ModifyColumn { .. } | DdlStatement::RenameColumn { .. } => {
+            crate::cluster_ddl::modify_column::prepare_modify_column_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+                store_count,
+                has_null,
+            )
+        }
+        DdlStatement::AddColumn { .. } => {
+            crate::cluster_ddl::add_column::prepare_add_column_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::DropColumn { .. } => {
+            crate::cluster_ddl::drop_column::prepare_drop_column_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
+            crate::cluster_ddl::drop_index::prepare_drop_index_job_submission(
+                snapshot,
+                statement,
+                job_context,
+                start_ts,
+                upgrading,
+                min_job_id,
+            )
+        }
+        _ => crate::cluster_ddl::add_index::prepare_add_index_job_submission(
+            snapshot,
+            statement,
+            start_ts,
+            upgrading,
+            min_job_id,
+            store_count,
+        ),
+    }
+}
+
 /// Go's executor up to `doDDLJob2` for the statement kinds this node submits
 /// as persisted jobs (ADD / DROP INDEX and PRIMARY KEY, DROP TABLE / VIEW /
 /// SEQUENCE / DATABASE): one job queued without executing it; the owner
@@ -1532,249 +1349,17 @@ pub fn submit_persisted_job_with_retry<
                     ))
                 })
         };
-        match statement {
-            DdlStatement::MultiSchemaChange { .. } => {
-                crate::cluster_ddl::multi_schema::prepare_multi_schema_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                    store_count,
-                    &mut has_null,
-                )
-            }
-            DdlStatement::AddForeignKey { .. } => {
-                crate::cluster_ddl::foreign_key::prepare_add_foreign_key_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                    store_count,
-                )
-            }
-            DdlStatement::DropTable { .. }
-            | DdlStatement::DropView { .. }
-            | DdlStatement::DropSequence { .. }
-            | DdlStatement::DropDatabase { .. } => {
-                crate::cluster_ddl::drop_object::prepare_drop_object_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    targets,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::CreatePlacementPolicy { .. }
-            | DdlStatement::AlterPlacementPolicy { .. }
-            | DdlStatement::DropPlacementPolicy { .. } => {
-                crate::cluster_ddl::placement_policy::prepare_placement_policy_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::CreateResourceGroup { .. }
-            | DdlStatement::AlterResourceGroup { .. }
-            | DdlStatement::DropResourceGroup { .. } => {
-                crate::cluster_ddl::resource_group::prepare_resource_group_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::ExchangePartition { .. } => {
-                crate::cluster_ddl::exchange_partition::prepare_exchange_partition_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::AddPartitions { .. }
-            | DdlStatement::DropPartitions { .. }
-            | DdlStatement::TruncatePartitions { .. } => {
-                match crate::cluster_ddl::partition::prepare_partition_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                ) {
-                    // An ADD on a HASH/KEY table is Go's
-                    // `hashPartitionManagement`, a reorganization.
-                    Ok(None) => crate::cluster_ddl::reorganize_partition::prepare_reorganize_partition_job_submission(
-                        &mut snapshot,
-                        statement,
-                        job_context,
-                        start_ts,
-                        upgrading,
-                        min_job_id,
-                        store_count,
-                    ),
-                    other => other,
-                }
-            }
-            DdlStatement::ReorganizePartitions { .. } => {
-                crate::cluster_ddl::reorganize_partition::prepare_reorganize_partition_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                    store_count,
-                )
-            }
-            DdlStatement::LockTables { .. } | DdlStatement::UnlockTables { .. } => {
-                crate::cluster_ddl::table_lock::prepare_table_lock_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::ModifySchemaCharsetAndCollate { .. }
-            | DdlStatement::ModifySchemaDefaultPlacement { .. } => {
-                crate::cluster_ddl::alter_schema::prepare_alter_schema_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::CreateView { .. }
-            | DdlStatement::CreateSequence { .. }
-            | DdlStatement::CreateTableLike { .. }
-            | DdlStatement::AlterSequence { .. } => {
-                crate::cluster_ddl::create_object::prepare_create_object_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::CreateTable { .. } => {
-                crate::cluster_ddl::create_table::prepare_create_table_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::TruncateTable { .. } => {
-                crate::cluster_ddl::truncate::prepare_truncate_table_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            statement if crate::cluster_ddl::alter_table::is_alter_table_statement(statement) => {
-                crate::cluster_ddl::alter_table::prepare_alter_table_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::RenameTable { .. } | DdlStatement::RenameTables { .. } => {
-                crate::cluster_ddl::rename_table::prepare_rename_table_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::CreateDatabase { .. } => {
-                crate::cluster_ddl::create_schema::prepare_create_schema_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::ModifyColumn { .. } | DdlStatement::RenameColumn { .. } => {
-                crate::cluster_ddl::modify_column::prepare_modify_column_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                    store_count,
-                    &mut has_null,
-                )
-            }
-            DdlStatement::AddColumn { .. } => {
-                crate::cluster_ddl::add_column::prepare_add_column_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::DropColumn { .. } => {
-                crate::cluster_ddl::drop_column::prepare_drop_column_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
-                crate::cluster_ddl::drop_index::prepare_drop_index_job_submission(
-                    &mut snapshot,
-                    statement,
-                    job_context,
-                    start_ts,
-                    upgrading,
-                    min_job_id,
-                )
-            }
-            _ => crate::cluster_ddl::add_index::prepare_add_index_job_submission(
-                &mut snapshot,
-                statement,
-                start_ts,
-                upgrading,
-                min_job_id,
-                store_count,
-            ),
-        }
+        prepare_persisted_job_submission(
+            &mut snapshot,
+            statement,
+            job_context,
+            targets,
+            start_ts,
+            upgrading,
+            min_job_id,
+            store_count,
+            &mut has_null,
+        )
     };
     let _ = preparation.rollback();
     let (mut spec, warnings) = match prepared? {
@@ -2029,10 +1614,8 @@ fn commit_cluster_ddl_phase_with_retry<
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
     owner_id: &str,
-    auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
 ) -> Result<DdlPhaseOutcome, ClusterDdlError> {
     let mut attempt: u32 = 0;
     loop {
@@ -2042,10 +1625,8 @@ fn commit_cluster_ddl_phase_with_retry<
             timeout,
             notifier,
             backfiller,
-            exchange_validator,
             check_constraint_validator,
             owner_id,
-            auto_ids,
         ) {
             Err(ClusterDdlError::ConcurrentSchemaChange { .. })
                 if attempt + 1 < tidb_txnkv::MAX_RETRY_COUNT =>
@@ -2068,14 +1649,10 @@ fn commit_cluster_ddl_with_backfill_once<
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
-    exchange_validator: &dyn ExchangePartitionValidator,
     check_constraint_validator: &dyn CheckConstraintValidator,
     owner_id: &str,
-    auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
 ) -> Result<DdlPhaseOutcome, ClusterDdlError> {
-    if let DdlPhase::Persisted { check_owner, .. } = phase {
-        check_owner().map_err(ClusterDdlError::SchemaSync)?;
-    }
+    (phase.check_owner)().map_err(ClusterDdlError::SchemaSync)?;
     let transaction = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
@@ -2089,95 +1666,56 @@ fn commit_cluster_ddl_with_backfill_once<
                 .snapshot()
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         )
-        .with_row_ids_opt(row_ids.as_ref())
-        .with_auto_ids_opt(auto_ids);
-        match phase {
-            DdlPhase::Initial(statement, job_context) => {
-                crate::cluster_ddl::plan_ddl_with_auto_ids(
-                    &mut snapshot,
-                    statement,
-                    start_ts,
-                    tidb_datatype::new_collation_enabled(),
-                    auto_ids,
-                    job_context,
-                )
-                .map(|plan| (plan, false, None))
+        .with_row_ids_opt(row_ids.as_ref());
+        match plan_persisted_ddl_job_step(
+            &mut snapshot,
+            phase.ddl_job_id,
+            start_ts,
+            phase.schema_state.clone(),
+            &|| refresh_ddl_error_count_limit(&opener, timeout),
+        ) {
+            Ok(PersistedDdlJobPlan::Paused) => {
+                transaction
+                    .rollback()
+                    .map_err(ClusterDdlError::NotCommitted)?;
+                return Ok(DdlPhaseOutcome::Paused);
             }
-            DdlPhase::Persisted {
-                ddl_job_id,
-                ref schema_state,
-                ..
-            } => {
-                match plan_persisted_ddl_job_step(
-                    &mut snapshot,
-                    ddl_job_id,
-                    start_ts,
-                    schema_state.clone(),
-                    &|| refresh_ddl_error_count_limit(&opener, timeout),
-                ) {
-                    Ok(PersistedDdlJobPlan::Paused) => {
-                        transaction
-                            .rollback()
-                            .map_err(ClusterDdlError::NotCommitted)?;
-                        return Ok(DdlPhaseOutcome::Paused);
-                    }
-                    Ok(PersistedDdlJobPlan::SchemaSync {
-                        version,
-                        mdl_info,
-                        publish_version,
-                    }) => {
-                        transaction
-                            .rollback()
-                            .map_err(ClusterDdlError::NotCommitted)?;
-                        return Ok(DdlPhaseOutcome::SchemaSync {
-                            version,
-                            mdl_info,
-                            publish_version,
-                        });
-                    }
-                    Ok(PersistedDdlJobPlan::Reorg(reorg)) => {
-                        transaction
-                            .rollback()
-                            .map_err(ClusterDdlError::NotCommitted)?;
-                        return Ok(DdlPhaseOutcome::Reorg(Box::new(reorg)));
-                    }
-                    Ok(PersistedDdlJobPlan::Step(step)) => Ok((
-                        DdlPlan::Write(Box::new(step.write)),
-                        step.terminal,
-                        step.run_error.map(|error| (error, step.error_count)),
-                    )),
-                    Err(error) => Err(error),
-                }
+            Ok(PersistedDdlJobPlan::SchemaSync {
+                version,
+                mdl_info,
+                publish_version,
+            }) => {
+                transaction
+                    .rollback()
+                    .map_err(ClusterDdlError::NotCommitted)?;
+                return Ok(DdlPhaseOutcome::SchemaSync {
+                    version,
+                    mdl_info,
+                    publish_version,
+                });
             }
+            Ok(PersistedDdlJobPlan::Reorg(reorg)) => {
+                transaction
+                    .rollback()
+                    .map_err(ClusterDdlError::NotCommitted)?;
+                return Ok(DdlPhaseOutcome::Reorg(Box::new(reorg)));
+            }
+            Ok(PersistedDdlJobPlan::Step(step)) => Ok(step),
+            Err(error) => Err(error),
         }
     };
-    let (plan, mut persisted_job_terminal, mut run_error) = match plan {
-        Ok(plan) => plan,
+    let step = match plan {
+        Ok(step) => step,
         Err(error) => {
             let _ = transaction.rollback();
             return Err(error.into());
         }
     };
-    let mut write = match plan {
-        DdlPlan::AlreadySatisfied { detail, warnings } => {
-            transaction
-                .rollback()
-                .map_err(ClusterDdlError::NotCommitted)?;
-            return Ok(DdlPhaseOutcome::AlreadySatisfied(
-                ClusterDdlReport::AlreadySatisfied { detail, warnings },
-            ));
-        }
-        DdlPlan::Write(write) => *write,
-    };
+    let mut persisted_job_terminal = step.terminal;
+    let mut run_error = step.run_error.map(|error| (error, step.error_count));
+    let mut write = step.write;
     let mut buffer = MutationBuffer::new();
-    if !write.backfill.is_empty()
-        || !write.column_reorgs.is_empty()
-        || !write.foreign_key_checks.is_empty()
-        || write.cache_table_check.is_some()
-        || write.partition_reorg.is_some()
-        || write.exchange_partition_validation.is_some()
-        || write.check_constraint_validation.is_some()
-    {
+    if write.check_constraint_validation.is_some() {
         let stage_action = || {
             transaction
                 .snapshot()
@@ -2190,57 +1728,6 @@ fn commit_cluster_ddl_with_backfill_once<
                         })?
                         .bind(snapshot);
                     let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
-                    // Each data step reads the rows the one before it left in
-                    // the buffer, as Go's sub-jobs reorganize in turn.
-                    for reorg in &write.column_reorgs {
-                        match backfiller
-                            .stage_column(reorg, Arc::clone(&handle), &buffer)
-                            .map_err(ClusterDdlError::ColumnReorg)?
-                        {
-                            ColumnStageOutcome::Staged => {}
-                            ColumnStageOutcome::PrecheckFailed => {
-                                return Err(ClusterDdlError::ColumnPrecheckFailed {
-                                    action_offset: reorg.action_offset,
-                                })
-                            }
-                        }
-                    }
-                    for backfill in &write.backfill {
-                        backfiller
-                            .stage(backfill, Arc::clone(&handle), &buffer)
-                            .map_err(ClusterDdlError::IndexBackfill)?;
-                    }
-                    // After the key columns' index exists (Go runs its
-                    // `createIndex` job before the foreign-key job).
-                    for check in &write.foreign_key_checks {
-                        backfiller
-                            .stage_foreign_key_check(check, Arc::clone(&handle), &buffer)
-                            .map_err(|error| ClusterDdlError::ForeignKeyCheckFailed {
-                                error,
-                                rollback: Box::new(DdlStatement::AddForeignKeyRollback {
-                                    schema: check.schema.clone(),
-                                    table: check.child.name.original().to_owned(),
-                                    max_column_id: check.child.max_column_id,
-                                    max_index_id: check.child.max_index_id,
-                                    max_foreign_key_id: check.child.max_foreign_key_id,
-                                }),
-                            })?;
-                    }
-                    if let Some(table) = &write.cache_table_check {
-                        backfiller
-                            .stage_cache_table_check(table, Arc::clone(&handle), &buffer)
-                            .map_err(ClusterDdlError::IndexBackfill)?;
-                    }
-                    if let Some(step) = &write.partition_reorg {
-                        backfiller
-                            .stage_partition_reorg(step, Arc::clone(&handle), &buffer)
-                            .map_err(ClusterDdlError::IndexBackfill)?;
-                    }
-                    if let Some(validation) = &write.exchange_partition_validation {
-                        exchange_validator
-                            .validate(validation, Arc::clone(&handle), &buffer)
-                            .map_err(ClusterDdlError::ExchangeValidation)?;
-                    }
                     if let Some(validation) = &write.check_constraint_validation {
                         check_constraint_validator
                             .validate(validation, Arc::clone(&handle), &buffer)
@@ -2249,39 +1736,17 @@ fn commit_cluster_ddl_with_backfill_once<
                     Ok(())
                 })
         };
-        let staged = match phase {
-            DdlPhase::Persisted { ddl_job_id, .. } => recover_ddl_action(ddl_job_id, stage_action),
-            DdlPhase::Initial(..) => Ok(stage_action()),
-        };
-        // Go `executor.DoDDLJob` appends the job's reorganization warnings
-        // to the statement once the job is synced (one per code, counted).
-        for reorg in &write.column_reorgs {
-            for (level, code, message) in reorg.context.0.take_warnings() {
-                let level = match level {
-                    tidb_distsql::WarningLevel::Note => DdlWarningLevel::Note,
-                    _ => DdlWarningLevel::Warning,
-                };
-                write.warnings.push((level, code, message));
-            }
-        }
+        let staged = recover_ddl_action(phase.ddl_job_id, stage_action);
         let failure = match staged {
             Ok(Ok(())) => None,
             Err(()) => Some(PersistedDdlJobFailure::Panic),
-            Ok(Err(error)) => {
-                if matches!(phase, DdlPhase::Initial(..)) {
-                    let _ = transaction.rollback();
-                    return Err(error);
-                }
-                Some(PersistedDdlJobFailure::Error(match error {
-                    ClusterDdlError::Plan(error) => error,
-                    error => DdlPlanError::Encode(error.to_string()),
-                }))
-            }
+            Ok(Err(error)) => Some(PersistedDdlJobFailure::Error(match error {
+                ClusterDdlError::Plan(error) => error,
+                error => DdlPlanError::Encode(error.to_string()),
+            })),
         };
         if let Some(failure) = failure {
-            let DdlPhase::Persisted { ddl_job_id, .. } = phase else {
-                unreachable!("direct actions do not recover failures")
-            };
+            let ddl_job_id = phase.ddl_job_id;
             let checkpoint = transaction
                 .snapshot()
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))
@@ -2313,12 +1778,7 @@ fn commit_cluster_ddl_with_backfill_once<
         }
     }
     let placement_receipt = if let Some(endpoint) = opener.pd().http_endpoint() {
-        match deliver_placement_bundles(
-            &endpoint,
-            &write.placement_bundles,
-            &write.placement_rollback_bundles,
-            timeout,
-        ) {
+        match deliver_placement_bundles(&endpoint, &write.placement_bundles, timeout) {
             Ok(receipt) => receipt,
             Err(error) => {
                 let _ = transaction.rollback();
@@ -2372,40 +1832,32 @@ fn commit_cluster_ddl_with_backfill_once<
             return Err(error.into());
         }
     }
-    if let DdlPhase::Persisted { check_owner, .. } = phase {
-        if let Err(error) = check_owner() {
-            let _ = transaction.rollback();
-            return Err(compensate_external_delivery(
-                ClusterDdlError::SchemaSync(error),
-                placement_receipt.as_ref(),
-                label_receipt.as_ref(),
-                timeout,
-            ));
-        }
+    if let Err(error) = (phase.check_owner)() {
+        let _ = transaction.rollback();
+        return Err(compensate_external_delivery(
+            ClusterDdlError::SchemaSync(error),
+            placement_receipt.as_ref(),
+            label_receipt.as_ref(),
+            timeout,
+        ));
     }
     let planned_version = write.schema_version;
     match transaction.commit_with(&buffer, write.mutations) {
         Ok(_) => {
             // Go `deleteTableAffinityGroupsInPD`: best-effort, once durable.
             write.affinity_groups.apply_delete();
-            match phase {
-                DdlPhase::Initial(..) => notify_schema_version(notifier, planned_version),
-                DdlPhase::Persisted {
-                    ref schema_state, ..
-                } if planned_version != 0 => {
-                    if schema_state.mdl_enabled {
-                        if let Some(notifier) = notifier {
-                            notifier
-                                .notify(planned_version)
-                                .map_err(ClusterDdlError::SchemaSync)?;
-                        }
-                    } else {
-                        // Periodic reload can advance non-MDL self-version
-                        // keys even when the notification is unavailable.
-                        notify_schema_version(notifier, planned_version);
+            if planned_version != 0 {
+                if phase.schema_state.mdl_enabled {
+                    if let Some(notifier) = notifier {
+                        notifier
+                            .notify(planned_version)
+                            .map_err(ClusterDdlError::SchemaSync)?;
                     }
+                } else {
+                    // Periodic reload can advance non-MDL self-version
+                    // keys even when the notification is unavailable.
+                    notify_schema_version(notifier, planned_version);
                 }
-                _ => {}
             }
             Ok(DdlPhaseOutcome::Committed(CommittedDdlPhase {
                 report: ClusterDdlReport::Applied {
@@ -2537,25 +1989,13 @@ pub fn notify_schema_version(notifier: Option<&dyn SchemaVersionNotifier>, versi
     }
 }
 
-/// Names a write conflict for what it is on this path: a concurrent DDL.
-///
-/// Every catalog change writes `SchemaVersionKey` from a value it read, so
-/// TiKV's own conflict detection is this node's mutual exclusion. Any other
-/// cause keeps its coordinator-level meaning.
-fn classify(planned_version: i64, cause: &TransactionCause) -> ClusterDdlError {
-    match cause {
-        TransactionCause::WriteConflict { detail } => ClusterDdlError::ConcurrentSchemaChange {
-            planned_version,
-            detail: detail.clone(),
-        },
-        other => ClusterDdlError::Commit(transaction_cause_to_sql_error(other)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_txnkv::transaction::{OptimisticTransactionReceipt, UndeterminedTransaction};
+    use tidb_txnkv::transaction::{
+        OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
+        UndeterminedTransaction,
+    };
 
     #[test]
     fn committed_action_retry_matches_go_classification_and_budget() {
@@ -2598,28 +2038,6 @@ mod tests {
         for limit in [0, 1, 2] {
             assert!(!is_retryable_job_error(&plain, 1, limit));
         }
-    }
-
-    #[test]
-    fn a_write_conflict_on_a_catalog_change_is_named_a_concurrent_ddl() {
-        // `SchemaVersionKey` is in every catalog change's write set, so a TiKV
-        // write conflict here can mean only one thing.
-        let error = classify(
-            61,
-            &TransactionCause::WriteConflict {
-                detail: "optimistic write conflict: conflict_ts 450".to_owned(),
-            },
-        );
-        assert!(matches!(
-            error,
-            ClusterDdlError::ConcurrentSchemaChange {
-                planned_version: 61,
-                ..
-            }
-        ));
-        assert!(error
-            .to_string()
-            .contains("refuses to interleave: optimistic write conflict"));
     }
 
     #[test]
@@ -2696,37 +2114,5 @@ mod tests {
         let recording = Recording(RefCell::new(Vec::new()));
         notify_schema_version(Some(&recording), 61);
         assert_eq!(*recording.0.borrow(), vec![61]);
-    }
-
-    #[test]
-    fn any_other_failure_keeps_its_own_meaning_rather_than_blaming_a_concurrent_ddl() {
-        let error = classify(
-            61,
-            &TransactionCause::Region {
-                detail: "not leader".to_owned(),
-            },
-        );
-        assert!(matches!(
-            &error,
-            ClusterDdlError::Commit(driver_error)
-                if driver_error.code == 1105 && driver_error.message.contains("not leader")
-        ));
-        assert!(!error.to_string().contains("another DDL"));
-    }
-
-    #[test]
-    fn backoff_exhaustion_keeps_its_driver_error_identity() {
-        let error = classify(
-            61,
-            &TransactionCause::BackoffExhausted {
-                kind: tidb_txnkv::region::RegionBackoffKind::TikvRpc,
-                detail: "tikvRPC backoffer exhausted".to_owned(),
-            },
-        );
-        assert!(matches!(
-            error,
-            ClusterDdlError::Commit(error)
-                if error.code == tidb_error::tidb::errcode::ErrTiKVServerTimeout
-        ));
     }
 }

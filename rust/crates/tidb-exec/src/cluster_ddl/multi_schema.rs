@@ -1101,15 +1101,9 @@ fn merge_write(merged: &mut DdlWrite, write: DdlWrite) {
     if merged.diff.version == 0 {
         merged.diff = write.diff;
     }
-    merged.backfill.extend(write.backfill);
-    merged.column_reorgs.extend(write.column_reorgs);
-    merged.foreign_key_checks.extend(write.foreign_key_checks);
     merged.label_rules.extend(write.label_rules);
     merged.warnings.extend(write.warnings);
     merged.placement_bundles.extend(write.placement_bundles);
-    merged
-        .placement_rollback_bundles
-        .extend(write.placement_rollback_bundles);
     if merged.check_constraint_validation.is_none() {
         merged.check_constraint_validation = write.check_constraint_validation;
     }

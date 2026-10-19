@@ -32,7 +32,6 @@ use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer,
 use tidb_exec::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
 use tidb_exec::cluster_ddl::{
     CheckConstraintValidation, DdlPlanError, DdlStatement, ExchangePartitionValidation,
-    IndexBackfill, IndexBackfillOperation,
 };
 use tidb_exec::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use tidb_exec::ddl_job_table::DdlJobTable;
@@ -40,11 +39,10 @@ use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::{
-    commit_cluster_ddl_with_backfill, load_active_persisted_ddl_jobs_cached,
-    load_history_persisted_ddl_job, load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
+    answer_ddl_without_job, load_active_persisted_ddl_jobs_cached, load_history_persisted_ddl_job,
+    load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
     submit_check_constraint_job_with_retry, CheckConstraintValidator, ClusterDdlReport,
-    DdlSchemaSync, ExchangePartitionValidator, IndexBackfiller, PersistedDdlJobOutcome,
-    SchemaVersionNotifier,
+    DdlSchemaSync, IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
 
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -53,7 +51,7 @@ use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, Mutat
 use tidb_executor::{RowDecodeContext, StmtContext};
 use tidb_pd_client::EtcdClient;
 
-use crate::cluster_session::{cluster_table, kv_index, AutoIdSource};
+use crate::cluster_session::{cluster_table, AutoIdSource};
 use crate::sql_node::{cluster_ddl_error, SqlQueryError};
 
 /// This node's one route to the cluster's stored schema.
@@ -402,7 +400,6 @@ where
                             notifier_ref,
                             &backfiller,
                             &KvTableIndexBackfiller::default(),
-                            &KvTableIndexBackfiller::default(),
                             schema_sync.as_ref(),
                             &check_owner,
                             &|delay| wait_ddl_retry(&stopped, delay),
@@ -577,8 +574,6 @@ where
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     min_job_id_stop: Sender<()>,
     min_job_id_worker: Option<JoinHandle<()>>,
-    /// Serializes this node's one-transaction DDL commits (see `execute`).
-    direct_ddl_turn: Mutex<()>,
     /// Go `detectAndUpdateJobVersion`'s background re-detection, while some
     /// peer is still older than job version 2 / global index V1.
     job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
@@ -756,7 +751,6 @@ where
             min_job_id_refresher,
             min_job_id_stop,
             min_job_id_worker: Some(min_job_id_worker),
-            direct_ddl_turn: Mutex::new(()),
             job_version_detector,
         })
     }
@@ -1080,7 +1074,6 @@ mod schema_sync_tests {
                 Some(&notifier),
                 &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
-                &KvTableIndexBackfiller::default(),
                 &barrier,
                 &|| Ok(()),
                 &|_| panic!("no action error retry expected"),
@@ -1283,7 +1276,6 @@ mod schema_sync_tests {
                 id,
                 timeout,
                 notifier,
-                &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
                 &barrier,
@@ -1717,7 +1709,6 @@ mod schema_sync_tests {
                 None,
                 &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
-                &KvTableIndexBackfiller::default(),
                 &barrier,
                 &|| Ok(()),
                 &|delay| {
@@ -1843,7 +1834,6 @@ mod schema_sync_tests {
             timeout,
             None,
             &KvTableIndexBackfiller::default(),
-            &KvTableIndexBackfiller::default(),
             &validator,
             &barrier,
             &|| Ok(()),
@@ -1885,7 +1875,6 @@ mod schema_sync_tests {
             700,
             timeout,
             None,
-            &KvTableIndexBackfiller::default(),
             &KvTableIndexBackfiller::default(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
@@ -1934,7 +1923,6 @@ mod schema_sync_tests {
             704,
             timeout,
             None,
-            &KvTableIndexBackfiller::default(),
             &KvTableIndexBackfiller::default(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
             &barrier,
@@ -2012,7 +2000,6 @@ mod schema_sync_tests {
             timeout,
             None,
             &KvTableIndexBackfiller::default(),
-            &KvTableIndexBackfiller::default(),
             &panicking,
             &barrier,
             &lost_owner,
@@ -2027,7 +2014,6 @@ mod schema_sync_tests {
             702,
             timeout,
             None,
-            &KvTableIndexBackfiller::default(),
             &KvTableIndexBackfiller::default(),
             &panicking,
             &barrier,
@@ -2103,7 +2089,6 @@ mod schema_sync_tests {
                 timeout,
                 None,
                 &KvTableIndexBackfiller::default(),
-                &KvTableIndexBackfiller::default(),
                 &pause_then_panic,
                 &barrier,
                 &|| Ok(()),
@@ -2125,7 +2110,6 @@ mod schema_sync_tests {
                 703,
                 timeout,
                 None,
-                &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
                 &panicking,
                 &barrier,
@@ -2529,41 +2513,9 @@ where
                 }
             }
         }
-        let notifier = self
-            .notifier
-            .as_ref()
-            .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
-        // Go's owner never commits two general jobs' catalog transactions at
-        // once; this node's one-transaction changes take turns too, so two of
-        // its sessions never prewrite into each other's keys and wait out
-        // each other's lock TTL. Peers still meet as write conflicts.
-        let _turn = self
-            .direct_ddl_turn
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // The node's allocators serve the `mysql.*` rows the change inserts.
-        let backfiller = KvTableIndexBackfiller {
-            row_ids: self.scheduler.row_ids.get().cloned(),
-        };
-        let report = commit_cluster_ddl_with_backfill(
-            Arc::clone(&self.opener),
-            statement,
-            self.timeout,
-            notifier,
-            &backfiller,
-            &KvTableIndexBackfiller::default(),
-            &KvTableIndexBackfiller::default(),
-            self.schema_sync.as_ref(),
-            self.auto_ids.as_ref(),
-            job_context,
-        )
-        .map_err(cluster_ddl_error)?;
-        // Go `addDelRangeJob` wakes the emulator for every finished job.
-        if let Some(emulator) = self.scheduler.del_range.get() {
-            emulator.notify();
-        }
-        self.refresh_catalog();
-        Ok(report)
+        // A statement Go's executor finishes without a job.
+        answer_ddl_without_job(Arc::clone(&self.opener), statement, self.timeout)
+            .map_err(cluster_ddl_error)
     }
 }
 
@@ -3074,186 +3026,18 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         }
     }
 
-    fn stage(
-        &self,
-        plan: &IndexBackfill,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
-    ) -> Result<(), LockSqlError> {
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        // Built from the table as it was BEFORE the change, which is the shape
-        // its stored rows have -- and, for a DROP, the state in which the
-        // index being removed is still one of the table's own.
-        //
-        // With NO auto-increment counter, because a backfill allocates no id:
-        // Creation evaluates existing rows; removal deletes existing index
-        // keys. Neither operation reads the allocator. Naming that absence is what keeps it honest -- the plan
-        // carries no database id, so the alternative would be inventing one
-        // and handing over a counter starting at zero, which against shared
-        // cluster storage re-issues ids the table already holds.
-        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?
-            .with_new_collation_mode(plan.use_new_collation);
-        let index = {
-            let index = plan.index.read();
-            kv_index(&index, &table.columns).map_err(exchange_validation_internal)?
-        };
-        let name = index.name.clone();
-        match &plan.operation {
-            IndexBackfillOperation::Add(context) => {
-                // A partial index's entries are the rows its condition holds
-                // for (Go `buildIndexConditionChecker` in the backfill).
-                let stored = plan.index.read();
-                if stored.has_condition() {
-                    let condition = stored
-                        .condition_expr()
-                        .map_err(|error| exchange_validation_internal(error.message))?;
-                    let (zone, escape) =
-                        (context.0.session_zone(), context.0.like_default_escape());
-                    table
-                        .add_partial_index_condition(
-                            stored.id,
-                            stored.name.original(),
-                            &condition,
-                            &zone,
-                            escape,
-                        )
-                        .map_err(backfill_failure)?;
-                }
-                table
-                    .create_index_with_context(index, &context.0)
-                    .map_err(backfill_failure)?
-            }
-            IndexBackfillOperation::Drop => {
-                if !table.drop_index(&name).map_err(backfill_failure)? {
-                    return Err(exchange_validation_internal(format!(
-                        "index {name} is absent from the stored table"
-                    )));
-                }
-            }
-        }
-        Ok(())
-    }
-    /// Go `onModifyColumn`'s data work for every kind but `ModifyTypeNoReorg`,
-    /// over the table as its rows are stored, through the DDL transaction's
-    /// snapshot and buffer:
-    ///
-    /// 1. `GetModifiableColumnJob`'s `checkForNullValue` for a NULL -> NOT
-    ///    NULL change (1265 at row 1), which Go's executor runs before it
-    ///    submits the job;
-    /// 2. `precheckForVarcharToChar`, whose failing row sends the statement
-    ///    back to be planned as a reorganization;
-    /// 3. `checkModifyColumnData` for the checked kinds and the index-only
-    ///    reorganization (1138 / 1265);
-    /// 4. the row and index rewrite for the reorganizing kinds, which leaves
-    ///    the rows under the after-table's column id and the entries under
-    ///    its index ids.
-    fn stage_column(
-        &self,
-        plan: &tidb_exec::cluster_ddl::ColumnReorg,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
-    ) -> Result<tidb_exec::real_tikv_ddl::ColumnStageOutcome, LockSqlError> {
-        use tidb_exec::real_tikv_ddl::ColumnStageOutcome;
-        use tidb_executor::ddl::modify_column_type::{
-            is_null_to_not_null_change, ModifyColumnType,
-        };
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let ctx = &plan.context.0;
-        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?
-            .with_new_collation_mode(plan.use_new_collation);
-        let after = cluster_table(&plan.after, &storage, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?;
-        let offset = table
-            .columns
-            .iter()
-            .position(|column| column.id == plan.column_id)
-            .ok_or_else(|| {
-                exchange_validation_internal("the modified column is absent".to_owned())
-            })?;
-        let new_offset = after
-            .columns
-            .iter()
-            .position(|column| column.id == plan.new_column_id)
-            .ok_or_else(|| {
-                exchange_validation_internal("the changed column is absent".to_owned())
-            })?;
-        let new_column = after.columns[new_offset].clone();
-        let failure = |error: tidb_executor::DriverError| {
-            let error = error.to_mysql_error();
-            LockSqlError {
-                code: error.code,
-                state: error.state,
-                message: error.message,
-            }
-        };
-        let old_type = table.columns[offset].field_type.clone();
-        if is_null_to_not_null_change(&old_type, &new_column.field_type)
-            && !(old_type.code() != tidb_datatype::FieldTypeCode::Timestamp
-                && new_column.field_type.code() == tidb_datatype::FieldTypeCode::Timestamp)
-            && table
-                .check_modify_column_data(offset, &new_column.field_type, false, ctx)
-                .map_err(backfill_failure)?
-                .is_some()
-        {
-            return Err(failure(tidb_executor::DriverError::DataTruncatedAtRow {
-                column: tidb_hack::go_to_lower(&new_column.name),
-                row: 1,
-            }));
-        }
-        if plan.precheck
-            && table
-                .check_modify_column_data(offset, &new_column.field_type, true, ctx)
-                .map_err(backfill_failure)?
-                .is_some()
-        {
-            return Ok(ColumnStageOutcome::PrecheckFailed);
-        }
-        if matches!(
-            plan.kind,
-            ModifyColumnType::NoReorgWithCheck | ModifyColumnType::IndexReorg
-        ) {
-            if let Some(error) = table
-                .check_modify_column_data(
-                    offset,
-                    &new_column.field_type,
-                    plan.check_value_range,
-                    ctx,
-                )
-                .map_err(backfill_failure)?
-            {
-                return Err(failure(tidb_executor::ddl::modify_column_error(error)));
-            }
-        }
-        if matches!(
-            plan.kind,
-            ModifyColumnType::IndexReorg | ModifyColumnType::Reorg
-        ) {
-            table
-                .reorganize_column_with_context(
-                    offset,
-                    new_column,
-                    Some(new_offset),
-                    &plan.renumbered_indexes,
-                    ctx,
-                )
-                .map_err(|error| failure(tidb_executor::ddl::modify_column_error(error)))?;
-        }
-        Ok(ColumnStageOutcome::Staged)
-    }
-    /// Go `checkForeignKeyConstrain`: the child's existing rows against its
-    /// parent, both read through the DDL transaction's snapshot and buffer,
-    /// by the same check the in-process `ADD FOREIGN KEY` runs.
     fn stage_exchange_partition_check(
         &self,
         plan: &ExchangePartitionValidation,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
-        ExchangePartitionValidator::validate(self, plan, snapshot, buffer)
+        self.validate_exchange_partition(plan, snapshot, buffer)
     }
 
+    /// Go `checkForeignKeyConstrain`: the child's existing rows against its
+    /// parent, both read through the DDL transaction's snapshot and buffer,
+    /// by the same check the in-process `ADD FOREIGN KEY` runs.
     fn stage_foreign_key_check(
         &self,
         plan: &tidb_exec::cluster_ddl::ForeignKeyCheck,
@@ -3294,57 +3078,6 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             }
         })
     }
-    fn stage_partition_reorg(
-        &self,
-        step: &tidb_exec::cluster_ddl::PartitionReorgStep,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
-    ) -> Result<(), LockSqlError> {
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        // A heap row whose `_tidb_rowid` collides with one already moved takes
-        // a new id from the table's counter, read and bumped inside this DDL
-        // transaction so the counter copied below includes it.
-        let ids = DdlTransactionAutoIds {
-            storage: storage.clone(),
-        };
-        let mut table = cluster_table(
-            &step.table,
-            &storage,
-            &AutoIdSource::In {
-                db_id: step.db_id,
-                ids: &ids,
-            },
-        )
-        .map_err(exchange_validation_internal)?;
-        let failure = |error: tidb_executor::DriverError| {
-            let error = error.to_mysql_error();
-            LockSqlError {
-                code: error.code,
-                state: error.state,
-                message: error.message,
-            }
-        };
-        table
-            .reorganize_partitions(step.reorg.clone(), &step.context.0)
-            .map_err(|error| failure(tidb_executor::driver::kv_write_error(error)))?;
-        let mut storage = storage;
-        for (from, to) in &step.counter_moves {
-            match tidb_executor::storage::TableStorage::get(
-                &mut storage,
-                &tidb_txnkv::Key::from_bytes(from.clone()),
-            ) {
-                Ok(value) => tidb_executor::storage::TableStorage::set(
-                    &mut storage,
-                    tidb_txnkv::Key::from_bytes(to.clone()),
-                    value,
-                )
-                .map_err(|error| failure(error.into()))?,
-                Err(tidb_executor::storage::StorageError::NotFound) => {}
-                Err(error) => return Err(failure(error.into())),
-            }
-        }
-        Ok(())
-    }
     fn stage_cache_table_check(
         &self,
         table: &tidb_model::TableInfo,
@@ -3373,8 +3106,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
     }
 }
 
-impl ExchangePartitionValidator for KvTableIndexBackfiller {
-    fn validate(
+impl KvTableIndexBackfiller {
+    /// Go `checkExchangePartitionRecordValidation`: every standalone-table
+    /// row must route to the exchanged partition.
+    fn validate_exchange_partition(
         &self,
         plan: &ExchangePartitionValidation,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,

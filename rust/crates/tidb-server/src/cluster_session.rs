@@ -57,7 +57,9 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 
 // Go `tables.TableFromMeta` and the auto-id seam moved beside the DDL
 // planner; the server keeps reaching them by their old paths.
-pub(crate) use tidb_exec::table_from_meta::{cluster_table, kv_index, AutoIdKind};
+#[cfg(test)]
+pub(crate) use tidb_exec::table_from_meta::kv_index;
+pub(crate) use tidb_exec::table_from_meta::{cluster_table, AutoIdKind};
 pub use tidb_exec::table_from_meta::{AutoIdSource, LocalTableAutoIds, TableAutoIds};
 
 /// Why one loaded table is not part of the session's catalog.

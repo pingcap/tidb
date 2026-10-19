@@ -680,9 +680,11 @@ pub fn plan_insert_job_rows(
         DdlJobTable::locate(catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     for spec in specs {
         if spec.job.type_ == ActionType::ACTION_MULTI_SCHEMA_CHANGE {
+            // Go `fillArgsWithSubJobs`: each sub-job in the parent's version.
+            let version = spec.job.version;
             if let Some(info) = &spec.job.multi_schema_info {
                 for sub_job in info.read().sub_jobs.iter_deref() {
-                    sub_job.write().fill_v2_args();
+                    sub_job.write().fill_args(version);
                 }
             }
         } else {

@@ -605,6 +605,24 @@ impl SubJob {
         self.args = GoSharedSlice::from_vec(vec![self.job_args.clone()]);
     }
 
+    /// Go `SubJob.FillArgs`: the private argument cache in the shape the
+    /// parent job's version encodes (`getArgsV1` for version 1, the typed
+    /// arguments for version 2), through a fake job of this sub-job's type.
+    pub fn fill_args(&mut self, job_version: JobVersion) {
+        let mut fake = Job {
+            version: job_version,
+            type_: self.type_,
+            ..Job::default()
+        };
+        match self.job_args_value() {
+            Some(value) => value.clone().fill_job(&mut fake),
+            None => {
+                fake.args = GoSharedSlice::from_vec(vec![self.job_args.clone()]);
+            }
+        }
+        self.args = fake.args;
+    }
+
     /// Returns a copied Go slice header for the private argument cache.
     pub fn decoded_args(&self) -> GoSharedSlice<GoAny> {
         self.args.clone()

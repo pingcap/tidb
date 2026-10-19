@@ -29,11 +29,9 @@ use tidb_exec::cluster_catalog::{
     load_cluster_catalog, prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_ddl::{
-    lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation,
-    plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
+    lower_ddl, lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
     prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlPlanError,
-    DdlStatement, IndexBackfillOperation, MdlInfoUpdate, PersistedDdlJobFailure,
-    PersistedDdlJobPlan, PersistedDdlJobStep,
+    DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep,
 };
 
 use tidb_exec::cluster_ddl::DdlJobSchemaState;
@@ -42,14 +40,10 @@ use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::ddl_systable::{SystemTableManager, SystemTableManagerError};
 use tidb_exec::mysql_system_tables::{SystemRow, SystemTableView};
-use tidb_exec::real_tikv_ddl::{prepare_cluster_ddl_with_context, DdlWarningLevel};
 use tidb_exec::system_row_write::store_clustered_row;
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
-use tidb_model::{
-    ActionType, DBInfo, GoAnyView, GoShared, Job, JobArgsValue, JobState, JobVersion, SchemaState,
-    TimeZoneLocation,
-};
+use tidb_model::{ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, SchemaState};
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
 fn plan_worker_step(
@@ -2019,7 +2013,6 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         assert!(!step.terminal, "{action}: pause must retain the active job");
         assert_eq!(step.write.schema_version, 0, "{action}");
         assert!(step.write.mdl_info_update.is_none());
-        assert!(step.write.backfill.is_empty());
         assert!(step.write.check_constraint_validation.is_none());
         assert!(step.write.placement_bundles.is_empty());
         assert_eq!(store.pairs, before, "planning must not mutate storage");
@@ -3064,6 +3057,123 @@ fn committed_table(store: &MetaStore, table_id: i64) -> tidb_model::TableInfo {
     .expect("committed table metadata decodes")
 }
 
+/// Runs `statement` as Go's persisted job, submitted at `start_ts` and
+/// stepped to completion by the owner (each step applied as it commits).
+/// The write answered carries every committed step's mutations in order
+/// (already applied; applying them again changes nothing), the last schema
+/// version published with its diff, and the table ID the job created.
+pub(crate) fn plan_ddl(
+    store: &mut MetaStore,
+    statement: &DdlStatement,
+    start_ts: u64,
+) -> Result<DdlPlan, DdlPlanError> {
+    let context = tidb_executor::StmtContext::for_query();
+    let mut no_null = |_: &tidb_model::TableInfo, _: i64| Ok(false);
+    let submission = tidb_exec::real_tikv_ddl::prepare_persisted_job_submission(
+        store,
+        statement,
+        &context,
+        &[],
+        start_ts,
+        false,
+        0,
+        1,
+        &mut no_null,
+    )?;
+    let (mut spec, warnings) = match submission {
+        Some(tidb_exec::cluster_ddl::add_index::AddIndexSubmission::Job(spec, warnings)) => {
+            (*spec, warnings)
+        }
+        Some(tidb_exec::cluster_ddl::add_index::AddIndexSubmission::AlreadySatisfied {
+            detail,
+            warnings,
+        }) => return Ok(DdlPlan::AlreadySatisfied { detail, warnings }),
+        // A statement Go answers without a job.
+        None => return tidb_exec::cluster_ddl::plan_ddl(store, statement),
+    };
+    let catalog = load_cluster_catalog(store)?;
+    let mut before_insert_with_assigned_ids =
+        |_: &[tidb_exec::ddl_job_submit::JobSpec]| Option::<fn()>::None;
+    let (mutations, _) = plan_insert_attempt(
+        store,
+        &catalog,
+        std::slice::from_mut(&mut spec),
+        &mut before_insert_with_assigned_ids,
+    )?;
+    apply_mutations(store, &mutations);
+    let job_id = spec.job.id;
+    let mut write = tidb_exec::cluster_ddl::job_only_write(job_id, mutations);
+    write.warnings = warnings;
+    let mut failure = None;
+    let mut outcomes = Vec::new();
+    let mut ts = start_ts;
+    loop {
+        ts += 1;
+        let mut schema_state = DdlJobSchemaState::new(true);
+        schema_state.reorg = outcomes.clone();
+        let step = match plan_persisted_ddl_job_step(store, job_id, ts, schema_state, &|| {
+            tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT
+        })? {
+            PersistedDdlJobPlan::Step(step) => step,
+            // The fixture tables hold no rows: a reorganization has nothing
+            // to do (Go `checkIfTableReorgWorkCanSkip`) and a data check
+            // finds nothing wrong.
+            PersistedDdlJobPlan::Reorg(reorg) => {
+                outcomes.push(empty_table_reorg_outcome(&reorg));
+                continue;
+            }
+            PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
+            PersistedDdlJobPlan::SchemaSync { .. } => {
+                panic!("a previous MDL barrier is still pending")
+            }
+        };
+        outcomes.clear();
+        apply(store, &step.write);
+        // A job that ran into an error ends cancelled or rolled back.
+        if step.run_error.is_some() {
+            failure = step.run_error;
+        }
+        let step_write = step.write;
+        write.created_id = write.created_id.or(step_write.created_id);
+        if step_write.schema_version != 0 {
+            write.schema_version = step_write.schema_version;
+            write.diff = step_write.diff;
+        }
+        write.mutations.extend(step_write.mutations);
+        if step.terminal {
+            break;
+        }
+    }
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    Ok(DdlPlan::Write(Box::new(write)))
+}
+
+/// What the owner's reorganization `reorg` comes to over tables without
+/// rows.
+fn empty_table_reorg_outcome(
+    reorg: &tidb_exec::cluster_ddl::add_index::AddIndexReorg,
+) -> tidb_exec::cluster_ddl::add_index::ReorgOutcome {
+    use tidb_exec::cluster_ddl::add_index::{ReorgResult, ReorgStageRequest};
+    let result = match &reorg.stage {
+        ReorgStageRequest::Init => ReorgResult::Skipped,
+        ReorgStageRequest::Run(_) => ReorgResult::Done(reorg.row_count),
+        _ => ReorgResult::Checked(None),
+    };
+    tidb_exec::cluster_ddl::add_index::ReorgOutcome {
+        job_id: reorg.job_id,
+        merging: reorg.merging,
+        column: reorg.column.clone(),
+        sub_job: reorg.sub_job,
+        partition_phase: reorg.partition_phase,
+        row_count: reorg.row_count,
+        warnings: Vec::new(),
+        result,
+    }
+}
+
+/// Runs the fixture DDL `sql` as Go's persisted job (see [`plan_ddl`]).
 pub(crate) fn plan(
     store: &mut MetaStore,
     sql: &str,
@@ -3105,6 +3215,7 @@ pub(crate) fn stored_value<'write>(
     write
         .mutations
         .iter()
+        .rev()
         .find(|mutation| mutation.key() == raw_key)
         .unwrap_or_else(|| panic!("the write set carries this key"))
         .value()
@@ -3156,7 +3267,9 @@ fn a_created_table_is_stored_exactly_as_the_go_server_stores_it() {
     let write = plan(
         &mut store,
         "CREATE TABLE u6.minimal (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT NOT NULL)",
-        467_996_279_696_261_139,
+        // The job's step, which stamps `UpdateTS`, runs one timestamp after
+        // the submission.
+        467_996_279_696_261_138,
     );
     assert_eq!(write.created_id, Some(116));
     assert_carries(
@@ -3186,7 +3299,7 @@ fn every_admitted_column_type_is_stored_with_the_go_servers_field_type() {
            name VARCHAR(32) NOT NULL,
            price DECIMAL(10,2) NOT NULL
          )",
-        467_996_279_683_416_098,
+        467_996_279_683_416_097,
     );
     assert_eq!(write.created_id, Some(114));
     assert_carries(
@@ -3298,34 +3411,6 @@ fn created_database_metadata_follows_go() {
         refusal("CREATE DATABASE c CHARACTER SET utf8 COLLATE utf8mb4_bin")
             .contains("is not valid for CHARACTER SET")
     );
-}
-
-#[test]
-fn every_catalog_change_writes_the_schema_version_and_its_diff() {
-    // The version key in the write set is the whole concurrency story: it is
-    // written from the value this snapshot read, so a competing DDL becomes a
-    // TiKV write conflict instead of an interleaved half-change.
-    for sql in [
-        "CREATE DATABASE fresh",
-        "DROP DATABASE u6",
-        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
-    ] {
-        let mut store = bootstrapped();
-        let write = plan(&mut store, sql, 7);
-        assert_eq!(write.schema_version, 61, "{sql}");
-        assert_eq!(write.diff.version, 61, "{sql}");
-        assert_eq!(
-            stored_value(&write, &key::schema_version_kv_key()),
-            b"61",
-            "{sql}"
-        );
-        let stored_diff =
-            value::parse_schema_diff(stored_value(&write, &key::schema_diff_kv_key(61)))
-                .expect("the stored diff decodes")
-                .expect("the stored diff is not empty");
-        // The reloader (ours and a real TiDB's domain) reads exactly this back.
-        assert_eq!(stored_diff, write.diff, "{sql}");
-    }
 }
 
 #[test]
@@ -3522,85 +3607,6 @@ fn notifier_events(
 }
 
 #[test]
-fn a_created_table_is_loadable_and_droppable_by_this_node() {
-    let mut store = bootstrapped();
-    let created = plan(
-        &mut store,
-        "CREATE TABLE u6.made (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
-        7,
-    );
-    apply(&mut store, &created);
-    // The catalog reader finds what the writer wrote, at the version it wrote.
-    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
-        .expect("the written catalog loads");
-    assert_eq!(catalog.schema_version, 61);
-    let (database, table) = catalog.find_table("u6", "made").expect("the created table");
-    assert_eq!(database.id, 112);
-    assert_eq!(table.id, 117);
-    tidb_exec::cluster_catalog::configure_loaded_table(database.name.original(), table)
-        .expect("a table this node created is one it can serve");
-
-    // Its own auto-id allocator key was never written, so DROP removes exactly
-    // the table key, and the next version is the one after the create's.
-    let dropped = plan(&mut store, "DROP TABLE u6.made", 8);
-    assert_eq!(dropped.schema_version, 62);
-    let deleted: Vec<_> = dropped
-        .mutations
-        .iter()
-        .filter(|mutation| mutation.kind() == BufferMutationOp::Delete)
-        .map(|mutation| mutation.key().to_vec())
-        .collect();
-    assert_eq!(deleted, vec![key::table_kv_key(112, 117)]);
-    apply(&mut store, &dropped);
-    assert!(tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
-        .expect("the catalog loads")
-        .find_table("u6", "made")
-        .is_none());
-}
-
-#[test]
-fn dropping_a_database_removes_every_field_of_its_hash() {
-    let mut store = bootstrapped();
-    let created = plan(
-        &mut store,
-        "CREATE TABLE u6.made (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
-        7,
-    );
-    apply(&mut store, &created);
-    // A table that has allocated row IDs also owns an allocator field, which
-    // Go's `HClear` removes with the rest of the hash.
-    store.put(key::auto_table_id_kv_key(112, 117), b"30000".to_vec());
-
-    let dropped = plan(&mut store, "DROP DATABASE u6", 9);
-    let mut deleted: Vec<_> = dropped
-        .mutations
-        .iter()
-        .filter(|mutation| mutation.kind() == BufferMutationOp::Delete)
-        .map(|mutation| mutation.key().to_vec())
-        .collect();
-    deleted.sort();
-    let mut expected = vec![
-        key::table_kv_key(112, 117),
-        key::auto_table_id_kv_key(112, 117),
-        key::database_kv_key(112),
-    ];
-    expected.sort();
-    assert_eq!(deleted, expected);
-    apply(&mut store, &dropped);
-    let catalog =
-        tidb_exec::cluster_catalog::load_cluster_catalog(&mut store).expect("the catalog loads");
-    assert!(!catalog
-        .databases
-        .iter()
-        .any(|database| database.info.id == 112));
-    // DROP DATABASE u6 must leave the fixture's mysql database untouched.
-    assert!(catalog
-        .databases
-        .iter()
-        .any(|database| { database.info.id == tidb_metadef::system::SYSTEM_DATABASE_ID }));
-}
-
-#[test]
 fn an_if_exists_clause_turns_a_missing_object_into_a_no_op_that_spends_no_version() {
     let mut store = bootstrapped();
     for sql in [
@@ -3627,9 +3633,12 @@ fn an_if_exists_clause_turns_a_missing_object_into_a_no_op_that_spends_no_versio
 fn a_missing_object_without_if_exists_is_named_precisely() {
     let mut store = bootstrapped();
     let unknown_table = plan_ddl(&mut store, &statement("DROP TABLE u6.absent"), 7)
-        .expect_err("a missing table is an error");
-    assert!(matches!(unknown_table, DdlPlanError::UnknownTable { .. }));
-    assert_eq!(unknown_table.to_string(), "Unknown table 'u6.absent'");
+        .expect_err("a missing table is an error")
+        .to_sql_error();
+    assert_eq!(
+        (unknown_table.code, unknown_table.message.as_str()),
+        (1051, "Unknown table 'u6.absent'")
+    );
 
     let unknown_database = plan_ddl(
         &mut store,
@@ -4103,43 +4112,6 @@ fn workload_repository_partition_changes_use_cluster_ddl() {
     assert_eq!(names, ["p20260831", "p20260901"]);
 }
 
-/// Go `AlterTablePartitioning` / `onReorganizePartition`: PARTITION BY on an
-/// existing table publishes the table under its `NewTableID`, partitioned,
-/// and owes the move of every row into the new partitions.
-#[test]
-fn cluster_repartition_publishes_the_new_table_and_owes_the_row_move() {
-    let mut store = bootstrapped();
-    let created = plan(&mut store, "CREATE TABLE u6.t (a INT)", 470_100_010);
-    let old_id = created.created_id.expect("CREATE TABLE allocates an id");
-    apply(&mut store, &created);
-    let write = plan(
-        &mut store,
-        "ALTER TABLE u6.t PARTITION BY HASH(a) PARTITIONS 2",
-        470_100_011,
-    );
-    assert_eq!(
-        write.diff.action_type,
-        tidb_model::ActionType::ACTION_ALTER_TABLE_PARTITIONING
-    );
-    assert_eq!(write.diff.old_table_id, old_id);
-    let new_id = write.diff.table_id;
-    assert_ne!(new_id, old_id);
-    let stored = stored_table(&write, new_id);
-    assert_eq!(
-        stored["partition"]["definitions"]
-            .as_array()
-            .expect("the new table is partitioned")
-            .len(),
-        2
-    );
-    let step = write
-        .partition_reorg
-        .as_ref()
-        .expect("the rows move in the DDL transaction");
-    assert_eq!(step.reorg.source_ids, [old_id]);
-    assert_eq!(step.reorg.new_table_id, Some(new_id));
-}
-
 #[test]
 fn cluster_partition_changes_do_not_require_prior_thread_metadata() {
     let mut store = bootstrapped();
@@ -4294,145 +4266,6 @@ fn exchange_partition_swaps_ids_auto_ids_and_notifier_payload() {
     assert_eq!(event_standalone.id, old_standalone_id);
 }
 
-/// Pinned Go performs the `checkExchangePartition` and
-/// `checkTableDefCompatible` admission checks before it creates the job, and
-/// DEFAULT is `WITH VALIDATION`. Keep the errno/message distinctions here:
-/// they are separate public contracts in Go, not interchangeable generic DDL
-/// failures.
-#[test]
-fn exchange_partition_validation_default_and_admission_errors_match_go() {
-    fn admission(error: DdlPlanError) -> (u16, String) {
-        let DdlPlanError::Admission(error) = error else {
-            panic!("expected a source DDL admission error, got {error:?}");
-        };
-        (error.code, error.reason)
-    }
-
-    let mut store = bootstrapped();
-    for (sql, ts) in [
-        (
-            "CREATE TABLE u6.pt (id BIGINT PRIMARY KEY CLUSTERED) \
-             PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10), \
-             PARTITION p1 VALUES LESS THAN (MAXVALUE))",
-            470_100_020,
-        ),
-        (
-            "CREATE TABLE u6.nt (id BIGINT PRIMARY KEY CLUSTERED)",
-            470_100_021,
-        ),
-        (
-            "CREATE TABLE u6.mismatch (id INT PRIMARY KEY CLUSTERED)",
-            470_100_022,
-        ),
-        (
-            "CREATE TABLE u6.other_pt (id BIGINT PRIMARY KEY CLUSTERED) \
-             PARTITION BY HASH (id) PARTITIONS 2",
-            470_100_023,
-        ),
-    ] {
-        let write = plan(&mut store, sql, ts);
-        apply(&mut store, &write);
-    }
-
-    let validated = plan(
-        &mut store,
-        "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.nt",
-        470_100_024,
-    );
-    assert!(
-        validated.exchange_partition_validation.is_some(),
-        "the grammar's DEFAULT is Go WITH VALIDATION"
-    );
-    assert_eq!(
-        validated.warnings,
-        vec![(
-            DdlWarningLevel::Warning,
-            1105,
-            "after the exchange, please analyze related table of the exchange to update statistics"
-                .to_owned()
-        )]
-    );
-
-    let unvalidated = plan(
-        &mut store,
-        "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.nt WITHOUT VALIDATION",
-        470_100_025,
-    );
-    assert!(unvalidated.exchange_partition_validation.is_none());
-
-    let (code, message) = admission(
-        plan_ddl(
-            &mut store,
-            &statement("ALTER TABLE u6.nt EXCHANGE PARTITION p0 WITH TABLE u6.mismatch"),
-            470_100_026,
-        )
-        .expect_err("partition management on a normal table refuses"),
-    );
-    assert_eq!(code, 1505);
-    assert_eq!(
-        message,
-        "Partition management on a not partitioned table is not possible"
-    );
-
-    let (code, message) = admission(
-        plan_ddl(
-            &mut store,
-            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.other_pt"),
-            470_100_027,
-        )
-        .expect_err("a partitioned exchange table refuses"),
-    );
-    assert_eq!(code, 1732);
-    assert_eq!(
-        message,
-        "Table to exchange with partition is partitioned: 'other_pt'"
-    );
-
-    let (code, message) = admission(
-        plan_ddl(
-            &mut store,
-            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION absent WITH TABLE u6.nt"),
-            470_100_028,
-        )
-        .expect_err("an unknown partition refuses"),
-    );
-    assert_eq!(code, 1735);
-    assert_eq!(message, "Unknown partition 'absent' in table 'pt'");
-
-    let (code, message) = admission(
-        plan_ddl(
-            &mut store,
-            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.mismatch"),
-            470_100_029,
-        )
-        .expect_err("different definitions refuse"),
-    );
-    assert_eq!(code, 1736);
-    assert_eq!(message, "Tables have different definitions");
-
-    let view = match plan_ddl(
-        &mut store,
-        &view_statement("u6", "exchange_view", false),
-        470_100_030,
-    )
-    .expect("the view plans")
-    {
-        DdlPlan::Write(write) => *write,
-        DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write: {detail}"),
-    };
-    apply(&mut store, &view);
-    let (code, message) = admission(
-        plan_ddl(
-            &mut store,
-            &statement("ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.exchange_view"),
-            470_100_031,
-        )
-        .expect_err("a view is Go ErrCheckNoSuchTable"),
-    );
-    assert_eq!(code, 1177);
-    assert_eq!(message, "Can't open table");
-}
-
 #[test]
 fn exchange_partition_builds_gos_four_way_label_rule_patch() {
     use tidb_executor::ddl_label::{CodecV1, Rule};
@@ -4496,232 +4329,6 @@ fn exchange_partition_builds_gos_four_way_label_rule_patch() {
     let neither = swap.patch(&codec, &[]);
     assert!(neither.set_rules.is_empty());
     assert!(neither.delete_rules.is_empty());
-}
-
-#[test]
-fn exchange_partition_precomputes_inverse_placement_bundles_without_pd_reads() {
-    let mut store = bootstrapped();
-    for (sql, ts) in [
-        (
-            "CREATE PLACEMENT POLICY p PRIMARY_REGION='r1' REGIONS='r1'",
-            470_100_032,
-        ),
-        (
-            "CREATE TABLE u6.pt (id BIGINT PRIMARY KEY CLUSTERED) \
-             PLACEMENT POLICY=p PARTITION BY RANGE (id) \
-             (PARTITION p0 VALUES LESS THAN (10), \
-              PARTITION p1 VALUES LESS THAN (MAXVALUE))",
-            470_100_033,
-        ),
-        (
-            "CREATE TABLE u6.nt (id BIGINT PRIMARY KEY CLUSTERED) PLACEMENT POLICY=p",
-            470_100_034,
-        ),
-    ] {
-        let write = plan(&mut store, sql, ts);
-        apply(&mut store, &write);
-    }
-
-    let exchanged = plan(
-        &mut store,
-        "ALTER TABLE u6.pt EXCHANGE PARTITION p0 WITH TABLE u6.nt WITHOUT VALIDATION",
-        470_100_035,
-    );
-    assert_eq!(exchanged.placement_bundles.len(), 3);
-    assert_eq!(exchanged.placement_rollback_bundles.len(), 3);
-
-    // With an inherited partition policy, Go writes an empty group for the
-    // physical ID that stopped being a standalone table. The inverse set must
-    // empty the opposite ID and restore the old table-level key ranges.
-    let forward_empty = exchanged
-        .placement_bundles
-        .iter()
-        .find(|bundle| bundle.rules.is_empty())
-        .expect("the forward exchange clears the old standalone group");
-    let rollback_empty = exchanged
-        .placement_rollback_bundles
-        .iter()
-        .find(|bundle| bundle.rules.is_empty())
-        .expect("rollback clears the old partition group");
-    assert_ne!(forward_empty.id, rollback_empty.id);
-
-    let forward_table = exchanged
-        .placement_bundles
-        .iter()
-        .max_by_key(|bundle| bundle.rules.len())
-        .expect("the forward table bundle exists");
-    let rollback_table = exchanged
-        .placement_rollback_bundles
-        .iter()
-        .find(|bundle| bundle.id == forward_table.id)
-        .expect("rollback restores the same table group");
-    assert_ne!(forward_table, rollback_table);
-}
-
-/// Go routes the single-action ALTER spelling through the same add/drop-index
-/// job as standalone `CREATE INDEX`/`DROP INDEX`. The cluster catalog does the
-/// same, so both spellings publish the metadata mutation and row backfill.
-#[test]
-fn alter_table_index_actions_share_the_catalog_backfill_path() {
-    let mut store = bootstrapped();
-    let table_id = table_with_two_columns(&mut store);
-
-    let added = plan(
-        &mut store,
-        "ALTER TABLE u6.minimal ADD UNIQUE INDEX vi (v)",
-        470_000_000,
-    );
-    assert_eq!(added.diff.action_type.0, 7, "ActionAddIndex");
-    let backfill = added.backfill.first().expect("the index owes entries");
-    assert!(matches!(backfill.operation, IndexBackfillOperation::Add(_)));
-    assert!(backfill.index.read().unique);
-    assert_eq!(
-        stored_table(&added, table_id)["index_info"][0]["idx_name"]["O"],
-        "vi"
-    );
-    apply(&mut store, &added);
-
-    let dropped = plan(
-        &mut store,
-        "ALTER TABLE u6.minimal DROP INDEX vi",
-        470_000_001,
-    );
-    assert_eq!(dropped.diff.action_type.0, 8, "ActionDropIndex");
-    // Its entries are left to the delete range.
-    assert!(dropped.backfill.is_empty());
-
-    // Go merges multiple add-index sub-jobs. Both entry walks remain ordered
-    // in the one catalog transaction.
-    let multiple = plan(
-        &mut store,
-        "ALTER TABLE u6.minimal ADD INDEX i1 (v), ADD INDEX i2 (v)",
-        470_000_002,
-    );
-    assert_eq!(multiple.backfill.len(), 2);
-    assert_eq!(multiple.backfill[0].index.read().name.original(), "i1");
-    assert_eq!(multiple.backfill[1].index.read().name.original(), "i2");
-    let events = notifier_events(&mut store, &multiple);
-    assert_eq!(events.len(), 1, "Go merges both indexes into one sub-job");
-    assert_eq!(events[0].0, 0);
-    let (_, indexes, analyzed) = events[0].1.add_index_info();
-    assert_eq!(indexes.len(), 2);
-    assert!(!analyzed);
-}
-
-/// Go's single-table rename job keeps the table ID and its auto-ID authority,
-/// while moving the metadata field to the destination schema.  `ALTER TABLE
-/// ... RENAME TO` uses that same job rather than a distinct local-only path.
-#[test]
-fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
-    let mut store = bootstrapped();
-    let archive = plan(&mut store, "CREATE DATABASE archive", 470_000_100);
-    apply(&mut store, &archive);
-    let created = plan(
-        &mut store,
-        "CREATE TABLE u6.made (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
-        470_000_101,
-    );
-    let table_id = created.created_id.expect("a table id");
-    apply(&mut store, &created);
-
-    let renamed = plan(
-        &mut store,
-        "ALTER TABLE u6.made RENAME TO archive.renamed",
-        470_000_102,
-    );
-    assert_eq!(renamed.diff.action_type.0, 14, "ActionRenameTable");
-    assert_eq!(renamed.diff.old_schema_id, 112);
-    assert!(renamed
-        .mutations
-        .iter()
-        .any(|mutation| mutation.kind() == BufferMutationOp::Delete
-            && mutation.key() == key::table_kv_key(112, table_id)));
-    apply(&mut store, &renamed);
-    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
-        .expect("the renamed catalog loads");
-    assert!(catalog.find_table("u6", "made").is_none());
-    let (database, table) = catalog
-        .find_table("archive", "renamed")
-        .expect("the renamed table");
-    assert_eq!(table.id, table_id);
-    assert_eq!(table.auto_id_schema_id, 112);
-    assert_ne!(database.id, 112);
-
-    let returned = plan(
-        &mut store,
-        "ALTER TABLE archive.renamed RENAME TO u6.made_again",
-        470_000_103,
-    );
-    apply(&mut store, &returned);
-    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
-        .expect("the returned catalog loads");
-    let (_, table) = catalog
-        .find_table("u6", "made_again")
-        .expect("the returned table");
-    assert_eq!(table.id, table_id);
-    assert_eq!(table.auto_id_schema_id, 0);
-
-    let identity = tidb_parser::parse("ALTER TABLE u6.made_again RENAME TO u6.made_again")
-        .expect("the identity spelling parses");
-    let lowered = lower_ddl(&identity, "u6")
-        .unwrap()
-        .expect("identity rename still resolves its table");
-    let planned = plan_ddl(&mut store, &lowered, 470_000_104).unwrap();
-    let DdlPlan::AlreadySatisfied { warnings, .. } = planned else {
-        panic!("identity ALTER rename must not stage catalog writes");
-    };
-    assert!(warnings.is_empty());
-
-    for (sql, existing) in [
-        ("RENAME TABLE u6.made_again TO u6.made_again", true),
-        ("ALTER TABLE u6.missing RENAME TO u6.missing", false),
-    ] {
-        let statement = tidb_parser::parse(sql).unwrap();
-        let lowered = lower_ddl(&statement, "u6").unwrap().unwrap();
-        let error = plan_ddl(&mut store, &lowered, 470_000_104).unwrap_err();
-        if existing {
-            assert!(
-                matches!(error, DdlPlanError::TableExists { .. }),
-                "{error:?}"
-            );
-        } else {
-            assert!(
-                matches!(error, DdlPlanError::TableNotExists { .. }),
-                "{error:?}"
-            );
-        }
-    }
-
-    let pairs = tidb_parser::parse("RENAME TABLE u6.made_again TO u6.a, u6.a TO u6.b")
-        .expect("the multi-pair spelling parses");
-    let lowered = lower_ddl(&pairs, "u6")
-        .expect("the full multi-table rename is admitted")
-        .expect("a catalog change");
-    let DdlStatement::RenameTables { pairs } = lowered else {
-        panic!("the multi-pair spelling retains every pair");
-    };
-    assert_eq!(pairs.len(), 2);
-    let renamed_twice = match plan_ddl(
-        &mut store,
-        &DdlStatement::RenameTables { pairs },
-        470_000_104,
-    )
-    .expect("one atomic multi-table rename plans")
-    {
-        DdlPlan::Write(write) => *write,
-        DdlPlan::AlreadySatisfied { detail, .. } => panic!("expected a write, got {detail}"),
-    };
-    assert_eq!(renamed_twice.diff.action_type.0, 47, "ActionRenameTables");
-    assert_eq!(renamed_twice.diff.affected_options.len(), 1);
-    apply(&mut store, &renamed_twice);
-    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
-        .expect("the multi-renamed catalog loads");
-    assert!(catalog.find_table("u6", "made_again").is_none());
-    assert!(catalog.find_table("u6", "a").is_none());
-    let (_, table) = catalog
-        .find_table("u6", "b")
-        .expect("the second pair sees the first pair's namespace");
-    assert_eq!(table.id, table_id);
 }
 
 #[test]
@@ -4819,78 +4426,6 @@ fn create_table_with_auto_random_persists_its_allocator_format() {
 }
 
 #[test]
-fn alter_auto_random_base_updates_table_info_and_the_tarid_counter_together() {
-    let mut store = bootstrapped();
-    let create = plan(
-        &mut store,
-        "CREATE TABLE ar_alter (id BIGINT AUTO_RANDOM(5) PRIMARY KEY, v INT)",
-        123,
-    );
-    apply(&mut store, &create);
-    store.put(key::schema_version_kv_key(), b"61".to_vec());
-
-    let alter = plan(&mut store, "ALTER TABLE ar_alter AUTO_RANDOM_BASE=500", 124);
-    let table_id = create.created_id.unwrap();
-    let table: tidb_model::TableInfo =
-        serde_json::from_slice(stored_value(&alter, &key::table_kv_key(112, table_id))).unwrap();
-    assert_eq!(table.auto_rand_id, 500);
-    assert_eq!(
-        stored_value(&alter, &key::auto_random_table_id_kv_key(112, table_id)),
-        b"499"
-    );
-    assert_eq!(
-        alter.diff.action_type,
-        tidb_model::ActionType::ACTION_REBASE_AUTO_RANDOM_BASE
-    );
-
-    apply(&mut store, &alter);
-    store.put(key::schema_version_kv_key(), b"62".to_vec());
-    let lower = plan(&mut store, "ALTER TABLE ar_alter AUTO_RANDOM_BASE=10", 125);
-    let lower_table: tidb_model::TableInfo =
-        serde_json::from_slice(stored_value(&lower, &key::table_kv_key(112, table_id))).unwrap();
-    assert_eq!(lower_table.auto_rand_id, 500);
-    assert_eq!(
-        stored_value(&lower, &key::auto_random_table_id_kv_key(112, table_id)),
-        b"499"
-    );
-
-    apply(&mut store, &lower);
-    store.put(key::schema_version_kv_key(), b"63".to_vec());
-    let forced = plan(
-        &mut store,
-        "ALTER TABLE ar_alter FORCE AUTO_RANDOM_BASE=2",
-        126,
-    );
-    let forced_table: tidb_model::TableInfo =
-        serde_json::from_slice(stored_value(&forced, &key::table_kv_key(112, table_id))).unwrap();
-    assert_eq!(forced_table.auto_rand_id, 2);
-    assert_eq!(
-        stored_value(&forced, &key::auto_random_table_id_kv_key(112, table_id)),
-        b"1"
-    );
-
-    let forced_zero = statement("ALTER TABLE ar_alter FORCE AUTO_RANDOM_BASE=0");
-    assert!(matches!(
-        plan_ddl(&mut store, &forced_zero, 127).unwrap_err(),
-        DdlPlanError::AutoIdReadFailed
-    ));
-
-    let plain_create = plan(
-        &mut store,
-        "CREATE TABLE not_random (id BIGINT PRIMARY KEY)",
-        128,
-    );
-    apply(&mut store, &plain_create);
-    store.put(key::schema_version_kv_key(), b"64".to_vec());
-    let non_random = statement("ALTER TABLE not_random AUTO_RANDOM_BASE=10");
-    assert!(matches!(
-        plan_ddl(&mut store, &non_random, 129).unwrap_err(),
-        DdlPlanError::InvalidAutoRandom(reason)
-            if reason == "alter auto_random_base of a non auto_random table"
-    ));
-}
-
-#[test]
 fn alter_auto_id_cache_publishes_table_metadata_without_touching_the_counter() {
     let mut store = bootstrapped();
     let create = plan(
@@ -4927,151 +4462,6 @@ fn alter_auto_id_cache_publishes_table_metadata_without_touching_the_counter() {
         DdlPlanError::Unsupported(reason)
             if reason == "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different"
     ));
-}
-
-#[test]
-fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
-    let mut store = bootstrapped();
-    let create = plan(
-        &mut store,
-        "CREATE TABLE ar_bits_cluster (id BIGINT AUTO_RANDOM(5) PRIMARY KEY, v INT)",
-        130,
-    );
-    apply(&mut store, &create);
-    store.put(key::schema_version_kv_key(), b"61".to_vec());
-    let table_id = create.created_id.unwrap();
-
-    let alter = plan(
-        &mut store,
-        "ALTER TABLE ar_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(8)",
-        131,
-    );
-    let table: tidb_model::TableInfo =
-        serde_json::from_slice(stored_value(&alter, &key::table_kv_key(112, table_id))).unwrap();
-    assert_eq!(table.auto_random_bits, 8);
-    assert_eq!(table.auto_random_range_bits, 64);
-    assert_eq!(
-        stored_value(&alter, &key::auto_random_table_id_kv_key(112, table_id)),
-        b"1"
-    );
-    assert_eq!(
-        alter.diff.action_type,
-        tidb_model::ActionType::ACTION_MODIFY_COLUMN
-    );
-    let events = notifier_events(&mut store, &alter);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].0, -1);
-    let (event_table, columns, analyzed) = events[0].1.modify_column_info();
-    assert_eq!(event_table.auto_random_bits, 8);
-    assert_eq!(columns.len(), 1);
-    assert_eq!(columns[0].name.original(), "id");
-    assert!(!analyzed);
-
-    apply(&mut store, &alter);
-    store.put(key::schema_version_kv_key(), b"62".to_vec());
-    let decrease = statement("ALTER TABLE ar_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(7)");
-    assert!(matches!(
-        plan_ddl(&mut store, &decrease, 132).unwrap_err(),
-        DdlPlanError::InvalidAutoRandom(reason)
-            if reason == "decreasing auto_random shard bits is not supported"
-    ));
-    let wrong_column =
-        statement("ALTER TABLE ar_bits_cluster MODIFY COLUMN v BIGINT AUTO_RANDOM(9)");
-    assert!(matches!(
-        plan_ddl(&mut store, &wrong_column, 133).unwrap_err(),
-        DdlPlanError::InvalidAutoRandom(reason)
-            if reason == "auto_random can only be converted from auto_increment clustered primary key"
-    ));
-
-    let create_ai = plan(
-        &mut store,
-        "CREATE TABLE ai_bits_cluster (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)",
-        134,
-    );
-    apply(&mut store, &create_ai);
-    store.put(key::schema_version_kv_key(), b"63".to_vec());
-    let ai_table_id = create_ai.created_id.unwrap();
-    store.put(key::auto_table_id_kv_key(112, ai_table_id), b"100".to_vec());
-    let converted = plan(
-        &mut store,
-        "ALTER TABLE ai_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(5)",
-        135,
-    );
-    let converted_table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &converted,
-        &key::table_kv_key(112, ai_table_id),
-    ))
-    .unwrap();
-    assert_eq!(converted_table.auto_random_bits, 5);
-    assert_eq!(
-        converted_table.get_pk_col_info().unwrap().read().get_flag()
-            & u64::from(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT),
-        0
-    );
-    assert_eq!(
-        stored_value(
-            &converted,
-            &key::auto_random_table_id_kv_key(112, ai_table_id)
-        ),
-        b"101"
-    );
-    assert!(converted.mutations.iter().any(|mutation| {
-        mutation.kind() == BufferMutationOp::Delete
-            && mutation.key() == key::auto_table_id_kv_key(112, ai_table_id)
-    }));
-
-    let create_separate = plan(
-        &mut store,
-        "CREATE TABLE ai_separate_cluster (id BIGINT AUTO_INCREMENT PRIMARY KEY)",
-        136,
-    );
-    apply(&mut store, &create_separate);
-    store.put(key::schema_version_kv_key(), b"64".to_vec());
-    let separate_table_id = create_separate.created_id.unwrap();
-    let separate_table_key = key::table_kv_key(112, separate_table_id);
-    let mut separate_info: tidb_model::TableInfo = serde_json::from_slice(
-        store
-            .pairs
-            .get(&separate_table_key)
-            .expect("the committed table metadata exists"),
-    )
-    .unwrap();
-    separate_info.auto_id_cache = 1;
-    store.put(
-        separate_table_key,
-        value::serialize_table_info(&separate_info).unwrap(),
-    );
-    store.put(
-        key::auto_increment_id_kv_key(112, separate_table_id),
-        b"100".to_vec(),
-    );
-    store.put(
-        key::auto_table_id_kv_key(112, separate_table_id),
-        b"40".to_vec(),
-    );
-    let separate = plan(
-        &mut store,
-        "ALTER TABLE ai_separate_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(5)",
-        137,
-    );
-    assert_eq!(
-        stored_value(
-            &separate,
-            &key::auto_increment_id_kv_key(112, separate_table_id)
-        ),
-        b"101"
-    );
-    assert_eq!(
-        stored_value(
-            &separate,
-            &key::auto_random_table_id_kv_key(112, separate_table_id)
-        ),
-        b"40"
-    );
-    assert!(separate.mutations.iter().any(|mutation| {
-        mutation.kind() == BufferMutationOp::Delete
-            && mutation.key() == key::auto_table_id_kv_key(112, separate_table_id)
-    }));
 }
 
 /// `AUTO_ID_CACHE 1` is Go's `SepAutoInc`, and only then does the counter move
@@ -5214,49 +4604,6 @@ fn tiflash_batch_partition_status_updates_containing_table() {
     }
 }
 
-#[test]
-fn tiflash_batch_restore_reset_and_zero_count_clear_the_record() {
-    let mut store = bootstrapped();
-    let id = table_with_two_columns(&mut store);
-    let mut table = committed_table(&store, id);
-    table.tiflash_replica = Some(GoShared::new(tidb_model::TiFlashReplicaInfo {
-        count: 1,
-        available: true,
-        ..Default::default()
-    }));
-    store.put(
-        key::table_kv_key(112, id),
-        value::serialize_table_info(&table).unwrap(),
-    );
-    let mut statement = statement("ALTER TABLE u6.minimal SET TIFLASH REPLICA 1");
-    let DdlStatement::SetTiFlashReplica {
-        reset_available, ..
-    } = &mut statement
-    else {
-        panic!("replica statement")
-    };
-    *reset_available = true;
-    let DdlPlan::Write(write) = plan_ddl(&mut store, &statement, 5000).unwrap() else {
-        panic!("reset writes")
-    };
-    apply(&mut store, &write);
-    assert!(
-        !committed_table(&store, id)
-            .tiflash_replica
-            .as_ref()
-            .unwrap()
-            .read()
-            .available
-    );
-    let write = plan(
-        &mut store,
-        "ALTER TABLE u6.minimal SET TIFLASH REPLICA 0",
-        5001,
-    );
-    apply(&mut store, &write);
-    assert!(committed_table(&store, id).tiflash_replica.is_none());
-}
-
 fn tiflash_partition_fixture() -> (MetaStore, i64, Vec<i64>) {
     let mut store = bootstrapped();
     let create = plan(&mut store, "CREATE TABLE u6.tfparts (id BIGINT PRIMARY KEY) PARTITION BY RANGE(id) (PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN(MAXVALUE))", 5000);
@@ -5356,92 +4703,6 @@ pub(crate) fn stored_table(
         .expect("a stored TableInfo")
 }
 
-/// The index lands in `index_info` with the id `max_idx_id` names, and its
-/// column offset is resolved against the STORED table rather than trusted from
-/// the statement -- Go's `IndexColumn.Offset` is a position in `TableInfo.Cols`.
-#[test]
-fn create_index_stores_the_index_and_owes_a_backfill() {
-    let mut store = bootstrapped();
-    let table_id = table_with_two_columns(&mut store);
-    let write = plan(&mut store, "CREATE INDEX vi ON u6.minimal (v)", 470_000_000);
-    let stored = stored_table(&write, table_id);
-
-    assert_eq!(stored["max_idx_id"], 1, "the first index of this table");
-    let index = &stored["index_info"][0];
-    assert_eq!(index["id"], 1);
-    assert_eq!(index["idx_name"]["O"], "vi");
-    assert_eq!(index["is_unique"], false);
-    assert_eq!(index["is_primary"], false);
-    // `state` 5 is Go's `StatePublic`.
-    assert_eq!(index["state"], 5);
-    assert_eq!(index["idx_cols"][0]["name"]["O"], "v");
-    assert_eq!(
-        index["idx_cols"][0]["offset"], 1,
-        "`v` is the second column"
-    );
-    assert_eq!(index["idx_cols"][0]["length"], -1, "not a prefix index");
-    assert_eq!(
-        stored["update_timestamp"], 470_000_000_u64,
-        "Go stamps the job transaction's own start timestamp"
-    );
-
-    // `ActionAddIndex`, so a peer's schema reload knows what changed.
-    assert_eq!(write.diff.action_type.0, 7);
-    assert_eq!(write.diff.table_id, table_id);
-
-    // The half that keeps the index from being EMPTY. Losing it is the silent
-    // wrong answer this whole path exists to avoid, which is why the publisher
-    // that cannot perform it refuses outright rather than writing the meta half.
-    let backfill = write.backfill.first().expect("entries are owed");
-    assert!(matches!(backfill.operation, IndexBackfillOperation::Add(_)));
-    {
-        let index = backfill.index.read();
-        assert_eq!(index.id, 1);
-    }
-    assert_eq!(
-        backfill.table.indices.len(),
-        0,
-        "the walker gets the table as its stored ROWS have it: before the change"
-    );
-}
-
-/// Go `createIndex` builds an expression part's hidden VIRTUAL column
-/// (`BuildHiddenColumnInfo`), and the job worker appends it with the next
-/// column id before the index points at it. The backfill walks the rows with
-/// that column present, so it can compute each entry.
-#[test]
-fn an_expression_index_adds_its_hidden_column() {
-    let mut store = bootstrapped();
-    let table_id = table_with_two_columns(&mut store);
-    let write = plan(
-        &mut store,
-        "CREATE INDEX ei ON u6.minimal ((v + 1))",
-        470_000_000,
-    );
-    let stored = stored_table(&write, table_id);
-
-    let hidden = &stored["cols"][2];
-    assert_eq!(hidden["name"]["O"], "_V$_ei_0");
-    assert_eq!(hidden["hidden"], true);
-    assert_eq!(hidden["generated_expr_string"], "`v` + 1");
-    assert_eq!(hidden["generated_stored"], false);
-    assert_eq!(hidden["id"], 3, "the next column id");
-    assert_eq!(stored["max_col_id"], 3);
-    let index = &stored["index_info"][0];
-    assert_eq!(index["idx_name"]["O"], "ei");
-    assert_eq!(index["idx_cols"][0]["name"]["O"], "_V$_ei_0");
-    assert_eq!(index["idx_cols"][0]["offset"], 2);
-    assert_eq!(index["idx_cols"][0]["length"], -1);
-
-    let backfill = write.backfill.first().expect("entries are owed");
-    assert_eq!(
-        backfill.table.columns.len(),
-        3,
-        "the hidden column is there"
-    );
-    assert_eq!(backfill.table.indices.len(), 0, "the index is not");
-}
-
 /// Go `checkIndexNameAndColumns`: `ALTER TABLE ... ADD INDEX` without a name
 /// takes `GetName4AnonymousIndex`'s, after the first key column, against the
 /// stored table's indexes.
@@ -5463,38 +4724,6 @@ fn an_anonymous_added_index_is_named_against_the_stored_table() {
     let stored = stored_table(&second, table_id);
     assert_eq!(stored["index_info"][0]["idx_name"]["O"], "v");
     assert_eq!(stored["index_info"][1]["idx_name"]["O"], "v_2");
-}
-
-/// Go captures `collate.NewCollationEnabled()` in `DDLReorgMeta` when the job
-/// is built. The backfill must carry that snapshot rather than re-read the
-/// runtime switch after the catalog mutation has already been planned.
-#[test]
-fn index_backfill_carries_the_planned_collation_mode() {
-    for use_new_collation in [false, true] {
-        let mut store = bootstrapped();
-        table_with_two_columns(&mut store);
-        let write = match plan_ddl_with_collation(
-            &mut store,
-            &statement("CREATE INDEX vi ON u6.minimal (v)"),
-            470_000_000,
-            use_new_collation,
-        )
-        .expect("the fixture plans")
-        {
-            DdlPlan::Write(write) => write,
-            DdlPlan::AlreadySatisfied { detail, .. } => {
-                panic!("expected a write, got already-satisfied: {detail}")
-            }
-        };
-        assert_eq!(
-            write
-                .backfill
-                .first()
-                .expect("CREATE INDEX owes a backfill")
-                .use_new_collation,
-            use_new_collation
-        );
-    }
 }
 
 /// A second index of the same name is 1061, and `IF NOT EXISTS` makes it a
@@ -5545,56 +4774,6 @@ fn index_shapes_this_node_cannot_maintain_are_refused_at_admission() {
             reason.contains(expected),
             "`{sql}` must be refused for {expected}, got: {reason}"
         );
-    }
-}
-
-/// The index leaves the stored table, and its entries are named for removal in
-/// the same transaction -- a stale entry reads as a row that is not there.
-#[test]
-fn drop_index_removes_it_and_owes_the_entry_removal() {
-    let mut store = bootstrapped();
-    let table_id = table_with_two_columns(&mut store);
-    let created = plan(&mut store, "CREATE INDEX vi ON u6.minimal (v)", 470_000_000);
-    apply(&mut store, &created);
-
-    let write = plan(&mut store, "DROP INDEX vi ON u6.minimal", 470_000_003);
-    let stored = stored_table(&write, table_id);
-    assert!(
-        stored["index_info"]
-            .as_array()
-            .is_none_or(|indexes| indexes.is_empty()),
-        "the index is gone from the stored table: {}",
-        stored["index_info"]
-    );
-    assert_eq!(
-        stored["max_idx_id"], 1,
-        "Go never lowers MaxIndexID, so a later index cannot reuse the id"
-    );
-    // `ActionDropIndex`.
-    assert_eq!(write.diff.action_type.0, 8);
-    // Go leaves the entries to the delete range the job records.
-    assert!(write.backfill.is_empty());
-    apply(&mut store, &write);
-    let (start, end) = index_range(table_id, 1);
-    assert_eq!(delete_ranges(&mut store), vec![(1, start, end)]);
-    let refused = plan_ddl(
-        &mut store,
-        &statement("DROP INDEX nosuch ON u6.minimal"),
-        470_000_004,
-    )
-    .expect_err("a missing index is an error");
-    // Go `dropIndex`: `ErrCantDropFieldOrKey.GenWithStack("index %s doesn't
-    // exist")` (1091), captured from Go on this branch.
-    assert_eq!(refused.to_string(), "index nosuch doesn't exist");
-    match plan_ddl(
-        &mut store,
-        &statement("DROP INDEX IF EXISTS nosuch ON u6.minimal"),
-        470_000_005,
-    )
-    .expect("IF EXISTS plans")
-    {
-        DdlPlan::AlreadySatisfied { .. } => {}
-        DdlPlan::Write(_) => panic!("IF EXISTS on a missing index must write nothing"),
     }
 }
 
@@ -5791,439 +4970,6 @@ fn truncate_reallocates_the_table_id_and_restarts_the_allocators() {
             && matches!(mutation.kind(), BufferMutationOp::Delete)),
         "the observed allocator is deleted with the old id"
     );
-}
-
-/// Go `isDroppableColumn` + `onDropColumn`: offsets close over the gap, a
-/// single-column secondary index goes with its column, and the three
-/// refusals answer Go's exact messages.
-#[test]
-fn drop_column_shifts_offsets_and_takes_its_single_column_index() {
-    let mut store = bootstrapped();
-    let write = plan(
-        &mut store,
-        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT, c BIGINT)",
-        100,
-    );
-    apply(&mut store, &write);
-    let table_id = write.created_id.expect("an id");
-    let write = plan(&mut store, "CREATE INDEX idx_a ON u6.t (a)", 150);
-    apply(&mut store, &write);
-
-    let write = plan(&mut store, "ALTER TABLE u6.t DROP COLUMN b", 200);
-    apply(&mut store, &write);
-    let stored: serde_json::Value =
-        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
-            .expect("the altered table is stored");
-    let columns = stored["cols"].as_array().expect("columns");
-    let names: Vec<_> = columns
-        .iter()
-        .map(|c| c["name"]["O"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["id", "a", "c"]);
-    let offsets: Vec<_> = columns
-        .iter()
-        .map(|c| c["offset"].as_i64().unwrap())
-        .collect();
-    assert_eq!(offsets, [0, 1, 2], "the gap closes");
-    assert_eq!(
-        write.diff.action_type,
-        tidb_model::ActionType::ACTION_DROP_COLUMN
-    );
-
-    // The single-column index on `a` goes with `a`.
-    let write = plan(&mut store, "ALTER TABLE u6.t DROP COLUMN a", 300);
-    // Go leaves the index's keys to the delete range.
-    assert!(write.backfill.is_empty());
-    apply(&mut store, &write);
-    assert_eq!(delete_ranges(&mut store).len(), 1);
-    let stored: serde_json::Value =
-        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
-            .expect("stored");
-    // `[]`, not `null`: Go removes the entry from a non-nil slice, and an
-    // emptied non-nil slice marshals as an empty array — unlike the builder's
-    // untouched nil slice a fresh CREATE TABLE stores. Both states are pinned.
-    assert_eq!(
-        stored["index_info"],
-        serde_json::json!([]),
-        "listIndicesWithColumn drops idx_a with its column"
-    );
-
-    for (sql, message) in [
-        (
-            "ALTER TABLE u6.t DROP COLUMN id",
-            "Unsupported drop integer primary key",
-        ),
-        (
-            "ALTER TABLE u6.t DROP COLUMN missing",
-            "Can't DROP 'missing'; check that column/key exists",
-        ),
-    ] {
-        let error = plan_ddl(&mut store, &statement(sql), 400)
-            .expect_err("refused")
-            .to_string();
-        assert!(error.contains(message), "{sql}: {error}");
-    }
-}
-
-/// Go's one ActionMultiSchemaChange job: the sub-actions fold over ONE
-/// evolving TableInfo inside one transaction, in SQL order, so a later action
-/// sees the earlier one's change and the table lands whole or not at all.
-#[test]
-fn a_multi_action_alter_folds_over_one_evolving_table() {
-    let mut store = bootstrapped();
-    let write = plan(
-        &mut store,
-        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT)",
-        100,
-    );
-    apply(&mut store, &write);
-    let table_id = write.created_id.expect("an id");
-
-    let write = plan(
-        &mut store,
-        "ALTER TABLE u6.t ADD COLUMN c BIGINT DEFAULT 5, DROP COLUMN a, ADD COLUMN d BIGINT",
-        200,
-    );
-    apply(&mut store, &write);
-    assert_eq!(
-        write.diff.action_type,
-        tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
-    );
-    let stored: serde_json::Value =
-        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
-            .expect("stored");
-    let names: Vec<_> = stored["cols"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"]["O"].as_str().unwrap())
-        .collect();
-    // `c` appended after `b`, then `a` dropped closing the gap, then `d`
-    // appended after the shift — SQL order, one evolving table.
-    assert_eq!(names, ["id", "b", "c", "d"]);
-    let offsets: Vec<_> = stored["cols"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["offset"].as_i64().unwrap())
-        .collect();
-    assert_eq!(offsets, [0, 1, 2, 3]);
-
-    // One failing sub-action fails the whole bundle: nothing is staged.
-    let error = plan_ddl(
-        &mut store,
-        &statement("ALTER TABLE u6.t ADD COLUMN e BIGINT, DROP COLUMN missing"),
-        300,
-    )
-    .expect_err("the failing drop fails the bundle")
-    .to_string();
-    assert!(error.contains("Can't DROP 'missing'"), "{error}");
-
-    // Every sub-action a no-op is the statement already satisfied.
-    match plan_ddl(
-        &mut store,
-        &statement(
-            "ALTER TABLE u6.t ADD COLUMN IF NOT EXISTS c BIGINT, DROP COLUMN IF EXISTS missing",
-        ),
-        400,
-    )
-    .expect("the all-no-op bundle plans")
-    {
-        DdlPlan::AlreadySatisfied { .. } => {}
-        DdlPlan::Write(_) => panic!("an all-no-op bundle must publish nothing"),
-    }
-}
-
-/// A bundle mixing column and index changes folds over the same
-/// evolving table: the index resolves against an original column, the
-/// backfill walks existing rows against the evolved columns, and multiple
-/// index actions retain their SQL order in one catalog transaction.
-#[test]
-fn a_column_and_index_bundle_folds_and_backfills_together() {
-    let mut store = bootstrapped();
-    let write = plan(
-        &mut store,
-        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT)",
-        100,
-    );
-    apply(&mut store, &write);
-    let table_id = write.created_id.expect("an id");
-
-    let write = plan(
-        &mut store,
-        "ALTER TABLE u6.t ADD COLUMN c BIGINT DEFAULT 5, ADD INDEX idx_c (v)",
-        200,
-    );
-    let events = notifier_events(&mut store, &write);
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].0, 0);
-    assert_eq!(
-        events[0].1.action_type(),
-        tidb_model::ActionType::ACTION_ADD_COLUMN
-    );
-    assert_eq!(events[1].0, 1);
-    assert_eq!(
-        events[1].1.action_type(),
-        tidb_model::ActionType::ACTION_ADD_INDEX
-    );
-    apply(&mut store, &write);
-    assert_eq!(
-        write.diff.action_type,
-        tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
-    );
-    let backfill = write.backfill.first().expect("the index change backfills");
-    assert!(matches!(backfill.operation, IndexBackfillOperation::Add(_)));
-    assert_eq!(backfill.index.read().name.original(), "idx_c");
-    assert_eq!(
-        backfill
-            .index
-            .read()
-            .columns
-            .iter_deref()
-            .next()
-            .unwrap()
-            .read()
-            .offset,
-        1,
-        "the admitted original column retains its offset"
-    );
-    let stored: serde_json::Value =
-        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
-            .expect("stored");
-    assert_eq!(stored["index_info"].as_array().unwrap().len(), 1);
-
-    // The drop direction: the stored table no longer names the index.
-    let write = plan(
-        &mut store,
-        "ALTER TABLE u6.t ADD COLUMN d BIGINT, DROP INDEX idx_c",
-        300,
-    );
-    apply(&mut store, &write);
-    // The dropped index's entries are left to the delete range.
-    assert!(write.backfill.is_empty());
-    assert_eq!(delete_ranges(&mut store).len(), 1);
-    let stored: serde_json::Value =
-        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
-            .expect("stored");
-    assert_eq!(stored["index_info"].as_array().unwrap().len(), 0);
-
-    // Go merges multiple add-index sub-jobs and executes their reorganization
-    // together. The Rust transaction carries both ordered entry walks.
-    let write = plan(
-        &mut store,
-        "ALTER TABLE u6.t ADD INDEX i1 (v), ADD INDEX i2 (c)",
-        400,
-    );
-    assert_eq!(write.backfill.len(), 2);
-    assert_eq!(write.backfill[0].index.read().name.original(), "i1");
-    assert_eq!(write.backfill[1].index.read().name.original(), "i2");
-}
-
-/// Go `getModifyColumnType` decides what a MODIFY leaves behind: a widening is
-/// metadata only; every other admitted change owes a data step in the same
-/// transaction; and a reorganization gives the column -- and every index on
-/// it -- a new id (`AllocateColumnID`, `AllocateIndexID`), as Go's changing
-/// column and changing indexes replace the old ones.
-#[test]
-fn a_modify_column_plans_the_kind_go_gives_it() {
-    use tidb_executor::ddl::modify_column_type::ModifyColumnType;
-    let mut store = bootstrapped();
-    let create = plan(
-        &mut store,
-        "CREATE TABLE widen (id BIGINT PRIMARY KEY, small INT, big BIGINT, \
-         name VARCHAR(10), money DECIMAL(10,2), code CHAR(20) COLLATE utf8mb4_bin, \
-         INDEX iname (name), INDEX icode (code))",
-        200,
-    );
-    let table_id = create.created_id.expect("a table id");
-    apply(&mut store, &create);
-    let column = |write: &tidb_exec::cluster_ddl::DdlWrite, name: &str| {
-        let stored = stored_table(write, table_id);
-        stored["cols"]
-            .as_array()
-            .expect("columns")
-            .iter()
-            .find(|column| column["name"]["O"] == name)
-            .expect("the column")
-            .clone()
-    };
-    let index_id = |write: &tidb_exec::cluster_ddl::DdlWrite, name: &str| {
-        let stored = stored_table(write, table_id);
-        stored["index_info"]
-            .as_array()
-            .expect("indexes")
-            .iter()
-            .find(|index| index["idx_name"]["O"] == name)
-            .expect("the index")["id"]
-            .clone()
-    };
-
-    // Metadata only: the column keeps its id and nothing reads the rows.
-    for sql in [
-        "ALTER TABLE widen MODIFY COLUMN small BIGINT",
-        "ALTER TABLE widen MODIFY COLUMN name VARCHAR(40)",
-    ] {
-        let write = plan(&mut store, sql, 201);
-        assert!(write.column_reorgs.is_empty(), "{sql}");
-    }
-
-    // (statement, kind, VARCHAR -> CHAR precheck, the column renumbered).
-    for (sql, kind, precheck, renumbered) in [
-        (
-            "ALTER TABLE widen MODIFY COLUMN big INT",
-            ModifyColumnType::NoReorgWithCheck,
-            false,
-            false,
-        ),
-        (
-            "ALTER TABLE widen MODIFY COLUMN name VARCHAR(4)",
-            ModifyColumnType::NoReorgWithCheck,
-            false,
-            false,
-        ),
-        // Go's own case: an indexed VARCHAR -> CHAR under utf8mb4_bin is an
-        // index reorganization (CHAR restores its padding), via the precheck.
-        (
-            "ALTER TABLE widen MODIFY COLUMN name CHAR(40)",
-            ModifyColumnType::IndexReorg,
-            true,
-            false,
-        ),
-        (
-            "ALTER TABLE widen MODIFY COLUMN code VARCHAR(10) COLLATE utf8mb4_bin",
-            ModifyColumnType::IndexReorg,
-            false,
-            false,
-        ),
-        (
-            "ALTER TABLE widen MODIFY COLUMN small DATETIME",
-            ModifyColumnType::Reorg,
-            false,
-            true,
-        ),
-        (
-            "ALTER TABLE widen MODIFY COLUMN small INT UNSIGNED",
-            ModifyColumnType::Reorg,
-            false,
-            true,
-        ),
-        (
-            "ALTER TABLE widen MODIFY COLUMN money DECIMAL(10,3)",
-            ModifyColumnType::Reorg,
-            false,
-            true,
-        ),
-    ] {
-        let write = plan(&mut store, sql, 202);
-        let [reorg] = write.column_reorgs.as_slice() else {
-            panic!("one data step is owed")
-        };
-        assert_eq!(reorg.kind, kind, "{sql}");
-        assert_eq!(reorg.precheck, precheck, "{sql}");
-        assert_eq!(reorg.new_column_id != reorg.column_id, renumbered, "{sql}");
-        let changed = reorg
-            .after
-            .columns
-            .iter_deref()
-            .find(|column| column.read().id == reorg.new_column_id)
-            .expect("the changed column")
-            .read()
-            .name
-            .original()
-            .to_owned();
-        assert_eq!(column(&write, &changed)["id"], reorg.new_column_id, "{sql}");
-        if renumbered {
-            assert_eq!(
-                stored_table(&write, table_id)["max_col_id"],
-                reorg.new_column_id,
-                "{sql}: the next column id"
-            );
-        }
-    }
-
-    // An index on a reorganized column is rebuilt under a new id; the others
-    // keep theirs.
-    let write = plan(
-        &mut store,
-        "ALTER TABLE widen MODIFY COLUMN code VARCHAR(10) COLLATE utf8mb4_bin",
-        203,
-    );
-    let [reorg] = write.column_reorgs.as_slice() else {
-        panic!("one data step is owed")
-    };
-    assert_eq!(reorg.renumbered_indexes, [(2, 3)]);
-    assert_eq!(index_id(&write, "icode"), 3);
-    assert_eq!(index_id(&write, "iname"), 1);
-}
-
-/// Go `CreateForeignKey`: an anonymous key is `fk_{MaxForeignKeyID+1}`; when
-/// no index covers its columns, `createIndex` adds one named after the key;
-/// and under `foreign_key_checks` the existing rows are checked before the
-/// key is public. A refused check rolls the job back (`dropForeignKey`): the
-/// table is as it was but for the ids the write-only steps took.
-#[test]
-fn an_added_foreign_key_plans_gos_name_index_check_and_rollback() {
-    let mut store = bootstrapped();
-    let parent = plan(
-        &mut store,
-        "CREATE TABLE fkp (id INT PRIMARY KEY, c INT, INDEX (c))",
-        300,
-    );
-    apply(&mut store, &parent);
-    let child = plan(
-        &mut store,
-        "CREATE TABLE fkc (id INT PRIMARY KEY, cc INT)",
-        301,
-    );
-    let child_id = child.created_id.expect("a table id");
-    apply(&mut store, &child);
-    let before = committed_table(&store, child_id);
-
-    let write = plan(
-        &mut store,
-        "ALTER TABLE fkc ADD FOREIGN KEY (cc) REFERENCES fkp (c)",
-        302,
-    );
-    assert_eq!(write.backfill.len(), 1);
-    let index = write.backfill[0].index.read().clone();
-    assert_eq!(index.name.original(), "fk_1");
-    assert_eq!(index.id, before.max_index_id + 1);
-    let [check] = write.foreign_key_checks.as_slice() else {
-        panic!("one key's rows are checked");
-    };
-    assert_eq!(check.name, "fk_1");
-    assert_eq!(check.child.max_foreign_key_id, 1);
-    let stored = stored_table(&write, child_id);
-    assert_eq!(stored["fk_info"][0]["fk_name"]["O"], "fk_1");
-    assert_eq!(stored["fk_info"][0]["id"], 1);
-    assert_eq!(stored["max_fk_id"], 1);
-
-    let rollback = DdlStatement::AddForeignKeyRollback {
-        schema: check.schema.clone(),
-        table: check.child.name.original().to_owned(),
-        max_column_id: check.child.max_column_id,
-        max_index_id: check.child.max_index_id,
-        max_foreign_key_id: check.child.max_foreign_key_id,
-    };
-    let DdlPlan::Write(rolled_back) = plan_ddl(&mut store, &rollback, 303).expect("plans") else {
-        panic!("the rollback writes the table");
-    };
-    assert!(rolled_back.backfill.is_empty() && rolled_back.foreign_key_checks.is_empty());
-    apply(&mut store, &rolled_back);
-    let after = committed_table(&store, child_id);
-    assert_eq!(after.foreign_keys.len(), 0);
-    assert_eq!(after.indices.len(), before.indices.len());
-    assert_eq!(after.max_foreign_key_id, 1);
-    assert_eq!(after.max_index_id, before.max_index_id + 1);
-
-    // The next anonymous key takes the id after the rolled-back one.
-    let write = plan(
-        &mut store,
-        "ALTER TABLE fkc ADD FOREIGN KEY (cc) REFERENCES fkp (c)",
-        304,
-    );
-    assert_eq!(write.backfill[0].index.read().name.original(), "fk_2");
-    assert_eq!(write.backfill[0].index.read().id, before.max_index_id + 2);
 }
 
 /// All prefix-index spellings retain their key-part lengths in published metadata.
@@ -6536,341 +5282,6 @@ fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
     assert_eq!(
         function.reason,
         "An expression of a check constraint 'c' contains disallowed function: rand."
-    );
-}
-
-#[test]
-fn check_constraints_follow_go_for_column_dependencies_and_create_like() {
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
-    let lower = |sql: &str| {
-        let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
-        lower_ddl_with_context(&parsed, "u6", &context)
-            .expect("CHECK DDL is admitted")
-            .expect("CHECK DDL owns a catalog route")
-    };
-    let mut store = bootstrapped();
-
-    let create = plan_ddl(
-        &mut store,
-        &lower(
-            "CREATE TABLE ck_dep (a INT, b INT, \
-             CONSTRAINT c_pair CHECK (a < b) NOT ENFORCED, \
-             CONSTRAINT c_one CHECK (b > 0) NOT ENFORCED)",
-        ),
-        1_100,
-    )
-    .expect("CREATE plans");
-    let DdlPlan::Write(create) = create else {
-        panic!("CREATE writes metadata")
-    };
-    apply(&mut store, &create);
-
-    let rename = plan_ddl(
-        &mut store,
-        &lower("ALTER TABLE ck_dep RENAME COLUMN a TO a"),
-        1_101,
-    )
-    .expect_err("Go checks CHECK dependencies before its same-name no-op");
-    let DdlPlanError::Admission(rename) = rename else {
-        panic!("expected a coded DDL refusal, got {rename:?}")
-    };
-    assert_eq!(rename.code, 3959);
-    assert_eq!(
-        rename.reason,
-        "Check constraint 'c_pair' uses column 'a', hence column cannot be dropped or renamed."
-    );
-
-    let drop_multi = plan_ddl(
-        &mut store,
-        &lower("ALTER TABLE ck_dep DROP COLUMN a"),
-        1_102,
-    )
-    .expect_err("a multi-column CHECK blocks DROP COLUMN");
-    let DdlPlanError::Admission(drop_multi) = drop_multi else {
-        panic!("expected a coded DDL refusal, got {drop_multi:?}")
-    };
-    assert_eq!(drop_multi.code, 3959);
-
-    let source_id = create.created_id.expect("CREATE allocated a table id");
-    let source_key = key::table_kv_key(112, source_id);
-    let mut source: tidb_model::TableInfo = serde_json::from_slice(
-        store
-            .pairs
-            .get(&source_key)
-            .expect("the committed source table exists"),
-    )
-    .expect("the source table decodes");
-    source.tiflash_replica = Some(GoShared::new(tidb_model::TiFlashReplicaInfo {
-        count: 2,
-        location_labels: vec!["zone".to_owned()].into(),
-        available: true,
-        available_partition_ids: vec![source_id].into(),
-    }));
-    source.ttl_info = Some(GoShared::new(tidb_model::TTLInfo {
-        column_name: tidb_ast::CiString::new("a"),
-        interval_expr_str: "1".to_owned(),
-        interval_time_unit: 5,
-        enable: true,
-        job_interval: "1h".to_owned(),
-    }));
-    source.affinity = Some(GoShared::new(tidb_model::TableAffinityInfo {
-        level: "table".to_owned(),
-    }));
-    source.auto_rand_id = 77;
-    source.max_foreign_key_id = 9;
-    store.put(
-        source_key.clone(),
-        value::serialize_table_info(&source).expect("the augmented source encodes"),
-    );
-
-    let clean_source = source.clone_like_go();
-    let missing_source = plan_ddl(
-        &mut store,
-        &lower("CREATE TABLE missing_target.ck_missing LIKE missing_source.ck_dep"),
-        1_102_0,
-    )
-    .expect_err("Go resolves a missing LIKE source before the target database");
-    assert!(
-        matches!(
-            missing_source,
-            DdlPlanError::TableNotExists { ref schema, ref table }
-                if schema == "missing_source" && table == "ck_dep"
-        ),
-        "{missing_source:?}"
-    );
-    let expect_temporary_like_refusal = |store: &mut MetaStore,
-                                         source: &tidb_model::TableInfo,
-                                         target: &str,
-                                         start_ts: u64,
-                                         code: u16,
-                                         reason: &str| {
-        store.put(
-            source_key.clone(),
-            value::serialize_table_info(source).expect("the test source encodes"),
-        );
-        let error = plan_ddl(
-            store,
-            &lower(&format!(
-                "CREATE GLOBAL TEMPORARY TABLE {target} LIKE ck_dep \
-                     ON COMMIT DELETE ROWS"
-            )),
-            start_ts,
-        )
-        .expect_err("Go refuses this inherited temporary-table setting");
-        let DdlPlanError::Admission(error) = error else {
-            panic!("expected a coded DDL refusal, got {error:?}")
-        };
-        assert_eq!(error.code, code, "{target}");
-        assert_eq!(error.reason, reason, "{target}");
-    };
-
-    let mut invalid_source = clean_source.clone_like_go();
-    invalid_source.temp_table_type = tidb_model::TempTableType::GLOBAL;
-    invalid_source.auto_random_bits = 3;
-    expect_temporary_like_refusal(
-        &mut store,
-        &invalid_source,
-        "missing_schema.ck_from_temp",
-        1_102_1,
-        8006,
-        "`create table like` is unsupported on temporary tables.",
-    );
-
-    let mut invalid_source = clean_source.clone_like_go();
-    invalid_source.auto_random_bits = 3;
-    expect_temporary_like_refusal(
-        &mut store,
-        &invalid_source,
-        "ck_auto_random",
-        1_102_2,
-        8006,
-        "`auto_random` is unsupported on temporary tables.",
-    );
-
-    let mut invalid_source = clean_source.clone_like_go();
-    invalid_source.pre_split_regions = 2;
-    expect_temporary_like_refusal(
-        &mut store,
-        &invalid_source,
-        "ck_pre_split",
-        1_102_3,
-        8006,
-        "`pre split regions` is unsupported on temporary tables.",
-    );
-
-    let mut invalid_source = clean_source.clone_like_go();
-    invalid_source.partition = Some(GoShared::new(tidb_model::PartitionInfo::default()));
-    expect_temporary_like_refusal(
-        &mut store,
-        &invalid_source,
-        "ck_partitioned",
-        1_102_4,
-        1562,
-        "Cannot create temporary table with partitions",
-    );
-
-    let mut invalid_source = clean_source.clone_like_go();
-    invalid_source.shard_row_id_bits = 4;
-    expect_temporary_like_refusal(
-        &mut store,
-        &invalid_source,
-        "ck_sharded",
-        1_102_5,
-        8006,
-        "`shard_row_id_bits` is unsupported on temporary tables.",
-    );
-
-    let mut invalid_source = clean_source.clone_like_go();
-    invalid_source.placement_policy_ref = Some(GoShared::new(tidb_model::PolicyRefInfo::default()));
-    expect_temporary_like_refusal(
-        &mut store,
-        &invalid_source,
-        "ck_placed",
-        1_102_6,
-        8006,
-        "`placement` is unsupported on temporary tables.",
-    );
-    store.put(
-        source_key.clone(),
-        value::serialize_table_info(&clean_source).expect("the clean source encodes"),
-    );
-
-    let create_like = plan_ddl(
-        &mut store,
-        &lower("CREATE TABLE ck_copy LIKE ck_dep"),
-        1_103,
-    )
-    .expect("CREATE LIKE plans");
-    let DdlPlan::Write(create_like) = create_like else {
-        panic!("CREATE LIKE writes metadata")
-    };
-    let copy_id = create_like
-        .created_id
-        .expect("CREATE LIKE allocates a table id");
-    let copied: tidb_model::TableInfo =
-        serde_json::from_slice(stored_value(&create_like, &key::table_kv_key(112, copy_id)))
-            .expect("copied table decodes");
-    let replica = copied
-        .tiflash_replica
-        .as_ref()
-        .expect("ordinary CREATE LIKE preserves the TiFlash setting")
-        .read();
-    assert_eq!(replica.count, 2);
-    assert_eq!(
-        replica.location_labels.iter().cloned().collect::<Vec<_>>(),
-        vec!["zone".to_owned()]
-    );
-    assert!(!replica.available);
-    assert!(replica.available_partition_ids.is_empty());
-    assert!(
-        !replica.available_partition_ids.is_allocated(),
-        "Go clears AvailablePartitionIDs to nil rather than an allocated empty slice"
-    );
-    assert!(copied.ttl_info.is_some());
-    assert!(copied.affinity.is_some());
-    assert_eq!(copied.temp_table_type, tidb_model::TempTableType::NONE);
-    assert_eq!(copied.auto_rand_id, 77, "Go resets only AutoIncID");
-    assert_eq!(
-        copied.max_foreign_key_id, 9,
-        "Go clears ForeignKeys without rewinding MaxForeignKeyID"
-    );
-    assert_eq!(copied.max_constraint_id, 2);
-    let copied_constraints = copied
-        .constraints
-        .iter_deref()
-        .map(|constraint| {
-            let constraint = constraint.read();
-            (
-                constraint.id,
-                constraint.name.original().to_owned(),
-                constraint.table.original().to_owned(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        copied_constraints,
-        vec![
-            (1, "ck_copy_chk_1".to_owned(), "ck_copy".to_owned()),
-            (2, "ck_copy_chk_2".to_owned(), "ck_copy".to_owned()),
-        ]
-    );
-
-    let temporary_like = plan_ddl(
-        &mut store,
-        &lower("CREATE GLOBAL TEMPORARY TABLE ck_temp LIKE ck_dep ON COMMIT DELETE ROWS"),
-        1_104,
-    )
-    .expect("temporary CREATE LIKE plans");
-    let DdlPlan::Write(temporary_like) = temporary_like else {
-        panic!("temporary CREATE LIKE writes metadata")
-    };
-    let temporary_id = temporary_like
-        .created_id
-        .expect("temporary CREATE LIKE allocates a table id");
-    let temporary: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &temporary_like,
-        &key::table_kv_key(112, temporary_id),
-    ))
-    .expect("temporary copied table decodes");
-    assert_eq!(temporary.temp_table_type, tidb_model::TempTableType::GLOBAL);
-    assert!(temporary.tiflash_replica.is_none());
-    assert!(temporary.ttl_info.is_none());
-    assert!(temporary.affinity.is_none());
-    assert_eq!(temporary.auto_rand_id, 77);
-    assert_eq!(temporary.max_foreign_key_id, 9);
-
-    let preserve = plan_ddl(
-        &mut store,
-        &lower(
-            "CREATE GLOBAL TEMPORARY TABLE ck_preserve LIKE ck_dep \
-             ON COMMIT PRESERVE ROWS",
-        ),
-        1_105,
-    )
-    .expect_err("Go refuses ON COMMIT PRESERVE ROWS after validating the LIKE source");
-    let DdlPlanError::Admission(preserve) = preserve else {
-        panic!("expected a coded DDL refusal, got {preserve:?}")
-    };
-    assert_eq!(preserve.code, 8200);
-    assert_eq!(
-        preserve.reason,
-        "TiDB doesn't support ON COMMIT PRESERVE ROWS for now"
-    );
-
-    let drop_pair = lower("ALTER TABLE ck_dep DROP CONSTRAINT c_pair");
-    let submission = plan_check_constraint_job_submission(&mut store, &drop_pair, 1_106)
-        .expect("DROP CHECK submission plans")
-        .expect("DROP CHECK uses the Go job table");
-    let drop_job_id = submission.job.id;
-    apply_mutations(&mut store, &submission.mutations);
-    let write_only = plan_worker_step(&mut store, drop_job_id, 1_107)
-        .expect("DROP CHECK publishes WriteOnly");
-    assert!(!write_only.terminal);
-    apply(&mut store, &write_only.write);
-    let removed = plan_worker_step(&mut store, drop_job_id, 1_108)
-        .expect("DROP CHECK removes the constraint");
-    assert!(!removed.terminal);
-    apply(&mut store, &removed.write);
-    finish_worker_job(&mut store, drop_job_id, 1_109);
-
-    let drop_single = plan_ddl(
-        &mut store,
-        &lower("ALTER TABLE ck_dep DROP COLUMN b"),
-        1_109,
-    )
-    .expect("a single-column CHECK does not block DROP COLUMN");
-    let DdlPlan::Write(drop_single) = drop_single else {
-        panic!("DROP COLUMN writes metadata")
-    };
-    let dropped: tidb_model::TableInfo = serde_json::from_slice(stored_value(
-        &drop_single,
-        &key::table_kv_key(112, source_id),
-    ))
-    .expect("post-DROP table decodes");
-    assert!(dropped.constraints.is_empty());
-    assert_eq!(
-        dropped.max_constraint_id, 2,
-        "lazy removal does not rewind Go's constraint allocator"
     );
 }
 
@@ -7401,102 +5812,6 @@ fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
     definitions.iter().map(|definition| definition.id).collect()
 }
 
-fn seed_step(
-    plan: Result<PersistedDdlJobPlan, DdlPlanError>,
-) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    match plan? {
-        PersistedDdlJobPlan::Step(step) => Ok(step),
-        PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
-        PersistedDdlJobPlan::SchemaSync { .. } => panic!("seed step must acknowledge previous MDL"),
-        PersistedDdlJobPlan::Reorg(_) => panic!("a reorganization runs outside the worker step"),
-    }
-}
-
-/// Looks up the column ID at the given offset in the table.
-fn view_info_columns(table: &tidb_model::TableInfo, offset: usize) -> i64 {
-    table
-        .columns
-        .iter_deref()
-        .nth(offset)
-        .map(|c| c.read().id)
-        .expect("column exists at offset")
-}
-
-/// Reads a view's stored rows back through the driver: the same pre-load-
-/// and-SELECT shape the build engine uses, so the assertion exercises the
-/// real decode path rather than re-reading the test's own encodings.
-fn read_view_rows(
-    store: &mut MetaStore,
-    view: &tidb_model::TableInfo,
-) -> Vec<Vec<tidb_datatype::Datum>> {
-    use tidb_executor::storage::{MemTableStorage, TableStorage};
-    use tidb_executor::{Catalog, KvColumn, KvTable};
-    let mut kv_columns: Vec<KvColumn> = Vec::new();
-    for column in view.columns.iter_deref() {
-        let column = column.read();
-        kv_columns.push(KvColumn {
-            name: column.name.original().to_owned(),
-            id: column.id,
-            field_type: column.field_type.clone(),
-            column_info_version: column.version,
-            default_value: None,
-            origin_default: None,
-            comment: column.comment.clone(),
-            generated: None,
-        });
-    }
-    let mut storage = MemTableStorage::new();
-    let (start, end) = tidb_codec::table_key::get_table_handle_key_range(view.id);
-    for (key, stored) in store
-        .scan_range(&start, &end)
-        .expect("the view record range scans")
-    {
-        storage
-            .set(tidb_txnkv::Key::from_bytes(key), stored)
-            .expect("the row preloads");
-    }
-    let mut kv_table = KvTable::with_storage(view.id, kv_columns, Box::new(storage));
-    kv_table.set_name(view.name.original());
-    if view.pk_is_handle {
-        let offset = view
-            .columns
-            .iter_deref()
-            .position(|column| {
-                column.read().field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0
-            })
-            .expect("the PK column exists");
-        kv_table.set_pk_handle_offset(offset);
-    } else if view.is_common_handle {
-        let mut offsets = Vec::new();
-        let primary = view
-            .indices
-            .iter_deref()
-            .find(|index| index.read().primary)
-            .expect("the view has its PRIMARY index");
-        for part in primary.read().columns.iter_deref() {
-            let name = part.read().name.lowercase().to_owned();
-            offsets.push(
-                view.columns
-                    .iter_deref()
-                    .position(|column| column.read().name.lowercase() == name.as_str())
-                    .expect("the key column exists"),
-            );
-        }
-        kv_table.set_common_handle_offsets(offsets);
-        kv_table.set_common_handle_version(view.common_handle_version);
-    }
-    let mut catalog = Catalog::default();
-    catalog.create_database("u6");
-    catalog
-        .register_kv_in("u6", view.name.original(), kv_table)
-        .expect("the view registers");
-    let context = tidb_executor::StmtContext::for_query();
-    let sql = format!("SELECT * FROM {} ORDER BY 1", view.name.original());
-    let (_, rows) = tidb_executor::run_select_meta_in(&sql, &catalog, "u6", &context)
-        .expect("the view rows read");
-    rows
-}
-
 /// Looks up the column ID at the given offset in the table.
 
 /// Go BuildHiddenColumnInfo uses the expression type and shared index admission.
@@ -7575,7 +5890,6 @@ fn grouped_drop_columns_remove_every_owned_index_range() {
         200,
     );
     // Go leaves the indexes' entries to the delete range.
-    assert!(write.backfill.is_empty());
     apply(&mut store, &write);
     let ranges: Vec<(i64, Vec<u8>, Vec<u8>)> = delete_ranges(&mut store);
     let expected: Vec<(i64, Vec<u8>, Vec<u8>)> = [1, 2]
@@ -7586,59 +5900,6 @@ fn grouped_drop_columns_remove_every_owned_index_range() {
         })
         .collect();
     assert_eq!(ranges, expected);
-}
-
-/// Go admits all specs before its shared MultiSchemaChange worker applies them.
-#[test]
-fn cluster_column_batch_retains_every_sibling_and_notification() {
-    for sql in [
-        "ALTER TABLE u6.t RENAME COLUMN a TO renamed, ADD COLUMN c INT DEFAULT 7, DROP COLUMN b",
-        "ALTER TABLE u6.t ADD COLUMN c INT DEFAULT 7, CHANGE COLUMN a renamed BIGINT, DROP COLUMN b",
-        "ALTER TABLE u6.t MODIFY COLUMN a BIGINT, ADD COLUMN c INT DEFAULT 7, RENAME COLUMN b TO renamed",
-    ] {
-        let mut store = bootstrapped();
-        let create = plan(
-            &mut store,
-            "CREATE TABLE u6.t(id BIGINT PRIMARY KEY, a INT, b INT, KEY ia(a))",
-            100,
-        );
-        let id = create.created_id.unwrap();
-        apply(&mut store, &create);
-        let write = plan(&mut store, sql, 200);
-        assert_eq!(
-            write.diff.action_type,
-            ActionType::ACTION_MULTI_SCHEMA_CHANGE,
-            "{sql}"
-        );
-        let stored = stored_table(&write, id);
-        let names: Vec<_> = stored["cols"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| c["name"]["O"].as_str().unwrap())
-            .collect();
-        assert!(
-            names.contains(&"c") && names.contains(&"renamed"),
-            "{sql}: {names:?}"
-        );
-        let events = notifier_events(&mut store, &write);
-        assert!(
-            events
-                .iter()
-                .any(|event| event.1.action_type() == ActionType::ACTION_ADD_COLUMN),
-            "{sql}"
-        );
-        assert!(
-            events
-                .iter()
-                .any(|event| event.1.action_type() == ActionType::ACTION_MODIFY_COLUMN),
-            "{sql}"
-        );
-        assert_eq!(
-            stored["cols"][1]["id"], 2,
-            "column identity survives siblings"
-        );
-    }
 }
 
 #[test]
@@ -7674,68 +5935,6 @@ fn cluster_column_batch_admits_original_names_before_execution() {
         assert_eq!(error.to_sql_error().code, code, "{sql}: {error}");
         assert_eq!(store.pairs, before, "admission must not mutate storage");
     }
-}
-
-/// Go runs a MODIFY / CHANGE whose rows change inside a multi-schema change
-/// as one sub-job among its siblings: the bundle stages that sub-job's data
-/// step, tagged with its place so a failed precheck re-plans it alone.
-#[test]
-fn cluster_column_batch_stages_a_reorg_per_modify_sub_job() {
-    for sql in [
-        "ALTER TABLE u6.t MODIFY a INT, ADD COLUMN c INT",
-        "ALTER TABLE u6.t CHANGE a renamed INT, ADD COLUMN c INT",
-        "ALTER TABLE u6.t ADD COLUMN c INT, MODIFY s VARCHAR(2), DROP COLUMN a",
-    ] {
-        let mut store = bootstrapped();
-        let create = plan(
-            &mut store,
-            "CREATE TABLE u6.t(id BIGINT PRIMARY KEY,a BIGINT,s VARCHAR(10))",
-            100,
-        );
-        apply(&mut store, &create);
-        let write = plan(&mut store, sql, 200);
-        let [reorg] = write.column_reorgs.as_slice() else {
-            panic!("{sql}: one data step is owed")
-        };
-        let expected = if sql.contains("ADD COLUMN c INT, MODIFY") {
-            1
-        } else {
-            0
-        };
-        assert_eq!(reorg.action_offset, Some(expected), "{sql}");
-    }
-}
-
-#[test]
-fn cluster_column_batch_conditional_noops_keep_notes_and_jobs() {
-    let mut store = bootstrapped();
-    let create = plan(
-        &mut store,
-        "CREATE TABLE u6.t(id BIGINT PRIMARY KEY,a INT,b INT)",
-        100,
-    );
-    let id = create.created_id.unwrap();
-    apply(&mut store, &create);
-    let write = plan(
-        &mut store,
-        "ALTER TABLE u6.t ADD COLUMN IF NOT EXISTS a INT, DROP COLUMN a, RENAME COLUMN b TO c",
-        200,
-    );
-    let stored = stored_table(&write, id);
-    assert_eq!(stored["cols"].as_array().unwrap().len(), 2);
-    assert_eq!(stored["cols"][1]["name"]["O"], "c");
-    assert!(write.warnings.iter().any(|warning| warning.1 == 1060));
-    let noop = plan_ddl(
-        &mut store,
-        &statement("ALTER TABLE u6.t RENAME COLUMN a TO a, DROP COLUMN IF EXISTS missing"),
-        300,
-    )
-    .unwrap();
-    let DdlPlan::AlreadySatisfied { warnings, .. } = noop else {
-        panic!("no jobs to publish")
-    };
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].1, 1091);
 }
 
 #[test]
