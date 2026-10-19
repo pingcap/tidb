@@ -77,3 +77,29 @@ desc mv_ddl_70457;
 drop materialized view mv_ddl_70457;
 drop materialized view log on t_mv_ddl_70457;
 drop table if exists t_mv_ddl_70457;
+
+# TestDropMaterializedViewWithOwnedLog
+
+create table t_mv_drop_owned_log (a int not null, b int not null);
+insert into t_mv_drop_owned_log values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_drop_owned_log (a, b);
+create materialized view mv_drop_owned_log (a, s, cnt) as
+select a, sum(b), count(1) from t_mv_drop_owned_log group by a;
+create materialized view log on mv_drop_owned_log (a, s, cnt);
+set @owned_mlog_id = (select mlog_id from information_schema.tidb_mlogs where table_schema = 'test' and mlog_name = '$mlog$mv_drop_owned_log');
+
+-- error 8200
+drop materialized view mv_drop_owned_log;
+-- error 8200
+drop materialized view if exists mv_drop_owned_log;
+select * from mv_drop_owned_log order by a;
+select mlog_name, base_table_name from information_schema.tidb_mlogs where mlog_id = @owned_mlog_id;
+select count(*) from mysql.tidb_mlog_purge_info where mlog_id = @owned_mlog_id;
+
+drop materialized view log on mv_drop_owned_log;
+select count(*) from mysql.tidb_mlog_purge_info where mlog_id = @owned_mlog_id;
+drop materialized view mv_drop_owned_log;
+show tables like 'mv_drop_owned_log';
+show tables like '$mlog$mv_drop_owned_log';
+drop materialized view log on t_mv_drop_owned_log;
+drop table t_mv_drop_owned_log;

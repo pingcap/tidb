@@ -1250,14 +1250,19 @@ func normalizeMaterializedViewLogBlobFlen(ft *types.FieldType) {
 }
 
 func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.TableInfo) bool {
-	return tblInfo != nil &&
-		!util.IsMemOrSysDB(schemaLowerName) &&
-		!tblInfo.IsView() &&
-		!tblInfo.IsSequence() &&
-		tblInfo.TempTableType == model.TempTableNone &&
-		tblInfo.MaterializedView == nil &&
-		tblInfo.MaterializedViewShadow == nil &&
-		tblInfo.MaterializedViewLog == nil
+	if tblInfo == nil ||
+		util.IsMemOrSysDB(schemaLowerName) ||
+		tblInfo.IsView() ||
+		tblInfo.IsSequence() ||
+		tblInfo.TempTableType != model.TempTableNone ||
+		tblInfo.MaterializedViewShadow != nil ||
+		tblInfo.MaterializedViewLog != nil {
+		return false
+	}
+	if tblInfo.MaterializedView != nil {
+		return tblInfo.State == model.StatePublic && tblInfo.MaterializedView.GetInitBuildState().IsReady()
+	}
+	return true
 }
 
 // CheckMaterializedViewLogColumnSupported validates whether a base table column
