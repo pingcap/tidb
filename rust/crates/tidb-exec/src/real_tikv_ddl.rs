@@ -1439,6 +1439,16 @@ pub fn submit_persisted_job_with_retry<
                     min_job_id,
                 )
             }
+            DdlStatement::TruncateTable { .. } => {
+                crate::cluster_ddl::truncate::prepare_truncate_table_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )
+            }
             DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
                 crate::cluster_ddl::drop_index::prepare_drop_index_job_submission(
                     &mut snapshot,

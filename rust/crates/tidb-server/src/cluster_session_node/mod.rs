@@ -8743,7 +8743,10 @@ impl tidb_session::ddl_service::DdlService for ClusterDdlService {
             ))
         })?;
         if let (
-            DdlStatement::CreateTable { .. } | DdlStatement::CreateTableLike { .. },
+            DdlStatement::CreateTable { .. }
+            | DdlStatement::CreateTableLike { .. }
+            // Go `onTruncateTable` pre-splits the new identity.
+            | DdlStatement::TruncateTable { .. },
             tidb_exec::real_tikv_ddl::ClusterDdlReport::Applied {
                 created_id: Some(id),
                 ..

@@ -6117,6 +6117,7 @@ pub enum PersistedDdlJobPlan {
 pub mod add_index;
 pub mod drop_index;
 pub mod drop_object;
+pub mod truncate;
 
 /// Actions currently integrated into the persisted owner worker. Seed planners
 /// outside this set are not made live by the common lifecycle.
@@ -6138,6 +6139,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_ADD_PRIMARY_KEY
             | ActionType::ACTION_DROP_INDEX
             | ActionType::ACTION_DROP_PRIMARY_KEY
+            | ActionType::ACTION_TRUNCATE_TABLE
     )
 }
 
@@ -6198,6 +6200,11 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 }
                 ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
                     drop_index::plan_persisted_drop_index_job_step(catalog, active, start_ts)
+                }
+                ActionType::ACTION_TRUNCATE_TABLE => {
+                    truncate::plan_persisted_truncate_table_job_step(
+                        snapshot, catalog, active, start_ts,
+                    )
                 }
                 _ => unreachable!("supported action checked above"),
             }
@@ -8254,6 +8261,12 @@ fn plan_cancel_persisted_ddl_job(
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
             return drop_index::plan_cancel_drop_index(catalog, active);
+        }
+        // Go `rollingbackTruncateTable`: `cancelOnlyNotHandledJob` at
+        // `StateNone`, after `GetTableInfoAndCancelFaultJob`.
+        ActionType::ACTION_TRUNCATE_TABLE => {
+            checked_job_table(catalog, active, false)?;
+            active.job.schema_state == SchemaState::NONE
         }
         _ => {
             return Err(DdlPlanError::Encode(format!(
@@ -12657,17 +12670,9 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             }
             let old_table_id = stored.id;
             // Go `onTruncateTable` reassigns the PARTITION ids as well as the
-            // table's (`ddl/table.go:510`), and its comment says why: "all the
-            // old data is encoded with the old partition ID, it can not be
-            // accessed anymore". A partitioned table's rows are keyed by the
-            // PARTITION's physical id, not the table's -- so giving the table
-            // a new id while the partitions kept theirs would leave every row
-            // exactly where it was and still addressable. The truncate would
-            // report success and empty nothing.
-            //
-            // The ids are drawn in ONE call, table first then one per
-            // partition in definition order, which is the same contiguous
-            // block shape `CREATE TABLE` uses.
+            // table's: the old rows are keyed by the old physical ids. The ids
+            // are drawn in ONE call, table first then one per partition in
+            // definition order, as `assignGIDsForJobs` draws them.
             let partition_count = stored.partition.as_ref().map_or(0, |partition| {
                 partition.read().definitions.with_visible(<[_]>::len)
             }) as i64;
@@ -12676,97 +12681,18 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
             // The new table ID, which a session holding a lock on the old
             // one moves its lock to (Go `HandleLockTablesOnSuccessSubmit`).
             created_id = Some(new_table_id);
-            let mut info = stored.clone_like_go();
-            info.id = new_table_id;
-            if let Some(replica) = &info.tiflash_replica {
-                let mut replica = replica.write();
-                replica.available = false;
-                replica.available_partition_ids = Default::default();
-            }
-            if let Some(partition) = &info.partition {
-                let partition = partition.read();
-                for (ordinal, id) in ids[1..].iter().enumerate() {
-                    partition
-                        .definitions
-                        .update(ordinal, |definition| definition.id = *id);
-                }
-            }
-            info.update_ts = start_ts;
-            writes.push(BufferMutation::delete(key::table_kv_key(
+            let info = apply_truncate_table(
+                snapshot,
+                schema,
                 db_id,
-                old_table_id,
-            ))?);
-            let encoded = value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            writes.push(BufferMutation::set(
-                key::table_kv_key(db_id, new_table_id),
-                encoded,
-            )?);
-            // The allocators travel with the table id; deleting the old
-            // ones is what restarts the counters, Go's `Del()` on truncate.
-            for allocator in [
-                key::auto_table_id_kv_key(db_id, old_table_id),
-                key::auto_increment_id_kv_key(db_id, old_table_id),
-                key::auto_random_table_id_kv_key(db_id, old_table_id),
-            ] {
-                if snapshot.get(&allocator)?.is_some() {
-                    writes.push(BufferMutation::delete(allocator)?);
-                }
-            }
-            // Go `onTruncateTable` rebuilds the bundles once the new id is
-            // stamped and sends them (`ddl/table.go:574`). Truncate gives the
-            // table a NEW identity, and PD's rules are keyed by id -- so
-            // without this the truncated table has no rules at all and its
-            // data goes wherever the default says, silently losing the
-            // placement the table still claims in its own catalog entry.
-            if info.placement_policy_ref.is_some()
-                || info.partition.as_ref().is_some_and(|partition| {
-                    partition
-                        .read()
-                        .definitions
-                        .snapshot()
-                        .iter()
-                        .any(|definition| definition.placement_policy_ref.is_some())
-                })
-            {
-                let policies = load_policies(snapshot)?;
-                placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
-                    .map_err(|error| {
-                        DdlPlanError::Admission(DdlAdmissionError::with_code(
-                            GENERIC_ERROR_CODE,
-                            format!("building placement rules: {error}"),
-                        ))
-                    })?;
-            }
-            // Go `onTruncateTable`: the new identity's groups first (the job
-            // fails when PD refuses), then the old table's, best-effort.
-            if info.affinity.is_some() {
-                affinity_groups
-                    .create_for(&info)
-                    .map_err(|error| pd_step_error(None, error))?;
-            }
-            if stored.affinity.is_some() {
-                affinity_groups.delete_for(stored, None);
-            }
-            // Go `onTruncateTable`: the rules named for the table and its
-            // partitions re-range over the new IDs.
-            let label_table = LabelRuleTable::from_table_info(&info);
-            let old_rules = label_rules::get_old_label_rules(
-                label_rules.manager(),
-                &label_table,
-                &schema.go_to_lower(),
-                &label_table.name,
-            )
-            .map_err(|error| pd_step_error(Some("failed to get old label rules from PD"), error))?;
-            label_rules.push(
-                label_rules::update_label_rules(
-                    &schema.go_to_lower(),
-                    &label_table,
-                    &old_rules,
-                    &[],
-                    new_table_id,
-                ),
-                Some("failed to update the label rule to PD"),
+                stored,
+                new_table_id,
+                &ids[1..],
+                start_ts,
+                &mut writes,
+                &mut placement_bundles,
+                &mut affinity_groups,
+                &mut label_rules,
             )?;
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE;
             diff.schema_id = db_id;
@@ -14176,6 +14102,132 @@ fn append_history_ddl_job<S: MetaSnapshot>(
 /// done state Go's `Finish*Job` leaves, and the finished table or schema in
 /// `BinlogInfo`. A multi-schema change carries its sub-jobs.
 #[allow(clippy::too_many_arguments)]
+/// Go `onTruncateTable`'s metadata: the table under `new_table_id` (and its
+/// partitions under `new_partition_ids`), the old table key and allocators
+/// gone, the placement bundles, affinity groups and label rules re-keyed.
+/// Returns the new table.
+#[allow(clippy::too_many_arguments)]
+fn apply_truncate_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    schema: &str,
+    db_id: i64,
+    stored: &TableInfo,
+    new_table_id: i64,
+    new_partition_ids: &[i64],
+    start_ts: u64,
+    writes: &mut Vec<BufferMutation>,
+    placement_bundles: &mut Vec<tidb_placement::Bundle>,
+    affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
+    label_rules: &mut LabelRuleSteps,
+) -> Result<TableInfo, DdlPlanError> {
+    let old_table_id = stored.id;
+    // Go `onTruncateTable` reassigns the PARTITION ids as well as the
+    // table's (`ddl/table.go:510`), and its comment says why: "all the
+    // old data is encoded with the old partition ID, it can not be
+    // accessed anymore". A partitioned table's rows are keyed by the
+    // PARTITION's physical id, not the table's -- so giving the table
+    // a new id while the partitions kept theirs would leave every row
+    // exactly where it was and still addressable. The truncate would
+    // report success and empty nothing.
+    //
+    // The ids are drawn in ONE call, table first then one per
+    // partition in definition order, which is the same contiguous
+    // block shape `CREATE TABLE` uses.
+    let mut info = stored.clone_like_go();
+    info.id = new_table_id;
+    if let Some(replica) = &info.tiflash_replica {
+        let mut replica = replica.write();
+        replica.available = false;
+        replica.available_partition_ids = Default::default();
+    }
+    if let Some(partition) = &info.partition {
+        let partition = partition.read();
+        for (ordinal, id) in new_partition_ids.iter().enumerate() {
+            partition
+                .definitions
+                .update(ordinal, |definition| definition.id = *id);
+        }
+    }
+    info.update_ts = start_ts;
+    writes.push(BufferMutation::delete(key::table_kv_key(
+        db_id,
+        old_table_id,
+    ))?);
+    let encoded = value::serialize_table_info(&info)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    writes.push(BufferMutation::set(
+        key::table_kv_key(db_id, new_table_id),
+        encoded,
+    )?);
+    // The allocators travel with the table id; deleting the old
+    // ones is what restarts the counters, Go's `Del()` on truncate.
+    for allocator in [
+        key::auto_table_id_kv_key(db_id, old_table_id),
+        key::auto_increment_id_kv_key(db_id, old_table_id),
+        key::auto_random_table_id_kv_key(db_id, old_table_id),
+    ] {
+        if snapshot.get(&allocator)?.is_some() {
+            writes.push(BufferMutation::delete(allocator)?);
+        }
+    }
+    // Go `onTruncateTable` rebuilds the bundles once the new id is
+    // stamped and sends them (`ddl/table.go:574`). Truncate gives the
+    // table a NEW identity, and PD's rules are keyed by id -- so
+    // without this the truncated table has no rules at all and its
+    // data goes wherever the default says, silently losing the
+    // placement the table still claims in its own catalog entry.
+    if info.placement_policy_ref.is_some()
+        || info.partition.as_ref().is_some_and(|partition| {
+            partition
+                .read()
+                .definitions
+                .snapshot()
+                .iter()
+                .any(|definition| definition.placement_policy_ref.is_some())
+        })
+    {
+        let policies = load_policies(snapshot)?;
+        *placement_bundles =
+            tidb_placement::new_full_table_bundles(&policies, &info).map_err(|error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("building placement rules: {error}"),
+                ))
+            })?;
+    }
+    // Go `onTruncateTable`: the new identity's groups first (the job
+    // fails when PD refuses), then the old table's, best-effort.
+    if info.affinity.is_some() {
+        affinity_groups
+            .create_for(&info)
+            .map_err(|error| pd_step_error(None, error))?;
+    }
+    if stored.affinity.is_some() {
+        affinity_groups.delete_for(stored, None);
+    }
+    // Go `onTruncateTable`: the rules named for the table and its
+    // partitions re-range over the new IDs.
+    let label_table = LabelRuleTable::from_table_info(&info);
+    let old_rules = label_rules::get_old_label_rules(
+        label_rules.manager(),
+        &label_table,
+        &schema.go_to_lower(),
+        &label_table.name,
+    )
+    .map_err(|error| pd_step_error(Some("failed to get old label rules from PD"), error))?;
+    label_rules.push(
+        label_rules::update_label_rules(
+            &schema.go_to_lower(),
+            &label_table,
+            &old_rules,
+            &[],
+            new_table_id,
+        ),
+        Some("failed to update the label rule to PD"),
+    )?;
+    Ok(info)
+}
+
 /// Go `insertJobIntoDeleteRangeTable` for a change applied in one
 /// transaction: what Go's finished job arguments would name, read from what
 /// the change removed (dropped tables and partitions, replaced global

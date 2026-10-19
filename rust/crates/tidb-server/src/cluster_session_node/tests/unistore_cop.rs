@@ -19730,3 +19730,57 @@ fn drop_objects_run_as_persisted_jobs_like_go() {
     rows(&mut session, "set foreign_key_checks = 0");
     rows(&mut session, "drop database dp");
 }
+
+/// TRUNCATE TABLE runs as Go's persisted job (`executor.TruncateTable`, the
+/// owner's `onTruncateTable`): new table and partition ids, the allocators
+/// restarted, the refusals the executor's. Captured from the Go oracle.
+#[test]
+fn truncate_table_runs_as_a_persisted_job_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1941)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let last_job = |session: &mut _| {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [3, 2, 4, 7, 11].map(|column| row[column].clone()).join("|")
+    };
+    rows(
+        &mut session,
+        "create table t (a int auto_increment primary key, b int)",
+    );
+    rows(&mut session, "insert into t (b) values (1),(2)");
+    rows(&mut session, "truncate table t");
+    assert_eq!(last_job(&mut session), "truncate table|t|public|0|synced");
+    rows(&mut session, "insert into t (b) values (3)");
+    assert_eq!(
+        displayed(rows(&mut session, "select * from t")),
+        [["1", "3"]]
+    );
+    rows(&mut session, "create table p (id int primary key)");
+    rows(
+        &mut session,
+        "create table c (id int primary key, pid int, constraint fkc foreign key (pid) references p(id))",
+    );
+    rows(&mut session, "create view v as select 1");
+    for (sql, code, message) in [
+        (
+            "truncate table p",
+            1701,
+            "Cannot truncate a table referenced in a foreign key constraint (`test`.`c` CONSTRAINT `fkc`)",
+        ),
+        ("truncate table v", 1146, "Table 'test.v' doesn't exist"),
+        ("truncate table nosuch", 1146, "Table 'test.nosuch' doesn't exist"),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
+    }
+    rows(&mut session, "truncate table c");
+    rows(
+        &mut session,
+        "create table tp (a int) partition by hash(a) partitions 2",
+    );
+    rows(&mut session, "insert into tp values (1),(2)");
+    rows(&mut session, "truncate table tp");
+    assert_eq!(last_job(&mut session), "truncate table|tp|public|0|synced");
+    assert_eq!(displayed(rows(&mut session, "select count(*) from tp")), [["0"]]);
+}

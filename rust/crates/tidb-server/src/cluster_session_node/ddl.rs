@@ -816,9 +816,20 @@ where
                     return Err(persisted_job_error(&error));
                 }
                 if job.state.is_done() || job.state.is_synced() {
+                    // TRUNCATE's new identity, which a session holding a lock
+                    // on the old one moves its lock to and which is
+                    // pre-split like a created table.
+                    let created_id = (job.type_ == tidb_model::ActionType::ACTION_TRUNCATE_TABLE)
+                        .then(|| {
+                            job.binlog_info
+                                .as_ref()
+                                .and_then(|history| history.read().table_info.clone())
+                                .map(|table| table.read().id)
+                        })
+                        .flatten();
                     return Ok(ClusterDdlReport::Applied {
                         schema_version: job.last_schema_version,
-                        created_id: None,
+                        created_id,
                         warnings: job
                             .warning
                             .as_ref()
@@ -2542,6 +2553,7 @@ where
                     | DdlStatement::DropTable { .. }
                     | DdlStatement::DropSequence { .. }
                     | DdlStatement::DropDatabase { .. }
+                    | DdlStatement::TruncateTable { .. }
             )
         {
             // Go `createIndex` / `dropIndex` / `dropTableObject` /
