@@ -361,8 +361,9 @@ pub fn cluster_table(
     // `CURRENT_TIMESTAMP`, whose instant is per-INSERT and not per-load)
     // refuses the whole table by name.
     let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
-    for column in &columns {
-        let column = column.read();
+    // One `KvColumn` per stored column, public or not (the write path
+    // carries the non-public ones).
+    let build_column = |column: &tidb_model::ColumnInfo| -> Result<KvColumn, String> {
         let name = column.name.original().to_owned();
         // A nil Go interface is "no DEFAULT was written", which is not the
         // same fact as a `DEFAULT NULL`, so it must become `None` here rather
@@ -506,7 +507,7 @@ pub fn cluster_table(
         } else {
             None
         };
-        kv_columns.push(KvColumn {
+        Ok(KvColumn {
             name,
             id: column.id,
             field_type: column.field_type.clone(),
@@ -517,7 +518,10 @@ pub fn cluster_table(
             generated,
             default_value,
             origin_default,
-        });
+        })
+    };
+    for column in &columns {
+        kv_columns.push(build_column(&column.read())?);
     }
     let hidden = kv_columns.split_off(visible_count);
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
@@ -529,6 +533,37 @@ pub fn cluster_table(
     );
     for column in hidden {
         kv_table.add_hidden_column(column);
+    }
+    // Go `TableFromMeta` keeps every column that is not `StateNone`: one a
+    // DDL is adding, dropping or changing is written by its state, and a
+    // public column a MODIFY COLUMN is checking carries its changing type.
+    let public_ids: Vec<i64> = columns.iter().map(|column| column.read().id).collect();
+    for column in table.columns.iter_deref() {
+        let column = column.read();
+        if column.state == SchemaState::PUBLIC {
+            if let (Some(changing), Some(offset)) = (
+                column.changing_field_type.as_ref(),
+                public_ids.iter().position(|id| *id == column.id),
+            ) {
+                kv_table.set_changing_field_type(offset, changing.read().clone());
+            }
+            continue;
+        }
+        if column.state == SchemaState::NONE {
+            continue;
+        }
+        // `DependencyColumnOffset` addresses `TableInfo.Columns`; the write
+        // row addresses the public columns by this loader's order.
+        let dependency = column.change_state_info.as_ref().and_then(|info| {
+            let offset = usize::try_from(info.read().dependency_column_offset).ok()?;
+            let id = table.columns.get(offset)?.read().id;
+            public_ids.iter().position(|public| *public == id)
+        });
+        kv_table.add_nonpublic_column(tidb_executor::kv_table::NonPublicColumn {
+            column: build_column(&column)?,
+            state: column.state,
+            dependency,
+        });
     }
     kv_table.set_name(table.name.original());
     // Go `LoadCheckConstraint` -> `removeInvalidCheckConstraintsInfo`: a
@@ -740,6 +775,18 @@ pub fn cluster_table(
     }
     for index in table.indices.iter_deref() {
         let index = index.read();
+        // Go `IndexColumn.UseChangingType`: the parts cast to their column's
+        // changing type.
+        kv_table.set_changing_index_parts(
+            index.id,
+            index
+                .columns
+                .iter_deref()
+                .enumerate()
+                .filter(|(_, part)| part.read().use_changing_type)
+                .map(|(position, _)| position)
+                .collect(),
+        );
         // Go `TableFromMeta` keeps every index that is not `StateNone`
         // (`tables.go`): one a DDL is still adding or dropping is maintained
         // by DML according to its state, though no reader sees it. Skipping
@@ -753,11 +800,20 @@ pub fn cluster_table(
             if clustered_primary {
                 continue;
             }
-            // A key part over a column that is not public yet (an index
-            // added with its column in one multi-schema change) has no
-            // public offset to write from; such an index stays unwritten
-            // rather than costing the whole table.
-            let Ok(nonpublic) = kv_index(&index, &kv_table.columns) else {
+            // A key part may address a column a DDL is adding or changing,
+            // which the write row carries past the public columns.
+            let write_columns: Vec<KvColumn> = kv_table
+                .columns
+                .iter()
+                .cloned()
+                .chain(
+                    kv_table
+                        .nonpublic_columns()
+                        .iter()
+                        .map(|column| column.column.clone()),
+                )
+                .collect();
+            let Ok(nonpublic) = kv_index(&index, &write_columns) else {
                 continue;
             };
             kv_table.add_nonpublic_index(nonpublic, index.state, index.backfill_state);

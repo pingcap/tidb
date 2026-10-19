@@ -49,6 +49,10 @@ pub struct ReorgBatch {
     /// Row keys the batch locks (Go `txn.LockKeys` in the backfill), for the
     /// caller to commit as lock-only mutations with the batch.
     pub locks: Vec<Vec<u8>>,
+    /// A column rewrite's per-row warnings (Go `backfillTaskContext.warnings`
+    /// and `warningsCount`): each code's first warning and how often it
+    /// recurred, for the job's `ReorgMeta`.
+    pub warnings: Vec<(u16, String, i64)>,
 }
 
 /// Go `kv.Key.Next`.
@@ -423,5 +427,172 @@ impl KvTable {
                     .join("-")
             })
             .unwrap_or_default()
+    }
+}
+
+impl KvTable {
+    /// Go `updateColumnWorker.BackfillData`: one batch of a MODIFY COLUMN's
+    /// row rewrite over `[start, end)`. Each row not yet carrying the
+    /// changing column (DML writes it once the column exists) gets the old
+    /// column's value cast into it (`getRowRecord`) and is written back. The
+    /// changing column is the non-public column at `changing`; the old one
+    /// the public column at `old_offset`.
+    ///
+    /// A cast failure is the job's error (`reformatErrors`); a warning is
+    /// counted by code. `cast_context` is the job's reorganization context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_column_batch(
+        &mut self,
+        old_offset: usize,
+        changing: usize,
+        start: &[u8],
+        end: &[u8],
+        batch_count: usize,
+        decode_context: &RowDecodeContext,
+        cast_context: &crate::StmtContext,
+    ) -> Result<ReorgBatch, KvTableError> {
+        let target = self
+            .nonpublic_columns
+            .get(changing)
+            .ok_or_else(|| {
+                KvTableError::Decode("the changing column is not on the table".to_owned())
+            })?
+            .column
+            .clone();
+        let old_name = self
+            .columns
+            .get(old_offset)
+            .ok_or_else(|| {
+                KvTableError::Decode("the modified column is not on the table".to_owned())
+            })?
+            .name
+            .clone();
+        let zone = decode_context.zone().clone();
+        let decoder = self.row_decoder_projected(None, decode_context)?;
+        let types: std::collections::BTreeMap<i64, tidb_datatype::FieldType> = self
+            .nonpublic_columns
+            .iter()
+            .map(|column| (column.column.id, column.column.field_type.clone()))
+            .collect();
+        let mut rows = Vec::new();
+        let mut task_done = false;
+        {
+            let mut iter = self.store.iter(
+                Some(&Key::from_bytes(start.to_vec())),
+                Some(&Key::from_bytes(end.to_vec())),
+            )?;
+            loop {
+                if !iter.valid() {
+                    task_done = true;
+                    break;
+                }
+                if rows.len() >= batch_count {
+                    break;
+                }
+                let key = iter.key().as_bytes().to_vec();
+                if key.as_slice() >= end {
+                    task_done = true;
+                    break;
+                }
+                rows.push((key, iter.value().to_vec()));
+                iter.next()?;
+            }
+            iter.close();
+        }
+        if rows.is_empty() {
+            task_done = true;
+        }
+        let next_key = if task_done {
+            end.to_vec()
+        } else {
+            key_next(&rows.last().expect("a full batch has rows").0)
+        };
+        let mut batch = ReorgBatch {
+            next_key,
+            done: task_done,
+            ..ReorgBatch::default()
+        };
+        // Go `null` -> NOT NULL TIMESTAMP: the current timestamp stands in.
+        let substitute = (self.columns[old_offset].field_type.code()
+            != tidb_datatype::FieldTypeCode::Timestamp)
+            .then(|| super::null_timestamp_substitute(&target.field_type, cast_context))
+            .flatten();
+        let flags = cast_context.reorg_default_conversion_flags();
+        let statement_warnings = cast_context.take_warnings();
+        let mut warnings: Vec<(u16, String, i64)> = Vec::new();
+        let mut failure = None;
+        for (key, value) in rows {
+            batch.scanned += 1;
+            let stored = tidb_tablecodec::decode_table_row_to_map(&value, &types, Some(&zone))
+                .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+            // Go: "The column is already added by update or insert
+            // statement, skip it."
+            if stored.contains_key(&target.id) {
+                continue;
+            }
+            let (handle, public_row) = decoder.decode_record(&key, &value)?;
+            let mut old_value = public_row
+                .get(old_offset)
+                .cloned()
+                .unwrap_or(tidb_datatype::Datum::Null);
+            if let (true, Some(substitute)) = (old_value.is_null(), substitute.as_ref()) {
+                old_value = substitute.clone();
+            }
+            let converted = match crate::driver::cast_table_value_with_flags(
+                old_value.clone(),
+                &target.field_type,
+                &target.name,
+                cast_context,
+                flags,
+                false,
+            ) {
+                Ok(converted) => converted,
+                Err(error) => {
+                    let reported = error.to_mysql_error();
+                    failure = Some(KvTableError::ColumnCast(super::reformat_reorg_error(
+                        reported.code,
+                        reported.message,
+                        &old_name,
+                        &old_value,
+                    )));
+                    break;
+                }
+            };
+            if let Some((_, code, message)) = cast_context.take_warnings().into_iter().next() {
+                let warning = super::reformat_reorg_error(code, message, &old_name, &old_value);
+                match warnings
+                    .iter_mut()
+                    .find(|(seen, _, _)| *seen == warning.code)
+                {
+                    Some((_, _, count)) => *count += 1,
+                    None => warnings.push((warning.code, warning.message, 1)),
+                }
+            }
+            // The row as Go re-encodes it: every column it has, with the
+            // changing column's value added.
+            let mut write_row = public_row;
+            for (position, column) in self.nonpublic_columns.iter().enumerate() {
+                write_row.push(if position == changing {
+                    converted.clone()
+                } else {
+                    stored
+                        .get(&column.column.id)
+                        .cloned()
+                        .unwrap_or(tidb_datatype::Datum::Null)
+                });
+            }
+            let encoded = self.encode_row_value(&write_row, &zone)?;
+            let _ = handle;
+            self.store.set(Key::from_bytes(key), encoded)?;
+            batch.added += 1;
+        }
+        for (level, code, message) in statement_warnings {
+            cast_context.append_leveled(level, code, &message);
+        }
+        if let Some(failure) = failure {
+            return Err(failure);
+        }
+        batch.warnings = warnings;
+        Ok(batch)
     }
 }

@@ -4693,6 +4693,21 @@ pub(super) fn prepare_modify_column(
     // for MODIFY any more than it does for RENAME.
     let preserve_origin_default = table.columns[offset].field_type == field_type;
     let previous_origin_default = table.columns[offset].origin_default.clone();
+    // Go `checkModifyGeneratedColumn` -> `findPositionRelativeColumn` is
+    // the executor's only look at the position: a missing AFTER column is
+    // `ErrBadField` in 'generated column function'.
+    if let tidb_ast::ColumnPosition::After(anchor) = position {
+        if !table
+            .columns()
+            .iter()
+            .any(|column| column.name.eq_ignore_ascii_case(anchor))
+        {
+            return Err(DriverError::Mysql(crate::MysqlError::new(
+                tidb_error::mysql::errcode::ErrBadField,
+                format!("Unknown column '{anchor}' in 'generated column function'"),
+            )));
+        }
+    }
     let new_position = column_changes::position(table, position, Some(offset), table_name)?;
     let generated =
         super::generated_modify::build(table, offset, def, &field_type, new_position, ctx)?;

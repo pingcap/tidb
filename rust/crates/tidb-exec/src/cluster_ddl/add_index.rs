@@ -28,6 +28,9 @@ use super::*;
 /// Go `meta.IndexElementKey`.
 pub const INDEX_ELEMENT_KEY: &[u8] = b"_idx_";
 
+/// Go `meta.ColumnElementKey`.
+pub const COLUMN_ELEMENT_KEY: &[u8] = b"_col_";
+
 /// Go `ingest.LitInitialized`: this node has no Lightning ingest backend,
 /// so a fast reorganization falls back to the transactional merge.
 const LIGHTNING_INITIALIZED: bool = false;
@@ -57,10 +60,40 @@ pub struct AddIndexReorg {
     pub context: DdlStatementContext,
     /// The job's row count, where the reorganization's count starts.
     pub row_count: i64,
+    /// For a MODIFY COLUMN's row-rewrite stage, the column it rewrites (the
+    /// reorganization's element is then the changing column, not an index).
+    pub column: Option<ColumnReorgSpec>,
+}
+
+/// What a MODIFY COLUMN's row rewrite reorganizes: Go's column element.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColumnReorgSpec {
+    /// The column being changed.
+    pub old_column_id: i64,
+    /// The temporary column the rows get, the reorganization's element.
+    pub changing_column_id: i64,
+}
+
+/// A data check a step asks the owner to run outside the job's
+/// transaction, as Go's owner runs `checkModifyColumnData` through its
+/// session (Go `ExecRestrictedSQL`).
+#[derive(Clone, Debug)]
+pub struct ColumnDataCheck {
+    /// The database's name.
+    pub schema: String,
+    /// The table as the job sees it.
+    pub table: Box<TableInfo>,
+    /// The column whose rows are checked.
+    pub old_column_id: i64,
+    /// The type the rows must fit.
+    pub new_column: Box<tidb_model::ColumnInfo>,
+    /// Go `checkValueRange`: whether the values must fit the new type, or
+    /// only be non-NULL.
+    pub check_value_range: bool,
 }
 
 /// The phase of the reorganization the owner runs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum ReorgStageRequest {
     /// Go `getReorgInfo` with `SnapshotVer == 0`: take a fresh version,
     /// find the first physical table's range (or check the work can be
@@ -68,6 +101,8 @@ pub enum ReorgStageRequest {
     Init,
     /// Go `runReorgJob`: resume from the persisted handle.
     Run(ReorgHandle),
+    /// Go `checkModifyColumnData`.
+    Check(ColumnDataCheck),
 }
 
 /// One `mysql.tidb_ddl_reorg` row.
@@ -92,6 +127,11 @@ pub struct ReorgOutcome {
     pub job_id: i64,
     /// Whether it was the temporary-index merge.
     pub merging: bool,
+    /// The column it rewrote, for a MODIFY COLUMN's row rewrite.
+    pub column: Option<ColumnReorgSpec>,
+    /// A row rewrite's warnings (Go `backfillTaskContext.warnings`): each
+    /// code's first warning and its count.
+    pub warnings: Vec<(u16, String, i64)>,
     /// The result.
     pub result: ReorgResult,
 }
@@ -123,6 +163,9 @@ pub enum ReorgResult {
     /// (Go `isReorgRunnable`: cancelling or pausing); the handle holds where
     /// it got to.
     Interrupted,
+    /// A column check ran: `None` when every row fits, else the error Go's
+    /// `checkModifyColumnData` answers (`checked == true`).
+    Checked(Option<(u16, String)>),
 }
 
 /// The ADD INDEX submission's answer.
@@ -332,7 +375,7 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
 }
 
-fn unsupported_partial_index() -> DdlPlanError {
+pub(super) fn unsupported_partial_index() -> DdlPlanError {
     coded_refusal(
         tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
         "Unsupported add partial index: add partial index without fast reorg is not supported",
@@ -341,7 +384,7 @@ fn unsupported_partial_index() -> DdlPlanError {
 
 /// Go `NewDDLReorgMeta` + `initJobReorgMetaFromVariables` for ADD INDEX on
 /// the classic kernel.
-fn new_add_index_reorg_meta(
+pub(super) fn new_add_index_reorg_meta(
     context: &tidb_executor::StmtContext,
     schema: &str,
     store_count: usize,
@@ -373,7 +416,7 @@ fn new_add_index_reorg_meta(
 
 /// Go `newReorgSessCtx` / `ReorgMeta.Location.GetLocation`: the job's SQL
 /// mode and time zone as the reorganization's statement context.
-fn reorg_statement_context(job: &Job) -> tidb_executor::StmtContext {
+pub(super) fn reorg_statement_context(job: &Job) -> tidb_executor::StmtContext {
     let utc = tidb_datatype::SessionTimeZone::utc();
     let zone = job
         .reorg_meta
@@ -412,7 +455,7 @@ fn reorg_statement_context(job: &Job) -> tidb_executor::StmtContext {
         .for_reorg()
 }
 
-fn job_batch_size(job: &Job) -> usize {
+pub(super) fn job_batch_size(job: &Job) -> usize {
     let defaults = tidb_model::DDLReorgProcessDefaults::new(
         || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT,
         || tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE,
@@ -442,7 +485,7 @@ pub(super) fn partition_ids(table: &TableInfo) -> Vec<i64> {
 }
 
 /// The physical tables a non-global index's entries live under.
-fn physical_ids(table: &TableInfo) -> Vec<i64> {
+pub(super) fn physical_ids(table: &TableInfo) -> Vec<i64> {
     let partitions = partition_ids(table);
     if partitions.is_empty() {
         vec![table.id]
@@ -452,7 +495,7 @@ fn physical_ids(table: &TableInfo) -> Vec<i64> {
 }
 
 /// Go `pickBackfillType`.
-fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
+pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
     let Some(meta) = job.reorg_meta.as_ref() else {
         return tidb_model::ReorgType::TXN;
     };
@@ -783,25 +826,6 @@ fn plan_write_reorganization<S: MetaSnapshot>(
     is_pk: bool,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
-    let reorg_type = pick_backfill_type(&active.job);
-    let backfill_state = indexes[0].read().backfill_state;
-    let merging =
-        reorg_type.need_merge_process() && backfill_state == tidb_model::BackfillState::MERGING;
-    // A merge's reorg phases are its own: an outcome from the backfill phase
-    // is not the merge's.
-    let outcome =
-        outcome.filter(|outcome| outcome.job_id == active.job.id && outcome.merging == merging);
-    if reorg_type.need_merge_process()
-        && backfill_state == tidb_model::BackfillState::READY_TO_MERGE
-    {
-        // Go: ReadyToMerge -> Merging, with a fresh snapshot for the merge.
-        for index in &indexes {
-            index.write().backfill_state = tidb_model::BackfillState::MERGING;
-        }
-        active.job.snapshot_version = 0;
-        let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
-        return Ok(action_step(write));
-    }
     let analyze_state = active
         .job
         .reorg_meta
@@ -810,52 +834,13 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             meta.read().analyze_state
         });
     if analyze_state == tidb_model::reorg::analyze_state::NONE {
-        let request = |stage: ReorgStageRequest| AddIndexReorg {
-            job_id: active.job.id,
-            stage,
-            table: Box::new(info.clone_like_go()),
-            index_ids: indexes.iter().map(|index| index.read().id).collect(),
-            merging,
-            physical_ids: physical_ids(&info),
-            batch_size: job_batch_size(&active.job),
-            context: DdlStatementContext(reorg_statement_context(&active.job)),
-            row_count: active.job.row_count,
-        };
-        let finished = match outcome.map(|outcome| &outcome.result) {
-            // Go `getReorgInfo`: the first visit persists the snapshot.
-            None if active.job.snapshot_version == 0 => {
-                return Ok(reorg_step(&active.job, request(ReorgStageRequest::Init)))
-            }
-            Some(ReorgResult::Initialized(version)) => {
-                active.job.snapshot_version = *version;
-                let write = job_only_write(active.job.id, Vec::new());
-                return Ok(action_step(write));
-            }
-            None | Some(ReorgResult::Interrupted) => {
-                let handle = load_reorg_handle(snapshot, catalog, active)?;
-                return Ok(reorg_step(
-                    &active.job,
-                    request(ReorgStageRequest::Run(handle)),
-                ));
-            }
-            Some(ReorgResult::Progress(rows)) => {
-                // Go `onCreateIndex` on `ErrWaitReorgTimeout`: the job keeps
-                // its state and records the count so far.
-                active.job.row_count = *rows;
-                return Ok(action_step(job_only_write(active.job.id, Vec::new())));
-            }
-            Some(ReorgResult::Skipped) => active.job.row_count,
-            Some(ReorgResult::Done(rows)) => *rows,
-            Some(ReorgResult::Failed {
-                code,
-                message,
-                rows,
-            }) => {
-                // Go `runReorgJob` records the count, then
-                // `runReorgJobAndHandleErr` turns a non-retryable failure
+        match do_reorg_work_for_create_index(
+            snapshot, catalog, active, &info, &indexes, outcome, start_ts,
+        )? {
+            CreateIndexReorg::Step(step) => return Ok(step),
+            CreateIndexReorg::Failed(error) => {
+                // Go `runReorgJobAndHandleErr` turns a non-retryable failure
                 // into a rollback.
-                active.job.row_count = *rows;
-                let error = coded_refusal(*code, message.clone());
                 let (write, error) =
                     convert_add_index_to_rollback(active, &mut info, &indexes, error)?;
                 return Ok(PersistedDdlActionStep {
@@ -865,20 +850,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
                     reorg: None,
                 });
             }
-        };
-        active.job.row_count = finished;
-        if reorg_type.need_merge_process() {
-            if backfill_state == tidb_model::BackfillState::RUNNING {
-                for index in &indexes {
-                    index.write().backfill_state = tidb_model::BackfillState::READY_TO_MERGE;
-                }
-                let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
-                return Ok(action_step(write));
-            }
-            // The merge finished: no more double writes.
-            for index in &indexes {
-                index.write().backfill_state = tidb_model::BackfillState::INAPPLICABLE;
-            }
+            CreateIndexReorg::Done => {}
         }
         // Go: no analyze for a job whose `tidb_enable_ddl_analyze` is off.
         if let Some(meta) = &active.job.reorg_meta {
@@ -958,6 +930,129 @@ fn plan_write_reorganization<S: MetaSnapshot>(
         run_error: None,
         reorg: None,
     })
+}
+
+/// What one visit of Go `doReorgWorkForCreateIndex` came to.
+pub(super) enum CreateIndexReorg {
+    /// The step to take: a reorganization request, a recorded count, or a
+    /// backfill-state change.
+    Step(PersistedDdlActionStep),
+    /// The indexes are backfilled (and merged); the caller moves on in this
+    /// same visit.
+    Done,
+    /// The reorganization failed with this error; the job's row count is
+    /// recorded.
+    Failed(DdlPlanError),
+}
+
+/// Go `doReorgWorkForCreateIndex` over `indexes` of `info`: the
+/// transactional backfill, and for a merge reorganization the
+/// running -> ready-to-merge -> merging -> inapplicable backfill states,
+/// each persisted by its own step. The owner runs a requested
+/// reorganization and hands its [`ReorgOutcome`] to the next visit.
+pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    info: &TableInfo,
+    indexes: &[GoShared<IndexInfo>],
+    outcome: Option<&ReorgOutcome>,
+    start_ts: u64,
+) -> Result<CreateIndexReorg, DdlPlanError> {
+    let database_id = active.job.schema_id;
+    let reorg_type = pick_backfill_type(&active.job);
+    let backfill_state = indexes[0].read().backfill_state;
+    let merging =
+        reorg_type.need_merge_process() && backfill_state == tidb_model::BackfillState::MERGING;
+    // A merge's reorg phases are its own: an outcome from the backfill phase
+    // is not the merge's.
+    let outcome = outcome.filter(|outcome| {
+        outcome.job_id == active.job.id && outcome.merging == merging && outcome.column.is_none()
+    });
+    if reorg_type.need_merge_process()
+        && backfill_state == tidb_model::BackfillState::READY_TO_MERGE
+    {
+        // Go: ReadyToMerge -> Merging, with a fresh snapshot for the merge.
+        for index in indexes {
+            index.write().backfill_state = tidb_model::BackfillState::MERGING;
+        }
+        active.job.snapshot_version = 0;
+        let write = table_step(catalog, active, database_id, info, true, start_ts)?;
+        return Ok(CreateIndexReorg::Step(action_step(write)));
+    }
+    let request =
+        |active: &crate::ddl_job_table::ActiveDdlJob, stage: ReorgStageRequest| AddIndexReorg {
+            job_id: active.job.id,
+            stage,
+            table: Box::new(info.clone_like_go()),
+            index_ids: indexes.iter().map(|index| index.read().id).collect(),
+            merging,
+            physical_ids: physical_ids(info),
+            batch_size: job_batch_size(&active.job),
+            context: DdlStatementContext(reorg_statement_context(&active.job)),
+            row_count: active.job.row_count,
+            column: None,
+        };
+    let finished = match outcome.map(|outcome| &outcome.result) {
+        // Go `getReorgInfo`: the first visit persists the snapshot.
+        None if active.job.snapshot_version == 0 => {
+            let reorg = request(active, ReorgStageRequest::Init);
+            return Ok(CreateIndexReorg::Step(reorg_step(&active.job, reorg)));
+        }
+        Some(ReorgResult::Initialized(version)) => {
+            active.job.snapshot_version = *version;
+            let write = job_only_write(active.job.id, Vec::new());
+            return Ok(CreateIndexReorg::Step(action_step(write)));
+        }
+        None | Some(ReorgResult::Interrupted) => {
+            let handle = load_reorg_handle(snapshot, catalog, active)?;
+            let reorg = request(active, ReorgStageRequest::Run(handle));
+            return Ok(CreateIndexReorg::Step(reorg_step(&active.job, reorg)));
+        }
+        Some(ReorgResult::Progress(rows)) => {
+            // Go `onCreateIndex` on `ErrWaitReorgTimeout`: the job keeps
+            // its state and records the count so far.
+            active.job.row_count = *rows;
+            return Ok(CreateIndexReorg::Step(action_step(job_only_write(
+                active.job.id,
+                Vec::new(),
+            ))));
+        }
+        Some(ReorgResult::Checked(_)) => {
+            return Err(DdlPlanError::Encode(
+                "an index reorganization got a column check's outcome".to_owned(),
+            ))
+        }
+        Some(ReorgResult::Skipped) => active.job.row_count,
+        Some(ReorgResult::Done(rows)) => *rows,
+        Some(ReorgResult::Failed {
+            code,
+            message,
+            rows,
+        }) => {
+            // Go `runReorgJob` records the count first.
+            active.job.row_count = *rows;
+            return Ok(CreateIndexReorg::Failed(coded_refusal(
+                *code,
+                message.clone(),
+            )));
+        }
+    };
+    active.job.row_count = finished;
+    if reorg_type.need_merge_process() {
+        if backfill_state == tidb_model::BackfillState::RUNNING {
+            for index in indexes {
+                index.write().backfill_state = tidb_model::BackfillState::READY_TO_MERGE;
+            }
+            let write = table_step(catalog, active, database_id, info, true, start_ts)?;
+            return Ok(CreateIndexReorg::Step(action_step(write)));
+        }
+        // The merge finished: no more double writes.
+        for index in indexes {
+            index.write().backfill_state = tidb_model::BackfillState::INAPPLICABLE;
+        }
+    }
+    Ok(CreateIndexReorg::Done)
 }
 
 /// Go `convertAddIdxJob2RollbackJob`: the indexes back to delete-only, the
@@ -1199,7 +1294,7 @@ pub(super) fn plan_cancel_add_index(
 }
 
 /// Go `getDDLReorgHandle`: the job's `mysql.tidb_ddl_reorg` row.
-fn load_reorg_handle<S: MetaSnapshot>(
+pub(super) fn load_reorg_handle<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &crate::ddl_job_table::ActiveDdlJob,

@@ -759,6 +759,22 @@ pub trait IndexBackfiller {
     /// One unit of ADD INDEX's transactional reorganization through a batch
     /// transaction's snapshot and buffer (Go's backfill workers). The caller
     /// commits the buffer, with the batch's row locks, in that transaction.
+    /// Go `checkForNullValue`'s query: whether `table` holds a NULL in
+    /// column `column_id`, read through a submitting transaction's snapshot.
+    fn has_null_value(
+        &self,
+        _table: &tidb_model::TableInfo,
+        _column_id: i64,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
+    ) -> Result<bool, LockSqlError> {
+        Err(LockSqlError {
+            code: 1105,
+            state: *b"HY000",
+            message: "this path cannot read a table's rows".to_owned(),
+        })
+    }
+
     fn reorg_add_index(
         &self,
         _reorg: &crate::cluster_ddl::add_index::AddIndexReorg,
@@ -798,6 +814,18 @@ pub enum AddIndexReorgWork<'a> {
         /// The range's end.
         end: &'a [u8],
     },
+    /// Go `updateColumnWorker.BackfillData` over the rows in
+    /// `[start, end)` (the reorganization's `column`).
+    UpdateColumn {
+        /// The physical table.
+        physical_id: i64,
+        /// The batch's first key.
+        start: &'a [u8],
+        /// The range's end.
+        end: &'a [u8],
+    },
+    /// Go `checkModifyColumnData` over the whole table.
+    CheckColumn(&'a crate::cluster_ddl::add_index::ColumnDataCheck),
     /// Go `mergeIndexWorker.BackfillData` over one index's temporary
     /// entries in `[start, end)`.
     Merge {
@@ -818,6 +846,8 @@ pub enum AddIndexReorgAnswer {
     Range(Option<(Vec<u8>, Vec<u8>)>),
     /// What a batch did.
     Batch(tidb_executor::kv_table::ReorgBatch),
+    /// What a column check found: `None` when every row fits.
+    Checked(Option<LockSqlError>),
 }
 
 /// The default for a backfiller that cannot read a table's stored bytes.
@@ -1421,6 +1451,7 @@ pub fn submit_persisted_job_with_retry<
     timeout: Duration,
     upgrading: bool,
     min_job_id: i64,
+    backfiller: &dyn IndexBackfiller,
 ) -> Result<AddIndexSubmitted, ClusterDdlError> {
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
     let store_count = opener
@@ -1502,6 +1533,40 @@ pub fn submit_persisted_job_with_retry<
                     start_ts,
                     upgrading,
                     min_job_id,
+                )
+            }
+            DdlStatement::ModifyColumn { .. } | DdlStatement::RenameColumn { .. } => {
+                let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+                slot.lock()
+                    .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
+                    .bind(
+                        preparation
+                            .snapshot()
+                            .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+                    );
+                let snapshot_handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
+                let buffer = MutationBuffer::new();
+                let mut has_null = |table: &tidb_model::TableInfo, column_id: i64| {
+                    backfiller
+                        .has_null_value(table, column_id, Arc::clone(&snapshot_handle), &buffer)
+                        .map_err(|error| {
+                            DdlPlanError::Admission(
+                                crate::table_info_build::DdlAdmissionError::with_code(
+                                    error.code,
+                                    error.message,
+                                ),
+                            )
+                        })
+                };
+                crate::cluster_ddl::modify_column::prepare_modify_column_job_submission(
+                    &mut snapshot,
+                    statement,
+                    job_context,
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                    store_count,
+                    &mut has_null,
                 )
             }
             DdlStatement::AddColumn { .. } => {

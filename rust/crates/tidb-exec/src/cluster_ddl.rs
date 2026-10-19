@@ -3112,6 +3112,7 @@ fn prepare_modify_column(
     context: &DdlStatementContext,
     rename_from: Option<&str>,
     modify_column_type: Option<tidb_executor::ddl::modify_column_type::ModifyColumnType>,
+    executor_only: bool,
 ) -> Result<PreparedModifyColumn, DdlPlanError> {
     use tidb_executor::ddl::modify_column_type::{
         get_modify_column_type, modify_column_type as adjust, no_reorg_data_strict,
@@ -3231,12 +3232,17 @@ fn prepare_modify_column(
     // Go `modify_column.go:700`: `MODIFY COLUMN b AFTER b` names
     // the column as its own anchor, which Go answers as
     // ErrColumnNotExists on THAT column rather than as a no-op.
-    if let tidb_ast::ColumnPosition::After(anchor) = requested_position {
-        if anchor.go_to_lower() == wanted {
-            return Err(DdlPlanError::UnknownColumn {
-                column: rename_from.unwrap_or(column.name.as_str()).to_owned(),
-                table: table.to_owned(),
-            });
+    // Go's executor leaves the position to the owner
+    // (`adjustTableInfoAfterModifyColumn`, `validatePosition`), which rolls
+    // a queued job back; the one-transaction path answers here.
+    if !executor_only {
+        if let tidb_ast::ColumnPosition::After(anchor) = requested_position {
+            if anchor.go_to_lower() == wanted {
+                return Err(DdlPlanError::UnknownColumn {
+                    column: rename_from.unwrap_or(column.name.as_str()).to_owned(),
+                    table: table.to_owned(),
+                });
+            }
         }
     }
     // Go: "As same with MySQL, we don't support modifying the stored status
@@ -3261,7 +3267,9 @@ fn prepare_modify_column(
     // Unlike ADD COLUMN, the column is already AT its offset, so the
     // destination is located against that rather than against an
     // appended tail (Go `modify_column.go:704`).
-    locate_offset_to_move(position, requested_position, stored)?;
+    if !executor_only {
+        locate_offset_to_move(position, requested_position, stored)?;
+    }
     let facts = ModifyColumnFacts {
         column_indexed: indexed,
         partitioned: stored.partition.is_some(),
@@ -3758,6 +3766,7 @@ fn prepare_cluster_columns(
                     context,
                     rename_from.as_deref(),
                     *modify_column_type,
+                    false,
                 ) {
                     Ok(modified) => modified,
                     // Go resolves an `AFTER` column while the job runs, which
@@ -6205,6 +6214,7 @@ pub mod create_table;
 pub mod drop_column;
 pub mod drop_index;
 pub mod drop_object;
+pub mod modify_column;
 pub mod rename_table;
 pub mod truncate;
 
@@ -6232,6 +6242,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_TRUNCATE_TABLE
             | ActionType::ACTION_ADD_COLUMN
             | ActionType::ACTION_DROP_COLUMN
+            | ActionType::ACTION_MODIFY_COLUMN
     ) || alter_table::ALTER_TABLE_ACTIONS.contains(&action)
 }
 
@@ -6305,6 +6316,15 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 ),
                 ActionType::ACTION_DROP_COLUMN => {
                     drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts)
+                }
+                ActionType::ACTION_MODIFY_COLUMN => {
+                    modify_column::plan_persisted_modify_column_job_step(
+                        snapshot,
+                        catalog,
+                        active,
+                        start_ts,
+                        reorg_outcome.as_ref(),
+                    )
                 }
                 action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
                     alter_table::plan_persisted_alter_table_job_step(
@@ -7901,6 +7921,9 @@ fn plan_cancel_persisted_ddl_job(
         }
         ActionType::ACTION_DROP_COLUMN => {
             return drop_column::plan_cancel_drop_column(catalog, active);
+        }
+        ActionType::ACTION_MODIFY_COLUMN => {
+            return modify_column::plan_cancel_modify_column(catalog, active);
         }
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
             return alter_table::plan_cancel_alter_table(catalog, active);
@@ -11636,6 +11659,7 @@ pub fn plan_ddl_with_auto_ids<S: MetaSnapshot>(
                 context,
                 rename_from.as_deref(),
                 *modify_column_type,
+                false,
             )?;
             let old_id = prepared.id;
             let mut info = stored.clone_like_go();

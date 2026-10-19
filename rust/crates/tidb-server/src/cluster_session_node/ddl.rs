@@ -2554,6 +2554,8 @@ where
                     | DdlStatement::CreateDatabase { .. }
                     | DdlStatement::RenameTable { .. }
                     | DdlStatement::RenameTables { .. }
+                    | DdlStatement::ModifyColumn { .. }
+                    | DdlStatement::RenameColumn { .. }
             )
             || tidb_exec::cluster_ddl::alter_table::is_alter_table_statement(statement)
         {
@@ -2568,6 +2570,7 @@ where
                 self.timeout,
                 self.server_state.is_upgrading_state(),
                 self.min_job_id_refresher.current_min_job_id(),
+                &KvTableIndexBackfiller::default(),
             )
             .map_err(cluster_ddl_error)?
             {
@@ -2850,6 +2853,42 @@ impl IndexBackfiller for KvTableIndexBackfiller {
     /// indexes being added written as the table's own: the backfill writes
     /// their real keys (Go `FromBackfill`), and the merge replays the
     /// temporary entries onto them.
+    fn has_null_value(
+        &self,
+        table: &tidb_model::TableInfo,
+        column_id: i64,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<bool, LockSqlError> {
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let mut kv_table = cluster_table(table, &storage, &AutoIdSource::Unavailable)
+            .map_err(exchange_validation_internal)?;
+        let Some(offset) = kv_table
+            .columns
+            .iter()
+            .position(|column| column.id == column_id)
+        else {
+            return Ok(false);
+        };
+        // A NULL is what a NOT NULL copy of the column refuses.
+        let not_null = kv_table.columns[offset]
+            .field_type
+            .clone()
+            .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        let found = kv_table
+            .check_modify_column_data(
+                offset,
+                &not_null,
+                false,
+                &tidb_executor::StmtContext::for_query(),
+            )
+            .map_err(backfill_failure)?;
+        Ok(matches!(
+            found,
+            Some(tidb_executor::kv_table::KvTableError::InvalidUseOfNull)
+        ))
+    }
+
     fn reorg_add_index(
         &self,
         reorg: &tidb_exec::cluster_ddl::add_index::AddIndexReorg,
@@ -2859,6 +2898,36 @@ impl IndexBackfiller for KvTableIndexBackfiller {
     ) -> Result<tidb_exec::real_tikv_ddl::AddIndexReorgAnswer, LockSqlError> {
         use tidb_exec::real_tikv_ddl::{AddIndexReorgAnswer, AddIndexReorgWork};
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let context = &reorg.context.0;
+        // Go `checkModifyColumnData` reads the table as it stands.
+        if let AddIndexReorgWork::CheckColumn(check) = &work {
+            let mut table = cluster_table(&check.table, &storage, &AutoIdSource::Unavailable)
+                .map_err(exchange_validation_internal)?
+                .with_new_collation_mode(tidb_datatype::new_collation_enabled());
+            let offset = table
+                .columns
+                .iter()
+                .position(|column| column.id == check.old_column_id)
+                .ok_or_else(|| {
+                    exchange_validation_internal("the modified column is absent".to_owned())
+                })?;
+            let found = table
+                .check_modify_column_data(
+                    offset,
+                    &check.new_column.field_type,
+                    check.check_value_range,
+                    context,
+                )
+                .map_err(backfill_failure)?;
+            return Ok(AddIndexReorgAnswer::Checked(found.map(|error| {
+                let error = tidb_executor::ddl::modify_column_error(error).to_mysql_error();
+                LockSqlError {
+                    code: error.code,
+                    state: error.state,
+                    message: error.message,
+                }
+            })));
+        }
         let info = reorg.table.clone_like_go();
         for index in info.indices.iter_deref() {
             let mut index = index.write();
@@ -2867,11 +2936,63 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 index.backfill_state = tidb_model::BackfillState::INAPPLICABLE;
             }
         }
-        let context = &reorg.context.0;
+        // A MODIFY COLUMN's changing indexes are backfilled from its changing
+        // column, which the row rewrite filled: the backfill reads it as an
+        // ordinary column.
+        if reorg.column.is_none() {
+            for column in info.columns.iter_deref() {
+                let mut column = column.write();
+                if column.change_state_info.is_some()
+                    && column.state != tidb_model::SchemaState::PUBLIC
+                {
+                    column.state = tidb_model::SchemaState::PUBLIC;
+                }
+            }
+        }
         let mut table = cluster_table(&info, &storage, &AutoIdSource::Unavailable)
             .map_err(exchange_validation_internal)?
             .with_new_collation_mode(tidb_datatype::new_collation_enabled());
         match work {
+            AddIndexReorgWork::CheckColumn(_) => unreachable!("answered above"),
+            // Go `updateColumnWorker.BackfillData`.
+            AddIndexReorgWork::UpdateColumn { start, end, .. } => {
+                let spec = reorg.column.as_ref().ok_or_else(|| {
+                    exchange_validation_internal("a column rewrite names no column".to_owned())
+                })?;
+                let old_offset = table
+                    .columns
+                    .iter()
+                    .position(|column| column.id == spec.old_column_id)
+                    .ok_or_else(|| {
+                        exchange_validation_internal("the modified column is absent".to_owned())
+                    })?;
+                let changing = table
+                    .nonpublic_columns()
+                    .iter()
+                    .position(|column| column.column.id == spec.changing_column_id)
+                    .ok_or_else(|| {
+                        exchange_validation_internal("the changing column is absent".to_owned())
+                    })?;
+                table
+                    .update_column_batch(
+                        old_offset,
+                        changing,
+                        start,
+                        end,
+                        reorg.batch_size,
+                        &RowDecodeContext::for_ddl(context),
+                        context,
+                    )
+                    .map(AddIndexReorgAnswer::Batch)
+                    .map_err(|error| {
+                        let error = tidb_executor::ddl::modify_column_error(error).to_mysql_error();
+                        LockSqlError {
+                            code: error.code,
+                            state: error.state,
+                            message: error.message,
+                        }
+                    })
+            }
             AddIndexReorgWork::TableRange { physical_id } => table
                 .physical_record_range(physical_id)
                 .map(AddIndexReorgAnswer::Range)

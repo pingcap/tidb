@@ -25,8 +25,8 @@ use tidb_txnkv::transaction::BufferMutation;
 use super::*;
 use crate::cluster_catalog::PagedMetaSnapshot;
 use crate::cluster_ddl::add_index::{
-    AddIndexReorg, ReorgHandle, ReorgOutcome, ReorgResult, ReorgStageRequest, INDEX_ELEMENT_KEY,
-    TEMP_INDEX_PREFIX,
+    AddIndexReorg, ReorgHandle, ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY,
+    INDEX_ELEMENT_KEY, TEMP_INDEX_PREFIX,
 };
 use crate::ddl_reorg_table::DdlReorgTable;
 
@@ -47,6 +47,7 @@ where
     P: StorePdCapability,
 {
     let tables = locate_tables(opener, timeout)?;
+    let mut warnings = Vec::new();
     let result = match &reorg.stage {
         ReorgStageRequest::Init => init_reorg(opener, timeout, backfiller, reorg, &tables)?,
         ReorgStageRequest::Run(handle) => run_reorg(
@@ -57,13 +58,48 @@ where
             &tables,
             handle,
             check_owner,
+            &mut warnings,
         )?,
+        ReorgStageRequest::Check(check) => {
+            reorg_transaction(opener, timeout, |_, snapshot, buffer, _| {
+                let answer = backfiller.reorg_add_index(
+                    reorg,
+                    AddIndexReorgWork::CheckColumn(check),
+                    snapshot,
+                    buffer,
+                );
+                buffer.reset();
+                Ok((answer, Vec::new()))
+            })
+            .and_then(|answer| match answer {
+                Ok(AddIndexReorgAnswer::Checked(found)) => Ok(ReorgResult::Checked(
+                    found.map(|error| (error.code, error.message)),
+                )),
+                Ok(_) => Err(ClusterDdlError::Backfill(
+                    "a column check answered something else".to_owned(),
+                )),
+                // Go: a failure to run the check is retried, not the job's
+                // error.
+                Err(error) => Err(ClusterDdlError::Backfill(error.message)),
+            })?
+        }
     };
     Ok(ReorgOutcome {
         job_id: reorg.job_id,
         merging: reorg.merging,
+        column: reorg.column.clone(),
+        warnings,
         result,
     })
+}
+
+/// The element a reorganization's handle names: the changing column of a
+/// row rewrite, else the first index.
+fn reorg_element(reorg: &AddIndexReorg) -> Option<(i64, &'static [u8])> {
+    match &reorg.column {
+        Some(column) => Some((column.changing_column_id, COLUMN_ELEMENT_KEY)),
+        None => reorg.index_ids.first().map(|id| (*id, INDEX_ELEMENT_KEY)),
+    }
 }
 
 /// Go `cleanupDDLReorgHandles`: best effort, once a job finished.
@@ -244,9 +280,9 @@ fn table_range(
             buffer,
         ) {
             Ok(AddIndexReorgAnswer::Range(range)) => Ok(range),
-            Ok(AddIndexReorgAnswer::Batch(_)) => {
+            Ok(AddIndexReorgAnswer::Batch(_) | AddIndexReorgAnswer::Checked(_)) => {
                 return Err(ClusterDdlError::Backfill(
-                    "a table-range request answered a batch".to_owned(),
+                    "a table-range request answered something else".to_owned(),
                 ))
             }
             Err(error) => Err(error),
@@ -268,9 +304,7 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
-    let first_index = *reorg
-        .index_ids
-        .first()
+    let (first_index, element_type) = reorg_element(reorg)
         .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no index".to_owned()))?;
     let last_index = *reorg.index_ids.last().unwrap_or(&first_index);
     let first_physical = *reorg
@@ -330,7 +364,7 @@ where
             let (start_key, end_key) = first_range.unwrap_or_default();
             ReorgHandle {
                 element_id: first_index,
-                element_type: INDEX_ELEMENT_KEY.to_vec(),
+                element_type: element_type.to_vec(),
                 start_key,
                 end_key,
                 physical_id: first_physical,
@@ -423,6 +457,7 @@ enum BatchStep {
         next_key: Vec<u8>,
         done: bool,
         added: u64,
+        batch_warnings: Vec<(u16, String, i64)>,
     },
     Interrupted,
     Failed(LockSqlError),
@@ -439,12 +474,14 @@ fn run_reorg<C, L, P>(
     tables: &ReorgTables,
     handle: &ReorgHandle,
     check_owner: &dyn Fn() -> Result<(), String>,
+    warnings: &mut Vec<(u16, String, i64)>,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
     C: StoreWriteClient,
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    let element_type = reorg_element(reorg).map_or(INDEX_ELEMENT_KEY, |(_, kind)| kind);
     let first_partition = reorg
         .physical_ids
         .iter()
@@ -495,7 +532,7 @@ where
         for (index_id, start, end) in items {
             current = ReorgHandle {
                 element_id: index_id.unwrap_or(current.element_id),
-                element_type: INDEX_ELEMENT_KEY.to_vec(),
+                element_type: element_type.to_vec(),
                 start_key: start,
                 end_key: end,
                 physical_id: *physical_id,
@@ -515,8 +552,17 @@ where
                         next_key,
                         done,
                         added,
+                        batch_warnings,
                     } => {
                         total += added as i64;
+                        // Go `mergeWarnings`: each code's first warning,
+                        // counted.
+                        for (code, message, count) in batch_warnings {
+                            match warnings.iter_mut().find(|(seen, _, _)| *seen == code) {
+                                Some((_, _, seen_count)) => *seen_count += count,
+                                None => warnings.push((code, message, count)),
+                            }
+                        }
                         current.start_key = next_key;
                         if done {
                             break;
@@ -561,6 +607,11 @@ where
                 start: &current.start_key,
                 end: &current.end_key,
             },
+            None if reorg.column.is_some() => AddIndexReorgWork::UpdateColumn {
+                physical_id: current.physical_id,
+                start: &current.start_key,
+                end: &current.end_key,
+            },
             None => AddIndexReorgWork::Backfill {
                 physical_id: current.physical_id,
                 start: &current.start_key,
@@ -569,9 +620,9 @@ where
         };
         let batch = match backfiller.reorg_add_index(reorg, work, snapshot, buffer) {
             Ok(AddIndexReorgAnswer::Batch(batch)) => batch,
-            Ok(AddIndexReorgAnswer::Range(_)) => {
+            Ok(AddIndexReorgAnswer::Range(_) | AddIndexReorgAnswer::Checked(_)) => {
                 return Err(ClusterDdlError::Backfill(
-                    "a batch request answered a range".to_owned(),
+                    "a batch request answered something else".to_owned(),
                 ))
             }
             Err(error) => {
@@ -611,6 +662,7 @@ where
                 next_key: batch.next_key,
                 done: batch.done,
                 added: batch.added,
+                batch_warnings: batch.warnings,
             },
             mutations,
         ))

@@ -597,6 +597,33 @@ pub struct NonPublicIndex {
     pub backfill_state: tidb_model::BackfillState,
 }
 
+/// A column Go's DDL is adding, dropping or changing (a `ColumnInfo` in a
+/// state other than public and `StateNone`). Only the write path sees it, as
+/// Go's `WritableCols` / `DeletableCols` extend `Cols`: an INSERT writes its
+/// original default (or, for a changing column, the cast of the column it
+/// replaces), an UPDATE keeps what the row holds, and index entries over it
+/// follow its index's state.
+#[derive(Clone, Debug)]
+pub struct NonPublicColumn {
+    /// The column as a write encodes it.
+    pub column: KvColumn,
+    /// Go `ColumnInfo.State`.
+    pub state: tidb_model::SchemaState,
+    /// Go `ChangeStateInfo.DependencyColumnOffset`: for the temporary column
+    /// a MODIFY COLUMN writes, the public column whose value it casts.
+    pub dependency: Option<usize>,
+}
+
+impl NonPublicColumn {
+    /// Go `col.State != StateDeleteOnly && != StateDeleteReorganization`:
+    /// DML writes its value.
+    #[must_use]
+    pub fn is_writable(&self) -> bool {
+        self.state != tidb_model::SchemaState::DELETE_ONLY
+            && self.state != tidb_model::SchemaState::DELETE_REORGANIZATION
+    }
+}
+
 impl NonPublicIndex {
     /// Go `IsIndexWritable`: every state except the two delete-only ones.
     #[must_use]

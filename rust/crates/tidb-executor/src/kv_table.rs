@@ -44,6 +44,7 @@ mod column_deps;
 mod index_entries;
 mod index_reorg;
 mod index_states;
+mod nonpublic_columns;
 mod partition_reorg;
 pub use index_reorg::ReorgBatch;
 pub use partition_reorg::{PartitionDoubleWrite, PartitionIndexMode};
@@ -72,8 +73,8 @@ pub use row_decoder::{
 };
 pub use table_meta::{
     index_ranges_estimated_memory_usage, intersect_index_ranges, FkAction, IndexRange, KvColumn,
-    KvForeignKey, KvIndex, NonPublicIndex, PreparedPointGetDecodeContext, RowDecodeContext,
-    TableCharset, TableHandle,
+    KvForeignKey, KvIndex, NonPublicColumn, NonPublicIndex, PreparedPointGetDecodeContext,
+    RowDecodeContext, TableCharset, TableHandle,
 };
 pub(crate) use table_scan::insert_extra_handle;
 pub use table_scan::{
@@ -524,6 +525,16 @@ pub struct KvTable {
     indexes: std::sync::Arc<Vec<KvIndex>>,
     /// Indexes a DDL is still adding or dropping; written by state only.
     nonpublic_indexes: std::sync::Arc<Vec<NonPublicIndex>>,
+    /// Columns a DDL is adding, dropping or changing. A write row carries
+    /// their values after the public columns (offset `columns.len() + i`),
+    /// which is where a non-public index's key parts address them.
+    nonpublic_columns: std::sync::Arc<Vec<NonPublicColumn>>,
+    /// Go `ColumnInfo.ChangingFieldType` of public columns, by offset: the
+    /// type a MODIFY COLUMN that rewrites no rows is checking writes against.
+    changing_field_types: std::collections::BTreeMap<usize, FieldType>,
+    /// Go `IndexColumn.UseChangingType`, by index id: the key parts whose
+    /// values are cast to their column's changing type.
+    changing_index_parts: std::collections::BTreeMap<i64, Vec<usize>>,
     /// An ongoing partition reorganization, whose writes are mirrored.
     partition_reorg: Option<Box<PartitionDoubleWrite>>,
     /// Go `TableInfo.MaxIndexID`, retained independently of surviving indexes.
@@ -1397,6 +1408,9 @@ impl KvTable {
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
             nonpublic_indexes: std::sync::Arc::new(Vec::new()),
+            nonpublic_columns: std::sync::Arc::new(Vec::new()),
+            changing_field_types: std::collections::BTreeMap::new(),
+            changing_index_parts: std::collections::BTreeMap::new(),
             partition_reorg: None,
             max_index_id: 0,
             partial_index_conditions: std::collections::BTreeMap::new(),
@@ -2990,6 +3004,20 @@ impl KvTable {
             ids.push(column.id);
             values.push(row.get(offset).cloned().unwrap_or(Datum::Null));
         }
+        // Go `AddRecord` / `updateRecord`: a write row past the public
+        // columns carries the writable non-public ones too.
+        if row.len() > self.columns.len() {
+            for (column, value) in self
+                .nonpublic_columns
+                .iter()
+                .zip(&row[self.columns.len()..])
+            {
+                if column.is_writable() {
+                    ids.push(column.column.id);
+                    values.push(value.clone());
+                }
+            }
+        }
         encode_table_row(Some(zone), &values, &ids, true, None)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))
     }
@@ -4495,6 +4523,12 @@ impl KvTable {
         // Re-evaluation here would duplicate warnings and could replace its
         // converted/NULL-substituted generated values before index encoding.
         self.validate_check_constraints(row, ctx)?;
+        self.check_data_for_modify_column(row, stats_ctx)?;
+        // Go `AddRecord` writes `WritableCols`: past the public columns, the
+        // ones a DDL is adding or changing.
+        let write_row =
+            self.insert_write_row(row, stats_ctx, tidb_expr::Columns::type_flags(ctx), &zone)?;
+        let row = write_row.as_deref().unwrap_or(row);
         let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: every record key is unique. A clustered key derives
         // it from visible columns; a heap table derives it from `_tidb_rowid`,
@@ -4749,6 +4783,25 @@ impl KvTable {
         let zone = ctx.session_zone();
         // The shared update owner has already completed generated values.
         self.validate_check_constraints(row, ctx)?;
+        self.check_data_for_modify_column(row, Some(ctx))?;
+        // Go reads `WritableCols` for an UPDATE: the old and new rows carry
+        // the columns a DDL holds in an intermediate state.
+        let write_rows = if self.nonpublic_columns.is_empty() {
+            None
+        } else {
+            let old = match old_row {
+                Some(old) => Some(old.to_vec()),
+                None => self.read_row(handle, &RowDecodeContext::for_write(ctx))?,
+            };
+            match old {
+                Some(old) => self.update_write_rows(handle, &old, row, ctx)?,
+                None => None,
+            }
+        };
+        let (old_row, row) = match &write_rows {
+            Some((old, new)) => (Some(old.as_slice()), new.as_slice()),
+            None => (old_row, row),
+        };
         // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
         // allocator, exactly as an explicit value on INSERT does, so later rows
         // land past the value the UPDATE named. Without this an `UPDATE t SET
@@ -5056,6 +5109,8 @@ impl KvTable {
             || self.partition_reorg.is_some()
         {
             if let Some(row) = self.read_row(handle, &RowDecodeContext::for_write(ctx))? {
+                // Go removes the `DeletableCols` row.
+                let row = self.delete_write_row(handle, &row, ctx)?.unwrap_or(row);
                 self.delete_index_entries(&row, handle, physical_id, &ctx.session_zone())?;
                 removed_row = Some(row);
             }
@@ -5095,6 +5150,9 @@ impl KvTable {
             physical_id,
             &handle.record_handle(),
         ));
+        // Go removes the `DeletableCols` row.
+        let write_row = self.delete_write_row(handle, old_row, ctx)?;
+        let old_row = write_row.as_deref().unwrap_or(old_row);
         if !self.indexes.is_empty() || !self.nonpublic_indexes.is_empty() {
             self.delete_index_entries(old_row, handle, physical_id, &zone)?;
         }

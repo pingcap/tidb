@@ -5587,13 +5587,13 @@ fn global_statistics_skip_missing_partition_like_go() {
     );
 }
 
-/// Pinned DDL subscriber `ActionModifyColumn`: `InsertColStats2KV` is an
-/// `INSERT IGNORE`, but if the histogram is absent it recreates it before
-/// refreshing meta. An original CREATE TABLE column has no origin default,
-/// even when it has a declared INSERT default, so Go records all old rows as
-/// NULL and creates no bucket. Both MODIFY and RENAME COLUMN are this action.
+/// Go writes a modify-column event only when the rows are rewritten
+/// (`doModifyColumnTypeWithData`); a change of metadata alone and a RENAME
+/// COLUMN write none, so the statistics subscriber recreates nothing for
+/// them (oracle: `mysql.tidb_ddl_notifier` gains a row for `INT -> VARCHAR`
+/// only).
 #[test]
-fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
+fn modify_column_ddl_events_follow_go() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
     let mut session = stack
@@ -5639,23 +5639,19 @@ fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
             ),
         );
     };
-    let assert_recreated = |session: &mut ClusterServerSession| {
+    let notifier_rows = |session: &mut ClusterServerSession| {
+        displayed(rows(
+            session,
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier",
+        ))[0][0]
+            .clone()
+    };
+    let assert_absent = |session: &mut ClusterServerSession| {
         assert_eq!(
             displayed(rows(
                 session,
                 &format!(
-                    "SELECT distinct_count, null_count, tot_col_size, stats_ver \
-                     FROM mysql.stats_histograms WHERE table_id = {table_id} \
-                     AND is_index = 0 AND hist_id = {column_id}"
-                ),
-            )),
-            [["0", "3", "0", "0"]]
-        );
-        assert_eq!(
-            displayed(rows(
-                session,
-                &format!(
-                    "SELECT count(*) FROM mysql.stats_buckets WHERE table_id = {table_id} \
+                    "SELECT count(*) FROM mysql.stats_histograms WHERE table_id = {table_id} \
                      AND is_index = 0 AND hist_id = {column_id}"
                 ),
             )),
@@ -5664,20 +5660,32 @@ fn modify_column_ddl_recreates_missing_default_statistics_like_go() {
     };
 
     remove_column_stats(&mut session);
+    let before = notifier_rows(&mut session);
     rows(
         &mut session,
         "ALTER TABLE stats_modify_column MODIFY COLUMN a BIGINT",
     );
+    assert_eq!(notifier_rows(&mut session), before);
     drain_stats_ddl_events(&stack.factory, &mut session);
-    assert_recreated(&mut session);
+    assert_absent(&mut session);
 
-    remove_column_stats(&mut session);
+    let before = notifier_rows(&mut session);
     rows(
         &mut session,
         "ALTER TABLE stats_modify_column RENAME COLUMN a TO b",
     );
+    assert_eq!(notifier_rows(&mut session), before);
     drain_stats_ddl_events(&stack.factory, &mut session);
-    assert_recreated(&mut session);
+    assert_absent(&mut session);
+
+    // A rewrite does write the event.
+    let before = notifier_rows(&mut session);
+    rows(
+        &mut session,
+        "ALTER TABLE stats_modify_column MODIFY COLUMN b VARCHAR(10)",
+    );
+    let after: i64 = notifier_rows(&mut session).parse().unwrap();
+    assert_eq!(after, before.parse::<i64>().unwrap() + 1);
 }
 
 /// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses
@@ -20098,6 +20106,224 @@ fn rename_tables_run_as_persisted_jobs_like_go() {
     assert_eq!(displayed(rows(&mut session, "select * from v2")), [["1"]]);
     rows(&mut session, "insert into a2 values (1)");
     assert_eq!(displayed(rows(&mut session, "select * from a2")), [["1"]]);
+}
+
+/// MODIFY / CHANGE / RENAME COLUMN run as Go's persisted `ActionModifyColumn`
+/// job through each of `onModifyColumn`'s courses: metadata only, a checked
+/// narrowing (rolled back on a row that does not fit), a VARCHAR -> CHAR
+/// precheck that falls back to a rewrite, and rewrites with their indexes
+/// rebuilt (new index ids, the old entries and the merge's temporary index
+/// left to the delete range). A non-strict rewrite reports its warning.
+/// Captured from the Go oracle.
+#[test]
+fn modify_column_runs_as_a_persisted_job_like_go() {
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+    let index = |id: i64, index: i64| tidb_codec::table_key::encode_table_index_prefix(id, index);
+    const TEMP: i64 = 0x7fff_0000_0000_0000;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1944)).unwrap();
+    rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut session, "USE test");
+    let last_job = |session: &mut _| {
+        let row = displayed(rows(session, "admin show ddl jobs 1")).remove(0);
+        [0, 3, 4, 7, 11].map(|column| row[column].clone()).join("|")
+    };
+    let kind = |job: &str| job.split_once('|').unwrap().1.to_owned();
+    rows(
+        &mut session,
+        "create table t (a int, b varchar(10), c int, d varchar(10), key kc(c), key kd(d))",
+    );
+    rows(
+        &mut session,
+        "insert into t values (1, 'x', 1, 'p'), (2, 'yy ', 300, 'q '), (null, null, null, null)",
+    );
+    let t: i64 = displayed(rows(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_name='t'",
+    ))[0][0]
+        .parse()
+        .unwrap();
+    for (sql, job) in [
+        (
+            "alter table t modify b varchar(20)",
+            "modify column|public|0|synced",
+        ),
+        (
+            "alter table t modify c bigint",
+            "modify column|public|0|synced",
+        ),
+        (
+            "alter table t change c c2 bigint",
+            "modify column|public|0|synced",
+        ),
+        (
+            "alter table t rename column c2 to c",
+            "modify column|public|0|synced",
+        ),
+        (
+            "alter table t modify a int first",
+            "modify column|public|0|synced",
+        ),
+    ] {
+        rows(&mut session, sql);
+        assert_eq!(kind(&last_job(&mut session)), job, "{sql}");
+    }
+    let error = session
+        .execute_write("alter table t modify c tinyint")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1265, "Data truncated for column 'c', value is '300'")
+    );
+    assert_eq!(
+        kind(&last_job(&mut session)),
+        "modify column|none|0|rollback done"
+    );
+    rows(&mut session, "alter table t modify c smallint");
+    assert_eq!(
+        kind(&last_job(&mut session)),
+        "modify column|public|0|synced"
+    );
+    let error = session
+        .execute_write("alter table t modify a int not null")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1265, "Data truncated for column 'a' at row 1")
+    );
+    rows(&mut session, "update t set a = 3 where a is null");
+    for (sql, job) in [
+        (
+            "alter table t modify a int not null",
+            "modify column|public|0|synced",
+        ),
+        // VARCHAR -> CHAR over a trailing space: the precheck fails and the
+        // rows are rewritten.
+        (
+            "alter table t modify b char(10)",
+            "modify column|public|3|synced",
+        ),
+        (
+            "alter table t modify d char(10)",
+            "modify column|public|6|synced",
+        ),
+        (
+            "alter table t modify c varchar(10)",
+            "modify column|public|6|synced",
+        ),
+    ] {
+        rows(&mut session, sql);
+        assert_eq!(kind(&last_job(&mut session)), job, "{sql}");
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select key_name, index_id from information_schema.tidb_indexes where table_name='t' order by key_name"
+        )),
+        [["kc", "4"], ["kd", "3"]]
+    );
+    let columns: Vec<String> = displayed(rows(&mut session, "show columns from t"))
+        .into_iter()
+        .map(|row| format!("{} {}", row[0], row[1]))
+        .collect();
+    assert_eq!(
+        columns,
+        ["a int", "b char(10)", "c varchar(10)", "d char(10)"]
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from t order by a")),
+        [
+            ["1", "x", "1", "p"],
+            ["2", "yy", "300", "q"],
+            ["3", "NULL", "NULL", "NULL"]
+        ]
+    );
+    rows(&mut session, "admin check table t");
+
+    rows(&mut session, "create table s (a varchar(10))");
+    rows(&mut session, "insert into s values ('abc'), ('12')");
+    let error = session
+        .execute_write("alter table s modify a int")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1292, "Truncated incorrect DOUBLE value: 'abc'")
+    );
+    assert_eq!(
+        kind(&last_job(&mut session)),
+        "modify column|none|0|rollback done"
+    );
+    rows(&mut session, "set sql_mode=''");
+    rows(&mut session, "alter table s modify a int");
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [["Warning", "1292", "Truncated incorrect DOUBLE value: 'abc'"]]
+    );
+    assert_eq!(
+        kind(&last_job(&mut session)),
+        "modify column|public|2|synced"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "select * from s order by a")),
+        [["0"], ["12"]]
+    );
+    rows(&mut session, "set sql_mode=default");
+    rows(&mut session, "create table r (a int, b int)");
+    for (sql, code, message) in [
+        (
+            "alter table s modify nosuch int",
+            1054,
+            "Unknown column 'nosuch' in 's'",
+        ),
+        (
+            "alter table s change a a int after nosuch",
+            1054,
+            "Unknown column 'nosuch' in 'generated column function'",
+        ),
+        (
+            "alter table r modify a int after a",
+            1054,
+            "Unknown column 'a' in 'r'",
+        ),
+    ] {
+        let error = session.execute_write(sql).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+    // Go queues the self-anchored MODIFY and rolls it back at the owner.
+    assert_eq!(
+        kind(&last_job(&mut session)),
+        "modify column|none|0|rollback done"
+    );
+
+    // The rewrites' old index entries and the merge's temporary indexes.
+    let pending = "select count(*) from mysql.gc_delete_range";
+    let started = std::time::Instant::now();
+    while displayed(rows(&mut session, pending)) != [["0"]] {
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let done: Vec<String> = displayed(rows(
+        &mut session,
+        "select element_id, end_key from mysql.gc_delete_range_done order by job_id, element_id",
+    ))
+    .into_iter()
+    .map(|row| row.join(" "))
+    .collect();
+    assert_eq!(
+        done,
+        [
+            format!("1 {}", hex(&index(t, 3))),
+            format!("2 {}", hex(&index(t, TEMP | 3 + 1))),
+            format!("1 {}", hex(&index(t, 2))),
+            format!("2 {}", hex(&index(t, TEMP | 4 + 1))),
+        ]
+    );
 }
 
 /// DROP TABLE / VIEW / SEQUENCE / DATABASE run as Go's persisted jobs, one

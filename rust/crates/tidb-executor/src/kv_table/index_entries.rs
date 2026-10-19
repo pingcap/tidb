@@ -279,12 +279,19 @@ impl KvTable {
             .iter()
             .enumerate()
             .map(|(position, offset)| {
-                let mut value = row.get(*offset).cloned().unwrap_or(Datum::Null);
-                if let Some(column) = self.columns.get(*offset) {
+                // Go `castIndexValuesToChangingTypes` before
+                // `TruncateIndexValues`, which cuts by the part's type.
+                let mut value = self.cast_index_part(
+                    index.id,
+                    position,
+                    *offset,
+                    row.get(*offset).cloned().unwrap_or(Datum::Null),
+                );
+                if let Some(field_type) = self.index_part_type(index.id, position, *offset) {
                     crate::index_prefix_cut::cut_index_value(
                         &mut value,
                         index.prefix_length(position),
-                        &column.field_type,
+                        field_type,
                     );
                 }
                 value
@@ -297,8 +304,7 @@ impl KvTable {
     /// the flag from exactly this test (`buildIndexColumns`).
     pub fn is_mv_index(&self, index: &KvIndex) -> bool {
         index.column_offsets.iter().any(|offset| {
-            self.columns
-                .get(*offset)
+            self.write_column(*offset)
                 .is_some_and(|column| column.field_type.is_array())
         })
     }
@@ -317,8 +323,7 @@ impl KvTable {
             return Ok(vec![values]);
         }
         let is_array_part = |position: usize| {
-            self.columns
-                .get(index.column_offsets[position])
+            self.write_column(index.column_offsets[position])
                 .is_some_and(|column| column.field_type.is_array())
         };
         let json_error = |error| KvTableError::Encode(format!("{error:?}"));
@@ -460,9 +465,13 @@ impl KvTable {
     pub(in crate::kv_table) fn codec_table_info(&self) -> CodecTableInfo {
         let common_handle = !self.common_handle_offsets().is_empty();
         CodecTableInfo {
+            // The write row's columns: the public ones, then the columns a
+            // DDL holds in an intermediate state, which a non-public index's
+            // key parts address.
             columns: self
                 .columns
                 .iter()
+                .chain(self.nonpublic_columns.iter().map(|column| &column.column))
                 .enumerate()
                 .map(|(offset, column)| CodecTableColumn {
                     id: column.id,
@@ -471,10 +480,9 @@ impl KvTable {
                         .field_type
                         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
                     field_type: column.field_type.clone(),
-                    // A column type is only ever "changing" mid-way through an
-                    // online MODIFY COLUMN, which this tier performs in one
-                    // step; Go reads the same `nil` outside that window.
-                    changing_field_type: None,
+                    // Go `ColumnInfo.ChangingFieldType`, set while a MODIFY
+                    // COLUMN that rewrites no rows checks writes.
+                    changing_field_type: self.changing_field_types.get(&offset).cloned(),
                 })
                 .collect(),
             indices: if common_handle {
@@ -523,7 +531,10 @@ impl KvTable {
                 .map(|(position, offset)| CodecIndexColumn {
                     offset: *offset,
                     length: index.prefix_length(position),
-                    use_changing_type: false,
+                    use_changing_type: self
+                        .changing_index_parts
+                        .get(&index.id)
+                        .is_some_and(|parts| parts.contains(&position)),
                 })
                 .collect(),
             unique: index.unique,
@@ -536,13 +547,16 @@ impl KvTable {
     /// Go `tables.NeedRestoredData`: whether ANY of `index`'s key parts stores
     /// a column whose new-collation sort key loses the original bytes.
     fn index_needs_restored_data(&self, index: &KvIndex) -> bool {
-        index.column_offsets.iter().any(|offset| {
-            self.columns.get(*offset).is_some_and(|column| {
-                column
-                    .field_type
-                    .need_restored_data_with_collation(self.use_new_collation)
+        index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .any(|(position, offset)| {
+                self.index_part_type(index.id, position, *offset)
+                    .is_some_and(|field_type| {
+                        field_type.need_restored_data_with_collation(self.use_new_collation)
+                    })
             })
-        })
     }
 
     /// Go `tables.TryGetHandleRestoredDataWrapper`: the clustered PRIMARY
