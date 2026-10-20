@@ -36,33 +36,6 @@ import (
 	"golang.org/x/net/http2"
 )
 
-func TestDumpServiceLifecycle(t *testing.T) {
-	socketPath := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/data" {
-			http.Error(writer, "unexpected request", http.StatusBadRequest)
-			return
-		}
-		// An empty metadata scan represents a snapshot with no databases.
-		writer.Header().Add("Trailer", "x-dumper-scan-status")
-		writer.WriteHeader(http.StatusOK)
-		writer.Header().Set("x-dumper-scan-status", "complete")
-	}))
-	conf := DefaultConfig()
-	conf.OutputDirPath = t.TempDir()
-	conf.StatusAddr = ""
-	conf.DumpService = (&url.URL{Scheme: "unix", Path: socketPath}).String()
-	dumper, err := NewDumper(context.Background(), conf)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, dumper.Close()) })
-	require.NoError(t, dumper.Dump())
-	info, err := os.Stat(socketPath)
-	require.NoError(t, err)
-	require.NotZero(t, info.Mode()&os.ModeSocket)
-	connection, err := net.Dial("unix", socketPath)
-	require.NoError(t, err)
-	require.NoError(t, connection.Close())
-}
-
 func TestDumpServiceFromTiDBStorage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

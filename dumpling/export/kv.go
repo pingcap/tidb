@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -31,17 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/format/textrow"
-	"github.com/pingcap/tidb/pkg/kv"
 	tidbmeta "github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"go.uber.org/zap"
@@ -373,74 +368,38 @@ func shardKVTableRanges(
 	return shards, nil
 }
 
-func kvHashDataPrefix(hashKey []byte) kv.Key {
-	prefix := []byte{'m'}
-	prefix = codec.EncodeBytes(prefix, hashKey)
-	return codec.EncodeUint(prefix, uint64(structure.HashData))
+type kvDatabaseTables struct {
+	database *model.DBInfo
+	tables   []*model.TableInfo
 }
 
-func scanKVHash(
-	ctx context.Context,
-	scanner kvScanner,
-	hashKey []byte,
-	emit func(field, value []byte) error,
-) error {
-	prefix := kvHashDataPrefix(hashKey)
-	return scanKVRange(ctx, scanner, prefix, prefix.PrefixNext(), func(key, value []byte) error {
-		if !bytes.HasPrefix(key, prefix) {
-			return errors.Errorf("kv metadata key %x is outside hash prefix %x", key, prefix)
-		}
-		remaining, field, err := codec.DecodeBytes(key[len(prefix):], nil)
-		if err != nil {
-			return errors.Annotatef(err, "decode kv metadata hash key %x", key)
-		}
-		if len(remaining) != 0 {
-			return errors.Errorf("kv metadata hash key %x has %d trailing bytes", key, len(remaining))
-		}
-		return emit(field, value)
-	})
-}
-
-func loadKVDatabases(ctx context.Context, scanner kvScanner) ([]*model.DBInfo, error) {
-	var databases []*model.DBInfo
-	if err := scanKVHash(ctx, scanner, []byte("DBs"), func(field, value []byte) error {
-		if !tidbmeta.IsDBkey(field) {
-			return nil
-		}
-		database := &model.DBInfo{}
-		if err := json.Unmarshal(value, database); err != nil {
-			return errors.Annotatef(err, "decode kv database schema at field %q", field)
-		}
-		if database.State == model.StatePublic {
-			databases = append(databases, database)
-		}
-		return nil
-	}); err != nil {
+func (d *Dumper) loadKVTables(reader tidbmeta.Reader) ([]kvDatabaseTables, error) {
+	databases, err := reader.ListDatabases()
+	if err != nil {
 		return nil, err
 	}
-
+	selected := make([]kvDatabaseTables, 0, len(databases))
 	for _, database := range databases {
-		if err := scanKVHash(ctx, scanner, tidbmeta.DBkey(database.ID), func(field, value []byte) error {
-			if !tidbmeta.IsTableKey(field) {
-				return nil
-			}
-			table := &model.TableInfo{}
-			if err := json.Unmarshal(value, table); err != nil {
-				return errors.Annotatef(err, "decode kv table schema in database %q", database.Name.O)
-			}
-			if table.State == model.StatePublic {
-				database.Deprecated.Tables = append(database.Deprecated.Tables, table)
-			}
-			return nil
-		}); err != nil {
+		if database.State != model.StatePublic || !d.conf.TableFilter.MatchSchema(database.Name.O) {
+			continue
+		}
+		tables, err := reader.ListTables(d.tctx, database.ID)
+		if err != nil {
 			return nil, err
 		}
-		slices.SortFunc(database.Deprecated.Tables, func(left, right *model.TableInfo) int {
+		tables = slices.DeleteFunc(tables, func(table *model.TableInfo) bool {
+			return table.State != model.StatePublic || table.IsView() || table.IsSequence() ||
+				!d.conf.TableFilter.MatchTable(database.Name.O, table.Name.O)
+		})
+		slices.SortFunc(tables, func(left, right *model.TableInfo) int {
 			return strings.Compare(left.Name.L, right.Name.L)
 		})
+		selected = append(selected, kvDatabaseTables{database: database, tables: tables})
 	}
-	slices.SortFunc(databases, model.LessDBInfo)
-	return databases, nil
+	slices.SortFunc(selected, func(left, right kvDatabaseTables) int {
+		return model.LessDBInfo(left.database, right.database)
+	})
+	return selected, nil
 }
 
 func kvCreateDatabaseSQL(database *model.DBInfo) (string, error) {
@@ -451,9 +410,13 @@ func kvCreateDatabaseSQL(database *model.DBInfo) (string, error) {
 	return output.String(), nil
 }
 
-func kvCreateTableSQL(table *model.TableInfo) (string, error) {
+func kvCreateTableSQL(reader tidbmeta.Reader, databaseID int64, table *model.TableInfo) (string, error) {
+	allocators, err := kvMetadataAllocators(reader, databaseID, table)
+	if err != nil {
+		return "", errors.Annotatef(err, "read auto ID bases for kv table %q", table.Name.O)
+	}
 	var output bytes.Buffer
-	if err := executor.ConstructResultOfShowCreateTable(mock.NewContextDeprecated(), table, autoid.Allocators{}, &output); err != nil {
+	if err := executor.ConstructResultOfShowCreateTable(mock.NewContextDeprecated(), table, allocators, &output); err != nil {
 		return "", errors.Annotatef(err, "build schema for kv table %q", table.Name.O)
 	}
 	return output.String(), nil
@@ -469,7 +432,16 @@ func (d *Dumper) dumpFromService() error {
 }
 
 func (d *Dumper) dumpFromScanner(scanner kvScanner) error {
-	databases, err := loadKVDatabases(d.tctx, scanner)
+	snapshot, err := newKVMetadataSnapshot(d.tctx, scanner)
+	if err != nil {
+		return err
+	}
+	reader := tidbmeta.NewReader(snapshot)
+	databases, err := d.loadKVTables(reader)
+	if err != nil {
+		return err
+	}
+	policies, err := reader.ListPolicies()
 	if err != nil {
 		return err
 	}
@@ -493,10 +465,16 @@ func (d *Dumper) dumpFromScanner(scanner kvScanner) error {
 		}
 		return nil
 	}
-	for _, database := range databases {
-		if !d.conf.TableFilter.MatchSchema(database.Name.O) {
-			continue
+	for _, policy := range policies {
+		createSQL := executor.ConstructResultOfShowCreatePlacementPolicy(policy)
+		if err := send(NewTaskPolicyMeta(policy.Name.O, fmt.Sprintf("/*T![placement] %s */", createSQL))); err != nil {
+			close(taskIn)
+			_ = wg.Wait()
+			return err
 		}
+	}
+	for _, entry := range databases {
+		database := entry.database
 		if !d.conf.NoSchemas {
 			createSQL, err := kvCreateDatabaseSQL(database)
 			if err != nil {
@@ -510,14 +488,11 @@ func (d *Dumper) dumpFromScanner(scanner kvScanner) error {
 				return err
 			}
 		}
-		for _, table := range database.Deprecated.Tables {
-			if table.IsView() || table.IsSequence() || !d.conf.TableFilter.MatchTable(database.Name.O, table.Name.O) {
-				continue
-			}
+		for _, table := range entry.tables {
 			tableCount++
 			var createSQL string
 			if !d.conf.NoSchemas {
-				createSQL, err = kvCreateTableSQL(table)
+				createSQL, err = kvCreateTableSQL(reader, database.ID, table)
 				if err != nil {
 					close(taskIn)
 					_ = wg.Wait()

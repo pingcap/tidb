@@ -48,13 +48,36 @@
 //
 // Dumpling reads two kinds of KV pair from that snapshot:
 //
-//   - Schema metadata: encoded hash keys for database and table schemas
-//     (pkg/meta, pkg/structure), with JSON schema values (pkg/meta/model).
+//   - Schema metadata: encoded hash keys for database and table schemas, placement
+//     policies, and persisted auto ID bases (pkg/meta, pkg/structure). Values retain
+//     their TiDB metadata encoding, including policy format version bytes.
 //   - Table records: keys holding the physical table or partition ID and row
 //     handle (pkg/tablecodec), with TiDB-encoded row values
 //     (pkg/tablecodec, pkg/util/rowcodec).
 //
 // Resolve MVCC versions and drop deleted records before returning these pairs.
+//
+// Dumpling requests /shards once for the metadata interval ["m", "n"). When a
+// metadata query first touches a shard, Dumpling scans that entire range and
+// retains its raw KV pairs until the export ends. Later metadata queries,
+// including auto ID lookups, use the same cached data. A scan may cost as much
+// as reading the whole shard even when its requested range contains one key.
+// Auto ID bases come from persisted snapshot metadata. With AUTO_ID_CACHE=1,
+// this records the reserved range end, so exported AUTO_INCREMENT can exceed
+// the value reported by SHOW CREATE TABLE using the live AutoID service.
+//
+// # Session semantics
+//
+// For row decoding and schema SQL rendering, Dumpling uses a local TiDB session
+// context with an empty sql_mode, time_zone='+00:00', and
+// character_set_connection='utf8mb4'. Text serialization uses
+// character_set_results='utf8mb4' semantics; binary columns retain their bytes.
+// These settings are independent of the source cluster's session and global
+// variables, and --params is rejected in service mode.
+//
+// TIMESTAMP values are therefore rendered in UTC. DATE and DATETIME retain their
+// stored calendar fields. The output does not set the importing session's time
+// zone; configure the importing tool to interpret TIMESTAMP values as UTC.
 //
 // # Range requests
 //
@@ -89,8 +112,8 @@
 // A range's position in the table's combined range list becomes the output chunk
 // index, and a task may produce several files when output-size limits apply. See
 // shardKVTableRanges and dumpFromScanner in dumpling/export/kv.go, and
-// tryToWriteTableData in dumpling/export/writer.go. Dumpling reads metadata
-// directly through /data.
+// tryToWriteTableData in dumpling/export/writer.go. Metadata shard discovery and
+// caching are implemented separately in dumpling/export/kv_metadata.go.
 //
 // # GET /data
 //
