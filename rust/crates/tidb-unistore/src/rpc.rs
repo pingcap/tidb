@@ -53,6 +53,36 @@ pub struct RpcClient {
     send_hook: Arc<Mutex<Option<SendHook>>>,
 }
 
+/// Go `RPCClient` as the connector client-rust's PD client opens store
+/// clients with: a client per known store address. Go checks the address on
+/// every request (`GetStoreIDByAddr`); client-rust asks once per address.
+#[derive(Clone, Debug)]
+pub struct RpcConnect {
+    rpc: RpcClient,
+}
+
+impl RpcConnect {
+    /// The connector over `rpc`'s store.
+    #[must_use]
+    pub fn new(rpc: RpcClient) -> Self {
+        Self { rpc }
+    }
+}
+
+#[async_trait]
+impl tikv_client::tikv::KvConnect for RpcConnect {
+    type KvClient = RpcClient;
+
+    async fn connect(&self, address: &str) -> Result<RpcClient> {
+        self.rpc
+            .cluster
+            .region_manager()
+            .get_store_id_by_addr(address)
+            .map_err(Error::StringError)?;
+        Ok(self.rpc.for_address(address))
+    }
+}
+
 impl std::fmt::Debug for RpcClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RpcClient")

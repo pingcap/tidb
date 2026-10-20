@@ -15871,6 +15871,60 @@ mod tests {
         assert_eq!(transaction.snapshot_cache_size(), 0);
     }
 
+    /// client-go's sender retries a region error before the scanner sees a
+    /// response, and `CheckVisibility` runs only after a successful page: a
+    /// scan whose first answer is a region error returns the retried rows,
+    /// not an empty region.
+    #[tokio::test]
+    async fn a_scan_retries_a_region_error_under_the_visibility_check() {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = attempts.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.downcast_ref::<kvrpcpb::ScanRequest>().is_some() {
+                    if seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::ScanResponse {
+                            region_error: Some(crate::proto::errorpb::Error {
+                                message: "server is busy".to_owned(),
+                                server_is_busy: Some(crate::proto::errorpb::ServerIsBusy {
+                                    reason: "busy".to_owned(),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::new(kvrpcpb::ScanResponse {
+                        pairs: vec![kvrpcpb::KvPair {
+                            key: b"~scan/key".to_vec(),
+                            value: b"value".to_vec(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                panic!("unexpected request")
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(100),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .read_only()
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let keys: Vec<Vec<u8>> = transaction
+            .scan(b"~scan/".to_vec()..b"~scan0".to_vec(), 10)
+            .await
+            .unwrap()
+            .map(|pair| pair.0.into())
+            .collect();
+        assert_eq!(keys, vec![b"~scan/key".to_vec()]);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_integration_tests_safepoint_test_TestSafePoint() {

@@ -13,20 +13,22 @@
 // limitations under the License.
 
 //! Go `pkg/store/mockstore/unistore/pd.go`: the PD client over the embedded
-//! store's [`MockPd`] -- here client-rust's [`tikv_client::PdClient`], as
-//! Go's is client-go's `pd.Client` -- with the keyspace manager the cluster
-//! is configured with.
+//! store's [`MockPd`], with the keyspace manager the cluster is configured
+//! with. Go's is client-go's `pd.Client`; here it is client-rust's
+//! [`RetryClientTrait`], under which client-rust's own [`PdRpcClient`]
+//! keeps the region cache, store clients and routing, as client-go's
+//! `KVStore` keeps them over Go's.
 //!
-//! client-rust's PD client also hands out the store clients a region routes
-//! to (`map_region_to_store`, `kv_client`), the role client-go gives its
-//! `tikv.Client`; this one hands out the embedded store's [`RpcClient`].
+//! Regions are answered as PD holds them, with memcomparable-encoded bounds;
+//! client-rust's codec PD client encodes the keys it asks with and decodes
+//! the answers, as client-go's `CodecPDClient` does.
+//!
+//! [`PdRpcClient`]: tikv_client::PdRpcClient
 //!
 //! # Narrowings, by name
 //!
 //! * Global config, member listing, service discovery, resource groups and
 //!   meta storage: client-rust's PD trait has no such calls.
-//! * Region lookups have no cache to update or invalidate: every lookup
-//!   asks the region manager, as client-go's own mock PD client does.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -34,12 +36,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tikv_client::proto::keyspacepb::{self, keyspace_meta, KeyspaceMeta};
 use tikv_client::proto::{metapb, pdpb};
-use tikv_client::tikv::{RegionStore, Store};
-use tikv_client::{Error, Key, RegionVerId, RegionWithLeader, Result, Timestamp, TimestampExt};
+use tikv_client::{
+    Error, RegionId, RegionScanOptions, RegionWithLeader, Result, RetryClientTrait, StoreId,
+    Timestamp,
+};
 
 use crate::mock_pd::{GcState, GcStatesError, MockPd};
-use crate::region_manager::encode_region_key;
-use crate::rpc::RpcClient;
 
 /// PD's `constants.MaxKeyspaceID`.
 pub const MAX_KEYSPACE_ID: u32 = 0x00FF_FFFF;
@@ -138,9 +140,6 @@ pub struct PdClient {
     mock_pd: Arc<MockPd>,
     keyspaces: MockKeyspaceManager,
     external_timestamp: AtomicU64,
-    current_keyspace_id: u32,
-    /// The store client regions route to (client-go's `tikv.Client`).
-    rpc: RpcClient,
 }
 
 /// A GC-state error as client-rust carries PD's: the message, Go's text.
@@ -148,25 +147,14 @@ fn gc_error(error: GcStatesError) -> Error {
     Error::StringError(error.to_string())
 }
 
-/// client-go's `decodeRegionMetaKeyInPlace`: region bounds as the client
-/// holds them, raw.
-fn decode_region(mut region: metapb::Region) -> Result<metapb::Region> {
-    for key in [&mut region.start_key, &mut region.end_key] {
-        if !key.is_empty() {
-            *key = tidb_codec::decode_bytes(key)
-                .map_err(|error| Error::StringError(error.to_string()))?
-                .1;
-        }
-    }
-    Ok(region)
+fn region_with_leader((region, leader): (metapb::Region, metapb::Peer)) -> RegionWithLeader {
+    RegionWithLeader::new(region, Some(leader))
 }
 
 impl PdClient {
-    /// Go `newPDClient`, with the store client regions route to.
+    /// Go `newPDClient`.
     pub fn new(
         mock_pd: Arc<MockPd>,
-        rpc: RpcClient,
-        current_keyspace_id: u32,
         cluster_keyspaces: Vec<KeyspaceMeta>,
     ) -> std::result::Result<Self, String> {
         let keyspaces = MockKeyspaceManager::new(cluster_keyspaces)
@@ -175,8 +163,6 @@ impl PdClient {
             mock_pd,
             keyspaces,
             external_timestamp: AtomicU64::new(0),
-            current_keyspace_id,
-            rpc,
         })
     }
 
@@ -186,91 +172,84 @@ impl PdClient {
         &self.mock_pd
     }
 
-    /// The keyspace the GC-state calls address: the current keyspace, the
-    /// null keyspace when none is configured.
-    fn gc_keyspace_id(&self) -> u32 {
-        self.current_keyspace_id
-    }
-
-    fn region_with_leader(
-        region: metapb::Region,
-        leader: metapb::Peer,
-    ) -> Result<RegionWithLeader> {
-        Ok(RegionWithLeader::new(decode_region(region)?, Some(leader)))
-    }
-
-    /// The store client for the store at `address`.
-    fn store_client(&self, address: &str) -> RpcClient {
-        self.rpc.for_address(address)
-    }
-
-    fn gc_state(&self) -> GcState {
+    fn gc_state(&self, keyspace_id: u32) -> GcState {
         self.mock_pd
             .gc_states()
-            .gc_states_client(self.gc_keyspace_id())
+            .gc_states_client(keyspace_id)
             .get_gc_state(false)
     }
 }
 
 #[async_trait]
-impl tikv_client::PdClient for PdClient {
-    type KvClient = RpcClient;
+impl RetryClientTrait for PdClient {
+    /// Go `GetClusterID`.
+    async fn cluster_id(&self) -> u64 {
+        self.mock_pd.get_cluster_id()
+    }
 
-    /// Go `RPCClient.SendRequest`'s `GetStoreIDByAddr`: only a known store
-    /// is reachable.
-    async fn kv_client(&self, address: &str) -> Result<RpcClient> {
+    /// Go `GetRegion`.
+    async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         self.mock_pd
-            .region_manager()
-            .get_store_id_by_addr(address)
-            .map_err(Error::StringError)?;
-        Ok(self.store_client(address))
+            .get_region(&key)
+            .map(region_with_leader)
+            .ok_or_else(|| Error::StringError(format!("region not found for key {key:?}")))
     }
 
-    async fn map_region_to_store(self: Arc<Self>, region: RegionWithLeader) -> Result<RegionStore> {
-        let store_id = region
-            .leader
-            .as_ref()
-            .ok_or_else(|| Error::StringError("region has no leader".to_owned()))?
-            .store_id;
-        let address = self
-            .mock_pd
-            .region_manager()
-            .get_store_addr_by_store_id(store_id)
-            .map_err(|_| Error::StringError(format!("invalid store ID {store_id}, not found")))?;
-        Ok(RegionStore::new(region, Arc::new(self.store_client(&address))).with_target(address))
-    }
-
-    /// client-go's codec PD client `GetRegion`: the raw key encoded.
-    async fn region_for_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        let raw: &[u8] = key.into();
-        let (region, leader) = self
-            .mock_pd
-            .get_region(&encode_region_key(raw))
-            .ok_or_else(|| Error::StringError(format!("region not found for key {raw:?}")))?;
-        Self::region_with_leader(region, leader)
-    }
-
-    /// client-go's codec PD client `GetPrevRegion`; an empty key is the last
-    /// region, as client-rust's own mock PD answers.
-    async fn region_for_end_key(&self, key: &Key) -> Result<RegionWithLeader> {
-        let raw: &[u8] = key.into();
-        let found = if raw.is_empty() {
+    /// Go `GetPrevRegion`; an empty key is the last region.
+    async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        let found = if key.is_empty() {
             self.mock_pd.scan_regions(b"", b"", 0).pop()
         } else {
-            self.mock_pd.get_prev_region(&encode_region_key(raw))
+            self.mock_pd.get_prev_region(&key)
         };
-        let (region, leader) = found
-            .ok_or_else(|| Error::StringError(format!("region not found for end key {raw:?}")))?;
-        Self::region_with_leader(region, leader)
+        found
+            .map(region_with_leader)
+            .ok_or_else(|| Error::StringError(format!("region not found for end key {key:?}")))
     }
 
     /// Go `GetRegionByID`.
-    async fn region_for_id(&self, id: u64) -> Result<RegionWithLeader> {
-        let (region, leader) = self
+    async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
+        self.mock_pd
+            .get_region_by_id(region_id)
+            .map(region_with_leader)
+            .ok_or(Error::RegionNotFoundInResponse { region_id })
+    }
+
+    /// Go `ScanRegions`.
+    async fn scan_regions(
+        self: Arc<Self>,
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        limit: usize,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Ok(self
             .mock_pd
-            .get_region_by_id(id)
-            .ok_or(Error::RegionNotFoundInResponse { region_id: id })?;
-        Self::region_with_leader(region, leader)
+            .scan_regions(&start_key, &end_key, limit)
+            .into_iter()
+            .map(region_with_leader)
+            .collect())
+    }
+
+    /// Go `BatchScanRegions`: unistore's `pdClient` does not override it, so
+    /// client-go falls back to scanning, as client-rust does on
+    /// `Unimplemented`.
+    async fn batch_scan_regions(
+        self: Arc<Self>,
+        _ranges: Vec<pdpb::KeyRange>,
+        _limit: usize,
+        _options: RegionScanOptions,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(Error::Unimplemented)
+    }
+
+    /// Go `GetStore`.
+    async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>> {
+        Ok(self.mock_pd.get_store(id))
+    }
+
+    /// Go `GetAllStores`.
+    async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+        Ok(self.mock_pd.get_all_stores())
     }
 
     /// Go `GetTS`.
@@ -283,14 +262,9 @@ impl tikv_client::PdClient for PdClient {
         })
     }
 
-    /// Go `GetClusterID`.
-    async fn cluster_id(&self) -> u64 {
-        self.mock_pd.get_cluster_id()
-    }
-
     /// Go `GetMinTS`: zero.
     async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        Ok(Timestamp::from_version(0))
+        Ok(Timestamp::default())
     }
 
     /// Go `pdClient.SetExternalTimestamp`: never past the current TSO, never
@@ -345,13 +319,13 @@ impl tikv_client::PdClient for PdClient {
     /// Go `UpdateServiceGCSafePoint`, the simulator's compatibility wrapper.
     async fn update_service_gc_safe_point(
         self: Arc<Self>,
-        service_id: &str,
+        service_id: String,
         ttl: i64,
         safe_point: u64,
     ) -> Result<u64> {
         self.mock_pd
             .gc_states()
-            .update_service_gc_safe_point(service_id, ttl, safe_point)
+            .update_service_gc_safe_point(&service_id, ttl, safe_point)
             .map_err(gc_error)
     }
 
@@ -361,41 +335,47 @@ impl tikv_client::PdClient for PdClient {
     }
 
     /// Go `GetGCStatesClient(keyspace).GetGCState`, barriers included.
-    async fn get_gc_state(self: Arc<Self>) -> Result<pdpb::GcState> {
-        let state = self.gc_state();
-        Ok(pdpb::GcState {
-            keyspace_scope: Some(pdpb::KeyspaceScope {
-                keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(
-                    state.keyspace_id,
-                )),
+    async fn get_gc_state(self: Arc<Self>, keyspace_id: u32) -> Result<pdpb::GetGcStateResponse> {
+        let state = self.gc_state(keyspace_id);
+        Ok(pdpb::GetGcStateResponse {
+            header: None,
+            gc_state: Some(pdpb::GcState {
+                keyspace_scope: Some(pdpb::KeyspaceScope {
+                    keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(
+                        state.keyspace_id,
+                    )),
+                }),
+                // The simulator's `NewGCStateWithGCBarriers` never sets it.
+                is_keyspace_level_gc: false,
+                txn_safe_point: state.txn_safe_point,
+                gc_safe_point: state.gc_safe_point,
+                gc_barriers: state
+                    .gc_barriers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|barrier| pdpb::GcBarrierInfo {
+                        barrier_id: barrier.barrier_id,
+                        barrier_ts: barrier.barrier_ts,
+                        // `TTLNeverExpire`, which PD's client saturates back.
+                        ttl_seconds: i64::MAX,
+                    })
+                    .collect(),
             }),
-            // The simulator's `NewGCStateWithGCBarriers` never sets it.
-            is_keyspace_level_gc: false,
-            txn_safe_point: state.txn_safe_point,
-            gc_safe_point: state.gc_safe_point,
-            gc_barriers: state
-                .gc_barriers
-                .unwrap_or_default()
-                .into_iter()
-                .map(|barrier| pdpb::GcBarrierInfo {
-                    barrier_id: barrier.barrier_id,
-                    barrier_ts: barrier.barrier_ts,
-                    // `TTLNeverExpire`, which PD's client saturates back.
-                    ttl_seconds: i64::MAX,
-                })
-                .collect(),
+            // The simulator keeps no global barriers.
+            global_gc_barriers: None,
         })
     }
 
     /// Go `GetGCInternalController(keyspace).AdvanceTxnSafePoint`.
-    async fn advance_transaction_safe_point(
+    async fn advance_txn_safe_point(
         self: Arc<Self>,
+        keyspace_id: u32,
         target: u64,
     ) -> Result<pdpb::AdvanceTxnSafePointResponse> {
         let res = self
             .mock_pd
             .gc_states()
-            .gc_internal_controller(self.gc_keyspace_id())
+            .gc_internal_controller(keyspace_id)
             .advance_txn_safe_point(target)
             .map_err(gc_error)?;
         Ok(pdpb::AdvanceTxnSafePointResponse {
@@ -409,12 +389,13 @@ impl tikv_client::PdClient for PdClient {
     /// Go `GetGCInternalController(keyspace).AdvanceGCSafePoint`.
     async fn advance_gc_safe_point(
         self: Arc<Self>,
+        keyspace_id: u32,
         target: u64,
     ) -> Result<pdpb::AdvanceGcSafePointResponse> {
         let res = self
             .mock_pd
             .gc_states()
-            .gc_internal_controller(self.gc_keyspace_id())
+            .gc_internal_controller(keyspace_id)
             .advance_gc_safe_point(target)
             .map_err(gc_error)?;
         Ok(pdpb::AdvanceGcSafePointResponse {
@@ -428,7 +409,7 @@ impl tikv_client::PdClient for PdClient {
     async fn scatter_regions(
         self: Arc<Self>,
         _region_ids: Vec<u64>,
-        _group: Option<String>,
+        _group: String,
     ) -> Result<pdpb::ScatterRegionResponse> {
         Ok(pdpb::ScatterRegionResponse::default())
     }
@@ -446,8 +427,8 @@ impl tikv_client::PdClient for PdClient {
         self: Arc<Self>,
         _split_keys: Vec<Vec<u8>>,
         _retry_limit: u64,
-    ) -> Result<Vec<u64>> {
-        Ok(Vec::new())
+    ) -> Result<pdpb::SplitRegionsResponse> {
+        Ok(pdpb::SplitRegionsResponse::default())
     }
 
     /// Go `LoadKeyspace`.
@@ -456,33 +437,6 @@ impl tikv_client::PdClient for PdClient {
             .load_keyspace(keyspace)
             .map_err(Error::StringError)
     }
-
-    /// Go `GetAllStores`.
-    async fn all_stores(&self) -> Result<Vec<Store>> {
-        Ok(self
-            .mock_pd
-            .get_all_stores()
-            .into_iter()
-            .map(|meta| {
-                Store::new(Arc::new(self.store_client(&meta.address)))
-                    .with_target(meta.address.clone())
-                    .with_metadata(&meta)
-            })
-            .collect())
-    }
-
-    /// Go `GetAllStores`: the stores' metadata.
-    async fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
-        Ok(self.mock_pd.get_all_stores())
-    }
-
-    async fn update_leader(&self, _ver_id: RegionVerId, _leader: metapb::Peer) -> Result<()> {
-        Ok(())
-    }
-
-    async fn invalidate_region_cache(&self, _ver_id: RegionVerId) {}
-
-    async fn invalidate_store_cache(&self, _store_id: u64) {}
 }
 
 #[cfg(test)]

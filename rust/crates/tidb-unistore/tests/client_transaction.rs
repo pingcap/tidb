@@ -39,6 +39,7 @@ struct Store {
     storage: SharedReadRuntime<InProcessClient, InProcessRegionLoader>,
     oracle: Oracle,
     runtime: Arc<tokio::runtime::Runtime>,
+    regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
 }
 impl Store {
     fn new() -> Self {
@@ -50,7 +51,7 @@ impl Store {
         ));
         let storage = SharedReadRuntime::new_injected(
             client.clone(),
-            RegionCache::new(InProcessRegionLoader::new(regions)),
+            RegionCache::new(InProcessRegionLoader::new(Arc::clone(&regions))),
         );
         let oracle = Oracle(oracle);
         let pd = ClientPd::new(storage.clone(), oracle.clone());
@@ -66,6 +67,7 @@ impl Store {
             runtime,
             storage,
             oracle,
+            regions,
         }
     }
     fn begin(&self, pessimistic: bool) -> TikvTransactionDriver<ClientPd> {
@@ -451,6 +453,38 @@ fn store_facade_scan_regions_uses_actual_serving_responses() {
     // Go's `MockRegionManager` bootstraps store 1, region 2, peer 3.
     assert_eq!(regions[0].region.id, 2);
     txn.finish_without_writes().unwrap();
+}
+
+/// A split the region cache has not seen: the scan meets the store's
+/// stale-epoch answer, and client-go's sender retries it on the new regions
+/// before the scanner sees a page. It must not read as an empty region.
+#[test]
+fn shared_engine_scan_retries_a_split_its_cache_has_not_seen() {
+    let store = Store::new();
+    let mut txn = store.begin(false);
+    for key in [b"a", b"n", b"z"] {
+        txn.set(Key::from(key.to_vec()), b"v".to_vec()).unwrap();
+    }
+    txn.commit().unwrap();
+    let scan = |store: &Store| {
+        let mut reader = store.begin(false);
+        let keys = reader
+            .scan(&Key::from(b"a".to_vec()), &Key::from(b"zz".to_vec()), 10)
+            .unwrap()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>();
+        reader.finish_without_writes().unwrap();
+        keys
+    };
+    let all = vec![
+        Key::from(b"a".to_vec()),
+        Key::from(b"n".to_vec()),
+        Key::from(b"z".to_vec()),
+    ];
+    assert_eq!(scan(&store), all);
+    store.regions.split_arbitrary(&[b"m".to_vec()]);
+    assert_eq!(scan(&store), all);
 }
 
 #[test]

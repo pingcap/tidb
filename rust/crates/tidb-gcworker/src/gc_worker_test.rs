@@ -26,8 +26,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_unistore::cluster::{bootstrap_with_multi_stores, Cluster};
+use tidb_unistore::mock::StorePdClient;
 use tidb_unistore::mock_pd::{AdvanceTxnSafePointResult as PdAdvanceTxnSafePointResult, GcState};
-use tidb_unistore::pd::PdClient as UnistorePdClient;
 use tikv_client::oracle::oracles::MockOracle;
 use tikv_client::proto::keyspacepb::{keyspace_meta, KeyspaceMeta};
 use tikv_client::proto::{kvrpcpb, metapb};
@@ -65,7 +65,7 @@ type FailingRequest = Arc<Mutex<Option<(Vec<u8>, String)>>>;
 /// record `UnsafeDestroyRange` (and may answer it) and `DeleteRange`; the
 /// `ScanLock` requests it records come from the RPC client's send hook.
 struct FakeKv {
-    inner: Arc<TikvStoreClient<UnistorePdClient>>,
+    inner: Arc<TikvStoreClient<StorePdClient>>,
     destroy_handler: Mutex<Option<DestroyHandler>>,
     destroy_requests: Mutex<Vec<DestroyRequest>>,
     delete_range_requests: Mutex<Vec<(Vec<u8>, Vec<u8>)>>,
@@ -287,7 +287,9 @@ struct Suite {
     /// Go `s.oracle`, installed as the store's oracle.
     oracle: MockOracle,
     /// The worker's store, PD and TiKV halves over the embedded store.
-    tikv: Arc<TikvStoreClient<UnistorePdClient>>,
+    tikv: Arc<TikvStoreClient<StorePdClient>>,
+    /// Go `s.pdClient`'s embedded-store half: unistore's PD client.
+    pd: Arc<tidb_unistore::pd::PdClient>,
     cluster: Arc<Cluster>,
     /// Go `s.initRegion.regionID`.
     init_region_id: u64,
@@ -322,10 +324,7 @@ fn create_gc_worker_suite_full(
             .build()
             .unwrap(),
     );
-    let current_keyspace_id = current_keyspace
-        .as_ref()
-        .map_or(NULL_KEYSPACE_ID, keyspace_id);
-    let (rpc, pd, cluster) = tidb_unistore::mock::new(current_keyspace_id, keyspaces).unwrap();
+    let (rpc, pd, cluster) = tidb_unistore::mock::new(keyspaces).unwrap();
     let (_, _, init_region_id, _) = bootstrap_with_multi_stores(&cluster, 3);
     let scan_lock_requests: Arc<Mutex<Vec<ScanLockRequest>>> = Arc::default();
     let recorded = Arc::clone(&scan_lock_requests);
@@ -339,11 +338,22 @@ fn create_gc_worker_suite_full(
             ));
         }
     })));
+    // Go `NewTestKeyspaceTiKVStore` with a current keyspace, else
+    // `NewTestTiKVStore`.
+    let mut config = tikv_client::Config::default();
+    config.keyspace = current_keyspace.as_ref().map(|meta| meta.name.clone());
+    let store_pd = runtime
+        .block_on(tidb_unistore::mock::store_pd_client(
+            &rpc,
+            Arc::clone(&pd),
+            config.clone(),
+        ))
+        .unwrap();
     let kv_store = runtime
         .block_on(KvStore::new_with_pd_client(
-            Arc::new(pd),
+            Arc::new(store_pd),
             Arc::new(MockSafePointKv::new()),
-            tikv_client::Config::default(),
+            config,
         ))
         .unwrap();
     // Go: `store.GetOracle().Close(); store.SetOracle(s.oracle)`.
@@ -376,6 +386,7 @@ fn create_gc_worker_suite_full(
     Suite {
         oracle,
         tikv,
+        pd,
         cluster,
         init_region_id,
         kv,
@@ -392,7 +403,7 @@ impl Suite {
 
     /// The embedded store's PD.
     fn mock_pd(&self) -> Arc<tidb_unistore::mock_pd::MockPd> {
-        Arc::clone(self.tikv.store().pd_client().mock_pd())
+        Arc::clone(self.pd.mock_pd())
     }
 
     /// Go `s.pdClient.GetGCStatesClient(keyspace).GetGCState`.
@@ -509,7 +520,7 @@ impl Suite {
         start_ts: Option<u64>,
         key: &[u8],
         value: &[u8],
-    ) -> tikv_client::transaction::Transaction<UnistorePdClient> {
+    ) -> tikv_client::transaction::Transaction<StorePdClient> {
         self.block_on(async {
             let mut options = tikv_client::transaction::TransactionOptions::new_pessimistic();
             if let Some(start_ts) = start_ts {

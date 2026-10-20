@@ -20,16 +20,18 @@
 use std::sync::Arc;
 
 use tidb_unistore::cluster::{bootstrap_with_single_store, Cluster};
-use tidb_unistore::mock_pd::NULL_KEYSPACE_ID;
-use tidb_unistore::pd::PdClient as UnistorePdClient;
+use tidb_unistore::mock::StorePdClient;
 use tikv_client::async_util::Cancellation;
 use tikv_client::proto::kvrpcpb;
 use tikv_client::tikv::{KvStore, MockSafePointKv};
 use tikv_client::{Config, PdClient, TimestampExt};
 
-async fn store() -> (KvStore<UnistorePdClient>, Arc<Cluster>) {
-    let (_rpc, pd, cluster) = tidb_unistore::mock::new(NULL_KEYSPACE_ID, Vec::new()).unwrap();
+async fn store() -> (KvStore<StorePdClient>, Arc<Cluster>) {
+    let (rpc, pd, cluster) = tidb_unistore::mock::new(Vec::new()).unwrap();
     bootstrap_with_single_store(&cluster);
+    let pd = tidb_unistore::mock::store_pd_client(&rpc, pd, Config::default())
+        .await
+        .unwrap();
     let store = KvStore::new_with_pd_client(
         Arc::new(pd),
         Arc::new(MockSafePointKv::new()),
@@ -40,7 +42,7 @@ async fn store() -> (KvStore<UnistorePdClient>, Arc<Cluster>) {
     (store, cluster)
 }
 
-async fn put_all(store: &KvStore<UnistorePdClient>, pairs: &[(&[u8], &[u8])]) {
+async fn put_all(store: &KvStore<StorePdClient>, pairs: &[(&[u8], &[u8])]) {
     let mut txn = store.begin_optimistic().await.unwrap();
     for (key, value) in pairs {
         txn.put(key.to_vec(), value.to_vec()).await.unwrap();
@@ -48,7 +50,7 @@ async fn put_all(store: &KvStore<UnistorePdClient>, pairs: &[(&[u8], &[u8])]) {
     txn.commit().await.unwrap();
 }
 
-async fn scan_keys(store: &KvStore<UnistorePdClient>) -> Vec<Vec<u8>> {
+async fn scan_keys(store: &KvStore<StorePdClient>) -> Vec<Vec<u8>> {
     let mut txn = store.begin_optimistic().await.unwrap();
     let keys = txn
         .scan(b"k".to_vec()..b"l".to_vec(), 100)

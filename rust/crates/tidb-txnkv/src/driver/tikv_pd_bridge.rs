@@ -189,6 +189,10 @@ fn key_range(range: pdpb::KeyRange) -> tidb_pd_client::PdKeyRange {
 
 #[async_trait::async_trait]
 impl RetryClientTrait for TidbPdBridge {
+    async fn cluster_id(&self) -> u64 {
+        self.client.cluster_id()
+    }
+
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         self.dispatch(move |client| client.get_region(&key))
             .await

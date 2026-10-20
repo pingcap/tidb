@@ -382,30 +382,35 @@ pub(crate) fn in_process_write_stack_with_regions() -> Result<
     Ok((read_authority, pd, transaction_opener, regions))
 }
 
-/// Go `mockstore.NewMockStore`'s `tikv.NewKVStore` over unistore: the node's
-/// client-rust store reaches the same handler, regions and oracle through
-/// unistore's RPC and PD clients, and loads its txn safe point from the mock
-/// PD's GC states like a real cluster's.
+/// Go `mockstore.NewMockStore`'s `tikv.NewTestTiKVStore` over unistore: the
+/// node's client-rust store keeps its region cache and routing over
+/// unistore's PD and RPC clients, which reach the same handler, regions and
+/// oracle, and loads its txn safe point from the mock PD's GC states like a
+/// real cluster's.
 fn embedded_tikv_store(
     handler: Arc<std::sync::Mutex<KvHandler>>,
     regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
     pd: &InProcessPd,
-) -> Result<TikvStore<tidb_unistore::pd::PdClient>, SqlQueryError> {
-    let (_rpc, pd_client, _cluster) = tidb_unistore::mock::over(
-        handler,
-        regions,
-        pd.oracle(),
-        tidb_unistore::mock_pd::NULL_KEYSPACE_ID,
-        Vec::new(),
-    )
-    .map_err(SqlQueryError::unknown)?;
+) -> Result<TikvStore<tidb_unistore::mock::StorePdClient>, SqlQueryError> {
+    let (rpc, pd_client, _cluster) =
+        tidb_unistore::mock::over(handler, regions, pd.oracle(), Vec::new())
+            .map_err(SqlQueryError::unknown)?;
     let runtime = store_runtime().map_err(SqlQueryError::unknown)?;
     let store = runtime
-        .block_on(tikv_client::tikv::KvStore::new_with_pd_client(
-            Arc::new(pd_client),
-            Arc::new(tikv_client::tikv::MockSafePointKv::new()),
-            tikv_client::Config::default(),
-        ))
+        .block_on(async {
+            let store_pd = tidb_unistore::mock::store_pd_client(
+                &rpc,
+                pd_client,
+                tikv_client::Config::default(),
+            )
+            .await?;
+            tikv_client::tikv::KvStore::new_with_pd_client(
+                Arc::new(store_pd),
+                Arc::new(tikv_client::tikv::MockSafePointKv::new()),
+                tikv_client::Config::default(),
+            )
+            .await
+        })
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     Ok(TikvStore::new(runtime, store))
 }

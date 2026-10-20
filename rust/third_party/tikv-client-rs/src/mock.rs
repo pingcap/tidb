@@ -39,7 +39,7 @@ use crate::Timestamp;
 
 /// Create a `PdRpcClient` with it's internals replaced with mocks so that the
 /// client can be tested without doing any RPC calls.
-pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, MockCluster> {
+pub async fn pd_rpc_client() -> PdRpcClient<MockKvConnect, RetryClient<MockCluster>> {
     let config = Config::default();
     PdRpcClient::new(
         config.clone(),

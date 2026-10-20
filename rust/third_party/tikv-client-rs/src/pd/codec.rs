@@ -94,6 +94,10 @@ impl<C> RetryClientTrait for CodecPdClient<C>
 where
     C: RetryClientTrait + Send + Sync + 'static,
 {
+    async fn cluster_id(&self) -> u64 {
+        self.inner.cluster_id().await
+    }
+
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
         let key = self.codec.encode_region_key(&key);
         let region = self.inner.clone().get_region(key).await?;
@@ -282,6 +286,10 @@ mod tests {
 
     #[async_trait]
     impl RetryClientTrait for RecordingPdClient {
+        async fn cluster_id(&self) -> u64 {
+            0
+        }
+
         async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
             self.calls.lock().unwrap().push(PdCall::Get(key));
             Ok(self.region.clone())

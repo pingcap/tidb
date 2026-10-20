@@ -917,9 +917,10 @@ pub trait ReplicaRouting: PdClient {
 }
 
 #[async_trait]
-impl<KvC> ReplicaRouting for PdRpcClient<KvC>
+impl<KvC, P> ReplicaRouting for PdRpcClient<KvC, P>
 where
     KvC: KvConnect + Send + Sync + 'static,
+    P: RetryClientTrait + Send + Sync + 'static,
 {
     fn forwarding_enabled(&self) -> bool {
         self.enable_forwarding
@@ -972,8 +973,11 @@ where
 
 /// This client converts requests for the logical TiKV cluster into requests
 /// for a single TiKV store using PD and internal logic.
-pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl = Cluster> {
-    pd: Arc<RetryClient<Cl>>,
+pub struct PdRpcClient<
+    KvC: KvConnect + Send + Sync + 'static = TikvConnect,
+    P = RetryClient<Cluster>,
+> {
+    pd: Arc<P>,
     kv_connect: KvC,
     kv_client_cache: Arc<RwLock<HashMap<String, CachedKvClient<KvC::KvClient>>>>,
     kv_client_versions: Arc<RwLock<HashMap<String, u64>>>,
@@ -985,7 +989,7 @@ pub struct PdRpcClient<KvC: KvConnect + Send + Sync + 'static = TikvConnect, Cl 
     enable_forwarding: bool,
     zone_label: String,
     security_mgr: Arc<SecurityManager>,
-    region_cache: Arc<RegionCache<CodecPdClient<RetryClient<Cl>>>>,
+    region_cache: Arc<RegionCache<CodecPdClient<P>>>,
 }
 
 const HEALTH_SERVING: i32 = 1;
@@ -1097,15 +1101,15 @@ fn parse_source_duration(value: &str) -> Option<Duration> {
     None
 }
 
-impl<KvC, Cl> PdRpcClient<KvC, Cl>
+impl<KvC, P> PdRpcClient<KvC, P>
 where
     KvC: KvConnect + Send + Sync + 'static,
-    RetryClient<Cl>: RetryClientTrait + Send + Sync + 'static,
+    P: RetryClientTrait + Send + Sync + 'static,
 {
     /// Returns the live region cache shared by this client's request plans.
     /// Existing and future requests observe mutations through the returned
     /// `Arc`, matching client-go's `KVStore.GetRegionCache` ownership.
-    pub fn region_cache(&self) -> Arc<RegionCache<CodecPdClient<RetryClient<Cl>>>> {
+    pub fn region_cache(&self) -> Arc<RegionCache<CodecPdClient<P>>> {
         self.region_cache.clone()
     }
 
@@ -1265,7 +1269,11 @@ where
 }
 
 #[async_trait]
-impl<KvC: KvConnect + Send + Sync + 'static> PdClient for PdRpcClient<KvC> {
+impl<KvC, P> PdClient for PdRpcClient<KvC, P>
+where
+    KvC: KvConnect + Send + Sync + 'static,
+    P: RetryClientTrait + Send + Sync + 'static,
+{
     type KvClient = KvC::KvClient;
 
     async fn split_regions(
@@ -1731,15 +1739,15 @@ enum PdCodecConfig {
     },
 }
 
-impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
+impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
     pub(crate) async fn advance_transaction_safe_point_for_keyspace(
         &self,
         keyspace_id: u32,
         target: u64,
     ) -> Result<pdpb::AdvanceTxnSafePointResponse>
     where
-        Cl: Send + Sync + 'static,
-        RetryClient<Cl>: RetryClientTrait,
+        P: Send + Sync + 'static,
+        P: RetryClientTrait,
     {
         self.pd
             .clone()
@@ -1776,10 +1784,10 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         kv_connect: MakeKvC,
         pd: MakePd,
         enable_codec: bool,
-    ) -> Result<PdRpcClient<KvC, Cl>>
+    ) -> Result<PdRpcClient<KvC, P>>
     where
-        Cl: Send + Sync + 'static,
-        PdFut: Future<Output = Result<RetryClient<Cl>>>,
+        P: Send + Sync + 'static,
+        PdFut: Future<Output = Result<P>>,
         MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
         MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
     {
@@ -1796,20 +1804,51 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
         Ok(client)
     }
 
-    async fn new_with_codec_resolver<PdFut, CodecFut, MakeKvC, MakePd, ResolveCodec>(
+    /// client-go `tikv.NewKVStore`'s client half over a PD client the caller
+    /// already holds -- an embedded store's or a mock's -- with the TiKV
+    /// clients `kv_connect` opens: the region cache, store clients and routing
+    /// are this client's own, whatever answers PD. With `config.keyspace` the
+    /// codec is that keyspace's API V2 one, loaded from `pd`, as client-go's
+    /// `NewCodecPDClientWithKeyspace`; without, API V1.
+    pub async fn new_with_pd_client(
         config: Config,
-        kv_connect: MakeKvC,
-        pd: MakePd,
-        resolve_codec: ResolveCodec,
-    ) -> Result<PdRpcClient<KvC, Cl>>
+        kv_connect: KvC,
+        pd: Arc<P>,
+        enable_codec: bool,
+    ) -> Result<PdRpcClient<KvC, P>>
     where
-        Cl: Send + Sync + 'static,
-        PdFut: Future<Output = Result<RetryClient<Cl>>>,
-        CodecFut: Future<Output = Result<(PdRegionCodec, Option<keyspacepb::KeyspaceMeta>)>>,
-        MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
-        MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
-        ResolveCodec: FnOnce(Arc<RetryClient<Cl>>) -> CodecFut,
+        P: RetryClientTrait + Send + Sync + 'static,
     {
+        let mode = if enable_codec {
+            KeyMode::Txn
+        } else {
+            KeyMode::Raw
+        };
+        let keyspace_name = config.keyspace.as_deref().map(build_keyspace_name);
+        let security_mgr = Self::configured_security(&config)?;
+        let client = Self::assemble(
+            config,
+            security_mgr,
+            |_| kv_connect,
+            pd,
+            move |pd| async move {
+                let Some(name) = keyspace_name else {
+                    return Ok((PdRegionCodec::v1(mode), None));
+                };
+                let meta = pd.load_keyspace(&name).await?;
+                let keyspace_id = match keyspace_from_pd_meta(&meta)? {
+                    Keyspace::Enable { keyspace_id } => keyspace_id,
+                    _ => unreachable!("PD metadata always constructs a numeric V2 keyspace"),
+                };
+                Ok((PdRegionCodec::v2(mode, keyspace_id)?, Some(meta)))
+            },
+        )
+        .await?;
+        client.region_cache.start_background_gc();
+        Ok(client)
+    }
+
+    fn configured_security(config: &Config) -> Result<Arc<SecurityManager>> {
         let security_mgr = Arc::new(
             config
                 .security_manager()
@@ -1823,8 +1862,41 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
                 ))
             })?;
         set_store_liveness_timeout(store_liveness_timeout);
+        Ok(security_mgr)
+    }
 
+    async fn new_with_codec_resolver<PdFut, CodecFut, MakeKvC, MakePd, ResolveCodec>(
+        config: Config,
+        kv_connect: MakeKvC,
+        pd: MakePd,
+        resolve_codec: ResolveCodec,
+    ) -> Result<PdRpcClient<KvC, P>>
+    where
+        P: Send + Sync + 'static,
+        PdFut: Future<Output = Result<P>>,
+        CodecFut: Future<Output = Result<(PdRegionCodec, Option<keyspacepb::KeyspaceMeta>)>>,
+        MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
+        MakePd: FnOnce(Arc<SecurityManager>) -> PdFut,
+        ResolveCodec: FnOnce(Arc<P>) -> CodecFut,
+    {
+        let security_mgr = Self::configured_security(&config)?;
         let pd = Arc::new(pd(security_mgr.clone()).await?);
+        Self::assemble(config, security_mgr, kv_connect, pd, resolve_codec).await
+    }
+
+    async fn assemble<CodecFut, MakeKvC, ResolveCodec>(
+        config: Config,
+        security_mgr: Arc<SecurityManager>,
+        kv_connect: MakeKvC,
+        pd: Arc<P>,
+        resolve_codec: ResolveCodec,
+    ) -> Result<PdRpcClient<KvC, P>>
+    where
+        P: Send + Sync + 'static,
+        CodecFut: Future<Output = Result<(PdRegionCodec, Option<keyspacepb::KeyspaceMeta>)>>,
+        MakeKvC: FnOnce(Arc<SecurityManager>) -> KvC,
+        ResolveCodec: FnOnce(Arc<P>) -> CodecFut,
+    {
         let (region_codec, keyspace_meta) = resolve_codec(pd.clone()).await?;
         let kv_client_cache = Default::default();
         let kv_client_versions = Default::default();
@@ -1906,8 +1978,8 @@ impl<KvC: KvConnect + Send + Sync + 'static, Cl> PdRpcClient<KvC, Cl> {
     /// client-go KVStore.Close. Every caller waits for the same completed close.
     pub async fn close(&self)
     where
-        Cl: Send + Sync + 'static,
-        RetryClient<Cl>: RetryClientTrait,
+        P: Send + Sync + 'static,
+        P: RetryClientTrait,
     {
         self.kv_client_closed.store(true, Ordering::Release);
         self.close_complete
@@ -2044,6 +2116,10 @@ pub mod test {
     // public close also closes the PD owner.
     #[async_trait]
     impl RetryClientTrait for RetryClient<MockCluster> {
+        async fn cluster_id(&self) -> u64 {
+            0
+        }
+
         async fn get_region(self: Arc<Self>, _: Vec<u8>) -> Result<RegionWithLeader> {
             unreachable!("pool-only fixture")
         }

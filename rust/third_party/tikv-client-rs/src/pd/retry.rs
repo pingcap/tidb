@@ -39,6 +39,9 @@ pub type RegionScanOptions = super::opt::GetRegionOp;
 
 #[async_trait]
 pub trait RetryClientTrait {
+    /// pd-client `GetClusterID`.
+    async fn cluster_id(&self) -> u64;
+
     /// Retires the owned PD services. Adapters without owned workers may do nothing.
     async fn close(&self) {}
 
@@ -549,6 +552,10 @@ impl RetryClient<Cluster> {
 
 #[async_trait]
 impl RetryClientTrait for RetryClient<Cluster> {
+    async fn cluster_id(&self) -> u64 {
+        RetryClient::cluster_id(self).await
+    }
+
     async fn close(&self) {
         RetryClient::close(self).await;
     }

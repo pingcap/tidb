@@ -211,6 +211,10 @@ mod test {
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 self.region_error.clone()
             }
+
+            fn has_region_error(&self) -> bool {
+                self.region_error.is_some()
+            }
         }
 
         impl HasLocks for MockRpcResponse {}
@@ -376,6 +380,10 @@ mod test {
         impl HasRegionError for MockOkResponse {
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 None
+            }
+
+            fn has_region_error(&self) -> bool {
+                false
             }
         }
 
@@ -599,6 +607,10 @@ mod test {
         impl HasRegionError for MockOkResponse {
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 None
+            }
+
+            fn has_region_error(&self) -> bool {
+                false
             }
         }
 

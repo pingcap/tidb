@@ -432,6 +432,10 @@ impl HasRegionError for ScannerBatchResponse {
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         self.region_error.take()
     }
+
+    fn has_region_error(&self) -> bool {
+        self.region_error.is_some()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -2363,6 +2367,10 @@ impl crate::store::HasKeyErrors for kvrpcpb::BroadcastTxnStatusResponse {
 impl crate::store::HasRegionError for kvrpcpb::BroadcastTxnStatusResponse {
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         None
+    }
+
+    fn has_region_error(&self) -> bool {
+        false
     }
 }
 

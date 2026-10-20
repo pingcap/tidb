@@ -217,12 +217,23 @@ impl<PdC: PdClient> RegionLockResolver for BaseRegionLockResolver<PdC> {
             let response: kvrpcpb::ScanLockResponse =
                 PlanBuilder::new(self.store.pd_client(), keyspace, request)
                     .keyspace_name_option(self.store.keyspace_name())
-                    .single_region_with_store(store)
+                    .single_region_with_store(store.clone())
                     .await?
                     .plan()
                     .execute()
                     .await?;
             if let Some(region_error) = response.region_error {
+                // client-go's `SendReq` applies the region error to the
+                // region cache (`onRegionError`) before returning it, so the
+                // next `LocateKey` sees the split or the new leader. Its
+                // retry decision is not this loop's: client-go backs off
+                // `BoRegionMiss` and locates again, as below.
+                let _ = crate::request::plan::handle_region_error(
+                    self.store.pd_client(),
+                    region_error.clone(),
+                    store,
+                )
+                .await;
                 backoff_or(backoff, Error::RegionError(Box::new(region_error))).await?;
                 continue;
             }

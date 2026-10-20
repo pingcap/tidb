@@ -129,8 +129,10 @@ where
     type Result = P::Result;
 
     async fn execute(&self) -> Result<Self::Result> {
-        let mut response = self.inner.execute().await?;
-        if response.region_error().is_none() {
+        let response = self.inner.execute().await?;
+        // client-go checks visibility only after a read succeeds; a region
+        // error stays in the response for the retry layer above.
+        if !response.has_region_error() {
             if let Some(validator) = &self.validator {
                 validator.check_visibility(self.read_timestamp).await?;
             }
@@ -3089,6 +3091,10 @@ impl HasRegionError for CleanupLocksResult {
     fn region_error(&mut self) -> Option<errorpb::Error> {
         self.region_error.take()
     }
+
+    fn has_region_error(&self) -> bool {
+        self.region_error.is_some()
+    }
 }
 
 impl HasKeyErrors for CleanupLocksResult {
@@ -3371,6 +3377,10 @@ impl<Resp: HasLocks, Shard> HasLocks for ResponseWithShard<Resp, Shard> {
 impl<Resp: HasRegionError, Shard> HasRegionError for ResponseWithShard<Resp, Shard> {
     fn region_error(&mut self) -> Option<errorpb::Error> {
         self.0.region_error()
+    }
+
+    fn has_region_error(&self) -> bool {
+        self.0.has_region_error()
     }
 }
 

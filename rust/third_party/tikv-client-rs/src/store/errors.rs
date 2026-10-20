@@ -6,7 +6,12 @@ use crate::Error;
 
 // Those that can have a single region error
 pub trait HasRegionError {
+    /// Takes the region error out of the response.
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error>;
+
+    /// Whether the response carries a region error, leaving it in place for
+    /// the retry layer that owns it.
+    fn has_region_error(&self) -> bool;
 }
 
 /// A concrete response accepted by client-go's `GenRegionErrorResp` switch.
@@ -44,6 +49,10 @@ macro_rules! has_region_error {
         impl HasRegionError for $type {
             fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
                 self.region_error.take().map(|e| e.into())
+            }
+
+            fn has_region_error(&self) -> bool {
+                self.region_error.is_some()
             }
         }
     };
@@ -144,6 +153,10 @@ region_error_response!(
 impl HasRegionError for coprocessor::Response {
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         self.region_error.take()
+    }
+
+    fn has_region_error(&self) -> bool {
+        self.region_error.is_some()
     }
 }
 
@@ -343,6 +356,10 @@ impl<T: HasKeyErrors> HasKeyErrors for Vec<T> {
 impl<T: HasRegionError, E> HasRegionError for Result<T, E> {
     fn region_error(&mut self) -> Option<crate::proto::errorpb::Error> {
         self.as_mut().ok().and_then(|t| t.region_error())
+    }
+
+    fn has_region_error(&self) -> bool {
+        self.as_ref().is_ok_and(HasRegionError::has_region_error)
     }
 }
 

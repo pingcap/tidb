@@ -3945,6 +3945,10 @@ mod test {
 
     #[async_trait]
     impl RetryClientTrait for MockRetryClient {
+        async fn cluster_id(&self) -> u64 {
+            0
+        }
+
         async fn get_region(
             self: Arc<Self>,
             key: Vec<u8>,
@@ -4458,6 +4462,33 @@ mod test {
         assert!(cache.region_cache.read().await.on_my_way_id.is_empty());
         assert_eq!(cache.get_region_by_id(42).await.unwrap().id(), 42);
         assert!(cache.region_cache.read().await.on_my_way_id.is_empty());
+    }
+
+    /// client-go builds its `RegionCache` on the store over any `pd.Client`
+    /// (`tikv.NewRegionCache(pdClient)`), so a mock or embedded PD gets the
+    /// same cache as a real cluster's: the second lookup of a key is served
+    /// from the cache, not from PD.
+    #[tokio::test]
+    async fn a_pd_rpc_client_over_any_pd_client_caches_regions() -> Result<()> {
+        let pd = Arc::new(MockRetryClient::default());
+        let mut cached = region(1, vec![], vec![]);
+        cached.leader = cached.region.peers.first().cloned();
+        pd.regions.lock().await.insert(1, cached);
+        let client = crate::pd::PdRpcClient::new_with_pd_client(
+            crate::Config::default(),
+            crate::mock::MockKvConnect,
+            pd.clone(),
+            false,
+        )
+        .await?;
+        let client = Arc::new(client);
+
+        use crate::pd::PdClient as _;
+        let key: Key = vec![1].into();
+        assert_eq!(client.clone().region_for_key(&key).await?.id(), 1);
+        assert_eq!(client.clone().region_for_key(&key).await?.id(), 1);
+        assert_eq!(pd.get_region_count.load(SeqCst), 1);
+        Ok(())
     }
 
     #[tokio::test]
