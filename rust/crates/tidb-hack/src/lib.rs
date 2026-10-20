@@ -300,4 +300,27 @@ mod case_tests {
         assert_eq!(go_to_lower("AbC_01"), "abc_01");
         assert_eq!(go_to_lower("中文"), "中文");
     }
+
+    /// Go `strings.ToLower`/`ToUpper` over a Go string run `strings.Map`,
+    /// which reads each byte that is not part of valid UTF-8 as
+    /// `utf8.RuneError` and writes U+FFFD: a latin1 client's `\xC9x` lowers
+    /// to `"\u{FFFD}x"`, the same key as its `\xE9X` (live Go: `select
+    /// count(*) from t as \xC9 where \xE9.id = 1` finds the alias). A valid
+    /// escape-range character has no case mapping and keeps its bytes.
+    #[test]
+    fn go_case_mapping_turns_invalid_bytes_into_replacement_characters() {
+        use crate::raw_bytes::{bytes_to_str, str_to_bytes};
+        let lower = |bytes: &[u8]| go_to_lower(bytes_to_str(bytes));
+        assert_eq!(lower(b"\xc9X"), "\u{FFFD}x");
+        assert_eq!(lower(b"\xc9X"), lower(b"\xe9x"));
+        assert_eq!(
+            go_to_upper(bytes_to_str(b"a\xe9\xd6\xd0")),
+            "A\u{FFFD}\u{FFFD}\u{FFFD}"
+        );
+        let kept = b"A\xf4\x8f\xbf\xbf\xe9";
+        assert_eq!(
+            str_to_bytes(&go_to_lower(bytes_to_str(kept))).as_ref(),
+            "a\u{10FFFF}\u{FFFD}".as_bytes()
+        );
+    }
 }

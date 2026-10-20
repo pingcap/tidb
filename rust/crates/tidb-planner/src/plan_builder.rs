@@ -1163,9 +1163,9 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
         if name.hidden || name.not_explicit_usable {
             continue;
         }
-        let matches = name.names.column.lower.eq_ignore_ascii_case(column)
-            && table.is_none_or(|t| name.names.table.lower.eq_ignore_ascii_case(t))
-            && db.is_none_or(|d| name.names.database.lower.eq_ignore_ascii_case(d));
+        let matches = lower_name_matches(&name.names.column.lower, column)
+            && table.is_none_or(|t| lower_name_matches(&name.names.table.lower, t))
+            && db.is_none_or(|d| lower_name_matches(&name.names.database.lower, d));
         if matches {
             if let Some(previous) = found {
                 // Go: "Do not allow multiple non-redundant columns with the
@@ -1186,6 +1186,17 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
     found
 }
 
+/// Whether a written identifier names `lower`, a stored `CIStr.L`: Go
+/// compares the two `L`s, so the written side goes through `strings.ToLower`
+/// as well -- a non-ASCII letter folds (`Σ` names `σ`) and each byte that is
+/// not UTF-8 reads as U+FFFD (a latin1 client's `É` names its `é`).
+pub(crate) fn lower_name_matches(lower: &str, written: &str) -> bool {
+    if lower.is_ascii() && written.is_ascii() {
+        return lower.eq_ignore_ascii_case(written);
+    }
+    tidb_mysql::to_lowercase(lower) == tidb_mysql::to_lowercase(written)
+}
+
 /// Whether `path` matches several NON-redundant names in `names` -- go
 /// `expression.FindFieldName`'s errNonUniq (1052) case, which the
 /// Option-only [`find_field_name`] cannot distinguish from an ordinary
@@ -1203,9 +1214,9 @@ pub(crate) fn field_name_ambiguity(names: &[FieldName], path: &[String]) -> Opti
         if name.hidden || name.not_explicit_usable {
             continue;
         }
-        let matches = name.names.column.lower.eq_ignore_ascii_case(column)
-            && table.is_none_or(|t| name.names.table.lower.eq_ignore_ascii_case(t))
-            && db.is_none_or(|d| name.names.database.lower.eq_ignore_ascii_case(d));
+        let matches = lower_name_matches(&name.names.column.lower, column)
+            && table.is_none_or(|t| lower_name_matches(&name.names.table.lower, t))
+            && db.is_none_or(|d| lower_name_matches(&name.names.database.lower, d));
         if matches {
             if let Some(previous) = found {
                 let previous: &FieldName = &names[previous];
@@ -3778,8 +3789,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             {
                 continue;
             }
-            if db.is_some_and(|d| !name.names.database.lower.eq_ignore_ascii_case(d))
-                || table.is_some_and(|t| !name.names.table.lower.eq_ignore_ascii_case(t))
+            if db.is_some_and(|d| !lower_name_matches(&name.names.database.lower, d))
+                || table.is_some_and(|t| !lower_name_matches(&name.names.table.lower, t))
             {
                 continue;
             }
@@ -5323,17 +5334,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                                 _ => return None,
                             };
                             if database.is_some_and(|database| {
-                                !name.names.database.lower.eq_ignore_ascii_case(database)
+                                !lower_name_matches(&name.names.database.lower, database)
                             }) {
                                 return None;
                             }
                             let aliased = name.names.table.lower != name.names.original_table.lower;
-                            let direct = name.names.table.lower.eq_ignore_ascii_case(target);
+                            let direct = lower_name_matches(&name.names.table.lower, target);
                             let rank = if direct && aliased {
                                 0
                             } else if direct {
                                 1
-                            } else if name.names.original_table.lower.eq_ignore_ascii_case(target) {
+                            } else if lower_name_matches(&name.names.original_table.lower, target) {
                                 2
                             } else {
                                 return None;

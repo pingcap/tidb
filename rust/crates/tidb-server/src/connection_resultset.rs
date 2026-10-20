@@ -148,7 +148,17 @@ pub fn write_connection_result_set_to_sink<S: ResultSetSource, W: ResultSetSink>
     options: ResultSetOptions,
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, ResultSetWriteError> {
-    let result = write_result_set_tracked(source, sink, options, batch_size);
+    let started = std::time::Instant::now();
+    let mut timed = crate::resultset_source::PullTimedResultSetSource::new(source);
+    let result = write_result_set_tracked(&mut timed, sink, options, batch_size);
+    let pulled = timed.pulled();
+    let column_count = timed.column_count();
+    // Go `writeChunks` and `writeResultSet`'s flush, before `rs.Close()`
+    // finishes the statement and writes its slow log.
+    source.add_write_sql_resp_duration(started.elapsed().saturating_sub(pulled));
+    if let Ok(outcome) = &result {
+        source.add_result_chunk_cells(result_chunk_cells(outcome.rows_written, column_count));
+    }
     let finish_result = match &result {
         Err(error) if !error.finish_attempted => source.finish(),
         _ => Ok(()),
@@ -174,7 +184,15 @@ pub fn write_connection_binary_result_set_to_sink<S: ResultSetSource, W: ResultS
     options: ResultSetOptions,
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, ResultSetWriteError> {
-    let result = write_binary_result_set_tracked(source, sink, options, batch_size);
+    let started = std::time::Instant::now();
+    let mut timed = crate::resultset_source::PullTimedResultSetSource::new(source);
+    let result = write_binary_result_set_tracked(&mut timed, sink, options, batch_size);
+    let pulled = timed.pulled();
+    let column_count = timed.column_count();
+    source.add_write_sql_resp_duration(started.elapsed().saturating_sub(pulled));
+    if let Ok(outcome) = &result {
+        source.add_result_chunk_cells(result_chunk_cells(outcome.rows_written, column_count));
+    }
     let finish_result = match &result {
         Err(error) if !error.finish_attempted => source.finish(),
         _ => Ok(()),
@@ -190,6 +208,13 @@ pub fn write_connection_binary_result_set_to_sink<S: ResultSetSource, W: ResultS
         }),
         (Ok(outcome), Ok(()), Ok(())) => Ok(outcome),
     }
+}
+
+/// Go `writeChunks`: `int64(totalRows) * int64(columnCount)`.
+fn result_chunk_cells(rows: impl TryInto<i64>, columns: usize) -> i64 {
+    rows.try_into()
+        .unwrap_or(i64::MAX)
+        .saturating_mul(i64::try_from(columns).unwrap_or(i64::MAX))
 }
 
 struct BinaryTrackedError {
@@ -592,5 +617,80 @@ mod tests {
             ),
             b"\0\0\x05[1,2]"
         );
+    }
+
+    /// A materialized source whose pulls are slow, recording what the writer
+    /// hands back to its statement.
+    struct ReportingSource {
+        inner: crate::pipeline_session::MaterializedResultSetSource,
+        pull_delay: std::time::Duration,
+        write_sql_resp: Option<std::time::Duration>,
+        result_chunk_cells: Option<i64>,
+    }
+
+    impl crate::resultset_source::ResultSetSource for ReportingSource {
+        fn next_batch(
+            &mut self,
+            max_rows: usize,
+        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+            std::thread::sleep(self.pull_delay);
+            self.inner.next_batch(max_rows)
+        }
+        fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, tidb_executor::MysqlError> {
+            self.inner.columns()
+        }
+        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+            self.inner.finish()
+        }
+        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+            self.inner.close()
+        }
+        fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+            assert!(self.write_sql_resp.replace(duration).is_none());
+        }
+        fn add_result_chunk_cells(&mut self, cells: i64) {
+            assert!(self.result_chunk_cells.replace(cells).is_none());
+        }
+    }
+
+    /// Go `writeChunks`: `WriteSQLRespDuration` is the writer's own time
+    /// (column info, rows, the terminal packet), not `rs.Next`'s, and
+    /// `AddResultChunkCells` gets the written rows times the columns.
+    #[test]
+    fn writer_reports_write_time_without_pulls_and_result_cells() {
+        let columns = crate::pipeline_session::select_columns(&[
+            (
+                "a".to_owned(),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+            (
+                "b".to_owned(),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            ),
+        ]);
+        let rows = (0..3)
+            .map(|i| vec![Datum::Int(i), Datum::Int(i * 10)])
+            .collect();
+        let pull_delay = std::time::Duration::from_millis(30);
+        let mut source = ReportingSource {
+            inner: crate::pipeline_session::MaterializedResultSetSource::new(columns, rows),
+            pull_delay,
+            write_sql_resp: None,
+            result_chunk_cells: None,
+        };
+        let started = std::time::Instant::now();
+        let response = super::write_connection_result_set(
+            &mut source,
+            tidb_protocol::ResultSetOptions::default(),
+            2,
+        )
+        .unwrap();
+        let total = started.elapsed();
+        assert_eq!(response.outcome.rows_written, 3);
+        assert_eq!(source.result_chunk_cells, Some(6));
+        let write = source.write_sql_resp.expect("the writer reported its time");
+        // Two pulls of 3 rows in batches of 2, plus the empty pull, slept.
+        assert!(write > std::time::Duration::ZERO, "{write:?}");
+        assert!(write + pull_delay * 3 <= total, "{write:?} of {total:?}");
     }
 }

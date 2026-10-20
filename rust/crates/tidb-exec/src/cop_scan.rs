@@ -963,7 +963,7 @@ where
         .map_err(|error| format!("{error:?}"))?
         .with_cop_lite_worker(plan.cop_lite_worker)
         .with_kv_exec_counter(plan.kv_exec_counter)
-        .with_ru_details(plan.kv_context.ru_details);
+        .with_kv_context(plan.kv_context);
     let mut runtime = InjectedQueryRuntime::new(&mut transport);
     let result = runtime
         .select_with_runtime_stats(

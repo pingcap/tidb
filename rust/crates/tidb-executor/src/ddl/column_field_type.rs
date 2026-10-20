@@ -183,9 +183,14 @@ pub fn build_field_type(
                 GoString::default();
                 declared.args.len()
             ]));
+            // Go's member is the literal's own Go string: a latin1 client's
+            // `'d\xE9'` is the bytes `d`, `E9` (carried here as a raw-byte
+            // escape), which the default is matched against and which the
+            // stored JSON then writes as U+FFFD.
+            let member = |value: &str| tidb_hack::raw_bytes::str_to_bytes(value).into_owned();
             for (index, argument) in declared.args.iter().enumerate() {
                 match argument {
-                    ColumnTypeArg::Text(value) => field_type.set_elem(index, value.as_str()),
+                    ColumnTypeArg::Text(value) => field_type.set_elem(index, member(value)),
                     ColumnTypeArg::Bytes(value) => {
                         field_type.set_elem_with_binary_literal(index, value.as_slice(), true)
                     }
@@ -193,7 +198,10 @@ pub fn build_field_type(
             }
             flen = enum_set_display_length_from_lengths(
                 code,
-                declared.args.iter().map(ColumnTypeArg::byte_len),
+                declared.args.iter().map(|argument| match argument {
+                    ColumnTypeArg::Text(value) => member(value).len(),
+                    ColumnTypeArg::Bytes(value) => value.len(),
+                }),
             );
         }
         // `FLOAT(M,D)` and `DOUBLE(M,D)` carry a precision AND a scale exactly

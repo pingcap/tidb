@@ -204,6 +204,7 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
         mut input: SelectInput,
         result_context: QueryResultContext,
     ) -> Result<QuerySelectResult<T::Response>, QueryRuntimeError> {
+        let _region = tidb_util::tracing::start_thread_region_ex("distsql.Select");
         input.row_len = result_context.final_field_types.len();
         self.execute(
             request,
@@ -228,6 +229,8 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
         root_plan_id: isize,
         collector_enabled: bool,
     ) -> Result<QuerySelectResult<T::Response>, QueryRuntimeError> {
+        // Go `SelectWithRuntimeStats` sends through `Select`.
+        let _region = tidb_util::tracing::start_thread_region_ex("distsql.Select");
         input.row_len = result_context.final_field_types.len();
         self.execute(
             request,

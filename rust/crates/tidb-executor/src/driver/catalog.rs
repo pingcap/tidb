@@ -3517,6 +3517,18 @@ impl Catalog {
         if pending.items.is_empty() {
             return Ok(());
         }
+        /// Go `SyncWaitStatsLoad`'s deferred `DurationOptimizer.StatsSyncWait`.
+        struct RecordStatsSyncWait<'a>(
+            &'a crate::phase_durations::SessionPhaseDurations,
+            std::time::Instant,
+        );
+        impl Drop for RecordStatsSyncWait<'_> {
+            fn drop(&mut self) {
+                self.0.set_stats_sync_wait(self.1.elapsed());
+            }
+        }
+        let _record_wait =
+            RecordStatsSyncWait(context.phase_durations(), std::time::Instant::now());
         let now = std::time::Instant::now();
         let deadline = now.checked_add(pending.timeout).unwrap_or(now);
         let requested_items = pending.items;
@@ -3949,6 +3961,46 @@ impl Catalog {
             Arc::make_mut(&mut physical).restrict_read_to_partitions(&[physical_id]);
         }
         Some(physical)
+    }
+
+    /// Go `GetTblInfoForUsedStatsByPhysicalID`'s name: the table's name, then
+    /// ` <partition>` for a partition id or ` global` for a partitioned
+    /// table's own id, and `tableID <id>` when no table owns the id.
+    pub(crate) fn used_stats_table_name(&self, physical_id: i64) -> String {
+        let current = self.table_id_names().get(&physical_id).and_then(|key| {
+            let TableEntry::Kv(table) = self
+                .databases
+                .get(&key.database)?
+                .tables
+                .get(&key.table)?
+                .as_ref()
+            else {
+                return None;
+            };
+            Some(table)
+        });
+        let Some(table) = current.or_else(|| {
+            self.shadowed_kv_table_by_id(physical_id)
+                .map(|(_, table)| table)
+        }) else {
+            return format!("tableID {physical_id}");
+        };
+        let mut name = table.name.clone();
+        if let Some(partition) = table.partition() {
+            match partition
+                .definitions
+                .iter()
+                .find(|definition| definition.id == physical_id)
+            {
+                Some(definition) => {
+                    name.push(' ');
+                    name.push_str(&definition.name);
+                }
+                None if !partition.definitions.is_empty() => name.push_str(" global"),
+                None => {}
+            }
+        }
+        name
     }
 
     /// Resolves a logical or partition table ID to its owning database name.

@@ -1852,8 +1852,9 @@ fn slow_log_rules_and_last_ddl_info_follow_go() {
     );
 }
 
-/// `TRACE` runs its statement and reports the span tree in Go's three
-/// formats, with Go's span names (the timestamps are this run's own).
+/// `TRACE` runs its statement and reports the spans its run recorded in Go's
+/// three formats. This in-process path drains the record set inside
+/// `session.ExecuteStmt`, so the executor calls sit under `session.runStmt`.
 #[test]
 fn trace_reports_go_spans() {
     let mut session = Session::new();
@@ -1866,15 +1867,15 @@ fn trace_reports_go_spans() {
         operations,
         [
             "trace",
-            "  ├─session.ExecuteStmt",
-            "  │ ├─executor.Compile",
-            "  │ │ ├─planner.Preprocess",
-            "  │ │ └─planner.Optimize",
-            "  │ └─session.runStmt",
-            "  ├─*executor.ProjectionExec.Next",
-            "  │ └─*executor.TableDualExec.Next",
-            "  └─*executor.ProjectionExec.Next",
-            "    └─*executor.TableDualExec.Next",
+            "  └─session.ExecuteStmt",
+            "    ├─executor.Compile",
+            "    │ ├─planner.Preprocess",
+            "    │ └─planner.Optimize",
+            "    └─session.runStmt",
+            "      ├─*executor.ProjectionExec.Next",
+            "      │ └─*executor.TableDualExec.Next",
+            "      └─*executor.ProjectionExec.Next",
+            "        └─*executor.TableDualExec.Next",
         ]
     );
     let log = row_text(session.run("TRACE FORMAT = 'log' SELECT 1"));

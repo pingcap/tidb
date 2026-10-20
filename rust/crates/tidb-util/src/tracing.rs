@@ -14,9 +14,10 @@
 
 //! TiDB trace categories, events, context propagation, and span regions.
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use tidb_log::Field;
 
@@ -294,7 +295,27 @@ pub struct RawSpan {
     pub parent_span_id: u64,
     /// Baggage propagated with the span.
     pub baggage: std::collections::BTreeMap<String, String>,
+    /// When the span started.
+    pub start: SystemTime,
+    /// How long the span lasted.
+    pub duration: Duration,
+    /// Go `RawSpan.Tags`, rendered as strings.
+    pub tags: std::collections::BTreeMap<String, String>,
+    /// Go `RawSpan.Logs`, in logging order.
+    pub logs: Vec<LogRecord>,
 }
+
+/// Go `opentracing.LogRecord`: one timestamped set of string fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogRecord {
+    /// When the record was logged.
+    pub timestamp: SystemTime,
+    /// The `(key, value)` fields, in logging order.
+    pub fields: Vec<(String, String)>,
+}
+
+/// Go `logutil.TraceEventKey`: the log field `logutil.Eventf` writes.
+pub const TRACE_EVENT_KEY: &str = "event";
 
 /// Go `basictracer.SpanContext`: the propagated identity of a span.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -317,6 +338,11 @@ pub type CallbackRecorder = Arc<dyn Fn(RawSpan) + Send + Sync>;
 pub struct Tracer {
     recorder: Option<CallbackRecorder>,
     next_id: Arc<AtomicU64>,
+    /// The wall-clock moment and monotonic instant the tracer was made at:
+    /// span times are this moment plus monotonic time since, so they keep
+    /// the order and resolution of the monotonic clock (Go's `time.Now()`
+    /// carries a monotonic reading the same way).
+    epoch: (SystemTime, Instant),
 }
 
 impl std::fmt::Debug for Tracer {
@@ -334,6 +360,7 @@ impl Tracer {
         Self {
             recorder: Some(recorder),
             next_id: Arc::new(AtomicU64::new(1)),
+            epoch: (SystemTime::now(), Instant::now()),
         }
     }
 
@@ -342,12 +369,40 @@ impl Tracer {
         Self {
             recorder: None,
             next_id: Arc::new(AtomicU64::new(1)),
+            epoch: (SystemTime::now(), Instant::now()),
         }
     }
 
     /// Whether this tracer discards every span (Go's no-op tracer check).
     pub fn is_noop(&self) -> bool {
         self.recorder.is_none()
+    }
+
+    /// Now, on the tracer's clock.
+    fn now(&self) -> (SystemTime, Instant) {
+        let now = Instant::now();
+        (self.system_time_of(now), now)
+    }
+
+    /// The moment a monotonic instant was, on the tracer's clock: what a
+    /// span measured elsewhere (an RPC's send) starts at.
+    pub fn system_time_of(&self, instant: Instant) -> SystemTime {
+        match instant.checked_duration_since(self.epoch.1) {
+            Some(after) => self.epoch.0 + after,
+            None => self.epoch.0 - self.epoch.1.duration_since(instant),
+        }
+    }
+
+    /// The monotonic instant a moment on the tracer's clock was.
+    fn instant_of(&self, moment: SystemTime) -> Instant {
+        match moment.duration_since(self.epoch.0) {
+            Ok(after) => self.epoch.1 + after,
+            Err(before) => self
+                .epoch
+                .1
+                .checked_sub(before.duration())
+                .unwrap_or(self.epoch.1),
+        }
     }
 
     fn next_id(&self) -> u64 {
@@ -372,8 +427,30 @@ impl Tracer {
         self.start_child(operation, Some(parent))
     }
 
+    /// Go `Tracer.StartSpan(operation, opentracing.ChildOf(parent),
+    /// opentracing.StartTime(start))`: a span whose start was measured
+    /// elsewhere, as client-go's `spanInfo.addTo` opens TiKV's detail spans.
+    pub fn start_span_child_of_at(
+        self: &Arc<Self>,
+        operation: &str,
+        parent: SpanContext,
+        start: SystemTime,
+    ) -> Span {
+        let span = self.start_child(operation, Some(parent));
+        {
+            let mut state = span
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.start_instant = self.instant_of(start);
+            state.start = start;
+        }
+        span
+    }
+
     fn start_child(self: &Arc<Self>, operation: &str, parent: Option<SpanContext>) -> Span {
         let span_id = self.next_id();
+        let (start, start_instant) = self.now();
         Span {
             tracer: Arc::clone(self),
             context: SpanContext {
@@ -382,7 +459,14 @@ impl Tracer {
             },
             parent_span_id: parent.map_or(0, |parent| parent.span_id),
             operation: operation.to_owned(),
-            state: Arc::new(Mutex::new(SpanState::default())),
+            state: Arc::new(Mutex::new(SpanState {
+                baggage: std::collections::BTreeMap::new(),
+                finished: false,
+                start,
+                start_instant,
+                tags: std::collections::BTreeMap::new(),
+                logs: Vec::new(),
+            })),
         }
     }
 }
@@ -420,10 +504,14 @@ pub struct Span {
     state: Arc<Mutex<SpanState>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct SpanState {
     baggage: std::collections::BTreeMap<String, String>,
     finished: bool,
+    start: SystemTime,
+    start_instant: Instant,
+    tags: std::collections::BTreeMap<String, String>,
+    logs: Vec<LogRecord>,
 }
 
 impl Span {
@@ -461,9 +549,54 @@ impl Span {
             .cloned()
     }
 
+    /// Go `Span.SetTag(key, value)`, the value in its `%+v` form.
+    pub fn set_tag(&self, key: &str, value: &str) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .tags
+            .insert(key.to_owned(), value.to_owned());
+    }
+
+    /// Go `Span.LogKV(key, value)`.
+    pub fn log_kv(&self, key: &str, value: &str) {
+        self.log_fields(vec![(key.to_owned(), value.to_owned())]);
+    }
+
+    /// Go `Span.LogFields(fields...)` at the current time.
+    pub fn log_fields(&self, fields: Vec<(String, String)>) {
+        if self.is_noop() {
+            return;
+        }
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .logs
+            .push(LogRecord {
+                timestamp: self.tracer.now().0,
+                fields,
+            });
+    }
+
+    /// Go `logutil.Eventf(ctx, ...)` on this span: a log record whose only
+    /// field is [`TRACE_EVENT_KEY`].
+    pub fn log_event(&self, event: &str) {
+        self.log_fields(vec![(TRACE_EVENT_KEY.to_owned(), event.to_owned())]);
+    }
+
     /// Go `Span.Finish`: hands the raw span to the tracer's recorder. Like
     /// Go's, a second finish records nothing.
     pub fn finish(&self) {
+        self.finish_with(None);
+    }
+
+    /// Go `Span.FinishWithOptions(opentracing.FinishOptions{FinishTime:
+    /// end})`.
+    pub fn finish_at(&self, end: SystemTime) {
+        self.finish_with(Some(end));
+    }
+
+    fn finish_with(&self, end: Option<SystemTime>) {
         let mut state = self
             .state
             .lock()
@@ -472,15 +605,23 @@ impl Span {
             return;
         }
         state.finished = true;
-        let baggage = state.baggage.clone();
+        let duration = match end {
+            Some(end) => end.duration_since(state.start).unwrap_or_default(),
+            None => state.start_instant.elapsed(),
+        };
+        let raw = self.tracer.recorder.as_ref().map(|_| RawSpan {
+            operation: self.operation.clone(),
+            context: self.context,
+            parent_span_id: self.parent_span_id,
+            baggage: state.baggage.clone(),
+            start: state.start,
+            duration,
+            tags: std::mem::take(&mut state.tags),
+            logs: std::mem::take(&mut state.logs),
+        });
         drop(state);
-        if let Some(recorder) = &self.tracer.recorder {
-            recorder(RawSpan {
-                operation: self.operation.clone(),
-                context: self.context,
-                parent_span_id: self.parent_span_id,
-                baggage,
-            });
+        if let (Some(recorder), Some(raw)) = (&self.tracer.recorder, raw) {
+            recorder(raw);
         }
     }
 }
@@ -697,6 +838,218 @@ impl Region {
     }
 }
 
+// Go threads the span through every call as `ctx`; this tier keeps the span
+// of the code a thread is running instead. A thread with no span (every
+// statement but a traced one) pays one thread-local read per region.
+thread_local! {
+    static THREAD_SPAN: RefCell<Option<Span>> = const { RefCell::new(None) };
+}
+
+/// Go `opentracing.SpanFromContext(ctx)` for the code this thread runs:
+/// the span a region opened here becomes a child of, `None` when untraced.
+pub fn current_span() -> Option<Span> {
+    THREAD_SPAN.with(|current| current.borrow().clone())
+}
+
+/// Go `opentracing.ContextWithSpan(ctx, span)` for the code this thread
+/// runs until the guard drops; work handed to another thread carries the
+/// span there with its own guard, as Go's goroutines inherit `ctx`.
+pub fn with_thread_span(span: Option<Span>) -> ThreadSpanGuard {
+    let previous = THREAD_SPAN.with(|current| current.replace(span));
+    ThreadSpanGuard {
+        previous,
+        open_regions: None,
+    }
+}
+
+/// [`with_thread_span`] for a whole traced run (Go `TraceExec`'s
+/// `ContextWithSpan`): when the guard drops, every region
+/// [`begin_thread_region`] opened under it that is still open ends too, as
+/// Go's deferred `End`s have all run once the traced call returns.
+pub fn enter_thread_trace(span: Span) -> ThreadSpanGuard {
+    let open_regions = OPEN_THREAD_REGIONS.with(|open| open.borrow().len());
+    let mut guard = with_thread_span(Some(span));
+    guard.open_regions = Some(open_regions);
+    guard
+}
+
+/// Restores the thread's previous span.
+#[must_use = "the span is removed when the guard drops"]
+pub struct ThreadSpanGuard {
+    previous: Option<Span>,
+    /// For [`enter_thread_trace`]: how many regions were open when it began.
+    open_regions: Option<usize>,
+}
+
+impl Drop for ThreadSpanGuard {
+    fn drop(&mut self) {
+        if let Some(open_regions) = self.open_regions {
+            let left_open = OPEN_THREAD_REGIONS.with(|open| {
+                let mut open = open.borrow_mut();
+                let keep = open_regions.min(open.len());
+                open.split_off(keep)
+            });
+            for region in left_open.into_iter().rev() {
+                region.span.finish();
+            }
+        }
+        let previous = self.previous.take();
+        THREAD_SPAN.with(|current| *current.borrow_mut() = previous);
+    }
+}
+
+/// A region opened on the thread's span: Go's
+/// `defer tracing.StartRegion(ctx, name).End()`, whose code keeps the
+/// caller's ctx, or `tracing.StartRegionEx`, whose code runs under the
+/// region's span. The region ends when the value drops; an ex-region gives
+/// the thread its caller's span back then.
+#[must_use = "the region ends when it drops"]
+pub struct ThreadRegion {
+    span: Option<Span>,
+    entered: Option<ThreadSpanGuard>,
+}
+
+impl ThreadRegion {
+    /// The region's span, `None` when the thread is untraced.
+    pub fn span(&self) -> Option<&Span> {
+        self.span.as_ref()
+    }
+
+    /// Go `Region.End`.
+    pub fn end(self) {}
+}
+
+impl Drop for ThreadRegion {
+    fn drop(&mut self) {
+        drop(self.entered.take());
+        if let Some(span) = self.span.take() {
+            span.finish();
+        }
+    }
+}
+
+fn start_thread_region_with(region_type: &str, enter: bool) -> ThreadRegion {
+    let span = THREAD_SPAN.with(|current| {
+        current.borrow().as_ref().map(|parent| {
+            parent
+                .tracer()
+                .start_span_child_of(region_type, parent.context())
+        })
+    });
+    let entered = match (&span, enter) {
+        (Some(span), true) => Some(with_thread_span(Some(span.clone()))),
+        _ => None,
+    };
+    ThreadRegion { span, entered }
+}
+
+/// Go `tracing.StartRegion(ctx, regionType)` on the thread's span: the
+/// region's own code keeps the caller's span.
+pub fn start_thread_region(region_type: &str) -> ThreadRegion {
+    start_thread_region_with(region_type, false)
+}
+
+/// Go `tracing.StartRegionEx(ctx, regionType)` on the thread's span: the
+/// code that runs while the region is open runs under its span.
+pub fn start_thread_region_ex(region_type: &str) -> ThreadRegion {
+    start_thread_region_with(region_type, true)
+}
+
+// Regions this tier opens in one frame and ends in another (Go opens them
+// with `tracing.StartRegionEx` and ends them with a deferred `End` in the
+// same function, but here the function's work is split across layers):
+// the open ones, innermost last, each with the span the thread had before.
+thread_local! {
+    static OPEN_THREAD_REGIONS: RefCell<Vec<OpenThreadRegion>> = const { RefCell::new(Vec::new()) };
+}
+
+struct OpenThreadRegion {
+    name: &'static str,
+    span: Span,
+    previous: Option<Span>,
+    note: Option<String>,
+}
+
+/// Go `r, ctx := tracing.StartRegionEx(ctx, name)` whose `defer r.End()`
+/// runs in another frame: the thread runs under the region's span until
+/// [`end_thread_region`] ends it. `note` is handed back by that call (the
+/// statement text Go's `runStmt` logs, for instance). Returns the region's
+/// span, `None` when the thread is untraced.
+pub fn begin_thread_region(name: &'static str, note: Option<String>) -> Option<Span> {
+    let parent = current_span()?;
+    let span = parent.tracer().start_span_child_of(name, parent.context());
+    let previous = THREAD_SPAN.with(|current| current.replace(Some(span.clone())));
+    OPEN_THREAD_REGIONS.with(|open| {
+        open.borrow_mut().push(OpenThreadRegion {
+            name,
+            span: span.clone(),
+            previous,
+            note,
+        });
+    });
+    Some(span)
+}
+
+/// Go `Region.End` for the innermost region [`begin_thread_region`] opened
+/// as `name`, and, as Go's deferred `End`s run, for every region opened
+/// after it that is still open; the thread gets back the span it had before
+/// the region began. Returns the region's note, `None` when no region of
+/// that name is open.
+pub fn end_thread_region(name: &'static str) -> Option<Option<String>> {
+    let ended = OPEN_THREAD_REGIONS.with(|open| {
+        let mut open = open.borrow_mut();
+        let position = open.iter().rposition(|region| region.name == name)?;
+        Some(open.split_off(position))
+    })?;
+    let mut ended = ended.into_iter().rev();
+    let mut outermost = None;
+    for region in ended.by_ref() {
+        region.span.finish();
+        outermost = Some(region);
+    }
+    let outermost = outermost?;
+    THREAD_SPAN.with(|current| *current.borrow_mut() = outermost.previous);
+    Some(outermost.note)
+}
+
+/// [`begin_thread_region`] whose [`end_thread_region`] runs when the value
+/// drops, on every return path of the frame that opened it.
+pub fn begin_thread_region_scope(name: &'static str) -> ThreadRegionScope {
+    let opened = begin_thread_region(name, None).is_some();
+    ThreadRegionScope { name, opened }
+}
+
+/// Ends its region when it drops; see [`begin_thread_region_scope`].
+#[must_use = "the region ends when it drops"]
+pub struct ThreadRegionScope {
+    name: &'static str,
+    opened: bool,
+}
+
+impl Drop for ThreadRegionScope {
+    fn drop(&mut self) {
+        if self.opened {
+            end_thread_region(self.name);
+        }
+    }
+}
+
+/// Whether a region [`begin_thread_region`] opened as `name` is still open
+/// on this thread.
+pub fn thread_region_open(name: &'static str) -> bool {
+    OPEN_THREAD_REGIONS.with(|open| open.borrow().iter().any(|region| region.name == name))
+}
+
+/// Go `logutil.Eventf(ctx, ...)` on the thread's span; `event` is formatted
+/// only when the thread is traced.
+pub fn thread_event(event: impl FnOnce() -> String) {
+    THREAD_SPAN.with(|current| {
+        if let Some(span) = current.borrow().as_ref() {
+            span.log_event(&event());
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -820,6 +1173,103 @@ mod tests {
         clone.finish();
 
         assert_eq!(collected.lock().unwrap().len(), 1);
+    }
+
+    // An untraced thread opens nothing and pays no recording.
+    #[test]
+    fn thread_regions_are_inert_without_a_span() {
+        assert!(current_span().is_none());
+        assert!(start_thread_region_ex("a").span().is_none());
+        assert!(begin_thread_region("b", None).is_none());
+        assert!(end_thread_region("b").is_none());
+        assert!(current_span().is_none());
+    }
+
+    // Go's ctx nesting on one thread: an ex-region's code runs under its
+    // span; a region begun in one frame and ended in another ends, as Go's
+    // deferred `End`s run, together with every region begun after it, and
+    // the thread gets its caller's span back.
+    #[test]
+    fn thread_regions_nest_as_gos_ctx_does() {
+        let spans = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&spans);
+        let tracer = Arc::new(Tracer::new(Arc::new(move |raw| {
+            sink.lock().unwrap().push(raw);
+        })));
+        let root = tracer.start_span("trace");
+        let entered = with_thread_span(Some(root.clone()));
+        let outer = begin_thread_region("outer", Some("note".to_owned())).unwrap();
+        start_thread_region("sibling").end();
+        let inner = begin_thread_region("inner", None).unwrap();
+        {
+            let next = start_thread_region_ex("next");
+            thread_event(|| "inside".to_owned());
+            assert_eq!(
+                current_span().unwrap().context(),
+                next.span().unwrap().context()
+            );
+        }
+        assert_eq!(current_span().unwrap().context(), inner.context());
+        assert_eq!(end_thread_region("outer"), Some(Some("note".to_owned())));
+        assert!(!thread_region_open("inner"));
+        assert_eq!(current_span().unwrap().context(), root.context());
+        drop(entered);
+        assert!(current_span().is_none());
+        root.finish();
+
+        let spans = spans.lock().unwrap();
+        let by_name = |name: &str| spans.iter().find(|span| span.operation == name).unwrap();
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| span.operation.as_str())
+                .collect::<Vec<_>>(),
+            ["sibling", "next", "inner", "outer", "trace"]
+        );
+        assert_eq!(by_name("outer").parent_span_id, root.context().span_id);
+        assert_eq!(by_name("sibling").parent_span_id, outer.context().span_id);
+        assert_eq!(by_name("inner").parent_span_id, outer.context().span_id);
+        assert_eq!(by_name("next").parent_span_id, inner.context().span_id);
+        assert_eq!(
+            by_name("next").logs[0].fields,
+            [(TRACE_EVENT_KEY.to_owned(), "inside".to_owned())]
+        );
+    }
+
+    // A traced run's guard ends the regions its run left open, so none
+    // outlives the trace on the thread.
+    #[test]
+    fn a_trace_ends_the_regions_its_run_left_open() {
+        let spans = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&spans);
+        let tracer = Arc::new(Tracer::new(Arc::new(move |raw| {
+            sink.lock().unwrap().push(raw);
+        })));
+        let root = tracer.start_span("trace");
+        let entered = enter_thread_trace(root);
+        begin_thread_region("session.runStmt", None).unwrap();
+        drop(entered);
+        assert!(!thread_region_open("session.runStmt"));
+        assert!(current_span().is_none());
+        assert_eq!(spans.lock().unwrap()[0].operation, "session.runStmt");
+    }
+
+    // Go `opentracing.StartTime` / `FinishOptions.FinishTime`: a span whose
+    // bounds were measured elsewhere keeps them.
+    #[test]
+    fn explicit_start_and_finish_times_are_kept() {
+        let spans = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&spans);
+        let tracer = Arc::new(Tracer::new(Arc::new(move |raw| {
+            sink.lock().unwrap().push(raw);
+        })));
+        let root = tracer.start_span("trace");
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+        let child = tracer.start_span_child_of_at("tikv.RPC", root.context(), start);
+        child.finish_at(start + Duration::from_micros(7));
+        let spans = spans.lock().unwrap();
+        assert_eq!(spans[0].start, start);
+        assert_eq!(spans[0].duration, Duration::from_micros(7));
     }
 
     // Go `TestTraceInfoFromContext`.

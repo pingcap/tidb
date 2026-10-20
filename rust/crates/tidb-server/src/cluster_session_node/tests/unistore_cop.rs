@@ -22208,3 +22208,119 @@ fn gc_worker_sessions_run_gos_system_table_statements() {
     assert!(!session.is_raft_kv2().unwrap());
     assert!(session.history_job(1).unwrap().is_none());
 }
+
+/// The `operation` column of `TRACE <sql>`: the span tree Go's `dfsTree`
+/// prints, one line per span, region IDs (the embedded store's own) as `N`.
+fn trace_tree(session: &mut ClusterServerSession, sql: &str) -> Vec<String> {
+    displayed(rows(session, &format!("TRACE {sql}")))
+        .into_iter()
+        .map(|row| match row[0].split_once("region ID: ") {
+            Some((head, tail)) => {
+                let digits = tail.chars().take_while(char::is_ascii_digit).count();
+                format!("{head}region ID: N{}", &tail[digits..])
+            }
+            None => row[0].clone(),
+        })
+        .collect()
+}
+
+/// `TRACE` records the spans the statement's run opens -- Go's regions in
+/// the session, planner, executors (one `exec.Next` span per call) and
+/// coprocessor client, and client-go's `rpcClient.SendRequest` per RPC --
+/// so the trees are Go's for the same statements (the Go server's answers
+/// on a TiKV cluster, for the spans this node opens; the embedded store
+/// reports no execution details, so no `tikv.*` nodes). Go's client-go
+/// spans inside client-rust's request plans (`regionRequest.SendReqCtx` of
+/// a KV request, `tikvSnapshot.get`, `twoPhaseCommitter.*`) are not opened.
+#[test]
+fn trace_records_the_spans_each_statement_opens() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(154)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.tr (id INT PRIMARY KEY, k INT, v INT, KEY ik (k))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.tr VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3), (5, 5, 6)",
+    );
+    let compile = [
+        "  ├─session.ExecuteStmt",
+        "  │ ├─executor.Compile",
+        "  │ │ ├─planner.Preprocess",
+        "  │ │ └─planner.Optimize",
+    ];
+    // The coprocessor read: `distsql.Select` under `session.runStmt` (the
+    // reader's Open), its send outliving it, and the record set drained
+    // under the trace span after `ExecuteStmt` returned: HashAgg reads its
+    // child to the end in its first call.
+    let mut expected = vec!["trace"];
+    expected.extend(compile);
+    expected.extend([
+        "  │ └─session.runStmt",
+        "  │   └─distsql.Select",
+        "  │     ├─copr.buildCopTasks",
+        "  │     └─regionRequest.SendReqCtx",
+        "  │       └─rpcClient.SendRequest, region ID: N, type: Cop",
+        "  ├─*aggregate.HashAggExec.Next",
+        "  │ ├─*executor.IndexReaderExecutor.Next",
+        "  │ └─*executor.IndexReaderExecutor.Next",
+        "  └─*aggregate.HashAggExec.Next",
+    ]);
+    assert_eq!(
+        trace_tree(&mut session, "SELECT COUNT(*) FROM test.tr"),
+        expected
+    );
+    for (sql, executor, cmd) in [
+        (
+            "SELECT * FROM test.tr WHERE id = 5",
+            "*executor.PointGetExecutor.Next",
+            "Get",
+        ),
+        (
+            "SELECT * FROM test.tr WHERE id IN (1, 2, 3)",
+            "*executor.BatchPointGetExec.Next",
+            "BatchGet",
+        ),
+    ] {
+        let data_call = format!("  ├─{executor}");
+        let rpc = format!("  │ └─rpcClient.SendRequest, region ID: N, type: {cmd}");
+        let end_call = format!("  └─{executor}");
+        let mut expected = vec!["trace"];
+        expected.extend(compile);
+        expected.extend(["  │ └─session.runStmt", &data_call, &rpc, &end_call]);
+        assert_eq!(trace_tree(&mut session, sql), expected, "{sql}");
+    }
+    // An autocommit UPDATE: the executor runs under `handleNoDelayExecutor`
+    // and the commit under `runStmt`; an unchanged row commits nothing.
+    let update = [
+        "trace",
+        "  └─session.ExecuteStmt",
+        "    ├─executor.Compile",
+        "    │ ├─planner.Preprocess",
+        "    │ └─planner.Optimize",
+        "    └─session.runStmt",
+        "      ├─executor.handleNoDelayExecutor",
+        "      │ └─*executor.UpdateExec.Next",
+        "      │   ├─*executor.PointGetExecutor.Next",
+        "      │   │ └─rpcClient.SendRequest, region ID: N, type: Get",
+        "      │   ├─*executor.PointGetExecutor.Next",
+        "      │   └─executor.updateRecord",
+        "      └─session.CommitTxn",
+        "        └─session.doCommitWithRetry",
+    ];
+    assert_eq!(
+        trace_tree(&mut session, "UPDATE test.tr SET v = v WHERE id = 5"),
+        update
+    );
+    let mut expected = update.to_vec();
+    expected.extend([
+        "          └─tikvTxn.Commit",
+        "            ├─rpcClient.SendRequest, region ID: N, type: Prewrite",
+        "            └─rpcClient.SendRequest, region ID: N, type: Commit",
+    ]);
+    assert_eq!(
+        trace_tree(&mut session, "UPDATE test.tr SET v = v + 1 WHERE id = 5"),
+        expected
+    );
+}

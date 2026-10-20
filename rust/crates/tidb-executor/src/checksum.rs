@@ -230,7 +230,7 @@ fn finish_request(
         })?;
     Ok(request
         .with_kv_exec_counter(settings.kv_exec_counter.clone())
-        .with_ru_details(settings.kv_context.ru_details.clone()))
+        .with_kv_context(settings.kv_context.clone()))
 }
 
 /// Go `updateChecksumResponse`.

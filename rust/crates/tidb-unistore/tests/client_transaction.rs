@@ -1008,6 +1008,41 @@ fn snapshot_read_options_reach_native_requests_and_reset() {
     txn.finish_without_writes().unwrap();
 }
 
+/// Go `snapshot.SetOption(kv.CollectRuntimeStats, stats)`: a point reader's
+/// own `SnapshotRuntimeStats` collect the snapshot's Get/BatchGet RPCs while
+/// installed, and clearing the option returns collection to the
+/// transaction's own statistics, untouched meanwhile.
+#[test]
+fn reader_snapshot_runtime_stats_collect_only_while_installed() {
+    let store = Store::new();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+    let mut txn = store.facade();
+    let stats = Arc::new(tikv_client::SnapshotRuntimeStats::default());
+    txn.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions {
+        runtime_stats: Some(tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&stats))),
+        ..Default::default()
+    });
+    txn.snapshot_get(b"stats-a", &call).unwrap();
+    txn.snapshot_batch_get(&[b"stats-b".to_vec(), b"stats-c".to_vec()], &call)
+        .unwrap();
+    assert_eq!(stats.rpc_count(tikv_client::SnapshotRpcCommand::Get), 1);
+    assert_eq!(
+        stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+        1
+    );
+    let text = stats.to_string();
+    assert!(text.starts_with("Get:{num_rpc:1, total_time:"), "{text}");
+    assert!(text.contains("BatchGet:{num_rpc:1, total_time:"), "{text}");
+    assert_eq!(txn.snapshot_point_rpc_counts(), (1, 1));
+
+    txn.set_snapshot_read_options(&tidb_txnkv::SnapshotReadOptions::default());
+    assert_eq!(txn.snapshot_point_rpc_counts(), (0, 0));
+    txn.snapshot_get(b"stats-d", &call).unwrap();
+    assert_eq!(txn.snapshot_point_rpc_counts(), (1, 0));
+    assert_eq!(stats.rpc_count(tikv_client::SnapshotRpcCommand::Get), 1);
+    txn.finish_without_writes().unwrap();
+}
+
 /// `NOWAIT` fails the statement at once instead of queueing behind a live
 /// owner.
 #[test]

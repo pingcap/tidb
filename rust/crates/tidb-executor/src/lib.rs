@@ -123,6 +123,7 @@ mod mpp_query;
 pub(crate) mod merge_join_plan;
 pub mod partition_pruning;
 pub mod partition_routing;
+pub mod phase_durations;
 mod physical_cte;
 pub mod select_lock;
 #[cfg(test)]

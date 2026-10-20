@@ -314,6 +314,7 @@ impl Session {
             }
         };
         self.record_observation_parse(sql, parse_started.elapsed());
+        self.record_ruv2_session_parse(sql);
         self.observe_statement_node(&stmt, false);
         self.install_statement_warning_state(&stmt, previous);
         // go's recoverable parser diagnostics land as warning rows AFTER the
@@ -444,6 +445,21 @@ impl Session {
 
     fn install_statement_warning_state(&mut self, stmt: &Stmt, previous: Vec<SqlWarning>) {
         self.restore_statement_variables();
+        // Go `ResetContextOfStmt` resolves an EXECUTE's prepared statement
+        // (`GetPreparedStmt`) before it counts the previous warnings and
+        // installs the new statement context, so an unknown name fails with
+        // the previous statement's warnings and counts still in place, and
+        // its 8111 joins them (`SELEC 1; EXECUTE nonexist; SHOW WARNINGS`
+        // lists both errors).
+        if let Stmt::Session(session_stmt) = stmt {
+            if let tidb_ast::SessionStmt::Execute { name, .. } = session_stmt.as_ref() {
+                if self.prepared_statement_sql(name).is_none() {
+                    self.warnings = previous;
+                    self.in_show_warning = false;
+                    return;
+                }
+            }
+        }
         self.set_previous_warning_counts(&previous);
         // go `clientConn.handleLoadData`: a LOCAL load without the client
         // capability refuses BEFORE any statement context reset, so the

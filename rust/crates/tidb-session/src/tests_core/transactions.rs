@@ -1000,3 +1000,36 @@ fn deferred_uniqueness_batch_context_scopes_the_live_setting() {
         .statement_context(true)
         .pessimistic_check_in_prewrite());
 }
+
+/// Go `txnIsolationLevelOneShot`: `SET TRANSACTION ISOLATION LEVEL` gives
+/// only the NEXT transaction its level. The SET's own autocommit `CommitTxn`
+/// arms it, the transaction's end clears it, a statement that commits in
+/// between (even `SELECT 1`) uses it up while one that fails to compile does
+/// not, and inside a transaction the SET is refused with 1568. Captured on a
+/// Go tidb-server over TiKV by reading a peer's commit twice inside `BEGIN
+/// PESSIMISTIC` (RC sees it, RR does not).
+#[test]
+fn set_transaction_isolation_level_applies_to_the_next_transaction_only() {
+    let mut session = Session::new();
+    let begin_is_rc = |session: &mut Session| {
+        session.run("BEGIN PESSIMISTIC").unwrap();
+        let read_committed = session.read_committed_locking();
+        session.run("COMMIT").unwrap();
+        read_committed
+    };
+    let set = "SET TRANSACTION ISOLATION LEVEL READ COMMITTED";
+    session.run(set).unwrap();
+    assert!(begin_is_rc(&mut session));
+    assert!(!begin_is_rc(&mut session));
+    session.run(set).unwrap();
+    session.run("SELECT 1").unwrap();
+    assert!(!begin_is_rc(&mut session));
+    session.run(set).unwrap();
+    assert!(session.run("SELECT * FROM no_such_table").is_err());
+    assert!(begin_is_rc(&mut session));
+    session.run("BEGIN PESSIMISTIC").unwrap();
+    let error = session.run(set).unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1568, "{}", error.message);
+    session.run("COMMIT").unwrap();
+    assert!(!begin_is_rc(&mut session));
+}

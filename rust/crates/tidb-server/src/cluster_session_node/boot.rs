@@ -868,7 +868,21 @@ fn start_resource_groups_controller(
         controller.start();
     }
     tikv_client::set_resource_control_interceptor(controller.clone());
+    // Go `SetupTopProfiling(..., dom)` binds the domain as the RU-version
+    // provider; its `GetRUVersion` asks this controller.
+    tidb_util::topsql_stmtstats::bind_ru_version_provider(Some(Arc::new(DomainRuVersion(
+        Arc::clone(&controller),
+    ))));
     Ok(controller)
+}
+
+/// Go `Domain.GetRUVersion`: the resource-groups controller's RU version.
+struct DomainRuVersion(Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>);
+
+impl tidb_util::topsql_stmtstats::RuVersionProvider for DomainRuVersion {
+    fn get_ru_version(&self) -> tidb_util::topsql_stmtstats::RuVersion {
+        tidb_util::topsql_stmtstats::RuVersion(self.0.get_ru_version())
+    }
 }
 
 /// Go `Domain.Close`'s controller teardown: the interceptor is removed and
@@ -878,6 +892,8 @@ fn stop_resource_groups_controller(
     controller: &Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
 ) {
     tikv_client::unset_resource_control_interceptor();
+    // Go `topsql.Close`: `BindRUVersionProvider(nil)`.
+    tidb_util::topsql_stmtstats::bind_ru_version_provider(None);
     // Go cancels the controller's context and logs nothing.
     let _ = store.block_on(controller.stop());
 }

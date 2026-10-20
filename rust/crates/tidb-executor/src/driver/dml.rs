@@ -132,6 +132,8 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     // 1146 (oracle m13).
     resolve_insert_target(insert, catalog, current_db, ctx)?;
     let extended_source = insert_plan_source(insert, catalog, current_db);
+    // Go `planner.Optimize`.
+    let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
     let mut fresh = physical_plan
         .is_none()
         .then(|| {
@@ -146,11 +148,18 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
             )
         })
         .transpose()?;
+    optimize.end();
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
+    // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
+    let _execution = super::begin_dml_execution(if insert.replace {
+        "*executor.ReplaceExec.Next"
+    } else {
+        "*executor.InsertExec.Next"
+    });
     let (physical_source, fk_triggers) = dml_execution_parts(physical_plan, "Insert")?;
     run_insert_with_physical(
         insert,
@@ -2568,6 +2577,8 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         }
     }
     let source = update_source_query(update);
+    // Go `planner.Optimize`.
+    let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
     let mut fresh = physical_plan
         .is_none()
         .then(|| match &update.kind {
@@ -2588,11 +2599,14 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
             ),
         })
         .transpose()?;
+    optimize.end();
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
+    // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
+    let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
     let (physical_source, update_expressions, fk_triggers) = match physical_plan {
         Some(plan) => {
             let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
@@ -3909,6 +3923,8 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         }
     }
     let source = delete_source_query(delete);
+    // Go `planner.Optimize`.
+    let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
     let mut fresh = physical_plan
         .is_none()
         .then(|| match &delete.kind {
@@ -3929,11 +3945,14 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
             ),
         })
         .transpose()?;
+    optimize.end();
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
+    // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
+    let _execution = super::begin_dml_execution("*executor.DeleteExec.Next");
     let (physical_source, fk_triggers) = dml_execution_parts(physical_plan, "Delete")?;
     run_delete_with_physical(
         delete,

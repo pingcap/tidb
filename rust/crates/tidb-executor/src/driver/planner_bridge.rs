@@ -1303,6 +1303,12 @@ struct InitStats<'a> {
     select: Option<&'a tidb_ast::SelectStmt>,
     enable_pseudo_for_outdated_stats: bool,
     context: &'a crate::StmtContext,
+    /// Whether this walk records the statement's used statistics (Go
+    /// `initStats`' `RecordUsedInfo` and `recordUsedItemStatsStatus`). Go
+    /// initializes a source when its statistics are derived, after the
+    /// partition processor; the walk this port runs before the logical rules
+    /// would record a statically pruned table's logical id, so it does not.
+    record_used_stats: bool,
 }
 
 fn record_used_item_stats_status(
@@ -1523,6 +1529,24 @@ impl InitStats<'_> {
             })
             .unwrap_or_default();
         let row_count = crate::access_cost::realtime_row_count(statistics);
+        // Go `buildDataSource`: a table with an available TiFlash replica
+        // marks the statement as reading TiFlash whenever MPP is allowed.
+        if source.has_tiflash_replica && self.context.optimizer_cost_env().session.mpp_allowed {
+            self.context.mark_is_tiflash();
+        }
+        // Go `initStats`: the statement's `UsedStatsInfo` entry for this
+        // source's physical table, `PseudoVersion` (0) for a pseudo table.
+        if self.record_used_stats {
+            self.context.record_used_stats_info(
+                source.physical_table_id,
+                self.catalog.used_stats_table_name(source.physical_table_id),
+                statistics
+                    .filter(|statistics| !statistics.pseudo)
+                    .map_or(0, |statistics| statistics.version),
+                row_count as i64,
+                statistics.map_or(0, |statistics| statistics.modify_count),
+            );
+        }
         // Go's `fillIndexPath` initializes the table path's CountAfterAccess
         // from the datasource row count and `deriveTablePathStats` replaces
         // it from the access conditions. Only a handle range this replay
@@ -1974,6 +1998,9 @@ impl InitStats<'_> {
             source.table_stats.as_ref(),
         ) {
             let record = |item_id, is_index| {
+                if !self.record_used_stats {
+                    return;
+                }
                 record_used_item_stats_status(
                     self.context,
                     &source.table_name,
@@ -2029,14 +2056,16 @@ impl InitStats<'_> {
                     let (columns, lengths): (Vec<_>, Vec<_>) = prefix.into_iter().unzip();
                     // Go `GetRowCountByIndexRanges` records the index it reads
                     // (`row_count_index.go:48`) before any fast path.
-                    record_used_item_stats_status(
-                        self.context,
-                        &source.table_name,
-                        source.physical_table_id,
-                        statistics,
-                        index.id,
-                        true,
-                    );
+                    if self.record_used_stats {
+                        record_used_item_stats_status(
+                            self.context,
+                            &source.table_name,
+                            source.physical_table_id,
+                            statistics,
+                            index.id,
+                            true,
+                        );
+                    }
                     // Go's `fillIndexPath` builds a path's ranges and row
                     // count in one pass; the logical derivation's port of it
                     // converts the points under the statement's warnings, so
@@ -2279,6 +2308,10 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     ctx: &crate::StmtContext,
     col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
 ) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+    let begin_physical_opt = ctx
+        .phase_durations()
+        .take_begin_physical_opt()
+        .unwrap_or_else(std::time::Instant::now);
     let optimizer_cost_env = ctx.optimizer_cost_env();
     let coster = Ver2Coster::from_env(optimizer_cost_env);
     let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(ctx);
@@ -2333,7 +2366,13 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
         .with_column_ids(column_ids);
     dispatch.expr_pushdown_blacklist = ctx.expr_pushdown_blacklist().clone();
     dispatch.shuffle_options = ctx.optimizer_cost_env().session.shuffle_options;
-    let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)?;
+    // Go `physicalOptimize` records `DurationOptimizer.PhysicalOpt` on every
+    // return, an error one included.
+    let task =
+        find_best_task(logical, &PhysicalProperty::default(), &mut dispatch).inspect_err(|_| {
+            ctx.phase_durations()
+                .set_physical_opt(begin_physical_opt.elapsed());
+        })?;
     let mut physical = task.plan().cloned().ok_or_else(|| {
         tidb_planner::plan_base::PlanError::internal_coded(
             "Can't find a proper physical plan for this query",
@@ -2356,7 +2395,10 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
         ctx.append_leveled(level, 1815, &warning.message);
     }
     // Go physicalOptimize binds positions before postOptimize removes aliases.
-    physical.resolve_indices()?;
+    let resolved = physical.resolve_indices();
+    ctx.phase_durations()
+        .set_physical_opt(begin_physical_opt.elapsed());
+    resolved?;
     let physical = tidb_planner::physical::eliminate_physical_projection_for_update(
         physical,
         col_ref_from_update_plan,
@@ -2523,18 +2565,26 @@ impl DriverCteOptimizer<'_> {
             select: None,
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             context: ctx,
+            record_used_stats: true,
         };
         let (plan, ()) = fold_owned(&mut initializer, plan, ());
         if let Some(error) = initializer.error {
             return Err(error);
         }
         let opt_flag = adjust_optimization_flags(opt_flag, ctx);
-        let optimized = logical_optimize(rule_context, opt_flag, plan)
-            .map_err(|(_, error)| error)?
-            .plan;
+        // Go's CTE `DoOptimize` runs `logicalOptimize` and `physicalOptimize`,
+        // which set the session's optimizer clocks like any other pass.
+        let begin_logical_opt = std::time::Instant::now();
+        let logical_result = logical_optimize(rule_context, opt_flag, plan);
+        ctx.phase_durations()
+            .set_logical_opt(begin_logical_opt.elapsed());
+        let optimized = logical_result.map_err(|(_, error)| error)?.plan;
         let mut optimized =
             check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
+        let begin_physical_opt = std::time::Instant::now();
         optimized.recursive_derive_stats_with_context(&[], rule_context)?;
+        ctx.phase_durations()
+            .finish_stats_derive(begin_physical_opt);
         let logical = prepare_possible_properties(optimized).0;
         let physical = physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, ctx)?;
         Ok((logical, physical))
@@ -2752,9 +2802,14 @@ fn subquery_evaluator<'a>(
             .map(|_| column_ids.alloc())
             .collect::<Vec<_>>();
         let plan_id = plan_ids.alloc();
-        let (row, has_row) =
-            crate::driver::physical_builder::execute_first_row(&mut physical, catalog, ctx)
-                .map_err(driver_error_to_plan)?;
+        // Go `EvalSubqueryFirstRow`'s deferred `PreprocessSubQueries++` and
+        // `DurationPreprocessSubQuery += time.Since(begin)`, error or not.
+        let begin_evaluation = std::time::Instant::now();
+        let evaluated =
+            crate::driver::physical_builder::execute_first_row(&mut physical, catalog, ctx);
+        ctx.phase_durations()
+            .add_preprocess_sub_query(begin_evaluation.elapsed());
+        let (row, has_row) = evaluated.map_err(driver_error_to_plan)?;
         registry.borrow_mut().push(RegisteredScalarSubquery {
             output_col_ids: output_col_ids.clone(),
             physical,
@@ -2836,6 +2891,10 @@ fn planner_optimized_query_with_allocators(
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
+    // Go `buildLogicalPlan`: `RewritePhaseInfo.Reset()`, then
+    // `DurationRewrite` is the time `builder.Build` took.
+    ctx.phase_durations().reset_rewrite_phase_info();
+    let begin_rewrite = std::time::Instant::now();
     let (plan, opt_flag) = planner_built_query_with_allocators(
         query,
         catalog,
@@ -2847,6 +2906,11 @@ fn planner_optimized_query_with_allocators(
         registry,
         None,
     )?;
+    ctx.phase_durations()
+        .set_duration_rewrite(begin_rewrite.elapsed());
+    // Go `buildAndOptimizeLogicalPlanRound`: the optimization clock starts
+    // before the first `DoOptimize` of a logical plan.
+    ctx.phase_durations().begin_optimize();
     optimize_built_logical(
         plan,
         opt_flag,
@@ -3207,6 +3271,12 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     ),
     tidb_planner::plan_base::PlanError,
 > {
+    // Go builds an UPDATE/DELETE inside `builder.Build` (`buildUpdate` /
+    // `buildDelete` run the read plan's `DoOptimize` themselves), so its
+    // `DurationRewrite` covers the read plan's optimization too, and the
+    // non-logical `Update`/`Delete` never starts `optimize`'s total clock.
+    ctx.phase_durations().reset_rewrite_phase_info();
+    let begin_rewrite = std::time::Instant::now();
     let source = catalog
         .planner_catalog(current_database, ctx.latest_index_schema())
         .with_explain_hypo_state(ctx)
@@ -3355,6 +3425,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
             )
         })?;
     }
+    ctx.phase_durations()
+        .set_duration_rewrite(begin_rewrite.elapsed());
     Ok((physical, update_expressions, root))
 }
 
@@ -3374,6 +3446,8 @@ fn optimize_built_logical(
         catalog: &'a Catalog,
         context: &'a crate::StmtContext,
         select: Option<&'a tidb_ast::SelectStmt>,
+        /// See [`InitStats::record_used_stats`].
+        record_used_stats: std::cell::Cell<bool>,
     }
 
     impl tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester
@@ -3407,6 +3481,7 @@ fn optimize_built_logical(
                 select: self.select,
                 enable_pseudo_for_outdated_stats: self.context.enable_pseudo_for_outdated_stats(),
                 context: self.context,
+                record_used_stats: self.record_used_stats.get(),
             };
             let (plan, ()) = fold_owned(&mut initializer, plan, ());
             if let Some(error) = initializer.error {
@@ -3490,6 +3565,7 @@ fn optimize_built_logical(
         catalog,
         context: ctx,
         select: select_hint,
+        record_used_stats: std::cell::Cell::new(true),
     };
     let partition_pruning = PlannerPartitionPruning {
         catalog,
@@ -3561,11 +3637,14 @@ fn optimize_built_logical(
     // join reorder derives candidate statistics while logical optimization
     // is still running. Attach real-or-pseudo base statistics before entering
     // that rule list, rather than delaying them until physical optimization.
-    let mut plan = tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
-        &statistics_load,
-        plan,
-    )
-    .map_err(|(_, error)| error)?;
+    statistics_load.record_used_stats.set(false);
+    let initialized =
+        tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
+            &statistics_load,
+            plan,
+        );
+    statistics_load.record_used_stats.set(true);
+    let mut plan = initialized.map_err(|(_, error)| error)?;
     // Go `core.RecheckCTE(logic)` (`optimize.go:553`): fill
     // `IsOuterMostCTE` on every CTE class before ANY optimization runs —
     // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
@@ -3579,9 +3658,12 @@ fn optimize_built_logical(
     // No CTE class is optimized here: Go's `LogicalCTE.DeriveStats` runs
     // `DoOptimize` the first time a reference's statistics are derived, which
     // `rule_context.cte_optimizer` does from inside the stats walk.
-    let mut optimized = logical_optimize(&rule_context, flags, plan)
-        .map_err(|(_, error)| error)?
-        .plan;
+    let begin_logical_opt = std::time::Instant::now();
+    let logical_result = logical_optimize(&rule_context, flags, plan);
+    // Go `logicalOptimize`'s deferred `DurationOptimizer.LogicalOpt`.
+    ctx.phase_durations()
+        .set_logical_opt(begin_logical_opt.elapsed());
+    let mut optimized = logical_result.map_err(|(_, error)| error)?.plan;
     // SyncWaitStatsLoadPoint has initialized ordinary and statically pruned
     // sources from the loaded snapshot before join reorder. No partition-only
     // reinitialization or pre-load access-path estimates survive here.
@@ -3596,7 +3678,13 @@ fn optimize_built_logical(
     {
         optimized.set_output_names(built_names);
     }
+    // Go `physicalOptimize` starts its clock before `RecursiveDeriveStats`
+    // and records `StatsDerive` after it; the physical search that follows
+    // this function takes the start over.
+    let begin_physical_opt = std::time::Instant::now();
     optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
+    ctx.phase_durations()
+        .finish_stats_derive(begin_physical_opt);
     let logical = prepare_possible_properties(optimized).0;
     Ok(logical)
 }
@@ -4046,6 +4134,7 @@ mod statistics_initialization_tests {
             select: None,
             enable_pseudo_for_outdated_stats: false,
             context: &context,
+            record_used_stats: true,
         };
         let (plan, ()) = fold_owned(&mut initializer, LogicalPlan::DataSource(source), ());
         let LogicalPlan::DataSource(returned) = plan else {
@@ -4196,6 +4285,7 @@ mod statistics_initialization_tests {
                 select: None,
                 enable_pseudo_for_outdated_stats: false,
                 context: &context,
+                record_used_stats: true,
             };
             let (plan, ()) = fold_owned(
                 &mut initializer,
@@ -4374,6 +4464,7 @@ mod statistics_initialization_tests {
                     select: None,
                     enable_pseudo_for_outdated_stats: false,
                     context: &context,
+                    record_used_stats: true,
                 };
                 let (plan, ()) = fold_owned(
                     &mut initializer,

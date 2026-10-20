@@ -594,15 +594,16 @@ impl<S: tikv_client::PdClient> TiFlashMppScanSource<S> {
         };
         // Go dispatches and establishes under the statement ctx, whose
         // `RUDetails` client-go's resource-control interceptor charges.
-        let ru_details = request
+        let kv_context = request
             .statement
             .kv_context
             .as_ref()
-            .and_then(|context| context.get().ru_details);
+            .map(tidb_txnkv::StatementKvContextCell::get)
+            .unwrap_or_default();
         let response = self
             .store
-            .block_on(tidb_txnkv::driver::cop_store::with_ru_details(
-                ru_details.as_ref(),
+            .block_on(tidb_txnkv::driver::cop_store::with_statement_kv_context(
+                &kv_context,
                 async {
                     let memory = &request.statement.memory;
                     target.kv_exec_counter.mark(&address);

@@ -353,6 +353,14 @@ pub struct ProcessPlanInfo {
     pub explain_marker: bool,
     /// [`Self::explain_marker`] of the previous statement.
     pub previous_explain: bool,
+    /// Go `StmtCtx.GetUsedStatsInfo(false)`: the statistics planning used,
+    /// keyed by physical table id, for the slow log's `Stats`.
+    pub used_stats: BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>,
+    /// Go `StmtCtx.IsSyncStatsFailed`.
+    pub is_sync_stats_failed: bool,
+    /// Go `StmtCtx.IsTiFlash` as the planner set it (`buildDataSource`);
+    /// the executor builder's readers add theirs from the plan.
+    pub is_tiflash: bool,
 }
 
 /// Boundaries shared by statement summaries and execution counters.
@@ -1073,6 +1081,15 @@ pub struct StmtContextData {
     /// keeping `TableIDs`/`IndexNames`/stats.
     publish_brief_binary_plan: bool,
     statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
+    /// Go `SessionVars.RewritePhaseInfo` / `DurationOptimizer`: the
+    /// session's planning-phase clocks, which this statement's planner sets.
+    phase_durations: crate::phase_durations::SessionPhaseDurations,
+    /// Go `SessionVars.SQLCPUUsages`, which point readers charge their TiKV
+    /// process time to.
+    sql_cpu_usages: Option<Arc<tidb_util::ppcpuusage::SqlCpuUsages>>,
+    /// Go `StmtCtx.IsTiFlash` as `buildDataSource` sets it: MPP is allowed
+    /// and a table the statement reads has an available TiFlash replica.
+    is_tiflash: Arc<AtomicBool>,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     /// Go's statement ctx `RUDetails` and `StmtCtx.GetResourceGroupTagger`,
     /// as the session publishes them for the statement that runs.
@@ -1138,6 +1155,11 @@ pub struct StmtContextData {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// The scanner's client and connection encodings (Go `GetParseParams`)
+    /// for a re-parse of the CLIENT's statement text, which arrives in the
+    /// client's character set. The default (utf8mb4) is right for text this
+    /// tier wrote itself, which Go parses without the client's settings.
+    parser_config: tidb_parser::ParserConfig,
     /// The complete numeric `SessionVars.SQLMode` captured for DDL jobs.
     ///
     /// The lexer projection above intentionally contains only six scanning
@@ -1367,6 +1389,14 @@ context_configuration! {
     #[must_use]
     pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
         self.sql_mode = sql_mode;
+        self
+    }
+
+    /// Attaches the session's parser configuration, for a statement whose
+    /// re-parse reads the client's own text.
+    #[must_use]
+    pub fn with_parser_config(mut self, config: tidb_parser::ParserConfig) -> Self {
+        self.parser_config = config;
         self
     }
 
@@ -1980,6 +2010,27 @@ context_configuration! {
         self
     }
 
+    /// Shares the session's planning-phase clocks (Go `SessionVars`'
+    /// `RewritePhaseInfo` and `DurationOptimizer`) with this statement.
+    #[must_use]
+    pub fn with_phase_durations(
+        mut self,
+        durations: crate::phase_durations::SessionPhaseDurations,
+    ) -> Self {
+        self.phase_durations = durations;
+        self
+    }
+
+    /// Shares the session's SQL CPU usages (Go `SessionVars.SQLCPUUsages`).
+    #[must_use]
+    pub fn with_sql_cpu_usages(
+        mut self,
+        usages: Option<Arc<tidb_util::ppcpuusage::SqlCpuUsages>>,
+    ) -> Self {
+        self.sql_cpu_usages = usages;
+        self
+    }
+
     /// Installs the two published blacklists. See
     /// [`crate::pushdown_blacklist`].
     #[must_use]
@@ -2587,6 +2638,9 @@ impl StmtContext {
             process_plan_info: None,
             publish_brief_binary_plan: true,
             statement_phase_observer: None,
+            phase_durations: Default::default(),
+            sql_cpu_usages: None,
+            is_tiflash: Arc::default(),
             kv_exec_counter: Default::default(),
             statement_kv_context: None,
             keys_read: KeysReadBudget::default(),
@@ -2604,6 +2658,7 @@ impl StmtContext {
             executor_chunk_sizes: ExecutorChunkSizes::default(),
             enable_vectorized_expression: true,
             sql_mode: tidb_parser::SqlMode::default(),
+            parser_config: tidb_parser::ParserConfig::default(),
             ddl_sql_mode: session.ddl_sql_mode,
             ddl_query: String::new(),
             ddl_query_rewrite: Arc::default(),
@@ -3041,6 +3096,12 @@ impl StmtContext {
         self.sql_mode
     }
 
+    /// The parser configuration for this statement's re-parses.
+    #[must_use]
+    pub fn parser_config(&self) -> tidb_parser::ParserConfig {
+        self.parser_config
+    }
+
     /// The complete numeric SQL mode captured for a persisted DDL job.
     #[must_use]
     pub fn ddl_sql_mode(&self) -> i64 {
@@ -3242,6 +3303,24 @@ impl StmtContext {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// The session's planning-phase clocks (Go `SessionVars`'
+    /// `RewritePhaseInfo` and `DurationOptimizer`).
+    #[must_use]
+    pub fn phase_durations(&self) -> &crate::phase_durations::SessionPhaseDurations {
+        &self.phase_durations
+    }
+
+    /// The session's SQL CPU usages (Go `SessionVars.SQLCPUUsages`).
+    #[must_use]
+    pub fn sql_cpu_usages(&self) -> Option<&Arc<tidb_util::ppcpuusage::SqlCpuUsages>> {
+        self.sql_cpu_usages.as_ref()
+    }
+
+    /// Go `buildDataSource`: `StmtCtx.IsTiFlash.Store(true)`.
+    pub fn mark_is_tiflash(&self) {
+        self.is_tiflash.store(true, Ordering::Relaxed);
+    }
+
     /// Go `StmtCtx.IsSyncStatsFailed`.
     #[must_use]
     pub fn sync_stats_failed(&self) -> bool {
@@ -3275,6 +3354,33 @@ impl StmtContext {
         &self,
     ) -> Option<&Arc<dyn crate::executor::ExecutorRuntimeStatsSource>> {
         self.executor_runtime_stats_source.as_ref()
+    }
+
+    /// Go `initStats`' `GetUsedStatsInfo(true).RecordUsedInfo(...)`: the
+    /// table statistics a data source was planned with. Like Go's
+    /// `sync.Map.Store`, a later source over the same physical table replaces
+    /// the entry, item statuses included.
+    pub fn record_used_stats_info(
+        &self,
+        physical_table_id: i64,
+        name: String,
+        version: u64,
+        realtime_count: i64,
+        modify_count: i64,
+    ) {
+        self.used_stats_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                physical_table_id,
+                crate::used_stats::UsedStatsInfoForTable {
+                    name,
+                    version,
+                    realtime_count,
+                    modify_count,
+                    ..crate::used_stats::UsedStatsInfoForTable::default()
+                },
+            );
     }
 
     /// Records one non-full-load statistics item, matching Go's
@@ -3557,7 +3663,7 @@ impl StmtContext {
     /// point that takes SQL text as a string goes through here, so a scanner
     /// flag cannot be honored by one tier and dropped by the next.
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, crate::DriverError> {
-        tidb_parser::parse_with_sql_mode(sql, self.sql_mode)
+        tidb_parser::parse_with_sql_mode_and_config(sql, self.sql_mode, self.parser_config)
             .map_err(|e| crate::DriverError::Parse(format!("{e:?}")))
     }
 
@@ -3959,6 +4065,8 @@ impl StmtContext {
         physical: &tidb_planner::physical::PhysicalPlan,
         catalog: &crate::driver::Catalog,
     ) {
+        // Go `optimize` returns its plan here: `DurationOptimizer.Total`.
+        self.phase_durations.finish_optimize();
         if self.process_plan_info.is_none() {
             return;
         }
@@ -3976,6 +4084,17 @@ impl StmtContext {
         );
         plan.max_execution_time = self.max_execution_time_ms();
         plan.execution_started = execution_started;
+        // Go's slow log reads `StmtCtx.GetUsedStatsInfo(false)` and
+        // `StmtCtx.IsSyncStatsFailed` after execution; planning is what
+        // records both, and rendering the plan above is the last step that
+        // can add a used-statistics status.
+        plan.used_stats = self
+            .used_stats_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        plan.is_sync_stats_failed = self.sync_stats_failed();
+        plan.is_tiflash = self.is_tiflash.load(Ordering::Relaxed);
         self.publish_process_plan_info(plan);
     }
 
@@ -4394,6 +4513,7 @@ impl StmtContext {
                 )
             }),
             kv_context: self.statement_kv_context.clone(),
+            runtime_stats: None,
         }
     }
 
@@ -5652,6 +5772,28 @@ impl Columns for StmtContext {
 
 #[cfg(test)]
 mod tests {
+    /// Go `initStats`' `RecordUsedInfo` stores a source's table entry like
+    /// `sync.Map.Store`: a later source over the same physical table
+    /// replaces it, and `recordUsedItemStatsStatus` adds item statuses to
+    /// the entry in force.
+    #[test]
+    fn used_stats_ledger_records_sources_and_item_statuses() {
+        let ctx = super::StmtContext::for_query();
+        ctx.record_used_stats_info(7, "t".to_owned(), 100, 5, 1);
+        ctx.record_used_stats_status(7, "ignored", 0, 0, 0, 2, true, "allEvicted");
+        let entry = ctx.used_stats_info(7).expect("the source's entry");
+        assert_eq!(
+            entry.write_to_slow_log(),
+            "t:stats_meta_version=100[realtime_count=5;modify_count=1][ID 2:allEvicted][]"
+        );
+        // The next source over the same table starts a fresh entry.
+        ctx.record_used_stats_info(7, "t".to_owned(), 0, 10000, 0);
+        assert_eq!(
+            ctx.used_stats_info(7).unwrap().write_to_slow_log(),
+            "t:stats_meta_version=pseudo[realtime_count=10000;modify_count=0]"
+        );
+    }
+
     #[test]
     fn index_lookup_join_concurrency_uses_statement_override_and_fallback() {
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();

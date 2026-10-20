@@ -122,6 +122,9 @@ pub(crate) struct PhysicalRuntimeCounter {
     /// on the target plan after the analyzed statement ran and before its
     /// executors' `Close` register theirs.
     ru: Option<Arc<tidb_util::ruv2_metrics::RuRuntimeStats>>,
+    /// Go `runtimeStatsWithSnapshot`, which a PointGet/BatchPointGet
+    /// registers from its `Close`: its snapshot's RPC, time and scan details.
+    snapshot: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 }
 
 impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
@@ -131,6 +134,7 @@ impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
             calls: None,
             apply: None,
             ru: None,
+            snapshot: None,
         }
     }
 }
@@ -168,6 +172,11 @@ impl PhysicalRuntimeCounter {
         if let Some(ru) = self.ru.as_ref().map(|ru| ru.string()) {
             if !ru.is_empty() {
                 details.push(ru);
+            }
+        }
+        if let Some(snapshot) = self.snapshot.as_ref().map(ToString::to_string) {
+            if !snapshot.is_empty() {
+                details.push(snapshot);
             }
         }
         if let Some(snapshot) = self.apply.as_ref().and_then(|sink| *sink.lock().unwrap()) {
@@ -208,6 +217,28 @@ pub(crate) fn runtime_plan_key(plan: &PhysicalPlan) -> usize {
 }
 
 impl BuildState {
+    /// Go `PointGetExecutor.Init` / `buildBatchPointGet`: with
+    /// `RuntimeStats() != nil` (EXPLAIN ANALYZE, or execution-info collection),
+    /// a point reader owns a `SnapshotRuntimeStats` its snapshot collects
+    /// into, registered on the plan's runtime stats.
+    fn point_snapshot_runtime_stats(
+        &mut self,
+        plan: &PhysicalPlan,
+    ) -> Option<Arc<tikv_client::SnapshotRuntimeStats>> {
+        let analyzed = self.runtime_counters.is_some();
+        if !analyzed && self.executor_runtime_stats_source.is_none() {
+            return None;
+        }
+        let stats = Arc::new(tikv_client::SnapshotRuntimeStats::default());
+        if let Some(counters) = self.runtime_counters.as_mut() {
+            counters
+                .entry(runtime_plan_key(plan))
+                .or_insert_with(|| crate::executor::RowCount::default().into())
+                .snapshot = Some(Arc::clone(&stats));
+        }
+        Some(stats)
+    }
+
     fn apply_runtime_sink(
         &mut self,
         plan_key: usize,
@@ -227,9 +258,26 @@ impl BuildState {
     fn meter(
         &mut self,
         plan: &PhysicalPlan,
-        mut executor: Box<dyn Executor>,
+        executor: Box<dyn Executor>,
         memory: crate::StatementMemory,
     ) -> Box<dyn Executor> {
+        let next_region = go_executor_next_region(plan);
+        self.meter_as(plan, executor, memory, next_region)
+    }
+
+    /// [`Self::meter`] for an executor whose Go `exec.Next` region is
+    /// `next_region` (`<Go type>.Next`), `None` for a node Go builds no
+    /// executor for.
+    fn meter_as(
+        &mut self,
+        plan: &PhysicalPlan,
+        mut executor: Box<dyn Executor>,
+        memory: crate::StatementMemory,
+        next_region: Option<&'static str>,
+    ) -> Box<dyn Executor> {
+        // A coprocessor plan's nodes run in TiKV for Go: no TiDB executor
+        // and no `exec.Next` region.
+        let next_region = next_region.filter(|_| !self.in_reader);
         let plan_id = i64::from(plan.base().base.id());
         let runtime_stats = (plan_id > 0)
             .then(|| {
@@ -238,7 +286,12 @@ impl BuildState {
                     .and_then(|source| source.for_executor(plan_id))
             })
             .flatten();
-        executor = checked_executor_with_stats(executor, memory, runtime_stats);
+        executor = Box::new(SqlKillerCheckExec {
+            child: executor,
+            memory,
+            runtime_stats,
+            next_region,
+        });
         let Some(counters) = self.runtime_counters.as_mut() else {
             return executor;
         };
@@ -267,6 +320,7 @@ impl BuildState {
                     calls: None,
                     apply: None,
                     ru: None,
+                    snapshot: None,
                 });
         let counter = stats.rows.clone();
         let calls = Arc::clone(
@@ -290,6 +344,46 @@ struct SqlKillerCheckExec {
     child: Box<dyn Executor>,
     memory: crate::StatementMemory,
     runtime_stats: Option<Arc<dyn crate::executor::ExecutorRuntimeStats>>,
+    /// Go `exec.Next`'s `tracing.StartRegionEx(ctx, <type>.Next)` for the
+    /// executor Go builds for the node.
+    next_region: Option<&'static str>,
+}
+
+/// Go `reflect.TypeOf(e).String() + ".Next"` for the executor
+/// `executorBuilder.build` makes from `plan`; `None` for a node Go builds no
+/// executor of its own for.
+fn go_executor_next_region(plan: &PhysicalPlan) -> Option<&'static str> {
+    Some(match plan {
+        PhysicalPlan::Projection(_) => "*executor.ProjectionExec.Next",
+        PhysicalPlan::Selection(_) => "*executor.SelectionExec.Next",
+        PhysicalPlan::TableDual(_) => "*executor.TableDualExec.Next",
+        PhysicalPlan::PointGet(_) => "*executor.PointGetExecutor.Next",
+        PhysicalPlan::BatchPointGet(_) => "*executor.BatchPointGetExec.Next",
+        PhysicalPlan::TableReader(_) => "*executor.TableReaderExecutor.Next",
+        PhysicalPlan::IndexReader(_) => "*executor.IndexReaderExecutor.Next",
+        PhysicalPlan::IndexLookUpReader(_) => "*executor.IndexLookUpExecutor.Next",
+        PhysicalPlan::IndexMergeReader(_) => "*executor.IndexMergeReaderExecutor.Next",
+        PhysicalPlan::Limit(_) => "*executor.LimitExec.Next",
+        PhysicalPlan::TopN(_) => "*sortexec.TopNExec.Next",
+        PhysicalPlan::Sort(_) => "*sortexec.SortExec.Next",
+        PhysicalPlan::HashAgg(_) => "*aggregate.HashAggExec.Next",
+        PhysicalPlan::StreamAgg(_) => "*aggregate.StreamAggExec.Next",
+        PhysicalPlan::HashJoin(_) => "*join.HashJoinV1Exec.Next",
+        PhysicalPlan::MergeJoin(_) => "*join.MergeJoinExec.Next",
+        PhysicalPlan::Apply(_) => "*join.NestedLoopApplyExec.Next",
+        PhysicalPlan::UnionAll(_) => "*unionexec.UnionExec.Next",
+        PhysicalPlan::MaxOneRow(_) => "*executor.MaxOneRowExec.Next",
+        PhysicalPlan::Show(_) => "*executor.ShowExec.Next",
+        PhysicalPlan::Lock(_) => "*executor.SelectLockExec.Next",
+        PhysicalPlan::CTE(_) => "*executor.CTEExec.Next",
+        PhysicalPlan::CTETable(_) => "*executor.CTETableReaderExec.Next",
+        PhysicalPlan::Sequence(_) => "*executor.SequenceExec.Next",
+        PhysicalPlan::UnionScan(_) => "*executor.UnionScanExec.Next",
+        PhysicalPlan::TableSample(_) => "*executor.TableSampleExecutor.Next",
+        PhysicalPlan::Expand(_) => "*executor.ExpandExec.Next",
+        PhysicalPlan::Shuffle(_) => "*executor.ShuffleExec.Next",
+        _ => return None,
+    })
 }
 
 fn checked_executor(child: Box<dyn Executor>, memory: crate::StatementMemory) -> Box<dyn Executor> {
@@ -305,6 +399,7 @@ fn checked_executor_with_stats(
         child,
         memory,
         runtime_stats,
+        next_region: None,
     })
 }
 
@@ -319,6 +414,9 @@ impl Executor for SqlKillerCheckExec {
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
+        let _region = self
+            .next_region
+            .map(tidb_util::tracing::start_thread_region_ex);
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
         let result = crate::sort_util::recover_executor_panic(|| {
             self.memory.check()?;
@@ -4429,6 +4527,7 @@ fn build_point_get(
     point: &PhysicalPointGet,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
+    snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let Some(physical_id) = point_partition_id(point, catalog, ctx)? else {
         return Ok(Box::new(TableDualExec::new(
@@ -4439,7 +4538,8 @@ fn build_point_get(
     let table = catalog
         .physical_kv_table_by_id(physical_id)
         .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
-    table.configure_snapshot_read(ctx, plan.point_avg_row_size(true));
+    let snapshot_stats =
+        configure_point_snapshot_read(&table, ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
     let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1);
@@ -4474,6 +4574,7 @@ fn build_point_get(
             ctx,
             Some(index_id),
             PointCommand::Get,
+            snapshot_stats,
         ));
     }
     let handles = point_handles(&table, &point.ranges, ctx)?;
@@ -4496,6 +4597,7 @@ fn build_point_get(
         ctx,
         None,
         PointCommand::Get,
+        snapshot_stats,
     ))
 }
 
@@ -4504,11 +4606,13 @@ fn build_batch_point_get(
     batch: &PhysicalBatchPointGet,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
+    snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = catalog
         .physical_kv_table_by_id(batch.table_id)
         .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
-    table.configure_snapshot_read(ctx, plan.point_avg_row_size(true));
+    let snapshot_stats =
+        configure_point_snapshot_read(&table, ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
     // Go buildBatchPointGet sizes both capacities to the retained access keys.
@@ -4545,6 +4649,7 @@ fn build_batch_point_get(
             ctx,
             Some(index_id),
             PointCommand::BatchGet,
+            snapshot_stats,
         ));
     }
     let mut handles = point_handles(&table, &batch.ranges, ctx)?;
@@ -4591,7 +4696,33 @@ fn build_batch_point_get(
         ctx,
         None,
         PointCommand::BatchGet,
+        snapshot_stats,
     ))
+}
+
+/// Go `snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)` beside the
+/// point reader's other snapshot options; the returned handle keeps the
+/// options to restore when the reader closes.
+fn configure_point_snapshot_read(
+    table: &crate::kv_table::KvTable,
+    ctx: &crate::StmtContext,
+    avg_row_bytes: f64,
+    snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
+) -> Option<super::index_usage_reporter::PointSnapshotStats> {
+    let options = ctx.snapshot_read_options(avg_row_bytes);
+    let Some(stats) = snapshot_stats else {
+        table.set_snapshot_read_options(options);
+        return None;
+    };
+    table.set_snapshot_read_options(tidb_txnkv::SnapshotReadOptions {
+        runtime_stats: Some(tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&stats))),
+        ..options.clone()
+    });
+    Some(super::index_usage_reporter::PointSnapshotStats {
+        stats,
+        options_without_stats: options,
+        sql_cpu_usages: ctx.sql_cpu_usages().cloned(),
+    })
 }
 
 fn wrap_point_index_usage(
@@ -4601,6 +4732,7 @@ fn wrap_point_index_usage(
     ctx: &crate::StmtContext,
     index_id: Option<i64>,
     command: PointCommand,
+    snapshot_stats: Option<super::index_usage_reporter::PointSnapshotStats>,
 ) -> Box<dyn Executor> {
     // Go PointGet has no planner UsedStatsInfo entry and uses the smallest
     // bucket. BatchPointGet reports against the logical table's whole count,
@@ -4616,6 +4748,7 @@ fn wrap_point_index_usage(
         ctx.index_usage_collector().cloned(),
         index_id,
         command,
+        snapshot_stats,
     ))
 }
 
@@ -5799,14 +5932,26 @@ fn build_with_state(
             Ok(executor)
         }
         PhysicalPlan::PointGet(point) => {
-            with_select_lock(plan, point.select_lock, point.table_id, catalog, ctx, |plan| {
-                build_point_get(plan, point, catalog, ctx)
-            })
+            let snapshot_stats = state.point_snapshot_runtime_stats(plan);
+            with_select_lock(
+                plan,
+                point.select_lock,
+                point.table_id,
+                catalog,
+                ctx,
+                |plan| build_point_get(plan, point, catalog, ctx, snapshot_stats.clone()),
+            )
         }
         PhysicalPlan::BatchPointGet(batch) => {
-            with_select_lock(plan, batch.select_lock, batch.table_id, catalog, ctx, |plan| {
-                build_batch_point_get(plan, batch, catalog, ctx)
-            })
+            let snapshot_stats = state.point_snapshot_runtime_stats(plan);
+            with_select_lock(
+                plan,
+                batch.select_lock,
+                batch.table_id,
+                catalog,
+                ctx,
+                |plan| build_batch_point_get(plan, batch, catalog, ctx, snapshot_stats.clone()),
+            )
         }
         PhysicalPlan::Lock(lock) => {
             state.has_lock = true;
@@ -6065,8 +6210,14 @@ fn build_with_state(
                 && crate::hash_join_version::is_hash_join_v2_supported()
                 && can_use_hash_join_v2(join)
             {
-                return build_hash_join_v2(plan, join, catalog, ctx, state)
-                    .map(|executor| state.meter(plan, executor, ctx.statement_memory()));
+                return build_hash_join_v2(plan, join, catalog, ctx, state).map(|executor| {
+                    state.meter_as(
+                        plan,
+                        executor,
+                        ctx.statement_memory(),
+                        Some("*join.HashJoinV2Exec.Next"),
+                    )
+                });
             }
             let mut executor = build_join(
                 plan,
@@ -6361,6 +6512,8 @@ pub(super) fn open_query(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<super::QueryRecordSet, DriverError> {
+    // Go `runStmt` -> `ExecStmt.Exec`: build the executor and open it.
+    super::begin_run_stmt_region();
     prepare_execution_plan(physical, catalog, ctx)?;
     ctx.publish_physical_process_info(physical, catalog);
     let root = build(physical, catalog, ctx)?;

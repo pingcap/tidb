@@ -974,3 +974,33 @@ fn optimistic_autocommit_point_write_uses_its_snapshot_without_prelocking() {
         vec![vec![Datum::Int(25)]]
     );
 }
+
+/// The `start_ts` a session's `tidb_last_query_info` reports.
+fn last_query_start_ts(session: &mut ClusterServerSession) -> u64 {
+    let info = rows(session, "SELECT @@tidb_last_query_info");
+    let Some(Datum::String(info)) = info.first().and_then(|row| row.first()) else {
+        panic!("tidb_last_query_info is a string: {info:?}");
+    };
+    let info: serde_json::Value =
+        serde_json::from_slice(info.bytes()).expect("tidb_last_query_info is JSON");
+    info["start_ts"].as_u64().expect("start_ts is a number")
+}
+
+/// Go's executor builder activates a DML's transaction before the statement
+/// runs (`buildInsert` -> `updateForUpdateTS` -> `GetStmtForUpdateTS`), so an
+/// autocommit point INSERT that fails without ever reading still reports its
+/// `TxnCtx.StartTS` (captured on a Go tidb-server over TiKV: `INSERT INTO t
+/// VALUES ('a',1,1)` answers 1366 and `tidb_last_query_info` carries a
+/// non-zero `start_ts`).
+#[test]
+fn a_failed_autocommit_point_insert_reports_its_transaction_start_ts() {
+    let (mut session, _cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES ('a', 1)")
+        .expect_err("a string that is not an integer fails under strict sql_mode");
+    assert_ne!(last_query_start_ts(&mut session), 0);
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (5000000000000000000000, 1)")
+        .expect_err("an out-of-range id fails under strict sql_mode");
+    assert_ne!(last_query_start_ts(&mut session), 0);
+}

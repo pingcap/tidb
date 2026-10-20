@@ -2873,8 +2873,19 @@ impl Session {
         // and planning happen, so it is the compile boundary.
         let started = std::time::Instant::now();
         self.start_observation_compile();
+        // Go `executor.Compile`; the executor hands over to `session.runStmt`
+        // where planning ends and execution begins, and a statement that
+        // reaches no such point hands over here.
+        if tidb_util::tracing::current_span().is_some() {
+            tidb_util::tracing::begin_thread_region("executor.Compile", Some(sql.to_owned()));
+        }
         let result =
             self.prepare_parsed_statement_compile_phase(sql, stmt, prepared, select_plan, dml_plan);
+        if result.is_ok() {
+            tidb_executor::driver::begin_run_stmt_region();
+        } else {
+            tidb_util::tracing::end_thread_region("executor.Compile");
+        }
         if result.is_err() && !self.in_transaction() {
             self.cleanup_txn_read_ts();
         }
@@ -2915,7 +2926,9 @@ impl Session {
         // every table-shaped question from that pass (`preprocess.go`); the
         // three consumers below share this one walk instead of each cloning
         // and re-walking the statement.
+        let preprocess = tidb_util::tracing::start_thread_region("planner.Preprocess");
         let scan = crate::binding::scan_statement_tables(&mut stmt);
+        preprocess.end();
         // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
         if scan.names_commit_ts {
@@ -3025,6 +3038,7 @@ impl Session {
                 crate::txn::StatementFinish::Retry => {
                     execution = match (retries.retry(), retry_stmt.clone()) {
                         (Ok(()), Some(stmt)) => {
+                            self.record_statement_retry();
                             self.execute_parsed_statement_inner(sql, stmt, prepared, None, None)
                         }
                         (Err(error), _) => Err(DriverError::Mysql(tidb_executor::MysqlError::new(
@@ -3761,7 +3775,9 @@ impl Session {
             }
             Stmt::Ddl(ddl) => match &**ddl {
                 DdlStmt::RenameTable(_) => {
-                    let context = self.ddl_statement_context();
+                    let context = self
+                        .ddl_statement_context()
+                        .with_parser_config(self.vars.build_parser_config());
                     let current_db = self.current_db.clone();
                     self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_rename_table_in(
@@ -3775,7 +3791,9 @@ impl Session {
                     })
                 }
                 DdlStmt::TruncateTable(name) => {
-                    let context = self.ddl_statement_context();
+                    let context = self
+                        .ddl_statement_context()
+                        .with_parser_config(self.vars.build_parser_config());
                     let local = self.is_local_temporary_table_path(name);
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = !local && self.foreign_key_checks();
@@ -3892,7 +3910,9 @@ impl Session {
                     // `a = 0` is 1365 under the default SQL mode and succeeds
                     // under `sql_mode = ''`, exactly as the INSERT of such a
                     // row does.
-                    let ctx = self.statement_context(true);
+                    let ctx = self
+                        .statement_context(true)
+                        .with_parser_config(self.vars.build_parser_config());
                     let result = self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_create_index_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
@@ -3951,7 +3971,12 @@ impl Session {
                     };
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
-                    let ctx = self.statement_context(true).with_ddl_query(sql);
+                    // The executor re-parses the client's text, in the
+                    // client's encodings (Go parses it once, so).
+                    let ctx = self
+                        .statement_context(true)
+                        .with_ddl_query(sql)
+                        .with_parser_config(self.vars.build_parser_config());
                     let exchanged_local_temporary = alter.actions.iter().find_map(|action| {
                         let tidb_ast::AlterTableAction::Partition(
                             tidb_ast::AlterPartitionAction::Exchange { table, .. },

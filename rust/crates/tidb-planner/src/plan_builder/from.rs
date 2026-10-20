@@ -137,7 +137,10 @@ use crate::plan_base::PlanError;
 use super::catalog::{SourceTable, SourceView, TableSource};
 use super::handle_col_helper::PlanHandleCols;
 use super::marker::MarkerKind;
-use super::{snapshot_schema_and_names, PlanBuilder, EXTRA_COMMIT_TS_NAME, EXTRA_HANDLE_NAME};
+use super::{
+    lower_name_matches, snapshot_schema_and_names, PlanBuilder, EXTRA_COMMIT_TS_NAME,
+    EXTRA_HANDLE_NAME,
+};
 
 /// Go `model.ExtraPhysTblIDName` (`meta/model/table.go:95`), which
 /// [`PlanBuilder::coalesce_common_columns`] excludes from `NATURAL`/`USING`
@@ -1915,7 +1918,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // Go `expression.FindFieldNameIdxByColName(names, info.Name.L)`.
                     let index = names
                         .iter()
-                        .position(|name| name.names.column.lower.eq_ignore_ascii_case(&info.name))
+                        .position(|name| lower_name_matches(&name.names.column.lower, &info.name))
                         .ok_or_else(|| view_invalid(&view.db_name, &view.view_name))?;
                     let (Some(column), Some(name)) = (schema.columns.get(index), names.get(index))
                     else {

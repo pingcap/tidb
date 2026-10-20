@@ -211,7 +211,7 @@ pub fn run_rename_table_in(
     // from BDR admission, and its job sink records it.
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+    let stmt = tidb_parser::parse_with_sql_mode_and_config(sql, sql_mode, ctx.parser_config())
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
         return Err(DriverError::unsupported(
@@ -447,7 +447,7 @@ pub fn run_truncate_table_in_with_foreign_key_checks(
     // from BDR admission, and its job sink records it.
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+    let stmt = tidb_parser::parse_with_sql_mode_and_config(sql, sql_mode, ctx.parser_config())
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
         return Err(DriverError::unsupported(

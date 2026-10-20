@@ -838,6 +838,14 @@ impl ResultSetSource for PreparedRecordSet<'_> {
     fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.state.close().map_err(|error| error.to_mysql_error())
     }
+
+    fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        self.state.add_write_sql_resp_duration(duration);
+    }
+
+    fn add_result_chunk_cells(&mut self, cells: i64) {
+        self.state.add_result_chunk_cells(cells);
+    }
 }
 
 /// A fully materialized result-set source: the pipeline returns complete row

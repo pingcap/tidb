@@ -1503,37 +1503,38 @@ impl Session {
                 crate::trace::check_options(trace)
                     .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
                 let inner_sql = crate::trace::statement_text(&trace.statement);
-                let started = std::time::SystemTime::now();
-                let clock = std::time::Instant::now();
                 let inner = (*trace.statement).clone();
+                let recorder = crate::trace::StatementTrace::start();
+                let entered = recorder.enter();
+                // Go `session.ExecuteStmt`; this path drains the record set
+                // inside it.
+                let execute_stmt =
+                    tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
                 let outcome = self.execute_statement_owned(inner, &inner_sql);
-                let elapsed = clock.elapsed();
-                let (rows, affected, error) = match outcome {
-                    Ok(StmtOutput::Rows { rows, .. }) => (rows.len() as u64, 0, None),
-                    Ok(StmtOutput::Affected(count)) => (0, count, None),
-                    Ok(_) => (0, 0, None),
+                drop(execute_stmt);
+                drop(entered);
+                // Go `executeChild` and `drainRecordSet`'s events.
+                let affected = match outcome {
+                    Ok(StmtOutput::Rows { rows, .. }) => {
+                        recorder.event(&format!(
+                            "execute done, ReturnRow: {}, ModifyRow: 0",
+                            rows.len()
+                        ));
+                        0
+                    }
+                    Ok(StmtOutput::Affected(count)) => count,
+                    Ok(_) => 0,
                     Err(error) => {
                         let mysql = error.to_mysql_error();
-                        (0, 0, Some((mysql.code, mysql.message)))
+                        recorder.event(&format!(
+                            "execute with error({}): {}",
+                            mysql.code, mysql.message
+                        ));
+                        0
                     }
                 };
-                let plan = self.published_plan();
-                let kind = crate::trace::kind_of(
-                    &trace.statement,
-                    plan,
-                    rows,
-                    self.in_transaction(),
-                );
-                let spans = crate::trace::build_spans(&crate::trace::TraceInput {
-                    kind,
-                    sql: inner_sql,
-                    started,
-                    elapsed,
-                    affected_rows: affected,
-                    error,
-                    chunk_sizes: self.chunk_sizes(),
-                    cop_selects: Vec::new(),
-                });
+                recorder.event(&format!("execute done, modify row: {affected}"));
+                let (spans, started) = recorder.finish();
                 let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
                     .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
                 Ok(Some(StmtOutput::Rows { columns, rows }))

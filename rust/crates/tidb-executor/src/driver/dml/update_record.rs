@@ -86,6 +86,7 @@ impl<'a> UpdateRecords<'a> {
         generation: GeneratedWrite,
         ctx: &crate::StmtContext,
     ) -> Result<UpdateOutcome, DriverError> {
+        let _region = tidb_util::tracing::start_thread_region_ex("executor.updateRecord");
         let entry = catalog.get_in(database, name).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
                 "{database}.{name}"

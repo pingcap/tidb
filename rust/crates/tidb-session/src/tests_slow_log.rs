@@ -318,3 +318,261 @@ fn last_query_info_follows_statements_and_failures() {
     assert!(session.run("SELECT * FROM no_such_table").is_err());
     assert!(one(&mut session, "SELECT @@tidb_last_query_info").contains("\"error\""));
 }
+
+/// The last slow-log entry whose statement line is `sql;`.
+fn entry_for(log: &str, sql: &str) -> String {
+    let statement = format!("\n{sql};\n");
+    let end = log
+        .rfind(&statement)
+        .unwrap_or_else(|| panic!("no slow-log entry for {sql}: {log}"))
+        + statement.len();
+    let start = log[..end].rfind("# Time: ").expect("the entry's header");
+    log[start..end].to_owned()
+}
+
+/// The value of `# key: value`, or of `key: value` inside a line carrying
+/// several (`Optimize_time: .. Opt_logical: ..`).
+fn field<'a>(entry: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("{key}: ");
+    entry.lines().find_map(|line| {
+        let line = line.strip_prefix("# ")?;
+        let at = line
+            .match_indices(&needle)
+            .find(|(at, _)| *at == 0 || line[..*at].ends_with(' '))?
+            .0;
+        let value = &line[at + needle.len()..];
+        Some(value.split(' ').next().unwrap_or(value))
+    })
+}
+
+fn seconds(entry: &str, key: &str) -> f64 {
+    field(entry, key)
+        .unwrap_or_else(|| panic!("{key} in {entry}"))
+        .parse()
+        .unwrap_or_else(|_| panic!("{key} is a number in {entry}"))
+}
+
+/// Go `SessionVars.RewritePhaseInfo`, `DurationOptimizer` and the statement
+/// ledger of used statistics: an optimized SELECT reports a nonzero rewrite,
+/// optimization and each optimizer phase, bounded by its compile time; an
+/// uncorrelated subquery is counted and timed as a pre-processed subquery;
+/// and `Stats` names every table planning read statistics for.
+#[test]
+fn slow_log_reports_planning_phases_and_used_stats() {
+    let dir = log_dir("planning-phases");
+    let (slow, _) = install_loggers(&dir);
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_slow_log_threshold = 0")
+        .unwrap();
+    session
+        .run("CREATE TABLE phase_t (a INT PRIMARY KEY, b INT, KEY ib (b))")
+        .unwrap();
+    session
+        .run("INSERT INTO phase_t VALUES (1, 10), (2, 20)")
+        .unwrap();
+    let sql = "SELECT a FROM phase_t WHERE b > 5 AND a < (SELECT MAX(a) FROM phase_t)";
+    session.run(sql).unwrap();
+
+    let entry = entry_for(&read(&slow), sql);
+    let compile = seconds(&entry, "Compile_time");
+    let rewrite = seconds(&entry, "Rewrite_time");
+    let optimize = seconds(&entry, "Optimize_time");
+    assert!(rewrite > 0.0 && rewrite <= compile, "{entry}");
+    assert!(optimize > 0.0 && optimize <= compile, "{entry}");
+    for phase in ["Opt_logical", "Opt_physical", "Opt_stats_derive"] {
+        let value = seconds(&entry, phase);
+        assert!(value > 0.0 && value <= optimize, "{phase} in {entry}");
+    }
+    // `StatsDerive` is the first part of `PhysicalOpt`.
+    assert!(
+        seconds(&entry, "Opt_stats_derive") <= seconds(&entry, "Opt_physical"),
+        "{entry}"
+    );
+    // The subquery ran while the outer query was being built.
+    assert_eq!(field(&entry, "Preproc_subqueries"), Some("1"), "{entry}");
+    assert!(
+        seconds(&entry, "Preproc_subqueries_time") <= rewrite,
+        "{entry}"
+    );
+    // Go `initStats`: never analyzed, so pseudo statistics with
+    // `PseudoRowCount` rows.
+    assert!(
+        entry.contains(
+            "# Stats: phase_t:stats_meta_version=pseudo[realtime_count=10000;modify_count=0]\n"
+        ),
+        "{entry}"
+    );
+    // Go `Session.Parse` counts the statement's parse into its RU v2.
+    assert!(
+        field(&entry, "Request_unit_v2_detail").is_some()
+            && entry.contains("session_parser_total:1"),
+        "{entry}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Go `GetTblInfoForUsedStatsByPhysicalID`: a partitioned table's own id is
+/// `<table> global`, each statically pruned partition `<table> <partition>`.
+#[test]
+fn slow_log_stats_names_partitions_like_go() {
+    let dir = log_dir("partition-stats");
+    let (slow, _) = install_loggers(&dir);
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_slow_log_threshold = 0")
+        .unwrap();
+    session
+        .run("CREATE TABLE part_t (a INT, b INT) PARTITION BY HASH(a) PARTITIONS 2")
+        .unwrap();
+    session
+        .run("SET tidb_partition_prune_mode = 'dynamic'")
+        .unwrap();
+    let dynamic = "SELECT b FROM part_t WHERE b > 1";
+    session.run(dynamic).unwrap();
+    session
+        .run("SET tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    let static_sql = "SELECT b FROM part_t WHERE b > 2";
+    session.run(static_sql).unwrap();
+
+    let log = read(&slow);
+    let dynamic_entry = entry_for(&log, dynamic);
+    assert!(
+        dynamic_entry.contains(
+            "# Stats: part_t global:stats_meta_version=pseudo[realtime_count=10000;modify_count=0]\n"
+        ),
+        "{dynamic_entry}"
+    );
+    let static_entry = entry_for(&log, static_sql);
+    assert!(
+        static_entry.contains(
+            "# Stats: part_t p0:stats_meta_version=pseudo[realtime_count=10000;modify_count=0],\
+             part_t p1:stats_meta_version=pseudo[realtime_count=10000;modify_count=0]\n"
+        ),
+        "{static_entry}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Go `ResetContextOfStmt` resets the session memory tracker's peak, so a
+/// statement's `Mem_max` is its own, not the connection's.
+#[test]
+fn slow_log_mem_max_is_the_statements_peak() {
+    let dir = log_dir("mem-max");
+    let (slow, _) = install_loggers(&dir);
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE mem_t (a INT PRIMARY KEY, b VARCHAR(64))")
+        .unwrap();
+    let values = (1..=300)
+        .map(|i| format!("({i}, REPEAT('x', 60))"))
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .run(&format!("INSERT INTO mem_t VALUES {values}"))
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_slow_log_threshold = 0")
+        .unwrap();
+    let heavy = "SELECT b FROM mem_t ORDER BY b DESC, a";
+    session.run(heavy).unwrap();
+    let light = "SELECT 'light'";
+    session.run(light).unwrap();
+
+    let log = read(&slow);
+    let heavy_max: i64 = field(&entry_for(&log, heavy), "Mem_max")
+        .expect("the sort used memory")
+        .parse()
+        .unwrap();
+    let light_entry = entry_for(&log, light);
+    let light_max = field(&light_entry, "Mem_max").map_or(0, |value| value.parse::<i64>().unwrap());
+    assert!(
+        light_max < heavy_max,
+        "{light_max} < {heavy_max}: {light_entry}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Go `FinishExecuteStmt(origTxnCtx.StartTS, ...)` and `TxnCtx.IsExplicit`:
+/// the slow-log entry of a statement carries the transaction context in force
+/// when it began, which outlives a `COMMIT`/`ROLLBACK` that ends it and is not
+/// the one a `BEGIN` opens. Captured on a Go tidb-server over TiKV
+/// (`Txn_start_ts` / `IsExplicitTxn`): `begin` 0/true, the statements and
+/// the `commit` the transaction's start/true, an implicit-commit `begin` the
+/// ended transaction's start/true, and a `commit` with no transaction 0/false.
+#[test]
+fn slow_log_keeps_the_transaction_a_statement_ended() {
+    let dir = log_dir("txn-context");
+    let (slow, _) = install_loggers(&dir);
+    let mut session = Session::new();
+    session
+        .run("SET GLOBAL tidb_slow_log_threshold = 0")
+        .unwrap();
+    session
+        .run("CREATE TABLE slow_txn (a INT PRIMARY KEY)")
+        .unwrap();
+    for sql in [
+        "BEGIN",
+        "INSERT INTO slow_txn VALUES (1)",
+        "COMMIT",
+        "BEGIN",
+        "INSERT INTO slow_txn VALUES (2)",
+        "ROLLBACK",
+        "BEGIN",
+        "INSERT INTO slow_txn VALUES (3)",
+        "BEGIN",
+        "COMMIT",
+        "COMMIT",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let log = read(&slow);
+    let entries: Vec<(u64, String, String)> = log
+        .split("# Time: ")
+        .skip(1)
+        .map(|entry| {
+            let field = |name: &str| {
+                entry
+                    .lines()
+                    .find_map(|line| line.strip_prefix(&format!("# {name}: ")))
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let query = entry.lines().last().unwrap_or_default().to_owned();
+            (
+                field("Txn_start_ts").parse().unwrap(),
+                field("IsExplicitTxn"),
+                query,
+            )
+        })
+        .filter(|(_, _, query)| {
+            query.starts_with("BEGIN")
+                || query.starts_with("INSERT INTO slow_txn")
+                || query.starts_with("COMMIT")
+                || query.starts_with("ROLLBACK")
+        })
+        .collect();
+    let explicit: Vec<&str> = entries.iter().map(|(_, e, _)| e.as_str()).collect();
+    assert_eq!(
+        explicit,
+        ["true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "false"],
+        "{entries:?}"
+    );
+    let ts: Vec<u64> = entries.iter().map(|(ts, _, _)| *ts).collect();
+    assert_eq!(ts[0], 0, "BEGIN: {entries:?}");
+    assert_ne!(ts[1], 0, "{entries:?}");
+    assert_eq!(ts[2], ts[1], "COMMIT keeps its transaction: {entries:?}");
+    assert_eq!(ts[3], 0, "{entries:?}");
+    assert_ne!(ts[4], 0, "{entries:?}");
+    assert_eq!(ts[5], ts[4], "ROLLBACK keeps its transaction: {entries:?}");
+    assert_eq!(ts[6], 0, "{entries:?}");
+    assert_ne!(ts[7], 0, "{entries:?}");
+    assert_eq!(
+        ts[8], ts[7],
+        "an implicit commit keeps the ended transaction: {entries:?}"
+    );
+    assert_ne!(ts[9], 0, "{entries:?}");
+    assert_ne!(ts[9], ts[7], "the BEGIN's own transaction: {entries:?}");
+    assert_eq!(ts[10], 0, "no transaction: {entries:?}");
+}

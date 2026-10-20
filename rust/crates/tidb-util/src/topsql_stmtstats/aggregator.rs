@@ -402,6 +402,16 @@ pub fn bind_ru_version_provider(provider: Option<Arc<dyn RuVersionProvider>>) {
     global_aggregator().set_ru_version_provider(provider);
 }
 
+/// Go `Domain.GetRUVersion` for the callers that reach the domain: the
+/// version of the provider TiDB binds at setup (`SetupTopProfiling` binds
+/// the domain, whose resource-groups controller answers), and Go
+/// `rmclient.DefaultRUVersion` without one.
+pub fn bound_ru_version() -> RuVersion {
+    global_aggregator()
+        .ru_version_provider()
+        .map_or_else(default_ru_version, |provider| provider.get_ru_version())
+}
+
 /// Go `CloseAggregator`: stops the background aggregator of the `stmtstats`
 /// module. **Not** thread-safe.
 pub fn close_aggregator() {
@@ -487,6 +497,18 @@ mod tests {
 
         // Go's t.Cleanup.
         close_aggregator();
+        bind_ru_version_provider(original_provider);
+    }
+
+    // Go `Domain.GetRUVersion`: the bound domain's version, else the default.
+    #[test]
+    fn bound_ru_version_reads_the_bound_provider() {
+        let _guard = global_test_guard();
+        let original_provider = global_aggregator().ru_version_provider();
+        bind_ru_version_provider(None);
+        assert_eq!(bound_ru_version(), default_ru_version());
+        bind_ru_version_provider(Some(Arc::new(MockRuVersionProvider::new(RuVersion::V2))));
+        assert_eq!(bound_ru_version(), RuVersion::V2);
         bind_ru_version_provider(original_provider);
     }
 

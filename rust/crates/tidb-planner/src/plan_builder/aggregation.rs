@@ -911,7 +911,9 @@ pub fn resolve_from_select_fields(
         // matches its name, and a function call its written text (issue
         // 7331, `group by `concat(k1,k2)``).
         let by_expression = |field: &ProjectionField| match &field.expr {
-            Expr::Column(p) => p.last().is_some_and(|last| last.eq_ignore_ascii_case(name)),
+            Expr::Column(p) => p
+                .last()
+                .is_some_and(|last| super::lower_name_matches(last, name)),
             Expr::Func { .. } => field
                 .text
                 .as_deref()
@@ -922,7 +924,7 @@ pub fn resolve_from_select_fields(
             by_expression(field)
         } else {
             match &field.alias {
-                Some(alias) => alias.eq_ignore_ascii_case(name),
+                Some(alias) => super::lower_name_matches(alias, name),
                 None => by_expression(field),
             }
         };

@@ -987,6 +987,14 @@ impl ResultSetSource for ProcessTrackedResultSet<'_> {
         self.statement.take();
         result
     }
+
+    fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        self.inner.add_write_sql_resp_duration(duration);
+    }
+
+    fn add_result_chunk_cells(&mut self, cells: i64) {
+        self.inner.add_result_chunk_cells(cells);
+    }
 }
 
 /// Sized adapter for a boxed worker-local result source.
@@ -1042,6 +1050,14 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
 
     fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
         self.inner.close()
+    }
+
+    fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        self.inner.add_write_sql_resp_duration(duration);
+    }
+
+    fn add_result_chunk_cells(&mut self, cells: i64) {
+        self.inner.add_result_chunk_cells(cells);
     }
 }
 

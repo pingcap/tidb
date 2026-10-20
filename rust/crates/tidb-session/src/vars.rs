@@ -2243,6 +2243,17 @@ fn timestamp_hook_value(override_value: Option<&str>) -> String {
     format_double(seconds)
 }
 
+/// Go `txnIsolationLevelOneShotState`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TxnIsolationLevelOneShotState {
+    /// Go `oneShotDef`: `tx_isolation_one_shot` is not set.
+    Def,
+    /// Go `oneShotSet`: set by the current statement.
+    Set,
+    /// Go `oneShotUse`: the level of the transaction that comes next.
+    Use,
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionVars {
     systems: HashMap<String, String>,
@@ -2274,6 +2285,10 @@ pub struct SessionVars {
     snapshot_ts: u64,
     txn_read_ts: u64,
     txn_read_ts_used: bool,
+    /// Go `SessionVars.txnIsolationLevelOneShot`: the level `SET TRANSACTION
+    /// ISOLATION LEVEL` (the `tx_isolation_one_shot` hook) gives the next
+    /// transaction, and where it stands in its one-shot lifecycle.
+    txn_isolation_level_one_shot: (TxnIsolationLevelOneShotState, String),
     /// Go's typed `SessionVars.SelectLimit`, maintained by the
     /// `sql_select_limit` `SetSession` hook. `u64::MAX` is the unlimited
     /// default and any smaller value caps top-level SELECT/set results.
@@ -2403,6 +2418,7 @@ impl Default for SessionVars {
             snapshot_ts: 0,
             txn_read_ts: 0,
             txn_read_ts_used: false,
+            txn_isolation_level_one_shot: (TxnIsolationLevelOneShotState::Def, String::new()),
             select_limit: u64::MAX,
             selectivity_factor: tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR,
             multi_statement_mode: 0,
@@ -2459,6 +2475,46 @@ impl SessionVars {
             return true;
         }
         false
+    }
+
+    /// Go `SessionVars.IsolationLevelForNewTxn`: the level a transaction
+    /// entered now runs at -- a `SET TRANSACTION ISOLATION LEVEL` level
+    /// (just set inside a transaction, or waiting outside one), else
+    /// `transaction_isolation`.
+    pub(crate) fn isolation_level_for_new_txn(&self, in_txn: bool) -> String {
+        let (state, value) = &self.txn_isolation_level_one_shot;
+        let pending = if in_txn {
+            TxnIsolationLevelOneShotState::Set
+        } else {
+            TxnIsolationLevelOneShotState::Use
+        };
+        if *state == pending && !value.is_empty() {
+            return value.clone();
+        }
+        self.get_system("transaction_isolation").unwrap_or_default()
+    }
+
+    /// The `SET TRANSACTION ISOLATION LEVEL` level Go `IsIsolation` adopts
+    /// for a transaction context that has none yet (`oneShotUse`).
+    pub(crate) fn txn_isolation_level_one_shot_in_use(&self) -> Option<&str> {
+        let (state, value) = &self.txn_isolation_level_one_shot;
+        (*state == TxnIsolationLevelOneShotState::Use && !value.is_empty())
+            .then_some(value.as_str())
+    }
+
+    /// Go `SetTxnIsolationLevelOneShotStateForNextTxn`, run by every
+    /// `CommitTxn` (`doCommitWithRetry`): a level set by `SET TRANSACTION`
+    /// waits for the next transaction, and that transaction's end clears it.
+    pub(crate) fn set_txn_isolation_level_one_shot_state_for_next_txn(&mut self) {
+        let one_shot = &mut self.txn_isolation_level_one_shot;
+        match one_shot.0 {
+            TxnIsolationLevelOneShotState::Def => {}
+            TxnIsolationLevelOneShotState::Set => one_shot.0 = TxnIsolationLevelOneShotState::Use,
+            TxnIsolationLevelOneShotState::Use => {
+                one_shot.0 = TxnIsolationLevelOneShotState::Def;
+                one_shot.1.clear();
+            }
+        }
     }
 
     /// The snapshot selected by SET tidb_snapshot; zero clears the pin.
@@ -3512,6 +3568,9 @@ impl SessionVars {
             self.systems.insert(other.to_owned(), value.clone());
         }
         self.systems.insert(key.clone(), value.clone());
+        if key == "tx_isolation_one_shot" {
+            self.txn_isolation_level_one_shot = (TxnIsolationLevelOneShotState::Set, value.clone());
+        }
         if let Some(ts) = parsed_snapshot_ts {
             if key == "tidb_snapshot" {
                 self.snapshot_ts = ts;

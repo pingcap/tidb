@@ -100,6 +100,116 @@ pub trait ResultSetSource {
 
     /// Releases the record-set resource, finishing it first when needed.
     fn close(&mut self) -> Result<(), tidb_executor::MysqlError>;
+
+    /// Go `StmtExecDetails.WriteSQLRespDuration += ...`: hands the
+    /// statement the time the connection spent writing its result. Sources
+    /// with no statement of their own ignore it.
+    fn add_write_sql_resp_duration(&mut self, _duration: std::time::Duration) {}
+
+    /// Go `writeChunks`' deferred `RUV2Metrics.AddResultChunkCells`: hands
+    /// the statement the rows times columns written for it.
+    fn add_result_chunk_cells(&mut self, _cells: i64) {}
+}
+
+/// Times the pulls a result-set writer makes on `inner`, so the writer's
+/// remaining time -- column info, row encoding, packet writes, the terminal
+/// packet and the flush -- is Go `writeChunks`' `WriteSQLRespDuration`, which
+/// leaves `rs.Next` and `rs.Finish` out.
+pub(crate) struct PullTimedResultSetSource<'a, S: ResultSetSource + ?Sized> {
+    inner: &'a mut S,
+    pulled: std::time::Duration,
+    /// Go `writeChunks`' `columnCount`, once the writer has the columns.
+    column_count: usize,
+}
+
+impl<'a, S: ResultSetSource + ?Sized> PullTimedResultSetSource<'a, S> {
+    pub(crate) fn new(inner: &'a mut S) -> Self {
+        Self {
+            inner,
+            pulled: std::time::Duration::ZERO,
+            column_count: 0,
+        }
+    }
+
+    /// The number of result columns the writer read.
+    pub(crate) fn column_count(&self) -> usize {
+        self.column_count
+    }
+
+    /// The time spent inside `inner`'s pulls so far.
+    pub(crate) fn pulled(&self) -> std::time::Duration {
+        self.pulled
+    }
+
+    fn timed<T>(&mut self, pull: impl FnOnce(&mut S) -> T) -> T {
+        let started = std::time::Instant::now();
+        let result = pull(self.inner);
+        self.pulled += started.elapsed();
+        result
+    }
+}
+
+impl<S: ResultSetSource + ?Sized> ResultSetSource for PullTimedResultSetSource<'_, S> {
+    fn statement_status(&self) -> Option<StatementStatus<'_>> {
+        self.inner.statement_status()
+    }
+
+    fn new_chunk(&self) -> Option<tidb_chunk::chunk::Chunk> {
+        self.inner.new_chunk()
+    }
+
+    fn next_chunk(
+        &mut self,
+        chunk: &mut tidb_chunk::chunk::Chunk,
+    ) -> Result<(), tidb_executor::MysqlError> {
+        self.timed(|inner| inner.next_chunk(chunk))
+    }
+
+    fn field_types(&self) -> &[tidb_datatype::FieldType] {
+        self.inner.field_types()
+    }
+
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+        self.timed(|inner| inner.next_batch(max_rows))
+    }
+
+    fn supports_text_batch(&self) -> bool {
+        self.inner.supports_text_batch()
+    }
+
+    fn next_text_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Option<Box<dyn TextResultBatch>>, tidb_executor::MysqlError> {
+        self.timed(|inner| inner.next_text_batch(max_rows))
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+        let columns = self.timed(|inner| inner.columns());
+        if let Ok(columns) = &columns {
+            self.column_count = columns.len();
+        }
+        columns
+    }
+
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.timed(|inner| inner.finish())
+    }
+
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.timed(|inner| inner.close())
+    }
+
+    fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        self.inner.add_write_sql_resp_duration(duration);
+    }
+
+    fn add_result_chunk_cells(&mut self, cells: i64) {
+        self.inner.add_result_chunk_cells(cells);
+    }
 }
 
 impl ResultSetSource for DistSqlRecordSet {

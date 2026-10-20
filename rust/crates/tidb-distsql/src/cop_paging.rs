@@ -28,9 +28,7 @@ pub use cop_read_task_runtime::{
     CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
 pub use native_transport::{
-    context_with_trace_exec_details, CopBackoffer, CopRpcTrace, CopTraceRecorder,
-    NativeCopResponse, NativeCopSend, NativeCopStore, NativeCopTransport, SendReqCtxTrace,
-    TraceExecDetailsGuard,
+    CopBackoffer, NativeCopResponse, NativeCopSend, NativeCopStore, NativeCopTransport,
 };
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,

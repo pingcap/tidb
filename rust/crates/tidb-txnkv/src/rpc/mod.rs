@@ -18,6 +18,7 @@
 
 mod call_context;
 mod execution;
+pub mod trace;
 
 pub use call_context::{UnaryCallContext, UnaryCancellation};
 pub use execution::{

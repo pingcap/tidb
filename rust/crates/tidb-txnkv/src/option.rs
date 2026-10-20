@@ -197,6 +197,30 @@ pub struct SnapshotReadOptions {
     /// Go `setOptionForTopSQL`'s statement values on the snapshot: its
     /// `kv.ResourceGroupTagger` and the statement ctx's `RUDetails`.
     pub kv_context: Option<StatementKvContextCell>,
+    /// Go `snapshot.SetOption(kv.CollectRuntimeStats, stats)`: the point
+    /// reader's own `SnapshotRuntimeStats`, which collect its Get/BatchGet
+    /// RPCs while installed; `None` collects into the transaction's own.
+    pub runtime_stats: Option<SnapshotRuntimeStatsHandle>,
+}
+
+/// A shared client-go `txnsnapshot.SnapshotRuntimeStats`, compared by
+/// identity as Go compares the option's pointer.
+#[derive(Clone)]
+pub struct SnapshotRuntimeStatsHandle(pub std::sync::Arc<tikv_client::SnapshotRuntimeStats>);
+
+impl PartialEq for SnapshotRuntimeStatsHandle {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for SnapshotRuntimeStatsHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("SnapshotRuntimeStatsHandle")
+            .field(&self.0.to_string())
+            .finish()
+    }
 }
 
 /// Go `StmtCtx.GetResourceGroupTagger`: builds the tag builder from the
@@ -211,15 +235,23 @@ pub type PessimisticLockResourceGroupTagger =
     std::sync::Arc<dyn Fn(&[u8]) -> Vec<u8> + Send + Sync>;
 
 /// The per-statement values Go reaches a transaction or snapshot call
-/// through: the statement ctx's `util.RUDetailsCtxKey` value
-/// (`execdetails.ContextWithInitializedExecDetails`), which client-go's
-/// resource-control interceptor charges on every RPC, and the statement's
-/// resource-group taggers (`txn.SetOption(kv.ResourceGroupTagger, ...)`,
+/// through: the statement ctx's `util.RUDetailsCtxKey` and
+/// `util.ExecDetailsKey` values (`execdetails.ContextWithInitializedExecDetails`),
+/// which client-go charges on every RPC, and the statement's resource-group
+/// taggers (`txn.SetOption(kv.ResourceGroupTagger, ...)`,
 /// `lockCtx.ResourceGroupTagger`).
 #[derive(Clone, Default)]
 pub struct StatementKvContext {
     /// Go `ctx.Value(util.RUDetailsCtxKey)`.
     pub ru_details: Option<std::sync::Arc<tikv_client::RuDetails>>,
+    /// Go `ctx.Value(util.ExecDetailsKey)`: the statement's KV/PD waits,
+    /// backoffs and traffic.
+    pub exec_details: Option<std::sync::Arc<tikv_client::util::ExecDetails>>,
+    /// The traffic half of Go's `util.ExecDetails`, which client-rust's
+    /// dispatch charges to its own collector rather than to the context's
+    /// `ExecDetails`.
+    pub network_traffic_details:
+        Option<std::sync::Arc<tikv_client::traffic::NetworkTrafficDetails>>,
     /// Go `StmtCtx.GetResourceGroupTagger`.
     pub resource_group_tagger: Option<StatementResourceGroupTagger>,
     /// Go `lockCtx.ResourceGroupTagger`.
@@ -231,6 +263,8 @@ impl std::fmt::Debug for StatementKvContext {
         formatter
             .debug_struct("StatementKvContext")
             .field("ru_details", &self.ru_details)
+            .field("exec_details", &self.exec_details.is_some())
+            .field("network_traffic_details", &self.network_traffic_details)
             .field(
                 "resource_group_tagger",
                 &self.resource_group_tagger.is_some(),

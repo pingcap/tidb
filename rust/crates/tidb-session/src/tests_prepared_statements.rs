@@ -851,3 +851,29 @@ fn prepare_reads_variables_at_prepare_and_again_at_execute() {
     session.run("set @x = 7").unwrap();
     assert_eq!(row_text(session.run("execute s3")), [["8"]]);
 }
+
+/// Go `ResetContextOfStmt` resolves an EXECUTE's prepared statement before
+/// it installs the new statement context, so an unknown name fails with the
+/// previous statement's warnings still in place and its 8111 joins them.
+/// Live Go: `SELEC 1; EXECUTE nonexist; SHOW WARNINGS` lists the 1064 and the
+/// 8111, `SELECT 1/0; EXECUTE nonexist` the 1365 and the 8111, while an
+/// unknown `DEALLOCATE PREPARE` starts over like any statement.
+#[test]
+fn unknown_execute_keeps_the_previous_statements_warnings() {
+    let mut session = Session::new();
+    let codes = |session: &mut Session| -> Vec<String> {
+        row_text(session.run("SHOW WARNINGS"))
+            .into_iter()
+            .map(|row| row[1].clone())
+            .collect()
+    };
+    assert!(session.run("SELEC 1").is_err());
+    assert_eq!(errno(session.run("EXECUTE nonexist")), 8111);
+    assert_eq!(codes(&mut session), ["1064", "8111"]);
+    session.run("SELECT 1/0").unwrap();
+    assert_eq!(errno(session.run("EXECUTE nonexist")), 8111);
+    assert_eq!(codes(&mut session), ["1365", "8111"]);
+    session.run("SELECT 1/0").unwrap();
+    assert_eq!(errno(session.run("DEALLOCATE PREPARE nonexist")), 8111);
+    assert_eq!(codes(&mut session), ["8111"]);
+}

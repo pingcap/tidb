@@ -3449,7 +3449,8 @@ fn register_ru_runtime_stats(
                 ru_details: Some(ru_details.cloned()),
                 metrics: None,
                 weights: tidb_util::ruv2_metrics::RuV2Weights::default(),
-                ru_version: tidb_util::topsql_stmtstats::default_ru_version(),
+                // Go `do.GetRUVersion()`.
+                ru_version: tidb_util::topsql_stmtstats::bound_ru_version(),
             });
     }
     runtime

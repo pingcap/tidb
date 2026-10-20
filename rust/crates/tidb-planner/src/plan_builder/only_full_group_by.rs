@@ -606,7 +606,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // resolves `v` against the TABLE.
         let names_a_reported_field = |path: &[String]| {
             matches!(path, [name]
-                if reported_names.iter().any(|reported| reported.eq_ignore_ascii_case(name)))
+                if reported_names.iter().any(|reported| super::lower_name_matches(reported, name)))
         };
 
         for (index, item) in select.order_by.iter().enumerate() {
@@ -1090,8 +1090,8 @@ fn names_a_select_field(expr: &Expr, fields: &[ProjectionField]) -> bool {
         return false;
     };
     fields.iter().any(|field| match &field.alias {
-        Some(alias) => alias.eq_ignore_ascii_case(name),
+        Some(alias) => super::lower_name_matches(alias, name),
         None => matches!(&field.expr, Expr::Column(path)
-            if path.last().is_some_and(|last| last.eq_ignore_ascii_case(name))),
+            if path.last().is_some_and(|last| super::lower_name_matches(last, name))),
     })
 }

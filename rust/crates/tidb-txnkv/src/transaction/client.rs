@@ -41,6 +41,9 @@ pub struct ClientTransaction<S: PdClient> {
     _start_ts_guard: crate::inner_txn::StartTsGuard,
     authority_id: u64,
     snapshot_stats: Arc<tikv_client::SnapshotRuntimeStats>,
+    /// Go `kv.CollectRuntimeStats`: a point reader's own stats, collecting
+    /// the snapshot's RPCs instead of [`Self::snapshot_stats`] while set.
+    reader_snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
     read_ts: u64,
     snapshot_read_options: Option<crate::SnapshotReadOptions>,
     collect_snapshot_stats: bool,
@@ -137,6 +140,7 @@ impl<S: PdClient> ClientTransaction<S> {
             _start_ts_guard: crate::inner_txn::ACTIVE_START_TS.hold(start_ts),
             authority_id,
             snapshot_stats,
+            reader_snapshot_stats: None,
             read_ts: start_ts,
             snapshot_read_options: None,
             collect_snapshot_stats: false,
@@ -270,30 +274,46 @@ impl<S: PdClient> ClientTransaction<S> {
     pub fn set_statement_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
         self.check_existence = level != tidb_proto::KvrpcAssertionLevel::Off;
     }
-    /// Installs statement-owned snapshot statistics in the client.
+    /// Go `KVSnapshot.SetRuntimeStats` (`kv.CollectRuntimeStats`): a point
+    /// reader's own statistics collect the snapshot's RPCs; `None` returns
+    /// collection to the transaction's own statistics.
     pub fn set_snapshot_runtime_stats(
         &mut self,
         stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
     ) {
+        let unchanged = match (&self.reader_snapshot_stats, &stats) {
+            (Some(installed), Some(stats)) => Arc::ptr_eq(installed, stats),
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return;
+        }
         self.collect_snapshot_stats = stats.is_some();
-        self.snapshot_stats = stats.unwrap_or_default();
+        self.reader_snapshot_stats = stats;
+        let active = Arc::clone(self.active_snapshot_stats());
         self.engine
             .transaction_mut()
             .inner_mut()
-            .set_snapshot_runtime_stats(Some(self.snapshot_stats.clone()));
+            .set_snapshot_runtime_stats(Some(active));
+    }
+    /// The statistics the native snapshot collects into now.
+    fn active_snapshot_stats(&self) -> &Arc<tikv_client::SnapshotRuntimeStats> {
+        self.reader_snapshot_stats
+            .as_ref()
+            .unwrap_or(&self.snapshot_stats)
     }
     /// Physical Get and BatchGet counts reported by the native snapshot.
     pub fn snapshot_point_rpc_counts(&self) -> (u64, u64) {
+        let stats = self.active_snapshot_stats();
         (
-            self.snapshot_stats
-                .rpc_count(tikv_client::SnapshotRpcCommand::Get),
-            self.snapshot_stats
-                .rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::Get),
+            stats.rpc_count(tikv_client::SnapshotRpcCommand::BatchGet),
         )
     }
     /// Point-read response details when collection is enabled.
     pub fn snapshot_point_response_stats(&self) -> tikv_client::PointResponseStats {
-        let mut stats = self.snapshot_stats.point_response_stats();
+        let mut stats = self.active_snapshot_stats().point_response_stats();
         if !self.collect_snapshot_stats {
             stats.invalidate();
         }
@@ -337,6 +357,12 @@ impl<S: PdClient> ClientTransaction<S> {
             self.set_statement_kv_context(context.clone());
         }
         Self::apply_snapshot_read_options(self.engine.transaction_mut().inner_mut(), options);
+        self.set_snapshot_runtime_stats(
+            options
+                .runtime_stats
+                .as_ref()
+                .map(|stats| Arc::clone(&stats.0)),
+        );
         self.snapshot_read_options = Some(options.clone());
     }
 
@@ -634,6 +660,8 @@ impl<S: PdClient> ClientTransaction<S> {
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
         self.finish_statement(true).map_err(Self::read_error)?;
         self.stage_mutations(mutations)?;
+        // client-go `KVTxn.Commit`'s span, opened as the commit begins.
+        let _commit = tidb_util::tracing::start_thread_region_ex("tikvTxn.Commit");
         self.calls.set(call);
         self.apply_statement_kv_context();
         let mut outcome = self

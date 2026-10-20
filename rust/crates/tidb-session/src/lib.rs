@@ -716,6 +716,16 @@ pub struct Session {
     /// autocommit transaction down (clearing [`Self::current_tso`]) before
     /// the statement finished; zero otherwise.
     statement_txn_start_ts: u64,
+    /// The start timestamp of the transaction the running statement began
+    /// inside and itself ended (`COMMIT`, `ROLLBACK`, an implicit commit):
+    /// Go's `origTxnCtx`, which outlives the transaction.
+    statement_ended_txn_start_ts: Option<u64>,
+    /// Whether the running statement is a `BEGIN`, whose transaction gets a
+    /// `TxnCtx` of its own rather than the statement's (`origTxnCtx`).
+    statement_began_txn: bool,
+    /// Whether the running statement already ran Go's `CommitTxn`
+    /// ([`Self::set_txn_isolation_level_one_shot_state_for_next_txn`]).
+    statement_committed_txn: bool,
     /// Go `SessionVars.CurrentDBChanged`: a `USE` switched databases since
     /// the last slow-log entry, which then prints `use <db>;`.
     current_db_changed: bool,
@@ -972,6 +982,14 @@ pub struct Session {
     /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
     /// tree before executor construction.
     process_plan_info: Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>>,
+    /// Go `SessionVars.RewritePhaseInfo`, `DurationOptimizer` and
+    /// `DurationWaitTS`, set by the planner and the transaction tier.
+    phase_durations: tidb_executor::phase_durations::SessionPhaseDurations,
+    /// Go `SessionVars.SQLCPUUsages`: the running statement's TiDB and TiKV
+    /// CPU time.
+    sql_cpu_usages: Arc<tidb_util::ppcpuusage::SqlCpuUsages>,
+    /// Go `SessionVars.RUV2PendingSessionParserTotal`.
+    ruv2_pending_session_parser_total: i64,
     /// Set while a binary-protocol EXECUTE runs. Go keeps the plan detail out
     /// of the process list for that path (`executeStmtImpl`,
     /// `pkg/session/session.go`: `execStmt.Name == ""` clears `currentPlan`),
@@ -1078,6 +1096,9 @@ impl Session {
             current_tso: tidb_executor::CurrentTso::default(),
             current_for_update_ts: tidb_executor::CurrentTso::default(),
             statement_txn_start_ts: 0,
+            statement_ended_txn_start_ts: None,
+            statement_began_txn: false,
+            statement_committed_txn: false,
             current_db_changed: false,
             prev_stmt_text: None,
             connection_attributes: std::collections::BTreeMap::new(),
@@ -1162,6 +1183,9 @@ impl Session {
             external_mpp_query_scope: false,
             mpp_attempt_completed: false,
             process_plan_info: Arc::default(),
+            phase_durations: Default::default(),
+            sql_cpu_usages: Arc::default(),
+            ruv2_pending_session_parser_total: 0,
             binary_prepared_execution: false,
             found_in_binding: false,
             prev_found_in_binding: false,
@@ -1403,6 +1427,13 @@ impl Session {
     #[must_use]
     pub fn current_tso(&self) -> tidb_executor::CurrentTso {
         self.current_tso.clone()
+    }
+
+    /// Go `SessionVars`' planning-phase clocks, shared with the transaction
+    /// tier that waits for the statement's timestamp (`DurationWaitTS`).
+    #[must_use]
+    pub fn phase_durations(&self) -> tidb_executor::phase_durations::SessionPhaseDurations {
+        self.phase_durations.clone()
     }
 
     /// Where the cluster tier publishes the open pessimistic transaction's
@@ -2371,16 +2402,15 @@ impl Session {
     /// The number of `?` markers a statement carries, which
     /// `COM_STMT_PREPARE` reports to the client.
     pub fn parameter_count(&self, sql: &str) -> Result<usize, DriverError> {
-        tidb_executor::parameter_count(sql, self.scanner_sql_mode())
+        Ok(tidb_executor::parsed_parameter_count(&self.parse(sql)?))
     }
 
     /// Runs one statement with its prepared-statement parameters bound.
     ///
     /// Go installs the execute-time values on the parsed statement's own
-    /// markers; this tier reaches execution through SQL text, so the markers
-    /// become literals and the statement is restored before it runs. A byte
-    /// string that is not UTF-8 becomes a hex literal, so no value is lost in
-    /// that round trip.
+    /// markers, so this door parses the text once -- in the client's
+    /// encodings, as the prepare did -- binds the values onto that tree and
+    /// runs it, with no restored text to lex again.
     pub fn run_with_params(
         &mut self,
         sql: &str,
@@ -2392,8 +2422,8 @@ impl Session {
         if params.is_empty() && self.parameter_count(sql)? == 0 {
             return self.run_with_columns(sql);
         }
-        let bound = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
-        self.run_with_columns(&bound)
+        let bound = tidb_executor::bind_statement(self.parse(sql)?, params)?;
+        self.run_with_columns_parsed(bound, sql)
     }
 
     /// Runs one parameterized statement and returns the exact policy needed
@@ -2410,8 +2440,10 @@ impl Session {
         if params.is_empty() && self.parameter_count(sql)? == 0 {
             return self.run_with_columns_internal(sql, true);
         }
-        let bound = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
-        self.run_with_columns_internal(&bound, true)
+        let bound = tidb_executor::bind_statement(self.parse(sql)?, params)?;
+        self.run_with_columns_using(sql, true, move |session| {
+            session.execute_statement_owned(bound, sql)
+        })
     }
 
     /// Executes the retained PREPARE tree and captures its result policy

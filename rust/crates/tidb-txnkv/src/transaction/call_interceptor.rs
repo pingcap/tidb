@@ -22,7 +22,9 @@
 //! on `store.Ctx()`.
 //!
 //! It also records the pages a scan's regions answered, for ANALYZE's
-//! per-region fragments.
+//! per-region fragments, and, for a traced statement, opens client-go's
+//! `rpcClient.SendRequest` span of every RPC under the span the call was
+//! made in (`crate::rpc::trace`).
 
 use std::any::Any;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -49,12 +51,16 @@ pub(crate) struct ScanPage {
 pub(crate) struct CallSlot {
     call: Arc<Mutex<Option<UnaryCallContext>>>,
     pages: Arc<Mutex<Option<Vec<ScanPage>>>>,
+    trace: crate::rpc::trace::RpcTraceParent,
 }
 
 impl CallSlot {
-    /// Binds the RPCs that follow to `call`.
+    /// Binds the RPCs that follow to `call`, made in the calling thread's
+    /// span (Go's span in the call's `ctx`).
     pub(crate) fn set(&self, call: &UnaryCallContext) {
         *self.call.lock().unwrap_or_else(PoisonError::into_inner) = Some(call.clone());
+        *self.trace.lock().unwrap_or_else(PoisonError::into_inner) =
+            tidb_util::tracing::current_span();
     }
 
     /// Starts (`true`) or stops recording scan pages, returning what was
@@ -151,6 +157,24 @@ impl RpcInterceptor for CallInterceptor {
         request: &'a dyn Request,
         next: RpcNext<'a>,
     ) -> BoxFuture<'a, RpcDispatchResult> {
+        let trace = self
+            .0
+            .trace
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let next: RpcNext<'a> = match trace {
+            Some(parent) => Arc::new(move || {
+                crate::rpc::trace::trace_rpc(
+                    parent.clone(),
+                    false,
+                    target,
+                    request,
+                    Arc::clone(&next),
+                )
+            }),
+            None => next,
+        };
         Box::pin(async move {
             let call = self
                 .0

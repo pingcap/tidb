@@ -3838,6 +3838,7 @@ impl ClusterSessionFactory {
             global_vars: self.global_vars.clone(),
             buffer,
             autocommit_txn_bytes: 0,
+            activate_statement_txn: false,
             slot,
             storage,
             transactions: Arc::clone(&self.transactions),
@@ -4967,6 +4968,9 @@ pub struct ClusterServerSession {
     /// the autocommit commit that may fail: the commit resets the buffer, and
     /// the retry budget is decided after it.
     autocommit_txn_bytes: usize,
+    /// Whether the running write is one whose transaction Go's executor
+    /// builder activates before it runs ([`Self::activates_txn_at_build`]).
+    activate_statement_txn: bool,
     /// The slot every table of `session` reads through; rebound per statement.
     slot: Arc<Mutex<SwappableSnapshot>>,
     /// The handles every table of `session` was built over, kept so the
@@ -5265,7 +5269,8 @@ impl ClusterServerSession {
         // in [`Self::execute_general`]'s prepared arm.
         let read_keys = self.storage.read_keys();
         let attempt_read_keys = read_keys.clone();
-        let affected_rows = match self.with_prelocked_statement(
+        self.activate_statement_txn = self.activates_txn_at_build(stmt);
+        let attempt = self.with_prelocked_statement(
             StatementReadShape::Unknown,
             |_session| prelock_keys.clone(),
             &resource_group,
@@ -5283,7 +5288,9 @@ impl ClusterServerSession {
                     )),
                 }
             },
-        ) {
+        );
+        self.activate_statement_txn = false;
+        let affected_rows = match attempt {
             Ok(affected_rows) => affected_rows,
             Err(error) => {
                 read_keys.cancel();
@@ -5300,6 +5307,35 @@ impl ClusterServerSession {
             affected_rows,
             last_insert_id: self.session.statement_insert_id(),
         })
+    }
+
+    /// Whether Go's executor builder activates `stmt`'s transaction before
+    /// the statement runs: `buildInsert` (INSERT and REPLACE), `buildUpdate`
+    /// and `buildDelete` call `updateForUpdateTS`, whose
+    /// `GetStmtForUpdateTS` activates it. A text `EXECUTE` builds the
+    /// statement it names.
+    fn activates_txn_at_build(&self, stmt: &Stmt) -> bool {
+        let stmt = match stmt {
+            Stmt::Session(session) => match session.as_ref() {
+                tidb_ast::SessionStmt::Execute { name, .. } => {
+                    match self.session.prepared_statement_node(name) {
+                        Some(prepared) => prepared,
+                        None => return false,
+                    }
+                }
+                _ => return false,
+            },
+            stmt => stmt,
+        };
+        matches!(
+            stmt,
+            Stmt::Dml(dml) if matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_)
+                    | tidb_ast::DmlStmt::Update(_)
+                    | tidb_ast::DmlStmt::Delete(_)
+            )
+        )
     }
 
     fn observe_routed_write(
@@ -5334,78 +5370,50 @@ impl ClusterServerSession {
         tidb_session::trace::check_options(trace).map_err(SqlQueryError::unknown)?;
         let inner = (*trace.statement).clone();
         let inner_sql = tidb_session::trace::statement_text(&inner);
-        let started = std::time::SystemTime::now();
-        let clock = std::time::Instant::now();
-        let mut rows = 0_u64;
+        // Go `TraceExec.Next`: the statement runs under the recording
+        // tracer's `trace` span, `util.ContextWithTraceExecDetails` set.
+        let recorder = tidb_session::trace::StatementTrace::start();
+        let entered = recorder.enter();
+        // Go `executeChild`: `ExecuteStmt`, then `drainRecordSet` pulls the
+        // record set it returned under the same span.
         let mut affected = 0_u64;
-        let mut error = None;
-        // Go `TraceExec.Next`: `util.ContextWithTraceExecDetails(ctx)` and the
-        // trace span reach every coprocessor request the statement sends.
-        let cop_trace = Arc::new(tidb_distsql::cop_paging::CopTraceRecorder::default());
-        let cop_trace_guard =
-            tidb_distsql::cop_paging::context_with_trace_exec_details(Arc::clone(&cop_trace));
         match QuerySession::execute_write_parsed(self, &inner_sql, &inner) {
             Ok(Some(outcome)) => affected = outcome.affected_rows,
             Ok(None) => match self.execute_parsed(&inner_sql, &inner) {
-                Ok(mut result) => loop {
-                    match result.source().next_batch(1024) {
-                        Ok(batch) if batch.is_empty() => break,
-                        Ok(batch) => rows += batch.len() as u64,
-                        Err(failure) => {
-                            error = Some((failure.code, failure.message));
-                            break;
+                Ok(mut result) => {
+                    let mut rows = 0_u64;
+                    loop {
+                        match result.source().next_batch(1024) {
+                            Ok(batch) if batch.is_empty() => {
+                                recorder.event(&format!(
+                                    "execute done, ReturnRow: {rows}, ModifyRow: 0"
+                                ));
+                                break;
+                            }
+                            Ok(batch) => rows += batch.len() as u64,
+                            Err(failure) => {
+                                recorder.event(&format!(
+                                    "execute with error({}): {}",
+                                    failure.code, failure.message
+                                ));
+                                break;
+                            }
                         }
                     }
-                },
-                Err(failure) => error = Some((failure.code, failure.message)),
+                }
+                Err(failure) => recorder.event(&format!(
+                    "execute with error({}): {}",
+                    failure.code, failure.message
+                )),
             },
-            Err(failure) => error = Some((failure.code, failure.message)),
+            Err(failure) => recorder.event(&format!(
+                "execute with error({}): {}",
+                failure.code, failure.message
+            )),
         }
-        let elapsed = clock.elapsed();
-        drop(cop_trace_guard);
-        let offset = |at: std::time::Instant| {
-            i64::try_from(at.saturating_duration_since(clock).as_nanos()).unwrap_or(i64::MAX)
-        };
-        let cop_selects = cop_trace
-            .selects()
-            .into_iter()
-            .map(|sends| {
-                sends
-                    .into_iter()
-                    .map(|send| tidb_session::trace::SendReqCtxSpan {
-                        region_id: send.region_id,
-                        start: offset(send.start),
-                        end: offset(send.end),
-                        rpcs: send
-                            .rpcs
-                            .into_iter()
-                            .map(|rpc| tidb_session::trace::RpcSpan {
-                                start: offset(rpc.start),
-                                end: offset(rpc.end),
-                                details: rpc.details,
-                            })
-                            .collect(),
-                        parent: send.parent,
-                    })
-                    .collect()
-            })
-            .collect();
-        let kind = tidb_session::trace::kind_of(
-            &inner,
-            self.session.published_plan(),
-            rows,
-            self.explicit.is_some() || self.session.in_transaction(),
-        );
-        let spans = tidb_session::trace::build_spans(&tidb_session::trace::TraceInput {
-            kind,
-            sql: inner_sql,
-            started,
-            elapsed,
-            affected_rows: affected,
-            error,
-            chunk_sizes: self.session.chunk_sizes(),
-            cop_selects,
-        });
+        drop(entered);
+        recorder.event(&format!("execute done, modify row: {affected}"));
+        let (spans, started) = recorder.finish();
         let (columns, result_rows) = tidb_session::trace::render(&trace.format, &spans, started)
             .map_err(SqlQueryError::unknown)?;
         let columns = crate::pipeline_session::select_columns(&columns);
@@ -5674,7 +5682,8 @@ impl ClusterServerSession {
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
         let read_ts = transactions::StatementReadTs::new(self.session.current_tso())
-            .with_observer(self.session.transaction_observer());
+            .with_observer(self.session.transaction_observer())
+            .with_phase_durations(self.session.phase_durations());
         self.session
             .begin_external_executor_breakpoint_scope(notify_executor_breakpoint);
         let result = self.attempt_statement_inner(
@@ -5781,6 +5790,7 @@ impl ClusterServerSession {
                         if let Err(error) = retries.retry() {
                             break Err(transactions::sql_error(error));
                         }
+                        self.session.record_statement_retry();
                         // Nothing is staged yet -- this round never ran -- so
                         // only the read timestamp moves; the next round's lock
                         // attempt re-runs at it.
@@ -5874,6 +5884,24 @@ impl ClusterServerSession {
                 let _ = self.finish_snapshot();
                 break Err(error);
             }
+            // Go's executor builder activates an autocommit INSERT, UPDATE or
+            // DELETE before it runs (`updateForUpdateTS` ->
+            // `GetStmtForUpdateTS`): the statement has its start timestamp --
+            // the one it commits at, and the one its slow log and
+            // `tidb_last_query_info` report -- even when it never reads or
+            // fails before reading. Asking the deferred snapshot for it is
+            // that activation; a failed open is reported by the read or
+            // commit that follows.
+            if self.activate_statement_txn
+                && self.explicit.is_none()
+                && shape != StatementReadShape::AutocommitWrite
+            {
+                let _ = self
+                    .slot
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .start_ts();
+            }
             let outcome = run(&mut self.session);
             let finished = self.finish_snapshot();
             match outcome {
@@ -5893,6 +5921,7 @@ impl ClusterServerSession {
                             if let Err(error) = retries.retry() {
                                 break Err(transactions::sql_error(error));
                             }
+                            self.session.record_statement_retry();
                             // The statement's writes go back; its locks STAY
                             // (fair locking's whole point), and the replay
                             // reads at the timestamp that sees the version
@@ -5910,6 +5939,20 @@ impl ClusterServerSession {
                         }
                     }
                     match self.commit_if_session_left_transaction().and_then(|()| {
+                        // Go `finishStmt` -> `autoCommitAfterStmt`: outside a
+                        // transaction, `session.CommitTxn` ->
+                        // `session.doCommitWithRetry`.
+                        let _commit = (self.explicit.is_none() && !self.session.in_transaction())
+                            .then(|| {
+                                (
+                                    tidb_util::tracing::begin_thread_region_scope(
+                                        "session.CommitTxn",
+                                    ),
+                                    tidb_util::tracing::begin_thread_region_scope(
+                                        "session.doCommitWithRetry",
+                                    ),
+                                )
+                            });
                         self.flush_if_autocommit(
                             read_ts.get(),
                             write_transaction.clone(),
@@ -6304,6 +6347,9 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             return Ok(());
         }
+        // Go's autocommit `CommitTxn`, which a failed commit has run too.
+        self.session
+            .set_txn_isolation_level_one_shot_state_for_next_txn();
         let write_details = self.buffer_write_details();
         self.autocommit_txn_bytes = self.buffer.staged_bytes();
         if let Some(write_transaction) = write_transaction {
@@ -8238,6 +8284,9 @@ impl QuerySession for ClusterServerSession {
         if self.session.statement_kind_parsed(stmt) != StmtKind::Write {
             return Ok(None);
         }
+        // Go `session.ExecuteStmt`: compile and `runStmt`, the autocommit
+        // commit included.
+        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
         self.observe_routed_write(sql, stmt, |node| {
             node.execute_ordinary_write_parsed(sql, stmt)
         })
@@ -8584,6 +8633,8 @@ impl QuerySession for ClusterServerSession {
                 .begin_prepared_routed_statement_observation(&sql, stmt);
         }
         self.session.set_binary_prepared_execution(true);
+        self.activate_statement_txn =
+            is_write && effective.is_some_and(|stmt| self.activates_txn_at_build(stmt));
         let attempt = self.with_prelocked_statement(
             shape,
             bind_prelock_keys,
@@ -8621,6 +8672,7 @@ impl QuerySession for ClusterServerSession {
                 }
             },
         );
+        self.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
         if observed_write {
             let affected_rows = match &attempt {
@@ -8717,6 +8769,9 @@ impl QuerySession for ClusterServerSession {
         if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
             return self.execute_parsed(&body_sql, &body);
         }
+        // Go `session.ExecuteStmt`: it returns the opened record set, which
+        // the caller drains outside it.
+        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
         if let Some(transaction) = self.explicit.as_ref() {

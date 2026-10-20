@@ -226,33 +226,8 @@ pub struct JsonSqlWarnForSlowLog {
     pub is_extra: bool,
 }
 
-/// Go `RewritePhaseInfo`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RewritePhaseInfo {
-    /// Go `DurationRewrite`.
-    pub duration_rewrite: Duration,
-    /// Go `DurationPreprocessSubQuery`.
-    pub duration_preprocess_sub_query: Duration,
-    /// Go `PreprocessSubQueries`.
-    pub preprocess_sub_queries: u64,
-}
-
-/// Go `DurationOptimizer`: the optimizer's phase durations.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DurationOptimizer {
-    /// Go `Total`.
-    pub total: Duration,
-    /// Go `LogicalOpt`.
-    pub logical_opt: Duration,
-    /// Go `PhysicalOpt`.
-    pub physical_opt: Duration,
-    /// Go `BindingMatch`.
-    pub binding_match: Duration,
-    /// Go `StatsSyncWait`.
-    pub stats_sync_wait: Duration,
-    /// Go `StatsDerive`.
-    pub stats_derive: Duration,
-}
+/// Go `RewritePhaseInfo` and `DurationOptimizer`, which the planner sets.
+pub use tidb_executor::phase_durations::{DurationOptimizer, RewritePhaseInfo};
 
 /// Go `execdetails.LoadTiKVExecDetails(util.ExecDetails)`'s snapshot: the
 /// statement's client-go waits and traffic the `KV_total` .. `Unpacked_*`
@@ -281,6 +256,49 @@ pub struct KvExecDetails {
     pub unpacked_bytes_sent_mpp_cross_zone: i64,
     /// Go `UnpackedBytesReceivedMPPCrossZone`.
     pub unpacked_bytes_received_mpp_cross_zone: i64,
+}
+
+/// Go `execdetails.LoadTiKVExecDetails(ctx.Value(util.ExecDetailsKey))`.
+/// client-rust charges RPC traffic to its own collector rather than to the
+/// `ExecDetails` value, so the snapshot adds `network_traffic` to the value's
+/// own traffic counters.
+#[must_use]
+pub fn load_tikv_exec_details(
+    exec_details: &tikv_client::util::ExecDetails,
+    network_traffic: &tikv_client::traffic::NetworkTrafficDetails,
+) -> tikv_client::util::ExecDetailsSnapshot {
+    let mut snapshot = exec_details.snapshot();
+    let network = network_traffic.snapshot();
+    let traffic = &mut snapshot.traffic;
+    traffic.sent_kv_total += network.sent_kv_total;
+    traffic.received_kv_total += network.received_kv_total;
+    traffic.sent_kv_cross_zone += network.sent_kv_cross_zone;
+    traffic.received_kv_cross_zone += network.received_kv_cross_zone;
+    traffic.sent_mpp_total += network.sent_mpp_total;
+    traffic.received_mpp_total += network.received_mpp_total;
+    traffic.sent_mpp_cross_zone += network.sent_mpp_cross_zone;
+    traffic.received_mpp_cross_zone += network.received_mpp_cross_zone;
+    snapshot
+}
+
+impl From<&tikv_client::util::ExecDetailsSnapshot> for KvExecDetails {
+    fn from(snapshot: &tikv_client::util::ExecDetailsSnapshot) -> Self {
+        let nanos = |value: i64| Duration::from_nanos(u64::try_from(value).unwrap_or(0));
+        let traffic = &snapshot.traffic;
+        Self {
+            wait_kv_resp_duration: nanos(snapshot.wait_kv_response_duration_ns),
+            wait_pd_resp_duration: nanos(snapshot.wait_pd_response_duration_ns),
+            backoff_duration: nanos(snapshot.backoff_duration_ns),
+            unpacked_bytes_sent_kv_total: traffic.sent_kv_total,
+            unpacked_bytes_received_kv_total: traffic.received_kv_total,
+            unpacked_bytes_sent_kv_cross_zone: traffic.sent_kv_cross_zone,
+            unpacked_bytes_received_kv_cross_zone: traffic.received_kv_cross_zone,
+            unpacked_bytes_sent_mpp_total: traffic.sent_mpp_total,
+            unpacked_bytes_received_mpp_total: traffic.received_mpp_total,
+            unpacked_bytes_sent_mpp_cross_zone: traffic.sent_mpp_cross_zone,
+            unpacked_bytes_received_mpp_cross_zone: traffic.received_mpp_cross_zone,
+        }
+    }
 }
 
 /// Go `ppcpuusage.CPUUsages`.
@@ -406,6 +424,28 @@ pub struct SlowLogSessionVars {
     pub current_db_changed: bool,
     /// Go `RUV2Weights()`.
     pub ruv2_weights: tidb_util::ruv2_metrics::RuV2Weights,
+}
+
+/// Go `SessionVars.RUV2Weights()`: the TiDB-side RU v2 weights of the
+/// global config (`ruv2WeightsFromConfig`).
+#[must_use]
+pub fn ruv2_weights() -> tidb_util::ruv2_metrics::RuV2Weights {
+    let config = tidb_config::config_tree::config::get_global_config().ru_v2;
+    tidb_util::ruv2_metrics::RuV2Weights {
+        ru_scale: config.ru_scale,
+        result_chunk_cells: config.result_chunk_cells,
+        executor_l1: config.executor_l1,
+        executor_l2: config.executor_l2,
+        executor_l3: config.executor_l3,
+        executor_l5_insert_rows: config.executor_l5_insert_rows,
+        plan_cnt: config.plan_cnt,
+        plan_derive_stats_paths: config.plan_derive_stats_paths,
+        resource_manager_read_cnt: config.resource_manager_read_cnt,
+        resource_manager_write_cnt: config.resource_manager_write_cnt,
+        write_keys: config.write_keys,
+        session_parser_total: config.session_parser_total,
+        txn_cnt: config.txn_cnt,
+    }
 }
 
 /// Go `writeSlowLogItem`: `# key: value\n`.
@@ -1399,5 +1439,49 @@ mod tests {
         assert_eq!(format_sql("select\n1,\t2", 4096), "select 1, 2");
         assert_eq!(format_sql("select 1", 3), "sel(len:8)");
         assert_eq!(format_sql("select 1", 0), "select 1");
+    }
+
+    /// Go `LoadTiKVExecDetails` read into `kvExecDetailFormat`: the
+    /// statement's waits, backoffs and traffic, client-rust's separate
+    /// traffic collector included.
+    #[test]
+    fn kv_exec_details_load_the_statement_exec_details() {
+        let exec_details = tikv_client::util::ExecDetails::default();
+        exec_details.add_wait_kv_response(Duration::from_micros(1500));
+        exec_details.add_wait_pd_response(Duration::from_micros(5));
+        exec_details.add_backoff(Duration::from_millis(2));
+        exec_details.traffic.add_request(100, true, false);
+        exec_details.traffic.add_response(40, true, true);
+        let network = tikv_client::traffic::NetworkTrafficDetails::default();
+        let snapshot = load_tikv_exec_details(&exec_details, &network);
+        let detail = KvExecDetails::from(&snapshot);
+        let mut buf = String::new();
+        kv_exec_detail_format(&mut buf, Some(&detail));
+        assert_eq!(
+            buf,
+            "# KV_total: 0.0015\n\
+             # PD_total: 0.000005\n\
+             # Backoff_total: 0.002\n\
+             # Unpacked_bytes_sent_tikv_total: 0\n\
+             # Unpacked_bytes_received_tikv_total: 0\n\
+             # Unpacked_bytes_sent_tikv_cross_zone: 0\n\
+             # Unpacked_bytes_received_tikv_cross_zone: 0\n\
+             # Unpacked_bytes_sent_tiflash_total: 100\n\
+             # Unpacked_bytes_received_tiflash_total: 40\n\
+             # Unpacked_bytes_sent_tiflash_cross_zone: 0\n\
+             # Unpacked_bytes_received_tiflash_cross_zone: 40\n"
+        );
+    }
+
+    /// Go `ruv2WeightsFromConfig(DefaultRUV2Config())`.
+    #[test]
+    fn ruv2_weights_come_from_the_config() {
+        let weights = ruv2_weights();
+        let config = tidb_config::config_tree::config::get_global_config().ru_v2;
+        assert_eq!(weights.ru_scale, config.ru_scale);
+        assert_eq!(weights.executor_l2, config.executor_l2);
+        assert_eq!(weights.session_parser_total, config.session_parser_total);
+        assert_eq!(weights.txn_cnt, config.txn_cnt);
+        assert!(weights.ru_scale > 0.0);
     }
 }

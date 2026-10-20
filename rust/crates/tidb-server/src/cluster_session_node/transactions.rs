@@ -598,6 +598,8 @@ pub(crate) struct StatementReadTs {
     value: Arc<Mutex<Option<u64>>>,
     current_tso: tidb_executor::CurrentTso,
     observer: Option<tidb_session::process::ProcessTransactionObserver>,
+    /// Where the open records Go's `DurationWaitTS`.
+    phase_durations: Option<tidb_executor::phase_durations::SessionPhaseDurations>,
 }
 
 impl StatementReadTs {
@@ -606,6 +608,24 @@ impl StatementReadTs {
             value: Arc::default(),
             current_tso,
             observer: None,
+            phase_durations: None,
+        }
+    }
+
+    /// Records the statement's timestamp wait on the session's clocks.
+    pub(crate) fn with_phase_durations(
+        mut self,
+        phase_durations: tidb_executor::phase_durations::SessionPhaseDurations,
+    ) -> Self {
+        self.phase_durations = Some(phase_durations);
+        self
+    }
+
+    /// Go `LazyTxn.Wait`'s deferred `DurationWaitTS = time.Since(begin)`:
+    /// the pending transaction became valid after `waited`.
+    fn record_wait_ts(&self, waited: Duration) {
+        if let Some(phase_durations) = &self.phase_durations {
+            phase_durations.set_duration_wait_ts(waited);
         }
     }
 
@@ -800,12 +820,18 @@ impl DeferredSnapshot {
     ) -> Result<T, StorageError> {
         let mut guard = self.state();
         if guard.opened.is_none() {
+            // Go `LazyTxn.Wait` times turning the pending transaction valid:
+            // waiting for its timestamp future and creating the transaction.
+            // A prefetched write records it once its transaction is valid,
+            // before the point-write lock that follows.
+            let begin_wait = std::time::Instant::now();
+            let waits_prefetched_write = !guard.max_ts && guard.prefetched_write.is_some();
             let opened = if guard.max_ts {
                 self.transactions.open_max_ts_snapshot(&self.resource_group)
             } else if let Some(prefetched_write) = guard.prefetched_write.take() {
-                let transaction = prefetched_write
-                    .and_then(PendingClusterTransaction::wait)
-                    .map_err(StorageError::Backend)?;
+                let transaction = prefetched_write.and_then(PendingClusterTransaction::wait);
+                self.read_ts.record_wait_ts(begin_wait.elapsed());
+                let transaction = transaction.map_err(StorageError::Backend)?;
                 if let Some(buffer) = &self.mutation_buffer {
                     transaction.bind_mutation_buffer(buffer);
                 }
@@ -847,6 +873,9 @@ impl DeferredSnapshot {
             } else {
                 self.transactions.open_snapshot(&self.resource_group)
             };
+            if !waits_prefetched_write {
+                self.read_ts.record_wait_ts(begin_wait.elapsed());
+            }
             let mut opened = opened.map_err(StorageError::Backend)?;
             if let Some(options) = &guard.read_options {
                 opened.set_snapshot_read_options(options.clone());
@@ -888,6 +917,14 @@ impl Drop for DeferredSnapshot {
         });
         drop(state);
         if let Some(transaction) = transaction {
+            // Go's executor builder activates a DML's transaction before the
+            // statement runs (`buildInsert` -> `updateForUpdateTS` ->
+            // `GetStmtForUpdateTS`), so a write that never read -- a point
+            // INSERT, failed or not -- still has `TxnCtx.StartTS`, which its
+            // slow log and `tidb_last_query_info` report.
+            if self.read_ts.get().is_none() {
+                self.read_ts.record(transaction.start_ts());
+            }
             *handoff.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(transaction);
         }
     }

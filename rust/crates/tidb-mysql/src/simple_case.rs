@@ -382,10 +382,40 @@ fn map_string(value: &str, case: u8) -> String {
         };
     }
     let mut output = String::with_capacity(value.len());
+    let mut raw = Vec::new();
     for character in value.chars() {
+        if character as u32 >= RAW_BYTE_ESCAPE_BASE + 0x80 {
+            raw.push((character as u32 - RAW_BYTE_ESCAPE_BASE) as u8);
+            continue;
+        }
+        push_raw_bytes(&mut output, &mut raw);
         output.push(map_character(character, case));
     }
+    push_raw_bytes(&mut output, &mut raw);
     output
+}
+
+/// The character `tidb_hack::raw_bytes` carries Go string byte `b` (not part
+/// of valid UTF-8) in is `U+10FF00 + b`, for `b` in `0x80..=0xFF`.
+const RAW_BYTE_ESCAPE_BASE: u32 = 0x10FF00;
+
+/// Go `strings.Map` over the bytes a run of raw-byte escapes stands for: a
+/// byte that is not part of valid UTF-8 reads as `utf8.RuneError` and is
+/// written as U+FFFD; a valid character (only one in the escape range is
+/// ever escaped) has no case mapping and stays escaped.
+fn push_raw_bytes(output: &mut String, raw: &mut Vec<u8>) {
+    for chunk in raw.utf8_chunks() {
+        for byte in chunk.valid().bytes() {
+            output.push(
+                char::from_u32(RAW_BYTE_ESCAPE_BASE + u32::from(byte))
+                    .expect("the raw-byte escapes are Unicode scalars"),
+            );
+        }
+        for _ in chunk.invalid() {
+            output.push(char::REPLACEMENT_CHARACTER);
+        }
+    }
+    raw.clear();
 }
 
 fn map_character(character: char, case: u8) -> char {

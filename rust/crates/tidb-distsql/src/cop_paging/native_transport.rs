@@ -38,10 +38,9 @@
 //! * Go's `copIterator.GetStoreBatchInfo` counters (batched and fallback
 //!   task counts) are not kept: nothing in this node reports them.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
 
@@ -53,9 +52,7 @@ use crate::{
     CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     ResponseChannelEvent, TransportRequest,
 };
-pub use tidb_txnkv::driver::cop_store::{
-    CopBackoffer, CopRpcTrace, CopRpcTraces, NativeCopSend, NativeCopStore,
-};
+pub use tidb_txnkv::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
 use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
 
@@ -137,90 +134,6 @@ impl From<NativeCopError> for QueryResponseError {
             NativeCopError::Other(message) => Self::Source(message),
         }
     }
-}
-
-/// One `regionRequest.SendReqCtx` of a traced statement: the send to one
-/// region, with the physical RPCs (`rpcClient.SendRequest`) it made.
-#[derive(Clone, Debug)]
-pub struct SendReqCtxTrace {
-    /// `req.RegionId`.
-    pub region_id: u64,
-    /// When the send started.
-    pub start: Instant,
-    /// When the send returned.
-    pub end: Instant,
-    /// The physical RPCs that brought back execution details.
-    pub rpcs: Vec<CopRpcTrace>,
-    /// The earlier send of the same `distsql.Select` this one is nested
-    /// under: client-go's `SendReqCtx` puts its span into the backoffer's
-    /// ctx (`bo.SetCtx`), so a later send on the same backoffer is its child.
-    pub parent: Option<usize>,
-}
-
-/// The sends of one `distsql.Select` (one `CopClient.Send`), in order.
-pub type DistSqlSelectTrace = Arc<Mutex<Vec<SendReqCtxTrace>>>;
-
-/// What `TRACE` collects from the coprocessor client: Go's statement span
-/// that `regionRequest.SendReqCtx` and `rpcClient.SendRequest` open their
-/// spans under, with `util.ContextWithTraceExecDetails` set.
-#[derive(Debug, Default)]
-pub struct CopTraceRecorder {
-    selects: Mutex<Vec<DistSqlSelectTrace>>,
-}
-
-impl CopTraceRecorder {
-    /// One coprocessor send's trace, opened when the request is sent.
-    fn begin_select(&self) -> DistSqlSelectTrace {
-        let select = DistSqlSelectTrace::default();
-        self.selects
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(Arc::clone(&select));
-        select
-    }
-
-    /// Every coprocessor send's region sends, in send order.
-    #[must_use]
-    pub fn selects(&self) -> Vec<Vec<SendReqCtxTrace>> {
-        self.selects
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .map(|select| {
-                select
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone()
-            })
-            .collect()
-    }
-}
-
-thread_local! {
-    static TRACE_EXEC_DETAILS: RefCell<Option<Arc<CopTraceRecorder>>> = const { RefCell::new(None) };
-}
-
-/// Restores the previous recorder when the traced statement ends.
-#[must_use = "the recorder is removed when the guard drops"]
-pub struct TraceExecDetailsGuard {
-    previous: Option<Arc<CopTraceRecorder>>,
-}
-
-impl Drop for TraceExecDetailsGuard {
-    fn drop(&mut self) {
-        let previous = self.previous.take();
-        TRACE_EXEC_DETAILS.with(|current| *current.borrow_mut() = previous);
-    }
-}
-
-/// Go `TraceExec`'s `opentracing.ContextWithSpan` plus
-/// `util.ContextWithTraceExecDetails`, for the statement this thread runs:
-/// every coprocessor request it sends records its region sends into
-/// `recorder` until the guard drops. The request captures the recorder when
-/// it is sent, as Go's copr workers inherit the sender's ctx.
-pub fn context_with_trace_exec_details(recorder: Arc<CopTraceRecorder>) -> TraceExecDetailsGuard {
-    let previous = TRACE_EXEC_DETAILS.with(|current| current.borrow_mut().replace(recorder));
-    TraceExecDetailsGuard { previous }
 }
 
 /// Go `copNextMaxBackoff`: a task's backoff budget, shared by its sends,
@@ -354,6 +267,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
         CopPagingState::validate_read_request(&coordinator_metadata)
             .map_err(|e| format!("{e:?}"))?;
         let ranges = request_ranges(metadata)?;
+        let build_cop_tasks = tidb_util::tracing::start_thread_region("copr.buildCopTasks");
         let topology = locate(self.store.as_ref(), &ranges).map_err(|error| error.to_string())?;
         let cache = match self.config.shared_cache.clone() {
             Some(cache) => Some(cache),
@@ -368,6 +282,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             self.config.seed_read_bytes,
         )
         .map_err(|error| error.to_string())?;
+        build_cop_tasks.end();
         let keep_order = metadata.keep_order;
         let mut metadata = runtime.request_metadata().clone();
         metadata.keep_order = keep_order;
@@ -394,23 +309,19 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             query_deadline,
             cancellation.unary_cancellation(),
         );
-        let trace_select = TRACE_EXEC_DETAILS.with(|current| {
-            current
-                .borrow()
-                .as_ref()
-                .map(|recorder| recorder.begin_select())
-        });
+        // Go's copr workers inherit `distsql.Select`'s ctx and its span.
+        let trace_parent = tidb_util::tracing::current_span();
         let source = NativeCopResponse {
             store: Arc::clone(&self.store),
             cluster_id: self.store.cluster_id(),
             trace: self.config.trace.clone(),
-            trace_select,
-            trace_parents: Vec::new(),
+            trace_parent,
+            trace_backoffers: Vec::new(),
             event_callback: self.event_callback.clone(),
             cancellation,
             call,
             kv_exec_counter: request.kv_exec_counter(),
-            ru_details: request.ru_details(),
+            kv_context: request.kv_context(),
             timeout,
             metadata: Arc::new(metadata),
             runtime,
@@ -463,18 +374,21 @@ pub struct NativeCopResponse<S: ?Sized> {
     store: Arc<S>,
     cluster_id: u64,
     trace: Option<tidb_txnkv::TraceInfo>,
-    /// The traced statement's record of this request's region sends.
-    trace_select: Option<DistSqlSelectTrace>,
-    /// The last traced send of each backoffer, by its index in
-    /// `trace_select`: the span a later send on that backoffer nests under.
-    trace_parents: Vec<(CopBackoffer, usize)>,
+    /// A traced statement's `distsql.Select` span, the parent of the
+    /// request's first `regionRequest.SendReqCtx` on each backoffer.
+    trace_parent: Option<tidb_util::tracing::Span>,
+    /// Each traced backoffer's span (Go `bo.GetCtx()`'s): client-go's
+    /// `SendReqCtx` puts its span there with `bo.SetCtx`, so a later send on
+    /// the same backoffer nests under it and its RPCs open their spans under
+    /// it.
+    trace_backoffers: Vec<(CopBackoffer, tidb_txnkv::rpc::trace::RpcTraceParent)>,
     event_callback: Option<tidb_txnkv::EventCallback>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
-    /// Go `bo.GetCtx().Value(util.RUDetailsCtxKey)`: the statement's
-    /// `RUDetails`, charged for every send and lock resolution of the read.
-    ru_details: Option<Arc<tikv_client::RuDetails>>,
+    /// Go `bo.GetCtx()`'s statement values: the `RUDetails` and
+    /// `ExecDetails` charged for every send and lock resolution of the read.
+    kv_context: tidb_txnkv::StatementKvContext,
     timeout: Duration,
     metadata: Arc<crate::KvRequestMetadata>,
     runtime: CopReadTaskRuntime,
@@ -529,6 +443,8 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
 
     fn backoffer(&mut self, logical_task_id: u64) -> CopBackoffer {
         let counter = self.kv_exec_counter.clone();
+        let traced = self.trace_parent.is_some();
+        let trace_backoffers = &mut self.trace_backoffers;
         Arc::clone(self.backoffers.entry(logical_task_id).or_insert_with(|| {
             // Go `distsql.WithSQLKvExecCounterInterceptor` on the request's
             // ctx: TopSQL's counter sees every RPC the task's sends issue,
@@ -548,13 +464,26 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
                         >
                 },
             ));
-            Arc::new(tokio::sync::Mutex::new(
+            // A traced statement's RPCs open client-go's
+            // `rpcClient.SendRequest` spans under the backoffer's span.
+            let trace_span = traced.then(tidb_txnkv::rpc::trace::RpcTraceParent::default);
+            if let Some(trace_span) = &trace_span {
+                interceptors.link(tidb_txnkv::rpc::trace::rpc_trace_interceptor(
+                    Arc::clone(trace_span),
+                    true,
+                ));
+            }
+            let backoffer = Arc::new(tokio::sync::Mutex::new(
                 tikv_client::tikv::Backoffer::new(
                     tikv_client::async_util::Cancellation::default(),
                     COP_NEXT_MAX_BACKOFF_MS,
                 )
                 .with_rpc_interceptor(interceptors),
-            ))
+            ));
+            if let Some(trace_span) = trace_span {
+                trace_backoffers.push((Arc::clone(&backoffer), trace_span));
+            }
+            backoffer
         }))
     }
 
@@ -587,45 +516,32 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             .map_err(|error| error.to_string())?;
         wire.context = Some(request.context.clone());
         let backoffer = self.backoffer(logical_task_id);
-        let traced = self
-            .trace_select
-            .as_ref()
-            .map(|_| (Instant::now(), CopRpcTraces::default()));
+        // client-go `RegionRequestSender.SendReqCtx`'s span, opened under
+        // the backoffer's ctx span and stored back into it.
+        let send_span = self.trace_parent.as_ref().and_then(|select| {
+            let (_, bo_span) = self
+                .trace_backoffers
+                .iter()
+                .find(|(traced, _)| Arc::ptr_eq(traced, &backoffer))?;
+            let mut bo_span = bo_span
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let parent = bo_span.as_ref().unwrap_or(select);
+            let span = parent
+                .tracer()
+                .start_span_child_of("regionRequest.SendReqCtx", parent.context());
+            *bo_span = Some(span.clone());
+            Some(span)
+        });
         let sent = self.store.send(
             &backoffer,
             &wire.encode_to_vec(),
             region,
             self.timeout.min(self.call.timeout()),
-            self.ru_details.as_ref(),
-            traced.as_ref().map(|(_, rpcs)| rpcs),
+            &self.kv_context,
         );
-        if let (Some(select), Some((start, rpcs))) = (&self.trace_select, traced) {
-            let rpcs = std::mem::take(
-                &mut *rpcs
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-            );
-            let last = self
-                .trace_parents
-                .iter_mut()
-                .find(|(traced, _)| Arc::ptr_eq(traced, &backoffer));
-            let parent = last.as_ref().map(|(_, index)| *index);
-            let mut sends = select
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let index = sends.len();
-            sends.push(SendReqCtxTrace {
-                region_id: region.0,
-                start,
-                end: Instant::now(),
-                rpcs,
-                parent,
-            });
-            drop(sends);
-            match last {
-                Some((_, last)) => *last = index,
-                None => self.trace_parents.push((Arc::clone(&backoffer), index)),
-            }
+        if let Some(send_span) = send_span {
+            send_span.finish();
         }
         let sent = sent?;
         let (encoded, address) = match sent {
@@ -904,7 +820,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             context,
             lock,
             self.metadata.start_ts,
-            self.ru_details.as_ref(),
+            &self.kv_context,
         )?;
         self.snapshot_locks
             .lock()
@@ -1098,13 +1014,13 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                 store: Arc::clone(&self.store),
                 cluster_id: self.cluster_id,
                 trace: self.trace.clone(),
-                trace_select: self.trace_select.clone(),
-                trace_parents: Vec::new(),
+                trace_parent: self.trace_parent.clone(),
+                trace_backoffers: Vec::new(),
                 event_callback: self.event_callback.clone(),
                 cancellation: Arc::clone(&self.cancellation),
                 call: self.call.clone(),
                 kv_exec_counter: self.kv_exec_counter.clone(),
-                ru_details: self.ru_details.clone(),
+                kv_context: self.kv_context.clone(),
                 timeout: self.timeout,
                 metadata: Arc::clone(&self.metadata),
                 runtime,

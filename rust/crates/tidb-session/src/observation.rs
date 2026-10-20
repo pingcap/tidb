@@ -55,6 +55,15 @@ pub(crate) struct StatementObservation {
     /// created with its ctx (`execdetails.ContextWithInitializedExecDetails`)
     /// and charged by every TiKV/TiFlash RPC it issues.
     ru_details: Arc<tikv_client::RuDetails>,
+    /// Go `ctx.Value(util.ExecDetailsKey)`: the statement's KV and PD waits
+    /// and backoffs, created with the same ctx.
+    exec_details: Arc<tikv_client::util::ExecDetails>,
+    /// The traffic half of Go's `util.ExecDetails`, which client-rust
+    /// collects apart from the `ExecDetails` value.
+    network_traffic_details: Arc<tikv_client::traffic::NetworkTrafficDetails>,
+    /// Go `SessionVars.RUV2Metrics`: the statement's TiDB-side RU v2
+    /// counters (`RUV2MetricsFromContext`), created with its ctx.
+    ruv2_metrics: Arc<tidb_util::ruv2_metrics::RuV2Metrics>,
     /// Go `recordLastQueryInfo`'s statement test: a `SHOW` other than
     /// `SHOW SESSION_STATES`, an `EXECUTE`, or a DML node.
     record_last_query: bool,
@@ -73,6 +82,28 @@ struct StatementPhases {
     compile_measured: bool,
     execution_started: bool,
     tables: Vec<tidb_stmtsummary::statement_summary::TableEntry>,
+    /// Go `StmtExecDetails.WriteSQLRespDuration`: the time the server spent
+    /// writing this statement's result to the client.
+    write_sql_resp: Duration,
+    /// Go `ExecStmt.retryCount`: the statement's pessimistic re-executions.
+    exec_retry_count: u64,
+    /// Go `ExecStmt.retryStartTime`: when the last re-execution began.
+    retry_start: Option<std::time::Instant>,
+}
+
+impl StatementPhases {
+    /// Go `SetSlowLogItems` / `SummaryStmt`: `ExecRetryTime = TimeTotal -
+    /// DurationParse - DurationCompile - time.Since(retryStartTime)`, the
+    /// time the failed attempts took; zero without a retry.
+    fn exec_retry_time(&self, elapsed: Duration) -> Duration {
+        match self.retry_start {
+            Some(started) if self.exec_retry_count > 0 => elapsed
+                .saturating_sub(self.parse)
+                .saturating_sub(self.compile)
+                .saturating_sub(started.elapsed()),
+            _ => Duration::ZERO,
+        }
+    }
 }
 
 /// The exec details [`Session::initialize_statement_exec_details`] created
@@ -81,6 +112,8 @@ struct StatementPhases {
 pub(crate) struct PendingStatementExecDetails {
     sql: String,
     ru_details: Arc<tikv_client::RuDetails>,
+    exec_details: Arc<tikv_client::util::ExecDetails>,
+    network_traffic_details: Arc<tikv_client::traffic::NetworkTrafficDetails>,
     normalized: String,
     digest: tidb_parser::Digest,
 }
@@ -169,6 +202,57 @@ impl Session {
         } else {
             // The wire frontend parsed before opening ExecuteStmt.
             self.pending_observation_parse = Some((sql.to_owned(), duration));
+        }
+    }
+
+    /// Go `clientConn.writeChunks` / `writeResultSet`:
+    /// `StmtExecDetails.WriteSQLRespDuration += ...`, the server's time
+    /// encoding and writing the running statement's result packets.
+    pub fn add_write_sql_resp_duration(&mut self, duration: Duration) {
+        if let Some(observation) = &self.statement_observation {
+            observation
+                .phases
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .write_sql_resp += duration;
+        }
+    }
+
+    /// Go `ExecStmt.handlePessimisticLockError`: `retryCount++` and
+    /// `retryStartTime = time.Now()` before the running statement is
+    /// executed again at a newer for-update timestamp.
+    pub fn record_statement_retry(&mut self) {
+        if let Some(observation) = &self.statement_observation {
+            let mut phases = observation
+                .phases
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            phases.exec_retry_count += 1;
+            phases.retry_start = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Go `Session.Parse`: a non-internal session's parse adds to
+    /// `RUV2PendingSessionParserTotal`, which the statement it parsed (or,
+    /// for a parse before its statement starts, the next one) takes over.
+    pub(crate) fn record_ruv2_session_parse(&mut self, sql: &str) {
+        if self.restricted_sql {
+            return;
+        }
+        match self.statement_observation.as_ref().filter(|o| o.sql == sql) {
+            Some(observation) => observation.ruv2_metrics.add_session_parser_total(1),
+            None => self.ruv2_pending_session_parser_total += 1,
+        }
+    }
+
+    /// Go `clientConn.writeChunks`' deferred `AddResultChunkCells`: the
+    /// rows times columns the server wrote for the running statement.
+    pub fn add_result_chunk_cells(&mut self, cells: i64) {
+        if cells <= 0 {
+            return;
+        }
+        if let Some(observation) = &self.statement_observation {
+            observation.ruv2_metrics.add_result_chunk_cells(cells);
         }
     }
 
@@ -323,15 +407,27 @@ impl Session {
         let text = self.statement_text(sql).into_owned();
         // The details the server's door initialized for this statement, or
         // Go `execdetails.ContextWithInitializedExecDetails`'s fresh ones.
-        let (normalized, digest, ru_details) = match self
+        let (normalized, digest, ru_details, exec_details, network_traffic_details) = match self
             .pending_statement_exec_details
             .take()
             .filter(|pending| pending.sql == sql)
         {
-            Some(pending) => (pending.normalized, pending.digest, pending.ru_details),
+            Some(pending) => (
+                pending.normalized,
+                pending.digest,
+                pending.ru_details,
+                pending.exec_details,
+                pending.network_traffic_details,
+            ),
             None => {
                 let (normalized, digest) = normalize_statement_digest(&text);
-                (normalized, digest, Arc::new(tikv_client::RuDetails::new()))
+                (
+                    normalized,
+                    digest,
+                    Arc::new(tikv_client::RuDetails::new()),
+                    Arc::default(),
+                    Arc::default(),
+                )
             }
         };
         let parse = self
@@ -340,6 +436,29 @@ impl Session {
             .filter(|(parsed_sql, _)| parsed_sql == sql)
             .map_or(Duration::ZERO, |(_, duration)| duration);
         self.statement_txn_start_ts = 0;
+        // Go `executeStmtImpl`: `sessVars.RUV2Metrics` is the statement ctx's,
+        // its bypass decided (`shouldBypass`: no internal source type here),
+        // and the parses counted since the last statement move into it.
+        let ruv2_metrics = Arc::new(tidb_util::ruv2_metrics::RuV2Metrics::new());
+        ruv2_metrics.set_bypass(false);
+        let pending_parses = std::mem::take(&mut self.ruv2_pending_session_parser_total);
+        if pending_parses > 0 {
+            ruv2_metrics.add_session_parser_total(pending_parses);
+        }
+        // Go `ResetContextOfStmt`: `vars.DurationWaitTS = 0`.
+        self.phase_durations.reset_for_statement();
+        // Go `clientConn.dispatch`: `SQLCPUUsages.ResetCPUTimes()`.
+        self.sql_cpu_usages.reset_cpu_times();
+        // Go `ResetContextOfStmt`: `vars.MemTracker.ResetMaxConsumed()` and
+        // `vars.DiskTracker.ResetMaxConsumed()`, so `Mem_max`/`Disk_max` are
+        // this statement's peaks over what the session still holds.
+        self.session_memory.session_tracker().reset_max_consumed();
+        self.session_memory
+            .session_disk_tracker()
+            .reset_max_consumed();
+        self.statement_ended_txn_start_ts = None;
+        self.statement_began_txn = false;
+        self.statement_committed_txn = false;
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
             text,
@@ -361,6 +480,9 @@ impl Session {
                 )),
             ),
             ru_details,
+            exec_details,
+            network_traffic_details,
+            ruv2_metrics,
             record_last_query: false,
             crucial: false,
             phases: Arc::new(Mutex::new(StatementPhases {
@@ -384,19 +506,24 @@ impl Session {
         };
         self.publish_kv_context(
             &observation.ru_details,
+            &observation.exec_details,
+            &observation.network_traffic_details,
             &observation.normalized,
             &observation.digest,
             Some(Arc::clone(&self.process_plan_info)),
         );
     }
 
-    /// Publishes `ru_details` and the taggers of the statement with this
+    /// Publishes `ru_details`, `exec_details` (with the client's traffic
+    /// collector `network_traffic_details`) and the taggers of the statement with this
     /// normalized text and digest. `plan` is where its plan digest will be
     /// read; `None` before the statement is planned, whose tags then carry
     /// no plan digest (Go's nil `StmtCtx` plan digest).
     fn publish_kv_context(
         &self,
         ru_details: &Arc<tikv_client::RuDetails>,
+        exec_details: &Arc<tikv_client::util::ExecDetails>,
+        network_traffic_details: &Arc<tikv_client::traffic::NetworkTrafficDetails>,
         normalized: &str,
         digest: &tidb_parser::Digest,
         plan: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
@@ -419,6 +546,8 @@ impl Session {
         self.statement_kv_context
             .publish(tidb_txnkv::StatementKvContext {
                 ru_details: Some(Arc::clone(ru_details)),
+                exec_details: Some(Arc::clone(exec_details)),
+                network_traffic_details: Some(Arc::clone(network_traffic_details)),
                 resource_group_tagger: Some(Arc::new(move || {
                     let mut tagger = tidb_txnkv::ResourceGroupTagBuilder::new(keyspace_name);
                     tagger.set_plan_digest(&plan_digest());
@@ -452,11 +581,22 @@ impl Session {
             return;
         }
         let ru_details = Arc::new(tikv_client::RuDetails::new());
+        let exec_details = Arc::default();
+        let network_traffic_details = Arc::default();
         let (normalized, digest) = normalize_statement_digest(&self.statement_text(sql));
-        self.publish_kv_context(&ru_details, &normalized, &digest, None);
+        self.publish_kv_context(
+            &ru_details,
+            &exec_details,
+            &network_traffic_details,
+            &normalized,
+            &digest,
+            None,
+        );
         self.pending_statement_exec_details = Some(PendingStatementExecDetails {
             sql: sql.to_owned(),
             ru_details,
+            exec_details,
+            network_traffic_details,
             normalized,
             digest,
         });
@@ -670,6 +810,12 @@ impl Session {
         if observation.label.is_empty() {
             return;
         }
+        // Go `finishStmt` -> `autoCommitAfterStmt`: a statement that
+        // succeeded outside a transaction ends with `CommitTxn`, unless it
+        // already committed one itself.
+        if succeeded && !self.statement_committed_txn && !self.in_transaction() {
+            self.set_txn_isolation_level_one_shot_state_for_next_txn();
+        }
         let phases = observation
             .phases
             .lock()
@@ -698,6 +844,14 @@ impl Session {
         } else {
             self.statement_stats.clear_ru_exec_context();
         }
+        // Go `finalizeStatementRUV2Metrics`, before the slow log and the
+        // summary read the metrics: the raw TiKV RU v2 counters the
+        // statement's RPCs left in its `RUDetails`.
+        tidb_util::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
+            Some(&observation.ruv2_metrics),
+            Some(&observation.ru_details),
+        );
+        let ruv2_weights = crate::slow_log::ruv2_weights();
         // Go runs these from `FinishExecuteStmt` (and `logStmt` from
         // `runStmt`), which only a compiled statement reaches.
         if phases.compile_finished || phases.execution_started {
@@ -819,11 +973,14 @@ impl Session {
             succeed: succeeded,
             plan_in_cache: !observation.routed && self.found_in_plan_cache,
             plan_in_binding: !observation.routed && self.found_in_binding,
-            exec_retry_count: 0,
-            exec_retry_time: std::time::Duration::ZERO,
-            write_sql_resp_duration: std::time::Duration::ZERO,
+            exec_retry_count: phases.exec_retry_count,
+            exec_retry_time: phases.exec_retry_time(elapsed),
+            write_sql_resp_duration: phases.write_sql_resp,
             result_rows,
-            tikv_exec_details: None,
+            tikv_exec_details: Some(crate::slow_log::load_tikv_exec_details(
+                &observation.exec_details,
+                &observation.network_traffic_details,
+            )),
             prepared: observation.prepared,
             keyspace_name: tidb_config::config_tree::config::get_global_config()
                 .keyspace_name
@@ -831,15 +988,29 @@ impl Session {
             keyspace_id: 0,
             resource_group_name: self.active_resource_group.clone(),
             ru_detail: Some(Arc::clone(&observation.ru_details)),
-            // Go `calculateStatementTotalRUV2` with no statement RU v2
-            // metrics, which this node does not keep.
+            // Go `calculateStatementTotalRUV2`.
             total_ru_v2: tidb_util::ruv2_metrics::total_ru(
-                None,
-                tidb_util::ruv2_metrics::RuV2Weights::default(),
+                Some(&observation.ruv2_metrics),
+                ruv2_weights,
                 observation.ru_details.tikv_ru_v2(),
                 observation.ru_details.tiflash_ru(),
             ),
-            cpu_usages: Default::default(),
+            // Go `SQLCPUUsages.GetCPUUsages()`, whose TiKV time this node
+            // keeps as the coprocessor responses' plus the point readers'.
+            cpu_usages: tidb_util::ppcpuusage::CpuUsages {
+                tikv_cpu_time: i64::try_from(
+                    observation
+                        .cop_stats
+                        .exec_details()
+                        .cop_exec_details
+                        .time_detail
+                        .process_time
+                        .as_nanos(),
+                )
+                .unwrap_or(i64::MAX)
+                .wrapping_add(self.sql_cpu_usages.get_cpu_usages().tikv_cpu_time),
+                ..Default::default()
+            },
             plan_cache_unqualified: String::new(),
             lazy_info: Arc::new(LazyStatement {
                 plan_hint: if observation.routed || internal {
@@ -1037,27 +1208,33 @@ impl Session {
         };
         let mem_max = self.session_memory.session_tracker().max_consumed();
         let disk_max = self.session_memory.session_disk_tracker().max_consumed();
+        let durations = self.phase_durations.snapshot();
+        let kv_exec_detail =
+            crate::slow_log::KvExecDetails::from(&crate::slow_log::load_tikv_exec_details(
+                &observation.exec_details,
+                &observation.network_traffic_details,
+            ));
         if let Some(rules) = rules {
             match_rules = rules.should_write_slow_log(&crate::slow_log_rules::SlowLogRuleValues {
                 conn_id,
                 session_alias: session_alias.clone(),
                 db: self.current_db.clone(),
-                exec_retry_count: 0,
+                exec_retry_count: phases.exec_retry_count,
                 query_time: elapsed,
                 parse_time: phases.parse,
                 compile_time: phases.compile,
-                rewrite_time: Duration::ZERO,
-                optimize_time: Duration::ZERO,
-                wait_ts: Duration::ZERO,
+                rewrite_time: durations.rewrite_phase_info.duration_rewrite,
+                optimize_time: durations.duration_optimizer.total,
+                wait_ts: durations.duration_wait_ts,
                 is_internal: self.restricted_sql,
                 digest: observation.digest.to_string(),
                 num_cop_tasks: cop_tasks.as_ref().map(|details| details.num_cop_tasks),
                 mem_max,
                 disk_max,
-                write_sql_response_total: Duration::ZERO,
+                write_sql_response_total: phases.write_sql_resp,
                 succ: succeeded,
                 resource_group: self.active_resource_group.clone(),
-                kv_exec_detail: None,
+                kv_exec_detail: Some(kv_exec_detail),
                 exec_detail: exec_detail.clone(),
                 plan_digest: plan_digest.clone(),
             });
@@ -1102,9 +1279,19 @@ impl Session {
                 format!("[{}]", names.join(","))
             }
         };
-        let (txn_ts, _) = self.txn_start_and_for_update_ts();
+        // Go `FinishExecuteStmt(origTxnCtx.StartTS, ...)`: the transaction
+        // context in force when the statement began -- the one a `COMMIT` or
+        // `ROLLBACK` ended, and not the one a `BEGIN` opened.
+        let txn_ts = match self.statement_ended_txn_start_ts {
+            Some(start_ts) => start_ts,
+            None if self.statement_began_txn => 0,
+            None => self.txn_start_and_for_update_ts().0,
+        };
         let (storage_kv, storage_mpp) = match &plan.plan {
-            Some(stored) if !observation.routed => plan_storage_flags(&stored.0),
+            Some(stored) if !observation.routed => {
+                let (tikv, tiflash) = plan_storage_flags(&stored.0);
+                (tikv, tiflash || plan.is_tiflash)
+            }
             _ => (false, false),
         };
         let login = self
@@ -1129,9 +1316,11 @@ impl Session {
             time_total: elapsed,
             index_names,
             succ: succeeded,
-            is_explicit_txn: self.in_transaction(),
+            // Go `TxnCtx.IsExplicit`, which an ended transaction's context
+            // keeps until the next statement replaces it.
+            is_explicit_txn: self.in_transaction() || self.statement_ended_txn_start_ts.is_some(),
             is_write_cache_table: false,
-            is_sync_stats_failed: false,
+            is_sync_stats_failed: !observation.routed && plan.is_sync_stats_failed,
             prepared: observation.prepared,
             plan_from_cache: !observation.routed && self.found_in_plan_cache,
             plan_from_binding: !observation.routed && self.found_in_binding,
@@ -1175,10 +1364,15 @@ impl Session {
                 String::new()
             },
             cop_tasks,
-            // Go `SQLCPUUsages.MergeTikvCPUTime`: every coprocessor
-            // response's process time.
+            // Go `SQLCPUUsages.GetCPUUsages()`: every coprocessor
+            // response's process time (`selectResult.updateCopRuntimeStats`)
+            // and every point reader's (`PointGetExecutor.Close`).
             cpu_usages: crate::slow_log::CpuUsages {
-                tikv_cpu_time: exec_detail.cop_exec_details.time_detail.process_time,
+                tikv_cpu_time: exec_detail.cop_exec_details.time_detail.process_time
+                    + Duration::from_nanos(
+                        u64::try_from(self.sql_cpu_usages.get_cpu_usages().tikv_cpu_time)
+                            .unwrap_or(0),
+                    ),
                 ..crate::slow_log::CpuUsages::default()
             },
             storage_kv,
@@ -1204,6 +1398,17 @@ impl Session {
             mem_max,
             disk_max,
             session_connect_attrs: self.connection_attributes.clone(),
+            used_stats: if observation.routed {
+                std::collections::BTreeMap::new()
+            } else {
+                plan.used_stats.clone()
+            },
+            rewrite_info: durations.rewrite_phase_info,
+            kv_exec_detail: Some(kv_exec_detail),
+            write_sql_resp_total: phases.write_sql_resp,
+            ruv2_metrics: Some((*observation.ruv2_metrics).clone()),
+            exec_retry_count: phases.exec_retry_count,
+            exec_retry_time: phases.exec_retry_time(elapsed),
             ..crate::slow_log::SlowQueryLogItems::default()
         };
         let vars = crate::slow_log::SlowLogSessionVars {
@@ -1213,6 +1418,9 @@ impl Session {
             session_alias: session_alias.clone(),
             duration_parse: phases.parse,
             duration_compile: phases.compile,
+            duration_optimizer: durations.duration_optimizer,
+            duration_wait_ts: durations.duration_wait_ts,
+            ruv2_weights: crate::slow_log::ruv2_weights(),
             current_db: self.current_db.clone(),
             in_restricted_sql: self.restricted_sql,
             current_db_changed: self.current_db_changed,
@@ -1419,6 +1627,13 @@ fn plan_storage_flags(plan: &tidb_planner::physical::PhysicalPlan) -> (bool, boo
             | PhysicalPlan::PointGet(_)
             | PhysicalPlan::BatchPointGet(_)
             | PhysicalPlan::TableSample(_) => tikv = true,
+            // Go builds these producers' readers too, which set the flags;
+            // they are owned fields here, not children.
+            PhysicalPlan::CTE(cte) => {
+                stack.push(&cte.seed_plan);
+                stack.extend(cte.recursive_plan.as_deref());
+            }
+            PhysicalPlan::Dml(dml) => stack.extend(dml.select_plan.as_deref()),
             _ => {}
         }
         stack.extend(node.children());
@@ -1534,8 +1749,8 @@ fn is_crucial_stmt(stmt: &Stmt) -> bool {
 
 /// Go `observeStmtBeginForTopProfiling`'s `ExecBeginInfo`: under Top RU it
 /// carries the statement's `RUDetails` (Go's `Ctx`, whose only use is that
-/// lookup), the user and Go `stmtstats.DefaultRUVersion()` -- Go's version
-/// when no domain resource-group controller is reachable from the session.
+/// lookup), the user and the domain's RU version (Go
+/// `NormalizeRUVersion(do.GetRUVersion())`).
 fn top_profiling_begin_info(
     ru_details: &Arc<tikv_client::RuDetails>,
     user: &str,
@@ -1548,7 +1763,10 @@ fn top_profiling_begin_info(
     if top_ru {
         info.ru_details = Some(Arc::clone(ru_details));
         info.user = user.to_owned();
-        info.ru_version = tidb_util::topsql_stmtstats::default_ru_version();
+        // Go `stmtstats.NormalizeRUVersion(do.GetRUVersion())`.
+        info.ru_version = tidb_util::topsql_stmtstats::normalize_ru_version(
+            tidb_util::topsql_stmtstats::bound_ru_version(),
+        );
     }
     info
 }
@@ -1604,5 +1822,38 @@ fn statement_secure_text(stmt: &Stmt, sql: &str) -> Option<String> {
             _ => None,
         },
         Stmt::Query(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `ExecRetryTime = TimeTotal - DurationParse - DurationCompile -
+    /// time.Since(retryStartTime)`: the failed attempts' share of the
+    /// statement, and zero for a statement that never retried.
+    #[test]
+    fn exec_retry_time_is_the_failed_attempts_share() {
+        let mut phases = StatementPhases {
+            parse: Duration::from_millis(1),
+            compile: Duration::from_millis(2),
+            ..StatementPhases::default()
+        };
+        assert_eq!(
+            phases.exec_retry_time(Duration::from_secs(1)),
+            Duration::ZERO
+        );
+        phases.exec_retry_count = 2;
+        phases.retry_start = Some(std::time::Instant::now());
+        let retry = phases.exec_retry_time(Duration::from_millis(100));
+        // The last attempt began just now, so nearly all of the 97ms left
+        // after parsing and compiling belongs to the failed attempts.
+        assert!(retry <= Duration::from_millis(97), "{retry:?}");
+        assert!(retry >= Duration::from_millis(90), "{retry:?}");
+        // A clock that ran past the total saturates at zero.
+        assert_eq!(
+            phases.exec_retry_time(Duration::from_millis(2)),
+            Duration::ZERO
+        );
     }
 }

@@ -65,9 +65,10 @@ pub enum TransportRequestError {
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
-    /// Go's statement ctx `util.RUDetailsCtxKey` value the copr worker's
-    /// `bo.GetCtx()` carries to every send.
-    ru_details: Option<Arc<tikv_client::RuDetails>>,
+    /// Go's statement ctx values (`util.RUDetailsCtxKey`,
+    /// `util.ExecDetailsKey`) the copr worker's `bo.GetCtx()` carries to
+    /// every send.
+    kv_context: tidb_txnkv::StatementKvContext,
     cop_lite_worker: Option<Arc<std::sync::atomic::AtomicBool>>,
     execution_cancellation: Arc<CancelHandle>,
     request_cancellation: Option<Arc<CancelHandle>>,
@@ -82,7 +83,7 @@ impl TransportRequest {
         Self {
             metadata,
             kv_exec_counter: Default::default(),
-            ru_details: None,
+            kv_context: tidb_txnkv::StatementKvContext::default(),
             cop_lite_worker: None,
             execution_cancellation,
             request_cancellation: None,
@@ -113,16 +114,17 @@ impl TransportRequest {
         self.kv_exec_counter.clone()
     }
 
-    /// Carries the statement's `RUDetails` to every send of this request
-    /// (Go `CopClient.Send`'s ctx, which `bo.GetCtx()` hands `SendReqCtx`).
+    /// Carries the statement's ctx values -- its `RUDetails` and
+    /// `ExecDetails` -- to every send of this request (Go `CopClient.Send`'s
+    /// ctx, which `bo.GetCtx()` hands `SendReqCtx`).
     #[must_use]
-    pub fn with_ru_details(mut self, ru_details: Option<Arc<tikv_client::RuDetails>>) -> Self {
-        self.ru_details = ru_details;
+    pub fn with_kv_context(mut self, kv_context: tidb_txnkv::StatementKvContext) -> Self {
+        self.kv_context = kv_context;
         self
     }
 
-    pub(crate) fn ru_details(&self) -> Option<Arc<tikv_client::RuDetails>> {
-        self.ru_details.clone()
+    pub(crate) fn kv_context(&self) -> tidb_txnkv::StatementKvContext {
+        self.kv_context.clone()
     }
 
     pub(crate) fn cop_lite_worker(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
@@ -244,7 +246,7 @@ impl TransportRequest {
         Ok(Self {
             metadata: self.metadata.clone(),
             kv_exec_counter: self.kv_exec_counter.clone(),
-            ru_details: self.ru_details.clone(),
+            kv_context: self.kv_context.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
@@ -272,7 +274,7 @@ impl TransportRequest {
         Ok(Self {
             metadata,
             kv_exec_counter: self.kv_exec_counter.clone(),
-            ru_details: self.ru_details.clone(),
+            kv_context: self.kv_context.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),

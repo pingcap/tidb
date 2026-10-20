@@ -2515,7 +2515,7 @@ fn stamp_constraint_flags(columns: &mut [ColumnInfo], constraint: &Constraint) -
     let find = |columns: &mut [ColumnInfo], name: &str| -> Option<usize> {
         columns
             .iter()
-            .position(|column| column.name.lowercase().eq_ignore_ascii_case(name))
+            .position(|column| column.name.lowercase() == tidb_hack::go_to_lower(name))
     };
     match constraint.kind {
         ConstraintKind::PrimaryKey => {

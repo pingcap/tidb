@@ -331,20 +331,18 @@ impl Session {
     /// row.
     #[must_use]
     pub fn statement_read_shape(&self, sql: &str, params: &[Datum]) -> StatementReadShape {
-        let bound;
-        let sql = if params.is_empty() {
-            sql
-        } else {
-            match tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode()) {
-                Ok(text) => {
-                    bound = text;
-                    &bound
-                }
-                Err(_) => return StatementReadShape::Unknown,
-            }
-        };
+        // One parse, in the client's encodings, with the values installed on
+        // its markers -- not a bound text re-lexed in another encoding.
         let Ok(stmt) = self.parse(sql) else {
             return StatementReadShape::Unknown;
+        };
+        let stmt = if params.is_empty() {
+            stmt
+        } else {
+            match tidb_executor::bind_statement(stmt, params) {
+                Ok(stmt) => stmt,
+                Err(_) => return StatementReadShape::Unknown,
+            }
         };
         self.statement_read_shape_bound(&stmt)
     }

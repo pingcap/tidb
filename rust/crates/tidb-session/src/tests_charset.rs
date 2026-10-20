@@ -503,3 +503,149 @@ fn skip_string_checks_reach_column_writes() {
         );
     }
 }
+
+/// The client's SQL bytes as the wire carries them for the session's
+/// `@@character_set_client`.
+fn client_sql(session: &Session, sql: &[u8]) -> String {
+    let client = session.vars.build_parser_config().charset_client;
+    tidb_parser::carry_client_sql(sql, client).into_owned()
+}
+
+/// Go evaluates `EXECUTE ... USING @v` through the variable's `getvar`
+/// function, whose string result carries the variable's type's collation:
+/// live Go with a gbk client, `SET @v = '中'; PREPARE s FROM 'SELECT HEX(?),
+/// COLLATION(?)'; EXECUTE s USING @v, @v` answers `D6D0 | gbk_chinese_ci`
+/// (`E4B8AD | utf8mb4_bin` here before).
+#[test]
+fn execute_using_binds_the_user_variable_collation() {
+    let mut session = Session::new();
+    session.run("SET NAMES gbk").unwrap();
+    let set = client_sql(&session, b"SET @v = '\xd6\xd0'");
+    session.run(&set).unwrap();
+    session
+        .run("PREPARE s FROM 'SELECT HEX(?), COLLATION(?)'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("EXECUTE s USING @v, @v")),
+        [["D6D0", "gbk_chinese_ci"]]
+    );
+}
+
+/// Go compares identifiers by `CIStr.L`, `strings.ToLower` of what was
+/// written, which folds non-ASCII letters and reads each byte that is not
+/// UTF-8 as U+FFFD. Live Go: `SELECT COUNT(*) FROM t AS Σ WHERE σ.a = 1`,
+/// a latin1 client's `... AS \xC9 WHERE \xE9.a = 1` and `... AS \xC4 WHERE
+/// \xE4.a = 1`, and `SELECT a AS Ä FROM t GROUP BY ä` all resolve.
+#[test]
+fn identifier_comparisons_fold_like_go_to_lower() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fold_t (a INT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO fold_t VALUES (1), (2)").unwrap();
+    for sql in [
+        "SELECT COUNT(*) FROM fold_t AS Σ WHERE σ.a = 1",
+        "SELECT COUNT(*) FROM fold_t AS x WHERE test.X.a = 1",
+        "SELECT COUNT(*) FROM (SELECT a AS ä FROM fold_t) AS Ä WHERE Ä.Ä = 1",
+    ] {
+        assert_eq!(row_text(session.run(sql)), [["1"]], "{sql}");
+    }
+    assert_eq!(
+        row_text(session.run("SELECT a AS Ä FROM fold_t GROUP BY ä ORDER BY 1")),
+        [["1"], ["2"]]
+    );
+    session.run("SET NAMES latin1").unwrap();
+    for sql in [
+        &b"SELECT COUNT(*) FROM fold_t AS \xc9 WHERE \xe9.a = 1"[..],
+        b"SELECT COUNT(*) FROM fold_t AS \xc4 WHERE \xe4.a = 1",
+    ] {
+        let sql = client_sql(&session, sql);
+        assert_eq!(row_text(session.run(&sql)), [["1"]], "{sql}");
+    }
+}
+
+/// A latin1 client's `'d\xE9'` is the Go string `d`, `E9`. Go oracle
+/// (testkit, `SET NAMES latin1`): a utf8mb4 VARCHAR's `DEFAULT 'd\xE9'` is
+/// 1067 (the bytes are not utf8mb4), an ENUM/SET whose member is that same
+/// literal takes it as its default, and a default naming no member is 1067.
+#[test]
+fn latin1_client_enum_members_keep_their_bytes() {
+    let mut session = Session::new();
+    session.run("SET NAMES latin1").unwrap();
+    for (sql, expected) in [
+        (
+            &b"CREATE TABLE l1 (c VARCHAR(10) DEFAULT 'd\xe9')"[..],
+            Some(1067),
+        ),
+        (
+            b"CREATE TABLE l2 (c ENUM('d\xe9', 'x') DEFAULT 'd\xe9')",
+            None,
+        ),
+        (
+            b"CREATE TABLE l3 (c SET('d\xe9', 'x') DEFAULT 'd\xe9')",
+            None,
+        ),
+        (
+            b"CREATE TABLE l4 (c ENUM('a', 'b') DEFAULT 'd\xe9')",
+            Some(1067),
+        ),
+    ] {
+        let sql = client_sql(&session, sql);
+        match expected {
+            None => {
+                session.run(&sql).unwrap();
+            }
+            Some(code) => {
+                assert_eq!(error_code(&mut session, &sql), code, "{sql}");
+            }
+        }
+    }
+    session.run("INSERT INTO l2 VALUES ()").unwrap();
+    assert_eq!(row_text(session.run("SELECT c + 0 FROM l2")), [["1"]]);
+}
+
+/// Go parses a statement once, with the client's encodings, and binds a
+/// prepared statement's values onto that tree; nothing re-lexes it in
+/// another encoding. A gbk client's identifier `中` (bytes D6 D0) must name
+/// the same column through the prepared-parameter door and through the
+/// executor entries that take the statement text (ALTER TABLE, CREATE INDEX,
+/// RENAME TABLE, TRUNCATE TABLE).
+#[test]
+fn gbk_client_identifiers_survive_binding_and_ddl_reparse() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE gbk_t (id INT PRIMARY KEY, `中` INT)")
+        .unwrap();
+    session.run("INSERT INTO gbk_t VALUES (1, 7)").unwrap();
+    session.run("SET NAMES gbk").unwrap();
+    let select = client_sql(&session, b"SELECT `\xd6\xd0` FROM gbk_t WHERE id = ?");
+    match session.run_with_params(&select, &[Datum::Int(1)]).unwrap() {
+        StmtOutput::Rows { rows, .. } => assert_eq!(rows, vec![vec![Datum::Int(7)]]),
+        other => panic!("expected rows: {other:?}"),
+    }
+    for sql in [
+        &b"ALTER TABLE gbk_t ADD COLUMN `\xd6\xd0x` INT"[..],
+        b"CREATE INDEX `\xd6\xd0i` ON gbk_t (`\xd6\xd0`)",
+        b"RENAME TABLE gbk_t TO `\xd6\xd0t`",
+        b"TRUNCATE TABLE `\xd6\xd0t`",
+    ] {
+        let sql = client_sql(&session, sql);
+        session.run(&sql).unwrap();
+    }
+    session.run("SET NAMES utf8mb4").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT column_name FROM information_schema.columns \
+             WHERE table_name = '中t' ORDER BY ordinal_position"
+        )),
+        [["id"], ["中"], ["中x"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT DISTINCT index_name FROM information_schema.statistics \
+             WHERE table_name = '中t' AND index_name <> 'PRIMARY'"
+        )),
+        [["中i"]]
+    );
+    assert_eq!(row_text(session.run("SELECT COUNT(*) FROM `中t`")), [["0"]]);
+}

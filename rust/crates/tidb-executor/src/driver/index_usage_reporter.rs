@@ -167,6 +167,17 @@ pub(super) enum PointCommand {
     BatchGet,
 }
 
+/// A point reader's own `SnapshotRuntimeStats` (Go `runtimeStatsWithSnapshot`),
+/// installed on its snapshot when it was built.
+pub(super) struct PointSnapshotStats {
+    pub(super) stats: Arc<tikv_client::SnapshotRuntimeStats>,
+    /// The reader's snapshot options without the stats, which Go's `Close`
+    /// restores (`snapshot.SetOption(kv.CollectRuntimeStats, nil)`).
+    pub(super) options_without_stats: tidb_txnkv::SnapshotReadOptions,
+    /// Go `SessionVars.SQLCPUUsages`.
+    pub(super) sql_cpu_usages: Option<Arc<tidb_util::ppcpuusage::SqlCpuUsages>>,
+}
+
 /// Go point readers report from `Close` after reading SnapshotRuntimeStats.
 pub(super) struct PointIndexUsageExec {
     child: Box<dyn Executor>,
@@ -175,6 +186,10 @@ pub(super) struct PointIndexUsageExec {
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
     command: PointCommand,
+    snapshot_stats: Option<PointSnapshotStats>,
+    /// Whether `Close` already returned the snapshot to the transaction's
+    /// own statistics; Go installs the reader's stats once, in `Init`.
+    snapshot_stats_released: bool,
     before: (u64, u64),
     rows: u64,
     reported: bool,
@@ -188,6 +203,7 @@ impl PointIndexUsageExec {
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
         command: PointCommand,
+        snapshot_stats: Option<PointSnapshotStats>,
     ) -> Self {
         Self {
             child,
@@ -196,6 +212,8 @@ impl PointIndexUsageExec {
             collector,
             index_id,
             command,
+            snapshot_stats,
+            snapshot_stats_released: false,
             before: (0, 0),
             rows: 0,
             reported: false,
@@ -207,10 +225,20 @@ impl PointIndexUsageExec {
             return;
         }
         self.reported = true;
-        let after = self.table.point_rpc_counts();
-        let kv_requests = match self.command {
-            PointCommand::Get => after.0.wrapping_sub(self.before.0),
-            PointCommand::BatchGet => after.1.wrapping_sub(self.before.1),
+        // Go `GetCmdRPCCount(CmdGet / CmdBatchGet)` of the reader's own
+        // stats; without them, the RPCs the transaction's stats saw since open.
+        let kv_requests = match &self.snapshot_stats {
+            Some(snapshot) => snapshot.stats.rpc_count(match self.command {
+                PointCommand::Get => tikv_client::SnapshotRpcCommand::Get,
+                PointCommand::BatchGet => tikv_client::SnapshotRpcCommand::BatchGet,
+            }),
+            None => {
+                let after = self.table.point_rpc_counts();
+                match self.command {
+                    PointCommand::Get => after.0.wrapping_sub(self.before.0),
+                    PointCommand::BatchGet => after.1.wrapping_sub(self.before.1),
+                }
+            }
         };
         let reporter = IndexUsageReporter::new(self.collector.as_ref());
         match self.index_id {
@@ -247,6 +275,20 @@ impl Executor for PointIndexUsageExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         let result = self.child.close();
+        if let Some(snapshot) = &self.snapshot_stats {
+            // Go `Close`: `MergeTikvCPUTime(GetTimeDetail().ProcessTime)`,
+            // then `snapshot.SetOption(kv.CollectRuntimeStats, nil)`.
+            if let Some(usages) = &snapshot.sql_cpu_usages {
+                let process_time = snapshot.stats.time_detail().process_time;
+                usages.merge_tikv_cpu_time(
+                    i64::try_from(process_time.as_nanos()).unwrap_or(i64::MAX),
+                );
+            }
+            if !std::mem::replace(&mut self.snapshot_stats_released, true) {
+                self.table
+                    .set_snapshot_read_options(snapshot.options_without_stats.clone());
+            }
+        }
         self.report();
         result
     }

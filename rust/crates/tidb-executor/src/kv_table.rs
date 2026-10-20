@@ -2393,6 +2393,12 @@ impl KvTable {
             .set_snapshot_read_options(ctx.snapshot_read_options(avg_row_bytes));
     }
 
+    /// Installs exactly `options` on the backend that serves this table's
+    /// keys (Go `snapshot.SetOption` of a point reader's options).
+    pub(crate) fn set_snapshot_read_options(&self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.store.set_snapshot_read_options(options);
+    }
+
     pub(crate) fn point_reader(&self) -> PointRead<'_> {
         PointRead {
             table: self,

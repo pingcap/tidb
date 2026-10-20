@@ -343,6 +343,14 @@ impl SessionRecordSet<'_> {
     pub fn finish(&mut self) -> Result<(), DriverError> {
         self.state.finish(self.session)
     }
+    /// See [`Session::add_write_sql_resp_duration`].
+    pub fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        self.session.add_write_sql_resp_duration(duration);
+    }
+    /// See [`Session::add_result_chunk_cells`].
+    pub fn add_result_chunk_cells(&mut self, cells: i64) {
+        self.session.add_result_chunk_cells(cells);
+    }
     /// Publishes completion once.
     pub fn close(&mut self) -> Result<(), DriverError> {
         self.state.close(self.session)

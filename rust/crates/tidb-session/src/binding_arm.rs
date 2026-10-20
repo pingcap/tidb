@@ -714,6 +714,21 @@ impl Session {
         if !self.session_bool("tidb_use_plan_baselines", true) {
             return None;
         }
+        // Go `matchSQLBindingCore`'s deferred `DurationOptimizer.BindingMatch`.
+        let begin_binding_match = std::time::Instant::now();
+        let matched = self.match_statement_binding(stmt);
+        self.phase_durations
+            .set_binding_match(begin_binding_match.elapsed());
+        let (hints, bind_sql) = matched?;
+        let mut bound = stmt.clone();
+        binding::bind_hints(&mut bound, &hints);
+        self.bind_matched_statement(stmt, bound, bind_sql)
+    }
+
+    /// Go `matchSQLBindingCore`: the session binding, else the global one,
+    /// matching the statement's no-DB digest and tables -- the matched
+    /// binding's hints and bind SQL.
+    fn match_statement_binding(&mut self, stmt: &Stmt) -> Option<(binding::HintsSet, String)> {
         let global = self.global_binding_cache.as_ref().map(|cache| cache.load());
         let has_global = match &global {
             Some(cache) => cache.size() != 0,
@@ -767,8 +782,18 @@ impl Session {
                 (matched.hints.clone(), matched.bind_sql.clone())
             }
         };
-        let mut bound = stmt.clone();
-        binding::bind_hints(&mut bound, &hints);
+        Some((hints, bind_sql))
+    }
+
+    /// The rest of Go `planner.optimize`'s binding step once a binding
+    /// matched: the session records the match and the warnings of the
+    /// statement `bound` with the binding's hints.
+    fn bind_matched_statement(
+        &mut self,
+        stmt: &Stmt,
+        mut bound: Stmt,
+        bind_sql: String,
+    ) -> Option<(Stmt, String)> {
         for warning in crate::dispatch::filter_sem_restricted_hints(&mut bound) {
             self.append_warning(crate::WarningLevel::Warning, 1105, warning);
         }

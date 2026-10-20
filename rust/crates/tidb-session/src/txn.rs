@@ -407,6 +407,27 @@ impl Session {
         self.txn.is_some()
     }
 
+    /// Go `doCommitWithRetry`'s deferred
+    /// `SetTxnIsolationLevelOneShotStateForNextTxn`: every `CommitTxn` -- a
+    /// `COMMIT`, an implicit commit, an autocommit statement's, with or
+    /// without a valid transaction -- moves `SET TRANSACTION`'s level on.
+    pub fn set_txn_isolation_level_one_shot_state_for_next_txn(&mut self) {
+        self.statement_committed_txn = true;
+        self.vars
+            .set_txn_isolation_level_one_shot_state_for_next_txn();
+    }
+
+    /// Go keeps an ended transaction's `TxnCtx` until the next statement
+    /// builds a new one, so the statement that ended it still finishes with
+    /// that context: its slow log carries the transaction's start timestamp
+    /// (`FinishExecuteStmt(origTxnCtx.StartTS, ...)`) and `IsExplicitTxn`.
+    fn record_statement_ended_txn(&mut self) {
+        if self.statement_ended_txn_start_ts.is_none() {
+            self.statement_ended_txn_start_ts =
+                Some(u64::try_from(self.current_tso.value()).unwrap_or(0));
+        }
+    }
+
     /// Go SessionVars.ConstraintCheckInPlacePessimistic, read live per statement.
     pub fn pessimistic_constraint_check_in_place(&self) -> bool {
         self.vars
@@ -440,10 +461,13 @@ impl Session {
 
     pub(crate) fn read_committed_locking(&self) -> bool {
         self.txn.as_ref().map_or_else(
-            || {
-                self.vars
+            || match self.vars.txn_isolation_level_one_shot_in_use() {
+                // Go `IsIsolation` adopts a waiting `SET TRANSACTION` level.
+                Some(level) => level.eq_ignore_ascii_case("READ-COMMITTED"),
+                None => self
+                    .vars
                     .get_system("transaction_isolation")
-                    .is_ok_and(|value| value.eq_ignore_ascii_case("READ-COMMITTED"))
+                    .is_ok_and(|value| value.eq_ignore_ascii_case("READ-COMMITTED")),
             },
             |txn| txn.read_committed,
         )
@@ -468,7 +492,12 @@ impl Session {
     /// given and needs nothing from it afterwards.
     fn open_transaction(&mut self, mode: SessionTxnMode) -> Result<(), DriverError> {
         let local_temporary_at_open = self.local_temporary_tables.clone();
-        let read_committed = self.read_committed_locking();
+        // Go `txnManager.newProviderWithRequest` picks the provider from
+        // `IsolationLevelForNewTxn`, which honors `SET TRANSACTION`.
+        let read_committed = self
+            .vars
+            .isolation_level_for_new_txn(self.in_transaction())
+            .eq_ignore_ascii_case("READ-COMMITTED");
         let txn = Transaction::open(
             &*self.lock_catalog()?,
             mode,
@@ -780,12 +809,16 @@ impl Session {
                         }
                         return Err(DriverError::unsupported("start transaction read only as of is forbidden after set transaction read only as of"));
                     }
+                    self.statement_began_txn = true;
                     if self.txn.is_some() {
                         self.commit()?;
                     }
                     self.open_stale_transaction(ts)?;
                     return Ok(Some(true));
                 }
+                // Go's `NewTxn` gives the transaction a fresh `TxnCtx`, so the
+                // statement's own (`origTxnCtx`) is not the one it opens.
+                self.statement_began_txn = true;
                 // An open transaction is committed first (Go's implicit commit).
                 if self.txn.is_some() {
                     self.commit()?;
@@ -815,6 +848,9 @@ impl Session {
                     return Ok(Some(true));
                 }
                 self.cleanup_txn_read_ts();
+                if self.txn.is_some() {
+                    self.record_statement_ended_txn();
+                }
                 // Dropping the staged copy discards every staged write.
                 // A local temporary table's rows are not in that copy -- they
                 // are in the session -- so they are put back by hand.
@@ -978,6 +1014,10 @@ impl Session {
     /// as an aborted Go transaction does -- the staged writes are gone either
     /// way, so the caller must retry the statements, not just the COMMIT.
     pub(crate) fn commit(&mut self) -> Result<(), DriverError> {
+        self.set_txn_isolation_level_one_shot_state_for_next_txn();
+        if self.txn.is_some() {
+            self.record_statement_ended_txn();
+        }
         self.cleanup_txn_read_ts();
         let Some(txn) = self.txn.take() else {
             // COMMIT with no open transaction is a no-op, as in MySQL.

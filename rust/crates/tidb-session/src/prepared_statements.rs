@@ -123,6 +123,48 @@ impl Session {
             .map(|prepared| prepared.sql.as_str())
     }
 
+    /// The statement a prepared name holds, if this session holds that name.
+    pub fn prepared_statement_node(&self, name: &str) -> Option<&Stmt> {
+        self.prepared_statements
+            .get(name)
+            .map(|prepared| &prepared.statement)
+    }
+
+    /// One `EXECUTE ... USING @name` value: Go `SetParameterValuesIntoSCtx`
+    /// evaluates the entry's `getvar` function (`usingParam.Eval`), and a
+    /// string read comes back stamped with the variable's type's collation
+    /// (`getStringVarFunctionClass` copies it from `GetUserVarType`;
+    /// `ScalarFunction.Eval` -> `SetValue`), which the parameter's type then
+    /// follows (`InferParamTypeFromDatum`). A gbk client's `SET @v = '中'`
+    /// therefore binds as gbk text.
+    fn using_param_value(&self, name: &str) -> Datum {
+        let name = tidb_util::stringutil::go_to_lower(name);
+        let value = self
+            .user_vars
+            .get_user_var_val(&name)
+            .unwrap_or(Datum::Null);
+        let Datum::String(string) = &value else {
+            return value;
+        };
+        let Some(field_type) = self.user_vars.get_user_var_type(&name) else {
+            return value;
+        };
+        use tidb_datatype::EvalType;
+        let string_read = !matches!(
+            field_type.eval_type(),
+            EvalType::Int | EvalType::Real | EvalType::Decimal | EvalType::Datetime
+        );
+        if !string_read || field_type.charset_name().is_empty() {
+            return value;
+        }
+        match tidb_datatype::Collation::from_name(field_type.collation_name()) {
+            Some(collation) if collation != string.collation() => {
+                Datum::new_collation_string(string.bytes(), collation)
+            }
+            _ => value,
+        }
+    }
+
     /// The text of a prepared DDL statement named by a text-protocol
     /// `EXECUTE name` with no `USING` values, parsed. Go's `ExecuteExec` runs
     /// the prepared plan as the statement's body, so a node that owns DDL
@@ -196,7 +238,7 @@ impl Session {
         // statement names its tables by the database current NOW, so its
         // requests below and every EXECUTE after a `USE` agree.
         crate::binding::pin_current_database(&mut statement, self.current_database())?;
-        let param_count = tidb_executor::parameter_count(&text, self.scanner_sql_mode())?;
+        let param_count = tidb_executor::parsed_parameter_count(&statement);
         let limit_markers = limit_marker_orders(&statement);
         // Go's PrepareExec builds the plan with each variable read as its value
         // NOW (`rewriteVariable`); the retained statement keeps the variables,
@@ -402,10 +444,7 @@ impl Session {
         let values: Vec<Datum> = using
             .iter()
             .map(|expr| match expr {
-                Expr::UserVar(name) => self
-                    .user_vars
-                    .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
-                    .unwrap_or(Datum::Null),
+                Expr::UserVar(name) => self.using_param_value(name),
                 _ => unreachable!("the parser admits only @variables in USING"),
             })
             .collect();

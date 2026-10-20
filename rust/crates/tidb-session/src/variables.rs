@@ -420,6 +420,11 @@ impl Session {
                                 )
                             })?,
                         };
+                        // Go's SET evaluates the expression under the
+                        // statement's own context, so what the evaluation
+                        // warned (`SET @a = (SELECT 1/0)`'s 1365) is the
+                        // statement's warning.
+                        self.drain_eval_warnings(&ctx);
                         match rows.len() {
                             0 => Datum::Null,
                             1 => rows[0].first().cloned().unwrap_or(Datum::Null),
@@ -702,6 +707,19 @@ impl Session {
         if is_read_timestamp {
             // Go evaluates the expression before checking transaction state.
             self.check_snapshot_change_in_transaction(is_txn_read)?;
+        }
+        // Go `SetExecutor.setSysVariable`'s `InTxn` refusal, which covers
+        // `SET TRANSACTION ISOLATION LEVEL` as well as `tx_read_ts`.
+        if !is_node_wide
+            && assignment
+                .name
+                .eq_ignore_ascii_case("tx_isolation_one_shot")
+            && self.in_transaction()
+        {
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
+                tidb_error::mysql::errcode::ErrCantChangeTxCharacteristics,
+                "Transaction characteristics can't be changed while a transaction is in progress",
+            )));
         }
         self.check_noop_gated_variable(&assignment.name, &value, is_global)?;
         self.check_isolation_level(&assignment.name, &value)?;

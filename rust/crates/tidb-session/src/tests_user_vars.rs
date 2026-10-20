@@ -406,3 +406,17 @@ fn predicate_stays_above_projection_assigning_function_value() {
         [vec!["2".to_owned(), "d".to_owned(), "2".to_owned()]]
     );
 }
+
+/// Go's SET evaluates the value under the statement's own context, so what
+/// the evaluation warns is the statement's warning: live Go, `SET @a =
+/// (SELECT 1/0); SHOW WARNINGS` lists `Warning 1365 Division by 0`.
+#[test]
+fn a_subquery_value_reports_its_evaluation_warnings() {
+    let mut session = Session::new();
+    session.run("SET @a = (SELECT 1/0)").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [["Warning", "1365", "Division by 0"]]
+    );
+    assert_eq!(one_row(&mut session, "SELECT @a"), ["NULL"]);
+}

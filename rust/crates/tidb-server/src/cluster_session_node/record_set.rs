@@ -122,7 +122,8 @@ impl ClusterServerSession {
                 .schema_pins
                 .hold(self.connection_id, self.schema_version),
             read_ts: transactions::StatementReadTs::new(self.session.current_tso())
-                .with_observer(self.session.transaction_observer()),
+                .with_observer(self.session.transaction_observer())
+                .with_phase_durations(self.session.phase_durations()),
             savepoint: self.buffer.checkpoint(),
             autocommit,
             resource_group: resource_group.to_owned(),
@@ -399,6 +400,12 @@ impl ResultSetSource for ClusterRecordSet<'_> {
             .close(&mut self.owner.session)
             .map_err(|error| error.to_mysql_error());
         finished.and(closed)
+    }
+    fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        self.owner.session.add_write_sql_resp_duration(duration);
+    }
+    fn add_result_chunk_cells(&mut self, cells: i64) {
+        self.owner.session.add_result_chunk_cells(cells);
     }
 }
 

@@ -17,8 +17,8 @@
 //! the node's client-rust store. The coprocessor holds it as a trait object,
 //! so a transaction opener can hand its node's store to the reads it serves.
 
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use prost::Message as _;
 
@@ -39,22 +39,6 @@ pub enum NativeCopSend {
     RegionError(String),
 }
 
-/// One physical RPC of a traced send: client-go's `rpcClient.SendRequest`
-/// span and the `tikv.*` tree `buildSpanInfoFromResp` hangs under it from the
-/// response's `ExecDetailsV2` when `util.TraceExecDetailsEnabled(ctx)`.
-#[derive(Clone, Debug)]
-pub struct CopRpcTrace {
-    /// client-go's `start` in `RPCClient.sendRequest`: the physical send.
-    pub start: Instant,
-    /// When the response arrived.
-    pub end: Instant,
-    /// TiKV's reported execution details as client-go's span tree.
-    pub details: tikv_client::trace::ExecutionDetailSpan,
-}
-
-/// The RPCs of one traced send, in arrival order.
-pub type CopRpcTraces = Arc<Mutex<Vec<CopRpcTrace>>>;
-
 /// The client-go store surface Go's coprocessor uses: the region cache, the
 /// region sender, the lock resolver and the backoffer.
 pub trait NativeCopStore: Send + Sync + 'static {
@@ -69,18 +53,16 @@ pub trait NativeCopStore: Send + Sync + 'static {
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error>;
 
     /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
-    /// `ru_details` is Go's `bo.GetCtx().Value(util.RUDetailsCtxKey)`, which
-    /// the resource-control interceptor charges for each RPC. `rpc_traces`
-    /// is Go's `util.ContextWithTraceExecDetails(ctx)` under a traced
-    /// statement: every physical RPC of the send is appended to it.
+    /// `kv_context` holds Go's `bo.GetCtx()` values: the
+    /// `util.RUDetailsCtxKey` value the resource-control interceptor charges
+    /// for each RPC and the `util.ExecDetailsKey` value.
     fn send(
         &self,
         backoffer: &CopBackoffer,
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
-        ru_details: Option<&Arc<tikv_client::RuDetails>>,
-        rpc_traces: Option<&CopRpcTraces>,
+        kv_context: &crate::StatementKvContext,
     ) -> Result<NativeCopSend, tikv_client::Error>;
 
     /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`, under the
@@ -91,7 +73,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
-        ru_details: Option<&Arc<tikv_client::RuDetails>>,
+        kv_context: &crate::StatementKvContext,
     ) -> Result<LockRecoveryResult, tikv_client::Error>;
 
     /// Go `bo.Backoff(BoRegionMiss, err)`.
@@ -144,6 +126,53 @@ pub async fn with_ru_details<F: std::future::Future>(
     }
 }
 
+/// Runs `future` under Go's statement ctx: client-rust's dispatch charges the
+/// trace context's `RuDetails` (Go `util.RUDetailsCtxKey`), its intercepted
+/// PD client the task's `ExecDetails` (Go `util.ExecDetailsKey`, which the
+/// trace context also carries), and its network collector the task's
+/// traffic details.
+pub async fn with_statement_kv_context<'a, F>(
+    kv_context: &crate::StatementKvContext,
+    future: F,
+) -> F::Output
+where
+    F: std::future::Future + Send + 'a,
+{
+    // Erased once, so the three ctx scopes below do not nest the caller's
+    // future type three levels deeper.
+    let future: std::pin::Pin<Box<dyn std::future::Future<Output = F::Output> + Send + 'a>> =
+        Box::pin(future);
+    let future = async {
+        if kv_context.ru_details.is_none() && kv_context.exec_details.is_none() {
+            return future.await;
+        }
+        let mut context = tikv_client::trace::TraceContext::new();
+        if let Some(ru_details) = &kv_context.ru_details {
+            context = tikv_client::util::context_with_ru_details(&context, Arc::clone(ru_details));
+        }
+        if let Some(exec_details) = &kv_context.exec_details {
+            context =
+                tikv_client::util::context_with_exec_details(&context, Arc::clone(exec_details));
+        }
+        tikv_client::trace::with_trace_context(context, future).await
+    };
+    let future = async {
+        match &kv_context.network_traffic_details {
+            Some(details) => {
+                tikv_client::traffic::with_network_traffic_details(Arc::clone(details), future)
+                    .await
+            }
+            None => future.await,
+        }
+    };
+    match &kv_context.exec_details {
+        Some(exec_details) => {
+            tikv_client::util::with_exec_details(Arc::clone(exec_details), future).await
+        }
+        None => future.await,
+    }
+}
+
 impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
     fn cluster_id(&self) -> u64 {
         self.block_on(self.store().pd_client().cluster_id())
@@ -183,8 +212,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
-        ru_details: Option<&Arc<tikv_client::RuDetails>>,
-        rpc_traces: Option<&CopRpcTraces>,
+        kv_context: &crate::StatementKvContext,
     ) -> Result<NativeCopSend, tikv_client::Error> {
         let request = tikv_client::proto::coprocessor::Request::decode(request)
             .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
@@ -196,27 +224,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         let send = self
             .store()
             .send_req_ctx(Arc::clone(backoffer), request, &region, timeout);
-        let sent = match rpc_traces {
-            Some(rpc_traces) => {
-                let rpc_traces = Arc::clone(rpc_traces);
-                let handler: tikv_client::trace::ExecutionDetailsTraceHandler =
-                    Arc::new(move |start, details| {
-                        rpc_traces
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .push(CopRpcTrace {
-                                start,
-                                end: Instant::now(),
-                                details: details.clone(),
-                            });
-                    });
-                self.block_on(with_ru_details(
-                    ru_details,
-                    tikv_client::trace::with_trace_exec_details(handler, send),
-                ))
-            }
-            None => self.block_on(with_ru_details(ru_details, send)),
-        };
+        let sent = self.block_on(with_statement_kv_context(kv_context, send));
         match sent {
             Ok((response, address)) => {
                 Ok(NativeCopSend::Response(response.encode_to_vec(), address))
@@ -234,7 +242,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
-        ru_details: Option<&Arc<tikv_client::RuDetails>>,
+        kv_context: &crate::StatementKvContext,
     ) -> Result<LockRecoveryResult, tikv_client::Error> {
         use tikv_client::txnkv::txnlock::{LockHintsInRequest, ResolveLocksOptions};
         let lock = tikv_client::proto::kvrpcpb::LockInfo::decode(lock.encode_to_vec().as_slice())
@@ -252,8 +260,8 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
             ),
             ..Default::default()
         };
-        let result = self.block_on(with_ru_details(
-            ru_details,
+        let result = self.block_on(with_statement_kv_context(
+            kv_context,
             self.store()
                 .resolve_locks_with_opts(&native_context, Arc::clone(backoffer), opts),
         ))?;

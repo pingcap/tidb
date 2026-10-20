@@ -268,6 +268,39 @@ pub(crate) fn run_query_stmt(
     open_query_meta_stmt_with_physical(query, None, catalog, current_db, ctx)?.collect()
 }
 
+/// Go `session.ExecuteStmt` handing the compiled statement from
+/// `executor.Compile` to `session.runStmt`, which logs the statement's text
+/// (`r.Span.LogKV("sql", s.Text())`). The session opens `executor.Compile`
+/// with the text; once it has ended this does nothing, nor on an untraced
+/// thread.
+pub fn begin_run_stmt_region() {
+    if let Some(text) = tidb_util::tracing::end_thread_region("executor.Compile") {
+        if let Some(span) = tidb_util::tracing::begin_thread_region("session.runStmt", None) {
+            span.log_kv("sql", text.as_deref().unwrap_or_default());
+        }
+    }
+}
+
+/// Go `ExecStmt.handleNoDelayExecutor`'s region and, under it, the `exec.Next`
+/// region of the DML executor it drives (`executor` is Go's type name); the
+/// DML runs inside both until the value drops.
+pub(crate) struct DmlExecutionRegions {
+    // Dropped in declaration order: the executor's call ends first.
+    _next: tidb_util::tracing::ThreadRegion,
+    _handle: tidb_util::tracing::ThreadRegion,
+}
+
+/// [`begin_run_stmt_region`], then [`DmlExecutionRegions`] for `executor`.
+pub(crate) fn begin_dml_execution(executor: &'static str) -> DmlExecutionRegions {
+    begin_run_stmt_region();
+    let handle = tidb_util::tracing::start_thread_region_ex("executor.handleNoDelayExecutor");
+    let next = tidb_util::tracing::start_thread_region_ex(executor);
+    DmlExecutionRegions {
+        _next: next,
+        _handle: handle,
+    }
+}
+
 /// Go `planner.optimize`: try the complete fast physical plan first, then
 /// build and optimize the ordinary logical tree exactly once.
 pub(crate) fn optimize_query_stmt(
@@ -597,7 +630,9 @@ pub fn open_query_meta_stmt_with_physical(
         Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
         None => {
             set_opr::validate_query_usage(query, ctx)?;
+            let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
             let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
+            optimize.end();
             physical_builder::open_query(query, &mut physical, catalog, ctx)
         }
     }
