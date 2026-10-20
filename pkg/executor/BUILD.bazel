@@ -241,6 +241,11 @@ go_library(
         "//pkg/util/logutil/consistency",
         "//pkg/util/mathutil",
         "//pkg/util/memory",
+<<<<<<< HEAD
+=======
+        "//pkg/util/metricsutil",
+        "//pkg/util/parser",
+>>>>>>> 633a9e37f1c (metrics, server: fix multi-statement latency attribution (#71584))
         "//pkg/util/password-validation",
         "//pkg/util/plancodec",
         "//pkg/util/printer",
