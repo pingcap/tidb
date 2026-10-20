@@ -80,6 +80,8 @@ type statementRUPointResponseStatsProvider interface {
 // finalization for one ExecStmt. Its calculation setup is released when the
 // shared finishOnce is consumed.
 type statementRUOwner struct {
+	// writeRU is retained after finalization for slow logs and statement summaries.
+	writeRU      float64
 	finishOnce   sync.Once
 	finalOutcome atomic.Uint32
 	rootEOF      atomic.Bool
@@ -255,6 +257,7 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 		)
 	})
 	if publishFinalized {
+		owner.writeRU = finalized.writeRU
 		finalized.ttlJob = owner.ttlJobAtInstall
 		publishStatementRUFinalizedSnapshot(a, finalized)
 		return finalized.result.TotalRU
@@ -627,6 +630,8 @@ func calculateStatementRUPlanChildFirst(
 		if !addStatementRUCPUWork(calculator, work) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
+		calculator.writeOperatorUnits.CPUWork += work
+		calculator.writeOperatorUnits.OperatorNum++
 	case *plannercore.Simple:
 		_, isCommit := origin.Statement.(*ast.CommitStmt)
 		if !operator.IsRoot || len(children) != 0 || !isCommit {
