@@ -2315,7 +2315,10 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 		}
 		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
-			if err := worker.handleLockErr(bo, lockHints, lockErr, task); err != nil {
+			// TODO: This passes a nil lock from the synthesized response. Keep it temporarily
+			// until #70521 and the API V2 decoding fix are backported, then restore the
+			// child-lock assertions in TestHandleBatchCopResponse.
+			if err := worker.handleLockErr(bo, lockHints, resp.pbResp.GetLocked(), task); err != nil {
 				return batchRespList, nil, err
 			}
 			task.meetLockFallback = true
