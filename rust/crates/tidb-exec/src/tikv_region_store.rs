@@ -73,8 +73,12 @@ impl TikvRegionStore {
         }
     }
 
-    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        self.store.runtime().block_on(future)
+    fn block_on<F>(&self, future: F) -> F::Output
+    where
+        F: std::future::Future + Send,
+        F::Output: Send,
+    {
+        self.store.block_on(future)
     }
 
     /// Go `getRegionInfo`: PD's statistics for one region.

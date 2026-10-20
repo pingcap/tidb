@@ -27,6 +27,16 @@ pub struct Backoff {
 
 impl Backoff {
     // Returns the delay period for next retry. If the maximum retry count is hit returns None.
+    /// client-go's `expo` caps the growing sleep at its maximum; doubling
+    /// past it would shift the bits out after enough attempts and leave a
+    /// zero (and an empty jitter range).
+    fn grow_delay(&mut self) {
+        self.current_delay_ms = self
+            .current_delay_ms
+            .saturating_mul(2)
+            .min(self.max_delay_ms.max(1));
+    }
+
     pub fn next_delay_duration(&mut self) -> Option<Duration> {
         if self.current_attempts >= self.max_attempts {
             return None;
@@ -37,7 +47,7 @@ impl Backoff {
             BackoffKind::None => None,
             BackoffKind::NoJitter => {
                 let delay_ms = self.max_delay_ms.min(self.current_delay_ms);
-                self.current_delay_ms <<= 1;
+                self.grow_delay();
 
                 Some(Duration::from_millis(delay_ms))
             }
@@ -45,8 +55,12 @@ impl Backoff {
                 let delay_ms = self.max_delay_ms.min(self.current_delay_ms);
 
                 let mut rng = thread_rng();
-                let delay_ms: u64 = rng.gen_range(0..delay_ms);
-                self.current_delay_ms <<= 1;
+                let delay_ms: u64 = if delay_ms == 0 {
+                    0
+                } else {
+                    rng.gen_range(0..delay_ms)
+                };
+                self.grow_delay();
 
                 Some(Duration::from_millis(delay_ms))
             }
@@ -55,8 +69,12 @@ impl Backoff {
                 let half_delay_ms = delay_ms >> 1;
 
                 let mut rng = thread_rng();
-                let delay_ms: u64 = rng.gen_range(0..half_delay_ms) + half_delay_ms;
-                self.current_delay_ms <<= 1;
+                let delay_ms: u64 = if half_delay_ms == 0 {
+                    delay_ms
+                } else {
+                    rng.gen_range(0..half_delay_ms) + half_delay_ms
+                };
+                self.grow_delay();
 
                 Some(Duration::from_millis(delay_ms))
             }
@@ -204,6 +222,23 @@ mod test {
     use std::convert::TryInto;
 
     use super::*;
+
+    /// `wait_scatter_region_finish` backs off with unlimited attempts: the
+    /// delay stays within its maximum however long it waits, instead of
+    /// doubling until the bits shift out and the jitter range is empty.
+    #[test]
+    fn a_long_lived_backoff_keeps_its_delay_within_the_maximum() {
+        for mut backoff in [
+            Backoff::equal_jitter_backoff(100, 2_000, u32::MAX),
+            Backoff::full_jitter_backoff(100, 2_000, u32::MAX),
+            Backoff::no_jitter_backoff(100, 2_000, u32::MAX),
+        ] {
+            for _ in 0..200 {
+                let delay = backoff.next_delay_duration().unwrap();
+                assert!(delay <= Duration::from_millis(2_000), "{delay:?}");
+            }
+        }
+    }
 
     #[test]
     fn test_no_jitter_backoff() {

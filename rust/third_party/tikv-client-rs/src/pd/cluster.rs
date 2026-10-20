@@ -1492,6 +1492,15 @@ impl PdMessage for pdpb::GetOperatorRequest {
     async fn rpc(req: Request<Self>, client: &mut Self::Client) -> GrpcResult<Self::Response> {
         Ok(client.get_operator(req).await?.into_inner())
     }
+
+    /// pd-client `GetOperator` returns PD's response as it is: a region with
+    /// no operator answers a header error, which the callers read as "not
+    /// scattering" (`scatter_wait_completed`, `check_region_in_scattering`).
+    async fn send(self, client: &mut Self::Client, timeout: Duration) -> Result<Self::Response> {
+        let mut req = self.into_request();
+        req.set_timeout(timeout);
+        Ok(Self::rpc(req, client).await?)
+    }
 }
 
 #[async_trait]

@@ -160,6 +160,14 @@ where
                 .unary(service, request)
                 .await)
             }),
+            "/pdpb.PD/GetOperator" => Box::pin(async move {
+                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                    pdpb::GetOperatorResponse,
+                    pdpb::GetOperatorRequest,
+                >::default())
+                .unary(service, request)
+                .await)
+            }),
             "/pdpb.PD/ScanRegions" => Box::pin(async move {
                 Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
                     pdpb::ScanRegionsResponse,
@@ -299,6 +307,28 @@ impl tonic::server::UnaryService<pdpb::GetAllStoresRequest> for PdServer {
                     id: 9,
                     ..Default::default()
                 }],
+            }))
+        })
+    }
+}
+
+/// PD's `GetOperator` for a region with no operator: the header carries
+/// `UNKNOWN: Not Found` and the response nothing else.
+impl tonic::server::UnaryService<pdpb::GetOperatorRequest> for PdServer {
+    type Response = pdpb::GetOperatorResponse;
+    type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+    fn call(&mut self, _request: tonic::Request<pdpb::GetOperatorRequest>) -> Self::Future {
+        Box::pin(async move {
+            Ok(tonic::Response::new(pdpb::GetOperatorResponse {
+                header: Some(ResponseHeader {
+                    cluster_id: 42,
+                    error: Some(pdpb::Error {
+                        r#type: pdpb::ErrorType::Unknown as i32,
+                        message: "Not Found".to_owned(),
+                    }),
+                }),
+                ..Default::default()
             }))
         })
     }
@@ -2072,6 +2102,21 @@ async fn source_provider_api_minimum_compatibility_and_errors() {
         "only compatibility may allocate TSO"
     );
     assert_eq!(pd.service.received.load(Ordering::SeqCst), 0);
+}
+
+/// pd-client `GetOperator` returns PD's response as it is: a region with no
+/// operator answers a header error, which `CheckRegionInScattering` and
+/// `WaitScatterRegionFinish` read as "not scattering" -- not a failure to
+/// retry until the backoff runs out.
+#[tokio::test]
+async fn get_operator_returns_pds_header_error_in_the_response() {
+    let pd = Server::start(Reply::Timestamp).await;
+    let mut cluster = pd.cluster(Duration::from_secs(1)).await;
+    let response = cluster.get_operator(7, Duration::from_secs(1)).await;
+    cluster.start_close().await;
+    let response = response.unwrap();
+    assert_eq!(response.header.unwrap().error.unwrap().message, "Not Found");
+    assert!(response.desc.is_empty());
 }
 
 #[tokio::test]
