@@ -131,14 +131,15 @@ func (c *s3Client) CheckPutAndDeleteObject(ctx context.Context) (err error) {
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
 	}
+	// The probe must satisfy the same encryption policy as real writes.
+	if sse := c.options.GetSse(); sse != "" {
+		input.ServerSideEncryption = types.ServerSideEncryption(sse)
+	}
+	if keyID := c.options.GetSseKmsKeyId(); keyID != "" {
+		input.SSEKMSKeyId = aws.String(keyID)
+	}
 	if encryptionContext := c.options.GetSseKmsEncryptionContext(); encryptionContext != "" {
 		input.SSEKMSEncryptionContext = aws.String(encryptionContext)
-		// A context-bearing request must also carry the configured KMS settings.
-		// Keep the legacy probe behavior when no context is configured.
-		input.ServerSideEncryption = types.ServerSideEncryption(c.options.GetSse())
-		if keyID := c.options.GetSseKmsKeyId(); keyID != "" {
-			input.SSEKMSKeyId = aws.String(keyID)
-		}
 	}
 	var optFns []func(*s3.Options)
 	if c.s3Compatible {
@@ -353,12 +354,16 @@ func (c *s3Client) CopyObject(ctx context.Context, params *s3like.CopyInput) err
 		CopySource: aws.String(path.Join(params.FromLoc.Bucket, fromKey)),
 		Key:        aws.String(toKey),
 	}
+	// CopyObject does not keep the source encryption; without these settings
+	// the destination falls back to the bucket default.
+	if sse := c.options.GetSse(); sse != "" {
+		copyInput.ServerSideEncryption = types.ServerSideEncryption(sse)
+	}
+	if keyID := c.options.GetSseKmsKeyId(); keyID != "" {
+		copyInput.SSEKMSKeyId = aws.String(keyID)
+	}
 	if encryptionContext := c.options.GetSseKmsEncryptionContext(); encryptionContext != "" {
 		copyInput.SSEKMSEncryptionContext = aws.String(encryptionContext)
-		copyInput.ServerSideEncryption = types.ServerSideEncryption(c.options.GetSse())
-		if keyID := c.options.GetSseKmsKeyId(); keyID != "" {
-			copyInput.SSEKMSKeyId = aws.String(keyID)
-		}
 	}
 
 	// We must use the client of the target region.
@@ -499,12 +504,14 @@ func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
 		Key:    aws.String(u.key),
 		Body:   rd,
 	}
+	if u.sse != "" {
+		upParams.ServerSideEncryption = types.ServerSideEncryption(u.sse)
+	}
+	if u.sseKmsKeyID != "" {
+		upParams.SSEKMSKeyId = aws.String(u.sseKmsKeyID)
+	}
 	if u.sseKmsEncryptionContext != "" {
 		upParams.SSEKMSEncryptionContext = aws.String(u.sseKmsEncryptionContext)
-		upParams.ServerSideEncryption = types.ServerSideEncryption(u.sse)
-		if u.sseKmsKeyID != "" {
-			upParams.SSEKMSKeyId = aws.String(u.sseKmsKeyID)
-		}
 	}
 	_, err := u.uploader.Upload(ctx, upParams)
 	if err != nil && strings.Contains(err.Error(), "MaxUploadParts") {

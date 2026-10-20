@@ -127,13 +127,8 @@ func TestClientEncryptionContextRequests(t *testing.T) {
 			s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 					require.Equal(t, expected, input.SSEKMSEncryptionContext)
-					if tc.context == "" {
-						require.Empty(t, input.ServerSideEncryption)
-						require.Nil(t, input.SSEKMSKeyId)
-					} else {
-						require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
-						require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
-					}
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
 					require.Empty(t, input.ACL)
 					return &s3.PutObjectOutput{}, nil
 				})
@@ -157,13 +152,8 @@ func TestClientEncryptionContextRequests(t *testing.T) {
 					require.Equal(t, expected, input.SSEKMSEncryptionContext)
 					require.Equal(t, "source/source-prefix/object", aws.ToString(input.CopySource))
 					require.Equal(t, "bucket", aws.ToString(input.Bucket))
-					if tc.context == "" {
-						require.Empty(t, input.ServerSideEncryption)
-						require.Nil(t, input.SSEKMSKeyId)
-					} else {
-						require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
-						require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
-					}
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
 					require.Empty(t, input.ACL)
 					return &s3.CopyObjectOutput{}, nil
 				})
@@ -211,13 +201,12 @@ func TestCopyObjectEncryptionContextHeader(t *testing.T) {
 			header := request.Header.Values("X-Amz-Server-Side-Encryption-Context")
 			if encryptionContext == "" {
 				require.Empty(t, header)
-				require.Empty(t, request.Header.Get("X-Amz-Server-Side-Encryption"))
-				require.Empty(t, request.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"))
 			} else {
 				require.Equal(t, []string{encryptionContext}, header)
-				require.Equal(t, "aws:kms", request.Header.Get("X-Amz-Server-Side-Encryption"))
-				require.Equal(t, "destination-key-id", request.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"))
 			}
+			// The destination must use the configured key, not the bucket default.
+			require.Equal(t, "aws:kms", request.Header.Get("X-Amz-Server-Side-Encryption"))
+			require.Equal(t, "destination-key-id", request.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"))
 			require.Equal(t, "source/source-prefix/object", request.Header.Get("X-Amz-Copy-Source"))
 		})
 	}
@@ -273,26 +262,30 @@ func TestMultipartUploaderEncryptionContext(t *testing.T) {
 				counts := make(map[string]int)
 				for req := range requests {
 					operation := "put"
-					expected := encryptionContext
+					writesObject := true
 					switch {
 					case req.URL.Query().Has("uploads"):
 						operation = "create"
 					case req.URL.Query().Has("partNumber"):
-						operation, expected = "part", ""
+						operation, writesObject = "part", false
 					case req.Method == http.MethodPost:
-						operation, expected = "complete", ""
+						operation, writesObject = "complete", false
 					}
 					counts[operation]++
 					header := req.Header.Values("X-Amz-Server-Side-Encryption-Context")
-					if expected == "" {
+					if !writesObject {
 						require.Empty(t, header, operation)
 						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
 						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
-					} else {
-						require.Equal(t, []string{expected}, header, operation)
-						require.Equal(t, "aws:kms", req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
-						require.Equal(t, "key-id", req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
+						continue
 					}
+					if encryptionContext == "" {
+						require.Empty(t, header, operation)
+					} else {
+						require.Equal(t, []string{encryptionContext}, header, operation)
+					}
+					require.Equal(t, "aws:kms", req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
+					require.Equal(t, "key-id", req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
 				}
 				if tc.name == "single" {
 					require.Equal(t, map[string]int{"put": 1}, counts)
