@@ -547,20 +547,7 @@ where
         .unwrap_or_default();
     let policy = SamplePolicy::choose(options.num_samples, rate)
         .ok_or_else(|| error("invalid ANALYZE sample policy".to_owned()))?;
-    let runtime = opener
-        .open_read_runtime()
-        .map_err(|e| error(e.to_string()))?;
-    let transport = tidb_distsql::DirectUnaryQueryTransport::with_shared_runtime(
-        runtime,
-        tidb_distsql::DirectUnaryRuntimeConfig {
-            default_timeout: timeout,
-            ..Default::default()
-        },
-        tidb_txnkv::pd_capability::CapabilityTimestampSource(opener.pd().clone()),
-    )
-    .map_err(|e| error(e.to_string()))?
-    .with_concurrent_workers()
-    .map_err(|e| error(e.to_string()))?;
+    let transport = native_transport(opener, timeout).map_err(error)?;
     let start = tidb_codec::table_key::gen_table_record_prefix(physical_id);
     let end = super::finite_successor(&start)?;
     let (read_ts, isolation) = read_policy(snapshot_enabled, snapshot);
@@ -669,19 +656,7 @@ where
         }),
         ..Default::default()
     };
-    let transport = tidb_distsql::DirectUnaryQueryTransport::with_shared_runtime(
-        opener
-            .open_read_runtime()
-            .map_err(|e| error(e.to_string()))?,
-        tidb_distsql::DirectUnaryRuntimeConfig {
-            default_timeout: timeout,
-            ..Default::default()
-        },
-        tidb_txnkv::pd_capability::CapabilityTimestampSource(opener.pd().clone()),
-    )
-    .map_err(|e| error(e.to_string()))?
-    .with_concurrent_workers()
-    .map_err(|e| error(e.to_string()))?;
+    let transport = native_transport(opener, timeout).map_err(error)?;
     let mut runtime = tidb_distsql::InjectedQueryRuntime::new(transport);
     let (read_ts, isolation) = read_policy(statement.analyze_snapshot, snapshot);
     let mut sketch = tidb_stats::FmSketch::new(tidb_stats::MAX_SKETCH_SIZE);
@@ -850,4 +825,26 @@ mod tests {
         malformed.fm_sketch.pop();
         assert!(schema.project_collector(&plan, malformed).is_err());
     }
+}
+
+/// Go's ANALYZE sends its sampling and index requests through the store's
+/// coprocessor client (`copr.CopClient` over the `KVStore`): here the node's
+/// client-rust store, which the opener carries.
+fn native_transport<C, L, P>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
+    timeout: std::time::Duration,
+) -> Result<
+    tidb_distsql::cop_paging::NativeCopTransport<dyn tidb_txnkv::driver::cop_store::NativeCopStore>,
+    String,
+> {
+    let store = opener
+        .cop_store()
+        .ok_or_else(|| "ANALYZE needs the node's store".to_owned())?;
+    Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
+        std::sync::Arc::clone(store),
+        tidb_distsql::DirectUnaryRuntimeConfig {
+            default_timeout: timeout,
+            ..Default::default()
+        },
+    ))
 }

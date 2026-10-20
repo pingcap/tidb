@@ -15,6 +15,7 @@
 //! Transaction-driver leaves. The shared router is steward-owned so read and
 //! error campaigns can evolve in parallel without editing the crate root.
 
+pub mod cop_store;
 pub mod mem_buffer;
 pub mod read;
 pub mod tikv_mem_buffer;

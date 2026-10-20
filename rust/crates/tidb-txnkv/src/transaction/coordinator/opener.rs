@@ -52,6 +52,10 @@ pub struct RealOptimisticTransactionOpener<
     /// Resource group every transaction and direct MaxTS snapshot opened
     /// through this capability attaches to its TiKV request contexts.
     resource_group_name: Option<Arc<str>>,
+    /// The node's client-rust store as the coprocessor reads through it
+    /// (Go's copr over the `KVStore`), for the reads this opener's users
+    /// issue themselves -- ANALYZE's sampling.
+    cop_store: Option<Arc<dyn crate::driver::cop_store::NativeCopStore>>,
 }
 
 impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
@@ -63,7 +67,16 @@ impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
             visibility: Arc::clone(&self.visibility),
             protocol: self.protocol,
             resource_group_name: self.resource_group_name.clone(),
+            cop_store: self.cop_store.clone(),
         }
+    }
+}
+
+impl<C, L, P> RealOptimisticTransactionOpener<C, L, P> {
+    /// The node's store for coprocessor reads, when the node has one.
+    #[must_use]
+    pub fn cop_store(&self) -> Option<&Arc<dyn crate::driver::cop_store::NativeCopStore>> {
+        self.cop_store.as_ref()
     }
 }
 
@@ -88,6 +101,7 @@ impl RealOptimisticTransactionOpener {
             visibility,
             protocol: CommitProtocol::two_phase_only(),
             resource_group_name: None,
+            cop_store: None,
         })
     }
 }
@@ -174,6 +188,7 @@ where
             visibility,
             protocol: CommitProtocol::two_phase_only(),
             resource_group_name: None,
+            cop_store: None,
         })
     }
 
@@ -186,6 +201,17 @@ where
     #[must_use]
     pub const fn with_commit_protocol(mut self, protocol: CommitProtocol) -> Self {
         self.protocol = protocol;
+        self
+    }
+
+    /// Hands this opener the node's store for the coprocessor reads its users
+    /// issue.
+    #[must_use]
+    pub fn with_cop_store(
+        mut self,
+        store: Arc<dyn crate::driver::cop_store::NativeCopStore>,
+    ) -> Self {
+        self.cop_store = Some(store);
         self
     }
 

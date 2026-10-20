@@ -43,7 +43,8 @@ use crate::{
     CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     ResponseChannelEvent, TransportRequest,
 };
-use tidb_txnkv::lock::{LockRecoveryResult, SnapshotLockSet};
+pub use tidb_txnkv::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
+use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
 
 use super::{
@@ -109,196 +110,13 @@ impl From<NativeCopError> for QueryResponseError {
 /// its region-miss rebuilds and its lock resolution.
 const COP_NEXT_MAX_BACKOFF_MS: u64 = 20_000;
 
-/// One task's `Backoffer` (Go `bo`), shared with the store's sender and lock
-/// resolver.
-pub type CopBackoffer = Arc<tokio::sync::Mutex<tikv_client::tikv::Backoffer>>;
-
-/// What the store's sender answered for one task.
-#[derive(Debug)]
-pub enum NativeCopSend {
-    /// The response, encoded (`coprocessor.Response`), and the address of
-    /// the store that answered (client-go `rpcCtx.Addr`).
-    Response(Vec<u8>, Option<String>),
-    /// A region error the caller handles: the task's ranges are located again.
-    RegionError(String),
-}
-
-/// The client-go store surface Go's coprocessor uses: the region cache, the
-/// region sender, the lock resolver and the backoffer.
-pub trait NativeCopStore: Send + Sync + 'static {
-    /// Go `KVStore.GetClusterID`.
-    fn cluster_id(&self) -> u64;
-
-    /// Go `RegionCache.SplitKeyRangesByLocations`' locations: the regions
-    /// covering `ranges`, in key order.
-    fn locate(
-        &self,
-        ranges: &[(Vec<u8>, Vec<u8>)],
-    ) -> Result<Vec<RegionTaskTopology>, tikv_client::Error>;
-
-    /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
-    fn send(
-        &self,
-        backoffer: &CopBackoffer,
-        request: &[u8],
-        region: (u64, u64, u64),
-        timeout: Duration,
-    ) -> Result<NativeCopSend, tikv_client::Error>;
-
-    /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`.
-    fn resolve_lock(
-        &self,
-        backoffer: &CopBackoffer,
-        context: &tidb_proto::KvrpcContext,
-        lock: &tidb_proto::KvrpcLockInfo,
-        caller_start_ts: u64,
-    ) -> Result<LockRecoveryResult, tikv_client::Error>;
-
-    /// Go `bo.Backoff(BoRegionMiss, err)`.
-    fn backoff_region_miss(
-        &self,
-        backoffer: &CopBackoffer,
-        reason: String,
-    ) -> Result<(), tikv_client::Error>;
-
-    /// Go `bo.BackoffWithMaxSleepTxnLockFast(msBeforeExpired, err)`.
-    fn backoff_lock_fast(
-        &self,
-        backoffer: &CopBackoffer,
-        max_sleep_ms: u64,
-        reason: String,
-    ) -> Result<(), tikv_client::Error>;
-}
-
-impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_store::TikvStore<PdC> {
-    fn cluster_id(&self) -> u64 {
-        self.block_on(self.store().pd_client().cluster_id())
-    }
-
-    fn locate(
-        &self,
-        ranges: &[(Vec<u8>, Vec<u8>)],
-    ) -> Result<Vec<RegionTaskTopology>, tikv_client::Error> {
-        self.block_on(async {
-            let pd = self.store().pd_client();
-            let mut topology: Vec<RegionTaskTopology> = Vec::new();
-            for (start, end) in ranges {
-                let mut next = start.clone();
-                loop {
-                    let region = pd.region_for_key(&next.clone().into()).await?;
-                    let region_end = region.region.end_key.clone();
-                    if topology
-                        .last()
-                        .is_none_or(|last| last.region_id != region.region.id)
-                    {
-                        topology.push(region_topology(&region));
-                    }
-                    if region_end.is_empty() || (!end.is_empty() && region_end >= *end) {
-                        break;
-                    }
-                    next = region_end;
-                }
-            }
-            Ok(topology)
-        })
-    }
-
-    fn send(
-        &self,
-        backoffer: &CopBackoffer,
-        request: &[u8],
-        region: (u64, u64, u64),
-        timeout: Duration,
-    ) -> Result<NativeCopSend, tikv_client::Error> {
-        let request = tikv_client::proto::coprocessor::Request::decode(request)
-            .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
-        let region = tikv_client::RegionVerId {
-            id: region.0,
-            conf_ver: region.1,
-            ver: region.2,
-        };
-        let sent = self.block_on(self.store().send_req_ctx(
-            Arc::clone(backoffer),
-            request,
-            &region,
-            timeout,
-        ));
-        match sent {
-            Ok((response, address)) => {
-                Ok(NativeCopSend::Response(response.encode_to_vec(), address))
-            }
-            Err(tikv_client::Error::RegionError(error)) => {
-                Ok(NativeCopSend::RegionError(format!("{error:?}")))
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    fn resolve_lock(
-        &self,
-        backoffer: &CopBackoffer,
-        context: &tidb_proto::KvrpcContext,
-        lock: &tidb_proto::KvrpcLockInfo,
-        caller_start_ts: u64,
-    ) -> Result<LockRecoveryResult, tikv_client::Error> {
-        use tikv_client::txnkv::txnlock::{LockHintsInRequest, ResolveLocksOptions};
-        let lock = tikv_client::proto::kvrpcpb::LockInfo::decode(lock.encode_to_vec().as_slice())
-            .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
-        let native_context =
-            tikv_client::proto::kvrpcpb::Context::decode(context.encode_to_vec().as_slice())
-                .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
-        let opts = ResolveLocksOptions {
-            caller_start_ts,
-            locks: vec![lock],
-            for_read: true,
-            lock_hints_in_request: LockHintsInRequest::new(
-                &context.resolved_locks,
-                &context.committed_locks,
-            ),
-            ..Default::default()
-        };
-        let result = self.block_on(self.store().resolve_locks_with_opts(
-            &native_context,
-            Arc::clone(backoffer),
-            opts,
-        ))?;
-        Ok(LockRecoveryResult {
-            ttl: Duration::from_millis(u64::try_from(result.ttl).unwrap_or(0)),
-            ignore_locks: result.ignore_locks,
-            access_locks: result.access_locks,
-        })
-    }
-
-    fn backoff_region_miss(
-        &self,
-        backoffer: &CopBackoffer,
-        reason: String,
-    ) -> Result<(), tikv_client::Error> {
-        self.block_on(async {
-            backoffer
-                .lock()
-                .await
-                .backoff(tikv_client::tikv::BO_REGION_MISS, reason)
-                .await
-                .map_err(tikv_client::Error::from)
-        })
-    }
-
-    fn backoff_lock_fast(
-        &self,
-        backoffer: &CopBackoffer,
-        max_sleep_ms: u64,
-        reason: String,
-    ) -> Result<(), tikv_client::Error> {
-        self.block_on(async {
-            backoffer
-                .lock()
-                .await
-                .backoff_with_max_sleep_txn_lock_fast(max_sleep_ms, reason)
-                .await
-                .map_err(tikv_client::Error::from)
-        })
-    }
+/// Go `buildCopTasks`' locations: the regions covering `ranges`, as task
+/// topology.
+fn locate<S: NativeCopStore + ?Sized>(
+    store: &S,
+    ranges: &[(Vec<u8>, Vec<u8>)],
+) -> Result<Vec<RegionTaskTopology>, tikv_client::Error> {
+    Ok(store.locate(ranges)?.iter().map(region_topology).collect())
 }
 
 /// Go `buildCopTasks`' view of one located region: its epoch, bounds and the
@@ -336,13 +154,13 @@ fn observation_time() -> Duration {
 }
 
 /// Go `copr.CopClient` over the node's client-rust store.
-pub struct NativeCopTransport<S> {
+pub struct NativeCopTransport<S: ?Sized> {
     store: Arc<S>,
     config: DirectUnaryRuntimeConfig,
     event_callback: Option<tidb_txnkv::EventCallback>,
 }
 
-impl<S: NativeCopStore> NativeCopTransport<S> {
+impl<S: NativeCopStore + ?Sized> NativeCopTransport<S> {
     /// A transport over `store` with `config`'s timeout, cache and paging
     /// policy.
     #[must_use]
@@ -355,7 +173,7 @@ impl<S: NativeCopStore> NativeCopTransport<S> {
     }
 }
 
-impl<S: NativeCopStore> QueryTransport for NativeCopTransport<S> {
+impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
     type Response = super::CopIterator<NativeCopResponse<S>>;
 
     fn set_event_callback(&mut self, callback: Option<tidb_txnkv::EventCallback>) {
@@ -396,10 +214,7 @@ impl<S: NativeCopStore> QueryTransport for NativeCopTransport<S> {
         CopPagingState::validate_read_request(&coordinator_metadata)
             .map_err(|e| format!("{e:?}"))?;
         let ranges = request_ranges(metadata)?;
-        let topology = self
-            .store
-            .locate(&ranges)
-            .map_err(|error| error.to_string())?;
+        let topology = locate(self.store.as_ref(), &ranges).map_err(|error| error.to_string())?;
         let cache = match self.config.shared_cache.clone() {
             Some(cache) => Some(cache),
             None => CoprCache::from_optional_config(self.config.cache.as_ref())
@@ -494,7 +309,7 @@ fn request_ranges(metadata: &crate::KvRequestMetadata) -> Result<Vec<(Vec<u8>, V
 }
 
 /// One coprocessor read's response owner (Go `copIterator`).
-pub struct NativeCopResponse<S> {
+pub struct NativeCopResponse<S: ?Sized> {
     store: Arc<S>,
     cluster_id: u64,
     trace: Option<tidb_txnkv::TraceInfo>,
@@ -516,7 +331,7 @@ pub struct NativeCopResponse<S> {
     snapshot_locks: Arc<std::sync::Mutex<SnapshotLockSet>>,
 }
 
-impl<S: NativeCopStore> NativeCopResponse<S> {
+impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
     fn fail(&mut self, message: String) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.closed = true;
         Err(QueryResponseError::Source(message))
@@ -644,7 +459,7 @@ impl<S: NativeCopStore> NativeCopResponse<S> {
             .into_iter()
             .map(|range| (Vec::from(range.start_key), Vec::from(range.end_key)))
             .collect();
-        let topology = self.store.locate(&ranges)?;
+        let topology = locate(self.store.as_ref(), &ranges)?;
         let replacement = self.runtime.rebuild_region_attempts(failed, &topology)?;
         if replacement.logical_task_ids.len() != replacement.active_attempt_ids.len()
             || replacement.logical_task_ids.first() != Some(&logical_task_id)
@@ -721,7 +536,7 @@ impl<S: NativeCopStore> NativeCopResponse<S> {
     }
 }
 
-impl<S: NativeCopStore> QueryResponse for NativeCopResponse<S> {
+impl<S: NativeCopStore + ?Sized> QueryResponse for NativeCopResponse<S> {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         loop {
             if self.closed {
@@ -777,7 +592,7 @@ impl<S: NativeCopStore> QueryResponse for NativeCopResponse<S> {
     }
 }
 
-impl<S: NativeCopStore> super::cop_iterator::CopTaskSource for NativeCopResponse<S> {
+impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopTaskSource for NativeCopResponse<S> {
     fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.next()
     }
@@ -799,7 +614,7 @@ impl<S: NativeCopStore> super::cop_iterator::CopTaskSource for NativeCopResponse
     fn set_waker(&mut self, _waker: std::task::Waker) {}
 }
 
-impl<S: NativeCopStore> super::cop_iterator::CopWorkerSource for NativeCopResponse<S> {
+impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for NativeCopResponse<S> {
     fn keep_order(&self) -> bool {
         self.metadata.keep_order
     }

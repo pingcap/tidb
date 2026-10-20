@@ -360,7 +360,8 @@ pub(crate) fn in_process_stack() -> Result<InProcessStack, SqlQueryError> {
         tikv_store.visibility(),
     )
     .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-    .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
+    .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol())
+    .with_cop_store(Arc::new(tikv_store.clone()));
     Ok(InProcessStack {
         read_authority,
         pd,
