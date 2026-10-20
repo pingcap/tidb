@@ -78,6 +78,10 @@ const (
 	TpWriteRuntimeStats
 	// TpJoinedRowsRuntimeStats is the type for join pairs before residual filtering.
 	TpJoinedRowsRuntimeStats
+	// TpMViewDeltaMergeAggRuntimeStats is the type for MV delta merge aggregation.
+	TpMViewDeltaMergeAggRuntimeStats
+	// TpMViewCompleteDeltaApplyRuntimeStats is the type for MV complete delta apply.
+	TpMViewCompleteDeltaApplyRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
