@@ -833,8 +833,9 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	// Create a smaller dataset to reduce test execution time
 	valsInsert := make([]string, 0, 50)
 	for i := 0; i < 50; i++ {
-		// Use deterministic values to reduce variability
-		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", i%10, i%8, i%15))
+		// Keep c unique so ORDER BY c LIMIT selects the same rows for both plans.
+		// Equal sort keys may otherwise return different, equally valid rows.
+		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", i%10, i%8, i))
 	}
 	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
 
