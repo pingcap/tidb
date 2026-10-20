@@ -68,6 +68,11 @@ const (
 	s3RoleARNOption       = "s3.role-arn"
 	s3ExternalIDOption    = "s3." + S3ExternalID
 	s3ProfileOption       = "s3.profile"
+
+	// SSE-KMS modes that accept an encryption context on AWS S3.
+	sseAWSKMS     = "aws:kms"
+	sseAWSKMSDSSE = "aws:kms:dsse"
+
 	// max number of retries when meets error
 	maxErrorRetries = 3
 	// the maximum number of byte to read for seek.
@@ -187,6 +192,13 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	if err != nil {
 		return err
 	}
+	// AWS rejects a context header unless the request explicitly selects
+	// SSE-KMS, even when the bucket default is SSE-KMS.
+	if encryptionContext != "" && (options.Provider == "" || options.Provider == "aws") &&
+		options.Sse != sseAWSKMS && options.Sse != sseAWSKMSDSSE {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig,
+			"sse-kms-context requires sse=%s or sse=%s", sseAWSKMS, sseAWSKMSDSSE)
+	}
 
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	s3.Region = options.Region
@@ -285,7 +297,7 @@ func DefineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3SseOption, "", "Set S3 server-side encryption, e.g. aws:kms")
 	flags.String(s3SseKmsKeyIDOption, "", "KMS CMK key id to use with S3 server-side encryption."+
 		"Leave empty to use S3 owned key.")
-	flags.String(s3SseKmsContextOption, "", "S3 SSE-KMS encryption context as a JSON object of string key-value pairs; BR encodes it as Base64")
+	flags.String(s3SseKmsContextOption, "", "S3 SSE-KMS encryption context as a JSON object of string key-value pairs; BR encodes it as Base64. On AWS S3, requires --s3.sse aws:kms or aws:kms:dsse")
 	flags.String(s3ACLOption, "", "(experimental) Set the S3 canned ACLs, e.g. authenticated-read")
 	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
 	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")

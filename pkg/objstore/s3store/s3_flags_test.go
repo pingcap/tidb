@@ -57,6 +57,7 @@ func TestS3SSEKMSContextFlags(t *testing.T) {
 			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
 			s3like.DefineS3Flags(flags)
 			require.NoError(t, flags.Set("s3.sse-kms-context", tc.input))
+			require.NoError(t, flags.Set("s3.sse", "aws:kms"))
 			var options s3like.S3BackendOptions
 			require.NoError(t, options.ParseFromFlags(flags))
 			backend := &backuppb.S3{}
@@ -70,21 +71,29 @@ func TestS3SSEKMSContextFlags(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(tc.normalized)), backend.GetSseKmsEncryptionContext())
-			// Context must not introduce requirements or defaults for existing options.
-			require.Empty(t, backend.Sse)
+			// Context must not introduce defaults for existing options.
+			require.Equal(t, "aws:kms", backend.Sse)
 			require.Empty(t, backend.SseKmsKeyId)
 			require.NoError(t, options.Apply(backend))
 			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(tc.normalized)), backend.GetSseKmsEncryptionContext())
 		})
 	}
 
-	for _, tc := range []struct{ sse, keyID, provider string }{
-		{"", "", ""},
-		{"", "test-key", "ceph"},
-		{"AES256", "", "ceph"},
-		{"AES256", "test-key", "aws"},
-		{"aws:kms", "", "aws"},
-		{"aws:kms", "test-key", ""},
+	// AWS rejects a context header without explicit SSE-KMS; other providers
+	// keep their own SSE semantics.
+	for _, tc := range []struct {
+		sse, keyID, provider string
+		invalid              bool
+	}{
+		{"", "", "", true},
+		{"", "test-key", "aws", true},
+		{"AES256", "", "", true},
+		{"AES256", "test-key", "aws", true},
+		{"", "test-key", "ceph", false},
+		{"AES256", "", "ceph", false},
+		{"aws:kms", "", "aws", false},
+		{"aws:kms", "test-key", "", false},
+		{"aws:kms:dsse", "test-key", "aws", false},
 	} {
 		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
 		s3like.DefineS3Flags(flags)
@@ -95,7 +104,14 @@ func TestS3SSEKMSContextFlags(t *testing.T) {
 		var options s3like.S3BackendOptions
 		require.NoError(t, options.ParseFromFlags(flags))
 		backend := &backuppb.S3{}
-		require.NoError(t, options.Apply(backend))
+		err := options.Apply(backend)
+		if tc.invalid {
+			require.True(t, berrors.ErrStorageInvalidConfig.Equal(err), "%+v", tc)
+			require.Contains(t, err.Error(), "sse-kms-context")
+			require.NotContains(t, err.Error(), "tenant-a")
+			continue
+		}
+		require.NoError(t, err, "%+v", tc)
 		require.Equal(t, tc.sse, backend.Sse)
 		require.Equal(t, tc.keyID, backend.SseKmsKeyId)
 		require.Equal(t, tc.provider, backend.Provider)

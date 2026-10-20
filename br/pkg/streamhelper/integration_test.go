@@ -151,7 +151,7 @@ func TestIntegration(t *testing.T) {
 			{name: "omitted"},
 			{
 				name:    "configured",
-				query:   "?sse-kms-context=%7B%22tenant%22%3A%22tenant-a%22%7D",
+				query:   "?sse=aws:kms&sse-kms-context=%7B%22tenant%22%3A%22tenant-a%22%7D",
 				encoded: "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9",
 			},
 		} {

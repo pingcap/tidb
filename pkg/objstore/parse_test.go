@@ -40,11 +40,11 @@ func TestS3SSEKMSContextURL(t *testing.T) {
 	for _, key := range []string{"sse-kms-context", "SSE_KMS_CONTEXT"} {
 		t.Run(key, func(t *testing.T) {
 			options := &BackendOptions{}
-			require.NoError(t, json.Unmarshal([]byte(`{"sse-kms-context":"{\"tenant\":\"from-options\"}"}`), &options.S3))
+			require.NoError(t, json.Unmarshal([]byte(`{"sse":"aws:kms","sse-kms-context":"{\"tenant\":\"from-options\"}"}`), &options.S3))
 			backend, err := ParseBackend("s3://bucket/prefix?"+key+"="+query, options)
 			require.NoError(t, err)
 			require.Equal(t, encoded, backend.GetS3().GetSseKmsEncryptionContext())
-			require.Empty(t, backend.GetS3().Sse)
+			require.Equal(t, "aws:kms", backend.GetS3().Sse)
 			require.Empty(t, backend.GetS3().SseKmsKeyId)
 
 			// Parsing a URL overrides options for this backend, without mutating them.
@@ -64,7 +64,7 @@ func TestS3SSEKMSContextURL(t *testing.T) {
 	}
 
 	// The encoded value survives snapshot request serialization.
-	backend, err := ParseBackend("s3://bucket/prefix?sse-kms-context="+query, nil)
+	backend, err := ParseBackend("s3://bucket/prefix?sse=aws:kms&sse-kms-context="+query, nil)
 	require.NoError(t, err)
 	request := &backuppb.BackupRequest{StorageBackend: backend}
 	data, err := request.Marshal()
