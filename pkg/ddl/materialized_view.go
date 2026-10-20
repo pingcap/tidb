@@ -240,24 +240,22 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
-	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
-		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTableName.Name, "BASE TABLE")
-	}
-	if baseTable.Meta().GetPartitionInfo() != nil {
-		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
-	}
-	baseTableID := baseTable.Meta().ID
-
-	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
-	mlogTable, err := is.TableByName(e.ctx, baseTableName.Schema, mlogName)
-	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return errors.Errorf("materialized view log does not exist for base table %s.%s", baseTableName.Schema.O, baseTableName.Name.O)
-		}
+	baseTableInfo := baseTable.Meta()
+	if err := validateMaterializedViewSourceState(schemaName.O, baseTableInfo); err != nil {
 		return err
 	}
-	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
-		return errors.Errorf("table %s.%s is not a materialized view log for base table %s.%s", baseTableName.Schema.O, mlogName.O, baseTableName.Schema.O, baseTableName.Name.O)
+	baseTableID := baseTableInfo.ID
+
+	if baseTableInfo.MaterializedViewBase == nil || baseTableInfo.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for source object %s.%s", baseTableName.Schema.O, baseTableName.Name.O)
+	}
+	mlogTable, ok := is.TableByID(e.ctx, baseTableInfo.MaterializedViewBase.MLogID)
+	if !ok {
+		return errors.Errorf("materialized view log id %d does not exist for source object %s.%s", baseTableInfo.MaterializedViewBase.MLogID, baseTableName.Schema.O, baseTableName.Name.O)
+	}
+	mlogTableInfo := mlogTable.Meta()
+	if err := validateMaterializedViewSourceMLog(schemaName.O, baseTableInfo, mlogTableInfo); err != nil {
+		return err
 	}
 
 	// Validate Stage-1 query contract and ensure MV LOG columns cover query references.
@@ -265,7 +263,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		ctx,
 		baseTableName,
 		baseTable.Meta(),
-		mlogTable.Meta().MaterializedViewLog.Columns,
+		mlogTableInfo.MaterializedViewLog.Columns,
 		s.Select,
 	)
 	if err != nil {
@@ -400,8 +398,8 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	// CREATE MATERIALIZED VIEW is submitted as reorg DDL: create table first, then initial build in reorg phase.
 	involvingSchemas := []model.InvolvingSchemaInfo{
 		{Database: schema.Name.L, Table: mvTableInfo.Name.L},
-		{Database: schema.Name.L, Table: baseTable.Meta().Name.L},
-		{Database: schema.Name.L, Table: mlogTable.Meta().Name.L},
+		{Database: schema.Name.L, Table: baseTableInfo.Name.L},
+		{Database: schema.Name.L, Table: mlogTableInfo.Name.L},
 	}
 	job := &model.Job{
 		Version:             model.GetJobVerInUse(),
@@ -422,7 +420,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	AddMViewExecutionSessionVarsToJob(job, ctx.GetSessionVars())
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
-		MLogTableIDs: []int64{mlogTable.Meta().ID},
+		MLogTableIDs: []int64{mlogTableInfo.ID},
 	}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
 		return errors.Trace(err)
@@ -1962,6 +1960,55 @@ func removeMaterializedViewID(ids []int64, mviewID int64) ([]int64, bool) {
 		filtered = append(filtered, id)
 	}
 	return filtered, removed
+}
+
+// validateMaterializedViewSourceState validates the object that a materialized view definition
+// reads. A source is a public physical table or a ready materialized view; protected MV auxiliary
+// tables and SQL views are never valid sources.
+func validateMaterializedViewSourceState(schemaName string, source *model.TableInfo) error {
+	if source == nil {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: source object is nil")
+	}
+	if source.IsView() ||
+		source.IsSequence() ||
+		source.TempTableType != model.TempTableNone ||
+		source.MaterializedViewShadow != nil ||
+		source.MaterializedViewLog != nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, source.Name, "BASE TABLE")
+	}
+	if source.State != model.StatePublic {
+		return dbterror.ErrInvalidDDLState.GenWithStack("source object %s is not in public, but %s", source.Name, source.State)
+	}
+	if source.GetPartitionInfo() != nil {
+		return errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
+	}
+	if source.MaterializedView != nil && !source.MaterializedView.GetInitBuildState().IsReady() {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(source.MaterializedView.GetInitBuildState().AccessErrorMessage(schemaName + "." + source.Name.O))
+	}
+	return nil
+}
+
+func validateMaterializedViewSourceMLog(schemaName string, source, mlog *model.TableInfo) error {
+	if source == nil {
+		return errors.Errorf("materialized view log does not exist for source object %s", schemaName)
+	}
+	if source.MaterializedViewBase == nil || source.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for source object %s.%s", schemaName, source.Name.O)
+	}
+	if mlog == nil ||
+		mlog.ID != source.MaterializedViewBase.MLogID ||
+		mlog.MaterializedViewLog == nil ||
+		mlog.MaterializedViewLog.BaseTableID != source.ID {
+		mlogName := ""
+		if mlog != nil {
+			mlogName = mlog.Name.O
+		}
+		return errors.Errorf("table %s is not a materialized view log for source object %s.%s", mlogName, schemaName, source.Name.O)
+	}
+	if mlog.State != model.StatePublic {
+		return dbterror.ErrInvalidDDLState.GenWithStack("materialized view log %s is not in public, but %s", mlog.Name, mlog.State)
+	}
+	return nil
 }
 
 func errDropMaterializedViewLogDependent(schemaName, baseTableName string) error {
