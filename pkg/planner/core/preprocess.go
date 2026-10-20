@@ -70,6 +70,11 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
+// InImportInto is a PreprocessOpt that indicates the node is part of an IMPORT INTO statement.
+func InImportInto(p *preprocessor) {
+	p.flag |= inImportInto
+}
+
 // InitTxnContextProvider is a PreprocessOpt that indicates preprocess should init transaction's context
 func InitTxnContextProvider(p *preprocessor) {
 	p.flag |= initTxnContextProvider
