@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -92,28 +93,38 @@ func TestAffinityGroupIDIncludesKeyspaceInNextGen(t *testing.T) {
 	require.NoError(t, err)
 
 	if kerneltype.IsNextGen() {
-		for _, invalidCodec := range []tikv.Codec{
-			nil,
-			tikv.NewCodecV1(tikv.ModeTxn),
-			affinityTestCodec{Codec: codec},
-			affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{}},
-			affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 16777216}}, id: 16777216},
-			affinityTestCodec{Codec: codec, meta: codec.GetKeyspaceMeta(), id: 43},
+		unsetCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
+		require.NoError(t, err)
+		require.Zero(t, unsetCodec.GetKeyspaceID(), "client-go treats an unset identity as zero")
+		for _, tc := range []struct {
+			name  string
+			codec tikv.Codec
+		}{
+			{"nil", nil},
+			{"APIv1", tikv.NewCodecV1(tikv.ModeTxn)},
+			{"missing metadata", affinityTestCodec{Codec: codec}},
+			{"unset identity", unsetCodec},
+			{"APIv3 identity", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_KeyspaceIdentity{}}}},
+			{"out of range", affinityTestCodec{Codec: codec, meta: &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 16777216}}, id: 16777216}},
+			{"mismatched ID", affinityTestCodec{Codec: codec, meta: codec.GetKeyspaceMeta(), id: 43}},
 		} {
-			id, err := ddl.GetTableAffinityGroupID(invalidCodec, 123)
-			require.ErrorContains(t, err, "affinity requires a valid APIv2 keyspace codec in NextGen")
-			require.Empty(t, id)
-			id, err = ddl.GetPartitionAffinityGroupID(invalidCodec, 123, 456)
-			require.ErrorContains(t, err, "affinity requires a valid APIv2 keyspace codec in NextGen")
-			require.Empty(t, id)
-			for _, level := range []string{ast.TableAffinityLevelTable, ast.TableAffinityLevelPartition} {
-				groups, err := ddl.BuildAffinityGroupDefinitionsForTest(invalidCodec, &model.TableInfo{
-					ID: 123, Affinity: &model.TableAffinityInfo{Level: level},
-					Partition: &model.PartitionInfo{Enable: true, Definitions: []model.PartitionDefinition{{ID: 456}}},
-				}, nil)
+			t.Run(tc.name, func(t *testing.T) {
+				invalidCodec := tc.codec
+				id, err := ddl.GetTableAffinityGroupID(invalidCodec, 123)
 				require.ErrorContains(t, err, "affinity requires a valid APIv2 keyspace codec in NextGen")
-				require.Empty(t, groups)
-			}
+				require.Empty(t, id)
+				id, err = ddl.GetPartitionAffinityGroupID(invalidCodec, 123, 456)
+				require.ErrorContains(t, err, "affinity requires a valid APIv2 keyspace codec in NextGen")
+				require.Empty(t, id)
+				for _, level := range []string{ast.TableAffinityLevelTable, ast.TableAffinityLevelPartition} {
+					groups, err := ddl.BuildAffinityGroupDefinitionsForTest(invalidCodec, &model.TableInfo{
+						ID: 123, Affinity: &model.TableAffinityInfo{Level: level},
+						Partition: &model.PartitionInfo{Enable: true, Definitions: []model.PartitionDefinition{{ID: 456}}},
+					}, nil)
+					require.ErrorContains(t, err, "affinity requires a valid APIv2 keyspace codec in NextGen")
+					require.Empty(t, groups)
+				}
+			})
 		}
 	}
 	zeroCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
@@ -442,6 +453,62 @@ func mustTableAffinityGroupID(t *testing.T, codec tikv.Codec, tableID int64) str
 	id, err := ddl.GetTableAffinityGroupID(codec, tableID)
 	require.NoError(t, err)
 	return id
+}
+
+func TestAffinityInvalidCodecDDL(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("codec validation is specific to NextGen")
+	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int) affinity='table'")
+	tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("create table plain(a int)")
+	tk.MustExec("create table plain_p(a int) partition by hash(a) partitions 2")
+	for _, name := range []string{"t", "p", "plain", "plain_p"} {
+		tk.MustExec("insert into " + name + " values (1),(2),(11),(12)")
+	}
+	const codecFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockAffinityCodec"
+	testfailpoint.EnableCall(t, codecFailpoint, func(codec *tikv.Codec) { *codec = nil })
+	for _, query := range []string{
+		"create table c(a int) affinity='table'",
+		"create table cp(a int) affinity='partition' partition by hash(a) partitions 2",
+	} {
+		t.Run(query, func(t *testing.T) {
+			require.ErrorContains(t, tk.ExecToErr(query), "affinity requires a valid APIv2 keyspace codec in NextGen")
+		})
+	}
+	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("c")))
+	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("cp")))
+	for _, tc := range []struct{ name, query string }{
+		{"plain", "alter table plain affinity='table'"},
+		{"plain_p", "alter table plain_p affinity='partition'"},
+		{"t", "truncate table t"},
+		{"p", "truncate table p"},
+		{"p", "alter table p truncate partition p0"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			before, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tc.name))
+			require.NoError(t, err)
+			beforeMeta := before.Meta().Clone()
+			require.ErrorContains(t, tk.ExecToErr(tc.query), "affinity requires a valid APIv2 keyspace codec in NextGen")
+			after, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tc.name))
+			require.NoError(t, err)
+			require.Equal(t, beforeMeta, after.Meta().Clone())
+			tk.MustQuery("select * from " + tc.name + " order by a").Check(testkit.Rows("1", "2", "11", "12"))
+		})
+	}
+	// Affinity cleanup is best effort: an invalid codec must not block DROP.
+	tk.MustExec("drop table t, p")
+	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("t")))
+	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("p")))
+	testfailpoint.Disable(t, codecFailpoint)
+	tk.MustExec("create database affinity_drop")
+	tk.MustExec("create table affinity_drop.t(a int) affinity='table'")
+	testfailpoint.EnableCall(t, codecFailpoint, func(codec *tikv.Codec) { *codec = nil })
+	tk.MustExec("drop database affinity_drop")
+	require.False(t, dom.InfoSchema().SchemaExists(ast.NewCIStr("affinity_drop")))
 }
 
 func mustPartitionAffinityGroupID(t *testing.T, codec tikv.Codec, tableID, partitionID int64) string {
