@@ -126,3 +126,52 @@ func TestMViewDeltaMergeSnapshotSelection(t *testing.T) {
 		require.Equal(t, uint64(303), ts)
 	})
 }
+
+func TestMViewCompleteDeltaApplySnapshotSelection(t *testing.T) {
+	readSnapshot := &mviewSnapshotProbe{}
+	forUpdateSnapshot := &mviewSnapshotProbe{}
+	originalGetTxnManager := sessiontxn.GetTxnManager
+	sessiontxn.GetTxnManager = func(sessionctx.Context) sessiontxn.TxnManager {
+		return lockCtxTxnManager{
+			readTS: 101, forUpdateTS: 202,
+			readSnapshot: readSnapshot, forUpdateSnapshot: forUpdateSnapshot,
+		}
+	}
+	t.Cleanup(func() { sessiontxn.GetTxnManager = originalGetTxnManager })
+
+	for _, tc := range []struct {
+		name     string
+		builder  executorBuilder
+		ts       uint64
+		snapshot kv.Snapshot
+	}{
+		{name: "read", ts: 101, snapshot: readSnapshot},
+		{name: "update", builder: executorBuilder{inUpdateStmt: true}, ts: 202, snapshot: forUpdateSnapshot},
+		{name: "complete_delta_apply", builder: executorBuilder{inMViewCompleteDeltaApplyStmt: true}, ts: 202, snapshot: forUpdateSnapshot},
+	} {
+		b := tc.builder
+		b.sctx = mock.NewContext()
+		t.Run(tc.name+"/timestamp", func(t *testing.T) {
+			ts, err := b.getSnapshotTS()
+			require.NoError(t, err)
+			require.Equal(t, tc.ts, ts)
+		})
+		t.Run(tc.name+"/snapshot", func(t *testing.T) {
+			snapshot, err := b.getSnapshot()
+			require.NoError(t, err)
+			require.Same(t, tc.snapshot, snapshot)
+		})
+	}
+
+	t.Run("explicit_snapshot", func(t *testing.T) {
+		b := executorBuilder{
+			sctx:                          mock.NewContext(),
+			inMViewCompleteDeltaApplyStmt: true,
+			forDataReaderBuilder:          true,
+			dataReaderTS:                  303,
+		}
+		ts, err := b.getSnapshotTS()
+		require.NoError(t, err)
+		require.Equal(t, uint64(303), ts)
+	})
+}
