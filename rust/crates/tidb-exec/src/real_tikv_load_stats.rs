@@ -27,9 +27,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tidb_executor::load_stats::JsonTable;
-use tidb_txnkv::transaction::{
-    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
 
 use crate::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use crate::cluster_load_stats::{
@@ -102,8 +100,8 @@ impl std::error::Error for ClusterLoadStatsCommitError {}
 /// enforce=false)` cache gate for column/index transactions. Final meta uses
 /// `enforce=true` and therefore does not consult it. History failures remain
 /// nonfatal, exactly as the Go handle logs and ignores them.
-pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn commit_cluster_load_stats<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     json: &JsonTable,
     timeout: Duration,
     historical_stats_enabled: bool,
@@ -149,8 +147,8 @@ pub fn commit_cluster_load_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
 /// `DeleteTableStatsFromKV(statsIDs, soft = true)` in one wrapped transaction,
 /// whose start timestamp is the new version of every re-versioned meta and
 /// histogram row.
-pub fn commit_cluster_drop_stats<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn commit_cluster_drop_stats<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     physical_ids: &[i64],
     timeout: Duration,
 ) -> Result<(), ClusterLoadStatsCommitError> {
@@ -164,8 +162,8 @@ pub fn commit_cluster_drop_stats<C: StoreWriteClient, L: StoreWriteLoader, P: St
     .map_err(pessimistic_error)
 }
 
-fn commit_loaded_table<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_loaded_table<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
@@ -277,8 +275,8 @@ fn panic_text(panic: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-fn resolve_tables<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn resolve_tables<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     json: &JsonTable,
     timeout: Duration,
 ) -> Result<(ResolvedClusterLoadStats, ClusterCatalog), ClusterLoadStatsCommitError> {
@@ -295,8 +293,8 @@ fn resolve_tables<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability
     Ok((tables, catalog))
 }
 
-fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_item<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     item: &ClusterStatsItem,
@@ -336,8 +334,8 @@ fn commit_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
     Ok(version)
 }
 
-fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_usage<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
@@ -374,8 +372,8 @@ fn commit_usage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         .map_err(commit_error)
 }
 
-fn commit_final_meta<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_final_meta<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
@@ -398,8 +396,8 @@ fn commit_final_meta<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabil
     .map_err(pessimistic_error)
 }
 
-fn record_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn record_history<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     table_id: i64,
     version: u64,
     timeout: Duration,

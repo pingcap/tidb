@@ -47,14 +47,13 @@ use tidb_meta::MetaError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     BufferMutation, OptimisticCommitOutcome, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
+    RealOptimisticTransactionOpener, StoreClient, StorePdCapability,
 };
 use tidb_txnkv::{NewTxnError, NewTxnStorage, NewTxnTransaction, OptionKey, TxnOptionValue};
 
 use crate::cluster_catalog::prefix_scan_end;
 
-type LiveTransaction<C, L, P> =
-    RealOptimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>;
+type LiveTransaction<S> = RealOptimisticTransaction<S>;
 
 /// Why an attempt failed, carrying Go's retry classification.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,9 +103,9 @@ impl From<MetaError> for MetaTxnError {
 }
 
 /// One live TiKV transaction with Go's memory-buffer semantics.
-pub struct MetaTxn<C, L, P: StorePdCapability> {
+pub struct MetaTxn<S: StoreClient> {
     /// Taken by commit or rollback, which consume the live transaction.
-    transaction: Option<LiveTransaction<C, L, P>>,
+    transaction: Option<LiveTransaction<S>>,
     /// Go's memory buffer: `Some` is a set, `None` a delete.
     writes: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     start_ts: u64,
@@ -118,13 +117,11 @@ pub struct MetaTxn<C, L, P: StorePdCapability> {
     configured_for_meta: bool,
 }
 
-impl<C, L, P> MetaTxn<C, L, P>
+impl<S> MetaTxn<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
-    fn new(transaction: LiveTransaction<C, L, P>, timeout: Duration) -> Self {
+    fn new(transaction: LiveTransaction<S>, timeout: Duration) -> Self {
         let start_ts = transaction.start_ts();
         Self {
             transaction: Some(transaction),
@@ -141,7 +138,7 @@ where
         self.configured_for_meta
     }
 
-    fn live(&mut self) -> Result<&mut LiveTransaction<C, L, P>, MetaError> {
+    fn live(&mut self) -> Result<&mut LiveTransaction<S>, MetaError> {
         self.transaction
             .as_mut()
             .ok_or_else(|| MetaError::Storage("the transaction has already finished".to_owned()))
@@ -178,11 +175,9 @@ where
     }
 }
 
-impl<C, L, P> RawTransaction for MetaTxn<C, L, P>
+impl<S> RawTransaction for MetaTxn<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn start_ts(&self) -> u64 {
         self.start_ts
@@ -237,11 +232,9 @@ where
     }
 }
 
-impl<C, L, P> tidb_txnkv::TxnResourceGroup for MetaTxn<C, L, P>
+impl<S> tidb_txnkv::TxnResourceGroup for MetaTxn<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn set_resource_group_name(&mut self, name: &str) {
         if let Some(transaction) = self.transaction.as_mut() {
@@ -250,11 +243,9 @@ where
     }
 }
 
-impl<C, L, P> NewTxnTransaction for MetaTxn<C, L, P>
+impl<S> NewTxnTransaction for MetaTxn<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     type Error = MetaTxnError;
 
@@ -326,28 +317,27 @@ where
 
 /// Go `kv.Storage.Begin` for [`tidb_txnkv::run_in_new_txn`]: one fresh live
 /// transaction per attempt.
-pub struct MetaTxnStorage<'opener, C, L, P> {
-    opener: &'opener RealOptimisticTransactionOpener<C, L, P>,
+pub struct MetaTxnStorage<'opener, S: StoreClient, P> {
+    opener: &'opener RealOptimisticTransactionOpener<S, P>,
     timeout: Duration,
 }
 
-impl<'opener, C, L, P> MetaTxnStorage<'opener, C, L, P> {
+impl<'opener, S: StoreClient, P> MetaTxnStorage<'opener, S, P> {
     /// Binds the opener and the per-request deadline each attempt stamps.
-    pub fn new(opener: &'opener RealOptimisticTransactionOpener<C, L, P>, timeout: Duration) -> Self {
+    pub fn new(opener: &'opener RealOptimisticTransactionOpener<S, P>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<C, L, P> NewTxnStorage for MetaTxnStorage<'_, C, L, P>
+impl<S, P> NewTxnStorage for MetaTxnStorage<'_, S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    type Transaction = MetaTxn<C, L, P>;
+    type Transaction = MetaTxn<S>;
     type Error = MetaTxnError;
 
-    fn begin(&mut self) -> Result<MetaTxn<C, L, P>, MetaTxnError> {
+    fn begin(&mut self) -> Result<MetaTxn<S>, MetaTxnError> {
         self.opener
             .begin()
             .map(|transaction| MetaTxn::new(transaction, self.timeout))

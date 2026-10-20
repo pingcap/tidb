@@ -26,29 +26,26 @@ use std::time::Duration;
 
 use tidb_exec::meta_txn::{MetaTxnError, MetaTxnStorage};
 use tidb_meta::transaction::Mutator;
-use tidb_txnkv::transaction::{
-    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
 use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 
-pub(super) struct ClusterBdrRoleStore<C, L, P: StorePdCapability> {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub(super) struct ClusterBdrRoleStore<S: StoreClient, P: StorePdCapability> {
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
 }
 
-impl<C, L, P: StorePdCapability> ClusterBdrRoleStore<C, L, P> {
+impl<S: StoreClient, P: StorePdCapability> ClusterBdrRoleStore<S, P> {
     pub(super) fn new(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         timeout: Duration,
     ) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<C, L, P> tidb_session::BdrRoleStore for ClusterBdrRoleStore<C, L, P>
+impl<S, P> tidb_session::BdrRoleStore for ClusterBdrRoleStore<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn get(&self) -> Result<String, String> {

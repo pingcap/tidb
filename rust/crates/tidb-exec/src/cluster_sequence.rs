@@ -44,27 +44,23 @@ use tidb_executor::sequence::{
 use tidb_meta::structure::encode_hash_data_key;
 use tidb_meta::{key, value};
 use tidb_pd_client::PdClient;
-use tidb_txnkv::pd_capability::CapabilityTimestampSource;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     BufferMutation, OptimisticCommitOutcome, RealOptimisticTransaction,
     RealOptimisticTransactionOpener,
 };
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use crate::cluster_auto_id::MAX_RESERVE_RETRIES;
 use crate::cluster_catalog::MetaSnapshot;
 
 /// One sequence's shared counter over the cluster meta keys.
-pub struct ClusterSequenceCounter<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct ClusterSequenceCounter<S = tikv_client::PdRpcClient, P = PdClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: RealOptimisticTransactionOpener<C, L, P>,
+    opener: RealOptimisticTransactionOpener<S, P>,
     /// Go's `SEV:<tableID>` field under the database hash key: the batch end.
     value_key: Vec<u8>,
     /// Go's `SEC:<tableID>` field under the same hash key; written only when
@@ -75,12 +71,11 @@ where
 
 /// The concrete transaction type [`RealOptimisticTransactionOpener::begin`]
 /// hands back.
-type CounterTransaction<C, L, P> = RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>;
+type CounterTransaction<S> = RealOptimisticTransaction<S>;
 
-impl<C, L, P> std::fmt::Debug for ClusterSequenceCounter<C, L, P>
+impl<S, P> std::fmt::Debug for ClusterSequenceCounter<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -91,16 +86,15 @@ where
     }
 }
 
-impl<C, L, P> ClusterSequenceCounter<C, L, P>
+impl<S, P> ClusterSequenceCounter<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// The counter for sequence `table_id` stored in database `db_id`.
     #[must_use]
     pub fn new(
-        opener: RealOptimisticTransactionOpener<C, L, P>,
+        opener: RealOptimisticTransactionOpener<S, P>,
         db_id: i64,
         table_id: i64,
         timeout: Duration,
@@ -124,7 +118,7 @@ where
 
     /// Reads both fields at one snapshot. Go `HGetInt64`: a missing field is
     /// zero.
-    fn read(&self, transaction: &mut CounterTransaction<C, L, P>) -> Result<(i64, i64), String> {
+    fn read(&self, transaction: &mut CounterTransaction<S>) -> Result<(i64, i64), String> {
         let mut snapshot =
             crate::real_tikv_catalog::TransactionMetaSnapshot::new(transaction, self.timeout);
         let stored = snapshot.get(&self.value_key).map_err(|e| e.to_string())?;
@@ -141,7 +135,7 @@ where
     fn commit_end_and_round(
         &self,
         call: UnaryCallContext,
-        transaction: CounterTransaction<C, L, P>,
+        transaction: CounterTransaction<S>,
         new_end: i64,
         round: i64,
         round_changed: bool,
@@ -181,10 +175,9 @@ enum CommitFailure {
     Failed(String),
 }
 
-impl<C, L, P> SequenceCounter for ClusterSequenceCounter<C, L, P>
+impl<S, P> SequenceCounter for ClusterSequenceCounter<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn alloc_seq_cache(&self, info: &SequenceInfo) -> Result<(i64, i64, i64), SequenceError> {

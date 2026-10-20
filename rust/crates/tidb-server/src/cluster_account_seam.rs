@@ -58,9 +58,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tidb_pd_client::PdClient;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use tidb_exec::cluster_account_write::{
     plan_account_write, plan_account_write_with_hints, AccountWriteError, AccountWriteHints,
@@ -82,8 +80,8 @@ use crate::sql_node::{cluster_commit_error, SqlQueryError};
 /// Reserves `count` `_tidb_rowid`s of a `mysql.*` table in their own
 /// transaction (Go's autoid allocator, `RunInNewTxn`), never below
 /// `minimum`, answering the first. Shared by every system-table writer.
-pub(crate) fn reserve_system_row_ids<C, L, P>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub(crate) fn reserve_system_row_ids<S, P>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     timeout: Duration,
     db: i64,
     table: &tidb_model::TableInfo,
@@ -91,16 +89,15 @@ pub(crate) fn reserve_system_row_ids<C, L, P>(
     count: usize,
 ) -> Result<i64, String>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     reserve_account_ids(opener, timeout, db, table, minimum, count)
         .map_err(|error| error.to_string())
 }
 
-fn reserve_account_ids<C, L, P>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn reserve_account_ids<S, P>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     timeout: Duration,
     db: i64,
     table: &tidb_model::TableInfo,
@@ -108,8 +105,7 @@ fn reserve_account_ids<C, L, P>(
     count: usize,
 ) -> Result<i64, AccountWriteError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let store = ClusterAutoIdStore::new(opener.clone(), db, table, timeout);
@@ -172,13 +168,12 @@ pub trait PendingAccountChange {
 
 /// The production account writer: one real transaction per statement, the
 /// optimistic 2PC, then the live table and the etcd announcement.
-pub struct RealClusterAccountWriter<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct RealClusterAccountWriter<S = tikv_client::PdRpcClient, P = PdClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     /// The node's LIVE account table -- the one every session, the login path
     /// and `SHOW GRANTS` already hold a clone of. Published into only after a
     /// commit.
@@ -190,17 +185,16 @@ where
     notifier: Option<Arc<EtcdClient>>,
 }
 
-impl<C, L, P> RealClusterAccountWriter<C, L, P>
+impl<S, P> RealClusterAccountWriter<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// Binds the writer to an already-connected authority and the live
     /// account table a successful change publishes into.
     #[must_use]
     pub fn new(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         live: PrivilegeRegistry,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -214,10 +208,9 @@ where
     }
 }
 
-impl<C, L, P> ClusterAccountWriter for RealClusterAccountWriter<C, L, P>
+impl<S, P> ClusterAccountWriter for RealClusterAccountWriter<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn notify_login_lock_change(&self, user: &str, host: &str) {
@@ -267,17 +260,14 @@ where
     }
 }
 
-struct RealPendingAccountChange<C, L, P>
+struct RealPendingAccountChange<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     /// `None` only after [`PendingAccountChange::commit`] has taken it.
-    transaction: Option<
-        RealOptimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
-    >,
+    transaction: Option<RealOptimisticTransaction<S>>,
     catalog: ClusterCatalog,
     scratch: PrivilegeRegistry,
     live: PrivilegeRegistry,
@@ -286,10 +276,9 @@ where
     hints: AccountWriteHints,
 }
 
-impl<C, L, P> PendingAccountChange for RealPendingAccountChange<C, L, P>
+impl<S, P> PendingAccountChange for RealPendingAccountChange<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn registry(&self) -> PrivilegeRegistry {
@@ -391,14 +380,13 @@ pub fn notify_privilege_update(notifier: Option<&EtcdClient>, changed: &[String]
 /// where the node's own `--auth-file` defines it over a store that starts
 /// empty each boot (`--store unistore`). A node joining a populated cluster
 /// must not call this: it would delete accounts it never knew about.
-pub fn seed_cluster_accounts<C, L, P>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn seed_cluster_accounts<S, P>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     live: &PrivilegeRegistry,
     timeout: Duration,
 ) -> Result<Vec<String>, SqlQueryError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let mut transaction = opener

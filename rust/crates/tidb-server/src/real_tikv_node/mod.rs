@@ -36,7 +36,7 @@ use tidb_exec::stats_watch::{
 use tidb_pd_client::{
     EtcdClient, EtcdWatcher, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
 };
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use crate::cluster_privileges::PrivilegeReloader;
 use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
@@ -195,13 +195,12 @@ fn load_cluster_sysvars_with_read(
     Ok(())
 }
 
-pub(crate) fn load_cluster_startup_variables<C, L, P>(
+pub(crate) fn load_cluster_startup_variables<S, P>(
     users: &ConfiguredUserStore,
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    opener: &RealOptimisticTransactionOpener<S, P>,
 ) -> Result<(), RunConfiguredNodeError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let variables = tidb_exec::real_tikv_privileges::load_startup_variables_from_cluster(

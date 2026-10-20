@@ -23,138 +23,82 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tidb_pd_client::PdClient;
+use tikv_client::PdRpcClient;
 
-use crate::gc_state::StoreVisibility;
+use crate::driver::tikv_store::TikvStore;
 use crate::lock::TimestampSource;
-use crate::rpc::TonicCoprocessorClient;
-use crate::{PdRegionLoader, SharedReadOpener, SharedReadRuntime};
 
 use super::{CommitProtocol, OptimisticCoordinatorError, RealOptimisticTransaction};
 
-/// Process-level opener for concrete normal optimistic transactions.
+/// Process-level opener for TiDB transactions: Go `tikvStore.Begin`.
 ///
-/// It holds only a cloneable session opener and the cloneable capability for
-/// the already-running PD worker. The unique RegionCache maintenance and TiKV
-/// transport lifecycle owners remain with the process that supplied them.
-pub struct RealOptimisticTransactionOpener<
-    C = TonicCoprocessorClient,
-    L = PdRegionLoader,
-    P = PdClient,
-> {
-    opener: crate::SharedReadOpener<C, L>,
+/// It holds the node's client-rust store -- whose region cache, sender, lock
+/// resolver, oracle and txn safe point every transaction it opens shares --
+/// and the cloneable capability for the already-running PD client.
+pub struct RealOptimisticTransactionOpener<S: tikv_client::PdClient = PdRpcClient, P = PdClient> {
+    store: TikvStore<S>,
     pd: P,
     timeout: Duration,
-    /// client-go `KVStore.CheckVisibility`, answered by the node's store,
-    /// which keeps its txn safe point current for as long as any clone of
-    /// this opener -- and so any transaction it opened -- can still read.
-    visibility: StoreVisibility,
     protocol: CommitProtocol,
     /// Resource group every transaction and direct MaxTS snapshot opened
     /// through this capability attaches to its TiKV request contexts.
     resource_group_name: Option<Arc<str>>,
-    /// The node's client-rust store as the coprocessor reads through it
-    /// (Go's copr over the `KVStore`), for the reads this opener's users
-    /// issue themselves -- ANALYZE's sampling.
-    cop_store: Option<Arc<dyn crate::driver::cop_store::NativeCopStore>>,
+    /// The same store as the coprocessor reads through it (Go's copr over
+    /// the `KVStore`), for the reads this opener's users issue themselves --
+    /// ANALYZE's sampling.
+    cop_store: Arc<dyn crate::driver::cop_store::NativeCopStore>,
 }
 
-impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
+impl<S: tikv_client::PdClient, P: Clone> Clone for RealOptimisticTransactionOpener<S, P> {
     fn clone(&self) -> Self {
         Self {
-            opener: self.opener.clone(),
+            store: self.store.clone(),
             pd: self.pd.clone(),
             timeout: self.timeout,
-            visibility: Arc::clone(&self.visibility),
             protocol: self.protocol,
             resource_group_name: self.resource_group_name.clone(),
-            cop_store: self.cop_store.clone(),
+            cop_store: Arc::clone(&self.cop_store),
         }
     }
 }
 
-impl<C, L, P> RealOptimisticTransactionOpener<C, L, P> {
-    /// The node's store for coprocessor reads, when the node has one.
+impl<S: tikv_client::PdClient, P> RealOptimisticTransactionOpener<S, P> {
+    /// The node's store for coprocessor reads.
     #[must_use]
     pub fn cop_store(&self) -> Option<&Arc<dyn crate::driver::cop_store::NativeCopStore>> {
-        self.cop_store.as_ref()
+        Some(&self.cop_store)
+    }
+
+    /// The node's client-rust store (Go `tikvStore`'s `*tikv.KVStore`).
+    #[must_use]
+    pub fn store(&self) -> &TikvStore<S> {
+        &self.store
     }
 }
 
 impl RealOptimisticTransactionOpener {
-    /// Derives transaction-opening capability from the already-running shared
-    /// read authority. This starts no PD, RegionCache, or transport worker;
-    /// the txn safe point comes from the node's store (`visibility`), which
-    /// client-go loads inside `NewKVStore`.
+    /// The production opener over the node's store and its PD client.
     pub fn from_process_capabilities(
-        opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
+        store: TikvStore,
         pd: PdClient,
         timeout: Duration,
-        visibility: StoreVisibility,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        if pd.cluster_id() == 0 {
-            return Err(OptimisticCoordinatorError::ZeroClusterId);
-        }
-        Ok(Self {
-            opener,
-            pd,
-            timeout,
-            visibility,
-            protocol: CommitProtocol::two_phase_only(),
-            resource_group_name: None,
-            cop_store: None,
-        })
+        Self::from_capabilities(store, pd, timeout)
     }
 }
 
-/// Everything the write path demands of a store client, under one name.
-///
-/// Go's `kv.Storage` is one interface and every layer above it is
-/// store-agnostic; these three aliases are that interface's client half,
-/// so a helper generic over a store writes one bound instead of restating
-/// the five-trait bundle. Blanket-implemented: any type with the parts IS one.
-pub trait StoreWriteClient:
-    Clone
-    + crate::transaction::TransactionCommandClient
-    + crate::lock::LockRecoveryClient
-    + crate::LockWaitInfoClient
-    + Send
-    + Sync
-    + 'static
-{
-}
-impl<T> StoreWriteClient for T where
-    T: Clone
-        + crate::transaction::TransactionCommandClient
-        + crate::lock::LockRecoveryClient
-        + crate::LockWaitInfoClient
-        + Send
-        + Sync
-        + 'static
-{
-}
+/// The store a transaction opener runs on, under one name: any client-rust
+/// PD client (a TiKV cluster's, or the embedded store's).
+pub trait StoreClient: tikv_client::PdClient {}
+impl<T: tikv_client::PdClient> StoreClient for T {}
 
-/// The region-routing half of a store, under one name (see [`StoreWriteClient`]).
-pub trait StoreWriteLoader:
-    crate::region::RegionRecoveryLoader + crate::region::RegionQueryLoader + Send + Sync + 'static
-{
-}
-impl<T> StoreWriteLoader for T where
-    T: crate::region::RegionRecoveryLoader
-        + crate::region::RegionQueryLoader
-        + Send
-        + Sync
-        + 'static
-{
-}
-
-/// The control-plane half of a store, under one name (see [`StoreWriteClient`]).
+/// The control-plane half of a store, under one name.
 pub trait StorePdCapability: crate::pd_capability::PdCapability + Send + Sync + 'static {}
 impl<T> StorePdCapability for T where T: crate::pd_capability::PdCapability + Send + Sync + 'static {}
 
-impl<C, L, P> RealOptimisticTransactionOpener<C, L, P>
+impl<S, P> RealOptimisticTransactionOpener<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// The PD capability this opener routes through.
@@ -162,33 +106,23 @@ where
         &self.pd
     }
 
-    /// Opens one worker-local capability over the process-owned transport and
-    /// region cache without starting another authority.
-    pub fn open_read_runtime(&self) -> Result<SharedReadRuntime<C, L>, OptimisticCoordinatorError> {
-        self.opener
-            .open_session()
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))
-    }
-
-    /// The generic constructor: the caller supplies the store's visibility
-    /// check (an embedded node's store, or the cluster's).
+    /// The opener over `store`, with `pd` for timestamps and PD's API.
     pub fn from_capabilities(
-        opener: crate::SharedReadOpener<C, L>,
+        store: TikvStore<S>,
         pd: P,
         timeout: Duration,
-        visibility: StoreVisibility,
     ) -> Result<Self, OptimisticCoordinatorError> {
         if pd.cluster_id() == 0 {
             return Err(OptimisticCoordinatorError::ZeroClusterId);
         }
+        let cop_store: Arc<dyn crate::driver::cop_store::NativeCopStore> = Arc::new(store.clone());
         Ok(Self {
-            opener,
+            store,
             pd,
             timeout,
-            visibility,
             protocol: CommitProtocol::two_phase_only(),
             resource_group_name: None,
-            cop_store: None,
+            cop_store,
         })
     }
 
@@ -201,17 +135,6 @@ where
     #[must_use]
     pub const fn with_commit_protocol(mut self, protocol: CommitProtocol) -> Self {
         self.protocol = protocol;
-        self
-    }
-
-    /// Hands this opener the node's store for the coprocessor reads its users
-    /// issue.
-    #[must_use]
-    pub fn with_cop_store(
-        mut self,
-        store: Arc<dyn crate::driver::cop_store::NativeCopStore>,
-    ) -> Self {
-        self.cop_store = Some(store);
         self
     }
 
@@ -233,28 +156,23 @@ where
         self
     }
 
-    /// Stable shared process authority identity.
+    /// Stable store identity in this process.
     #[must_use]
     pub fn authority_id(&self) -> u64 {
-        self.opener.authority_id()
+        self.store.authority_id()
     }
 
     /// The PD cluster this opener writes to, as PD itself names it.
     ///
-    /// Never zero: [`Self::from_process_capabilities`] refuses a PD client that
-    /// has not learned its cluster ID.
+    /// Never zero: [`Self::from_capabilities`] refuses a PD client that has
+    /// not learned its cluster ID.
     #[must_use]
     pub fn cluster_id(&self) -> u64 {
         self.pd.cluster_id()
     }
 
-    /// Opens a worker-local transaction over the existing process authorities.
-    pub fn begin(
-        &self,
-    ) -> Result<
-        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
-        OptimisticCoordinatorError,
-    > {
+    /// Opens a transaction.
+    pub fn begin(&self) -> Result<RealOptimisticTransaction<S>, OptimisticCoordinatorError> {
         self.open(false)
     }
 
@@ -282,10 +200,7 @@ where
     pub fn begin_at(
         &self,
         start_ts: u64,
-    ) -> Result<
-        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
-        OptimisticCoordinatorError,
-    > {
+    ) -> Result<RealOptimisticTransaction<S>, OptimisticCoordinatorError> {
         if start_ts == u64::MAX {
             return Err(OptimisticCoordinatorError::Timestamp(
                 "refusing to publish at the max-ts read marker: u64::MAX is the latest-committed \
@@ -301,10 +216,7 @@ where
     /// The native snapshot option enforces read-only access.
     pub fn begin_read_only(
         &self,
-    ) -> Result<
-        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
-        OptimisticCoordinatorError,
-    > {
+    ) -> Result<RealOptimisticTransaction<S>, OptimisticCoordinatorError> {
         self.open(true)
     }
 
@@ -327,46 +239,22 @@ where
     pub fn begin_read_only_at(
         &self,
         start_ts: u64,
-    ) -> Result<
-        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
-        OptimisticCoordinatorError,
-    > {
+    ) -> Result<RealOptimisticTransaction<S>, OptimisticCoordinatorError> {
         self.open_at(Some(start_ts), true)
     }
 
     /// Reads one point key at `u64::MAX` without activating a transaction.
     ///
     /// Go's optimistic provider returns `math.MaxUint64` directly for this
-    /// plan shape; it does not call `Txn()`. Keep that distinction here too:
-    /// open a read-session lease and run the snapshot RPC directly.
-    /// The snapshot reader still owns the normal region
-    /// recovery, lock resolution, GC visibility, and call-deadline checks.
+    /// plan shape; it does not call `Txn()`. The store's snapshot still owns
+    /// region recovery, lock resolution, GC visibility and the call deadline.
     pub fn snapshot_get_at_max_ts(
         &self,
         key: &[u8],
         call: &crate::rpc::UnaryCallContext,
         options: &crate::SnapshotReadOptions,
     ) -> Result<(Option<Vec<u8>>, u64), OptimisticCoordinatorError> {
-        let runtime = self.open_read_runtime()?;
-        if runtime.cluster_id() != self.pd.cluster_id() {
-            return Err(OptimisticCoordinatorError::ClusterMismatch {
-                pd: self.pd.cluster_id(),
-                region_cache: runtime.cluster_id(),
-            });
-        }
-        let mut snapshot = RealOptimisticTransaction::new_opened(
-            runtime,
-            crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
-            self.timeout,
-            u64::MAX,
-            Instant::now(),
-            true,
-            Arc::clone(&self.visibility),
-        )?;
-        snapshot.set_snapshot_read_options(options);
-        if let Some(name) = self.resource_group_name.as_deref() {
-            crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
-        }
+        let mut snapshot = self.max_ts_snapshot(options)?;
         let result = snapshot
             .snapshot_get(key, call)
             .map(|result| (result.value, result.rpc_count));
@@ -386,38 +274,33 @@ where
         call: &crate::rpc::UnaryCallContext,
         options: &crate::SnapshotReadOptions,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
-        let runtime = self.open_read_runtime()?;
-        if runtime.cluster_id() != self.pd.cluster_id() {
-            return Err(OptimisticCoordinatorError::ClusterMismatch {
-                pd: self.pd.cluster_id(),
-                region_cache: runtime.cluster_id(),
-            });
-        }
-        let mut snapshot = RealOptimisticTransaction::new_opened(
-            runtime,
-            crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
-            self.timeout,
-            u64::MAX,
-            Instant::now(),
-            true,
-            Arc::clone(&self.visibility),
-        )?;
-        snapshot.set_snapshot_read_options(options);
-        if let Some(name) = self.resource_group_name.as_deref() {
-            crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
-        }
+        let mut snapshot = self.max_ts_snapshot(options)?;
         let result = snapshot.snapshot_scan(start_key, end_key, limit, call);
         snapshot.finish_without_writes()?;
         result
     }
 
+    fn max_ts_snapshot(
+        &self,
+        options: &crate::SnapshotReadOptions,
+    ) -> Result<RealOptimisticTransaction<S>, OptimisticCoordinatorError> {
+        let mut snapshot = RealOptimisticTransaction::new_opened(
+            &self.store,
+            u64::MAX,
+            true,
+            self.authority_id(),
+        )?;
+        snapshot.set_snapshot_read_options(options);
+        if let Some(name) = self.resource_group_name.as_deref() {
+            crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
+        }
+        Ok(snapshot)
+    }
+
     fn open(
         &self,
         read_only: bool,
-    ) -> Result<
-        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
-        OptimisticCoordinatorError,
-    > {
+    ) -> Result<RealOptimisticTransaction<S>, OptimisticCoordinatorError> {
         self.open_at(None, read_only)
     }
 
@@ -427,23 +310,10 @@ where
         &self,
         start_ts: Option<u64>,
         read_only: bool,
-    ) -> Result<
-        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
-        OptimisticCoordinatorError,
-    > {
-        let opened_at = Instant::now();
-        let runtime = self.open_read_runtime()?;
-        if runtime.cluster_id() != self.pd.cluster_id() {
-            return Err(OptimisticCoordinatorError::ClusterMismatch {
-                pd: self.pd.cluster_id(),
-                region_cache: runtime.cluster_id(),
-            });
-        }
+    ) -> Result<RealOptimisticTransaction<S>, OptimisticCoordinatorError> {
         let start_ts = match start_ts {
             Some(start_ts) => start_ts,
             None => {
-                // The real client's `get_timestamp` IS `get_timestamp_async +
-                // wait`, so the seam changes nothing observable.
                 use crate::pd_capability::TimestampFutureWait;
                 self.pd
                     .timestamp_future()
@@ -457,13 +327,10 @@ where
             ));
         }
         let mut transaction = RealOptimisticTransaction::new_opened(
-            runtime,
-            crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
-            self.timeout,
+            &self.store,
             start_ts,
-            opened_at,
             read_only,
-            Arc::clone(&self.visibility),
+            self.authority_id(),
         )?;
         transaction.set_commit_protocol(self.protocol);
         if let Some(resource_group_name) = self.resource_group_name.as_deref() {
@@ -475,21 +342,14 @@ where
         Ok(transaction)
     }
 
-    /// Opens a pessimistic transaction over the same process authorities.
+    /// Opens a pessimistic transaction over the same store.
     ///
     /// It shares the optimistic opener because a pessimistic transaction *is*
     /// an optimistic two-phase commit preceded by statement-level locking; only
     /// the conflict-detection point differs.
     pub fn begin_pessimistic(
         &self,
-    ) -> Result<
-        super::super::RealPessimisticTransaction<
-            C,
-            L,
-            crate::pd_capability::CapabilityTimestampSource<P>,
-        >,
-        OptimisticCoordinatorError,
-    > {
+    ) -> Result<super::super::RealPessimisticTransaction<S>, OptimisticCoordinatorError> {
         let opened_at = Instant::now();
         let two_pc = self.begin()?;
         super::super::RealPessimisticTransaction::from_transaction(two_pc, opened_at)
@@ -499,14 +359,7 @@ where
     /// `GET_LOCK` holds its locks until rollback.
     pub fn begin_pessimistic_lock_only(
         &self,
-    ) -> Result<
-        super::super::RealPessimisticTransaction<
-            C,
-            L,
-            crate::pd_capability::CapabilityTimestampSource<P>,
-        >,
-        OptimisticCoordinatorError,
-    > {
+    ) -> Result<super::super::RealPessimisticTransaction<S>, OptimisticCoordinatorError> {
         let opened_at = Instant::now();
         let two_pc = self.open(false)?;
         super::super::RealPessimisticTransaction::from_transaction(two_pc, opened_at)

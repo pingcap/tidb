@@ -14,6 +14,7 @@
 
 //! TiDB transaction adapters over the native client transaction engine.
 
+mod call_interceptor;
 mod command_client;
 mod coordinator;
 mod mutation;
@@ -30,8 +31,8 @@ pub use command_client::{
 pub use coordinator::{
     CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,
     ProductionOptimisticTransaction, ProductionPessimisticTransaction, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, SnapshotGetResult, SnapshotScanRegion, StorePdCapability,
-    StoreWriteClient, StoreWriteLoader,
+    RealOptimisticTransactionOpener, SnapshotGetResult, SnapshotScanRegion, StoreClient,
+    StorePdCapability,
 };
 pub use mutation::{BufferMutation, BufferMutationOp, MutationSetError};
 pub use mutation_plan::MutationPlan;

@@ -16,7 +16,6 @@
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod async_commit_one_pc_realtikv_source;
-mod async_commit_one_pc_source;
 mod async_completion_source;
 mod background_region_gc_source;
 mod background_runner_source;
@@ -39,11 +38,9 @@ mod key_ranges_source;
 mod kv_package_source;
 mod lock_model_source;
 mod mutable_transaction_runtime_source;
-mod optimistic_2pc_failure_branch_source;
 mod optimistic_2pc_realtikv_source;
 mod pd_region_loader_source;
 mod pessimistic_lock_realtikv_source;
-mod pessimistic_lock_source;
 mod pessimistic_prewrite_recovery_realtikv_source;
 mod physical_channel_evidence_source;
 mod prefix_filter_source;
@@ -66,8 +63,6 @@ mod request_selector_source;
 mod resource_group_tag_source;
 mod route_policy_seam_source;
 mod shared_read_runtime_source;
-mod snapshot_scan_page_deadline_source;
-mod start_ts_conflict_fidelity_source;
 mod store_failure_state_source;
 mod tikv_active_cancellation_source;
 mod tikv_client_contract_source;

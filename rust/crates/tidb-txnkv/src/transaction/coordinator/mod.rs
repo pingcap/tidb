@@ -19,11 +19,8 @@ pub use super::client::{
 };
 use super::mutation::MutationSetError;
 use crate::gc_state::VisibilityError;
-use crate::rpc::TonicCoprocessorClient;
-use crate::PdRegionLoader;
 pub use opener::{
-    PdLockTimestampSource, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
-    StoreWriteLoader,
+    PdLockTimestampSource, RealOptimisticTransactionOpener, StoreClient, StorePdCapability,
 };
 use std::fmt;
 
@@ -119,16 +116,9 @@ impl CommitProtocol {
 }
 
 /// The one production pessimistic transaction.
-pub type ProductionPessimisticTransaction = super::RealPessimisticTransaction<
-    TonicCoprocessorClient,
-    PdRegionLoader,
-    crate::pd_capability::CapabilityTimestampSource<tidb_pd_client::PdClient>,
->;
+pub type ProductionPessimisticTransaction =
+    super::RealPessimisticTransaction<tikv_client::PdRpcClient>;
 
 /// The one production transaction: real TiKV transport, real PD-backed region
 /// topology, and real PD timestamps.
-pub type ProductionOptimisticTransaction = RealOptimisticTransaction<
-    TonicCoprocessorClient,
-    PdRegionLoader,
-    crate::pd_capability::CapabilityTimestampSource<tidb_pd_client::PdClient>,
->;
+pub type ProductionOptimisticTransaction = RealOptimisticTransaction<tikv_client::PdRpcClient>;

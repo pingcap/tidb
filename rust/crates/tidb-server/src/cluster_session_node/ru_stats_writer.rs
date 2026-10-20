@@ -34,9 +34,7 @@ use tidb_domain::ru_stats::{
 };
 use tidb_exec::meta_txn::{MetaTxnError, MetaTxnStorage};
 use tidb_meta::transaction::Mutator;
-use tidb_txnkv::transaction::{
-    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
 use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 
 use super::{ClusterSessionFactory, ClusterStatsSessionContext, UsageWorkerStop};
@@ -46,23 +44,22 @@ use super::{ClusterSessionFactory, ClusterStatsSessionContext, UsageWorkerStop};
 struct InternalTxnOthers;
 
 /// The production dependencies of Go's RU statistics writer.
-pub(super) struct ClusterRuStatsDeps<C, L, P: StorePdCapability> {
+pub(super) struct ClusterRuStatsDeps<S: StoreClient, P: StorePdCapability> {
     pd: tidb_pd_client::PdClient,
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
     keyspace_id: Option<u32>,
     timeout: Duration,
 }
 
-impl<C, L, P> ClusterRuStatsDeps<C, L, P>
+impl<S, P> ClusterRuStatsDeps<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     pub(super) fn new(
         pd: tidb_pd_client::PdClient,
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
         keyspace_id: Option<u32>,
         timeout: Duration,
@@ -103,7 +100,7 @@ where
     /// One read-only meta transaction, rolled back afterwards.
     fn read_meta<T>(
         &self,
-        read: impl FnOnce(&mut tidb_exec::meta_txn::MetaTxn<C, L, P>) -> Result<T, RuStatsError>,
+        read: impl FnOnce(&mut tidb_exec::meta_txn::MetaTxn<S>) -> Result<T, RuStatsError>,
     ) -> Result<T, RuStatsError> {
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
         let mut transaction = storage
@@ -115,10 +112,9 @@ where
     }
 }
 
-impl<C, L, P> RuStatsDeps for ClusterRuStatsDeps<C, L, P>
+impl<S, P> RuStatsDeps for ClusterRuStatsDeps<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn list_resource_groups_with_ru_stats(

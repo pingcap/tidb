@@ -1612,15 +1612,14 @@ impl ClusterSessionFactory {
     /// pool. Go starts it unconditionally beside the other domain loops; it
     /// needs a PD client, so a node without one (the embedded store) has no
     /// ResourceManager to read and starts nothing.
-    pub(crate) fn start_ru_stats_writer<C, L, P>(
+    pub(crate) fn start_ru_stats_writer<S, P>(
         self: &Arc<Self>,
         pd: tidb_pd_client::PdClient,
-        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>>,
         keyspace_id: Option<u32>,
         timeout: Duration,
     ) where
-        C: tidb_txnkv::transaction::StoreWriteClient + 'static,
-        L: tidb_txnkv::transaction::StoreWriteLoader + 'static,
+        S: tidb_txnkv::transaction::StoreClient + 'static,
         P: tidb_txnkv::transaction::StorePdCapability,
     {
         if self.ru_stats_writer.get().is_some() {
@@ -1641,13 +1640,12 @@ impl ClusterSessionFactory {
     /// Installs the TiKV meta store that holds the cluster's BDR role, so
     /// sessions opened from now on answer ADMIN SET / UNSET / SHOW BDR ROLE
     /// from it.
-    pub(crate) fn install_bdr_role_store<C, L, P>(
+    pub(crate) fn install_bdr_role_store<S, P>(
         &self,
-        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>>,
         timeout: Duration,
     ) where
-        C: tidb_txnkv::transaction::StoreWriteClient + 'static,
-        L: tidb_txnkv::transaction::StoreWriteLoader + 'static,
+        S: tidb_txnkv::transaction::StoreClient + 'static,
         P: tidb_txnkv::transaction::StorePdCapability + 'static,
     {
         let _ = self

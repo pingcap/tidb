@@ -381,8 +381,8 @@ impl Drop for SamplingCancellation {
     }
 }
 
-pub(crate) fn analyze_table<C, L, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
+pub(crate) fn analyze_table<S, P>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
     table: &TableInfo,
     physical_id: i64,
     statement: &super::AnalyzeStatement,
@@ -396,8 +396,7 @@ pub(crate) fn analyze_table<C, L, P>(
     progress: &dyn Fn(i64),
 ) -> Result<super::AnalyzeReport, AnalyzeError>
 where
-    C: tidb_txnkv::transaction::StoreWriteClient + tidb_txnkv::DirectUnaryClient,
-    L: tidb_txnkv::transaction::StoreWriteLoader,
+    S: tidb_txnkv::transaction::StoreClient,
     P: tidb_txnkv::transaction::StorePdCapability,
 {
     let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
@@ -517,8 +516,8 @@ fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_distsql::Iso
 
 /// Uses the process-owned region cache and lock recovery; only sampled
 /// collector responses cross the TiKV boundary.
-pub(super) fn collect_regions<C, L, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
+pub(super) fn collect_regions<S, P>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
     schema: &SamplingSchema,
     plan: &AnalyzePlan,
     request: tipb::AnalyzeReq,
@@ -533,8 +532,7 @@ pub(super) fn collect_regions<C, L, P>(
     progress: &dyn Fn(i64),
 ) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError>
 where
-    C: tidb_txnkv::transaction::StoreWriteClient + tidb_txnkv::DirectUnaryClient,
-    L: tidb_txnkv::transaction::StoreWriteLoader,
+    S: tidb_txnkv::transaction::StoreClient,
     P: tidb_txnkv::transaction::StorePdCapability,
 {
     use prost::Message;
@@ -601,8 +599,8 @@ where
 
 /// Go analyzeIndexNDVPushDown uses index keys for prefix and virtual-column NDV. A single
 /// column's NULL range has a separate histogram and never enters its sketch.
-fn collect_index_ndv<C, L, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
+fn collect_index_ndv<S, P>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
     physical_id: i64,
     index: &tidb_executor::analyze::AnalyzedIndex,
     common_handle: bool,
@@ -614,8 +612,7 @@ fn collect_index_ndv<C, L, P>(
     resource_group: &str,
 ) -> Result<(i64, tidb_stats::FmSketch), AnalyzeError>
 where
-    C: tidb_txnkv::transaction::StoreWriteClient + tidb_txnkv::DirectUnaryClient,
-    L: tidb_txnkv::transaction::StoreWriteLoader,
+    S: tidb_txnkv::transaction::StoreClient,
     P: tidb_txnkv::transaction::StorePdCapability,
 {
     use prost::Message;
@@ -830,8 +827,8 @@ mod tests {
 /// Go's ANALYZE sends its sampling and index requests through the store's
 /// coprocessor client (`copr.CopClient` over the `KVStore`): here the node's
 /// client-rust store, which the opener carries.
-fn native_transport<C, L, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
+fn native_transport<S: tidb_txnkv::transaction::StoreClient, P>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
     timeout: std::time::Duration,
 ) -> Result<
     tidb_distsql::cop_paging::NativeCopTransport<dyn tidb_txnkv::driver::cop_store::NativeCopStore>,

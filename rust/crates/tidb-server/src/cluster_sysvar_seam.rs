@@ -45,9 +45,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_pd_client::PdClient;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use tidb_exec::cluster_sysvar_load::load_cluster_sysvars;
@@ -317,13 +315,12 @@ fn remember_local_commits(
 
 /// The production sysvar writer: one real transaction per statement, the
 /// optimistic 2PC, then the live table and the etcd announcement.
-pub struct RealClusterSysvarWriter<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct RealClusterSysvarWriter<S = tikv_client::PdRpcClient, P = PdClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     /// The node's LIVE sysvar table -- the one every session shares a clone
     /// of. Published into only after a commit.
     live: GlobalSysvars,
@@ -335,17 +332,16 @@ where
     publication_fence: SysvarPublicationFence,
 }
 
-impl<C, L, P> RealClusterSysvarWriter<C, L, P>
+impl<S, P> RealClusterSysvarWriter<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// Binds the writer to an already-connected authority and the live
     /// sysvar table a successful change publishes into.
     #[must_use]
     pub fn new(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         live: GlobalSysvars,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -361,10 +357,9 @@ where
     }
 }
 
-impl<C, L, P> ClusterSysvarWriter for RealClusterSysvarWriter<C, L, P>
+impl<S, P> ClusterSysvarWriter for RealClusterSysvarWriter<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn begin(&self) -> Result<Box<dyn PendingSysvarChange>, String> {
@@ -390,29 +385,25 @@ where
     }
 }
 
-struct RealPendingSysvarChange<C, L, P>
+struct RealPendingSysvarChange<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// `None` only after [`PendingSysvarChange::commit`] has taken it.
-    transaction: Option<
-        RealOptimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
-    >,
+    transaction: Option<RealOptimisticTransaction<S>>,
     catalog: ClusterCatalog,
     scratch: GlobalSysvars,
     live: GlobalSysvars,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
     publication_fence: SysvarPublicationFence,
-    reload_opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    reload_opener: Arc<RealOptimisticTransactionOpener<S, P>>,
 }
 
-impl<C, L, P> PendingSysvarChange for RealPendingSysvarChange<C, L, P>
+impl<S, P> PendingSysvarChange for RealPendingSysvarChange<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn table(&self) -> GlobalSysvars {
@@ -657,9 +648,9 @@ pub type SysvarReloadRead =
 impl SysvarReloader {
     /// Starts the reload thread ticking every `interval`, republishing into
     /// `live` (the node's LIVE table every session already holds a clone of).
-    pub fn spawn<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    pub fn spawn<S: StoreClient, P: StorePdCapability>(
         live: GlobalSysvars,
-        opener: RealOptimisticTransactionOpener<C, L, P>,
+        opener: RealOptimisticTransactionOpener<S, P>,
         interval: Duration,
         timeout: Duration,
         publication_fence: SysvarPublicationFence,

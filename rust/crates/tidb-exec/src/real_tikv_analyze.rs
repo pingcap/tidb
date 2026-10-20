@@ -41,7 +41,7 @@ use tidb_stats::{
 };
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, RealOptimisticTransactionOpener};
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
@@ -471,12 +471,8 @@ impl ResolvedClusterAnalyze {
 }
 
 /// Reads and merges the saved table-level ANALYZE options before execution.
-pub fn resolve_cluster_analyze_statement<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn resolve_cluster_analyze_statement<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     statement: &AnalyzeStatement,
     timeout: Duration,
     resource_group: &str,
@@ -897,12 +893,8 @@ fn final_column_choice(
 
 /// Saves the merged raw options in Go's later, independent restricted
 /// transaction. Callers treat failure as a statement warning.
-pub fn save_cluster_analyze_options<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn save_cluster_analyze_options<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
     row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
@@ -1047,12 +1039,8 @@ fn realtime_count_of(row_count: u64) -> i64 {
 }
 
 /// Runs and commits one `ANALYZE TABLE`.
-pub fn commit_cluster_analyze<
-    C: StoreWriteClient + tidb_txnkv::DirectUnaryClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn commit_cluster_analyze<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     resolved: &ResolvedClusterAnalyze,
     resource_group: &str,
     timeout: Duration,
@@ -1413,8 +1401,8 @@ fn merge_analyze_report(report: &mut ClusterAnalyzeReport, next: ClusterAnalyzeR
     }
 }
 
-fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_cluster_global_stats<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     resolved: &ResolvedClusterAnalyze,
     report: &mut ClusterAnalyzeReport,
     column_ids: &[i64],
@@ -1641,8 +1629,8 @@ fn commit_cluster_global_stats<C: StoreWriteClient, L: StoreWriteLoader, P: Stor
     Ok(())
 }
 
-fn record_analyze_history<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn record_analyze_history<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     table_id: i64,
     version: u64,
     timeout: Duration,
@@ -2213,8 +2201,8 @@ fn merge_global_items<TZ: TimeZone + Sync>(
     Ok(result)
 }
 
-fn commit_global_stats_item<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_global_stats_item<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     table_id: i64,
     row_count: i64,
     modify_count: i64,
@@ -2285,8 +2273,8 @@ fn refresh_slow_stats_save_version(
     })
 }
 
-fn refresh_stats_meta_version<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn refresh_stats_meta_version<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     table_id: i64,
     timeout: Duration,
     row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
@@ -2313,12 +2301,8 @@ fn refresh_stats_meta_version<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     })
 }
 
-fn commit_cluster_analyze_target<
-    C: StoreWriteClient + tidb_txnkv::DirectUnaryClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_cluster_analyze_target<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     statement: &AnalyzeStatement,
     options: &tidb_executor::analyze::PhysicalAnalyzeOptions,
     timeout: Duration,
@@ -2526,12 +2510,8 @@ fn commit_cluster_analyze_target<
     Ok(receipt)
 }
 
-fn commit_cluster_independent_index<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn commit_cluster_independent_index<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     statement: &AnalyzeStatement,
     physical_id: Option<i64>,
     index_id: i64,
@@ -2626,8 +2606,8 @@ fn commit_cluster_independent_index<
     Ok(receipt)
 }
 
-fn finish_analyze_save<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn finish_analyze_save<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     table_id: i64,
     mut version: u64,
     started: Instant,

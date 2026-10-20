@@ -20,11 +20,7 @@ use std::time::Duration;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_stats_lock::{commit_cluster_stats_lock, ClusterStatsLockReport};
 use tidb_pd_client::PdClient;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::transaction::{
-    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
 
 use crate::sql_node::{cluster_stats_lock_error, SqlQueryError};
 
@@ -38,33 +34,30 @@ pub trait ClusterStatsLock: Send + Sync {
 }
 
 /// The production TiKV-backed lockstats transaction.
-pub struct RealClusterStatsLock<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct RealClusterStatsLock<S = tikv_client::PdRpcClient, P = PdClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
 }
 
-impl<C, L, P> RealClusterStatsLock<C, L, P>
+impl<S, P> RealClusterStatsLock<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// Binds the route to an already-connected transaction authority.
     #[must_use]
-    pub fn new(opener: Arc<RealOptimisticTransactionOpener<C, L, P>>, timeout: Duration) -> Self {
+    pub fn new(opener: Arc<RealOptimisticTransactionOpener<S, P>>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<C, L, P> ClusterStatsLock for RealClusterStatsLock<C, L, P>
+impl<S, P> ClusterStatsLock for RealClusterStatsLock<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn execute(

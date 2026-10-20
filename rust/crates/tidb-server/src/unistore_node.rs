@@ -92,7 +92,7 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
 /// generic transaction opener over all three. Every unistore surface --
 /// bootstrap, reads and writes alike -- derives from this one build.
 type InProcessOpener =
-    RealOptimisticTransactionOpener<InProcessClient, InProcessRegionLoader, InProcessPd>;
+    RealOptimisticTransactionOpener<tidb_unistore::mock::StorePdClient, InProcessPd>;
 
 #[cfg(test)]
 mod transaction_buffer_tests {
@@ -161,7 +161,7 @@ mod transaction_buffer_tests {
             .unwrap();
             // Publish after the locking reader's for_update_ts. The real
             // embedded TiKV must report a write conflict on its first lock.
-            let mut writer = opener.begin().unwrap();
+            let writer = opener.begin().unwrap();
             writer
                 .commit(
                     vec![BufferMutation::set(
@@ -196,7 +196,7 @@ mod transaction_buffer_tests {
         let (_authority, _pd, opener) = in_process_write_stack().unwrap();
         let call = UnaryCallContext::with_timeout(IN_PROCESS_TIMEOUT);
         let key = Key::from_bytes(b"existing".to_vec());
-        let mut seed = opener.begin().unwrap();
+        let seed = opener.begin().unwrap();
         seed.commit(
             vec![BufferMutation::set(key.as_bytes(), b"original").unwrap()],
             &call,
@@ -354,14 +354,12 @@ pub(crate) fn in_process_stack() -> Result<InProcessStack, SqlQueryError> {
     // on TiKV (`session_commit_protocol`) -- and the shared-oracle store can
     // answer both, exactly as Go's unistore does under its mock PD.
     let transaction_opener = RealOptimisticTransactionOpener::from_capabilities(
-        read_authority.opener(),
+        tikv_store.clone(),
         pd.clone(),
         IN_PROCESS_TIMEOUT,
-        tikv_store.visibility(),
     )
     .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-    .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol())
-    .with_cop_store(Arc::new(tikv_store.clone()));
+    .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
     Ok(InProcessStack {
         read_authority,
         pd,

@@ -20,10 +20,8 @@
 use crate::lock::{LockRecoveryClient, TimestampSource};
 use crate::region::{LeaderRequest, RegionLocation, RegionQueryLoader, RegionRecoveryLoader};
 use crate::rpc::UnaryCallContext;
-use crate::transaction::{PublishedCommand, TransactionCommandClient};
 use crate::SharedReadRuntime;
 use async_trait::async_trait;
-use prost::Message;
 use std::any::Any;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -166,7 +164,6 @@ trait Backend: Send + Sync {
 
 type Dispatch<C, L> = fn(
     &SharedReadRuntime<C, L>,
-    &Mutex<ClientTrace>,
     &str,
     &dyn Request,
     &UnaryCallContext,
@@ -175,7 +172,6 @@ type Dispatch<C, L> = fn(
 struct StorageBackend<C, L, T> {
     storage: SharedReadRuntime<C, L>,
     timestamps: Mutex<T>,
-    trace: Arc<Mutex<ClientTrace>>,
     dispatch: Dispatch<C, L>,
 }
 impl<C, L, T> Backend for StorageBackend<C, L, T>
@@ -358,118 +354,12 @@ where
         request: &dyn Request,
         call: &UnaryCallContext,
     ) -> Result<Box<dyn Any + Send>> {
-        (self.dispatch)(&self.storage, &self.trace, address, request, call)
+        (self.dispatch)(&self.storage, address, request, call)
     }
-}
-
-fn encode_native_get(request: &kvrpcpb::GetRequest, context: &tidb_proto::KvrpcContext) -> Vec<u8> {
-    let mut request = request.clone();
-    let native_context = request.context.get_or_insert_with(Default::default);
-    native_context.cluster_id = context.cluster_id;
-    native_context.request_origin = context.request_origin;
-    request.encode_to_vec()
-}
-
-fn dispatch_transaction<C, L>(
-    storage: &SharedReadRuntime<C, L>,
-    trace: &Mutex<ClientTrace>,
-    address: &str,
-    request: &dyn Request,
-    call: &UnaryCallContext,
-) -> Result<Box<dyn Any + Send>>
-where
-    C: TransactionCommandClient + LockRecoveryClient + Clone,
-    L: RegionRecoveryLoader,
-{
-    let mut client = storage.client().lock().map_err(failure)?.clone();
-    // Point gets dominate prepared point-update workloads. Keep the
-    // client-rust protobuf bytes intact across the transport boundary;
-    // decoding into tidb-proto and encoding again costs an allocation on
-    // every RPC.
-    if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::GetRequest>() {
-        let mut context: tidb_proto::KvrpcContext = request.context.clone().unwrap_or_default();
-        context.cluster_id = storage.cluster_id();
-        context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
-        if let Some(published) = client.publish_raw_transaction(
-            address,
-            crate::rpc::BatchCommandTag::Get,
-            encode_native_get(request, &context),
-            &context,
-            call,
-        ) {
-            trace
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .observe_native_get(request, &context, &published);
-            let response = match published {
-                PublishedCommand::BeforePublication(error) => return Err(failure(error)),
-                PublishedCommand::AfterPublication { error, .. } => {
-                    return Err(Error::GrpcAPI(tonic::Status::unavailable(error)))
-                }
-                PublishedCommand::Response(response) => response.response,
-            };
-            return Ok(Box::new(response));
-        }
-    }
-    macro_rules! command {
-        ($request:ident, $response:ident, $method:ident) => {
-            if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::$request>() {
-                let mut request = request.clone();
-                let mut context = request.context.take().unwrap_or_default();
-                context.cluster_id = storage.cluster_id();
-                context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
-                request.context = Some(context.clone());
-                let published = client.$method(address, &request, &context, call);
-                trace
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .observe(&request, &context, address, &published);
-                let response = match published {
-                    PublishedCommand::BeforePublication(error) => return Err(failure(error)),
-                    PublishedCommand::AfterPublication { error, .. } => {
-                        return Err(Error::GrpcAPI(tonic::Status::unavailable(error)))
-                    }
-                    PublishedCommand::Response(response) => response.response,
-                };
-                return Ok(Box::new(response));
-            }
-        };
-    }
-    command!(GetRequest, GetResponse, publish_transaction_get);
-    command!(
-        BatchGetRequest,
-        BatchGetResponse,
-        publish_transaction_batch_get
-    );
-    command!(ScanRequest, ScanResponse, publish_transaction_scan);
-    command!(PrewriteRequest, PrewriteResponse, publish_prewrite);
-    command!(CommitRequest, CommitResponse, publish_commit);
-    command!(
-        BatchRollbackRequest,
-        BatchRollbackResponse,
-        publish_batch_rollback
-    );
-    command!(
-        PessimisticLockRequest,
-        PessimisticLockResponse,
-        publish_pessimistic_lock
-    );
-    command!(
-        PessimisticRollbackRequest,
-        PessimisticRollbackResponse,
-        publish_pessimistic_rollback
-    );
-    command!(
-        TxnHeartBeatRequest,
-        TxnHeartBeatResponse,
-        publish_txn_heart_beat
-    );
-    dispatch_lock_request(&mut client, storage.cluster_id(), address, request, call)
 }
 
 fn dispatch_resolver<C, L>(
     storage: &SharedReadRuntime<C, L>,
-    _trace: &Mutex<ClientTrace>,
     address: &str,
     request: &dyn Request,
     call: &UnaryCallContext,
@@ -559,31 +449,10 @@ fn dispatch_lock_request(
 #[derive(Clone)]
 pub struct ClientPd {
     source_leader_read: bool,
-    trace: Arc<Mutex<ClientTrace>>,
     backend: Arc<dyn Backend>,
     call: Arc<Mutex<Option<UnaryCallContext>>>,
 }
 impl ClientPd {
-    /// Adapts process-owned transport, metadata and timestamp capabilities.
-    pub fn new<C, L, T>(storage: SharedReadRuntime<C, L>, timestamps: T) -> Arc<Self>
-    where
-        C: TransactionCommandClient + LockRecoveryClient + Clone + Send + 'static,
-        L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
-        T: TimestampSource + Send + 'static,
-    {
-        let trace = Arc::new(Mutex::new(ClientTrace::default()));
-        Arc::new(Self {
-            source_leader_read: true,
-            backend: Arc::new(StorageBackend {
-                storage,
-                timestamps: Mutex::new(timestamps),
-                trace: trace.clone(),
-                dispatch: dispatch_transaction::<C, L>,
-            }),
-            trace,
-            call: Arc::new(Mutex::new(None)),
-        })
-    }
     /// Adapts the existing read transport without requiring transaction commands.
     pub(crate) fn new_resolver<C, L, T>(
         storage: SharedReadRuntime<C, L>,
@@ -594,69 +463,17 @@ impl ClientPd {
         L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
         T: TimestampSource + Send + Sync + 'static + ?Sized,
     {
-        let trace = Arc::new(Mutex::new(ClientTrace::default()));
         Arc::new(Self {
             source_leader_read: true,
             backend: Arc::new(StorageBackend {
                 storage,
                 timestamps: Mutex::new(timestamps),
-                trace: trace.clone(),
                 dispatch: dispatch_resolver::<C, L>,
             }),
-            trace,
             call: Arc::new(Mutex::new(None)),
         })
     }
 
-    pub(crate) fn observe_detached_commits(
-        &self,
-    ) -> std::sync::mpsc::Receiver<crate::transaction::DetachedCommitCompletion> {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        self.trace
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .secondary_observer = Some(sender);
-        receiver
-    }
-    pub(crate) fn last_lock_primary(&self) -> Vec<u8> {
-        self.trace
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .lock_primary
-            .clone()
-    }
-    pub(crate) fn capture_scan_pages(&self, enabled: bool) -> Vec<ScanPage> {
-        let mut trace = self.trace.lock().unwrap_or_else(|e| e.into_inner());
-        let pages = trace.scan_pages.take().unwrap_or_default();
-        if enabled {
-            trace.scan_pages = Some(Vec::new());
-        }
-        pages
-    }
-    pub(crate) fn take_read_trace(&self) -> ReadTrace {
-        std::mem::take(&mut self.trace.lock().unwrap_or_else(|e| e.into_inner()).reads)
-    }
-    pub(crate) fn capture_attempts_for_test(&self) {
-        self.trace
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .capture_attempts = true;
-    }
-    pub(crate) fn fill_receipt(
-        &self,
-        receipt: &mut crate::transaction::OptimisticTransactionReceipt,
-    ) {
-        let trace = self.trace.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(write) = trace.writes.as_ref() {
-            let authority_id = receipt.authority_id;
-            let commit_ts = receipt.commit_ts;
-            let mutation_count = receipt.mutation_count;
-            *receipt = write.clone();
-            receipt.authority_id = authority_id;
-            receipt.commit_ts = commit_ts.max(receipt.commit_ts);
-            receipt.mutation_count = mutation_count;
-        }
-    }
     /// Binds foreground RPCs to the current caller; cleanup owns its context.
     pub fn set_call(&self, call: &UnaryCallContext) {
         *self.call.lock().unwrap_or_else(|e| e.into_inner()) = Some(call.clone());
@@ -1039,353 +856,10 @@ impl PdClient for ClientPd {
     }
 }
 
-// This is transport evidence only. No transaction decisions, retry budget or
-// cleanup state is owned here; client-rust consumes every response unchanged.
-#[derive(Default)]
-pub(crate) struct ReadTrace {
-    pub rpc_count: u64,
-    pub last_get: Option<(
-        crate::region::RegionVerId,
-        crate::rpc::TransactionBatchPublication,
-    )>,
-}
-pub(crate) struct ScanPage {
-    pub region: crate::region::RegionVerId,
-    pub end_key: Vec<u8>,
-    pub pairs: Vec<(Vec<u8>, Vec<u8>)>,
-}
-#[derive(Default)]
-struct ClientTrace {
-    // Explicit test observation; ordinary transactions retain no key history.
-    capture_attempts: bool,
-    secondary_observer:
-        Option<std::sync::mpsc::Sender<crate::transaction::DetachedCommitCompletion>>,
-    lock_primary: Vec<u8>,
-    scan_pages: Option<Vec<ScanPage>>,
-    reads: ReadTrace,
-    writes: Option<crate::transaction::OptimisticTransactionReceipt>,
-}
-impl ClientTrace {
-    fn observe_native_get(
-        &mut self,
-        request: &kvrpcpb::GetRequest,
-        context: &tidb_proto::KvrpcContext,
-        published: &PublishedCommand<kvrpcpb::GetResponse>,
-    ) {
-        self.reads.rpc_count += 1;
-        if let PublishedCommand::Response(response) = published {
-            if response.response.region_error.is_none() && response.response.error.is_none() {
-                let epoch = context.region_epoch.as_ref().cloned().unwrap_or_default();
-                let region = crate::region::RegionVerId::new(
-                    context.region_id,
-                    epoch.conf_ver,
-                    epoch.version,
-                );
-                if !response.response.not_found {
-                    if let Some(pages) = self.scan_pages.as_mut() {
-                        pages.push(ScanPage {
-                            region,
-                            end_key: Vec::new(),
-                            pairs: vec![(request.key.clone(), response.response.value.clone())],
-                        });
-                    }
-                }
-                self.reads.last_get = Some((region, response.publication.clone()));
-            }
-        }
-    }
-
-    fn observe<R: Any>(
-        &mut self,
-        request: &dyn Any,
-        context: &tidb_proto::KvrpcContext,
-        address: &str,
-        published: &PublishedCommand<R>,
-    ) {
-        use crate::transaction::{
-            CommittedProtocol, OptimisticTransactionReceipt, TransactionAttemptPhase as Phase,
-            TransactionAttemptReceipt, TransactionAttemptResult as Attempt,
-            TransactionCause as Cause,
-        };
-        use tidb_proto::kvrpcpb as rpc;
-        let epoch = context.region_epoch.as_ref().cloned().unwrap_or_default();
-        let region =
-            crate::region::RegionVerId::new(context.region_id, epoch.conf_ver, epoch.version);
-        let (publication, response, failure) = match published {
-            PublishedCommand::BeforePublication(error) => (
-                None,
-                None,
-                Some(Attempt::DefinitiveFailure(Cause::Transport {
-                    detail: error.clone(),
-                })),
-            ),
-            PublishedCommand::AfterPublication { publication, error } => (
-                Some(publication.clone()),
-                None,
-                Some(Attempt::Ambiguous(Cause::Transport {
-                    detail: error.clone(),
-                })),
-            ),
-            PublishedCommand::Response(response) => (
-                Some(response.publication.clone()),
-                Some(&response.response as &dyn Any),
-                None,
-            ),
-        };
-        if request.is::<rpc::GetRequest>()
-            || request.is::<rpc::BatchGetRequest>()
-            || request.is::<rpc::ScanRequest>()
-        {
-            self.reads.rpc_count += 1;
-            if let (Some(pages), Some(request), Some(response)) = (
-                self.scan_pages.as_mut(),
-                request.downcast_ref::<rpc::ScanRequest>(),
-                response.and_then(|r| r.downcast_ref::<rpc::ScanResponse>()),
-            ) {
-                if response.region_error.is_none() && response.error.is_none() {
-                    pages.push(ScanPage {
-                        region,
-                        end_key: request.end_key.clone(),
-                        pairs: response
-                            .pairs
-                            .iter()
-                            .filter(|p| p.error.is_none())
-                            .map(|p| (p.key.clone(), p.value.clone()))
-                            .collect(),
-                    });
-                }
-            }
-            // A scanner can resolve an individual locked pair with a point
-            // Get; those values have a serving region too.
-            if let (Some(pages), Some(request), Some(response)) = (
-                self.scan_pages.as_mut(),
-                request.downcast_ref::<rpc::GetRequest>(),
-                response.and_then(|r| r.downcast_ref::<rpc::GetResponse>()),
-            ) {
-                if response.region_error.is_none()
-                    && response.error.is_none()
-                    && !response.not_found
-                {
-                    pages.push(ScanPage {
-                        region,
-                        end_key: Vec::new(),
-                        pairs: vec![(request.key.clone(), response.value.clone())],
-                    });
-                }
-            }
-            if request.is::<rpc::GetRequest>() {
-                if let Some(publication) = publication {
-                    self.reads.last_get = Some((region, publication));
-                }
-            }
-            return;
-        }
-        if let (Some(observer), Some(request), Some(response), Some(publication)) = (
-            &self.secondary_observer,
-            request.downcast_ref::<rpc::CommitRequest>(),
-            response.and_then(|r| r.downcast_ref::<rpc::CommitResponse>()),
-            publication.as_ref(),
-        ) {
-            if (request.commit_role == rpc::CommitRole::Secondary as i32
-                || request.use_async_commit)
-                && response.region_error.is_none()
-                && response.error.is_none()
-            {
-                let _ = observer.send(Ok(crate::rpc::TransactionBatchResponse {
-                    response: response.clone(),
-                    publication: publication.clone(),
-                }));
-            }
-        }
-        if let (Some(request), Some(response)) = (
-            request.downcast_ref::<rpc::PessimisticLockRequest>(),
-            response.and_then(|r| r.downcast_ref::<rpc::PessimisticLockResponse>()),
-        ) {
-            if response.region_error.is_none() && response.errors.is_empty() {
-                self.lock_primary = request.primary_lock.clone();
-            }
-        }
-        if !self.capture_attempts {
-            return;
-        }
-        let (phase, keys, start_ts, primary) =
-            if let Some(request) = request.downcast_ref::<rpc::PrewriteRequest>() {
-                (
-                    Phase::Prewrite,
-                    request.mutations.iter().map(|m| m.key.clone()).collect(),
-                    request.start_version,
-                    request.primary_lock.clone(),
-                )
-            } else if let Some(request) = request.downcast_ref::<rpc::CommitRequest>() {
-                let primary = self
-                    .writes
-                    .as_ref()
-                    .map_or_else(Vec::new, |r| r.primary_key.clone());
-                let phase = if request.keys.contains(&primary) {
-                    Phase::PrimaryCommit
-                } else {
-                    Phase::SecondaryCommit
-                };
-                (phase, request.keys.clone(), request.start_version, primary)
-            } else if let Some(request) = request.downcast_ref::<rpc::BatchRollbackRequest>() {
-                (
-                    Phase::BatchRollback,
-                    request.keys.clone(),
-                    request.start_version,
-                    Vec::new(),
-                )
-            } else {
-                return;
-            };
-        let receipt = self.writes.get_or_insert_with(|| {
-            OptimisticTransactionReceipt::new(0, start_ts, primary.clone(), 0)
-        });
-        if !primary.is_empty() {
-            receipt.primary_key = primary;
-        }
-        if let Some(request) = request.downcast_ref::<rpc::PrewriteRequest>() {
-            receipt.lock_ttl_ms = request.lock_ttl;
-        }
-        if let Some(request) = request.downcast_ref::<rpc::CommitRequest>() {
-            receipt.commit_ts = request.commit_version;
-        }
-        let mut result = failure.unwrap_or(Attempt::Confirmed);
-        if let Some(response) = response {
-            macro_rules! errors {
-                ($r:expr, $errors:expr) => {
-                    if let Some(error) = &$r.region_error {
-                        result = Attempt::Retry(Cause::Region {
-                            detail: format!("{error:?}"),
-                        });
-                    } else if let Some(error) = $errors {
-                        result = Attempt::DefinitiveFailure(Cause::InvalidResponse {
-                            detail: format!("{error:?}"),
-                        });
-                    }
-                };
-            }
-            if let Some(r) = response.downcast_ref::<rpc::PrewriteResponse>() {
-                errors!(r, r.errors.first());
-                if r.one_pc_commit_ts > 0 {
-                    receipt.commit_ts = r.one_pc_commit_ts;
-                    receipt.commit_protocol = CommittedProtocol::OnePc;
-                }
-            } else if let Some(r) = response.downcast_ref::<rpc::CommitResponse>() {
-                errors!(r, r.error.as_ref());
-            } else if let Some(r) = response.downcast_ref::<rpc::BatchRollbackResponse>() {
-                errors!(r, r.error.as_ref());
-            }
-        }
-        receipt.region_attempts.push(region);
-        if let Some(publication) = &publication {
-            let confirmed = result == Attempt::Confirmed;
-            match phase {
-                Phase::Prewrite => {
-                    receipt
-                        .prewrite_attempt_publications
-                        .push(publication.clone());
-                    if confirmed {
-                        receipt.prewrite_publications.push(publication.clone());
-                    }
-                }
-                Phase::PrimaryCommit => receipt.primary_publications.push(publication.clone()),
-                Phase::SecondaryCommit => {
-                    receipt
-                        .secondary_attempt_publications
-                        .push(publication.clone());
-                    if confirmed {
-                        receipt.secondary_publications.push(publication.clone());
-                    }
-                }
-                Phase::BatchRollback => {
-                    receipt
-                        .rollback_attempt_publications
-                        .push(publication.clone());
-                    if confirmed {
-                        receipt.rollback_publications.push(publication.clone());
-                    }
-                }
-            }
-        }
-        receipt.attempt_history.push(TransactionAttemptReceipt {
-            phase,
-            keys,
-            region,
-            address: address.to_owned(),
-            publication,
-            result,
-        });
-    }
-}
-
 #[cfg(test)]
 mod ownership_regressions {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn native_get_bytes_keep_routed_context_and_lock_hints() {
-        let request = kvrpcpb::GetRequest {
-            context: Some(kvrpcpb::Context {
-                region_id: 42,
-                resolved_locks: vec![7],
-                committed_locks: vec![8],
-                request_source: "external_test".into(),
-                ..Default::default()
-            }),
-            key: b"key".to_vec(),
-            version: 99,
-            ..Default::default()
-        };
-        let mut context: tidb_proto::KvrpcContext = request.context.clone().unwrap();
-        context.cluster_id = 77;
-        context.request_origin = tidb_proto::KvrpcRequestOrigin::TiDb as i32;
-        let bytes = encode_native_get(&request, &context);
-        let decoded = tidb_proto::KvrpcGetRequest::decode(bytes.as_slice()).unwrap();
-        assert_eq!(decoded.context, Some(context));
-        assert_eq!(decoded.key, b"key");
-        assert_eq!(decoded.version, 99);
-    }
-
-    #[test]
-    fn native_get_preserves_scan_recovery_observations() {
-        let mut trace = ClientTrace {
-            scan_pages: Some(Vec::new()),
-            ..Default::default()
-        };
-        let context = tidb_proto::KvrpcContext {
-            region_id: 42,
-            ..Default::default()
-        };
-        let response = PublishedCommand::Response(crate::rpc::TransactionBatchResponse {
-            response: kvrpcpb::GetResponse {
-                value: b"value".to_vec(),
-                ..Default::default()
-            },
-            publication: crate::rpc::TransactionBatchPublication::in_process(
-                crate::rpc::BatchCommandTag::Get,
-                "local",
-                7,
-            ),
-        });
-        trace.observe_native_get(
-            &kvrpcpb::GetRequest {
-                key: b"key".to_vec(),
-                ..Default::default()
-            },
-            &context,
-            &response,
-        );
-        let pages = trace.scan_pages.unwrap();
-        assert_eq!(
-            pages.len(),
-            1,
-            "a point Get resolving a scan lock retains its serving region"
-        );
-        assert_eq!(pages[0].region.id, 42);
-        assert_eq!(pages[0].pairs, vec![(b"key".to_vec(), b"value".to_vec())]);
-        assert_eq!(trace.reads.rpc_count, 1);
-    }
 
     #[derive(Default)]
     struct CleanupBackend {
@@ -1685,7 +1159,6 @@ mod ownership_regressions {
             let backend = Arc::new(CleanupBackend::default());
             let client = Arc::new(ClientPd {
                 source_leader_read: true,
-                trace: Arc::new(Mutex::new(ClientTrace::default())),
                 backend: backend.clone(),
                 call: Arc::new(Mutex::new(Some(parent))),
             });

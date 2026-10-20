@@ -101,15 +101,13 @@ fn connect() -> Cluster {
     assert_eq!(shared.cluster_id(), pd.cluster_id());
     let read_opener = shared.opener();
     let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        read_opener.clone(),
-        pd.clone(),
-        RPC_TIMEOUT,
         tidb_txnkv::driver::tikv_store::TikvStore::connect(
             vec![pd_address.clone()],
             tikv_client::Config::default(),
         )
-        .expect("the node's store")
-        .visibility(),
+        .expect("the node's store"),
+        pd.clone(),
+        RPC_TIMEOUT,
     )
     .expect("derive transaction opener without starting another authority");
     let fixture = read_opener

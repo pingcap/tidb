@@ -55,9 +55,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tidb_pd_client::PdClient;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
@@ -932,35 +930,32 @@ pub(crate) fn prefetched_write_snapshot(
 
 /// The production transaction tier: real read-only transactions and the
 /// optimistic 2PC, both over the node's one process authority.
-pub struct RealClusterTransactions<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct RealClusterTransactions<S = tikv_client::PdRpcClient, P = PdClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     /// The opener stamped with each resource group already seen. Go keeps
     /// the group name on the request context; the Rust opener carries it,
     /// so every statement used to clone the whole opener for its group. A
     /// session's group rarely changes, so the stamped clone is kept and
     /// shared. Bounded by the number of distinct groups this node serves.
-    group_openers: Arc<Mutex<Vec<GroupOpener<C, L, P>>>>,
+    group_openers: Arc<Mutex<Vec<GroupOpener<S, P>>>>,
 }
 
 /// One resource group's stamped opener; see `RealClusterTransactions::group_openers`.
-type GroupOpener<C, L, P> = (Arc<str>, Arc<RealOptimisticTransactionOpener<C, L, P>>);
+type GroupOpener<S, P> = (Arc<str>, Arc<RealOptimisticTransactionOpener<S, P>>);
 
-struct RealPendingSnapshot<C, L, P>(PreparedStatementSnapshot<C, L, P>)
+struct RealPendingSnapshot<S, P>(PreparedStatementSnapshot<S, P>)
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability;
 
-impl<C, L, P> PendingClusterSnapshot for RealPendingSnapshot<C, L, P>
+impl<S, P> PendingClusterSnapshot for RealPendingSnapshot<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String> {
@@ -971,15 +966,14 @@ where
     }
 }
 
-impl<C, L, P> RealClusterTransactions<C, L, P>
+impl<S, P> RealClusterTransactions<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// Binds the tier to an already-connected authority's write capability.
     #[must_use]
-    pub fn new(opener: RealOptimisticTransactionOpener<C, L, P>, timeout: Duration) -> Self {
+    pub fn new(opener: RealOptimisticTransactionOpener<S, P>, timeout: Duration) -> Self {
         Self {
             opener: Arc::new(opener),
             timeout,
@@ -990,7 +984,7 @@ where
     fn opener_for_resource_group(
         &self,
         resource_group: &str,
-    ) -> Arc<RealOptimisticTransactionOpener<C, L, P>> {
+    ) -> Arc<RealOptimisticTransactionOpener<S, P>> {
         let mut cached = self
             .group_openers
             .lock()
@@ -1016,7 +1010,7 @@ where
         &self,
         name: &str,
         timeout: Duration,
-    ) -> Result<RealAdvisoryLockLease<C, L, P>, AdvisoryLockError> {
+    ) -> Result<RealAdvisoryLockLease<S>, AdvisoryLockError> {
         let key = tidb_exec::mysql_bootstrap::advisory_lock_key(name)
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
         let mut transaction = self
@@ -1049,23 +1043,17 @@ where
     }
 }
 
-struct RealAdvisoryLockLease<C, L, P>
+struct RealAdvisoryLockLease<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
-    transaction: Option<
-        RealPessimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
-    >,
+    transaction: Option<RealPessimisticTransaction<S>>,
     end_timeout: Duration,
 }
 
-impl<C, L, P> RealAdvisoryLockLease<C, L, P>
+impl<S> RealAdvisoryLockLease<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn finish(&mut self) {
         let Some(transaction) = self.transaction.take() else {
@@ -1075,34 +1063,26 @@ where
     }
 }
 
-fn finish_advisory_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    transaction: RealPessimisticTransaction<
-        C,
-        L,
-        tidb_txnkv::pd_capability::CapabilityTimestampSource<P>,
-    >,
+fn finish_advisory_transaction<S: StoreClient>(
+    transaction: RealPessimisticTransaction<S>,
     timeout: Duration,
 ) {
     let call = UnaryCallContext::with_timeout(timeout);
     let _ = transaction.rollback(&call);
 }
 
-impl<C, L, P> Drop for RealAdvisoryLockLease<C, L, P>
+impl<S> Drop for RealAdvisoryLockLease<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn drop(&mut self) {
         self.finish();
     }
 }
 
-impl<C, L, P> AdvisoryLockLease for RealAdvisoryLockLease<C, L, P>
+impl<S> AdvisoryLockLease for RealAdvisoryLockLease<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn release(mut self: Box<Self>) {
         self.finish();
@@ -1121,13 +1101,12 @@ fn map_advisory_lock_failure(failure: PessimisticLockFailure) -> AdvisoryLockErr
 /// [`PendingClusterTransaction`] over one real opener: the timestamp future
 /// dispatched at statement start, opened as an optimistic or pessimistic
 /// session transaction when first needed.
-struct PendingSessionTransaction<C, L, P>
+struct PendingSessionTransaction<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     start_ts: P::TsFuture,
     timeout: Duration,
     pessimistic: bool,
@@ -1135,10 +1114,9 @@ where
     options: SessionTransactionOptions,
 }
 
-impl<C, L, P> PendingClusterTransaction for PendingSessionTransaction<C, L, P>
+impl<S, P> PendingClusterTransaction for PendingSessionTransaction<S, P>
 where
-    C: StoreWriteClient + Send + Sync + 'static,
-    L: StoreWriteLoader + Send + Sync + 'static,
+    S: StoreClient + Send + Sync + 'static,
     P: StorePdCapability + Send + Sync + 'static,
     P::TsFuture: Send,
 {
@@ -1190,10 +1168,9 @@ where
     }
 }
 
-impl<C, L, P> ClusterTransactions for RealClusterTransactions<C, L, P>
+impl<S, P> ClusterTransactions for RealClusterTransactions<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
@@ -1213,24 +1190,12 @@ where
             .map(Some)
     }
 
+    /// Go `infoschema_reader.go`'s `DATA_LOCK_WAITS` source: the store's
+    /// `GetLockWaits` plus its lock resolver's `Resolving()`.
     fn lock_waits(&self) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, String> {
-        let addresses = self.opener.pd().store_addresses()?;
-        let runtime = self
-            .opener
-            .open_read_runtime()
-            .map_err(|error| error.to_string())?;
-        let mut result = Vec::new();
-        for address in addresses {
-            let response = runtime
-                .client()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get_lock_wait_info(&address, Duration::from_secs(30));
-            if let Ok(mut entries) = response {
-                result.append(&mut entries);
-            }
-        }
-        result.extend(runtime.resolving_locks().into_iter().map(|lock| {
+        let store = self.opener.store();
+        let mut result = store.get_lock_waits()?;
+        result.extend(store.resolving_locks().into_iter().map(|lock| {
             tidb_proto::KvrpcWaitForEntry {
                 txn: lock.txn_id,
                 wait_for_txn: lock.lock_txn_id,
@@ -1424,11 +1389,9 @@ where
     }
 }
 
-impl<C, L, P> OpenClusterTransaction for SessionTransaction<C, L, P>
+impl<S> OpenClusterTransaction for SessionTransaction<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn bind_mutation_buffer(&self, buffer: &MutationBuffer) {
         SessionTransaction::bind_mutation_buffer(self, buffer);
@@ -1691,16 +1654,15 @@ mod tests {
                 ))
             }
         }
-        let (authority, pd, _opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let stack = crate::unistore_node::in_process_stack().unwrap();
         let fail = Arc::new(AtomicBool::new(false));
         let opener = RealOptimisticTransactionOpener::from_capabilities(
-            authority.opener(),
+            (*stack.tikv_store).clone(),
             FailingPd {
-                inner: pd,
+                inner: stack.pd,
                 fail: fail.clone(),
             },
             Duration::from_secs(3),
-            Arc::new(|_| Ok(())),
         )
         .unwrap();
         let transactions = RealClusterTransactions::new(opener, Duration::from_secs(3));

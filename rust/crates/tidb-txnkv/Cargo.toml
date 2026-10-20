@@ -25,6 +25,7 @@ tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
+tidb-log = { path = "../tidb-log" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-vardef = { path = "../tidb-vardef" }
@@ -40,10 +41,6 @@ tonic-prost.workspace = true
 [[test]]
 name = "all"
 path = "tests/all.rs"
-
-[[test]]
-name = "snapshot_lock_wait_source"
-path = "tests/snapshot_lock_wait_source.rs"
 
 [[test]]
 name = "lock_resolver_source"

@@ -581,27 +581,43 @@ mod tests {
 
     /// The write-seam milestone: the REAL optimistic 2PC coordinator — the
     /// same `RealOptimisticTransaction` the production node publishes
-    /// through — opens over the in-process triple (client, region loader,
-    /// PD capability), takes its timestamps from the embedded TSO, prewrites
-    /// and commits through `TransactionCommandClient`, and the row lands in
-    /// the store. Go's precedent: a transaction over mockstore runs the
-    /// identical client-go committer, only the RPC hop is elided.
+    /// through — opens over the embedded store (client-rust's store over
+    /// unistore's PD and RPC clients), takes its timestamps from the embedded
+    /// TSO, prewrites and commits, and the row lands in the store. Go's
+    /// precedent: a transaction over mockstore runs the identical client-go
+    /// committer, only the RPC hop is elided.
     #[test]
     fn the_generic_opener_commits_through_the_in_process_store() {
-        use tidb_txnkv::region::RegionCache;
+        use tidb_txnkv::driver::tikv_store::{store_runtime, TikvStore};
         use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
 
-        let client = InProcessClient::new();
-        let cache = RegionCache::new(crate::region_loader::InProcessRegionLoader::default());
-        let authority =
-            tidb_txnkv::SharedReadAuthority::start_with_lock_resolver(client.clone(), cache)
-                .expect("the read authority starts over the in-process plane");
-        // The embedded store never garbage-collects: every start ts is visible.
+        let pd = crate::tso::InProcessPd::new();
+        let regions = Arc::new(crate::region_manager::InProcessRegionManager::new());
+        let handler = Arc::new(Mutex::new(KvHandler::new(
+            MvccStore::with_pd(pd.oracle()),
+            Arc::clone(&regions),
+        )));
+        let client = InProcessClient::over_shared(Arc::clone(&handler));
+        let (rpc, pd_client, _cluster) =
+            crate::mock::over(handler, regions, pd.oracle(), Vec::new()).unwrap();
+        let runtime = store_runtime().unwrap();
+        let store = runtime
+            .block_on(async {
+                let store_pd =
+                    crate::mock::store_pd_client(&rpc, pd_client, tikv_client::Config::default())
+                        .await?;
+                tikv_client::tikv::KvStore::new_with_pd_client(
+                    Arc::new(store_pd),
+                    Arc::new(tikv_client::tikv::MockSafePointKv::new()),
+                    tikv_client::Config::default(),
+                )
+                .await
+            })
+            .unwrap();
         let opener = tidb_txnkv::transaction::RealOptimisticTransactionOpener::from_capabilities(
-            authority.opener(),
-            crate::tso::InProcessPd::new(),
+            TikvStore::new(runtime, store),
+            pd,
             Duration::from_secs(1),
-            Arc::new(|_| Ok(())),
         )
         .expect("the opener derives from in-process capabilities");
 

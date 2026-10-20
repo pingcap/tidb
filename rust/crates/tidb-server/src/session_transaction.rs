@@ -30,11 +30,8 @@
 use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, TransactionEnd, TransactionStatementError,
 };
-use tidb_pd_client::PdClient;
 use tidb_planner::txn_mode::{txn_mode_for_begin, SessionTxnMode, TransactionMode};
-use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::StoreClient;
 
 /// Go `SetOptionsOnTxnActive`: capture the validated session values once.
 pub(crate) fn transaction_options(
@@ -81,35 +78,29 @@ fn options_from_values<V: AsRef<str>>(
 }
 
 /// The explicit-transaction state of one session.
-pub struct SessionTransaction<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct SessionTransaction<S = tikv_client::PdRpcClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     /// The mode the open transaction was opened in. `None` while no transaction
     /// is open, so it doubles as "is a transaction open".
     mode: Option<SessionTxnMode>,
     /// The real transaction, present once a statement has needed it.
-    open: Option<MultiStatementTransaction<C, L, P>>,
+    open: Option<MultiStatementTransaction<S>>,
 }
 
-impl<C, L, P> Default for SessionTransaction<C, L, P>
+impl<S> Default for SessionTransaction<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C, L, P> SessionTransaction<C, L, P>
+impl<S> SessionTransaction<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     /// A session that starts outside any explicit transaction (autocommit).
     #[must_use]
@@ -192,12 +183,12 @@ where
 
     /// The already-open real transaction, if a statement has needed one yet.
     #[must_use]
-    pub const fn opened(&self) -> Option<&MultiStatementTransaction<C, L, P>> {
+    pub const fn opened(&self) -> Option<&MultiStatementTransaction<S>> {
         self.open.as_ref()
     }
 
     /// The already-open real transaction, for a statement that acts on it.
-    pub const fn opened_mut(&mut self) -> Option<&mut MultiStatementTransaction<C, L, P>> {
+    pub const fn opened_mut(&mut self) -> Option<&mut MultiStatementTransaction<S>> {
         self.open.as_mut()
     }
 
@@ -209,8 +200,8 @@ where
     /// as before.
     pub fn opened_or_begin<E>(
         &mut self,
-        begin: impl FnOnce(SessionTxnMode) -> Result<MultiStatementTransaction<C, L, P>, E>,
-    ) -> Result<Option<&mut MultiStatementTransaction<C, L, P>>, E> {
+        begin: impl FnOnce(SessionTxnMode) -> Result<MultiStatementTransaction<S>, E>,
+    ) -> Result<Option<&mut MultiStatementTransaction<S>>, E> {
         let Some(mode) = self.mode else {
             return Ok(None);
         };

@@ -26,11 +26,10 @@ use tidb_proto::{
     KvrpcPeer, KvrpcPrewriteRequest, KvrpcRegionEpoch, KvrpcRequestOrigin,
 };
 use tidb_txnkv::region::RegionCache;
-use tidb_txnkv::rpc::{TonicCoprocessorClient, TransactionBatchPublication, UnaryCallContext};
+use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
     BufferMutation, OptimisticCommitOutcome, OptimisticTransactionState,
-    RealOptimisticTransactionOpener, TransactionAttemptPhase, TransactionAttemptResult,
-    TransactionCause,
+    RealOptimisticTransactionOpener, TransactionCause,
 };
 use tidb_txnkv::{DirectUnaryClient, PdRegionLoader, SharedReadAuthority, SharedReadRuntime};
 
@@ -169,22 +168,6 @@ fn wait_for_phase(directory: &Path, name: &str) {
     }
 }
 
-fn print_publication(
-    phase: &str,
-    publication: &TransactionBatchPublication,
-    start_ts: u64,
-    commit_ts: u64,
-) {
-    println!(
-        "campaign28_optimistic_2pc phase={phase} tag={} request_id={} physical_address={} channel_version={} stream_generation={} start_ts={start_ts} commit_ts={commit_ts}",
-        publication.tag().field_number(),
-        publication.request_id(),
-        publication.physical_address(),
-        publication.physical_channel_version(),
-        publication.batch_stream_generation(),
-    );
-}
-
 #[test]
 #[ignore = "requires run-realtikv-optimistic-2pc.sh"]
 fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
@@ -206,18 +189,15 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     assert_eq!(shared.cluster_id(), cluster_id);
     let shared_read_opener = shared.opener();
     let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        shared_read_opener.clone(),
-        pd_owner.clone(),
-        RPC_TIMEOUT,
         tidb_txnkv::driver::tikv_store::TikvStore::connect(
             vec![pd_address.clone()],
             tikv_client::Config::default(),
         )
-        .expect("the node's store")
-        .visibility(),
+        .expect("the node's store"),
+        pd_owner.clone(),
+        RPC_TIMEOUT,
     )
     .expect("derive transaction opener without starting another authority");
-    assert_eq!(opener.authority_id(), shared_read_opener.authority_id());
     assert_ne!(opener.authority_id(), 0);
 
     // Locate before the external split. The later commit therefore proves a
@@ -225,14 +205,15 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let mut transaction = opener
         .begin()
         .expect("allocate real start timestamp before split");
-    assert_eq!(
-        transaction.authority_id(),
-        shared_read_opener.authority_id()
-    );
+    assert_eq!(transaction.authority_id(), opener.authority_id());
     let before_split = transaction
         .snapshot_get(LOW_KEY, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("locate source region through real BatchCommands Get");
     assert!(before_split.value.is_none());
+    let fixture_runtime = shared_read_opener
+        .open_session()
+        .expect("open real lock-fixture session from the same authority");
+    let (stale_address, source_context) = route(&fixture_runtime, LOW_KEY);
     let mut encoded_split = Vec::new();
     encode_bytes(&mut encoded_split, SPLIT_KEY);
     let split_hex = encoded_split
@@ -243,13 +224,8 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         &phase_dir,
         "split-source",
         &format!(
-            "region_id={}\nsplit_key_hex={split_hex}\nstale_address={}\n",
-            before_split.region.unwrap().id,
-            before_split
-                .publication
-                .as_ref()
-                .unwrap()
-                .physical_address(),
+            "region_id={}\nsplit_key_hex={split_hex}\nstale_address={stale_address}\n",
+            source_context.region_id,
         ),
     );
     wait_for_phase(&phase_dir, "split-complete");
@@ -277,7 +253,6 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         )
         .unwrap(),
     ];
-    let detached_completions = transaction.observe_detached_commits();
     let committed = transaction
         .commit(mutations, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("run normal optimistic 2PC");
@@ -285,127 +260,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         panic!("expected committed multi-region outcome: {committed:?}");
     };
     assert!(committed.secondary_failures.is_empty());
-    assert_eq!(committed.receipt.mutation_count, 3);
-    assert_eq!(committed.receipt.primary_key, LOW_KEY);
-    assert_eq!(committed.receipt.prewrite_publications.len(), 2);
-    assert_eq!(committed.receipt.primary_publications.len(), 1);
-    // Go returns after the primary and flushes secondaries in the store pool.
-    // Validate the actual response after commit without making commit await it.
-    assert!(committed.receipt.secondary_publications.is_empty());
-    let mut secondary_publications = Vec::new();
-    loop {
-        match detached_completions.recv_timeout(RPC_TIMEOUT) {
-            Ok(completion) => {
-                let secondary = completion.expect("detached secondary transport must succeed");
-                assert!(secondary.response.region_error.is_none());
-                assert!(secondary.response.error.is_none());
-                secondary_publications.push(secondary.publication);
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(error) => panic!("detached secondary must complete: {error}"),
-        }
-    }
-    assert_eq!(secondary_publications.len(), 1);
-    assert!(
-        committed.receipt.prewrite_attempt_publications.len()
-            > committed.receipt.prewrite_publications.len(),
-        "forced split/leader transfer must produce a stale Prewrite attempt"
-    );
-    let prewrite_attempts = committed
-        .receipt
-        .attempt_history
-        .iter()
-        .filter(|attempt| attempt.phase == TransactionAttemptPhase::Prewrite)
-        .collect::<Vec<_>>();
-    let stale_source_attempt = prewrite_attempts
-        .iter()
-        .copied()
-        .find(|attempt| {
-            Some(attempt.region) == before_split.region
-                && matches!(attempt.result, TransactionAttemptResult::Retry(_))
-        })
-        .expect("typed receipt must retain the stale source-region publication");
-    let confirmed_source_attempt = prewrite_attempts
-        .iter()
-        .copied()
-        .find(|attempt| {
-            attempt.region.id == before_split.region.unwrap().id
-                && matches!(attempt.result, TransactionAttemptResult::Confirmed)
-        })
-        .expect("typed receipt must retain the confirmed source-region retry");
-    assert!(
-        confirmed_source_attempt
-            .keys
-            .iter()
-            .all(|key| stale_source_attempt.keys.contains(key)),
-        "regrouped source batch must descend from the exact immutable stale key set"
-    );
-    assert_ne!(
-        stale_source_attempt.address,
-        confirmed_source_attempt.address
-    );
-    assert_ne!(stale_source_attempt.region, confirmed_source_attempt.region);
-    let correlated_key = confirmed_source_attempt
-        .keys
-        .first()
-        .expect("confirmed source batch is nonempty");
-    println!(
-        "campaign28_optimistic_2pc phase=prewrite_regroup key={} stale_region={} stale_epoch_conf_ver={} stale_epoch_version={} stale_address={} confirmed_region={} confirmed_epoch_conf_ver={} confirmed_epoch_version={} confirmed_address={}",
-        String::from_utf8_lossy(correlated_key),
-        stale_source_attempt.region.id,
-        stale_source_attempt.region.epoch.conf_ver,
-        stale_source_attempt.region.epoch.version,
-        stale_source_attempt.address,
-        confirmed_source_attempt.region.id,
-        confirmed_source_attempt.region.epoch.conf_ver,
-        confirmed_source_attempt.region.epoch.version,
-        confirmed_source_attempt.address,
-    );
     assert!(committed.receipt.commit_ts > committed.receipt.start_ts);
-    let mut regions = committed
-        .receipt
-        .region_attempts
-        .iter()
-        .map(|region| region.id)
-        .collect::<Vec<_>>();
-    regions.sort_unstable();
-    regions.dedup();
-    assert!(
-        regions.len() >= 2,
-        "receipt must contain distinct real regions"
-    );
-    for publication in &committed.receipt.prewrite_publications {
-        print_publication(
-            "prewrite",
-            publication,
-            committed.receipt.start_ts,
-            committed.receipt.commit_ts,
-        );
-    }
-    for publication in &committed.receipt.prewrite_attempt_publications {
-        print_publication(
-            "prewrite_attempt",
-            publication,
-            committed.receipt.start_ts,
-            committed.receipt.commit_ts,
-        );
-    }
-    for publication in &committed.receipt.primary_publications {
-        print_publication(
-            "primary_commit",
-            publication,
-            committed.receipt.start_ts,
-            committed.receipt.commit_ts,
-        );
-    }
-    for publication in &secondary_publications {
-        print_publication(
-            "secondary_commit",
-            publication,
-            committed.receipt.start_ts,
-            committed.receipt.commit_ts,
-        );
-    }
 
     let mut readback = opener.begin().expect("allocate readback snapshot");
     let low = readback
@@ -426,17 +281,23 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         low_sibling.value.as_deref(),
         Some(b"low-sibling-v1".as_slice())
     );
-    assert_eq!(low.region.unwrap().id, low_sibling.region.unwrap().id);
-    assert_ne!(low.region.unwrap().id, high.region.unwrap().id);
+    // The split put the primary's region and the secondary's apart.
+    let low_region = route(&fixture_runtime, LOW_KEY).1.region_id;
+    let high_region = route(&fixture_runtime, HIGH_KEY).1.region_id;
+    assert_eq!(
+        low_region,
+        route(&fixture_runtime, LOW_SIBLING_KEY).1.region_id
+    );
+    assert_ne!(low_region, high_region);
     let read_only = readback
         .finish_without_writes()
         .expect("finish readback without publishing writes");
     assert_eq!(read_only.state, OptimisticTransactionState::ReadOnly);
-    assert_eq!(read_only.authority_id, shared_read_opener.authority_id());
+    assert_eq!(read_only.authority_id, opener.authority_id());
 
     // The low-region Insert prewrites first; the high-region existing Insert
     // fails. The coordinator must synchronously rollback every published batch.
-    let (rollback_key, duplicate_key) = if low.region.unwrap().id < high.region.unwrap().id {
+    let (rollback_key, duplicate_key) = if low_region < high_region {
         (ROLLBACK_KEY, HIGH_KEY)
     } else {
         (HIGH_ROLLBACK_KEY, LOW_KEY)
@@ -471,13 +332,6 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         | TransactionCause::AssertionFailed { key, .. } => assert_eq!(key, duplicate_key),
         cause => panic!("expected typed existing-key cause, got {cause:?}"),
     }
-    assert!(!rolled_back.receipt.prewrite_publications.is_empty());
-    assert!(!rolled_back.receipt.rollback_publications.is_empty());
-    assert!(rolled_back.receipt.primary_publications.is_empty());
-    for publication in &rolled_back.receipt.rollback_publications {
-        print_publication("rollback", publication, rolled_back.receipt.start_ts, 0);
-    }
-
     let mut after_rollback = opener.begin().expect("allocate cleanup snapshot");
     assert!(after_rollback
         .snapshot_get(rollback_key, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
@@ -527,7 +381,6 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         }
         cause => panic!("missing PutExisting lost assertion identity: {cause:?}"),
     }
-    assert!(missing_update.receipt.primary_publications.is_empty());
 
     // A strict PutExisting uses one snapshot and one normal transaction.
     let mut update = opener.begin().expect("allocate update snapshot");
@@ -562,9 +415,6 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
 
     // A real older lock must first be observed alive, waited to expiry,
     // resolved, then retried at the transaction's original start_ts.
-    let fixture_runtime = shared_read_opener
-        .open_session()
-        .expect("open real lock-fixture session from the same authority");
     let older_lock_start_ts = pd_owner
         .get_timestamp()
         .expect("allocate older fixture lock timestamp");
@@ -596,21 +446,9 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         older_lock_wait_started.elapsed() >= Duration::from_millis(100),
         "real older lock must remain alive long enough to exercise cancellation-aware waiting"
     );
-    let OptimisticCommitOutcome::Committed(older_lock_committed) = older_lock_outcome else {
+    let OptimisticCommitOutcome::Committed(_) = older_lock_outcome else {
         panic!("expired older lock was not resolved: {older_lock_outcome:?}");
     };
-    assert!(older_lock_committed
-        .receipt
-        .attempt_history
-        .iter()
-        .any(|attempt| {
-            attempt.phase == TransactionAttemptPhase::Prewrite
-                && matches!(
-                    attempt.result,
-                    TransactionAttemptResult::Retry(TransactionCause::Lock { .. })
-                )
-        }));
-
     // A transaction must classify a real later-started lock as a write
     // conflict without asking the resolver to roll it back. Committing the
     // fixture afterward proves that the coordinator left that newer lock live.
@@ -684,8 +522,8 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         "campaign28_optimistic_2pc status=passed cluster_id={cluster_id} start_ts={} commit_ts={} primary_region={} secondary_region={} rollback_start_ts={} older_lock_start_ts={} newer_lock_start_ts={} newer_lock_commit_ts={}",
         committed.receipt.start_ts,
         committed.receipt.commit_ts,
-        low.region.unwrap().id,
-        high.region.unwrap().id,
+        low_region,
+        high_region,
         rolled_back.receipt.start_ts,
         older_lock_start_ts,
         newer_lock_start_ts,

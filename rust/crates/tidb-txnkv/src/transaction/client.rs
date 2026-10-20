@@ -13,36 +13,34 @@
 // limitations under the License.
 
 //! TiDB store facade. The transaction protocol and lock lifecycle belong to client-rust.
+use super::call_interceptor::CallSlot;
 use super::state::*;
-use super::{CommitProtocol, OptimisticCoordinatorError, SchemaLease, TransactionCommandClient};
-use crate::driver::client_bridge::{self, ClientPd};
-use crate::gc_state::StoreVisibility;
-use crate::lock::{LockRecoveryClient, TimestampSource};
-use crate::region::{RegionQueryLoader, RegionRecoveryLoader};
+use super::{CommitProtocol, OptimisticCoordinatorError, SchemaLease};
+use crate::driver::tikv_store::TikvStore;
 use crate::rpc::UnaryCallContext;
-use crate::{MemBufferBackend, SharedReadRuntime, TikvTransactionDriver};
+use crate::{MemBufferBackend, TikvTransactionDriver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tikv_client::{Timestamp, TimestampExt, TransactionOptions};
+use tikv_client::{PdClient, Timestamp, TimestampExt, TransactionOptions};
 
-/// One TiDB transaction. Both optimistic and pessimistic modes use this engine.
-pub struct ClientTransaction<C, L, T> {
-    pub(super) engine: TikvTransactionDriver<ClientPd>,
-    pub(super) client: Arc<ClientPd>,
-    marker: std::marker::PhantomData<(C, L, T)>,
+/// One TiDB transaction (Go `KVTxn` from the node's store). Both optimistic
+/// and pessimistic modes use this engine: client-rust's transaction on the
+/// node's store, with the store's region cache, sender, lock resolver,
+/// oracle and txn safe point.
+pub struct ClientTransaction<S: PdClient> {
+    pub(super) engine: TikvTransactionDriver<S>,
+    store: TikvStore<S>,
+    /// Go's `ctx` for this transaction's RPCs.
+    calls: CallSlot,
 
     sql_staging: bool,
     check_existence: bool,
     start_ts: u64,
     _start_ts_guard: crate::inner_txn::StartTsGuard,
     authority_id: u64,
-    visibility: StoreVisibility,
     snapshot_stats: Arc<tikv_client::SnapshotRuntimeStats>,
     read_ts: u64,
     snapshot_read_options: Option<crate::SnapshotReadOptions>,
-    /// Shared with the committed-snapshot view of
-    /// [`Self::snapshot_scan_committed_at`].
-    lock_resolver_context: tikv_client::transaction::ResolveLocksContext,
     collect_snapshot_stats: bool,
     commit_mode: Arc<std::sync::Mutex<Option<CommittedProtocol>>>,
     schema_error: Arc<std::sync::Mutex<Option<super::SchemaLeaseError>>>,
@@ -73,79 +71,28 @@ pub struct SnapshotScanRegion {
     pub pairs: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-impl<C, L, T> crate::new_txn::TxnResourceGroup for ClientTransaction<C, L, T> {
+impl<S: PdClient> crate::new_txn::TxnResourceGroup for ClientTransaction<S> {
     fn set_resource_group_name(&mut self, name: &str) {
         self.engine.transaction_mut().set_resource_group_name(name);
         self.snapshot_read_options = None;
     }
 }
-impl<C, L, T> ClientTransaction<C, L, T>
-where
-    C: TransactionCommandClient + LockRecoveryClient + Clone + Send + 'static,
-    L: RegionRecoveryLoader + RegionQueryLoader + Send + 'static,
-    T: TimestampSource + Send + 'static,
-{
-    /// Opens over injected storage capabilities with an initial visible GC safepoint.
-    pub fn new_injected(
-        runtime: SharedReadRuntime<C, L>,
-        timestamps: T,
-        timeout: Duration,
-        start_ts: u64,
-        opened_at: Instant,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        Self::new_opened(
-            runtime,
-            timestamps,
-            timeout,
-            start_ts,
-            opened_at,
-            false,
-            // A store whose txn safe point never rose.
-            Arc::new(|_| Ok(())),
-        )
-    }
-
-    /// Opt-in physical attempt evidence for injected integration tests.
-    #[doc(hidden)]
-    pub fn with_attempt_history_for_test(self) -> Self {
-        self.client.capture_attempts_for_test();
-        self
-    }
-    /// Opens the native client at the allocated start timestamp and shared GC state.
+impl<S: PdClient> ClientTransaction<S> {
+    /// Go `tikvStore.Begin` at `start_ts`: the store's own transaction, with
+    /// its lock resolver context, read validation and txn safe point.
     pub fn new_opened(
-        runtime: SharedReadRuntime<C, L>,
-        timestamps: T,
-        _timeout: Duration,
+        store: &TikvStore<S>,
         start_ts: u64,
-        _opened_at: Instant,
         read_only: bool,
-        visibility: StoreVisibility,
+        authority_id: u64,
     ) -> Result<Self, OptimisticCoordinatorError> {
         if start_ts == 0 {
             return Err(OptimisticCoordinatorError::Timestamp(
                 "a transaction requires a nonzero start timestamp".into(),
             ));
         }
-        let authority_id = runtime.authority_id();
-        let lock_resolver_context = runtime.native_lock_resolver_context();
-        let client = ClientPd::new(runtime, timestamps);
-        let options =
-            TransactionOptions::new_optimistic().drop_check(tikv_client::CheckLevel::Warn);
-        let options = if read_only {
-            options.read_only()
-        } else {
-            options
-        };
-        let mut transaction = tikv_client::Transaction::new(
-            Timestamp::from_version(start_ts),
-            client.clone(),
-            // Transactions start optimistic; the pessimistic wrapper promotes
-            // the same native transaction only when Go's statement mode needs
-            // row locks. Autocommit DML follows Go's optimistic path.
-            options,
-            tikv_client::request::Keyspace::Disable,
-        );
-        transaction.set_lock_resolver_context(lock_resolver_context.clone());
+        let calls = CallSlot::default();
+        let mut transaction = Self::begin_on(store, start_ts, read_only, &calls)?;
         let snapshot_stats = Arc::new(tikv_client::SnapshotRuntimeStats::default());
         transaction.set_snapshot_runtime_stats(Some(snapshot_stats.clone()));
         let commit_mode = Arc::new(std::sync::Mutex::new(None));
@@ -162,31 +109,53 @@ where
             }
         });
         let engine = if read_only {
-            TikvTransactionDriver::new_read_only(transaction, client_bridge::runtime())
+            TikvTransactionDriver::new_read_only(transaction, Arc::clone(store.runtime()))
         } else {
-            TikvTransactionDriver::new(transaction, client_bridge::runtime())
+            TikvTransactionDriver::new(transaction, Arc::clone(store.runtime()))
         };
         Ok(Self {
             engine,
-            client,
+            store: store.clone(),
+            calls,
             sql_staging: false,
             check_existence: false,
-            marker: std::marker::PhantomData,
             start_ts,
             _start_ts_guard: crate::inner_txn::ACTIVE_START_TS.hold(start_ts),
             authority_id,
-            visibility,
             snapshot_stats,
             read_ts: start_ts,
             snapshot_read_options: None,
-            lock_resolver_context,
             collect_snapshot_stats: false,
             commit_mode,
             schema_error: Default::default(),
         })
     }
+
+    /// The store's transaction at `start_ts`, its RPCs bound to `calls`.
+    /// Transactions start optimistic; the pessimistic wrapper promotes the
+    /// same transaction only when Go's statement mode needs row locks.
+    fn begin_on(
+        store: &TikvStore<S>,
+        start_ts: u64,
+        read_only: bool,
+        calls: &CallSlot,
+    ) -> Result<tikv_client::Transaction<S>, OptimisticCoordinatorError> {
+        let options = TransactionOptions::new_optimistic()
+            .drop_check(tikv_client::CheckLevel::Warn)
+            .start_timestamp(Timestamp::from_version(start_ts));
+        let options = if read_only {
+            options.read_only()
+        } else {
+            options
+        };
+        let mut transaction = store
+            .block_on(store.store().begin_with_options(options))
+            .map_err(Self::client_read_error)?;
+        transaction.add_rpc_interceptor(calls.interceptor());
+        Ok(transaction)
+    }
 }
-impl<C, L, T> ClientTransaction<C, L, T> {
+impl<S: PdClient> ClientTransaction<S> {
     /// The immutable transaction start timestamp.
     pub const fn start_ts(&self) -> u64 {
         self.start_ts
@@ -195,11 +164,14 @@ impl<C, L, T> ClientTransaction<C, L, T> {
     pub const fn authority_id(&self) -> u64 {
         self.authority_id
     }
-    /// Subscribes to actual detached commit responses for diagnostics.
-    pub fn observe_detached_commits(
-        &mut self,
-    ) -> std::sync::mpsc::Receiver<super::DetachedCommitCompletion> {
-        self.client.observe_detached_commits()
+    /// Go `txn.SetOption(kv.RPCInterceptor, ...)`, client-go
+    /// `KVTxn.AddRPCInterceptor`: `interceptor` wraps every request this
+    /// transaction sends on the caller's behalf.
+    pub fn add_rpc_interceptor(&mut self, interceptor: tikv_client::RpcInterceptorHandle) {
+        self.engine
+            .transaction_mut()
+            .inner_mut()
+            .add_rpc_interceptor(interceptor);
     }
     /// Sets the protocols the client may choose for this transaction.
     pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {
@@ -284,7 +256,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
     }
 
     fn apply_snapshot_read_options(
-        transaction: &mut tikv_client::Transaction<ClientPd>,
+        transaction: &mut tikv_client::Transaction<S>,
         options: &crate::SnapshotReadOptions,
     ) {
         use tikv_client::{ReplicaReadAdjustment, ReplicaReadSelectorOption, ReplicaReadType};
@@ -351,8 +323,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
                 .as_ref()
                 .map(|o| o.kv_exec_counter.clone()),
         );
-        self.client.set_call(&call);
-        self.client.take_read_trace();
+        self.calls.set(&call);
         self.engine
             .transaction_mut()
             .inner_mut()
@@ -391,20 +362,13 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .transaction_mut()
             .get(key.to_vec())
             .map_err(Self::client_read_error)?;
-        let trace = self.client.take_read_trace();
-        if trace.rpc_count > 0 {
-            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
-        }
-        let (region, publication) = trace
-            .last_get
-            .map_or((None, None), |(region, publication)| {
-                (Some(region), Some(publication))
-            });
+        // The store checks the read against its txn safe point after it
+        // returns (client-go `KVSnapshot.Get`'s `CheckVisibility`).
         Ok(SnapshotGetResult {
             start_ts: self.start_ts,
             value,
-            region,
-            publication,
+            region: None,
+            publication: None,
             rpc_count: self.snapshot_point_rpc_counts().0.saturating_sub(before),
         })
     }
@@ -432,9 +396,6 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .into_iter()
             .map(|(key, entry)| (Vec::from(key), entry.value))
             .collect();
-        if self.client.take_read_trace().rpc_count > 0 {
-            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
-        }
         Ok(values)
     }
     /// Scans the transaction view in key order.
@@ -479,9 +440,6 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .map_err(Self::client_read_error)?
             .map(|pair| (Vec::from(pair.0), pair.1))
             .collect();
-        if self.client.take_read_trace().rpc_count > 0 {
-            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
-        }
         Ok(values)
     }
     /// Go `KVTxn.GetSnapshot().Iter`: scans the committed snapshot at
@@ -502,17 +460,8 @@ impl<C, L, T> ClientTransaction<C, L, T> {
                     .as_ref()
                     .map(|o| o.kv_exec_counter.clone()),
             );
-        self.client.set_call(&scan_call);
-        self.client.take_read_trace();
-        let mut transaction = tikv_client::Transaction::new(
-            Timestamp::from_version(read_ts),
-            self.client.clone(),
-            TransactionOptions::new_optimistic()
-                .drop_check(tikv_client::CheckLevel::Warn)
-                .read_only(),
-            tikv_client::request::Keyspace::Disable,
-        );
-        transaction.set_lock_resolver_context(self.lock_resolver_context.clone());
+        self.calls.set(&scan_call);
+        let mut transaction = Self::begin_on(&self.store, read_ts, true, &self.calls)?;
         if let Some(options) = &self.snapshot_read_options {
             Self::apply_snapshot_read_options(&mut transaction, options);
         }
@@ -526,7 +475,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             },
         );
         let mut committed =
-            TikvTransactionDriver::new_read_only(transaction, client_bridge::runtime());
+            TikvTransactionDriver::new_read_only(transaction, Arc::clone(self.store.runtime()));
         let values = committed
             .transaction_mut()
             .scan(
@@ -536,9 +485,6 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             .map_err(Self::client_read_error)?
             .map(|pair| (Vec::from(pair.0), pair.1))
             .collect();
-        if self.client.take_read_trace().rpc_count > 0 {
-            (self.visibility)(read_ts).map_err(OptimisticCoordinatorError::Visibility)?;
-        }
         Ok(values)
     }
     /// Attaches the SQL schema validity check to the native commit lifecycle.
@@ -590,7 +536,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         call: &UnaryCallContext,
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
         self.stage_mutations(mutations)?;
-        self.client.set_call(call);
+        self.calls.set(call);
         let mut outcome = self
             .engine
             .commit_staged()
@@ -615,7 +561,6 @@ impl<C, L, T> ClientTransaction<C, L, T> {
             OptimisticCommitOutcome::CleanupFailed(value) => &mut value.receipt,
         };
         receipt.authority_id = self.authority_id;
-        self.client.fill_receipt(receipt);
         if let Some(mode) = *self.commit_mode.lock().unwrap_or_else(|e| e.into_inner()) {
             receipt.commit_protocol = mode;
         }
@@ -635,7 +580,7 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         })
     }
 }
-impl<C, L, T> ClientTransaction<C, L, T> {
+impl<S: PdClient> ClientTransaction<S> {
     /// Groups rows by the regions that actually served the native scan.
     pub fn snapshot_scan_regions(
         &mut self,
@@ -643,9 +588,9 @@ impl<C, L, T> ClientTransaction<C, L, T> {
         end: &[u8],
         call: &UnaryCallContext,
     ) -> Result<Vec<SnapshotScanRegion>, OptimisticCoordinatorError> {
-        self.client.capture_scan_pages(true);
+        self.calls.capture_scan_pages(true);
         let result = self.snapshot_scan(start, end, None, call);
-        let pages = self.client.capture_scan_pages(false);
+        let pages = self.calls.capture_scan_pages(false);
         let rows = result?;
         // A region split or lock retry can replace a page. Associate each
         // final row with a successful response that actually supplied it.
@@ -707,18 +652,18 @@ impl tikv_client::transaction::SchemaLeaseChecker for DriverSchemaChecker {
 
 /// TiDB's statement timestamp and options over the same client transaction.
 /// Lock ownership, constraints, retries and TTL all remain in client-rust.
-pub struct ClientPessimisticTransaction<C, L, T> {
-    transaction: ClientTransaction<C, L, T>,
+pub struct ClientPessimisticTransaction<S: PdClient> {
+    transaction: ClientTransaction<S>,
     for_update_ts: u64,
     fair_locking: bool,
     max_conflict_ts: u64,
     lock_expired: Arc<std::sync::atomic::AtomicU32>,
     statement_stage: Option<crate::StagingHandle>,
 }
-impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
+impl<S: PdClient> ClientPessimisticTransaction<S> {
     /// Promotes the same native transaction to pessimistic mode.
     pub fn from_transaction(
-        mut transaction: ClientTransaction<C, L, T>,
+        mut transaction: ClientTransaction<S>,
         _opened_at: Instant,
     ) -> Result<Self, OptimisticCoordinatorError> {
         transaction
@@ -769,11 +714,11 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
         self.transaction.set_schema_lease(lease);
     }
     /// Borrows the same transaction for union-store reads or SQL staging.
-    pub fn snapshot(&mut self) -> &mut ClientTransaction<C, L, T> {
+    pub fn snapshot(&mut self) -> &mut ClientTransaction<S> {
         &mut self.transaction
     }
     /// Inspects the authoritative transaction without changing it.
-    pub fn snapshot_ref(&self) -> &ClientTransaction<C, L, T> {
+    pub fn snapshot_ref(&self) -> &ClientTransaction<S> {
         &self.transaction
     }
     /// Returns the native buffer keys carrying acquired-lock flags.
@@ -828,9 +773,9 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
     }
     /// Allocates a fresh statement timestamp and forwards the native fair retry hook.
     pub fn advance_for_update_ts(&mut self) -> Result<u64, super::PessimisticLockFailure> {
-        use tikv_client::PdClient;
-        let timestamp = client_bridge::runtime()
-            .block_on(self.transaction.client.clone().get_timestamp())
+        let store = &self.transaction.store;
+        let timestamp = store
+            .block_on(store.store().current_timestamp())
             .map_err(|error| {
                 super::PessimisticLockFailure::Transaction(TransactionCause::Timestamp {
                     detail: error.to_string(),
@@ -885,7 +830,7 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
         call: &UnaryCallContext,
         return_values: bool,
     ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
-        self.transaction.client.set_call(call);
+        self.transaction.calls.set(call);
         self.start_statement();
         let before: std::collections::BTreeSet<_> = self.locked_keys().into_iter().collect();
         for key in presume_not_exists {
@@ -972,7 +917,6 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
         Ok(super::AcquiredLocks {
             for_update_ts: self.for_update_ts,
             keys: newly_locked,
-            primary_key: self.transaction.client.last_lock_primary(),
             locked_with_conflict,
             values,
         })
@@ -984,7 +928,7 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
         call: &UnaryCallContext,
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
         self.finish_statement(true)
-            .map_err(ClientTransaction::<C, L, T>::read_error)?;
+            .map_err(ClientTransaction::<S>::read_error)?;
         self.transaction.commit(mutations, call)
     }
     /// Cancels the active statement and rolls back the native transaction.
@@ -992,13 +936,13 @@ impl<C, L, T> ClientPessimisticTransaction<C, L, T> {
         mut self,
         call: &UnaryCallContext,
     ) -> Result<ReadOnlyTransaction, OptimisticCoordinatorError> {
-        self.transaction.client.set_call(call);
+        self.transaction.calls.set(call);
         self.finish_statement(false)
-            .map_err(ClientTransaction::<C, L, T>::read_error)?;
+            .map_err(ClientTransaction::<S>::read_error)?;
         self.transaction.finish_without_writes()
     }
 }
-impl<C, L, T> crate::new_txn::TxnResourceGroup for ClientPessimisticTransaction<C, L, T> {
+impl<S: PdClient> crate::new_txn::TxnResourceGroup for ClientPessimisticTransaction<S> {
     fn set_resource_group_name(&mut self, name: &str) {
         self.transaction.set_resource_group_name(name);
     }
@@ -1042,7 +986,7 @@ fn lock_error(error: crate::TikvTransactionError) -> super::PessimisticLockFailu
     }
 }
 
-impl<C, L, T> Drop for ClientTransaction<C, L, T> {
+impl<S: PdClient> Drop for ClientTransaction<S> {
     fn drop(&mut self) {
         if self.engine.transaction_mut().inner_mut().is_valid() {
             if self.engine.is_statement_locking() {
@@ -1058,91 +1002,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_transaction_starts_optimistic_until_the_session_promotes_it() {
-        use crate::region::*;
-        struct NoRegions;
-        impl RegionLoader for NoRegions {
-            fn cluster_id(&self) -> u64 {
-                1
-            }
-            fn load_region(&mut self, _: &[u8]) -> Result<RegionLocation, RegionLoadError> {
-                panic!("opening a transaction must not load regions")
-            }
-        }
-        impl RegionQueryLoader for NoRegions {
-            fn query_region(
-                &mut self,
-                _: RegionQuery<'_>,
-                _: RegionQueryOptions,
-            ) -> Result<RegionLocation, RegionLoadError> {
-                unreachable!()
-            }
-            fn scan_regions_once(
-                &mut self,
-                _: &KeyRange,
-                _: usize,
-                _: RegionQueryOptions,
-            ) -> Result<Vec<RegionLocation>, RegionLoadError> {
-                unreachable!()
-            }
-            fn load_store(&mut self, _: u64) -> Result<Option<StoreMetadata>, RegionLoadError> {
-                unreachable!()
-            }
-        }
-        impl RegionRecoveryLoader for NoRegions {
-            fn hydrate_region(
-                &mut self,
-                _: &RegionMetadata,
-                _: u64,
-                _: &mut std::collections::BTreeMap<u64, Option<StoreMetadata>>,
-            ) -> Result<RegionLocation, RegionLoadError> {
-                unreachable!()
-            }
-        }
-        let runtime = SharedReadRuntime::new_injected(
-            crate::rpc::TonicCoprocessorClient::new().unwrap(),
-            RegionCache::new(NoRegions),
-        );
-        let mut transaction = ClientTransaction::new_injected(
-            runtime,
-            crate::lock::FixedTimestampSource::new(200),
-            Duration::from_secs(1),
-            765432108,
-            Instant::now(),
-        )
-        .unwrap();
-        assert!(crate::inner_txn::ACTIVE_START_TS
-            .snapshot()
-            .contains(&765432108));
-        // client-go NewTiKVTxn leaves isPessimistic false. TiDB changes the
-        // same KVTxn only when its session transaction mode requires locks.
-        assert!(!transaction
-            .engine
-            .transaction_mut()
-            .inner_mut()
-            .is_pessimistic());
-        let mut pessimistic =
-            ClientPessimisticTransaction::from_transaction(transaction, Instant::now()).unwrap();
-        assert!(pessimistic
-            .transaction
-            .engine
-            .transaction_mut()
-            .inner_mut()
-            .is_pessimistic());
-        drop(pessimistic);
-        assert!(!crate::inner_txn::ACTIVE_START_TS
-            .snapshot()
-            .contains(&765432108));
-    }
-
-    #[test]
     fn native_snapshot_errors_reach_the_sql_backoff_conversion() {
         for (error, expected_code) in [
             (tikv_client::error::ERR_TIKV_SERVER_TIMEOUT, 9002),
             (tikv_client::error::ERR_RESOLVE_LOCK_TIMEOUT, 9004),
             (tikv_client::error::ERR_REGION_UNAVAILABLE, 9005),
         ] {
-            let error = ClientTransaction::<(), (), ()>::client_read_error(error.into());
+            let error =
+                ClientTransaction::<tikv_client::PdRpcClient>::client_read_error(error.into());
             let OptimisticCoordinatorError::SnapshotBackoff { kind, detail } = error else {
                 panic!("native backoff was flattened: {error:?}");
             };

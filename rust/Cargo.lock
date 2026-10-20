@@ -4469,6 +4469,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-error",
  "tidb-hack",
+ "tidb-log",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-util",

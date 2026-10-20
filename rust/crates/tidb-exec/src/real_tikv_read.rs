@@ -685,20 +685,17 @@ impl ProductionReadProcessAuthority {
             default_timeout: timeout,
             copr_cache: copr_cache.clone(),
         };
-        // Derived from the authority that is already running: the same shared
-        // read opener and the same PD worker. This is a capability, not a
-        // second process authority.
+        // Go's `tikvStore.Begin` over the node's one `KVStore`: transactions
+        // share its region cache, sender, lock resolver and txn safe point.
         let transaction_opener = RealOptimisticTransactionOpener::from_process_capabilities(
-            read_authority.opener(),
+            tikv_store.clone(),
             pd.clone(),
             timeout,
-            tikv_store.visibility(),
         )
         .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?
         // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`, resolved once for
         // the node exactly as `@@tidb_pessimistic_txn_fair_locking` is.
-        .with_commit_protocol(crate::session_commit_protocol::bootstrap_commit_protocol())
-        .with_cop_store(Arc::new(tikv_store.clone()));
+        .with_commit_protocol(crate::session_commit_protocol::bootstrap_commit_protocol());
         let table = choose_table(&transaction_opener).map_err(RealTiKvReadError::Catalog)?;
         let (opener, admission) = RealTiKvReadSessionOpener::new_with_admission_owner(
             table,

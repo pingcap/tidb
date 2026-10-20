@@ -57,15 +57,13 @@ fn opener(protocol: CommitProtocol) -> (RealOptimisticTransactionOpener, u64) {
     .expect("start sole real RegionCache authority");
     assert_eq!(shared.cluster_id(), cluster_id);
     let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        shared.opener(),
-        pd_owner,
-        RPC_TIMEOUT,
         tidb_txnkv::driver::tikv_store::TikvStore::connect(
             vec![pd_address.clone()],
             tikv_client::Config::default(),
         )
-        .expect("the node's store")
-        .visibility(),
+        .expect("the node's store"),
+        pd_owner,
+        RPC_TIMEOUT,
     )
     .expect("derive transaction opener without starting another authority")
     .with_commit_protocol(protocol);

@@ -154,15 +154,14 @@ fn async_stats_load_interval(stats_lease: crate::node_config::StatsLease) -> Opt
 /// and a positive value is the exact tick for both ordinary and asynchronous
 /// loading. Stats have no schema-watch nudge; Go's own refresh is tick-only
 /// too.
-pub(crate) fn spawn_node_stats<C, L, P>(
+pub(crate) fn spawn_node_stats<S, P>(
     catalog: Arc<SharedCatalog>,
-    opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
+    opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
     stats_lease: crate::node_config::StatsLease,
     timeout: Duration,
 ) -> Result<(Arc<SharedStats>, StatsReloader, AsyncStatsLoader), StatsReloadError>
 where
-    C: tidb_txnkv::transaction::StoreWriteClient,
-    L: tidb_txnkv::transaction::StoreWriteLoader,
+    S: StoreClient,
     P: tidb_txnkv::transaction::StorePdCapability,
 {
     let Some(reload_interval) = stats_lease.reload_interval() else {
@@ -310,14 +309,13 @@ where
 /// A failed pass is not fatal and does not stop the thread: the previously
 /// published catalog stays in force and the next tick tries again, which is
 /// what Go's reload loop does with a failed `Reload`.
-pub(crate) fn spawn_catalog_reloader<C, L, P>(
+pub(crate) fn spawn_catalog_reloader<S, P>(
     startup: ClusterCatalog,
-    transaction_opener: RealOptimisticTransactionOpener<C, L, P>,
+    transaction_opener: RealOptimisticTransactionOpener<S, P>,
     schema_lease: Duration,
 ) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
 where
-    C: tidb_txnkv::transaction::StoreWriteClient,
-    L: tidb_txnkv::transaction::StoreWriteLoader,
+    S: StoreClient,
     P: tidb_txnkv::transaction::StorePdCapability,
 {
     if schema_lease.is_zero() {

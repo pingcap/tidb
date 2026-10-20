@@ -23,8 +23,7 @@ use tidb_datatype::Time;
 use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_stats::StatsLockTransaction;
 use tidb_txnkv::transaction::{
-    BufferMutation, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
-    StoreWriteLoader,
+    BufferMutation, RealOptimisticTransactionOpener, StoreClient, StorePdCapability,
 };
 
 use crate::cluster_catalog::load_cluster_catalog;
@@ -79,8 +78,8 @@ impl std::error::Error for ClusterStatsLockCommitError {}
 
 /// Runs Go `pkg/statistics/handle/lockstats` against the cluster tables in one
 /// transaction independent of the caller's user transaction.
-pub fn commit_cluster_stats_lock<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn commit_cluster_stats_lock<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     statement: &ClusterStatsLockStatement,
     timeout: Duration,
 ) -> Result<ClusterStatsLockReport, ClusterStatsLockCommitError> {
@@ -126,21 +125,17 @@ pub fn commit_cluster_stats_lock<C: StoreWriteClient, L: StoreWriteLoader, P: St
     }
 }
 
-struct PessimisticStatsLockTransaction<'a, C, L, P>
+struct PessimisticStatsLockTransaction<'a, S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
-    transaction: &'a SessionTransaction<C, L, P>,
+    transaction: &'a SessionTransaction<S>,
     staged: &'a MutationBuffer,
     catalog: &'a crate::cluster_catalog::ClusterCatalog,
     now: Time,
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
-    PessimisticStatsLockTransaction<'_, C, L, P>
-{
+impl<S: StoreClient> PessimisticStatsLockTransaction<'_, S> {
     fn snapshot(&self) -> Result<SnapshotMetaSnapshot, ClusterStatsLockCommitError> {
         let snapshot = self
             .transaction
@@ -167,9 +162,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatsLockTransaction
-    for PessimisticStatsLockTransaction<'_, C, L, P>
-{
+impl<S: StoreClient> StatsLockTransaction for PessimisticStatsLockTransaction<'_, S> {
     type Error = ClusterStatsLockCommitError;
 
     fn query_locked_tables(&mut self) -> Result<BTreeSet<i64>, Self::Error> {

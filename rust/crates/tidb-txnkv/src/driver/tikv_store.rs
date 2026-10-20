@@ -19,6 +19,7 @@
 //! share the one `KVStore`.
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use tikv_client::tikv::KvStore;
 use tikv_client::{PdClient, PdRpcClient};
@@ -30,6 +31,13 @@ use crate::gc_state::{StoreVisibility, VisibilityError};
 pub struct TikvStore<PdC: PdClient = PdRpcClient> {
     runtime: Arc<tokio::runtime::Runtime>,
     store: KvStore<PdC>,
+    authority_id: u64,
+}
+
+static NEXT_AUTHORITY_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_authority_id() -> u64 {
+    NEXT_AUTHORITY_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl<PdC: PdClient> Clone for TikvStore<PdC> {
@@ -37,6 +45,7 @@ impl<PdC: PdClient> Clone for TikvStore<PdC> {
         Self {
             runtime: Arc::clone(&self.runtime),
             store: self.store.clone(),
+            authority_id: self.authority_id,
         }
     }
 }
@@ -79,7 +88,7 @@ impl TikvStore {
         let store = runtime
             .block_on(KvStore::new_with_config(pd_endpoints, config))
             .map_err(|error| error.to_string())?;
-        Ok(Self { runtime, store })
+        Ok(Self::new(runtime, store))
     }
 
     /// [`Self::connect`] with the TLS settings the node's other cluster
@@ -104,7 +113,18 @@ impl<PdC: PdClient> TikvStore<PdC> {
     /// A node store over a client-rust store already built on `runtime`.
     #[must_use]
     pub fn new(runtime: Arc<tokio::runtime::Runtime>, store: KvStore<PdC>) -> Self {
-        Self { runtime, store }
+        Self {
+            runtime,
+            store,
+            authority_id: next_authority_id(),
+        }
+    }
+
+    /// The store's identity in this process: transactions opened over it
+    /// carry it, so a receipt names the store that committed it.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority_id
     }
 
     /// The runtime the store's calls block on.
@@ -155,5 +175,57 @@ impl<PdC: PdClient> TikvStore<PdC> {
     pub fn visibility(&self) -> StoreVisibility {
         let store = self.clone();
         Arc::new(move |start_ts| store.check_visibility(start_ts))
+    }
+
+    /// Go `tikvStore.GetLockWaits`: every TiKV store's lock-wait entries,
+    /// each store asked once through the store's TiKV client with Go's 30s
+    /// timeout. A store that fails to answer is skipped, as Go logs and
+    /// moves on.
+    pub fn get_lock_waits(&self) -> Result<Vec<tidb_proto::KvrpcWaitForEntry>, String> {
+        const LOCK_WAIT_INFO_TIMEOUT: Duration = Duration::from_secs(30);
+        self.block_on(async {
+            let stores = self
+                .store
+                .pd_client()
+                .all_stores()
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut result = Vec::new();
+            for store in stores {
+                if store.endpoint_type != tikv_client::tikv::EndpointType::TiKv {
+                    continue;
+                }
+                let request = tikv_client::proto::kvrpcpb::GetLockWaitInfoRequest::default();
+                let response = match self
+                    .store
+                    .send_request(&store.target, &request, LOCK_WAIT_INFO_TIMEOUT)
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        tidb_util::logutil::bg_logger().warn(
+                            "query lock wait info failed",
+                            &[tidb_log::Field::new(
+                                "error",
+                                tidb_log::Value::Str(error.to_string()),
+                            )],
+                        );
+                        continue;
+                    }
+                };
+                match response.downcast::<tikv_client::proto::kvrpcpb::GetLockWaitInfoResponse>() {
+                    Ok(response) => result.extend(response.entries),
+                    Err(_) => tidb_util::logutil::bg_logger()
+                        .warn("lock wait info from store is nil", &[]),
+                }
+            }
+            Ok(result)
+        })
+    }
+
+    /// Go `KVStore.GetLockResolver().Resolving()`: the locks this store's
+    /// transactions are resolving now.
+    pub fn resolving_locks(&self) -> Vec<tikv_client::transaction::ResolvingLock> {
+        self.block_on(self.store.get_lock_resolver().resolving_locks())
     }
 }

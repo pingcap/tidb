@@ -25,9 +25,7 @@ use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_session::binding_cache::SharedBindingCache;
 use tidb_session::vars::GlobalSysvars;
-use tidb_txnkv::transaction::{
-    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
 const BINDING_LEASE: Duration = Duration::from_secs(3);
@@ -74,8 +72,8 @@ pub trait ClusterBindings: Send + Sync {
     fn close(&self);
 }
 
-struct StoredBindings<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> {
-    opener: RealOptimisticTransactionOpener<C, L, P>,
+struct StoredBindings<S: StoreClient, P: StorePdCapability> {
+    opener: RealOptimisticTransactionOpener<S, P>,
     catalog: Arc<SharedClusterCatalog>,
     globals: GlobalSysvars,
     cache: SharedBindingCache,
@@ -88,9 +86,7 @@ struct StoredBindings<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapabi
     record_range: RwLock<Option<(tidb_txnkv::Key, tidb_txnkv::Key)>>,
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterBindings
-    for StoredBindings<C, L, P>
-{
+impl<S: StoreClient, P: StorePdCapability> ClusterBindings for StoredBindings<S, P> {
     fn cache(&self) -> SharedBindingCache {
         self.cache.clone()
     }
@@ -224,16 +220,15 @@ impl Drop for BindingReloader {
 }
 
 /// Load the initial image before accepting connections, then follow peer changes.
-pub fn start_binding_cache<C, L, P>(
-    opener: RealOptimisticTransactionOpener<C, L, P>,
+pub fn start_binding_cache<S, P>(
+    opener: RealOptimisticTransactionOpener<S, P>,
     catalog: Arc<SharedClusterCatalog>,
     globals: GlobalSysvars,
     timeout: Duration,
     owner: Arc<dyn tidb_owner::Manager>,
 ) -> Result<(Arc<dyn ClusterBindings>, BindingReloader), String>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let bindings: Arc<dyn ClusterBindings> = Arc::new(StoredBindings {

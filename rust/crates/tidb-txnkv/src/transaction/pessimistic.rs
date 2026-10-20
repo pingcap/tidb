@@ -160,8 +160,6 @@ pub struct AcquiredLocks {
     pub for_update_ts: u64,
     /// Exact encoded keys newly locked, in encoded-key order.
     pub keys: Vec<Vec<u8>>,
-    /// Primary key of the transaction, chosen by the first successful lock.
-    pub primary_key: Vec<u8>,
     /// Keys fair locking locked *despite* a conflict, with the commit
     /// timestamp of the version that beat this statement.
     ///

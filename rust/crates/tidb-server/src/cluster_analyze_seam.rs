@@ -50,9 +50,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tidb_pd_client::PdClient;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
@@ -112,13 +110,12 @@ pub trait ClusterAnalyze: Send + Sync {
 
 /// The production analyzer: one real transaction per table, the optimistic
 /// 2PC, then this node's own statistics reload.
-pub struct RealClusterAnalyze<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct RealClusterAnalyze<S = tikv_client::PdRpcClient, P = PdClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     /// This node's LIVE statistics -- the snapshot every session's estimator
     /// reads. Republished only after a commit.
     stats: Arc<SharedStats>,
@@ -129,17 +126,16 @@ where
     row_ids: Option<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>,
 }
 
-impl<C, L, P> RealClusterAnalyze<C, L, P>
+impl<S, P> RealClusterAnalyze<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// Binds the analyzer to an already-connected authority and the live
     /// statistics a successful analysis republishes into.
     #[must_use]
     pub fn new(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         stats: Arc<SharedStats>,
         timeout: Duration,
         stats_lease: Duration,
@@ -211,10 +207,9 @@ where
     }
 }
 
-impl<C, L, P> ClusterAnalyze for RealClusterAnalyze<C, L, P>
+impl<S, P> ClusterAnalyze for RealClusterAnalyze<S, P>
 where
-    C: StoreWriteClient + tidb_txnkv::DirectUnaryClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn execute(

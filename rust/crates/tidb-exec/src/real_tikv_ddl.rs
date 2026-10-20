@@ -35,7 +35,7 @@ use std::time::Duration;
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
 use tidb_model::Job;
 use tidb_txnkv::transaction::{OptimisticCoordinatorError, RealOptimisticTransactionOpener};
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{
@@ -645,8 +645,8 @@ fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, limit: i64) ->
 // Go worker.loadGlobalVars uses an independent session: a SET GLOBAL committed
 // after the action snapshot must affect this error. Failed refresh retains the
 // process value published by the previous refresh or local SET GLOBAL.
-fn refresh_ddl_error_count_limit<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+fn refresh_ddl_error_count_limit<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     timeout: Duration,
 ) -> i64 {
     let refreshed = (|| -> Result<_, String> {
@@ -697,8 +697,8 @@ enum DdlPhaseOutcome {
 /// Answers a statement Go's executor finishes without submitting a job: the
 /// ALTER forms it accepts and changes nothing for (`plan_ddl`). The catalog
 /// is read at one snapshot and nothing is written.
-pub fn answer_ddl_without_job<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn answer_ddl_without_job<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     statement: &DdlStatement,
     timeout: Duration,
 ) -> Result<ClusterDdlReport, ClusterDdlError> {
@@ -740,8 +740,8 @@ pub enum PersistedDdlJobOutcome {
 /// `wait_retry` waits for the requested interval or returns an error when this
 /// owner's worker context is cancelled. It must not use statement cancellation.
 #[allow(clippy::too_many_arguments)]
-pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn run_persisted_ddl_job<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     ddl_job_id: i64,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
@@ -862,15 +862,14 @@ pub fn run_persisted_ddl_job<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
 /// Pinned Go `GenGIDAndInsertJobsWithRetry`: lock the global-ID key, assign
 /// every action-owned ID, run the caller's registration callback, encode all
 /// rows, and commit the allocation and inserts atomically.
-pub fn gen_global_ids_and_insert_jobs_with_retry<C, L, P, F, Cleanup>(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn gen_global_ids_and_insert_jobs_with_retry<S, P, F, Cleanup>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     specs: &mut [crate::ddl_job_submit::JobSpec],
     timeout: Duration,
     mut before_insert_with_assigned_ids: F,
 ) -> Result<(), ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
     F: FnMut(&[crate::ddl_job_submit::JobSpec]) -> Option<Cleanup>,
     Cleanup: FnOnce(),
@@ -958,12 +957,8 @@ where
 /// Go's submitter and owner scheduler are separate. Exposing the boundary is
 /// what lets a non-owner connection enqueue work and wait while the elected
 /// owner (possibly another server) executes it.
-pub fn submit_check_constraint_job_with_retry<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn submit_check_constraint_job_with_retry<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     statement: &DdlStatement,
     timeout: Duration,
     upgrading: bool,
@@ -1294,12 +1289,8 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
 /// as persisted jobs (ADD / DROP INDEX and PRIMARY KEY, DROP TABLE / VIEW /
 /// SEQUENCE / DATABASE): one job queued without executing it; the owner
 /// steps it through Go's schema states.
-pub fn submit_persisted_job_with_retry<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn submit_persisted_job_with_retry<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     statement: &DdlStatement,
     job_context: &tidb_executor::StmtContext,
     targets: &[(String, String)],
@@ -1424,12 +1415,8 @@ pub fn submit_persisted_job_with_retry<
 /// The returned order is the job table's primary-key order, matching Go's
 /// scheduler query `ORDER BY job_id`. The read transaction is always rolled
 /// back because queue inspection publishes no state.
-pub fn load_active_persisted_ddl_jobs<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn load_active_persisted_ddl_jobs<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     min_job_id: i64,
 ) -> Result<Vec<Job>, ClusterDdlError> {
@@ -1449,12 +1436,8 @@ pub fn load_active_persisted_ddl_jobs<
 /// does not change between ticks, so only its row scan is per-tick work;
 /// on any read error the cache is dropped so the next tick re-locates the
 /// table exactly like the uncached path.
-pub fn load_active_persisted_ddl_jobs_cached<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn load_active_persisted_ddl_jobs_cached<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     min_job_id: i64,
     cached_job_table: &mut Option<DdlJobTable>,
@@ -1503,12 +1486,8 @@ pub fn load_active_persisted_ddl_jobs_cached<
 
 /// Reads pinned Go `systable.Manager.GetMinJobID` in a fresh read-only
 /// transaction for `MinJobIDRefresher`.
-pub fn load_min_persisted_ddl_job_id<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn load_min_persisted_ddl_job_id<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     previous_min_job_id: i64,
 ) -> Result<i64, ClusterDdlError> {
@@ -1519,12 +1498,8 @@ pub fn load_min_persisted_ddl_job_id<
 /// Refresher variant of [`load_min_persisted_ddl_job_id`] that caches the
 /// located job table across refresh ticks for the same reason as
 /// [`load_active_persisted_ddl_jobs_cached`].
-pub fn load_min_persisted_ddl_job_id_cached<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn load_min_persisted_ddl_job_id_cached<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     previous_min_job_id: i64,
     cached_job_table: &mut Option<DdlJobTable>,
@@ -1566,12 +1541,8 @@ pub fn load_min_persisted_ddl_job_id_cached<
 }
 
 /// Reads one terminal DDL job from Go's authoritative meta history.
-pub fn load_history_persisted_ddl_job<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn load_history_persisted_ddl_job<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     ddl_job_id: i64,
     timeout: Duration,
 ) -> Result<Option<Job>, ClusterDdlError> {
@@ -1604,12 +1575,8 @@ pub fn load_history_persisted_ddl_job<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn commit_cluster_ddl_phase_with_retry<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+fn commit_cluster_ddl_phase_with_retry<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     phase: DdlPhase<'_>,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
@@ -1639,12 +1606,8 @@ fn commit_cluster_ddl_phase_with_retry<
     }
 }
 
-fn commit_cluster_ddl_with_backfill_once<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
->(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+fn commit_cluster_ddl_with_backfill_once<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     phase: DdlPhase<'_>,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
@@ -1885,8 +1848,8 @@ fn commit_cluster_ddl_with_backfill_once<
     }
 }
 
-fn clean_mdl_info_with_retry<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+fn clean_mdl_info_with_retry<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     mdl_info: &MdlInfoUpdate,
     ddl_job_id: i64,

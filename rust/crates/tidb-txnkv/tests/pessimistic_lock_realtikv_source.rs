@@ -65,15 +65,13 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
     .expect("start sole real RegionCache authority");
     assert_eq!(shared.cluster_id(), cluster_id);
     let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        shared.opener(),
-        pd_owner.clone(),
-        RPC_TIMEOUT,
         tidb_txnkv::driver::tikv_store::TikvStore::connect(
             vec![pd_address.clone()],
             tikv_client::Config::default(),
         )
-        .expect("the node's store")
-        .visibility(),
+        .expect("the node's store"),
+        pd_owner.clone(),
+        RPC_TIMEOUT,
     )
     .expect("derive transaction opener without starting another authority");
 
@@ -90,7 +88,6 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
         )
         .expect("an uncontended key is lockable");
     assert_eq!(held.keys, vec![CONTENDED_KEY.to_vec()]);
-    assert_eq!(held.primary_key, CONTENDED_KEY.to_vec());
     println!(
         "pessimistic_lock_realtikv phase=held start_ts={} for_update_ts={}",
         holder.start_ts(),
@@ -234,24 +231,14 @@ fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
     let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
         .expect("start sole real PD authority");
     let cluster_id = pd_owner.cluster_id();
-    let loader = PdRegionLoader::from_client(pd_owner.clone());
-    let transport_owner =
-        TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
-    let shared = SharedReadAuthority::start_with_store_liveness(
-        transport_owner.clone(),
-        RegionCache::new(loader),
-    )
-    .expect("start sole real RegionCache authority");
     let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        shared.opener(),
-        pd_owner.clone(),
-        RPC_TIMEOUT,
         tidb_txnkv::driver::tikv_store::TikvStore::connect(
             vec![pd_address.clone()],
             tikv_client::Config::default(),
         )
-        .expect("the node's store")
-        .visibility(),
+        .expect("the node's store"),
+        pd_owner.clone(),
+        RPC_TIMEOUT,
     )
     .expect("derive transaction opener without starting another authority");
 

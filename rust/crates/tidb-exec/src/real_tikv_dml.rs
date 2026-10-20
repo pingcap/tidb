@@ -56,15 +56,13 @@ use tidb_planner::{
     },
 };
 use tidb_tablecodec::{decode_table_row_to_map, encode_table_row, TableRowError};
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 use tidb_txnkv::{
-    lock::{LockRecoveryClient, TimestampSource},
-    region::RegionRecoveryLoader,
     rpc::UnaryCallContext,
     transaction::{
         BufferMutation, BufferMutationOp, MutationPlan, MutationSetError, OptimisticCommitOutcome,
         OptimisticCoordinatorError, ReadOnlyTransaction, RealOptimisticTransaction,
-        RealOptimisticTransactionOpener, TransactionCommandClient,
+        RealOptimisticTransactionOpener,
     },
 };
 
@@ -1864,8 +1862,8 @@ pub fn compose_configured_write_message(
 ///
 /// Every other terminal state — rolled back, cleanup failed, or undetermined —
 /// is an error here, because an OK packet asserts durable rows.
-pub fn commit_configured_write<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn commit_configured_write<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     write: &ConfiguredPreparedWrite,
     timeout: Duration,
     session_tz: &SessionTimeZone,
@@ -1937,11 +1935,9 @@ pub trait WritePlanningSnapshot {
     ) -> Result<Option<Vec<u8>>, ConfiguredWriteError>;
 }
 
-impl<C, L, T> WritePlanningSnapshot for RealOptimisticTransaction<C, L, T>
+impl<S> WritePlanningSnapshot for RealOptimisticTransaction<S>
 where
-    C: TransactionCommandClient + LockRecoveryClient,
-    L: RegionRecoveryLoader,
-    T: TimestampSource,
+    S: tidb_txnkv::transaction::StoreClient,
 {
     fn read_at_snapshot(
         &mut self,
@@ -2039,16 +2035,14 @@ pub fn plan_configured_write<S: WritePlanningSnapshot>(
 /// Planning ([`plan_configured_write`]) reads any UPDATE/DELETE row at this
 /// transaction's start timestamp through the same coordinator that publishes the
 /// mutation, so it can never observe a later snapshot; an INSERT needs no read.
-pub fn execute_configured_write<C, L, T>(
-    mut transaction: RealOptimisticTransaction<C, L, T>,
+pub fn execute_configured_write<S>(
+    mut transaction: RealOptimisticTransaction<S>,
     write: &ConfiguredPreparedWrite,
     call: &UnaryCallContext,
     session_tz: &SessionTimeZone,
 ) -> Result<ConfiguredWriteOutcome, ConfiguredWriteError>
 where
-    C: TransactionCommandClient + LockRecoveryClient,
-    L: RegionRecoveryLoader + Send + 'static,
-    T: TimestampSource,
+    S: tidb_txnkv::transaction::StoreClient,
 {
     let (plan, processed_keys) = {
         let mut snapshot = CountingWritePlanningSnapshot {

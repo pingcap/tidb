@@ -34,16 +34,15 @@ use crate::ddl_reorg_table::DdlReorgTable;
 /// failure is the caller's error; a SQL failure of the reorganization itself
 /// (a duplicate entry, a bad value) is the outcome Go's
 /// `runReorgJobAndHandleErr` turns into a rollback.
-pub(super) fn run_add_index_reorg<C, L, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub(super) fn run_add_index_reorg<S, P>(
+    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
     check_owner: &dyn Fn() -> Result<(), String>,
 ) -> Result<ReorgOutcome, ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let tables = locate_tables(opener, timeout)?;
@@ -139,14 +138,13 @@ fn reorg_element(reorg: &AddIndexReorg) -> Option<(i64, &'static [u8])> {
 }
 
 /// Go `cleanupDDLReorgHandles`: best effort, once a job finished.
-pub(super) fn clean_ddl_reorg_handles<C, L, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub(super) fn clean_ddl_reorg_handles<S, P>(
+    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     job_id: i64,
 ) -> Result<(), ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let tables = locate_tables(opener, timeout)?;
@@ -169,13 +167,12 @@ struct ReorgTables {
     system_db_id: i64,
 }
 
-fn locate_tables<C, L, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+fn locate_tables<S, P>(
+    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
 ) -> Result<ReorgTables, ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     reorg_transaction(opener, timeout, |meta, _, _, _| {
@@ -203,8 +200,8 @@ where
 /// One reorganization transaction: `work` reads through the snapshot,
 /// stages into the buffer and names extra mutations; the whole is committed
 /// at once and retried on a write conflict.
-pub(super) fn reorg_transaction<C, L, P, T>(
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub(super) fn reorg_transaction<S, P, T>(
+    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     mut work: impl FnMut(
         &mut SnapshotMetaSnapshot,
@@ -214,8 +211,7 @@ pub(super) fn reorg_transaction<C, L, P, T>(
     ) -> Result<(T, Vec<BufferMutation>), ClusterDdlError>,
 ) -> Result<T, ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let mut attempt: u32 = 0;
@@ -328,16 +324,15 @@ fn table_range(
 
 /// Go `getReorgInfo` with `SnapshotVer == 0`, after
 /// `checkIfTableReorgWorkCanSkip` / `checkIfTempIndexReorgWorkCanSkip`.
-fn init_reorg<C, L, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+fn init_reorg<S, P>(
+    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
     tables: &ReorgTables,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let (first_index, element_type) = reorg_element(reorg)
@@ -502,8 +497,8 @@ enum BatchStep {
 /// Go `runReorgJob` from the persisted handle: every physical table from
 /// the handle's on, each in batches of `batch_size` rows (or temporary
 /// entries, for each index in turn while merging).
-fn run_reorg<C, L, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+fn run_reorg<S, P>(
+    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
@@ -513,8 +508,7 @@ fn run_reorg<C, L, P>(
     warnings: &mut Vec<(u16, String, i64)>,
 ) -> Result<ReorgResult, ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     let element_type = reorg_element(reorg).map_or(INDEX_ELEMENT_KEY, |(_, kind)| kind);
@@ -617,8 +611,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_batch<C, L, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
+fn run_batch<S, P>(
+    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
     reorg: &AddIndexReorg,
@@ -628,8 +622,7 @@ fn run_batch<C, L, P>(
     check_owner: &dyn Fn() -> Result<(), String>,
 ) -> Result<BatchStep, ClusterDdlError>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     reorg_transaction(opener, timeout, |meta, snapshot, buffer, _| {

@@ -48,9 +48,7 @@ use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
 use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};
-use tidb_txnkv::transaction::{
-    RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient, StoreWriteLoader,
-};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
 
 /// The tables live local work still reads at older schema versions.
 ///
@@ -257,9 +255,9 @@ impl SchemaSyncAck {
     /// the loop only touches TiKV when the loaded version moved or an ack is
     /// still owed. Session, watch, monotonic-write, and owner-wait behavior
     /// comes from the shared `tidb-schemaver` package implementation.
-    pub fn spawn<C, L, P>(
+    pub fn spawn<S, P>(
         catalog: Arc<SharedCatalog>,
-        opener: RealOptimisticTransactionOpener<C, L, P>,
+        opener: RealOptimisticTransactionOpener<S, P>,
         pins: Arc<SchemaPinRegistry>,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         etcd: Arc<EtcdClient>,
@@ -272,8 +270,7 @@ impl SchemaSyncAck {
         timeout: Duration,
     ) -> Result<Self, String>
     where
-        C: StoreWriteClient + Send + 'static,
-        L: StoreWriteLoader + Send + 'static,
+        S: StoreClient + Send + 'static,
         P: StorePdCapability + Send + 'static,
     {
         let etcd_ops = Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(etcd));
@@ -434,9 +431,9 @@ fn handle_global_version_recv(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_ack_loop<C, L, P>(
+fn run_ack_loop<S, P>(
     catalog: &SharedCatalog,
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    opener: &RealOptimisticTransactionOpener<S, P>,
     pins: &SchemaPinRegistry,
     min_job_id_refresher: &MinJobIdRefresher,
     syncer: &dyn SchemaVersionSyncer,
@@ -448,8 +445,7 @@ fn run_ack_loop<C, L, P>(
     timeout: Duration,
     stop: &AtomicBool,
 ) where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     // Go's `jobCache`: (job id -> version already acknowledged).

@@ -49,7 +49,6 @@ use std::time::Duration;
 
 use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::{Datum, SessionTimeZone};
-use tidb_pd_client::PdClient;
 use tidb_planner::physical::PhysicalSelection;
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
 use tidb_planner::read_only_scan::{
@@ -61,15 +60,12 @@ use tidb_planner::signed_bigint_ranger::{
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_tablecodec::decode_table_row_to_map;
-use tidb_txnkv::pd_capability::CapabilityTimestampSource;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError, PessimisticLockFailure,
     RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
-    StorePdCapability, StoreWriteClient, StoreWriteLoader,
+    StoreClient, StorePdCapability,
 };
-use tidb_txnkv::PdRegionLoader;
 
 use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
@@ -176,29 +172,22 @@ pub enum TransactionEnd {
 /// They are one type here because every statement path treats them alike except
 /// where the mode genuinely differs: only the pessimistic one can lock, and only
 /// the optimistic one can first learn of a conflict at `COMMIT`.
-enum OpenTransaction<C, L, P>
-where
-    P: StorePdCapability,
-{
-    Optimistic(Box<RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>>),
-    Pessimistic(Box<RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>>),
+enum OpenTransaction<S: StoreClient> {
+    Optimistic(Box<RealOptimisticTransaction<S>>),
+    Pessimistic(Box<RealPessimisticTransaction<S>>),
 }
 
-impl<C, L, P> OpenTransaction<C, L, P>
+impl<S> OpenTransaction<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
-    fn transaction(&self) -> &RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>> {
+    fn transaction(&self) -> &RealOptimisticTransaction<S> {
         match self {
             Self::Optimistic(transaction) => transaction,
             Self::Pessimistic(transaction) => transaction.snapshot_ref(),
         }
     }
-    fn transaction_mut(
-        &mut self,
-    ) -> &mut RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>> {
+    fn transaction_mut(&mut self) -> &mut RealOptimisticTransaction<S> {
         match self {
             Self::Optimistic(transaction) => transaction,
             Self::Pessimistic(transaction) => transaction.snapshot(),
@@ -220,11 +209,11 @@ where
 pub const TRANSACTION_END_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One open explicit transaction, owned by exactly one connection.
-pub struct MultiStatementTransaction<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct MultiStatementTransaction<S = tikv_client::PdRpcClient>
 where
-    P: StorePdCapability,
+    S: tidb_txnkv::transaction::StoreClient,
 {
-    open: OpenTransaction<C, L, P>,
+    open: OpenTransaction<S>,
     mode: SessionTxnMode,
     /// The one table this node serves, needed to turn a clustered handle into
     /// the record key the buffer is keyed by.
@@ -252,16 +241,14 @@ where
     lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }
 
-impl<C, L, P> MultiStatementTransaction<C, L, P>
+impl<S> MultiStatementTransaction<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     /// Opens one explicit transaction in `mode` over the shared authorities.
     ///
-    pub fn begin(
-        opener: &RealOptimisticTransactionOpener<C, L, P>,
+    pub fn begin<P: StorePdCapability>(
+        opener: &RealOptimisticTransactionOpener<S, P>,
         mode: SessionTxnMode,
         fair_locking: bool,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
@@ -914,11 +901,9 @@ fn planned_mutation_keys(plan: &ConfiguredWritePlan) -> Vec<Vec<u8>> {
 /// key falls through to the snapshot at `start_ts`. That is `tikvTxn.Get`'s
 /// order, and it is what lets a second `UPDATE` of one row compute its new value
 /// from the first one's.
-impl<C, L, P> WritePlanningSnapshot for MultiStatementTransaction<C, L, P>
+impl<S> WritePlanningSnapshot for MultiStatementTransaction<S>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     fn read_at_snapshot(
         &mut self,

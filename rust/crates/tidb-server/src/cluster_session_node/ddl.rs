@@ -24,9 +24,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_pd_client::PdClient;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
-use tidb_txnkv::PdRegionLoader;
+use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
 use tidb_exec::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
@@ -234,13 +232,12 @@ fn handle_server_state_watch<T>(
     }
 }
 
-struct ClusterSchemaSync<C, L, P>
+struct ClusterSchemaSync<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     catalog: Arc<SharedClusterCatalog>,
     /// The node's schema validator, renewed by this reload like the reload
     /// thread's own passes renew it.
@@ -258,16 +255,15 @@ struct SchedulerWorker {
     _adding_job_watcher: Option<tidb_pd_client::EtcdWatcher>,
 }
 
-struct PersistedDdlScheduler<C, L, P>
+struct PersistedDdlScheduler<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
-    schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
+    schema_sync: Arc<ClusterSchemaSync<S, P>>,
     wake: Arc<(Mutex<u64>, Condvar)>,
     server_state: Arc<dyn Syncer>,
     server_state_context: ServerStateContext,
@@ -280,10 +276,9 @@ where
     del_range: Arc<std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>>,
 }
 
-impl<C, L, P> PersistedDdlScheduler<C, L, P>
+impl<S, P> PersistedDdlScheduler<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn notify(&self) {
@@ -340,10 +335,10 @@ where
     }
 
     fn run_loop(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
-        schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
+        schema_sync: Arc<ClusterSchemaSync<S, P>>,
         wake: Arc<(Mutex<u64>, Condvar)>,
         server_state: Arc<dyn Syncer>,
         server_state_context: ServerStateContext,
@@ -451,10 +446,9 @@ where
     }
 }
 
-impl<C, L, P> tidb_owner::Listener for PersistedDdlScheduler<C, L, P>
+impl<S, P> tidb_owner::Listener for PersistedDdlScheduler<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn on_become_owner(&self) {
@@ -552,13 +546,12 @@ where
 
 /// The production catalog writer: the optimistic 2PC over the node's one
 /// process authority, followed by an inline reload of the node's own catalog.
-pub struct RealClusterDdl<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct RealClusterDdl<S = tikv_client::PdRpcClient, P = PdClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     catalog: Arc<SharedClusterCatalog>,
     timeout: Duration,
     auto_ids: Option<Arc<tidb_exec::auto_id_client::AutoIdClient>>,
@@ -566,8 +559,8 @@ where
     /// peers' watches fire promptly. `None` leaves them to their lease tick;
     /// a failed announcement is a warning, never a failed DDL.
     notifier: Option<Arc<EtcdClient>>,
-    schema_sync: Arc<ClusterSchemaSync<C, L, P>>,
-    scheduler: Arc<PersistedDdlScheduler<C, L, P>>,
+    schema_sync: Arc<ClusterSchemaSync<S, P>>,
+    scheduler: Arc<PersistedDdlScheduler<S, P>>,
     owner: Arc<dyn tidb_owner::Manager>,
     server_state: Arc<dyn Syncer>,
     server_state_context: ServerStateContext,
@@ -579,10 +572,9 @@ where
     job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
 }
 
-impl<C, L, P> RealClusterDdl<C, L, P>
+impl<S, P> RealClusterDdl<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// The node's row-ID allocators, for the rows the owner inserts into
@@ -615,7 +607,7 @@ where
     /// Binds the writer to an already-connected authority and the catalog slot
     /// the reload thread publishes into.
     pub fn new(
-        opener: RealOptimisticTransactionOpener<C, L, P>,
+        opener: RealOptimisticTransactionOpener<S, P>,
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -641,7 +633,7 @@ where
     /// loop. Go's domain owns one `MinJobIDRefresher`; both the scheduler and
     /// `refreshMDLCheckTableInfo` read that same monotonic lower bound.
     pub fn new_with_min_job_id_refresher(
-        opener: RealOptimisticTransactionOpener<C, L, P>,
+        opener: RealOptimisticTransactionOpener<S, P>,
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -2210,10 +2202,9 @@ mod schema_sync_tests {
     }
 }
 
-impl<C, L, P> ClusterSchemaSync<C, L, P>
+impl<S, P> ClusterSchemaSync<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn reload_catalog(&self) -> Result<(), String> {
@@ -2232,10 +2223,9 @@ where
     }
 }
 
-impl<C, L, P> SchemaLoader for ClusterSchemaSync<C, L, P>
+impl<S, P> SchemaLoader for ClusterSchemaSync<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn reload(&self) -> Result<(), String> {
@@ -2243,10 +2233,9 @@ where
     }
 }
 
-impl<C, L, P> DdlSchemaSync for ClusterSchemaSync<C, L, P>
+impl<S, P> DdlSchemaSync for ClusterSchemaSync<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn owner_id(&self) -> &str {
@@ -2276,10 +2265,9 @@ where
     }
 }
 
-impl<C, L, P> ClusterDdl for RealClusterDdl<C, L, P>
+impl<S, P> ClusterDdl for RealClusterDdl<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn is_owner(&self) -> bool {
@@ -2295,10 +2283,9 @@ where
     }
 }
 
-impl<C, L, P> RealClusterDdl<C, L, P>
+impl<S, P> RealClusterDdl<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     /// [`ClusterDdl::execute`] for one target of a statement naming
@@ -2583,10 +2570,9 @@ fn reorg_meta_warnings(
         .collect()
 }
 
-impl<C, L, P> tidb_exec::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<C, L, P>
+impl<S, P> tidb_exec::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn is_owner(&self) -> bool {
@@ -2607,10 +2593,9 @@ where
     }
 }
 
-impl<C, L, P> Drop for RealClusterDdl<C, L, P>
+impl<S, P> Drop for RealClusterDdl<S, P>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
+    S: StoreClient,
     P: StorePdCapability,
 {
     fn drop(&mut self) {

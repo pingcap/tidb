@@ -70,16 +70,15 @@ use tidb_executor::cluster_storage::{
 use tidb_executor::storage::StorageError;
 use tidb_hack::GoToLower;
 use tidb_pd_client::PdClient;
-use tidb_txnkv::pd_capability::{CapabilityTimestampSource, TimestampFutureWait};
-use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext, UnaryCancellation};
+use tidb_txnkv::pd_capability::TimestampFutureWait;
+use tidb_txnkv::rpc::{UnaryCallContext, UnaryCancellation};
 use tidb_txnkv::transaction::{
     BufferMutation, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
     PessimisticLockFailure, RealOptimisticTransaction, RealOptimisticTransactionOpener,
-    RealPessimisticTransaction, SchemaLease, SchemaLeaseChecker, StorePdCapability,
-    StoreWriteClient, StoreWriteLoader, TransactionCause,
+    RealPessimisticTransaction, SchemaLease, SchemaLeaseChecker, StoreClient, StorePdCapability,
+    TransactionCause,
 };
 use tidb_txnkv::Key;
-use tidb_txnkv::PdRegionLoader;
 
 use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error_with_hint, duplicate_cause, duplicate_key_sql_error,
@@ -182,8 +181,8 @@ pub fn stage_mutations(
 /// fair-locking grant-with-conflict is NOT retried here, because its remedy
 /// is re-executing the statement at the advanced `for_update_ts`, which only
 /// the session layer can do.
-fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    transaction: &mut RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+fn acquire_statement_locks<S: StoreClient>(
+    transaction: &mut RealPessimisticTransaction<S>,
     lock_values: &mut PessimisticLockCache,
     keys: &[Vec<u8>],
     presume_not_exists: &BTreeSet<Vec<u8>>,
@@ -267,15 +266,13 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
 /// range put 192 of 4195 samples in the handshake this removes -- the whole
 /// cost of shipping a purely local `begin_read_only_at` to another thread and
 /// waiting for it to come back.
-pub struct StatementSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct StatementSnapshot<S = tikv_client::PdRpcClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
     /// `None` once the statement has finished; every read after that is
     /// refused because its transaction has already ended.
-    transaction: Option<RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>>,
+    transaction: Option<RealOptimisticTransaction<S>>,
     start_ts: u64,
     timeout: Duration,
     /// Reused by all reads in this statement; see `SessionSnapshot`.
@@ -287,23 +284,22 @@ where
 /// Unlike [`StatementSnapshot`], this owns only the in-flight timestamp. Go's
 /// warmup stores only an oracle future; the connection-worker transaction is
 /// opened when [`Self::wait`] activates the snapshot for the first storage read.
-pub struct PreparedStatementSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct PreparedStatementSnapshot<S = tikv_client::PdRpcClient, P = PdClient>
 where
+    S: StoreClient,
     P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     start_ts: P::TsFuture,
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
-    PreparedStatementSnapshot<C, L, P>
-{
+impl<S: StoreClient, P: StorePdCapability> PreparedStatementSnapshot<S, P> {
     /// Waits for the timestamp prepared after planning, then opens the
     /// read-only transaction HERE. `begin_read_only_at` spends no timestamp
     /// and sends no request -- it is local state over an already-shared
     /// transport -- so handing it to another thread only bought a round trip.
-    pub fn wait(self) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
+    pub fn wait(self) -> Result<StatementSnapshot<S>, OptimisticCoordinatorError> {
         let start_ts = self
             .start_ts
             .wait()
@@ -318,9 +314,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
-    for StatementSnapshot<C, L, P>
-{
+impl<S: StoreClient> fmt::Debug for StatementSnapshot<S> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StatementSnapshot")
@@ -332,11 +326,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
 
 impl StatementSnapshot {
     /// Opens a validated historical read through the ordinary snapshot owner.
-    pub fn open_at<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    pub fn open_at<S: StoreClient, P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         start_ts: u64,
         timeout: Duration,
-    ) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
+    ) -> Result<StatementSnapshot<S>, OptimisticCoordinatorError> {
         let transaction = opener.begin_read_only_at(start_ts)?;
         Ok(StatementSnapshot {
             transaction: Some(transaction),
@@ -348,10 +342,10 @@ impl StatementSnapshot {
 
     /// Starts fetching one ordinary read-only transaction's PD timestamp
     /// without opening the transaction itself.
-    pub fn prepare<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    pub fn prepare<S: StoreClient, P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         timeout: Duration,
-    ) -> Result<PreparedStatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
+    ) -> Result<PreparedStatementSnapshot<S, P>, OptimisticCoordinatorError> {
         let start_ts = opener.prepare_read_only_start_ts()?;
         Ok(PreparedStatementSnapshot {
             opener,
@@ -362,15 +356,15 @@ impl StatementSnapshot {
 
     /// Opens one read-only transaction on the CALLING thread, spending
     /// exactly one PD timestamp.
-    pub fn open<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    pub fn open<S: StoreClient, P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         timeout: Duration,
-    ) -> Result<StatementSnapshot<C, L, P>, OptimisticCoordinatorError> {
+    ) -> Result<StatementSnapshot<S>, OptimisticCoordinatorError> {
         StatementSnapshot::prepare(opener, timeout)?.wait()
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSnapshot<C, L, P> {
+impl<S: StoreClient> StatementSnapshot<S> {
     /// The timestamp every read of this statement is served at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
@@ -378,7 +372,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSn
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSnapshot<C, L, P> {
+impl<S: StoreClient> StatementSnapshot<S> {
     /// Ends the statement's read transaction, leaving no locks behind.
     ///
     /// Calling it twice is a no-op: the statement is already finished.
@@ -400,19 +394,14 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> StatementSn
         UnaryCallContext::with_deadline(Instant::now() + self.timeout, self.cancellation.clone())
     }
 
-    fn reader(
-        &mut self,
-    ) -> Result<&mut RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>, StorageError>
-    {
+    fn reader(&mut self) -> Result<&mut RealOptimisticTransaction<S>, StorageError> {
         self.transaction
             .as_mut()
             .ok_or_else(|| StorageError::Backend("the transaction is already finished".to_owned()))
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
-    for StatementSnapshot<C, L, P>
-{
+impl<S: StoreClient> Drop for StatementSnapshot<S> {
     fn drop(&mut self) {
         // Go abandons an autocommit read snapshot after the statement: there
         // are no writes or locks whose cleanup the foreground must observe.
@@ -426,9 +415,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
-    for StatementSnapshot<C, L, P>
-{
+impl<S: StoreClient> ClusterSnapshot for StatementSnapshot<S> {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         if let Some(transaction) = self.transaction.as_mut() {
             transaction.set_snapshot_read_options(&options);
@@ -488,8 +475,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 /// scan or later Get. Each accepted read opens only a shared read lease;
 /// region retries, lock recovery, GC visibility, and the call deadline remain
 /// those of the transaction snapshot reader.
-pub struct MaxTsSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient> {
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub struct MaxTsSnapshot<S = tikv_client::PdRpcClient, P = PdClient>
+where
+    S: StoreClient,
+{
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     timeout: Duration,
     /// Reused for the one direct read (and retained for the defensive scan
     /// path) so MaxTS does not allocate a cancellation channel per operation.
@@ -499,10 +489,10 @@ pub struct MaxTsSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdC
     read_options: tidb_txnkv::SnapshotReadOptions,
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapshot<C, L, P> {
+impl<S: StoreClient, P: StorePdCapability> MaxTsSnapshot<S, P> {
     /// Binds the direct read to the process transaction/read authority.
     #[must_use]
-    pub fn new(opener: Arc<RealOptimisticTransactionOpener<C, L, P>>, timeout: Duration) -> Self {
+    pub fn new(opener: Arc<RealOptimisticTransactionOpener<S, P>>, timeout: Duration) -> Self {
         Self {
             opener,
             timeout,
@@ -523,7 +513,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapsh
     }
 }
 
-impl<C, L, P> fmt::Debug for MaxTsSnapshot<C, L, P> {
+impl<S: StoreClient, P> fmt::Debug for MaxTsSnapshot<S, P> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MaxTsSnapshot")
@@ -532,9 +522,7 @@ impl<C, L, P> fmt::Debug for MaxTsSnapshot<C, L, P> {
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
-    for MaxTsSnapshot<C, L, P>
-{
+impl<S: StoreClient, P: StorePdCapability> ClusterSnapshot for MaxTsSnapshot<S, P> {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.read_options = options;
     }
@@ -595,13 +583,11 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 /// transaction touched was committed by someone else after that timestamp, and
 /// every statement in between reads at that timestamp, which is repeatable
 /// read.
-pub struct SessionTransaction<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+pub struct SessionTransaction<S = tikv_client::PdRpcClient>
 where
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
+    S: StoreClient,
 {
-    state: Arc<Mutex<SessionTransactionState<C, L, P>>>,
+    state: Arc<Mutex<SessionTransactionState<S>>>,
     start_ts: u64,
     timeout: Duration,
     /// Wall clock of BEGIN, Go's
@@ -636,8 +622,8 @@ impl PessimisticLockCache {
     }
 }
 
-enum SessionTransactionState<C, L, P: StorePdCapability> {
-    Optimistic(RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>),
+enum SessionTransactionState<S: StoreClient> {
+    Optimistic(RealOptimisticTransaction<S>),
     /// A pessimistic transaction before its first locking statement.
     ///
     /// Go keeps this state as an ordinary `KVTxn` and creates pessimistic
@@ -646,19 +632,17 @@ enum SessionTransactionState<C, L, P: StorePdCapability> {
     /// tearing down the pessimistic wrapper on every `BEGIN` is both needless
     /// work and a different lifecycle.
     PessimisticPending {
-        transaction: RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+        transaction: RealOptimisticTransaction<S>,
         opened_at: Instant,
     },
     Pessimistic {
-        transaction: RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+        transaction: RealPessimisticTransaction<S>,
         lock_values: PessimisticLockCache,
     },
     Finished,
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
-    SessionTransactionState<C, L, P>
-{
+impl<S: StoreClient> SessionTransactionState<S> {
     fn set_snapshot_read_options(&mut self, options: &tidb_txnkv::SnapshotReadOptions) {
         match self {
             Self::Optimistic(transaction) | Self::PessimisticPending { transaction, .. } => {
@@ -674,8 +658,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
 
 /// Crosses Go's lazy pessimistic boundary exactly once, immediately before
 /// the first statement that actually needs row locks.
-fn promote_pessimistic_state<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    state: &mut SessionTransactionState<C, L, P>,
+fn promote_pessimistic_state<S: StoreClient>(
+    state: &mut SessionTransactionState<S>,
     fair_locking: bool,
 ) -> Result<(), StorageError> {
     if !matches!(state, SessionTransactionState::PessimisticPending { .. }) {
@@ -703,9 +687,7 @@ fn promote_pessimistic_state<C: StoreWriteClient, L: StoreWriteLoader, P: StoreP
     Ok(())
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
-    for SessionTransaction<C, L, P>
-{
+impl<S: StoreClient> fmt::Debug for SessionTransaction<S> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let state = self
             .state
@@ -720,7 +702,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> fmt::Debug
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTransaction<C, L, P> {
+impl<S: StoreClient> SessionTransaction<S> {
     /// Bind executor staging to the client's own transaction buffer.
     pub fn bind_mutation_buffer(&self, buffer: &MutationBuffer) {
         let state = self.state.clone();
@@ -851,8 +833,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     /// Opens the transaction `BEGIN` holds, spending exactly one PD timestamp.
     ///
     /// The native buffer validates actual writes against configured byte limits.
-    pub fn begin(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    pub fn begin<P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         timeout: Duration,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
@@ -876,8 +858,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     /// PD round trip can overlap the statement's own planning (Go's
     /// `txnFuture`: the timestamp request is dispatched at warm-up and waited
     /// for at first use).
-    pub fn begin_at(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    pub fn begin_at<P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         start_ts: u64,
         timeout: Duration,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
@@ -898,8 +880,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
 
     /// [`Self::begin_pessimistic`] at a timestamp already obtained by
     /// [`RealOptimisticTransactionOpener::prepare_read_only_start_ts`].
-    pub fn begin_pessimistic_at(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    pub fn begin_pessimistic_at<P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         start_ts: u64,
         timeout: Duration,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
@@ -926,8 +908,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
     /// `tidb_txn_mode = 'pessimistic'`: the same one-timestamp transaction,
     /// which additionally serves the statement-lock protocol
     /// ([`Self::lock_keys`]) and commits with pessimistic constraints.
-    pub fn begin_pessimistic(
-        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    pub fn begin_pessimistic<P: StorePdCapability>(
+        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
         timeout: Duration,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
@@ -1309,13 +1291,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> SessionTran
 /// is supplied separately for version columns. Callers with multiple Go SQL
 /// statements must call [`lock_pessimistic_statement`] once per statement and
 /// commit their combined mutations only after every statement succeeds.
-pub fn commit_pessimistic_statement<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
-    T,
->(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn commit_pessimistic_statement<S: StoreClient, P: StorePdCapability, T>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     timeout: Duration,
     build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<BufferMutation>), String>,
 ) -> Result<T, PessimisticStatementTransactionError> {
@@ -1426,13 +1403,8 @@ impl ClusterSnapshot for MutationOverlaySnapshot {
 
 /// Locks one Go SQL statement and returns its mutations for the enclosing
 /// transaction's eventual commit.
-pub fn lock_pessimistic_statement<
-    C: StoreWriteClient,
-    L: StoreWriteLoader,
-    P: StorePdCapability,
-    T,
->(
-    transaction: &SessionTransaction<C, L, P>,
+pub fn lock_pessimistic_statement<S: StoreClient, T>(
+    transaction: &SessionTransaction<S>,
     staged: &MutationBuffer,
     build: impl FnMut(Box<dyn ClusterSnapshot>, u64) -> Result<(T, Vec<BufferMutation>), String>,
 ) -> Result<T, PessimisticStatementTransactionError> {
@@ -1616,8 +1588,8 @@ pub fn lock_pessimistic_statement_with<T>(
     }
 }
 
-fn finish_session_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    state: &mut SessionTransactionState<C, L, P>,
+fn finish_session_transaction<S: StoreClient>(
+    state: &mut SessionTransactionState<S>,
 ) -> Result<(), StorageError> {
     match std::mem::replace(state, SessionTransactionState::Finished) {
         SessionTransactionState::Optimistic(transaction) => transaction
@@ -1639,9 +1611,7 @@ fn finish_session_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: Store
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
-    for SessionTransaction<C, L, P>
-{
+impl<S: StoreClient> Drop for SessionTransaction<S> {
     fn drop(&mut self) {
         let mut state = self
             .state
@@ -1655,8 +1625,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> Drop
 ///
 /// It carries no ownership of the transaction: dropping it is the end of the
 /// statement, and the transaction stays open for the next one.
-struct SessionSnapshot<C, L, P: StorePdCapability> {
-    state: Arc<Mutex<SessionTransactionState<C, L, P>>>,
+struct SessionSnapshot<S: StoreClient> {
+    state: Arc<Mutex<SessionTransactionState<S>>>,
     /// Reused by all reads in this statement.  The transport does not cancel
     /// this carrier on an ordinary deadline, so sharing it avoids allocating
     /// one watch channel/condvar pair per point Get.
@@ -1674,7 +1644,7 @@ struct SessionSnapshot<C, L, P: StorePdCapability> {
     read_options: tidb_txnkv::SnapshotReadOptions,
 }
 
-impl<C, L, P: StorePdCapability> fmt::Debug for SessionSnapshot<C, L, P> {
+impl<S: StoreClient> fmt::Debug for SessionSnapshot<S> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("SessionSnapshot")
@@ -1683,9 +1653,7 @@ impl<C, L, P: StorePdCapability> fmt::Debug for SessionSnapshot<C, L, P> {
     }
 }
 
-impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
-    for SessionSnapshot<C, L, P>
-{
+impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.read_options = options;
     }
@@ -1915,12 +1883,11 @@ fn classify(error: OptimisticCoordinatorError) -> StorageError {
 /// The returned handle is the statement's; finishing it ends the read
 /// transaction. The buffer outlives it, because the session -- not the
 /// statement -- owns the staged writes until COMMIT.
-pub fn statement_storage<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+pub fn statement_storage<S: StoreClient, P: StorePdCapability>(
+    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
     buffer: MutationBuffer,
     timeout: Duration,
-) -> Result<(ClusterTableStorage, Arc<Mutex<StatementSnapshot<C, L, P>>>), OptimisticCoordinatorError>
-{
+) -> Result<(ClusterTableStorage, Arc<Mutex<StatementSnapshot<S>>>), OptimisticCoordinatorError> {
     let snapshot = Arc::new(Mutex::new(StatementSnapshot::open(opener, timeout)?));
     let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
     Ok((ClusterTableStorage::new(buffer, handle), snapshot))
@@ -1965,8 +1932,8 @@ fn deferred_duplicate_hint(
 /// Inside `BEGIN` ... `COMMIT` the publication goes through
 /// [`SessionTransaction::commit`] instead, at the timestamp `BEGIN` took. An
 /// empty buffer commits nothing and consumes no timestamp.
-pub fn commit_staged_buffer<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<C, L, P>,
+pub fn commit_staged_buffer<S: StoreClient, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<S, P>,
     buffer: &MutationBuffer,
     read_ts: Option<u64>,
     timeout: Duration,
@@ -2135,7 +2102,7 @@ mod tests {
 
     #[test]
     fn coprocessor_snapshot_timestamp_follows_the_statement_retry() {
-        let mut snapshot = SessionSnapshot::<TonicCoprocessorClient, PdRegionLoader, PdClient> {
+        let mut snapshot = SessionSnapshot::<tikv_client::PdRpcClient> {
             state: Arc::new(Mutex::new(SessionTransactionState::Finished)),
             cancellation: UnaryCancellation::new(),
             start_ts: 10,
@@ -2310,7 +2277,7 @@ mod tests {
     #[test]
     fn a_statement_snapshot_reports_the_timestamp_it_reads_at() {
         let state = Arc::new(Mutex::new(
-            SessionTransactionState::<TonicCoprocessorClient, PdRegionLoader, PdClient>::Finished,
+            SessionTransactionState::<tikv_client::PdRpcClient>::Finished,
         ));
         let at_transaction = SessionSnapshot {
             state: Arc::clone(&state),
