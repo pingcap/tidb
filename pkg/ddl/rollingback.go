@@ -409,11 +409,10 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	var dropIndices []*model.IndexInfo
+	// Non-unique global indexes are duplicated as well, so every changed index must be handled.
+	// New indexes stop taking writes here; rollbackLikeDropPartition removes them and
+	// queues their data for deletion once all sessions have seen this state.
 	for _, indexInfo := range tblInfo.Indices {
-		if !indexInfo.Unique {
-			continue
-		}
 		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
 		if !ok {
 			// non-changed index
@@ -428,14 +427,9 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 			if pi.DDLState == model.StateDeleteReorganization {
 				indexInfo.State = model.StateWriteOnly
 			} else {
-				dropIndices = append(dropIndices, indexInfo)
+				indexInfo.State = model.StateDeleteOnly
 			}
 		}
-	}
-	for _, indexInfo := range dropIndices {
-		DropIndexColumnFlag(tblInfo, indexInfo)
-		RemoveDependentHiddenColumns(tblInfo, indexInfo)
-		removeIndexInfo(tblInfo, indexInfo)
 	}
 	if pi.DDLState == model.StateDeleteReorganization {
 		// New partitions are public,
