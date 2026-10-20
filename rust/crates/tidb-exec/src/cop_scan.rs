@@ -691,6 +691,12 @@ where
         let plan = RemoteScanPlan {
             cancellation: request.statement.memory.coprocessor_request_cancellation(),
             kv_exec_counter: request.statement.kv_exec_counter.clone(),
+            kv_context: request
+                .statement
+                .kv_context
+                .as_ref()
+                .map(tidb_txnkv::StatementKvContextCell::get)
+                .unwrap_or_default(),
             dag,
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
@@ -740,6 +746,9 @@ where
 struct RemoteScanPlan {
     cancellation: Arc<CancelHandle>,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    /// The issuing statement's ctx values: its `RUDetails` and its
+    /// `StmtCtx.GetResourceGroupTagger`.
+    kv_context: tidb_txnkv::StatementKvContext,
     dag: tidb_proto::tipb::DagRequest,
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
@@ -896,6 +905,11 @@ where
     builder
         .set_read_replica_scope(plan.read_replica_scope)
         .set_is_staleness(plan.is_staleness);
+    // Go `SetFromSessionVars`: `SetResourceGroupTagger(sv.StmtCtx.
+    // GetResourceGroupTagger())`.
+    if let Some(tagger) = &plan.kv_context.resource_group_tagger {
+        builder.set_resource_group_tagger(tagger());
+    }
     builder.set_closest_replica_read_adjuster(closest_read_adjuster(
         plan.replica_read,
         plan.estimated_net_bytes,
@@ -921,7 +935,8 @@ where
         .build_transport_request(Arc::clone(&cancellation))
         .map_err(|error| format!("{error:?}"))?
         .with_cop_lite_worker(plan.cop_lite_worker)
-        .with_kv_exec_counter(plan.kv_exec_counter);
+        .with_kv_exec_counter(plan.kv_exec_counter)
+        .with_ru_details(plan.kv_context.ru_details);
     let mut runtime = InjectedQueryRuntime::new(&mut transport);
     let result = runtime
         .select_with_runtime_stats(

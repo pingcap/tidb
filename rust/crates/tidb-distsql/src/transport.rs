@@ -65,6 +65,9 @@ pub enum TransportRequestError {
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    /// Go's statement ctx `util.RUDetailsCtxKey` value the copr worker's
+    /// `bo.GetCtx()` carries to every send.
+    ru_details: Option<Arc<tikv_client::RuDetails>>,
     cop_lite_worker: Option<Arc<std::sync::atomic::AtomicBool>>,
     execution_cancellation: Arc<CancelHandle>,
     request_cancellation: Option<Arc<CancelHandle>>,
@@ -79,6 +82,7 @@ impl TransportRequest {
         Self {
             metadata,
             kv_exec_counter: Default::default(),
+            ru_details: None,
             cop_lite_worker: None,
             execution_cancellation,
             request_cancellation: None,
@@ -107,6 +111,18 @@ impl TransportRequest {
 
     pub(crate) fn kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
         self.kv_exec_counter.clone()
+    }
+
+    /// Carries the statement's `RUDetails` to every send of this request
+    /// (Go `CopClient.Send`'s ctx, which `bo.GetCtx()` hands `SendReqCtx`).
+    #[must_use]
+    pub fn with_ru_details(mut self, ru_details: Option<Arc<tikv_client::RuDetails>>) -> Self {
+        self.ru_details = ru_details;
+        self
+    }
+
+    pub(crate) fn ru_details(&self) -> Option<Arc<tikv_client::RuDetails>> {
+        self.ru_details.clone()
     }
 
     pub(crate) fn cop_lite_worker(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
@@ -228,6 +244,7 @@ impl TransportRequest {
         Ok(Self {
             metadata: self.metadata.clone(),
             kv_exec_counter: self.kv_exec_counter.clone(),
+            ru_details: self.ru_details.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
@@ -255,6 +272,7 @@ impl TransportRequest {
         Ok(Self {
             metadata,
             kv_exec_counter: self.kv_exec_counter.clone(),
+            ru_details: self.ru_details.clone(),
             cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),

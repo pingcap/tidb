@@ -533,9 +533,13 @@ pub struct Session {
     statement_normalized_sql: Option<String>,
     statement_observation: Option<observation::StatementObservation>,
     pending_observation_parse: Option<(String, Duration)>,
+    pending_statement_exec_details: Option<observation::PendingStatementExecDetails>,
     routed_statement_observation_depth: u32,
     previous_summary_statement: Option<(String, String)>,
     statement_stats: Arc<tidb_util::topsql_stmtstats::StatementStats>,
+    /// Go's statement ctx values (`RUDetails`, resource-group taggers) of the
+    /// statement that runs, shared with its transactions and requests.
+    statement_kv_context: tidb_txnkv::StatementKvContextCell,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
@@ -1006,9 +1010,11 @@ impl Session {
             statement_normalized_sql: None,
             statement_observation: None,
             pending_observation_parse: None,
+            pending_statement_exec_details: None,
             routed_statement_observation_depth: 0,
             previous_summary_statement: None,
             statement_stats: tidb_util::topsql_stmtstats::create_statement_stats(),
+            statement_kv_context: tidb_txnkv::StatementKvContextCell::default(),
             txn: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),

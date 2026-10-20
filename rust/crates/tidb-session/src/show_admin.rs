@@ -331,65 +331,6 @@ pub(crate) const SHOW_TABLE_STATUS_COLUMNS: &[(&str, bool)] = &[
     ("Comment", false),
 ];
 
-pub(crate) fn show_table_status_row(
-    name: &str,
-    auto_increment: Option<i64>,
-    charset: tidb_executor::TableCharset,
-    comment: &str,
-    create_options: &str,
-    create_time: Datum,
-) -> Vec<Datum> {
-    let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-    vec![
-        text(name),
-        text("InnoDB"),
-        Datum::Int(10),
-        text("Compact"),
-        Datum::Int(0), // Rows
-        Datum::Int(0), // Avg_row_length
-        Datum::Int(0), // Data_length
-        Datum::Int(0), // Max_data_length
-        Datum::Int(0), // Index_length
-        Datum::Int(0), // Data_free
-        match auto_increment {
-            Some(next) => Datum::Int(next),
-            None => Datum::Null,
-        },
-        create_time, // Create_time: the creating job's TSO, as information_schema.tables
-        Datum::Null, // Update_time
-        Datum::Null, // Check_time
-        text(charset.collation.name()),
-        text(""), // Checksum
-        // Go's `fetchShowTableStatus` (`executor/show.go:636`) SELECTs
-        // `create_options` straight out of `information_schema.tables`, so
-        // this cell is that column: `partitioned` for a partitioned table and
-        // `cached=on` for a cached one. Hard-coding it empty reported every
-        // partitioned table as if it had no partitioning.
-        text(create_options),
-        text(comment), // Comment
-    ]
-}
-
-/// One `SHOW TABLE STATUS` row for a view. Captured from Go: a view answers
-/// its name, NULL for every storage cell -- engine, version, row format,
-/// counts, sizes, collation and create options alike -- an empty `Checksum`,
-/// and the literal `VIEW` as its comment, which is how the two kinds of
-/// object are told apart in this output.
-pub(crate) fn show_table_status_view_row(name: &str, create_time: Datum) -> Vec<Datum> {
-    let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-    let mut row = vec![text(name)];
-    // Engine through Auto_increment: ten cells a view has no value for.
-    row.extend(std::iter::repeat_n(Datum::Null, 10));
-    // Create_time (the creating job's TSO), then Update_time, Check_time and
-    // Collation, which are NULL for a view in Go.
-    row.push(create_time);
-    row.extend(std::iter::repeat_n(Datum::Null, 3));
-    row.push(text("")); // Checksum
-    row.push(Datum::Null); // Create_options
-    row.push(text("VIEW")); // Comment
-    row
-}
-
 /// The in-memory slow-query memory `ADMIN SHOW SLOW` reads — go
 /// `Domain.ShowSlowQuery` over `topn_slow_query.go`'s lists. Go records every
 /// statement whose cost reaches `instance.ddl_slow_threshold`'s sibling, the

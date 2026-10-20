@@ -2126,7 +2126,7 @@ mod commit_error_tests {
             },
         );
         assert!(matches!(error, ConfiguredWriteError::Commit(error)
-            if error.code == 9004 && error.message == "[tikv:9004]Resolve lock timeout"));
+            if error.code == 9004 && error.message == "Resolve lock timeout"));
     }
 
     #[test]

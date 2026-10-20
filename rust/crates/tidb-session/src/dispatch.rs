@@ -1032,59 +1032,15 @@ impl Session {
             (*needs_storage_stats, *needs_column_lengths);
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
-        let mut storage_statistics = None;
-        let mut storage_statistics_failed = false;
         let reads_storage_statistics = needs_storage_stats
             && table_names.iter().any(|name| {
                 name.eq_ignore_ascii_case("TABLES") || name.eq_ignore_ascii_case("PARTITIONS")
             });
-        if reads_storage_statistics {
-            if let Some(provider) = &self.table_storage_stats {
-                match provider.load_table_storage_statistics(
-                    &self.active_resource_group,
-                    needs_column_lengths,
-                ) {
-                    Ok(statistics) => storage_statistics = Some(statistics),
-                    // The production provider already mirrors Go's
-                    // warn-and-serve-cache refresh, so it never returns Err;
-                    // a seam provider that does is served with zero size
-                    // columns for this statement rather than failing the
-                    // query, matching Go's reader never failing on a stats
-                    // refresh error.
-                    Err(error) => {
-                        storage_statistics_failed = true;
-                        eprintln!(
-                        "{{\"event\":\"information_schema_stats_refresh_failed\",\"error\":{}}}",
-                        serde_json::to_string(&error)
-                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                        )
-                    }
-                }
-            }
-        }
-        let mut scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
-        if storage_statistics_failed {
-            scratch.clear_table_storage_statistics();
-        } else if let Some(statistics) = storage_statistics {
-            for table in statistics {
-                scratch.set_table_storage_statistics(
-                    table.table_id,
-                    table.table,
-                    &table.partitions,
-                );
-            }
-        } else if reads_storage_statistics && self.table_storage_stats.is_none() {
-            // The in-process store is its own statistics handle: Go's
-            // `TableRowStatsCache` reads `stats_meta` and the column
-            // histograms, which here are the catalog's table statistics.
-            for estimate in tidb_executor::table_size_stats::table_storage_estimates(&scratch) {
-                scratch.set_table_storage_statistics(
-                    estimate.table_id,
-                    estimate.table,
-                    &estimate.partitions,
-                );
-            }
-        }
+        let mut scratch = if reads_storage_statistics {
+            self.table_storage_statistics_catalog(needs_column_lengths)?
+        } else {
+            self.with_catalog_mut(|catalog| Ok(catalog.clone()))?
+        };
         let mut materialized = Vec::with_capacity(table_names.len());
         use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor;
         let scans_of = |table: &str| {
@@ -1840,6 +1796,63 @@ impl Session {
                 ]
             })
             .collect())
+    }
+
+    /// The catalog `information_schema.TABLES` / `PARTITIONS` read their size
+    /// columns from: Go `TableRowStatsCache` (and `TableStorageStatsCache`
+    /// with `needs_column_lengths`) through the node's provider, which serves
+    /// its cache when a refresh fails; the in-process store answers from its
+    /// own table statistics.
+    pub(crate) fn table_storage_statistics_catalog(
+        &mut self,
+        needs_column_lengths: bool,
+    ) -> Result<tidb_executor::Catalog, DriverError> {
+        let mut storage_statistics = None;
+        let mut storage_statistics_failed = false;
+        if let Some(provider) = &self.table_storage_stats {
+            match provider
+                .load_table_storage_statistics(&self.active_resource_group, needs_column_lengths)
+            {
+                Ok(statistics) => storage_statistics = Some(statistics),
+                // The production provider already mirrors Go's
+                // warn-and-serve-cache refresh, so it never returns Err; a
+                // seam provider that does is served with zero size columns
+                // for this statement rather than failing the query, matching
+                // Go's reader never failing on a stats refresh error.
+                Err(error) => {
+                    storage_statistics_failed = true;
+                    eprintln!(
+                        "{{\"event\":\"information_schema_stats_refresh_failed\",\"error\":{}}}",
+                        serde_json::to_string(&error)
+                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    )
+                }
+            }
+        }
+        let mut scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
+        if storage_statistics_failed {
+            scratch.clear_table_storage_statistics();
+        } else if let Some(statistics) = storage_statistics {
+            for table in statistics {
+                scratch.set_table_storage_statistics(
+                    table.table_id,
+                    table.table,
+                    &table.partitions,
+                );
+            }
+        } else if self.table_storage_stats.is_none() {
+            // The in-process store is its own statistics handle: Go's
+            // `TableRowStatsCache` reads `stats_meta` and the column
+            // histograms, which here are the catalog's table statistics.
+            for estimate in tidb_executor::table_size_stats::table_storage_estimates(&scratch) {
+                scratch.set_table_storage_statistics(
+                    estimate.table_id,
+                    estimate.table,
+                    &estimate.partitions,
+                );
+            }
+        }
+        Ok(scratch)
     }
 
     /// Pinned Go `dataLockWaitsTableRetriever.retrieve` for pessimistic waits.

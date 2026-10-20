@@ -157,14 +157,16 @@ pub use new_txn::{
     MAX_RETRY_COUNT,
 };
 pub use option::{
-    get_internal_source_type, OptionKey, ReplicaReadType, RequestSource, SnapshotReadOptions,
-    TxnSizeLimits, INTERNAL_DDL_NOTIFIER, INTERNAL_DIST_TASK, INTERNAL_IMPORT_INTO,
-    INTERNAL_LOAD_DATA, INTERNAL_TIMER, INTERNAL_TXN_ADMIN, INTERNAL_TXN_BACKFILL_DDL_PREFIX,
-    INTERNAL_TXN_BIND_INFO, INTERNAL_TXN_BOOTSTRAP, INTERNAL_TXN_BR, INTERNAL_TXN_CACHE_TABLE,
-    INTERNAL_TXN_DDL, INTERNAL_TXN_GC, INTERNAL_TXN_LIGHTNING, INTERNAL_TXN_META,
-    INTERNAL_TXN_OTHERS, INTERNAL_TXN_PRIVILEGE, INTERNAL_TXN_STATS,
-    INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, INTERNAL_TXN_SYS_VAR, INTERNAL_TXN_TELEMETRY,
-    INTERNAL_TXN_TOOLS, INTERNAL_TXN_TRACE, INTERNAL_TXN_TTL, INTERNAL_TXN_WORKLOAD_LEARNING,
+    get_internal_source_type, OptionKey, PessimisticLockResourceGroupTagger, ReplicaReadType,
+    RequestSource, SnapshotReadOptions, StatementKvContext, StatementKvContextCell,
+    StatementResourceGroupTagger, TxnSizeLimits, INTERNAL_DDL_NOTIFIER, INTERNAL_DIST_TASK,
+    INTERNAL_IMPORT_INTO, INTERNAL_LOAD_DATA, INTERNAL_TIMER, INTERNAL_TXN_ADMIN,
+    INTERNAL_TXN_BACKFILL_DDL_PREFIX, INTERNAL_TXN_BIND_INFO, INTERNAL_TXN_BOOTSTRAP,
+    INTERNAL_TXN_BR, INTERNAL_TXN_CACHE_TABLE, INTERNAL_TXN_DDL, INTERNAL_TXN_GC,
+    INTERNAL_TXN_LIGHTNING, INTERNAL_TXN_META, INTERNAL_TXN_OTHERS, INTERNAL_TXN_PRIVILEGE,
+    INTERNAL_TXN_STATS, INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, INTERNAL_TXN_SYS_VAR,
+    INTERNAL_TXN_TELEMETRY, INTERNAL_TXN_TOOLS, INTERNAL_TXN_TRACE, INTERNAL_TXN_TTL,
+    INTERNAL_TXN_WORKLOAD_LEARNING,
 };
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
 pub use range_diagnostics::{
@@ -172,7 +174,7 @@ pub use range_diagnostics::{
     range_issues_for_key_ranges, OutOfBoundReason, RangeIssueStats,
 };
 pub use resource_group::{
-    set_decode_table_id, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
+    set_decode_table_id, ClientRequest, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
 };
 pub use resource_group_tag::{
     decode_resource_group_tag, get_first_key_from_request, get_resource_group_label_by_key,

@@ -194,6 +194,95 @@ pub struct SnapshotReadOptions {
     pub busy_threshold_ns: i64,
     /// Adaptive point-read estimate, threshold and configured zone.
     pub adaptive: Option<(f64, i64, String)>,
+    /// Go `setOptionForTopSQL`'s statement values on the snapshot: its
+    /// `kv.ResourceGroupTagger` and the statement ctx's `RUDetails`.
+    pub kv_context: Option<StatementKvContextCell>,
+}
+
+/// Go `StmtCtx.GetResourceGroupTagger`: builds the tag builder from the
+/// statement's keyspace, plan digest and SQL digest when it is called.
+pub type StatementResourceGroupTagger =
+    std::sync::Arc<dyn Fn() -> crate::ResourceGroupTagBuilder + Send + Sync>;
+
+/// Go `newLockCtx`'s `lockCtx.ResourceGroupTagger` (`pkg/executor/select.go`),
+/// given the key of the request's first mutation: the encoded tag, or empty
+/// (Go `nil`) when the statement has no normalized SQL.
+pub type PessimisticLockResourceGroupTagger =
+    std::sync::Arc<dyn Fn(&[u8]) -> Vec<u8> + Send + Sync>;
+
+/// The per-statement values Go reaches a transaction or snapshot call
+/// through: the statement ctx's `util.RUDetailsCtxKey` value
+/// (`execdetails.ContextWithInitializedExecDetails`), which client-go's
+/// resource-control interceptor charges on every RPC, and the statement's
+/// resource-group taggers (`txn.SetOption(kv.ResourceGroupTagger, ...)`,
+/// `lockCtx.ResourceGroupTagger`).
+#[derive(Clone, Default)]
+pub struct StatementKvContext {
+    /// Go `ctx.Value(util.RUDetailsCtxKey)`.
+    pub ru_details: Option<std::sync::Arc<tikv_client::RuDetails>>,
+    /// Go `StmtCtx.GetResourceGroupTagger`.
+    pub resource_group_tagger: Option<StatementResourceGroupTagger>,
+    /// Go `lockCtx.ResourceGroupTagger`.
+    pub pessimistic_lock_resource_group_tagger: Option<PessimisticLockResourceGroupTagger>,
+}
+
+impl std::fmt::Debug for StatementKvContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StatementKvContext")
+            .field("ru_details", &self.ru_details)
+            .field(
+                "resource_group_tagger",
+                &self.resource_group_tagger.is_some(),
+            )
+            .field(
+                "pessimistic_lock_resource_group_tagger",
+                &self.pessimistic_lock_resource_group_tagger.is_some(),
+            )
+            .finish()
+    }
+}
+
+/// A session's current [`StatementKvContext`], shared with the transactions
+/// and snapshots its statements use: the session publishes each statement's
+/// values as Go derives that statement's ctx, and a call reads the values in
+/// force when it is made, as a Go call reads the ctx it is passed.
+#[derive(Clone, Default)]
+pub struct StatementKvContextCell(std::sync::Arc<std::sync::Mutex<StatementKvContext>>);
+
+impl StatementKvContextCell {
+    /// Installs the values of the statement that now runs.
+    pub fn publish(&self, context: StatementKvContext) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = context;
+    }
+
+    /// The values of the statement in force.
+    #[must_use]
+    pub fn get(&self) -> StatementKvContext {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl PartialEq for StatementKvContextCell {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for StatementKvContextCell {}
+
+impl std::fmt::Debug for StatementKvContextCell {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("StatementKvContextCell")
+            .field(&self.get())
+            .finish()
+    }
 }
 
 /// Request-origin metadata propagated to storage RPCs.

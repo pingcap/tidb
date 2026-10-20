@@ -1622,17 +1622,9 @@ impl Session {
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
-            // Go `fetchShowTableStatus`: one row per table in the
-            // schema, with the columns MySQL's own SHOW TABLE STATUS
-            // reports.
-            //
-            // NOT MODELLED, and each reported the way Go reports an
-            // absent value rather than invented: every size and count
-            // (Rows, Data_length, Index_length and friends) is 0, which
-            // is also what TiDB itself answers without a statistics tier;
-            // Create_time is NULL because this tier stores no per-table
-            // creation timestamp; Update_time, Check_time and Checksum
-            // are NULL or empty for the same reason.
+            // Go `fetchShowTableStatus`: its restricted SQL over
+            // `information_schema.tables` for the schema, ordered by table
+            // name, so every size and count is the TABLES reader's.
             tidb_ast::AdminStmt::ShowTableStatus(show) => {
                 let database = match &show.database {
                     Some(database) => database.clone(),
@@ -1651,66 +1643,19 @@ impl Session {
                     Some(tidb_ast::ShowTableStatusFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let zone = self.session_time_zone();
-                let rows = self.with_catalog_mut(|catalog| {
-                    let mut rows = Vec::new();
-                    let names = catalog.table_names(&database).ok_or_else(|| {
-                        DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
-                    })?;
-                    for name in names {
-                        let entry = catalog.table_in(&database, &name);
-                        let (auto_increment, table_charset, comment, create_options, create_time) = match entry {
-                            Some(tidb_executor::TableEntry::Kv(table)) => (
-                                // Go `getAutoIncrementID`, as
-                                // information_schema.TABLES reads it.
-                                table.allocated_auto_increment(),
-                                table.charset(),
-                                table.comment(),
-                                // The same rule `information_schema.tables`
-                                // reports, which is where Go's SHOW TABLE
-                                // STATUS reads this from.
-                                if table.partition().is_some() {
-                                    "partitioned"
-                                } else if table.is_cached() {
-                                    "cached=on"
-                                } else {
-                                    ""
-                                },
-                                crate::infoschema::update_time_datum(table.update_ts(), &zone),
-                            ),
-                            Some(tidb_executor::TableEntry::Sequence(sequence)) => (
-                                None,
-                                tidb_executor::TableCharset::default(),
-                                "",
-                                "",
-                                crate::infoschema::update_time_datum(sequence.update_ts, &zone),
-                            ),
-                            _ => (None, tidb_executor::TableCharset::default(), "", "", Datum::Null),
-                        };
-                        let row = if let Some(tidb_executor::TableEntry::View(view)) = entry {
-                            crate::show_admin::show_table_status_view_row(
-                                &name,
-                                crate::infoschema::update_time_datum(view.update_ts, &zone),
-                            )
-                        } else {
-                            let mut row = crate::show_admin::show_table_status_row(
-                                &name,
-                                auto_increment,
-                                table_charset,
-                                comment,
-                                create_options,
-                                create_time,
-                            );
-                            // Go stores a sequence as a table with no columns
-                            // and its estimate is one row.
-                            if matches!(entry, Some(tidb_executor::TableEntry::Sequence(_))) {
-                                row[4] = Datum::Int(1);
-                            }
-                            row
-                        };
-                        rows.push(row);
-                    }
-                    Ok(rows)
-                })?;
+                let visibility = self.schema_visibility();
+                let catalog = self.table_storage_statistics_catalog(true)?;
+                if catalog.table_names(&database).is_none() {
+                    return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
+                        database.clone(),
+                    )));
+                }
+                let rows = crate::infoschema::show_table_status_rows(
+                    &catalog,
+                    &visibility,
+                    &zone,
+                    &database,
+                );
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let number =
@@ -1738,12 +1683,11 @@ impl Session {
             // with the clustered primary key first, then the table's own
             // indexes in definition order.
             //
-            // NOT MODELLED, and each reported the way Go reports an
-            // absent value rather than invented: Cardinality is 0 (no
-            // statistics tier), Sub_part and Packed are NULL (no prefix
-            // or packed indexes here), Comment/Index_comment are empty,
-            // Expression is NULL when no expression key part exists; Global
-            // is the stored `IndexInfo.Global` flag.
+            // Cardinality is each column's NDV from the table's stats and
+            // Sub_part the declared prefix length; Packed is NULL and
+            // Comment empty, as Go writes them; Expression is NULL when no
+            // expression key part exists; Global is the stored
+            // `IndexInfo.Global` flag.
             tidb_ast::AdminStmt::ShowIndex(show) => {
                 let (like_pattern, where_clause) = match &show.filter {
                     None => (None, None),
@@ -1780,7 +1724,14 @@ impl Session {
                             ));
                         }
                     };
-                    Ok(show_index_rows(&table_name, table))
+                    // Go `GetPhysicalTableStats(tb.Meta().ID, ...)`.
+                    let statistics = catalog.table_statistics(table.table_id);
+                    Ok(show_index_rows(&table_name, table, |column_id| {
+                        statistics
+                            .as_ref()
+                            .and_then(|statistics| statistics.columns.get(&column_id))
+                            .map_or(0, |column| column.histogram.ndv)
+                    }))
                 })?;
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);

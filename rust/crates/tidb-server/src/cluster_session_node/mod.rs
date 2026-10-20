@@ -5668,7 +5668,8 @@ impl ClusterServerSession {
                         Arc::<str>::from(resource_group),
                         pessimistic,
                         fair_locking,
-                        crate::session_transaction::transaction_options(vars),
+                        crate::session_transaction::transaction_options(vars)
+                            .with_statement_kv_context(self.session.statement_kv_context_cell()),
                     )
                 } else {
                     match self.open_read_snapshot(
@@ -5986,7 +5987,10 @@ impl ClusterServerSession {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))
     }
 
-    fn bind(&self, snapshot: Box<dyn ClusterSnapshot>) -> Option<Box<dyn ClusterSnapshot>> {
+    fn bind(&self, mut snapshot: Box<dyn ClusterSnapshot>) -> Option<Box<dyn ClusterSnapshot>> {
+        // Go passes the statement ctx (its `RUDetails`) to every snapshot
+        // call and sets the statement's resource-group tagger on it.
+        snapshot.set_statement_kv_context(&self.session.statement_kv_context_cell());
         self.slot
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -6066,7 +6070,8 @@ impl ClusterServerSession {
                 pessimistic,
                 fair_locking,
                 resource_group,
-                crate::session_transaction::transaction_options(self.session.vars()),
+                crate::session_transaction::transaction_options(self.session.vars())
+                    .with_statement_kv_context(self.session.statement_kv_context_cell()),
             )
             .map_err(SqlQueryError::unknown)?;
         transaction.bind_mutation_buffer(&self.buffer);
@@ -6143,7 +6148,7 @@ impl ClusterServerSession {
                     Err(error) => {
                         self.buffer.reset();
                         self.session.clear_table_delta();
-                        Err(error)
+                        Err(self.try_replace_write_conflict_error(error))
                     }
                 };
             }
@@ -6217,7 +6222,8 @@ impl ClusterServerSession {
             read_ts,
             resource_group,
             self.schema_lease_checker(),
-            crate::session_transaction::transaction_options(self.session.vars()),
+            crate::session_transaction::transaction_options(self.session.vars())
+                .with_statement_kv_context(self.session.statement_kv_context_cell()),
             self.session.transaction_observer(),
         ) {
             Ok(committed) => {
@@ -6227,9 +6233,29 @@ impl ClusterServerSession {
             }
             Err(error) => {
                 self.buffer.reset();
-                Err(error)
+                Err(self.try_replace_write_conflict_error(error))
             }
         }
+    }
+
+    /// Go `doCommitWithRetry`'s `tryReplaceWriteConflictError`
+    /// (`pkg/session/session.go:862`), against the transaction's infoschema
+    /// (`GetTxnInfoSchema`): the connection's catalog, which is not rebuilt
+    /// while a transaction is open.
+    fn try_replace_write_conflict_error(&self, error: SqlQueryError) -> SqlQueryError {
+        if error.write_conflict.is_none() {
+            return error;
+        }
+        let catalog = self.session.shared_catalog();
+        let catalog = catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let redaction = tidb_txnkv::driver::transaction_error::Redaction::current();
+        transactions::try_replace_write_conflict_error(error, redaction, |table_id| {
+            catalog
+                .table_names_by_id(table_id)
+                .map(|(schema, table)| (Some(schema), table))
+        })
     }
 
     /// Go's `kv.CommitHook`: a transaction that committed records its own
@@ -6308,7 +6334,7 @@ impl ClusterServerSession {
             Err(error) => {
                 self.buffer.reset();
                 self.session.clear_table_delta();
-                Err(error)
+                Err(self.try_replace_write_conflict_error(error))
             }
         }
     }
@@ -8336,6 +8362,8 @@ impl QuerySession for ClusterServerSession {
             None => self.session.statement_kind(&sql).map_err(map_error)? == StmtKind::Write,
         };
         if effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))) {
+            // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
+            self.session.initialize_statement_exec_details(&sql);
             let result =
                 self.open_statement_result(shape, bind_prelock_keys, &resource_group, |session| {
                     session.set_binary_prepared_execution(true);
@@ -8624,6 +8652,9 @@ impl QuerySession for ClusterServerSession {
         let process_statement = self.session.retain_process_statement(sql);
         let resource_group = self.session.statement_resource_group(stmt).into_owned();
         let shape = self.session.statement_read_shape_bound(stmt);
+        // Go `handleStmt`'s `ContextWithInitializedExecDetails`, before the
+        // pessimistic prelock below can reach storage.
+        self.session.initialize_statement_exec_details(sql);
         let result = self.open_statement_result(
             shape,
             |session| session.statement_prelock_keys(stmt, &[]),

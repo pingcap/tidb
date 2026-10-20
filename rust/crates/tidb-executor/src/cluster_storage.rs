@@ -83,6 +83,10 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     /// Installs immutable statement policy on the native snapshot, where available.
     fn set_snapshot_read_options(&mut self, _options: tidb_txnkv::SnapshotReadOptions) {}
 
+    /// Binds the session's statement ctx values (Go `RUDetails` and
+    /// resource-group taggers) to every read this snapshot serves.
+    fn set_statement_kv_context(&mut self, _context: &tidb_txnkv::StatementKvContextCell) {}
+
     /// Go `SnapshotRuntimeStats.GetCmdRPCCount` for point and batch-point
     /// commands issued by this snapshot so far.
     fn point_rpc_counts(&mut self) -> (u64, u64) {
@@ -913,6 +917,12 @@ impl ClusterSnapshot for SwappableSnapshot {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         if let Some(snapshot) = self.bound.as_mut() {
             snapshot.set_snapshot_read_options(options);
+        }
+    }
+
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        if let Some(snapshot) = self.bound.as_mut() {
+            snapshot.set_statement_kv_context(context);
         }
     }
 

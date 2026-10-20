@@ -23,12 +23,17 @@ use tidb_vardef::global_sysvar_initial::{
 
 /// Options copied once when a SQL transaction becomes active (Go
 /// `SetOptionsOnTxnActive`). The native client owns their commit-time meaning.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionTransactionOptions {
     /// Session permissions for native commit-protocol eligibility checks.
     pub commit_protocol: CommitProtocol,
     /// Session assertion checking level, fixed for this transaction.
     pub assertion_level: tidb_proto::KvrpcAssertionLevel,
+    /// The session's statement ctx values: Go `SetOptionsOnTxnActive`'s
+    /// `kv.ResourceGroupTagger`, and the statement ctx (with its `RUDetails`)
+    /// every later call of the transaction is passed. `None` for a
+    /// transaction no SQL session owns.
+    pub kv_context: Option<tidb_txnkv::StatementKvContextCell>,
 }
 
 impl SessionTransactionOptions {
@@ -39,6 +44,19 @@ impl SessionTransactionOptions {
     ) {
         transaction.set_commit_protocol(self.commit_protocol);
         transaction.set_assertion_level(self.assertion_level);
+        if let Some(context) = self.kv_context {
+            transaction.set_statement_kv_context(context);
+        }
+    }
+
+    /// Binds the session's statement ctx values to the transaction.
+    #[must_use]
+    pub fn with_statement_kv_context(
+        mut self,
+        context: tidb_txnkv::StatementKvContextCell,
+    ) -> Self {
+        self.kv_context = Some(context);
+        self
     }
 }
 
@@ -49,6 +67,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
         Self {
             commit_protocol,
             assertion_level: tidb_proto::KvrpcAssertionLevel::Off,
+            kv_context: None,
         }
     }
 }

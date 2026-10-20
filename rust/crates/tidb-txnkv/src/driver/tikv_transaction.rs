@@ -487,18 +487,14 @@ pub(crate) fn classify_cause(error: &TikvTransactionError) -> crate::transaction
     classify_client_cause(client_error)
 }
 
-/// Go `newWriteConflictError`'s message detail for TiKV's `WriteConflict`.
-fn write_conflict_detail(conflict: &tikv_client::proto::kvrpcpb::WriteConflict) -> String {
-    use crate::driver::transaction_error::{Redaction, WriteConflict};
-    use tidb_error::mysql::{redaction_mode, RedactionMode};
+/// Go `newWriteConflictError`'s arguments for TiKV's `WriteConflict`.
+fn write_conflict_args(
+    conflict: &tikv_client::proto::kvrpcpb::WriteConflict,
+) -> crate::driver::transaction_error::WriteConflictArgs {
+    use crate::driver::transaction_error::{Redaction, WriteConflict, WriteConflictArgs};
     let reason = tikv_client::proto::kvrpcpb::write_conflict::Reason::try_from(conflict.reason)
         .map_or_else(|_| conflict.reason.to_string(), |reason| reason.as_str_name().to_owned());
-    let redaction = match redaction_mode() {
-        RedactionMode::Disabled => Redaction::Disabled,
-        RedactionMode::Enabled => Redaction::Enabled,
-        RedactionMode::Marker => Redaction::Marker,
-    };
-    crate::driver::transaction_error::write_conflict_detail(
+    WriteConflictArgs::new(
         &WriteConflict {
             start_ts: conflict.start_ts,
             conflict_ts: conflict.conflict_ts,
@@ -507,7 +503,7 @@ fn write_conflict_detail(conflict: &tikv_client::proto::kvrpcpb::WriteConflict) 
             primary: conflict.primary.clone(),
             reason,
         },
-        redaction,
+        Redaction::current(),
     )
 }
 
@@ -548,11 +544,16 @@ pub(crate) fn classify_client_cause(
         // Go `extractKeyErr` -> `newWriteConflictError`: TiKV's conflict
         // fields rendered into `ErrWriteConflict`, keys redacted under the
         // process redaction mode as terror's `RedactArgPos` redacts them.
-        ClientError::WriteConflict(conflict) => TransactionCause::WriteConflict {
-            detail: write_conflict_detail(&conflict.conflict),
-        },
+        ClientError::WriteConflict(conflict) => {
+            let args = write_conflict_args(&conflict.conflict);
+            TransactionCause::WriteConflict {
+                detail: args.detail(),
+                args: Some(Box::new(args)),
+            }
+        }
         ClientError::WriteConflictInLatch(_) => TransactionCause::WriteConflict {
             detail: client_error.to_string(),
+            args: None,
         },
         ClientError::ResolveLockError(locks) => TransactionCause::Lock {
             key: locks
@@ -933,7 +934,7 @@ mod tests {
             },
         ));
 
-        let TransactionCause::WriteConflict { detail } = classify_cause(&error) else {
+        let TransactionCause::WriteConflict { detail, args } = classify_cause(&error) else {
             panic!("write conflict identity lost");
         };
         assert_eq!(
@@ -943,6 +944,15 @@ mod tests {
              primary={tableID=28, handle=20}, originalPrimaryKey=74800000000000001c5f728000000000000014, \
              reason=Optimistic"
         );
+        // The arguments travel with the cause, split where Go splits them,
+        // so the session can name the table in `args[3]`/`args[5]`.
+        let args = args.expect("TiKV supplied the conflict fields");
+        assert_eq!(
+            args.key_table_id,
+            crate::driver::transaction_error::RedactArg::Str("{tableID=28".to_owned())
+        );
+        assert_eq!(args.primary_table_id, args.key_table_id);
+        assert_eq!(args.detail(), detail);
     }
 
     #[test]

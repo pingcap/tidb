@@ -2837,6 +2837,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     code: error.code,
                     state: error.state,
                     message: error.message,
+                    write_conflict: None,
                 }
             })));
         }
@@ -2904,6 +2905,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                             code: error.code,
                             state: error.state,
                             message: error.message,
+                            write_conflict: None,
                         }
                     })
             }
@@ -3046,6 +3048,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 code: error.code,
                 state: error.state,
                 message: error.message,
+                write_conflict: None,
             }
         })
     }
@@ -3072,6 +3075,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 code: error.code,
                 state: error.state,
                 message: error.message,
+                write_conflict: None,
             }
         })
     }
@@ -3103,6 +3107,7 @@ impl KvTableIndexBackfiller {
                     "Unsupported partition type of table {} when exchanging partition",
                     plan.partitioned.name.original()
                 ),
+                write_conflict: None,
             });
         }
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
@@ -3197,6 +3202,7 @@ fn exchange_validation_internal(message: String) -> LockSqlError {
         code: 1105,
         state: *b"HY000",
         message,
+        write_conflict: None,
     }
 }
 
@@ -3208,6 +3214,7 @@ fn exchange_validation_table_error(error: tidb_executor::kv_table::KvTableError)
             code: tidb_error::tidb::errcode::ErrRowDoesNotMatchPartition,
             state: *b"HY000",
             message: "Found a row that does not match the partition".to_owned(),
+            write_conflict: None,
         },
         tidb_executor::kv_table::KvTableError::CheckConstraint {
             eval: Some(eval), ..
@@ -3218,6 +3225,7 @@ fn exchange_validation_table_error(error: tidb_executor::kv_table::KvTableError)
                 code: error.code,
                 state: error.state,
                 message: error.message,
+                write_conflict: None,
             }
         }
         other => exchange_validation_internal(format!("{other:?}")),
@@ -3231,5 +3239,6 @@ fn backfill_failure(error: tidb_executor::kv_table::KvTableError) -> LockSqlErro
         code: error.code,
         state: error.state,
         message: error.message,
+        write_conflict: None,
     }
 }

@@ -55,6 +55,12 @@ pub struct ClientTransaction<S: PdClient> {
     max_conflict_ts: u64,
     lock_expired: Arc<std::sync::atomic::AtomicU32>,
     statement_stage: Option<crate::StagingHandle>,
+    /// Go's statement ctx on this transaction's calls: the session's current
+    /// statement `RUDetails` and resource-group taggers, read when a call is
+    /// made. `None` for a transaction no SQL statement owns.
+    kv_context: Option<crate::StatementKvContextCell>,
+    /// The statement values last installed on the client transaction.
+    applied_kv_context: crate::StatementKvContext,
 }
 
 /// One point-read result. Physical diagnostics are supplied by the client engine.
@@ -141,6 +147,8 @@ impl<S: PdClient> ClientTransaction<S> {
             max_conflict_ts: 0,
             lock_expired: Default::default(),
             statement_stage: None,
+            kv_context: None,
+            applied_kv_context: Default::default(),
         })
     }
 
@@ -185,6 +193,56 @@ impl<S: PdClient> ClientTransaction<S> {
             .transaction_mut()
             .inner_mut()
             .add_rpc_interceptor(interceptor);
+    }
+    /// Binds the session's statement values to this transaction's calls: Go
+    /// passes each call the statement ctx carrying `util.RUDetailsCtxKey`,
+    /// and sets `kv.ResourceGroupTagger` from `StmtCtx.GetResourceGroupTagger`
+    /// (`SetOptionsOnTxnActive`, `SetOptionsBeforeCommit`, the executors'
+    /// `setOptionForTopSQL`).
+    pub fn set_statement_kv_context(&mut self, context: crate::StatementKvContextCell) {
+        self.kv_context = Some(context);
+    }
+    /// Installs the statement values in force on the client transaction
+    /// before a call: client-rust charges its `RuDetails` on every RPC (Go's
+    /// resource-control interceptor reading the ctx's `RUDetails`) and tags
+    /// every request with the statement's tagger (Go
+    /// `KVTxn.SetResourceGroupTagger`).
+    fn apply_statement_kv_context(&mut self) {
+        let Some(cell) = &self.kv_context else {
+            return;
+        };
+        let context = cell.get();
+        if let Some(ru_details) = &context.ru_details {
+            let applied = self
+                .applied_kv_context
+                .ru_details
+                .as_ref()
+                .is_some_and(|applied| Arc::ptr_eq(applied, ru_details));
+            if !applied {
+                self.engine
+                    .transaction_mut()
+                    .set_ru_details(Arc::clone(ru_details));
+            }
+        }
+        if let Some(tagger) = &context.resource_group_tagger {
+            let applied = self.applied_kv_context.resource_group_tagger.as_ref();
+            // Go: a pipelined transaction may already flush in the
+            // background, so its tagger is not touched once it is set.
+            let pipelined =
+                applied.is_some() && self.engine.transaction_mut().inner_mut().is_pipelined();
+            if !pipelined && !applied.is_some_and(|applied| Arc::ptr_eq(applied, tagger)) {
+                let tagger = Arc::clone(tagger);
+                self.engine
+                    .transaction_mut()
+                    .inner_mut()
+                    .set_resource_group_tagger(Some(Arc::new(
+                        move |request: &mut dyn tikv_client::tikv::Request| {
+                            tagger().build(Some(&mut crate::ClientRequest(request)));
+                        },
+                    )));
+            }
+        }
+        self.applied_kv_context = context;
     }
     /// Sets the protocols the client may choose for this transaction.
     pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {
@@ -264,6 +322,9 @@ impl<S: PdClient> ClientTransaction<S> {
         if self.snapshot_read_options.as_ref() == Some(options) {
             return;
         }
+        if let Some(context) = &options.kv_context {
+            self.set_statement_kv_context(context.clone());
+        }
         Self::apply_snapshot_read_options(self.engine.transaction_mut().inner_mut(), options);
         self.snapshot_read_options = Some(options.clone());
     }
@@ -337,6 +398,7 @@ impl<S: PdClient> ClientTransaction<S> {
                 .map(|o| o.kv_exec_counter.clone()),
         );
         self.calls.set(&call);
+        self.apply_statement_kv_context();
         self.engine
             .transaction_mut()
             .inner_mut()
@@ -472,9 +534,22 @@ impl<S: PdClient> ClientTransaction<S> {
                     .map(|o| o.kv_exec_counter.clone()),
             );
         self.calls.set(&scan_call);
+        self.apply_statement_kv_context();
         let mut transaction = Self::begin_on(&self.store, read_ts, true, &self.calls)?;
         if let Some(options) = &self.snapshot_read_options {
             Self::apply_snapshot_read_options(&mut transaction, options);
+        }
+        // Go `KVTxn.GetSnapshot` shares the transaction's options and ctx.
+        if let Some(ru_details) = &self.applied_kv_context.ru_details {
+            transaction.set_ru_details(Arc::clone(ru_details));
+        }
+        if let Some(tagger) = &self.applied_kv_context.resource_group_tagger {
+            let tagger = Arc::clone(tagger);
+            transaction.set_resource_group_tagger(Some(Arc::new(
+                move |request: &mut dyn tikv_client::tikv::Request| {
+                    tagger().build(Some(&mut crate::ClientRequest(request)));
+                },
+            )));
         }
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let range = (
@@ -549,6 +624,7 @@ impl<S: PdClient> ClientTransaction<S> {
         self.finish_statement(true).map_err(Self::read_error)?;
         self.stage_mutations(mutations)?;
         self.calls.set(call);
+        self.apply_statement_kv_context();
         let mut outcome = self
             .engine
             .commit_staged()
@@ -582,6 +658,7 @@ impl<S: PdClient> ClientTransaction<S> {
     pub fn finish_without_writes(
         mut self,
     ) -> Result<ReadOnlyTransaction, OptimisticCoordinatorError> {
+        self.apply_statement_kv_context();
         self.engine
             .finish_without_writes()
             .map_err(Self::transaction_error)?;
@@ -801,6 +878,7 @@ impl<S: PdClient> ClientTransaction<S> {
         return_values: bool,
     ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
         self.calls.set(call);
+        self.apply_statement_kv_context();
         self.start_statement();
         let before: std::collections::BTreeSet<_> = self.locked_keys().into_iter().collect();
         for key in presume_not_exists {
@@ -822,6 +900,22 @@ impl<S: PdClient> ClientTransaction<S> {
             std::time::SystemTime::now(),
         );
         context.lock_expired = Some(self.lock_expired.clone());
+        // Go `newLockCtx`'s `lockCtx.ResourceGroupTagger`: the first
+        // mutation's key; no mutation answers no tag.
+        if let Some(tagger) = &self
+            .applied_kv_context
+            .pessimistic_lock_resource_group_tagger
+        {
+            let tagger = Arc::clone(tagger);
+            context.resource_group_tagger = Some(Arc::new(
+                move |request: &tikv_client::proto::kvrpcpb::PessimisticLockRequest| {
+                    request
+                        .mutations
+                        .first()
+                        .map_or_else(Vec::new, |mutation| tagger(&mutation.key))
+                },
+            ));
+        }
         if return_values {
             context.init_return_values(keys.len());
         }
@@ -891,6 +985,7 @@ impl<S: PdClient> ClientTransaction<S> {
         call: &UnaryCallContext,
     ) -> Result<ReadOnlyTransaction, OptimisticCoordinatorError> {
         self.calls.set(call);
+        self.apply_statement_kv_context();
         self.finish_statement(false).map_err(Self::read_error)?;
         self.finish_without_writes()
     }
@@ -927,7 +1022,7 @@ fn lock_error(error: crate::TikvTransactionError) -> super::PessimisticLockFailu
         }
     }
     match crate::driver::tikv_transaction::classify_cause(&error) {
-        TransactionCause::WriteConflict { detail } => {
+        TransactionCause::WriteConflict { detail, .. } => {
             super::PessimisticLockFailure::WriteConflict { detail }
         }
         cause => super::PessimisticLockFailure::Transaction(cause),

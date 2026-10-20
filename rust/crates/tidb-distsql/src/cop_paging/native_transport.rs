@@ -298,6 +298,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             cancellation,
             call,
             kv_exec_counter: request.kv_exec_counter(),
+            ru_details: request.ru_details(),
             timeout,
             metadata: Arc::new(metadata),
             runtime,
@@ -354,6 +355,9 @@ pub struct NativeCopResponse<S: ?Sized> {
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    /// Go `bo.GetCtx().Value(util.RUDetailsCtxKey)`: the statement's
+    /// `RUDetails`, charged for every send and lock resolution of the read.
+    ru_details: Option<Arc<tikv_client::RuDetails>>,
     timeout: Duration,
     metadata: Arc<crate::KvRequestMetadata>,
     runtime: CopReadTaskRuntime,
@@ -453,6 +457,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             &wire.encode_to_vec(),
             region,
             self.timeout.min(self.call.timeout()),
+            self.ru_details.as_ref(),
         )?;
         let (encoded, address) = match sent {
             NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
@@ -725,9 +730,13 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
                 },
             ))));
         }
-        let recovered =
-            self.store
-                .resolve_lock(backoffer, context, lock, self.metadata.start_ts)?;
+        let recovered = self.store.resolve_lock(
+            backoffer,
+            context,
+            lock,
+            self.metadata.start_ts,
+            self.ru_details.as_ref(),
+        )?;
         self.snapshot_locks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -922,6 +931,7 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                 cancellation: Arc::clone(&self.cancellation),
                 call: self.call.clone(),
                 kv_exec_counter: self.kv_exec_counter.clone(),
+                ru_details: self.ru_details.clone(),
                 timeout: self.timeout,
                 metadata: Arc::clone(&self.metadata),
                 runtime,

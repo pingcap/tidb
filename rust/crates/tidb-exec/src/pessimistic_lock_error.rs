@@ -26,10 +26,13 @@
 //! `[tikv:3572]Statement aborted because lock(s) could not be acquired
 //! immediately and NOWAIT is set.`, and the same statement without `NOWAIT`,
 //! after `innodb_lock_wait_timeout`, raises `[tikv:1205]Lock wait timeout
-//! exceeded; try restarting transaction`.
+//! exceeded; try restarting transaction`. Those are the errors' `Error()`
+//! text; the client receives `terror.ToSQLError`'s message, which is
+//! `GetMsg()` -- the same text without the `[class:code]` prefix.
 
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_executor::cluster_storage::DuplicateKeyHint;
+use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
 use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
@@ -62,10 +65,15 @@ pub struct LockSqlError {
     pub code: u16,
     /// Five-byte SQLSTATE.
     pub state: [u8; 5],
-    /// The message Go renders: registered errors include their `[class:code]`
-    /// prefix, while unregistered passthrough errors keep their raw source
+    /// The message Go sends the client (`terror.ToSQLError`): a registered
+    /// error's `GetMsg()`, without the `[class:code]` prefix its `Error()`
+    /// adds, while unregistered passthrough errors keep their raw source
     /// text.
     pub message: String,
+    /// A write conflict's `newWriteConflictError` arguments, kept so the
+    /// session's commit can name the tables in them (Go
+    /// `tryReplaceWriteConflictError`).
+    pub write_conflict: Option<Box<WriteConflictArgs>>,
 }
 
 impl LockSqlError {
@@ -97,6 +105,7 @@ impl PessimisticStatementRetry {
                 code: tidb_error::mysql::errcode::ErrUnknown,
                 state: DEFAULT_SQL_STATE,
                 message: "pessimistic lock retry limit reached".to_owned(),
+                write_conflict: None,
             });
         }
         self.count += 1;
@@ -121,26 +130,31 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
         PessimisticLockFailure::Deadlock(_) => LockSqlError {
             code: ERR_LOCK_DEADLOCK,
             state: DEADLOCK_SQL_STATE,
-            message: "[executor:1213]Deadlock found when trying to get lock; try restarting \
-                      transaction"
+            message: "Deadlock found when trying to get lock; try restarting transaction"
                 .to_owned(),
+            write_conflict: None,
         },
         PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => LockSqlError {
             code: ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET,
             state: DEFAULT_SQL_STATE,
-            message: "[tikv:3572]Statement aborted because lock(s) could not be acquired \
-                      immediately and NOWAIT is set."
+            message: "Statement aborted because lock(s) could not be acquired immediately and \
+                      NOWAIT is set."
                 .to_owned(),
+            write_conflict: None,
         },
         PessimisticLockFailure::LockWaitTimeout { .. } => LockSqlError {
             code: ERR_LOCK_WAIT_TIMEOUT,
             state: DEFAULT_SQL_STATE,
-            message: "[tikv:1205]Lock wait timeout exceeded; try restarting transaction".to_owned(),
+            message: "Lock wait timeout exceeded; try restarting transaction".to_owned(),
+            write_conflict: None,
         },
+        // Go retries or aborts the statement; only a commit's conflict is
+        // rewritten with table names, so the arguments stop here.
         PessimisticLockFailure::WriteConflict { detail } => LockSqlError {
             code: ERR_WRITE_CONFLICT,
             state: DEFAULT_SQL_STATE,
-            message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
+            message: format!("Write conflict, {detail} [try again later]"),
+            write_conflict: None,
         },
         PessimisticLockFailure::Transaction(cause @ TransactionCause::BackoffExhausted { .. }) => {
             transaction_cause_to_sql_error(cause)
@@ -152,7 +166,8 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
         PessimisticLockFailure::Transaction(cause) => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
-            message: format!("[executor:1105]pessimistic transaction aborted: {cause}"),
+            message: format!("pessimistic transaction aborted: {cause}"),
+            write_conflict: None,
         },
     }
 }
@@ -203,6 +218,7 @@ pub fn commit_outcome_to_sql_error_with_hint(
             code: 1105,
             state: DEFAULT_SQL_STATE,
             message: ERR_RESULT_UNDETERMINED.message().to_owned(),
+            write_conflict: None,
         }),
     }
 }
@@ -212,6 +228,7 @@ pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
         code: 1062,
         state: *b"23000",
         message: format!("Duplicate entry '{}' for key '{}'", hint.value, hint.key),
+        write_conflict: None,
     }
 }
 
@@ -227,10 +244,11 @@ pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
 #[must_use]
 pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
     match cause {
-        TransactionCause::WriteConflict { detail } => LockSqlError {
+        TransactionCause::WriteConflict { detail, args } => LockSqlError {
             code: ERR_WRITE_CONFLICT,
             state: DEFAULT_SQL_STATE,
-            message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
+            message: format!("Write conflict, {detail} [try again later]"),
+            write_conflict: args.clone(),
         },
         TransactionCause::BackoffExhausted { kind, detail } => {
             backoff_exhausted_to_sql_error(*kind, detail)
@@ -244,6 +262,7 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             code: *code,
             state: DEFAULT_SQL_STATE,
             message: message.clone(),
+            write_conflict: None,
         },
         TransactionCause::AssertionFailed {
             key,
@@ -280,13 +299,15 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
                     .as_bytes()
                     .try_into()
                     .expect("five-byte SQLSTATE"),
-                message: format!("[{}]{}", prototype.rfc_code(), error.message),
+                message: error.message,
+                write_conflict: None,
             }
         }
         other => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
-            message: format!("[kv:1105]transaction failed: {other}"),
+            message: format!("transaction failed: {other}"),
+            write_conflict: None,
         },
     }
 }
@@ -308,7 +329,8 @@ fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
     LockSqlError {
         code: error.mysql_code().as_u16(),
         state: DEFAULT_SQL_STATE,
-        message: format!("[{}]{}", error.rfc_code(), error),
+        message: error.to_string(),
+        write_conflict: None,
     }
 }
 
@@ -319,12 +341,14 @@ fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> Lock
             code: u16::try_from(converted.code().value())
                 .expect("registered TiDB error code fits the MySQL protocol"),
             state: DEFAULT_SQL_STATE,
-            message: converted.to_string(),
+            message: converted.message().to_owned(),
+            write_conflict: None,
         },
         ConvertedDriverError::Passthrough(source) => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
             message: source.to_string(),
+            write_conflict: None,
         },
         ConvertedDriverError::Kv(_) | ConvertedDriverError::Transaction(_) => {
             unreachable!("backoff source table has no kv or transaction conversion rows")
@@ -354,10 +378,11 @@ pub fn locked_with_conflict_error(
         code: ERR_WRITE_CONFLICT,
         state: DEFAULT_SQL_STATE,
         message: format!(
-            "[kv:9007]Write conflict, txnStartTS={start_ts}, conflictStartTS=0, \
+            "Write conflict, txnStartTS={start_ts}, conflictStartTS=0, \
              conflictCommitTS={conflict_commit_ts}, key={conflict_key:?} primary=<unknown>, \
              reason=LockedWithConflict [try again later]"
         ),
+        write_conflict: None,
     }
 }
 
@@ -407,6 +432,7 @@ mod tests {
             receipt: receipt(),
             cause: TransactionCause::WriteConflict {
                 detail: "conflictStartTS=7".to_owned(),
+                args: None,
             },
         });
         let error = commit_outcome_to_sql_error(&refused)
@@ -494,7 +520,7 @@ mod tests {
                 }),
             ];
             let expected = format!(
-                "[tikv:8141]assertion failed: key: abcd, assertion: {direction}, \
+                "assertion failed: key: abcd, assertion: {direction}, \
                  start_ts: 42, existing start ts: 7, existing commit ts: 11"
             );
             for outcome in outcomes {
@@ -530,7 +556,8 @@ mod tests {
     fn transaction_causes_keep_only_source_typed_tidb_codes() {
         assert_eq!(
             transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
-                detail: "d".to_owned()
+                detail: "d".to_owned(),
+                args: None,
             })
             .code,
             ERR_WRITE_CONFLICT
@@ -561,7 +588,7 @@ mod tests {
         assert_eq!(error.state, *b"HY000");
         assert_eq!(
             error.message,
-            "[tikv:9015]Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=101, key=6B6579"
+            "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=101, key=6B6579"
         );
 
         let lock_error = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(cause));
@@ -692,7 +719,7 @@ mod tests {
         assert_eq!(&error.state, b"HY000");
         assert_eq!(
             error.message,
-            "[tikv:3572]Statement aborted because lock(s) could not be acquired immediately and \
+            "Statement aborted because lock(s) could not be acquired immediately and \
              NOWAIT is set."
         );
     }
@@ -705,7 +732,7 @@ mod tests {
         assert_eq!(error.code, ERR_LOCK_WAIT_TIMEOUT);
         assert_eq!(
             error.message,
-            "[tikv:1205]Lock wait timeout exceeded; try restarting transaction"
+            "Lock wait timeout exceeded; try restarting transaction"
         );
     }
 
@@ -726,6 +753,47 @@ mod tests {
         }));
         assert_eq!(error.code, ERR_LOCK_DEADLOCK);
         assert_eq!(&error.state, b"40001");
+        // `exeerrors.ErrDeadlock`'s `GetMsg()`: the client never sees the
+        // `[executor:1213]` prefix of its `Error()`.
+        assert_eq!(
+            error.message,
+            "Deadlock found when trying to get lock; try restarting transaction"
+        );
+    }
+
+    /// A commit's write conflict keeps `newWriteConflictError`'s arguments
+    /// for the session's table-name rewrite, and its message is `GetMsg()`.
+    #[test]
+    fn a_commit_write_conflict_carries_its_arguments_without_the_kv_prefix() {
+        use tidb_txnkv::driver::transaction_error::{Redaction, WriteConflict, WriteConflictArgs};
+
+        // Table 28, handle 20.
+        let key = b"t\x80\x00\x00\x00\x00\x00\x00\x1c_r\x80\x00\x00\x00\x00\x00\x00\x14".to_vec();
+        let args = WriteConflictArgs::new(
+            &WriteConflict {
+                start_ts: 10,
+                conflict_ts: 11,
+                conflict_commit_ts: 12,
+                key: key.clone(),
+                primary: key,
+                reason: "Optimistic".to_owned(),
+            },
+            Redaction::Disabled,
+        );
+        let error = transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
+            detail: args.detail(),
+            args: Some(Box::new(args.clone())),
+        });
+        assert_eq!(error.code, ERR_WRITE_CONFLICT);
+        assert_eq!(error.message, args.message());
+        assert_eq!(
+            error.message,
+            "Write conflict, txnStartTS=10, conflictStartTS=11, conflictCommitTS=12, \
+             key={tableID=28, handle=20}, originalKey=74800000000000001c5f728000000000000014, \
+             primary={tableID=28, handle=20}, originalPrimaryKey=74800000000000001c5f728000000000000014, \
+             reason=Optimistic [try again later]"
+        );
+        assert_eq!(error.write_conflict.as_deref(), Some(&args));
     }
 
     #[test]

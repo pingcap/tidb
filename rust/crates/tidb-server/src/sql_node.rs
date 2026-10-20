@@ -33,6 +33,7 @@ use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
+use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
@@ -307,6 +308,9 @@ pub struct SqlQueryError {
     pub state: [u8; 5],
     /// Caller-rendered error text.
     pub message: String,
+    /// A commit write conflict's `newWriteConflictError` arguments, which the
+    /// session rewrites with table names (Go `tryReplaceWriteConflictError`).
+    pub write_conflict: Option<Box<WriteConflictArgs>>,
 }
 
 impl SqlQueryError {
@@ -317,6 +321,7 @@ impl SqlQueryError {
             code,
             state,
             message: message.into(),
+            write_conflict: None,
         }
     }
 
@@ -363,7 +368,10 @@ pub const RESULT_UNDETERMINED_MESSAGE: &str = "execution result undetermined";
 /// boundary. Domain-specific commit errors delegate here instead of
 /// reclassifying an already typed failure from its display text.
 pub(crate) fn lock_sql_error(error: &LockSqlError) -> SqlQueryError {
-    SqlQueryError::new(error.code, error.state, error.message.clone())
+    SqlQueryError {
+        write_conflict: error.write_conflict.clone(),
+        ..SqlQueryError::new(error.code, error.state, error.message.clone())
+    }
 }
 
 /// Preserves the one DDL outcome that is not a failure verdict while mapping

@@ -71,6 +71,10 @@ fn server_tls_config() -> ServerTlsConfig {
 /// A client that trusts the throwaway CA completes the handshake and one RPC.
 #[test]
 fn secure_endpoint_completes_a_localhost_tls_handshake() {
+    // The server task builds its rustls config on a worker thread, possibly
+    // before the client's `secure_endpoint` installs the process provider;
+    // install it first, as a TLS-serving process does at startup.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

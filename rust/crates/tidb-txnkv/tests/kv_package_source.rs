@@ -544,6 +544,73 @@ fn TestResourceGroupTagEncoding() {
     }
 }
 
+/// Go `ResourceGroupTagBuilder.BuildProtoTagger`: the builder tags a
+/// client-rust request by its first key (`GetFirstKeyFromRequest`), so the
+/// tag's table ID and label follow the request's first key.
+#[test]
+fn resource_group_tag_builder_tags_client_rust_requests() {
+    use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+    use tikv_client::proto::{coprocessor, kvrpcpb};
+    let row_key = encode_row_key_with_handle(7, &RecordHandle::Int(1));
+    let mut builder = ResourceGroupTagBuilder::new(None);
+    builder.set_sql_digest(b"sql").set_plan_digest(b"plan");
+    let expected = builder.encode_tag_with_key(&row_key);
+
+    let mut lock = kvrpcpb::PessimisticLockRequest {
+        mutations: vec![kvrpcpb::Mutation {
+            key: row_key.clone(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    builder.build(Some(&mut ClientRequest(&mut lock)));
+    assert_eq!(lock.context.unwrap().resource_group_tag, expected);
+
+    let mut get = kvrpcpb::GetRequest {
+        key: row_key.clone(),
+        ..Default::default()
+    };
+    builder.build(Some(&mut ClientRequest(&mut get)));
+    assert_eq!(get.context.unwrap().resource_group_tag, expected);
+
+    let mut cop = coprocessor::Request {
+        ranges: vec![coprocessor::KeyRange {
+            start: row_key.clone(),
+            end: Vec::new(),
+        }],
+        ..Default::default()
+    };
+    assert_eq!(ClientRequest(&mut cop).first_key(), row_key.as_slice());
+
+    // A request without keys is tagged with no table key.
+    let mut empty = kvrpcpb::BatchGetRequest::default();
+    builder.build(Some(&mut ClientRequest(&mut empty)));
+    assert_eq!(
+        empty.context.unwrap().resource_group_tag,
+        builder.encode_tag_with_key(&[])
+    );
+}
+
+/// The session's statement values are shared by reference: a call reads the
+/// statement in force when it is made.
+#[test]
+fn statement_kv_context_cell_publishes_the_running_statement() {
+    let cell = StatementKvContextCell::default();
+    assert!(cell.get().ru_details.is_none());
+    let ru_details = Arc::new(tikv_client::RuDetails::new());
+    cell.publish(StatementKvContext {
+        ru_details: Some(Arc::clone(&ru_details)),
+        ..Default::default()
+    });
+    let shared = cell.clone();
+    assert_eq!(shared, cell);
+    assert!(Arc::ptr_eq(
+        shared.get().ru_details.as_ref().unwrap(),
+        &ru_details
+    ));
+    assert_ne!(StatementKvContextCell::default(), cell);
+}
+
 #[test]
 fn package_retry_and_inner_txn_defaults_are_pinned() {
     assert_eq!(MAX_RETRY_COUNT, 100);

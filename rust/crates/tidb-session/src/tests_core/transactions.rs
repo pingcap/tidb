@@ -641,6 +641,10 @@ fn as_of_timestamp_reads_the_stores_history() {
             "SELECT count(*) FROM t AS OF TIMESTAMP NULL",
             "as of timestamp cannot be NULL",
         ),
+        (
+            "SELECT count(*) FROM t AS OF TIMESTAMP 100",
+            "invalid TSO timestamp: TSO is before 2013-01-01",
+        ),
     ] {
         let error = session.run(sql).unwrap_err();
         assert!(
@@ -649,17 +653,22 @@ fn as_of_timestamp_reads_the_stores_history() {
         );
     }
     // Go resolves names in the historical schema: a table created later
-    // does not exist there. Never answer from the present.
-    let error = session
-        .run("SELECT a FROM t AS OF TIMESTAMP '2020-01-01 00:00:00'")
-        .unwrap_err();
-    assert!(
-        matches!(
-            error,
-            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(_))
-        ),
-        "got {error:?}"
-    );
+    // does not exist there. Never answer from the present. Only a raw TSO
+    // is bounded by 2013: a datetime before it is a read timestamp like any
+    // other (util.go:64-80).
+    for sql in [
+        "SELECT a FROM t AS OF TIMESTAMP '2020-01-01 00:00:00'",
+        "SELECT a FROM t AS OF TIMESTAMP '2000-01-01 00:00:00'",
+    ] {
+        let error = session.run(sql).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                DriverError::Schema(crate::SchemaErrorKind::UnknownTable(_))
+            ),
+            "{sql}: got {error:?}"
+        );
+    }
 }
 
 /// Go `SimpleExec.executeBegin`: `START TRANSACTION READ ONLY` is a no-op

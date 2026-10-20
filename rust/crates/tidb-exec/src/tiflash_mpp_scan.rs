@@ -592,47 +592,58 @@ impl<S: tikv_client::PdClient> TiFlashMppScanSource<S> {
             compute_cache,
             kv_exec_counter: request.statement.kv_exec_counter.clone(),
         };
+        // Go dispatches and establishes under the statement ctx, whose
+        // `RUDetails` client-go's resource-control interceptor charges.
+        let ru_details = request
+            .statement
+            .kv_context
+            .as_ref()
+            .and_then(|context| context.get().ru_details);
         let response = self
             .store
-            .block_on(async {
-                let memory = &request.statement.memory;
-                target.kv_exec_counter.mark(&address);
-                let dispatch_response = mpp_setup(
-                    Some(memory),
-                    Some(tikv_client::tikv::READ_TIMEOUT_MEDIUM),
-                    "dispatch",
-                    send_mpp::<_, _, tidb_proto::mpp::DispatchTaskResponse>(
-                        &target.store,
-                        &address,
-                        target.store_type,
-                        dispatch_request,
-                        tikv_client::tikv::READ_TIMEOUT_MEDIUM,
-                    ),
-                )
-                .await
-                .map_err(|error| {
-                    target.invalidate_compute_cache();
-                    error.to_string()
-                })?;
-                if let Some(error) = &dispatch_response.error {
-                    return Err(format!(
-                        "tiflash mpp: dispatch refused: {} ({})",
-                        error.msg, error.code
-                    ));
-                }
-                // Go `MPPClient.DispatchMPPTask`: retry regions only
-                // invalidate the region cache; they are NOT a dispatch
-                // failure. The task itself has already registered and will
-                // serve its regions through the learner read.
-                invalidate_mpp_retry_regions(&target.store, &dispatch_response.retry_regions).await;
-                establish_mpp_response(
-                    &target,
-                    meta.clone(),
-                    receiver_meta.clone(),
-                    request.statement.memory.clone(),
-                )
-                .await
-            })
+            .block_on(tidb_txnkv::driver::cop_store::with_ru_details(
+                ru_details.as_ref(),
+                async {
+                    let memory = &request.statement.memory;
+                    target.kv_exec_counter.mark(&address);
+                    let dispatch_response = mpp_setup(
+                        Some(memory),
+                        Some(tikv_client::tikv::READ_TIMEOUT_MEDIUM),
+                        "dispatch",
+                        send_mpp::<_, _, tidb_proto::mpp::DispatchTaskResponse>(
+                            &target.store,
+                            &address,
+                            target.store_type,
+                            dispatch_request,
+                            tikv_client::tikv::READ_TIMEOUT_MEDIUM,
+                        ),
+                    )
+                    .await
+                    .map_err(|error| {
+                        target.invalidate_compute_cache();
+                        error.to_string()
+                    })?;
+                    if let Some(error) = &dispatch_response.error {
+                        return Err(format!(
+                            "tiflash mpp: dispatch refused: {} ({})",
+                            error.msg, error.code
+                        ));
+                    }
+                    // Go `MPPClient.DispatchMPPTask`: retry regions only
+                    // invalidate the region cache; they are NOT a dispatch
+                    // failure. The task itself has already registered and will
+                    // serve its regions through the learner read.
+                    invalidate_mpp_retry_regions(&target.store, &dispatch_response.retry_regions)
+                        .await;
+                    establish_mpp_response(
+                        &target,
+                        meta.clone(),
+                        receiver_meta.clone(),
+                        request.statement.memory.clone(),
+                    )
+                    .await
+                },
+            ))
             .map_err(|message| mpp_open_error(&request.statement.memory, message))?;
         Ok(Box::new(response))
     }

@@ -176,12 +176,27 @@ impl MockCluster {
         }
         let mut versions = self.versions.lock().expect("versions");
         for (key, _) in &staged {
-            if versions
+            if let Some(last) = versions
                 .get(key.as_bytes())
-                .is_some_and(|last| *last > start_ts)
+                .filter(|last| **last > start_ts)
             {
+                // TiKV's conflict fields, rendered as Go's
+                // `newWriteConflictError` renders them; the first staged key
+                // stands in for the primary.
+                let args = tidb_txnkv::driver::transaction_error::WriteConflictArgs::new(
+                    &tidb_txnkv::driver::transaction_error::WriteConflict {
+                        start_ts,
+                        conflict_ts: 0,
+                        conflict_commit_ts: *last,
+                        key: key.as_bytes().to_vec(),
+                        primary: staged[0].0.as_bytes().to_vec(),
+                        reason: "Optimistic".to_owned(),
+                    },
+                    tidb_txnkv::driver::transaction_error::Redaction::Disabled,
+                );
                 return rolled_back(TransactionCause::WriteConflict {
-                    detail: format!("txnStartTS={start_ts}"),
+                    detail: args.detail(),
+                    args: Some(Box::new(args)),
                 });
             }
         }

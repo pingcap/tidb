@@ -168,28 +168,150 @@ fn format_write_conflict(conflict: &WriteConflict, redaction: Redaction) -> Stri
 /// their hex forms (the redacted argument positions), and the reason.
 #[must_use]
 pub fn write_conflict_detail(conflict: &WriteConflict, redaction: Redaction) -> String {
-    let prefix = format!(
-        "txnStartTS={}, conflictStartTS={}, conflictCommitTS={}, key=",
-        conflict.start_ts, conflict.conflict_ts, conflict.conflict_commit_ts
-    );
-    if redaction == Redaction::Enabled {
-        return format!("{prefix}????, reason={}", conflict.reason);
+    WriteConflictArgs::new(conflict, redaction).detail()
+}
+
+/// One string argument of a generated error after Go `errors.RedactErrorArg`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RedactArg {
+    /// A Go `string` argument; under `ON` redaction it is the `?` placeholder.
+    Str(String),
+    /// Go `*redactFormatter`, the `MARKER` wrapping: its argument rendered
+    /// between `‹` and `›`, with every marker inside doubled.
+    Marked(Box<RedactArg>),
+}
+
+impl RedactArg {
+    /// Go `RedactErrorArg` applied to one argument at a redacted position.
+    #[must_use]
+    pub fn redact(self, redaction: Redaction) -> Self {
+        match redaction {
+            Redaction::Disabled => self,
+            Redaction::Enabled => Self::Str("?".to_owned()),
+            Redaction::Marker => Self::Marked(Box::new(self)),
+        }
     }
-    let (key_table, key_rest) = pretty_write_key(&conflict.key);
-    let (primary_table, primary_rest) = pretty_write_key(&conflict.primary);
-    let key_parts = format!(
-        "{key_table}{key_rest}, originalKey={}, primary={primary_table}{primary_rest}, originalPrimaryKey={}",
-        hex(&conflict.key),
-        hex(&conflict.primary)
-    );
-    let key_parts = if redaction == Redaction::Marker {
-        format!(
-            "‹›‹{key_table}{key_rest}, originalKey={}, primary=›‹›‹{primary_table}{primary_rest}, originalPrimaryKey={}›",
-            hex(&conflict.key),
+}
+
+impl fmt::Display for RedactArg {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Str(value) => formatter.write_str(value),
+            Self::Marked(inner) => {
+                let mut output = String::from("‹");
+                for character in inner.to_string().chars() {
+                    output.push(character);
+                    if matches!(character, '‹' | '›') {
+                        output.push(character);
+                    }
+                }
+                output.push('›');
+                formatter.write_str(&output)
+            }
+        }
+    }
+}
+
+/// Go `newWriteConflictError`'s `kv.ErrWriteConflict.FastGenByArgs`
+/// arguments, as `RedactErrorArg` left them.
+///
+/// Go's session rewrites the two table-ID fields (`args[3]`, `args[5]`) of a
+/// commit's write conflict before the client sees it
+/// (`tryReplaceWriteConflictError`), so the arguments travel with the error
+/// rather than only its rendered text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WriteConflictArgs {
+    /// `args[0]`: the transaction's start timestamp.
+    pub start_ts: u64,
+    /// `args[1]`: the conflicting transaction's start timestamp.
+    pub conflict_ts: u64,
+    /// `args[2]`: the conflicting transaction's commit timestamp.
+    pub conflict_commit_ts: u64,
+    /// `args[3]`: the conflicting key's `{tableID=N` field, empty when the key
+    /// is not a table key.
+    pub key_table_id: RedactArg,
+    /// `args[4]`: the rest of the conflicting key, its `originalKey`, and the
+    /// `primary=` label.
+    pub key_rest: RedactArg,
+    /// `args[5]`: the primary key's `{tableID=N` field.
+    pub primary_table_id: RedactArg,
+    /// `args[6]`: the rest of the primary key and its `originalPrimaryKey`.
+    pub primary_rest: RedactArg,
+    /// `args[7]`: TiKV's conflict reason name.
+    pub reason: String,
+}
+
+impl WriteConflictArgs {
+    /// Go `newWriteConflictError(conflict)` under `redaction`.
+    #[must_use]
+    pub fn new(conflict: &WriteConflict, redaction: Redaction) -> Self {
+        let (key_table_id, key_rest) = pretty_write_key(&conflict.key);
+        let (primary_table_id, primary_rest) = pretty_write_key(&conflict.primary);
+        let key_rest = format!("{key_rest}, originalKey={}, primary=", hex(&conflict.key));
+        let primary_rest = format!(
+            "{primary_rest}, originalPrimaryKey={}",
             hex(&conflict.primary)
+        );
+        Self {
+            start_ts: conflict.start_ts,
+            conflict_ts: conflict.conflict_ts,
+            conflict_commit_ts: conflict.conflict_commit_ts,
+            key_table_id: RedactArg::Str(key_table_id).redact(redaction),
+            key_rest: RedactArg::Str(key_rest).redact(redaction),
+            primary_table_id: RedactArg::Str(primary_table_id).redact(redaction),
+            primary_rest: RedactArg::Str(primary_rest).redact(redaction),
+            reason: conflict.reason.clone(),
+        }
+    }
+
+    /// Go `kv.ErrWriteConflict.FastGenByArgs(args...)` over arguments copied
+    /// from an earlier error: `RedactErrorArg` runs again on the key
+    /// positions.
+    #[must_use]
+    pub fn fast_gen_by_args(self, redaction: Redaction) -> Self {
+        Self {
+            key_table_id: self.key_table_id.redact(redaction),
+            key_rest: self.key_rest.redact(redaction),
+            primary_table_id: self.primary_table_id.redact(redaction),
+            primary_rest: self.primary_rest.redact(redaction),
+            ..self
+        }
+    }
+
+    /// The formatted arguments between `Write conflict, ` and the retryable
+    /// mark.
+    #[must_use]
+    pub fn detail(&self) -> String {
+        format!(
+            "txnStartTS={}, conflictStartTS={}, conflictCommitTS={}, key={}{}{}{}, reason={}",
+            self.start_ts,
+            self.conflict_ts,
+            self.conflict_commit_ts,
+            self.key_table_id,
+            self.key_rest,
+            self.primary_table_id,
+            self.primary_rest,
+            self.reason
         )
-    } else {
-        key_parts
-    };
-    format!("{prefix}{key_parts}, reason={}", conflict.reason)
+    }
+
+    /// Go `GetMsg()` of the generated `ErrWriteConflict`, which is what
+    /// `terror.ToSQLError` sends a client: no `[kv:9007]` class prefix.
+    #[must_use]
+    pub fn message(&self) -> String {
+        format!("Write conflict, {} {TXN_RETRYABLE_MARK}", self.detail())
+    }
+}
+
+impl Redaction {
+    /// The process redaction mode (Go `errors.RedactLogEnabled`).
+    #[must_use]
+    pub fn current() -> Self {
+        use tidb_error::mysql::{redaction_mode, RedactionMode};
+        match redaction_mode() {
+            RedactionMode::Disabled => Self::Disabled,
+            RedactionMode::Enabled => Self::Enabled,
+            RedactionMode::Marker => Self::Marker,
+        }
+    }
 }

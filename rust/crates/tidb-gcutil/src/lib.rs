@@ -143,13 +143,17 @@ fn tidb_opt_on(value: &str) -> bool {
     value == "1" || value.eq_ignore_ascii_case("ON")
 }
 
+/// client-go `CompatibleParseGCTime` over `GCTimeFormat`
+/// (`20060102-15:04:05.000 -0700`: the milliseconds are part of the layout),
+/// retrying without the last space-separated field (an older zone name).
 fn compatible_parse_gc_time(value: &str) -> Result<chrono::DateTime<chrono::FixedOffset>, ()> {
-    if let Ok(parsed) = chrono::DateTime::parse_from_str(value, "%Y%m%d-%H:%M:%S %z") {
+    const GC_TIME_FORMAT: &str = "%Y%m%d-%H:%M:%S.%3f %z";
+    if let Ok(parsed) = chrono::DateTime::parse_from_str(value, GC_TIME_FORMAT) {
         return Ok(parsed);
     }
     let mut fields = value.split(' ').collect::<Vec<_>>();
     fields.pop();
-    chrono::DateTime::parse_from_str(&fields.join(" "), "%Y%m%d-%H:%M:%S %z").map_err(|_| ())
+    chrono::DateTime::parse_from_str(&fields.join(" "), GC_TIME_FORMAT).map_err(|_| ())
 }
 
 fn go_time_to_ts(value: chrono::DateTime<chrono::FixedOffset>) -> u64 {
@@ -233,9 +237,10 @@ mod snapshot_validation_tests {
             tidb_table: std::collections::HashMap::new(),
             fail_reads: false,
         };
+        // The GC worker's `GCTimeFormat`, milliseconds included.
         ctx.tidb_table.insert(
             "tikv_gc_safe_point".to_owned(),
-            "20240101-00:00:00 +0000".to_owned(),
+            "20240101-00:00:00.000 +0000".to_owned(),
         );
 
         // A snapshot after the safe point passes.
@@ -243,10 +248,38 @@ mod snapshot_validation_tests {
         // A snapshot before it refuses with the rendered safe point time.
         match validate_snapshot(&mut ctx, 1) {
             Err(Error::SnapshotTooOld { safe_point_time }) => {
-                assert!(safe_point_time.contains("2024-01-01"), "{safe_point_time}");
+                // `TSConvert2Time` renders in the process's local zone.
+                use chrono::TimeZone as _;
+                let local = chrono::Local
+                    .timestamp_millis_opt(1_704_067_200_000)
+                    .single()
+                    .unwrap()
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string();
+                assert!(safe_point_time.starts_with(&local), "{safe_point_time}");
             }
             other => panic!("expected SnapshotTooOld, got {other:?}"),
         }
+        // An older value carrying a zone name after the offset parses
+        // through the retry without its last field.
+        ctx.tidb_table.insert(
+            "tikv_gc_safe_point".to_owned(),
+            "20261020-05:17:17.103 -0700 PDT".to_owned(),
+        );
+        validate_snapshot(&mut ctx, 1_792_498_637_104_u64 << 18).unwrap();
+        assert!(matches!(
+            validate_snapshot(&mut ctx, 1_792_498_637_102_u64 << 18),
+            Err(Error::SnapshotTooOld { .. })
+        ));
+        // Without the milliseconds the layout does not match, as in Go.
+        ctx.tidb_table.insert(
+            "tikv_gc_safe_point".to_owned(),
+            "20240101-00:00:00 +0000".to_owned(),
+        );
+        assert!(matches!(
+            crate::get_gc_safe_point(&mut ctx),
+            Err(Error::InvalidGcTime { .. })
+        ));
         // A read failure propagates unchanged.
         ctx.fail_reads = true;
         assert!(validate_snapshot(&mut ctx, 1).is_err());

@@ -71,6 +71,7 @@ use tidb_executor::cluster_storage::{
     ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::storage::StorageError;
+use tidb_txnkv::driver::transaction_error::{RedactArg, Redaction};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure, RealTransaction};
@@ -81,7 +82,68 @@ use crate::sql_node::SqlQueryError;
 /// Carries a commit's own client-visible triple onto the wire, so a 9007 stays
 /// a 9007 instead of collapsing into the generic 1105.
 pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
-    SqlQueryError::new(error.code, error.state, error.message)
+    SqlQueryError {
+        write_conflict: error.write_conflict,
+        ..SqlQueryError::new(error.code, error.state, error.message)
+    }
+}
+
+/// Go `session.tryReplaceWriteConflictError` (`pkg/session/session.go:913`):
+/// "adds more information about the table in the error message" of a
+/// commit's write conflict, naming the table of the conflicting key
+/// (`args[3]`) and of the primary key (`args[5]`) through the transaction's
+/// infoschema. `table_by_id` is Go's `is.TableByID` followed by
+/// `infoschema.SchemaByTable`: `None` for no table, otherwise the schema name
+/// when the table has one, and the table name.
+///
+/// `redaction` is the process mode (`errors.RedactLogEnabled`). Go skips the
+/// rewrite when it is `ON`. Under `MARKER` the key arguments are no longer
+/// strings, so no table is named, but the new error still redacts its
+/// arguments again, as Go's `FastGenByArgs` does.
+pub(crate) fn try_replace_write_conflict_error(
+    mut error: SqlQueryError,
+    redaction: Redaction,
+    table_by_id: impl Fn(i64) -> Option<(Option<String>, String)>,
+) -> SqlQueryError {
+    let Some(args) = error.write_conflict.take() else {
+        return error;
+    };
+    if redaction == Redaction::Enabled {
+        error.write_conflict = Some(args);
+        return error;
+    }
+    let mut args = *args;
+    if let Some(field) = add_table_name_in_table_id_field(&args.key_table_id, &table_by_id) {
+        args.key_table_id = RedactArg::Str(field);
+    }
+    if let Some(field) = add_table_name_in_table_id_field(&args.primary_table_id, &table_by_id) {
+        args.primary_table_id = RedactArg::Str(field);
+    }
+    let args = args.fast_gen_by_args(redaction);
+    error.message = args.message();
+    error.write_conflict = Some(Box::new(args));
+    error
+}
+
+/// Go `addTableNameInTableIDField` (`pkg/session/session.go:944`): appends
+/// `, tableName=<schema>.<table>` to a `{tableID=N` field, with Go's
+/// `unknown` and `unknown.<table>` fallbacks. A field that is not a string
+/// (a redaction marker) or does not end in a table ID is left alone.
+fn add_table_name_in_table_id_field(
+    table_id_field: &RedactArg,
+    table_by_id: &impl Fn(i64) -> Option<(Option<String>, String)>,
+) -> Option<String> {
+    let RedactArg::Str(key_table_id) = table_id_field else {
+        return None;
+    };
+    let table_id_str = key_table_id.split('=').next_back()?;
+    let table_id = table_id_str.parse::<i64>().ok()?;
+    let table_name = match table_by_id(table_id) {
+        None => "unknown".to_owned(),
+        Some((None, table)) => format!("unknown.{table}"),
+        Some((Some(schema), table)) => format!("{schema}.{table}"),
+    };
+    Some(format!("{key_table_id}, tableName={table_name}"))
 }
 
 /// The commit callback's `TxnInfo` (client-go `txn.go`'s `CommitHook`
@@ -606,6 +668,9 @@ struct DeferredSnapshot {
 #[derive(Default)]
 struct DeferredState {
     read_options: Option<tidb_txnkv::SnapshotReadOptions>,
+    /// The session's statement ctx values, bound to whatever the first read
+    /// opens.
+    kv_context: Option<tidb_txnkv::StatementKvContextCell>,
     /// An ordinary timestamp request started after planning and not yet waited.
     prepared: Option<Box<dyn PendingClusterSnapshot>>,
     /// `None` until the first read waits for the prepared snapshot.
@@ -776,6 +841,9 @@ impl DeferredSnapshot {
             if let Some(options) = &guard.read_options {
                 opened.set_snapshot_read_options(options.clone());
             }
+            if let Some(context) = &guard.kv_context {
+                opened.set_statement_kv_context(context);
+            }
             // Recorded at the open, under the same lock, so the timestamp the
             // statement publishes at is the one its reads are served at and
             // cannot be a later transaction's.
@@ -822,6 +890,14 @@ impl ClusterSnapshot for DeferredSnapshot {
             opened.set_snapshot_read_options(options.clone());
         }
         state.read_options = Some(options);
+    }
+
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        let mut state = self.state();
+        if let Some(opened) = state.opened.as_mut() {
+            opened.set_statement_kv_context(context);
+        }
+        state.kv_context = Some(context.clone());
     }
 
     fn prepare(&mut self) -> Result<(), StorageError> {
@@ -1724,6 +1800,7 @@ mod tests {
             let options = SessionTransactionOptions {
                 commit_protocol: tidb_txnkv::transaction::CommitProtocol::two_phase_only(),
                 assertion_level: tidb_proto::KvrpcAssertionLevel::Strict,
+                kv_context: None,
             };
             let pending = transactions
                 .prepare_autocommit_write("default", pessimistic, false, options)
@@ -1767,5 +1844,167 @@ mod tests {
         assert_eq!(pairs.len(), 2);
         assert_eq!(batch_get_calls.load(Ordering::Relaxed), 1);
         assert_eq!(get_calls.load(Ordering::Relaxed), 0);
+    }
+}
+
+#[cfg(test)]
+mod write_conflict_rewrite_tests {
+    use tidb_codec::table_key::{
+        encode_index_seek_key, encode_row_key_with_handle, hex, RecordHandle,
+    };
+    use tidb_txnkv::driver::transaction_error::{
+        pretty_write_key, RedactArg, Redaction, WriteConflict, WriteConflictArgs,
+    };
+
+    use super::try_replace_write_conflict_error;
+    use crate::sql_node::SqlQueryError;
+
+    /// The commit error `sql_error` hands the session for one conflict.
+    fn commit_error(key: &[u8], primary: &[u8], redaction: Redaction) -> SqlQueryError {
+        let args = WriteConflictArgs::new(
+            &WriteConflict {
+                start_ts: 10,
+                conflict_ts: 11,
+                conflict_commit_ts: 12,
+                key: key.to_vec(),
+                primary: primary.to_vec(),
+                reason: "Optimistic".to_owned(),
+            },
+            redaction,
+        );
+        SqlQueryError {
+            write_conflict: Some(Box::new(args.clone())),
+            ..SqlQueryError::new(9007, *b"HY000", args.message())
+        }
+    }
+
+    /// Table 28 is `acc2.t`, table 29 has lost its schema, and nothing else
+    /// exists: Go's `is.TableByID` followed by `infoschema.SchemaByTable`.
+    fn tables(table_id: i64) -> Option<(Option<String>, String)> {
+        match table_id {
+            28 => Some((Some("acc2".to_owned()), "t".to_owned())),
+            29 => Some((None, "orphan".to_owned())),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn record_and_index_keys_gain_their_table_names() {
+        let record = encode_row_key_with_handle(28, &RecordHandle::Int(20));
+        // An index key of table 28 whose one value is the integer 7.
+        let index = encode_index_seek_key(28, 2, &[0x03, 0x80, 0, 0, 0, 0, 0, 0, 0x07]);
+        let error = try_replace_write_conflict_error(
+            commit_error(&index, &record, Redaction::Disabled),
+            Redaction::Disabled,
+            tables,
+        );
+        let (_, index_rest) = pretty_write_key(&index);
+        assert!(
+            index_rest.starts_with(", indexID=2, indexValues={"),
+            "{index_rest}"
+        );
+        assert_eq!(error.code, 9007);
+        assert_eq!(
+            error.message,
+            format!(
+                "Write conflict, txnStartTS=10, conflictStartTS=11, conflictCommitTS=12, \
+                 key={{tableID=28, tableName=acc2.t{index_rest}, originalKey={}, \
+                 primary={{tableID=28, tableName=acc2.t, handle=20}}, originalPrimaryKey={}, \
+                 reason=Optimistic [try again later]",
+                hex(&index),
+                hex(&record)
+            )
+        );
+        let args = error
+            .write_conflict
+            .expect("the arguments stay with the error");
+        assert_eq!(
+            args.key_table_id,
+            RedactArg::Str("{tableID=28, tableName=acc2.t".to_owned())
+        );
+    }
+
+    #[test]
+    fn tables_the_infoschema_cannot_name_use_go_s_fallbacks() {
+        let missing = encode_row_key_with_handle(404, &RecordHandle::Int(1));
+        let orphan = encode_row_key_with_handle(29, &RecordHandle::Int(2));
+        let error = try_replace_write_conflict_error(
+            commit_error(&missing, &orphan, Redaction::Disabled),
+            Redaction::Disabled,
+            tables,
+        );
+        assert!(
+            error
+                .message
+                .contains("key={tableID=404, tableName=unknown, handle=1}, originalKey="),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains(
+                "primary={tableID=29, tableName=unknown.orphan, handle=2}, originalPrimaryKey="
+            ),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn keys_without_a_table_id_are_left_alone() {
+        let raw = b"not a table key".to_vec();
+        let before = commit_error(&raw, &raw, Redaction::Disabled);
+        let after = try_replace_write_conflict_error(before.clone(), Redaction::Disabled, tables);
+        assert_eq!(after, before);
+    }
+
+    /// Go returns before touching the error when redaction is `ON`.
+    #[test]
+    fn redaction_on_skips_the_rewrite() {
+        let record = encode_row_key_with_handle(28, &RecordHandle::Int(20));
+        let before = commit_error(&record, &record, Redaction::Enabled);
+        let after = try_replace_write_conflict_error(before.clone(), Redaction::Enabled, tables);
+        assert_eq!(after, before);
+        assert_eq!(
+            after.message,
+            "Write conflict, txnStartTS=10, conflictStartTS=11, conflictCommitTS=12, \
+             key=????, reason=Optimistic [try again later]"
+        );
+    }
+
+    /// Under `MARKER` the key arguments are Go `*redactFormatter`s, not
+    /// strings, so no table is named, and `FastGenByArgs` marks them again.
+    #[test]
+    fn redaction_marker_names_no_table_and_marks_again() {
+        let record = encode_row_key_with_handle(28, &RecordHandle::Int(20));
+        let original = hex(&record);
+        let before = commit_error(&record, &record, Redaction::Marker);
+        assert_eq!(
+            before.message,
+            format!(
+                "Write conflict, txnStartTS=10, conflictStartTS=11, conflictCommitTS=12, \
+                 key=‹{{tableID=28›‹, handle=20}}, originalKey={original}, primary=›\
+                 ‹{{tableID=28›‹, handle=20}}, originalPrimaryKey={original}›, \
+                 reason=Optimistic [try again later]"
+            )
+        );
+        let after = try_replace_write_conflict_error(before, Redaction::Marker, tables);
+        assert_eq!(
+            after.message,
+            format!(
+                "Write conflict, txnStartTS=10, conflictStartTS=11, conflictCommitTS=12, \
+                 key=‹‹‹{{tableID=28›››‹‹‹, handle=20}}, originalKey={original}, primary=›››\
+                 ‹‹‹{{tableID=28›››‹‹‹, handle=20}}, originalPrimaryKey={original}›››, \
+                 reason=Optimistic [try again later]"
+            )
+        );
+    }
+
+    #[test]
+    fn errors_without_conflict_arguments_pass_through() {
+        let error = SqlQueryError::new(9007, *b"HY000", "Write conflict");
+        assert_eq!(
+            try_replace_write_conflict_error(error.clone(), Redaction::Disabled, tables),
+            error
+        );
     }
 }

@@ -22,7 +22,9 @@
 //! `execL1Kind`/`execL1KindForLabel`), the internal counter structures
 //! (`ruv2ExecutorL1Counter`, `ruv2ExtraLabelCounter`, `ruv2MetricsExtra` and
 //! their add/snapshot/sum/clone helpers), and the formatting entry points
-//! (`FormatRUV2Summary`, `FormatRUV2Total`, `FormatRUV2Metrics`).
+//! (`FormatRUV2Summary`, `FormatRUV2Total`, `FormatRUV2Metrics`), plus
+//! `runtime_stats.go`'s `RURuntimeStats` ([`RuRuntimeStats`]), which wraps
+//! these metrics with `RUDetails` for EXPLAIN ANALYZE.
 //!
 //! [`RuV2Weights`] and the live metrics container are owned together here, as
 //! they are in Go. Formatting snapshots the live atomics into local values in
@@ -1467,9 +1469,171 @@ pub fn format_ruv2_metrics(
     format_ruv2_summary(metrics, weights, tikv_ru, tiflash_ru).1
 }
 
+/// Go `RURuntimeStats` (`runtime_stats.go`): the RU details and
+/// statement-level RU v2 metrics EXPLAIN ANALYZE registers on its target
+/// plan. `ru_version` picks the accounting shown: v2 is the RU v2 total,
+/// v1 or any other value is `RRU + WRU`.
+#[derive(Debug, Default)]
+pub struct RuRuntimeStats {
+    /// Go `RURuntimeStats.RUDetails` (embedded `*util.RUDetails`).
+    pub ru_details: Option<RuDetails>,
+    /// Go `RURuntimeStats.Metrics`.
+    pub metrics: Option<RuV2Metrics>,
+    /// Go `RURuntimeStats.Weights`.
+    pub weights: RuV2Weights,
+    /// Go `RURuntimeStats.RUVersion`.
+    pub ru_version: crate::topsql_stmtstats::RuVersion,
+}
+
+impl RuRuntimeStats {
+    /// Go `RURuntimeStats.String`.
+    #[must_use]
+    pub fn string(&self) -> String {
+        let format = |value: f64| tidb_datatype::go_strconv::format_float(value, b'f', 2, 64);
+        if self.ru_version == crate::topsql_stmtstats::RuVersion::V2 {
+            let (tikv_ru, tiflash_ru) = self.ru_details.as_ref().map_or((0.0, 0.0), |details| {
+                (details.tikv_ru_v2(), details.tiflash_ru())
+            });
+            let total_ru = total_ru(self.metrics.as_ref(), self.weights, tikv_ru, tiflash_ru);
+            if total_ru == 0.0 {
+                return String::new();
+            }
+            return format!("RU:{}", format(total_ru));
+        }
+        match &self.ru_details {
+            Some(details) => format!("RU:{}", format(details.read_ru() + details.write_ru())),
+            None => String::new(),
+        }
+    }
+
+    /// Go `RURuntimeStats.Clone`.
+    #[must_use]
+    pub fn clone_stats(&self) -> Self {
+        Self {
+            ru_details: self.ru_details.as_ref().map(RuDetails::cloned),
+            metrics: self.metrics.clone(),
+            weights: self.weights,
+            ru_version: self.ru_version,
+        }
+    }
+
+    /// Go `RURuntimeStats.Merge`.
+    pub fn merge(&mut self, other: &Self) {
+        match (&self.ru_details, &other.ru_details) {
+            (Some(details), Some(other)) => details.merge(other),
+            (None, Some(other)) => self.ru_details = Some(other.cloned()),
+            _ => {}
+        }
+        match &self.metrics {
+            Some(metrics) => {
+                if let Some(other) = &other.metrics {
+                    metrics.merge(other);
+                }
+            }
+            None => self.metrics = other.metrics.clone(),
+        }
+        if self.weights == RuV2Weights::default() {
+            self.weights = other.weights;
+        }
+        if self.ru_version == crate::topsql_stmtstats::RuVersion::UNSPECIFIED {
+            self.ru_version = other.ru_version;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ru_runtime_stats(
+        ru_details: Option<RuDetails>,
+        ru_version: crate::topsql_stmtstats::RuVersion,
+    ) -> RuRuntimeStats {
+        RuRuntimeStats {
+            ru_details,
+            metrics: Some(RuV2Metrics::new()),
+            weights: default_ruv2_weights_for_test(),
+            ru_version,
+        }
+    }
+
+    fn tiflash_and_tikv_ru(details: &RuDetails) {
+        details.add_tikv_ru_v2(200.0);
+        details.update_tiflash(&tikv_client::proto::resource_manager::Consumption {
+            r_r_u: 100.0,
+            w_r_u: 200.0,
+            ..Default::default()
+        });
+    }
+
+    /// Port of Go `TestRURuntimeStatsStringIncludesTiFlashRU` and
+    /// `TestRURuntimeStatsStringV2`.
+    #[test]
+    fn ru_runtime_stats_string_v2() {
+        let stats = ru_runtime_stats(
+            Some(RuDetails::new()),
+            crate::topsql_stmtstats::RuVersion::V2,
+        );
+        tiflash_and_tikv_ru(stats.ru_details.as_ref().unwrap());
+        assert_eq!(stats.string(), "RU:500.00");
+    }
+
+    /// Port of Go `TestRURuntimeStatsStringV2ZeroRU`.
+    #[test]
+    fn ru_runtime_stats_string_v2_zero_ru() {
+        let stats = ru_runtime_stats(None, crate::topsql_stmtstats::RuVersion::V2);
+        assert_eq!(stats.string(), "");
+    }
+
+    /// Port of Go `TestRURuntimeStatsStringV1`, `TestRURuntimeStatsStringV1NilDetails`
+    /// and `TestRURuntimeStatsStringDefaultVersion`.
+    #[test]
+    fn ru_runtime_stats_string_v1() {
+        let details = || Some(RuDetails::new_with(10.5, 20.3, std::time::Duration::ZERO));
+        let v1 = ru_runtime_stats(details(), crate::topsql_stmtstats::RuVersion::V1);
+        assert_eq!(v1.string(), "RU:30.80");
+        let nil = ru_runtime_stats(None, crate::topsql_stmtstats::RuVersion::V1);
+        assert_eq!(nil.string(), "");
+        let default = ru_runtime_stats(details(), crate::topsql_stmtstats::RuVersion::UNSPECIFIED);
+        assert_eq!(default.string(), "RU:30.80");
+    }
+
+    /// Port of Go `TestRURuntimeStatsClonePreservesRUVersion` and
+    /// `TestRURuntimeStatsCloneNilPreservesZeroVersion`.
+    #[test]
+    fn ru_runtime_stats_clone_preserves_ru_version() {
+        let stats = ru_runtime_stats(
+            Some(RuDetails::new_with(10.0, 20.0, std::time::Duration::ZERO)),
+            crate::topsql_stmtstats::RuVersion::V1,
+        );
+        let cloned = stats.clone_stats();
+        assert_eq!(cloned.ru_version, crate::topsql_stmtstats::RuVersion::V1);
+        assert_eq!(cloned.string(), stats.string());
+        assert_eq!(
+            RuRuntimeStats::default().clone_stats().ru_version,
+            crate::topsql_stmtstats::RuVersion::UNSPECIFIED
+        );
+    }
+
+    /// Port of Go `TestRURuntimeStatsMergeRUVersion` and
+    /// `TestRURuntimeStatsMergeKeepsExistingRUVersion`, plus the details merge.
+    #[test]
+    fn ru_runtime_stats_merge() {
+        let mut dst = ru_runtime_stats(None, crate::topsql_stmtstats::RuVersion::UNSPECIFIED);
+        let src = ru_runtime_stats(
+            Some(RuDetails::new_with(1.0, 2.0, std::time::Duration::ZERO)),
+            crate::topsql_stmtstats::RuVersion::V2,
+        );
+        dst.merge(&src);
+        assert_eq!(dst.ru_version, crate::topsql_stmtstats::RuVersion::V2);
+        assert_eq!(dst.ru_details.as_ref().unwrap().read_ru(), 1.0);
+        dst.merge(&src);
+        assert_eq!(dst.ru_details.as_ref().unwrap().write_ru(), 4.0);
+
+        let mut keep = ru_runtime_stats(None, crate::topsql_stmtstats::RuVersion::V1);
+        keep.merge(&src);
+        assert_eq!(keep.ru_version, crate::topsql_stmtstats::RuVersion::V1);
+    }
 
     /// Go `defaultRUV2WeightsForTest`, sourced from
     /// `config.DefaultRUV2Config()`.

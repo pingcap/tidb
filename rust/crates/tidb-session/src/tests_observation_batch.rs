@@ -1072,3 +1072,81 @@ fn tidb_decode_sql_digests_reads_the_statement_summaries() {
         );
     }
 }
+
+/// Go `ContextWithInitializedExecDetails` at the statement door, then
+/// `StmtRUSummary.Add` from the statement's `RUDetails`: what the
+/// statement's RPCs charged reaches its summary, and its requests carry the
+/// same details and the statement's resource-group tags.
+#[test]
+fn statement_ru_details_reach_requests_and_summary() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    let sql = "SELECT 'ru_details_reach_summary'";
+    session.initialize_statement_exec_details(sql);
+    let context = session.statement_kv_context_cell().get();
+    let ru_details = context.ru_details.clone().unwrap();
+    // A storage RPC issued before the session runs the statement (the
+    // server's pessimistic prelock) is charged to the statement.
+    ru_details.update(
+        &tikv_client::proto::resource_manager::Consumption {
+            r_r_u: 3.5,
+            w_r_u: 1.25,
+            ..Default::default()
+        },
+        Duration::from_millis(7),
+    );
+    let (_, digest) = normalize_statement_digest(sql);
+    let lock_tag = (context.pessimistic_lock_resource_group_tagger.unwrap())(b"t\x80");
+    assert_eq!(
+        tidb_txnkv::decode_resource_group_tag(&lock_tag).unwrap(),
+        Some(digest.as_bytes().to_vec())
+    );
+    session.run(sql).unwrap();
+    // The observation adopted the door's details rather than fresh ones.
+    let published = session.statement_kv_context_cell().get();
+    assert!(Arc::ptr_eq(
+        published.ru_details.as_ref().unwrap(),
+        &ru_details
+    ));
+    let records =
+        tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.summary_map_values();
+    let record = records
+        .iter()
+        .find(|r| r.lock().unwrap().digest == digest.as_str())
+        .unwrap()
+        .lock()
+        .unwrap();
+    assert_eq!(record.cumulative.ru.sum_rru, 3.5);
+    assert_eq!(record.cumulative.ru.sum_wru, 1.25);
+    assert_eq!(
+        record.cumulative.ru.max_ru_wait_duration,
+        Duration::from_millis(7)
+    );
+}
+
+/// The statement context's snapshot options and coprocessor statement carry
+/// the session's statement values (Go: the statement ctx every snapshot and
+/// DistSQL request is passed).
+#[test]
+fn statement_context_carries_statement_kv_context() {
+    let mut session = Session::new();
+    session.begin_statement_observation("SELECT 1");
+    let cell = session.statement_kv_context_cell();
+    let ru_details = cell.get().ru_details.unwrap();
+    let ctx = session.statement_context(false);
+    assert!(Arc::ptr_eq(&ctx.ru_details().unwrap(), &ru_details));
+    assert_eq!(
+        ctx.snapshot_read_options(0.0).kv_context,
+        Some(cell.clone())
+    );
+    let cop = tidb_executor::remote_scan::PushdownStatementContext::from_stmt(&ctx);
+    assert_eq!(cop.kv_context, Some(cell));
+    // The next statement gets fresh details.
+    session.begin_statement_observation("SELECT 2");
+    let next = session
+        .statement_kv_context_cell()
+        .get()
+        .ru_details
+        .unwrap();
+    assert!(!Arc::ptr_eq(&next, &ru_details));
+}

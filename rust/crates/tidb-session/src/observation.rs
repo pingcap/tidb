@@ -14,8 +14,10 @@
 
 //! Statement completion publication uses the same owner for materialized and
 //! streaming results; readers never fabricate execution records.
-//! Plan digest and RPC/network/RU/CPU measurements are not connected yet;
-//! their empty values do not certify those execution-detail contracts.
+//! Each statement owns Go's `RUDetails` (`ContextWithInitializedExecDetails`),
+//! which its RPCs charge and its summary and Top RU read. Plan digest and
+//! RPC/network/CPU measurements are not connected yet; their empty values do
+//! not certify those execution-detail contracts.
 use crate::*;
 use tidb_stmtsummary::statement_summary::{
     EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtSummaryStmtCtx,
@@ -45,6 +47,10 @@ pub(crate) struct StatementObservation {
     /// Go `StmtCtx.ExecDetails`: what the statement's coprocessor responses
     /// reported, read back when the summary is recorded.
     cop_stats: Arc<tidb_exec::statement_cop_stats::StatementCopStats>,
+    /// Go `ctx.Value(util.RUDetailsCtxKey)`: the statement's resource units,
+    /// created with its ctx (`execdetails.ContextWithInitializedExecDetails`)
+    /// and charged by every TiKV/TiFlash RPC it issues.
+    ru_details: Arc<tikv_client::RuDetails>,
 }
 
 #[derive(Default)]
@@ -57,6 +63,16 @@ struct StatementPhases {
     compile_measured: bool,
     execution_started: bool,
     tables: Vec<tidb_stmtsummary::statement_summary::TableEntry>,
+}
+
+/// The exec details [`Session::initialize_statement_exec_details`] created
+/// for the statement the session is about to run, with the digest it
+/// computed for them.
+pub(crate) struct PendingStatementExecDetails {
+    sql: String,
+    ru_details: Arc<tikv_client::RuDetails>,
+    normalized: String,
+    digest: tidb_parser::Digest,
 }
 
 struct LazyStatement {
@@ -186,6 +202,8 @@ impl Session {
         let plan = Arc::clone(&self.process_plan_info);
         let digest = observation.digest.clone();
         let statement_started = observation.started;
+        let ru_details = Arc::clone(&observation.ru_details);
+        let user = self.top_ru_user();
         Some(Arc::new(move |phase| {
             let mut phases = phases
                 .lock()
@@ -223,8 +241,9 @@ impl Session {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_fast_plan;
-            if !fast || tidb_util::topsql_state::top_sql_enabled() {
-                stats.on_execution_begin(digest.as_bytes(), &[], None);
+            if !fast || tidb_util::topsql_state::top_profiling_enabled() {
+                let info = top_profiling_begin_info(&ru_details, &user);
+                stats.on_execution_begin(digest.as_bytes(), &[], Some(&info));
                 if tidb_util::topsql_state::top_sql_enabled() {
                     kv_exec_counter.initialize(&stats, digest.as_bytes(), &[]);
                 }
@@ -246,7 +265,19 @@ impl Session {
         if self.routed_statement_observation_depth != 0 {
             return;
         }
-        let (normalized, digest) = normalize_statement_digest(sql);
+        // The details the server's door initialized for this statement, or
+        // Go `execdetails.ContextWithInitializedExecDetails`'s fresh ones.
+        let (normalized, digest, ru_details) = match self
+            .pending_statement_exec_details
+            .take()
+            .filter(|pending| pending.sql == sql)
+        {
+            Some(pending) => (pending.normalized, pending.digest, pending.ru_details),
+            None => {
+                let (normalized, digest) = normalize_statement_digest(sql);
+                (normalized, digest, Arc::new(tikv_client::RuDetails::new()))
+            }
+        };
         let parse = self
             .pending_observation_parse
             .take()
@@ -266,13 +297,122 @@ impl Session {
             binding_sql: String::new(),
             binding_digest: String::new(),
             kv_exec_counter: Default::default(),
-            cop_stats: Arc::default(),
+            cop_stats: Arc::new(
+                tidb_exec::statement_cop_stats::StatementCopStats::with_ru_details(Arc::clone(
+                    &ru_details,
+                )),
+            ),
+            ru_details,
             phases: Arc::new(Mutex::new(StatementPhases {
                 parse,
                 parse_before_start: parse,
                 ..StatementPhases::default()
             })),
         });
+        self.publish_statement_kv_context();
+    }
+
+    /// Publishes the running statement's ctx values to the transactions,
+    /// snapshots and requests it reaches: its `RUDetails` and Go's
+    /// `StmtCtx.GetResourceGroupTagger` (`pkg/sessionctx/stmtctx`) and
+    /// `newLockCtx`'s `lockCtx.ResourceGroupTagger` (`pkg/executor/select.go`).
+    /// Both taggers read the statement's plan digest when they tag, as Go's
+    /// read `StmtCtx` when they run.
+    fn publish_statement_kv_context(&self) {
+        let Some(observation) = &self.statement_observation else {
+            return;
+        };
+        self.publish_kv_context(
+            &observation.ru_details,
+            &observation.normalized,
+            &observation.digest,
+            Some(Arc::clone(&self.process_plan_info)),
+        );
+    }
+
+    /// Publishes `ru_details` and the taggers of the statement with this
+    /// normalized text and digest. `plan` is where its plan digest will be
+    /// read; `None` before the statement is planned, whose tags then carry
+    /// no plan digest (Go's nil `StmtCtx` plan digest).
+    fn publish_kv_context(
+        &self,
+        ru_details: &Arc<tikv_client::RuDetails>,
+        normalized: &str,
+        digest: &tidb_parser::Digest,
+        plan: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
+    ) {
+        // Go `StmtCtx.SQLDigest`: a statement with no normalized text tags
+        // no SQL digest.
+        let sql_digest = (!normalized.is_empty()).then(|| digest.as_bytes().to_vec());
+        let keyspace_name = tidb_util::keyspace::get_keyspace_name_bytes_by_settings();
+        // Go `StmtCtx.GetPlanDigest`: empty until the plan is published.
+        let plan_digest = move || {
+            plan.as_ref().map_or_else(Vec::new, |plan| {
+                let plan = plan
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                decode_hex_digest(&plan.plan_digest)
+            })
+        };
+        let lock_plan_digest = plan_digest.clone();
+        let lock_sql_digest = sql_digest.clone();
+        self.statement_kv_context
+            .publish(tidb_txnkv::StatementKvContext {
+                ru_details: Some(Arc::clone(ru_details)),
+                resource_group_tagger: Some(Arc::new(move || {
+                    let mut tagger = tidb_txnkv::ResourceGroupTagBuilder::new(keyspace_name);
+                    tagger.set_plan_digest(&plan_digest());
+                    if let Some(sql_digest) = &sql_digest {
+                        tagger.set_sql_digest(sql_digest);
+                    }
+                    tagger
+                })),
+                pessimistic_lock_resource_group_tagger: Some(Arc::new(move |key: &[u8]| {
+                    let Some(sql_digest) = &lock_sql_digest else {
+                        return Vec::new();
+                    };
+                    let mut tagger = tidb_txnkv::ResourceGroupTagBuilder::new(keyspace_name);
+                    tagger
+                        .set_plan_digest(&lock_plan_digest())
+                        .set_sql_digest(sql_digest);
+                    tagger.encode_tag_with_key(key)
+                })),
+            });
+    }
+
+    /// Go `execdetails.ContextWithInitializedExecDetails` at the server's
+    /// statement door (`clientConn.handleStmt`, `executePlanCacheStmt`): the
+    /// statement's `RUDetails` exist before any of its storage work, so a
+    /// pessimistic lock the server takes before the session runs the
+    /// statement (Go `PointGetExecutor.getAndLock`'s fold) is charged and
+    /// tagged as the statement's own. The statement's observation adopts
+    /// these details when it starts.
+    pub fn initialize_statement_exec_details(&mut self, sql: &str) {
+        if self.routed_statement_observation_depth != 0 {
+            return;
+        }
+        let ru_details = Arc::new(tikv_client::RuDetails::new());
+        let (normalized, digest) = normalize_statement_digest(sql);
+        self.publish_kv_context(&ru_details, &normalized, &digest, None);
+        self.pending_statement_exec_details = Some(PendingStatementExecDetails {
+            sql: sql.to_owned(),
+            ru_details,
+            normalized,
+            digest,
+        });
+    }
+
+    /// Go `vars.User.String()` for Top RU: `user@host`, empty with no user.
+    fn top_ru_user(&self) -> String {
+        self.current_identity()
+            .map_or_else(String::new, |(user, host)| format!("{user}@{host}"))
+    }
+
+    /// The session's statement ctx values, shared with the transactions and
+    /// snapshots its statements use; see [`tidb_txnkv::StatementKvContextCell`].
+    #[must_use]
+    pub fn statement_kv_context_cell(&self) -> tidb_txnkv::StatementKvContextCell {
+        self.statement_kv_context.clone()
     }
 
     // SQL-level EXECUTE and the retained body share a result lifecycle. Replace
@@ -297,6 +437,7 @@ impl Session {
             observation.label.clear();
             observation.prepared = true;
         }
+        self.publish_statement_kv_context();
     }
 
     pub(crate) fn observe_statement_node(&mut self, stmt: &Stmt, prepared: bool) {
@@ -308,6 +449,7 @@ impl Session {
         {
             return;
         }
+        let user = self.top_ru_user();
         if let Some(observation) = &mut self.statement_observation {
             if observation.label.is_empty()
                 && stmt.label() != "Execute"
@@ -321,11 +463,12 @@ impl Session {
                         | tidb_ast::SessionStmt::SetCharset { .. }
                         | tidb_ast::SessionStmt::SetMixed(_)
                 ));
-                if !fast || tidb_util::topsql_state::top_sql_enabled() {
+                if !fast || tidb_util::topsql_state::top_profiling_enabled() {
+                    let info = top_profiling_begin_info(&observation.ru_details, &user);
                     self.statement_stats.on_execution_begin(
                         observation.digest.as_bytes(),
                         &[],
-                        None,
+                        Some(&info),
                     );
                     if tidb_util::topsql_state::top_sql_enabled() {
                         observation.kv_exec_counter.initialize(
@@ -449,12 +592,22 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Go GetTotalCostDuration includes parsing before ExecuteStmt.
         let elapsed = observation.started.elapsed() + phases.parse_before_start;
-        if phases.execution_started && tidb_util::topsql_state::top_sql_enabled() {
+        // Go `observeStmtFinishedForTopProfiling`: Top RU alone also records
+        // the finish, with the statement's `RUDetails` and user.
+        let top_ru = tidb_util::topsql_state::top_ru_enabled();
+        if phases.execution_started && (tidb_util::topsql_state::top_sql_enabled() || top_ru) {
             self.statement_stats.on_execution_finished(
                 observation.digest.as_bytes(),
                 &[],
                 Some(&ExecFinishInfo {
                     exec_duration_ns: i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
+                    top_ru_enabled: top_ru,
+                    ru_details: top_ru.then(|| Arc::clone(&observation.ru_details)),
+                    user: if top_ru {
+                        self.top_ru_user()
+                    } else {
+                        String::new()
+                    },
                     ..ExecFinishInfo::default()
                 }),
             );
@@ -573,8 +726,15 @@ impl Session {
                 .clone(),
             keyspace_id: 0,
             resource_group_name: self.active_resource_group.clone(),
-            ru_detail: None,
-            total_ru_v2: 0.0,
+            ru_detail: Some(Arc::clone(&observation.ru_details)),
+            // Go `calculateStatementTotalRUV2` with no statement RU v2
+            // metrics, which this node does not keep.
+            total_ru_v2: tidb_util::ruv2_metrics::total_ru(
+                None,
+                tidb_util::ruv2_metrics::RuV2Weights::default(),
+                observation.ru_details.tikv_ru_v2(),
+                observation.ru_details.tiflash_ru(),
+            ),
             cpu_usages: Default::default(),
             plan_cache_unqualified: String::new(),
             lazy_info: Arc::new(LazyStatement {
@@ -626,6 +786,40 @@ impl Session {
             }),
         });
     }
+}
+
+/// Go `observeStmtBeginForTopProfiling`'s `ExecBeginInfo`: under Top RU it
+/// carries the statement's `RUDetails` (Go's `Ctx`, whose only use is that
+/// lookup), the user and Go `stmtstats.DefaultRUVersion()` -- Go's version
+/// when no domain resource-group controller is reachable from the session.
+fn top_profiling_begin_info(
+    ru_details: &Arc<tikv_client::RuDetails>,
+    user: &str,
+) -> tidb_util::topsql_stmtstats::ExecBeginInfo {
+    let top_ru = tidb_util::topsql_state::top_ru_enabled();
+    let mut info = tidb_util::topsql_stmtstats::ExecBeginInfo {
+        top_ru_enabled: top_ru,
+        ..Default::default()
+    };
+    if top_ru {
+        info.ru_details = Some(Arc::clone(ru_details));
+        info.user = user.to_owned();
+        info.ru_version = tidb_util::topsql_stmtstats::default_ru_version();
+    }
+    info
+}
+
+/// The bytes of a digest held as its lowercase hex text (Go
+/// `parser.Digest.Bytes` of `Digest.String`); empty for no digest.
+fn decode_hex_digest(hex: &str) -> Vec<u8> {
+    hex.as_bytes()
+        .chunks_exact(2)
+        .map_while(|pair| {
+            std::str::from_utf8(pair)
+                .ok()
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+        })
+        .collect()
 }
 
 /// Go `ast.SensitiveStmtNode.SecureText` for the statements that implement

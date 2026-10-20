@@ -619,9 +619,33 @@ fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
     // one thing a caller that only looked for `Err` from the coordinator
     // could never report.
     assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
+    // Go sends `GetMsg()`, not `Error()`: no `[kv:9007]` prefix. And Go's
+    // `tryReplaceWriteConflictError` names the table of both keys from the
+    // transaction's infoschema.
     assert!(
-        error.message.contains("9007"),
+        error.message.starts_with("Write conflict, txnStartTS="),
         "a lost race is a write conflict, got: {}",
+        error.message
+    );
+    assert!(
+        error
+            .message
+            .contains("key={tableID=101, tableName=app.t, handle=1}, originalKey="),
+        "the conflicting key names its table, got: {}",
+        error.message
+    );
+    assert!(
+        error
+            .message
+            .contains("primary={tableID=101, tableName=app.t, handle=1}, originalPrimaryKey="),
+        "the primary key names its table, got: {}",
+        error.message
+    );
+    assert!(
+        error
+            .message
+            .ends_with(", reason=Optimistic [try again later]"),
+        "{}",
         error.message
     );
 

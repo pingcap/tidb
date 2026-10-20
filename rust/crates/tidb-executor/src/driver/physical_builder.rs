@@ -118,6 +118,10 @@ pub(crate) struct PhysicalRuntimeCounter {
     rows: crate::executor::RowCount,
     calls: Option<Arc<Mutex<PhysicalCallStats>>>,
     apply: Option<crate::apply::native::ApplyRuntimeSink>,
+    /// Go `RURuntimeStats`, which `ExplainExec.executeAnalyzeExec` registers
+    /// on the target plan after the analyzed statement ran and before its
+    /// executors' `Close` register theirs.
+    ru: Option<Arc<tidb_util::ruv2_metrics::RuRuntimeStats>>,
 }
 
 impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
@@ -126,6 +130,7 @@ impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
             rows,
             calls: None,
             apply: None,
+            ru: None,
         }
     }
 }
@@ -133,6 +138,14 @@ impl From<crate::executor::RowCount> for PhysicalRuntimeCounter {
 impl PhysicalRuntimeCounter {
     pub(crate) fn get(&self) -> u64 {
         self.rows.get()
+    }
+
+    /// Go `RuntimeStatsColl.RegisterStats(targetPlanID, &RURuntimeStats{..})`.
+    pub(crate) fn register_ru_runtime_stats(
+        &mut self,
+        stats: tidb_util::ruv2_metrics::RuRuntimeStats,
+    ) {
+        self.ru = Some(Arc::new(stats));
     }
 
     pub(crate) fn execution_info(&self) -> Option<String> {
@@ -151,6 +164,11 @@ impl PhysicalRuntimeCounter {
                 format(calls.close),
                 calls.loops,
             ));
+        }
+        if let Some(ru) = self.ru.as_ref().map(|ru| ru.string()) {
+            if !ru.is_empty() {
+                details.push(ru);
+            }
         }
         if let Some(snapshot) = self.apply.as_ref().and_then(|sink| *sink.lock().unwrap()) {
             let concurrency = if snapshot.concurrency > 1 {
@@ -248,6 +266,7 @@ impl BuildState {
                     rows: crate::executor::RowCount::default(),
                     calls: None,
                     apply: None,
+                    ru: None,
                 });
         let counter = stats.rows.clone();
         let calls = Arc::clone(
@@ -6435,6 +6454,43 @@ mod tests {
         PhysicalProjection, PhysicalSelection, PhysicalTableDual, PhysicalTableReader,
         PhysicalUnionAll,
     };
+
+    /// Go `ExplainExec.executeAnalyzeExec` registers `RURuntimeStats` on the
+    /// target plan after the run and before its executors' `Close` register
+    /// theirs, so `RootRuntimeStats.String` prints it right after the basic
+    /// stats and before the close-registered groups.
+    #[test]
+    fn ru_runtime_stats_follow_basic_stats_in_execution_info() {
+        let mut counter = PhysicalRuntimeCounter::from(crate::executor::RowCount::default());
+        counter.calls = Some(Arc::new(Mutex::new(PhysicalCallStats {
+            loops: 2,
+            ..PhysicalCallStats::default()
+        })));
+        counter.apply = Some(Arc::new(Mutex::new(Some(
+            crate::apply::native::ApplyRuntimeSnapshot {
+                concurrency: 1,
+                enabled: false,
+                hits: 0,
+                accesses: 0,
+            },
+        ))));
+        counter.register_ru_runtime_stats(tidb_util::ruv2_metrics::RuRuntimeStats {
+            ru_details: Some(tikv_client::RuDetails::new_with(
+                1.5,
+                1.33,
+                std::time::Duration::ZERO,
+            )),
+            ..Default::default()
+        });
+        assert_eq!(
+            counter.execution_info().unwrap(),
+            "time:0s, open:0s, close:0s, loops:2, RU:2.83, concurrency:OFF, cache:OFF"
+        );
+        // No RU details registers nothing visible.
+        let mut empty = PhysicalRuntimeCounter::from(crate::executor::RowCount::default());
+        empty.register_ru_runtime_stats(tidb_util::ruv2_metrics::RuRuntimeStats::default());
+        assert_eq!(empty.execution_info(), None);
+    }
 
     #[derive(Default)]
     struct RecordedExecutorRuntimeStats {

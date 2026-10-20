@@ -121,6 +121,7 @@ impl TransactionStatementError {
             code: 1105,
             state: *b"HY000",
             message: error.to_string(),
+            write_conflict: None,
         })
     }
 
@@ -130,6 +131,7 @@ impl TransactionStatementError {
             code: 1105,
             state: *b"HY000",
             message: message.into(),
+            write_conflict: None,
         })
     }
 
@@ -287,6 +289,7 @@ where
                 code: tidb_error::tidb::errcode::ErrLockExpire,
                 state: *b"HY000",
                 message: tidb_error::tidb::errname::ErrLockExpire.raw.to_owned(),
+                write_conflict: None,
             }));
         }
         Ok(())
@@ -1126,7 +1129,7 @@ mod tests {
             TransactionStatementError::write(&write),
         ] {
             assert_eq!(error.sql_error().code, 9004);
-            assert_eq!(error.sql_error().message, "[tikv:9004]Resolve lock timeout");
+            assert_eq!(error.sql_error().message, "Resolve lock timeout");
         }
     }
 
@@ -1137,6 +1140,7 @@ mod tests {
         // transaction rather than one statement.
         let outcome = rolled_back(TransactionCause::WriteConflict {
             detail: "conflictStartTS=7".to_owned(),
+            args: None,
         });
         let error = classify_commit_outcome(&outcome).expect_err("a lost race cannot report OK");
         assert_eq!(error.sql_error().code, ERR_WRITE_CONFLICT);
@@ -1185,7 +1189,8 @@ mod tests {
     fn a_write_conflict_is_the_only_cause_with_a_code_of_its_own() {
         assert_eq!(
             transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
-                detail: "d".to_owned()
+                detail: "d".to_owned(),
+                args: None,
             })
             .code,
             ERR_WRITE_CONFLICT

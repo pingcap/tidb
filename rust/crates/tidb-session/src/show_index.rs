@@ -36,8 +36,14 @@ pub(crate) const SHOW_INDEX_COLUMNS: &[(&str, bool)] = &[
 ];
 
 /// One `SHOW INDEX` row per index column, in Go's own order: the clustered
-/// primary key first, then each index in definition order.
-pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<Datum>> {
+/// primary key first, then each index in definition order. `column_ndv` is
+/// Go `fetchShowIndex`'s Cardinality: the column's NDV in the table's stats
+/// (`statsTbl.GetCol(col.ID).NDV`, 0 without them).
+pub(crate) fn show_index_rows(
+    table_name: &str,
+    table: &tidb_executor::KvTable,
+    column_ndv: impl Fn(i64) -> i64,
+) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     let mut push = |key_name: &str,
@@ -45,6 +51,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                     clustered: bool,
                     sequence: usize,
                     column: Option<&str>,
+                    cardinality: i64,
                     expression: Option<&str>,
                     nullable: bool,
                     comment: &str,
@@ -58,7 +65,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
             Datum::Int(sequence as i64),
             column.map_or(Datum::Null, text),
             text("A"),
-            Datum::Int(0),
+            Datum::Int(cardinality),
             // go `fetchShowIndex`'s Sub_part: the declared prefix length a
             // key part stores (`IndexColumn.Length`), NULL for a whole-column
             // part.
@@ -81,6 +88,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
             true,
             1,
             Some(&table.columns[offset].name),
+            column_ndv(table.columns[offset].id),
             None,
             false,
             "",
@@ -113,6 +121,7 @@ pub(crate) fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) 
                 // Go `fetchShowIndex`: a hidden expression-index column is
                 // named by the STRING "NULL" (not SQL NULL).
                 Some(if expression.is_none() { column.name.as_str() } else { "NULL" }),
+                column_ndv(column.id),
                 expression,
                 nullable,
                 &index.comment,

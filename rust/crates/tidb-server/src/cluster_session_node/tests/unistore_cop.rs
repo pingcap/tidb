@@ -11332,7 +11332,7 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         .contains("can not get 'tikv_gc_safe_point'"));
     rows(
         &mut session,
-        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', '')",
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05.000 -0700', '')",
     );
     rows(&mut session, &format!("SET tidb_snapshot='{ts}'"));
     assert!(
@@ -11572,7 +11572,7 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
     rows(&mut session, "INSERT INTO t VALUES (1,10)");
     rows(
         &mut session,
-        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05 -0700', '')",
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05.000 -0700', '')",
     );
     session.control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM t");

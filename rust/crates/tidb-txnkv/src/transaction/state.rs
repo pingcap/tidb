@@ -53,6 +53,10 @@ pub enum TransactionCause {
     WriteConflict {
         /// TiKV conflict diagnostic.
         detail: String,
+        /// Go `newWriteConflictError`'s arguments, when TiKV returned the
+        /// conflict's fields; the session's commit rewrites their table-ID
+        /// fields before the client sees them.
+        args: Option<Box<crate::driver::transaction_error::WriteConflictArgs>>,
     },
     /// TiKV confirmed that shared-lock ownership was lost during an upgrade.
     /// The key is rendered under the source redaction policy at classification.
@@ -117,7 +121,7 @@ impl std::fmt::Display for TransactionCause {
         match self {
             Self::AlreadyExists { detail, .. }
             | Self::AssertionFailed { detail, .. }
-            | Self::WriteConflict { detail }
+            | Self::WriteConflict { detail, .. }
             | Self::Lock { detail, .. }
             | Self::Region { detail }
             | Self::BackoffExhausted { detail, .. }
@@ -323,12 +327,14 @@ mod tests {
             receipt: receipt.clone(),
             cause: TransactionCause::WriteConflict {
                 detail: "conflict".to_owned(),
+                args: None,
             },
         });
         let cleanup_failed = OptimisticCommitOutcome::CleanupFailed(CleanupFailedTransaction {
             receipt: receipt.clone(),
             cause: TransactionCause::WriteConflict {
                 detail: "conflict".to_owned(),
+                args: None,
             },
             cleanup_failures: vec![CleanupBatchFailure {
                 keys: vec![b"p".to_vec()],

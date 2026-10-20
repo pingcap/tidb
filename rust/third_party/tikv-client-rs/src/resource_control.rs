@@ -972,6 +972,41 @@ mod test {
         assert!(select(&background, &request, 3, AccessLocationType::CrossZone, 0,).is_none());
     }
 
+    // client-go's interceptor takes the group from every intercepted
+    // request's `ResourceControlContext`, coprocessor requests included.
+    #[test]
+    fn coprocessor_requests_carry_their_resource_group_into_resource_control() {
+        let context = kvrpcpb::Context {
+            resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                resource_group_name: "rg1".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let controller: ResourceGroupControllerHandle = Arc::new(NoopController::default());
+        let mut cop = coprocessor::Request {
+            context: Some(context.clone()),
+            ..Default::default()
+        };
+        let selected = select(&controller, &cop, 0, AccessLocationType::Unknown, 0).unwrap();
+        assert_eq!(selected.resource_group_name, "rg1");
+        assert!(selected.request.is_cop());
+        cop.set_resource_control_priority_if_unset(8);
+        cop.set_resource_control_priority_if_unset(9);
+        assert_eq!(cop.batch_priority(), 8);
+
+        let mut stream = CoprocessorStreamRequest::new(cop.clone());
+        assert_eq!(stream.resource_group_name(), Some("rg1"));
+        stream.set_resource_group_name("rg2");
+        assert_eq!(stream.resource_group_name(), Some("rg2"));
+
+        let batch = BatchCoprocessorStreamRequest::new(coprocessor::BatchRequest {
+            context: Some(context),
+            ..Default::default()
+        });
+        assert_eq!(batch.resource_group_name(), Some("rg1"));
+    }
+
     #[test]
     fn source_analyze_coprocessor_bypass_is_nextgen_only() {
         let request = coprocessor::Request {

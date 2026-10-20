@@ -38,15 +38,15 @@ struct Counts {
 // emitted categories; otherwise a dropped match or changed rejection
 // direction would pass unnoticed behind a still-valid Go oracle.
 const EXPECTED_COUNTS: Counts = Counts {
-    go_accepted: 51_498,
-    go_rejected: 99,
+    go_accepted: 51_505,
+    go_rejected: 92,
     go_restore_failure: 1,
     // Every accepted statement and the one Go restore failure now has the
     // same Rust outcome. The remaining parse failures are exactly Go's
     // rejected inputs; there are no restore mismatches or false accepts.
-    rust_matched: 51_489,
+    rust_matched: 51_496,
     rust_multi_statement_matched: 10,
-    rust_parse_failure: 99,
+    rust_parse_failure: 92,
     rust_restore_mismatch: 0,
     rust_accepted_go_rejected: 0,
     rust_accepted_go_restore_failure: 0,
@@ -125,7 +125,13 @@ fn integration_parser_static_go_oracle_reports_rust_outcomes() {
                         counts.rust_restore_mismatch += 1;
                     }
                 }
-                GoOutcome::Rejected => counts.rust_accepted_go_rejected += 1,
+                GoOutcome::Rejected => {
+                    eprintln!(
+                        "Rust accepted Go-rejected input {}:{}\n{}",
+                        record.input.path, record.input.start_line, record.input.sql
+                    );
+                    counts.rust_accepted_go_rejected += 1;
+                }
                 GoOutcome::RestoreFailure => counts.rust_accepted_go_restore_failure += 1,
             },
         }

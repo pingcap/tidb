@@ -1074,6 +1074,9 @@ pub struct StmtContextData {
     publish_brief_binary_plan: bool,
     statement_phase_observer: Option<Arc<dyn Fn(StatementPhase) + Send + Sync>>,
     kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    /// Go's statement ctx `RUDetails` and `StmtCtx.GetResourceGroupTagger`,
+    /// as the session publishes them for the statement that runs.
+    statement_kv_context: Option<tidb_txnkv::StatementKvContextCell>,
     keys_read: KeysReadBudget,
     /// Go `StmtCtx.ExecDetails`/`RuntimeStatsColl` as the consumer of every
     /// coprocessor response this statement reads; `None` unless the
@@ -1923,6 +1926,18 @@ context_configuration! {
         self
     }
 
+    /// Carries the session's statement ctx values (Go
+    /// `ContextWithInitializedExecDetails`'s `RUDetails`, the resource-group
+    /// taggers) to every read and request of this execution.
+    #[must_use]
+    pub fn with_statement_kv_context(
+        mut self,
+        context: Option<tidb_txnkv::StatementKvContextCell>,
+    ) -> Self {
+        self.statement_kv_context = context;
+        self
+    }
+
     /// Shares the statement's processed-keys counter and limit with every
     /// read of this execution.
     #[must_use]
@@ -2573,6 +2588,7 @@ impl StmtContext {
             publish_brief_binary_plan: true,
             statement_phase_observer: None,
             kv_exec_counter: Default::default(),
+            statement_kv_context: None,
             keys_read: KeysReadBudget::default(),
             cop_response_sink: None,
             allow_write_row_id: false,
@@ -4331,6 +4347,22 @@ impl StmtContext {
         self.kv_exec_counter.clone()
     }
 
+    /// The session's statement ctx values, when a session runs this
+    /// execution.
+    #[must_use]
+    pub fn statement_kv_context(&self) -> Option<tidb_txnkv::StatementKvContextCell> {
+        self.statement_kv_context.clone()
+    }
+
+    /// Go `ctx.Value(util.RUDetailsCtxKey)`: the running statement's
+    /// `RUDetails`.
+    #[must_use]
+    pub fn ru_details(&self) -> Option<Arc<tikv_client::RuDetails>> {
+        self.statement_kv_context
+            .as_ref()
+            .and_then(|context| context.get().ru_details)
+    }
+
     /// The statement's processed-keys budget; see [`KeysReadBudget`].
     #[must_use]
     pub fn keys_read(&self) -> &KeysReadBudget {
@@ -4361,6 +4393,7 @@ impl StmtContext {
                     zone,
                 )
             }),
+            kv_context: self.statement_kv_context.clone(),
         }
     }
 

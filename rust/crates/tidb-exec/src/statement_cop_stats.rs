@@ -29,9 +29,21 @@ use crate::exec_details::{CopExecDetails, CopTasksSummary, ExecDetails, SyncExec
 #[derive(Debug, Default)]
 pub struct StatementCopStats {
     exec_details: SyncExecDetails,
+    /// Go `ctx.Value(util.RUDetailsCtxKey)` of the statement whose responses
+    /// these are, which TiFlash's reported RU is merged into.
+    ru_details: Option<std::sync::Arc<tikv_client::RuDetails>>,
 }
 
 impl StatementCopStats {
+    /// The statement's sink, merging TiFlash RU into `ru_details`.
+    #[must_use]
+    pub fn with_ru_details(ru_details: std::sync::Arc<tikv_client::RuDetails>) -> Self {
+        Self {
+            exec_details: SyncExecDetails::default(),
+            ru_details: Some(ru_details),
+        }
+    }
+
     /// Go `StmtCtx.GetExecDetails`.
     #[must_use]
     pub fn exec_details(&self) -> ExecDetails {
@@ -48,11 +60,25 @@ impl StatementCopStats {
 impl CopResponseSink for StatementCopStats {
     fn record_cop_response(
         &self,
-        _metadata: &SelectResultMetadata,
+        metadata: &SelectResultMetadata,
         sample: &ResponseRuntimeStats,
         fetch_duration: Duration,
-        _execution_summaries: &[ExecutorExecutionSummary],
+        execution_summaries: &[ExecutorExecutionSummary],
     ) {
+        // Go `selectResult.updateCopRuntimeStats`: a TiFlash response's
+        // summaries carry TiFlash's RU, merged into the statement's
+        // `RUDetails` (`MergeTiFlashRUConsumption`). This node keeps no
+        // statement RU v2 metrics, Go's nil-metrics case, so the merge always
+        // runs. A summary that fails to decode leaves the details unchanged;
+        // the sink has no error path for Go's returned error.
+        if metadata.store_type == tidb_txnkv::StoreType::TiFlash {
+            if let Some(ru_details) = &self.ru_details {
+                let _ = crate::tiflash_stats::merge_tiflash_ru_consumption(
+                    execution_summaries,
+                    ru_details,
+                );
+            }
+        }
         let backoff_sleep = sample
             .backoff_sleep_ns
             .iter()

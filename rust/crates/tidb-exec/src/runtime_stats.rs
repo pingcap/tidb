@@ -45,8 +45,9 @@
 //! `TestColumnarScanContextStats`) live in [`crate::tiflash_stats`]'s test
 //! module and drive these production types.
 //!
-//! The detached execution-context and RU EXPLAIN wrappers are retired; their
-//! live session integration remains an obligation. Percentile aggregation uses
+//! The detached execution-context wrapper is retired; Go `RURuntimeStats`
+//! lives in `tidb_util::ruv2_metrics` and is registered here as a
+//! [`RuntimeStats`]. Percentile aggregation uses
 //! the algorithm and defaults of the pinned `github.com/influxdata/tdigest`
 //! dependency. Shared runtime-statistics
 //! state retains Go's mutex/atomic synchronization.
@@ -105,6 +106,8 @@ pub const TP_UPDATE_RUNTIME_STATS: i32 = 16;
 pub const TP_FK_CHECK_RUNTIME_STATS: i32 = 17;
 /// Go `TpFKCascadeRuntimeStats`: the tp for `FKCascadeRuntimeStats`.
 pub const TP_FK_CASCADE_RUNTIME_STATS: i32 = 18;
+/// Go `TpRURuntimeStats`: the tp for `RURuntimeStats`.
+pub const TP_RU_RUNTIME_STATS: i32 = 19;
 
 /// Go `execdetails.MaxDetailsNumsForOneQuery` (`execdetails.go`): the max
 /// number of details kept exactly before [`Percentile`] switches to the
@@ -548,6 +551,35 @@ pub trait RuntimeStats: Any + Send {
     fn tp(&self) -> i32;
     /// The Go type switch's `rs.(*ConcreteType)` seam.
     fn as_any(&self) -> &dyn Any;
+}
+
+/// Go `RURuntimeStats`'s `RuntimeStats` methods; the type and its formatting
+/// live with the RU v2 metrics in [`tidb_util::ruv2_metrics`].
+impl RuntimeStats for tidb_util::ruv2_metrics::RuRuntimeStats {
+    fn string(&self) -> String {
+        tidb_util::ruv2_metrics::RuRuntimeStats::string(self)
+    }
+
+    fn merge(&mut self, other: &dyn RuntimeStats) {
+        if let Some(tmp) = other
+            .as_any()
+            .downcast_ref::<tidb_util::ruv2_metrics::RuRuntimeStats>()
+        {
+            tidb_util::ruv2_metrics::RuRuntimeStats::merge(self, tmp);
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn RuntimeStats> {
+        Box::new(self.clone_stats())
+    }
+
+    fn tp(&self) -> i32 {
+        TP_RU_RUNTIME_STATS
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 /// Go `basicCopRuntimeStats` (package-private): the per-executor cop task

@@ -3428,6 +3428,33 @@ impl tidb_planner::plan_hint::HintCatalog for CatalogHints<'_> {
     }
 }
 
+/// Go `ExplainExec.executeAnalyzeExec`'s last step: once the analyzed
+/// statement has run, the statement's `RUDetails` (cloned) are registered on
+/// the target plan as `RURuntimeStats`, under the RU version of Go's
+/// `domain.GetRUVersion` -- `rmclient.DefaultRUVersion` here, Go's answer
+/// when no domain resource-group controller is reachable from the session.
+/// This node keeps no statement-level RU v2 metrics (Go
+/// `SyncRUV2MetricsFromContext`), so `Metrics` is nil.
+fn register_ru_runtime_stats(
+    statement_context: &crate::StmtContext,
+    physical: &PhysicalPlan,
+    runtime: &crate::driver::physical_builder::PhysicalRuntimeStats,
+) -> crate::driver::physical_builder::PhysicalRuntimeStats {
+    let mut runtime = runtime.clone();
+    if let Some(ru_details) = statement_context.ru_details() {
+        runtime
+            .entry(crate::driver::physical_builder::runtime_plan_key(physical))
+            .or_insert_with(|| crate::executor::RowCount::default().into())
+            .register_ru_runtime_stats(tidb_util::ruv2_metrics::RuRuntimeStats {
+                ru_details: Some(ru_details.cloned()),
+                metrics: None,
+                weights: tidb_util::ruv2_metrics::RuV2Weights::default(),
+                ru_version: tidb_util::topsql_stmtstats::default_ru_version(),
+            });
+    }
+    runtime
+}
+
 fn render_physical_plan(
     eval_ctx: &dyn tidb_expr::Columns,
     statement_context: &crate::StmtContext,
@@ -3441,6 +3468,14 @@ fn render_physical_plan(
     if matches!(format, ExplainFormat::Dot) {
         return Ok(explain_dot_rows(physical));
     }
+    let runtime_with_ru;
+    let runtime = match runtime {
+        Some(runtime) if analyze => {
+            runtime_with_ru = register_ru_runtime_stats(statement_context, physical, runtime);
+            Some(&runtime_with_ru)
+        }
+        runtime => runtime,
+    };
     if matches!(format, ExplainFormat::TidbJson | ExplainFormat::Binary) {
         // Go's binary operator carries `getPlanCost` (cost model ver2).
         let coster = matches!(format, ExplainFormat::Binary).then(|| {

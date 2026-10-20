@@ -434,6 +434,7 @@ pub trait IndexBackfiller {
             code: 1105,
             state: *b"HY000",
             message: "this path cannot validate an exchanged partition's rows".to_owned(),
+            write_conflict: None,
         })
     }
 
@@ -464,6 +465,7 @@ pub trait IndexBackfiller {
             code: 1105,
             state: *b"HY000",
             message: "this path cannot read a table's rows".to_owned(),
+            write_conflict: None,
         })
     }
 
@@ -478,6 +480,7 @@ pub trait IndexBackfiller {
             code: 1105,
             state: *b"HY000",
             message: "this path cannot reorganize an index".to_owned(),
+            write_conflict: None,
         })
     }
 
@@ -570,6 +573,7 @@ fn cache_table_check_unavailable() -> LockSqlError {
         code: 1105,
         state: *b"HY000",
         message: "this path cannot measure a table for ALTER TABLE ... CACHE".to_owned(),
+        write_conflict: None,
     }
 }
 
@@ -579,6 +583,7 @@ fn foreign_key_check_unavailable() -> LockSqlError {
         code: 1105,
         state: *b"HY000",
         message: "this path cannot check a foreign key's existing rows".to_owned(),
+        write_conflict: None,
     }
 }
 
@@ -2028,6 +2033,7 @@ mod tests {
             code: WRITE_CONFLICT_CODE,
             state: *b"HY000",
             message: "write conflict at schema version key".to_owned(),
+            write_conflict: None,
         };
         assert!(matches!(
             classify_session_ddl_commit_error(61, conflict),
@@ -2041,6 +2047,7 @@ mod tests {
             code: 1105,
             state: *b"HY000",
             message: "prewrite transport failed definitively".to_owned(),
+            write_conflict: None,
         };
         assert!(matches!(
             classify_session_ddl_commit_error(61, ordinary),

@@ -2167,6 +2167,48 @@ pub(crate) fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZon
     .map_or(Datum::Null, Datum::Time)
 }
 
+/// Go `fetchShowTableStatus`'s restricted SQL over `information_schema.tables`:
+/// `SELECT table_name, engine, version, row_format, table_rows,
+/// avg_row_length, data_length, max_data_length, index_length, data_free,
+/// auto_increment, create_time, update_time, check_time, table_collation,
+/// IFNULL(checksum,''), create_options, table_comment ... WHERE
+/// lower(table_schema)=? ORDER BY table_name`, over `catalog`'s TABLES rows.
+pub(crate) fn show_table_status_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    zone: &tidb_expr::SessionTimeZone,
+    database: &str,
+) -> Vec<Vec<Datum>> {
+    const TABLE_SCHEMA: usize = 1;
+    const TABLE_NAME: usize = 2;
+    const CHECKSUM: usize = 18;
+    let schema = database.to_lowercase();
+    let mut rows = tables_rows(catalog, visibility, zone)
+        .into_iter()
+        .filter(|row| {
+            crate::datum_text(&row[TABLE_SCHEMA])
+                .is_some_and(|name| name.to_lowercase() == schema)
+        })
+        .map(|row| {
+            let mut status = Vec::with_capacity(18);
+            status.push(row[TABLE_NAME].clone());
+            status.extend(row[4..CHECKSUM].iter().cloned());
+            status.push(match &row[CHECKSUM] {
+                Datum::Null => Datum::Bytes(Vec::new()),
+                checksum => checksum.clone(),
+            });
+            status.extend(row[CHECKSUM + 1..=CHECKSUM + 2].iter().cloned());
+            status
+        })
+        .collect::<Vec<_>>();
+    // `table_name` is utf8mb4_bin: the ORDER BY compares bytes.
+    rows.sort_by(|left, right| match (&left[0], &right[0]) {
+        (Datum::Bytes(left), Datum::Bytes(right)) => left.cmp(right),
+        _ => std::cmp::Ordering::Equal,
+    });
+    rows
+}
+
 fn tables_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,

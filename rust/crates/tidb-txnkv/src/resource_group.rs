@@ -119,3 +119,55 @@ impl ResourceGroupTagBuilder {
         }
     }
 }
+
+/// A request of the node's client-rust store as Go's `*tikvrpc.Request` is
+/// seen by `ResourceGroupTagBuilder.Build`: Go `BuildProtoTagger` hands the
+/// builder each request client-go sends, so a transaction's tagger reaches
+/// the client-rust request it decorates through this view.
+pub struct ClientRequest<'a>(pub &'a mut dyn tikv_client::tikv::Request);
+
+impl FirstKeyRequest for ClientRequest<'_> {
+    /// Go `resourcegrouptag.GetFirstKeyFromRequest` over client-rust's
+    /// request types.
+    fn first_key(&self) -> &[u8] {
+        use tikv_client::proto::{coprocessor, kvrpcpb};
+        let request = self.0.as_any();
+        if let Some(request) = request.downcast_ref::<kvrpcpb::GetRequest>() {
+            &request.key
+        } else if let Some(request) = request.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+            request.keys.first().map_or(&[], Vec::as_slice)
+        } else if let Some(request) = request.downcast_ref::<kvrpcpb::ScanRequest>() {
+            &request.start_key
+        } else if let Some(request) = request.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+            request
+                .mutations
+                .first()
+                .map_or(&[], |mutation| &mutation.key)
+        } else if let Some(request) = request.downcast_ref::<kvrpcpb::CommitRequest>() {
+            request.keys.first().map_or(&[], Vec::as_slice)
+        } else if let Some(request) = request.downcast_ref::<kvrpcpb::BatchRollbackRequest>() {
+            request.keys.first().map_or(&[], Vec::as_slice)
+        } else if let Some(request) = request.downcast_ref::<coprocessor::Request>() {
+            request.ranges.first().map_or(&[], |range| &range.start)
+        } else if let Some(request) = request.downcast_ref::<coprocessor::BatchRequest>() {
+            request
+                .regions
+                .first()
+                .and_then(|region| region.ranges.first())
+                .map_or(&[], |range| &range.start)
+        } else if let Some(request) = request.downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+            request
+                .mutations
+                .first()
+                .map_or(&[], |mutation| &mutation.key)
+        } else {
+            &[]
+        }
+    }
+}
+
+impl ResourceGroupTaggedRequest for ClientRequest<'_> {
+    fn set_resource_group_tag(&mut self, tag: Vec<u8>) {
+        self.0.set_resource_group_tag(tag);
+    }
+}

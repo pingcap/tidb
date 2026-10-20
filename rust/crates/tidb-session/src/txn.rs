@@ -494,8 +494,8 @@ impl Session {
     /// Order is Go's exactly: NULL refuses; a DATETIME interpretation is
     /// tried first (through `UNIX_TIMESTAMP`, whose session-zone semantics
     /// are the ported `time.Date`), and only then a raw TSO -- a positive
-    /// integer or a string of digits. A TSO whose physical half is before
-    /// 2013-01-01 refuses with Go's own message.
+    /// integer or a string of digits. A raw TSO whose physical half is
+    /// before 2013-01-01 refuses with Go's own message.
     pub(crate) fn resolve_as_of_ts(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
         const TSO_LOGICAL_BITS: u32 = 18;
         // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
@@ -525,15 +525,16 @@ impl Session {
             }
             _ => None,
         };
-        let tso = if let Some(seconds) = seconds {
-            ((seconds * 1000.0) as u64) << TSO_LOGICAL_BITS
-        } else if let Ok(raw) = text.parse::<u64>() {
-            raw
-        } else {
+        if let Some(seconds) = seconds {
+            return Ok(((seconds * 1000.0) as u64) << TSO_LOGICAL_BITS);
+        }
+        let Ok(tso) = text.parse::<u64>() else {
             return Err(as_of_error(
                 "cannot parse AS OF TIMESTAMP expression as datetime or TSO",
             ));
         };
+        // Only a raw TSO is bounded (util.go:77-80); a datetime before 2013
+        // is a valid read timestamp that the GC safe point then refuses.
         if (tso >> TSO_LOGICAL_BITS) <= MIN_PHYSICAL_MS {
             return Err(as_of_error(
                 "invalid TSO timestamp: TSO is before 2013-01-01",

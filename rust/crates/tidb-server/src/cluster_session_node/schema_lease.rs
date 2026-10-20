@@ -77,8 +77,9 @@ impl SchemaLeaseChecker for SessionSchemaLeaseChecker {
             Ok(_) => Ok(()),
             Err((_, error)) => Err(SchemaLeaseError {
                 code: error.code(),
-                // Go's `terror` rendering: `[class:code]message`.
-                message: format!("[domain:{}]{}", error.code(), error.message()),
+                // The client reads Go's `terror.ToSQLError` message
+                // (`GetMsg()`), without the `[class:code]` of `Error()`.
+                message: error.message(),
             }),
         }
     }
@@ -184,7 +185,7 @@ mod tests {
         assert!(
             error
                 .message
-                .starts_with("[domain:8028]Information schema is changed"),
+                .starts_with("Information schema is changed"),
             "{}",
             error.message
         );
@@ -215,7 +216,7 @@ mod tests {
         assert!(
             error
                 .message
-                .starts_with("[domain:8027]Information schema is out of date"),
+                .starts_with("Information schema is out of date"),
             "{}",
             error.message
         );

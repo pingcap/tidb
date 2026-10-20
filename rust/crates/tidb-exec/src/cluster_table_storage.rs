@@ -418,6 +418,12 @@ impl<S: StoreClient> ClusterSnapshot for StatementSnapshot<S> {
         }
     }
 
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.set_statement_kv_context(context.clone());
+        }
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.transaction
             .as_ref()
@@ -483,6 +489,8 @@ where
     consumed: bool,
     get_rpc_count: u64,
     read_options: tidb_txnkv::SnapshotReadOptions,
+    /// The session's statement ctx values for the direct read.
+    kv_context: Option<tidb_txnkv::StatementKvContextCell>,
 }
 
 impl<S: StoreClient> MaxTsSnapshot<S> {
@@ -496,7 +504,18 @@ impl<S: StoreClient> MaxTsSnapshot<S> {
             consumed: false,
             get_rpc_count: 0,
             read_options: Default::default(),
+            kv_context: None,
         }
+    }
+
+    /// The read options of the direct read, with the statement ctx values
+    /// bound to this snapshot unless the point reader supplied them.
+    fn read_options(&self) -> tidb_txnkv::SnapshotReadOptions {
+        let mut options = self.read_options.clone();
+        if options.kv_context.is_none() {
+            options.kv_context.clone_from(&self.kv_context);
+        }
+        options
     }
 
     fn consume(&mut self) -> Result<(), StorageError> {
@@ -523,6 +542,10 @@ impl<S: StoreClient> ClusterSnapshot for MaxTsSnapshot<S> {
         self.read_options = options;
     }
 
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        self.kv_context = Some(context.clone());
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         (self.get_rpc_count, 0)
     }
@@ -535,7 +558,7 @@ impl<S: StoreClient> ClusterSnapshot for MaxTsSnapshot<S> {
         );
         let (value, rpc_count) = self
             .opener
-            .snapshot_get_at_max_ts(key.as_bytes(), &call, &self.read_options)
+            .snapshot_get_at_max_ts(key.as_bytes(), &call, &self.read_options())
             .map_err(classify)?;
         self.get_rpc_count = self.get_rpc_count.wrapping_add(rpc_count);
         Ok(value)
@@ -561,7 +584,7 @@ impl<S: StoreClient> ClusterSnapshot for MaxTsSnapshot<S> {
                 end.as_bytes(),
                 limit,
                 &call,
-                &self.read_options,
+                &self.read_options(),
             )
             .map_err(classify)
     }
@@ -983,6 +1006,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                     code: 1105,
                     state: *b"HY000",
                     message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
+                    write_conflict: None,
                 })
             }
             SessionTransactionState::Finished => {
@@ -1282,6 +1306,10 @@ impl fmt::Debug for MutationOverlaySnapshot {
 impl ClusterSnapshot for MutationOverlaySnapshot {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.snapshot.set_snapshot_read_options(options);
+    }
+
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        self.snapshot.set_statement_kv_context(context);
     }
 
     fn point_rpc_counts(&mut self) -> (u64, u64) {
@@ -1592,6 +1620,20 @@ impl<S: StoreClient> fmt::Debug for SessionSnapshot<S> {
 impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.read_options = options;
+    }
+
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::Pessimistic { transaction, .. } => {
+                transaction.set_statement_kv_context(context.clone());
+            }
+            SessionTransactionState::Finished => {}
+        }
     }
 
     fn point_rpc_counts(&mut self) -> (u64, u64) {
@@ -1932,6 +1974,7 @@ pub(crate) fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSq
             code: error.mysql_code().as_u16(),
             state: *b"HY000",
             message: error.to_string(),
+            write_conflict: None,
         },
         OptimisticCoordinatorError::SnapshotBackoff { kind, detail } => {
             transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted { kind, detail })
@@ -1946,6 +1989,7 @@ fn storage_sql_error(error: StorageError) -> LockSqlError {
             code: error.code,
             state: error.state,
             message: error.message,
+            write_conflict: None,
         },
         other => engine_sql_error(other.to_string()),
     }
@@ -1955,7 +1999,8 @@ fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
     LockSqlError {
         code: 1105,
         state: *b"HY000",
-        message: format!("[kv:1105]transaction failed: {detail}"),
+        message: format!("transaction failed: {detail}"),
+        write_conflict: None,
     }
 }
 
@@ -2126,12 +2171,12 @@ mod tests {
             (
                 tidb_txnkv::retry::RegionBackoffKind::TxnLockFast,
                 9004,
-                "[tikv:9004]Resolve lock timeout",
+                "Resolve lock timeout",
             ),
             (
                 tidb_txnkv::retry::RegionBackoffKind::RegionMiss,
                 9005,
-                "[tikv:9005]Region is unavailable",
+                "Region is unavailable",
             ),
         ] {
             let error = OptimisticCoordinatorError::SnapshotBackoff {

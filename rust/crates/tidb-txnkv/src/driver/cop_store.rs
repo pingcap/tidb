@@ -53,21 +53,26 @@ pub trait NativeCopStore: Send + Sync + 'static {
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error>;
 
     /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
+    /// `ru_details` is Go's `bo.GetCtx().Value(util.RUDetailsCtxKey)`, which
+    /// the resource-control interceptor charges for each RPC.
     fn send(
         &self,
         backoffer: &CopBackoffer,
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
+        ru_details: Option<&Arc<tikv_client::RuDetails>>,
     ) -> Result<NativeCopSend, tikv_client::Error>;
 
-    /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`.
+    /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`, under the
+    /// same `bo` ctx as [`Self::send`].
     fn resolve_lock(
         &self,
         backoffer: &CopBackoffer,
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
+        ru_details: Option<&Arc<tikv_client::RuDetails>>,
     ) -> Result<LockRecoveryResult, tikv_client::Error>;
 
     /// Go `bo.Backoff(BoRegionMiss, err)`.
@@ -95,6 +100,25 @@ pub trait NativeCopStore: Send + Sync + 'static {
 
     /// Go `RegionCache.InvalidateCachedRegion(region)`.
     fn invalidate_region(&self, region: (u64, u64, u64));
+}
+
+/// Runs `future` under Go's `context.WithValue(ctx, util.RUDetailsCtxKey,
+/// ruDetails)`: client-rust's dispatch charges the trace context's
+/// `RuDetails`, as client-go's resource-control interceptor charges the ctx's.
+pub async fn with_ru_details<F: std::future::Future>(
+    ru_details: Option<&Arc<tikv_client::RuDetails>>,
+    future: F,
+) -> F::Output {
+    match ru_details {
+        Some(ru_details) => {
+            let context = tikv_client::util::context_with_ru_details(
+                &tikv_client::trace::TraceContext::new(),
+                Arc::clone(ru_details),
+            );
+            tikv_client::trace::with_trace_context(context, future).await
+        }
+        None => future.await,
+    }
 }
 
 impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
@@ -136,6 +160,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
+        ru_details: Option<&Arc<tikv_client::RuDetails>>,
     ) -> Result<NativeCopSend, tikv_client::Error> {
         let request = tikv_client::proto::coprocessor::Request::decode(request)
             .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
@@ -144,11 +169,10 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
             conf_ver: region.1,
             ver: region.2,
         };
-        let sent = self.block_on(self.store().send_req_ctx(
-            Arc::clone(backoffer),
-            request,
-            &region,
-            timeout,
+        let sent = self.block_on(with_ru_details(
+            ru_details,
+            self.store()
+                .send_req_ctx(Arc::clone(backoffer), request, &region, timeout),
         ));
         match sent {
             Ok((response, address)) => {
@@ -167,6 +191,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
+        ru_details: Option<&Arc<tikv_client::RuDetails>>,
     ) -> Result<LockRecoveryResult, tikv_client::Error> {
         use tikv_client::txnkv::txnlock::{LockHintsInRequest, ResolveLocksOptions};
         let lock = tikv_client::proto::kvrpcpb::LockInfo::decode(lock.encode_to_vec().as_slice())
@@ -184,10 +209,10 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
             ),
             ..Default::default()
         };
-        let result = self.block_on(self.store().resolve_locks_with_opts(
-            &native_context,
-            Arc::clone(backoffer),
-            opts,
+        let result = self.block_on(with_ru_details(
+            ru_details,
+            self.store()
+                .resolve_locks_with_opts(&native_context, Arc::clone(backoffer), opts),
         ))?;
         Ok(LockRecoveryResult {
             ttl: Duration::from_millis(u64::try_from(result.ttl).unwrap_or(0)),

@@ -1312,6 +1312,31 @@ impl Request for kvrpcpb::StoreSafeTsRequest {
     fn set_api_version(&mut self, _api_version: kvrpcpb::ApiVersion) {}
 }
 
+/// The resource-control accessors of a request carrying a `kvrpcpb::Context`,
+/// as client-go's interceptor reads `req.GetResourceControlContext()` for
+/// every request type it intercepts.
+fn context_resource_group_name(context: Option<&kvrpcpb::Context>) -> Option<&str> {
+    context
+        .and_then(|context| context.resource_control_context.as_ref())
+        .map(|resource_control| resource_control.resource_group_name.as_str())
+        .filter(|resource_group_name| !resource_group_name.is_empty())
+}
+
+fn context_batch_priority(context: Option<&kvrpcpb::Context>) -> u64 {
+    context
+        .and_then(|context| context.resource_control_context.as_ref())
+        .map_or(0, |resource_control| resource_control.override_priority)
+}
+
+fn context_resource_control(
+    context: &mut Option<kvrpcpb::Context>,
+) -> &mut kvrpcpb::ResourceControlContext {
+    context
+        .get_or_insert_with(kvrpcpb::Context::default)
+        .resource_control_context
+        .get_or_insert_with(kvrpcpb::ResourceControlContext::default)
+}
+
 #[async_trait]
 impl Request for coprocessor::Request {
     async fn dispatch(
@@ -1435,6 +1460,33 @@ impl Request for coprocessor::Request {
         true
     }
 
+    fn batch_priority(&self) -> u64 {
+        context_batch_priority(self.context.as_ref())
+    }
+
+    fn resource_group_name(&self) -> Option<&str> {
+        context_resource_group_name(self.context.as_ref())
+    }
+
+    fn set_resource_group_name(&mut self, resource_group_name: &str) {
+        context_resource_control(&mut self.context).resource_group_name =
+            resource_group_name.to_owned();
+    }
+
+    fn set_resource_control_penalty(
+        &mut self,
+        penalty: Option<crate::proto::resource_manager::Consumption>,
+    ) {
+        context_resource_control(&mut self.context).penalty = penalty;
+    }
+
+    fn set_resource_control_priority_if_unset(&mut self, priority: u64) {
+        let resource_control = context_resource_control(&mut self.context);
+        if resource_control.override_priority == 0 {
+            resource_control.override_priority = priority;
+        }
+    }
+
     fn encoded_request_size(&self) -> u64 {
         self.encoded_len() as u64
     }
@@ -1546,6 +1598,33 @@ impl Request for CoprocessorStreamRequest {
 
     fn attach_context(&mut self, context: kvrpcpb::Context) -> bool {
         self.request.attach_context(context)
+    }
+
+    fn batch_priority(&self) -> u64 {
+        context_batch_priority(self.request.context.as_ref())
+    }
+
+    fn resource_group_name(&self) -> Option<&str> {
+        context_resource_group_name(self.request.context.as_ref())
+    }
+
+    fn set_resource_group_name(&mut self, resource_group_name: &str) {
+        context_resource_control(&mut self.request.context).resource_group_name =
+            resource_group_name.to_owned();
+    }
+
+    fn set_resource_control_penalty(
+        &mut self,
+        penalty: Option<crate::proto::resource_manager::Consumption>,
+    ) {
+        context_resource_control(&mut self.request.context).penalty = penalty;
+    }
+
+    fn set_resource_control_priority_if_unset(&mut self, priority: u64) {
+        let resource_control = context_resource_control(&mut self.request.context);
+        if resource_control.override_priority == 0 {
+            resource_control.override_priority = priority;
+        }
     }
 
     fn encoded_request_size(&self) -> u64 {
@@ -1673,6 +1752,33 @@ impl Request for BatchCoprocessorStreamRequest {
         fill_default_request_origin(&mut context);
         self.request.context = Some(context);
         true
+    }
+
+    fn batch_priority(&self) -> u64 {
+        context_batch_priority(self.request.context.as_ref())
+    }
+
+    fn resource_group_name(&self) -> Option<&str> {
+        context_resource_group_name(self.request.context.as_ref())
+    }
+
+    fn set_resource_group_name(&mut self, resource_group_name: &str) {
+        context_resource_control(&mut self.request.context).resource_group_name =
+            resource_group_name.to_owned();
+    }
+
+    fn set_resource_control_penalty(
+        &mut self,
+        penalty: Option<crate::proto::resource_manager::Consumption>,
+    ) {
+        context_resource_control(&mut self.request.context).penalty = penalty;
+    }
+
+    fn set_resource_control_priority_if_unset(&mut self, priority: u64) {
+        let resource_control = context_resource_control(&mut self.request.context);
+        if resource_control.override_priority == 0 {
+            resource_control.override_priority = priority;
+        }
     }
 
     fn encoded_request_size(&self) -> u64 {

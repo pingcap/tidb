@@ -74,6 +74,7 @@ fn options_from_values<V: AsRef<str>>(
             AssertionLevel::Fast => tidb_proto::KvrpcAssertionLevel::Fast,
             AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
         },
+        kv_context: None,
     }
 }
 
