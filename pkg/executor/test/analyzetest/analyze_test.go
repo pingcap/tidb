@@ -2237,6 +2237,46 @@ func TestAnalyzeIndexedGeneratedColumnOnSkippedColumn(t *testing.T) {
 	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
 }
 
+// TestIssue72122 verifies that ANALYZE keeps every column that a kept generated column or an
+// index needs, when some columns are skipped by type.
+func TestIssue72122(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_skip_column_types = 'json'")
+	h := dom.StatsHandle()
+
+	// A generated column over a generated column over a skipped column is skipped too.
+	for _, kind := range []string{"VIRTUAL", "STORED"} {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec(`CREATE TABLE t1 (id INT PRIMARY KEY, j JSON,
+			b INT AS (JSON_EXTRACT(j, '$.x')) ` + kind + `,
+			c INT AS (b + 1) VIRTUAL,
+			d INT AS (c + 1) STORED)`)
+		tk.MustExec(`INSERT INTO t1 (id, j) VALUES (1, '{"x": 1}'), (2, '{"x": 2}')`)
+		tk.MustExec("ANALYZE TABLE t1 ALL COLUMNS")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+		require.True(t, tblStats.GetCol(tbl.Meta().Columns[0].ID).IsAnalyzed())
+		for _, col := range tbl.Meta().Columns[1:] {
+			require.False(t, tblStats.GetCol(col.ID).IsAnalyzed(), "%s, column %s", kind, col.Name.O)
+		}
+	}
+
+	// An expression index over a vector column keeps the vector column, as it does a skipped JSON column.
+	for _, colType := range []string{"VECTOR(3)", "JSON"} {
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("CREATE TABLE t2 (id INT PRIMARY KEY, v " + colType + ", KEY idx_null ((v IS NULL)))")
+		tk.MustExec("INSERT INTO t2 VALUES (1, '[1,2,3]'), (2, NULL)")
+		tk.MustExec("ANALYZE TABLE t2")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+		require.NoError(t, err)
+		tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+		require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed(), colType)
+	}
+}
+
 func TestDynamicExpandMustForceAllColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
