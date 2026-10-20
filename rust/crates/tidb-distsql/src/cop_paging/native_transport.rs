@@ -55,7 +55,14 @@ use super::{
 #[derive(Debug)]
 enum NativeCopError {
     Task(CopReadTaskError),
+    Client(tikv_client::Error),
     Other(String),
+}
+
+impl From<tikv_client::Error> for NativeCopError {
+    fn from(error: tikv_client::Error) -> Self {
+        Self::Client(error)
+    }
 }
 
 impl From<CopReadTaskError> for NativeCopError {
@@ -74,6 +81,24 @@ impl From<NativeCopError> for QueryResponseError {
     fn from(error: NativeCopError) -> Self {
         match error {
             NativeCopError::Task(error) => DirectUnaryTransportError::from(error).into(),
+            // Go `ToTiDBErr`: an exhausted backoff is its class's storage error.
+            NativeCopError::Client(error) => {
+                match tidb_txnkv::driver::tikv_transaction::client_backoff_kind(&error) {
+                    Some(kind) => {
+                        let source =
+                            tidb_txnkv::StorageDriverError::from_backoff(kind, &error.to_string());
+                        match tidb_txnkv::to_tidb_driver_error(&source) {
+                            tidb_txnkv::ConvertedDriverError::Terror(converted) => Self::Sql {
+                                code: u16::try_from(converted.code().value())
+                                    .expect("registered storage error fits the MySQL protocol"),
+                                message: converted.to_string(),
+                            },
+                            other => Self::Source(other.to_string()),
+                        }
+                    }
+                    None => Self::Source(error.to_string()),
+                }
+            }
             NativeCopError::Other(message) => Self::Source(message),
         }
     }
@@ -104,7 +129,10 @@ pub trait NativeCopStore: Send + Sync + 'static {
 
     /// Go `RegionCache.SplitKeyRangesByLocations`' locations: the regions
     /// covering `ranges`, in key order.
-    fn locate(&self, ranges: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<RegionTaskTopology>, String>;
+    fn locate(
+        &self,
+        ranges: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<Vec<RegionTaskTopology>, tikv_client::Error>;
 
     /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
     fn send(
@@ -113,7 +141,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
-    ) -> Result<NativeCopSend, String>;
+    ) -> Result<NativeCopSend, tikv_client::Error>;
 
     /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`.
     fn resolve_lock(
@@ -122,10 +150,14 @@ pub trait NativeCopStore: Send + Sync + 'static {
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
-    ) -> Result<LockRecoveryResult, String>;
+    ) -> Result<LockRecoveryResult, tikv_client::Error>;
 
     /// Go `bo.Backoff(BoRegionMiss, err)`.
-    fn backoff_region_miss(&self, backoffer: &CopBackoffer, reason: String) -> Result<(), String>;
+    fn backoff_region_miss(
+        &self,
+        backoffer: &CopBackoffer,
+        reason: String,
+    ) -> Result<(), tikv_client::Error>;
 
     /// Go `bo.BackoffWithMaxSleepTxnLockFast(msBeforeExpired, err)`.
     fn backoff_lock_fast(
@@ -133,7 +165,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
         backoffer: &CopBackoffer,
         max_sleep_ms: u64,
         reason: String,
-    ) -> Result<(), String>;
+    ) -> Result<(), tikv_client::Error>;
 }
 
 impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_store::TikvStore<PdC> {
@@ -141,17 +173,17 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
         self.block_on(self.store().pd_client().cluster_id())
     }
 
-    fn locate(&self, ranges: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<RegionTaskTopology>, String> {
+    fn locate(
+        &self,
+        ranges: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<Vec<RegionTaskTopology>, tikv_client::Error> {
         self.block_on(async {
             let pd = self.store().pd_client();
             let mut topology: Vec<RegionTaskTopology> = Vec::new();
             for (start, end) in ranges {
                 let mut next = start.clone();
                 loop {
-                    let region = pd
-                        .region_for_key(&next.clone().into())
-                        .await
-                        .map_err(|error| error.to_string())?;
+                    let region = pd.region_for_key(&next.clone().into()).await?;
                     let region_end = region.region.end_key.clone();
                     if topology
                         .last()
@@ -175,9 +207,9 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
-    ) -> Result<NativeCopSend, String> {
+    ) -> Result<NativeCopSend, tikv_client::Error> {
         let request = tikv_client::proto::coprocessor::Request::decode(request)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
         let region = tikv_client::RegionVerId {
             id: region.0,
             conf_ver: region.1,
@@ -193,7 +225,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
             Err(tikv_client::Error::RegionError(error)) => {
                 Ok(NativeCopSend::RegionError(format!("{error:?}")))
             }
-            Err(error) => Err(error.to_string()),
+            Err(error) => Err(error),
         }
     }
 
@@ -203,13 +235,13 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
-    ) -> Result<LockRecoveryResult, String> {
+    ) -> Result<LockRecoveryResult, tikv_client::Error> {
         use tikv_client::txnkv::txnlock::{LockHintsInRequest, ResolveLocksOptions};
         let lock = tikv_client::proto::kvrpcpb::LockInfo::decode(lock.encode_to_vec().as_slice())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
         let native_context =
             tikv_client::proto::kvrpcpb::Context::decode(context.encode_to_vec().as_slice())
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
         let opts = ResolveLocksOptions {
             caller_start_ts,
             locks: vec![lock],
@@ -220,13 +252,11 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
             ),
             ..Default::default()
         };
-        let result = self
-            .block_on(self.store().resolve_locks_with_opts(
-                &native_context,
-                Arc::clone(backoffer),
-                opts,
-            ))
-            .map_err(|error| error.to_string())?;
+        let result = self.block_on(self.store().resolve_locks_with_opts(
+            &native_context,
+            Arc::clone(backoffer),
+            opts,
+        ))?;
         Ok(LockRecoveryResult {
             ttl: Duration::from_millis(u64::try_from(result.ttl).unwrap_or(0)),
             ignore_locks: result.ignore_locks,
@@ -234,14 +264,18 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
         })
     }
 
-    fn backoff_region_miss(&self, backoffer: &CopBackoffer, reason: String) -> Result<(), String> {
+    fn backoff_region_miss(
+        &self,
+        backoffer: &CopBackoffer,
+        reason: String,
+    ) -> Result<(), tikv_client::Error> {
         self.block_on(async {
             backoffer
                 .lock()
                 .await
                 .backoff(tikv_client::tikv::BO_REGION_MISS, reason)
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(tikv_client::Error::from)
         })
     }
 
@@ -250,14 +284,14 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
         backoffer: &CopBackoffer,
         max_sleep_ms: u64,
         reason: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), tikv_client::Error> {
         self.block_on(async {
             backoffer
                 .lock()
                 .await
                 .backoff_with_max_sleep_txn_lock_fast(max_sleep_ms, reason)
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(tikv_client::Error::from)
         })
     }
 }
@@ -357,7 +391,10 @@ impl<S: NativeCopStore> QueryTransport for NativeCopTransport<S> {
         CopPagingState::validate_read_request(&coordinator_metadata)
             .map_err(|e| format!("{e:?}"))?;
         let ranges = request_ranges(metadata)?;
-        let topology = self.store.locate(&ranges)?;
+        let topology = self
+            .store
+            .locate(&ranges)
+            .map_err(|error| error.to_string())?;
         let cache = match self.config.shared_cache.clone() {
             Some(cache) => Some(cache),
             None => CoprCache::from_optional_config(self.config.cache.as_ref())
@@ -807,5 +844,34 @@ impl<S: NativeCopStore> super::cop_iterator::CopWorkerSource for NativeCopRespon
                 snapshot_locks: Arc::clone(&self.snapshot_locks),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NativeCopError;
+    use crate::query_runtime::QueryResponseError;
+
+    /// Go `ToTiDBErr`: a read whose region-miss budget ran out fails with
+    /// `ErrRegionUnavailable` (9005), and the task state machine's
+    /// `ErrMaxKeysReadExceeded` keeps its code.
+    #[test]
+    fn exhausted_backoffs_and_task_errors_keep_gos_codes() {
+        let region_unavailable = QueryResponseError::from(NativeCopError::Client(
+            tikv_client::Error::Static(tikv_client::error::StaticError::RegionUnavailable),
+        ));
+        assert!(
+            matches!(
+                region_unavailable,
+                QueryResponseError::Sql { code: 9005, .. }
+            ),
+            "{region_unavailable:?}"
+        );
+        let max_keys_read =
+            QueryResponseError::from(NativeCopError::Task(super::CopReadTaskError::MaxKeysRead));
+        assert!(
+            matches!(max_keys_read, QueryResponseError::Sql { code: 8274, .. }),
+            "{max_keys_read:?}"
+        );
     }
 }

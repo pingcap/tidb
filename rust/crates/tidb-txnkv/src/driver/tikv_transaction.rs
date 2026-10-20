@@ -577,8 +577,10 @@ pub(crate) fn classify_client_cause(
     }
 }
 
-/// Maps the client's source sentinels to the existing TiDB error conversion.
-fn client_backoff_kind(error: &tikv_client::Error) -> Option<crate::retry::RegionBackoffKind> {
+/// Go `ToTiDBErr`'s backoff arm: the backoff class whose sentinel client-go
+/// returns when that class's budget ran out (`tikverr.ErrRegionUnavailable`
+/// for `BoRegionMiss`, and so on), from client-rust's sentinel.
+pub fn client_backoff_kind(error: &tikv_client::Error) -> Option<crate::retry::RegionBackoffKind> {
     use crate::retry::RegionBackoffKind as Kind;
     use tikv_client::error::StaticError;
     let terminal = match error {
