@@ -48,7 +48,7 @@ use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
 use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// The tables live local work still reads at older schema versions.
 ///
@@ -255,9 +255,9 @@ impl SchemaSyncAck {
     /// the loop only touches TiKV when the loaded version moved or an ack is
     /// still owed. Session, watch, monotonic-write, and owner-wait behavior
     /// comes from the shared `tidb-schemaver` package implementation.
-    pub fn spawn<S, P>(
+    pub fn spawn<S>(
         catalog: Arc<SharedCatalog>,
-        opener: RealOptimisticTransactionOpener<S, P>,
+        opener: RealOptimisticTransactionOpener<S>,
         pins: Arc<SchemaPinRegistry>,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         etcd: Arc<EtcdClient>,
@@ -271,7 +271,6 @@ impl SchemaSyncAck {
     ) -> Result<Self, String>
     where
         S: StoreClient + Send + 'static,
-        P: StorePdCapability + Send + 'static,
     {
         let etcd_ops = Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(etcd));
         let syncer = Arc::new(new_etcd_syncer(etcd_ops, &ddl_id));
@@ -282,19 +281,19 @@ impl SchemaSyncAck {
         }));
         let syncer_context = SchemaVersionContext::background();
         syncer.init(&syncer_context)?;
-        let syncer_thread = match crate::sql_node::sql_worker_thread("schema-version-mirror")
-            .spawn({
+        let syncer_thread =
+            match crate::sql_node::sql_worker_thread("schema-version-mirror").spawn({
                 let syncer = Arc::clone(&syncer);
                 let context = syncer_context.clone();
                 move || syncer.sync_job_schema_ver_loop(&context)
             }) {
-            Ok(thread) => thread,
-            Err(error) => {
-                syncer_context.cancel();
-                syncer.close();
-                return Err(error.to_string());
-            }
-        };
+                Ok(thread) => thread,
+                Err(error) => {
+                    syncer_context.cancel();
+                    syncer.close();
+                    return Err(error.to_string());
+                }
+            };
 
         // Go's SyncLoop reloads immediately on GlobalVersionCh. Keep the
         // lease/2 reloader as the correctness backstop, but consume the
@@ -304,15 +303,17 @@ impl SchemaSyncAck {
         let global_watch_syncer = Arc::clone(&syncer);
         let global_watch_context = syncer_context.clone();
         let global_watch_waker = reload_waker.clone();
-        let global_watch_thread = match crate::sql_node::sql_worker_thread("schema-global-reload-watch")
-            .spawn(move || {
-                run_global_version_watch_loop(
-                    global_watch_syncer.as_ref(),
-                    &global_watch_context,
-                    &global_watch_waker,
-                    &global_watch_stop,
-                );
-            }) {
+        let global_watch_thread = match crate::sql_node::sql_worker_thread(
+            "schema-global-reload-watch",
+        )
+        .spawn(move || {
+            run_global_version_watch_loop(
+                global_watch_syncer.as_ref(),
+                &global_watch_context,
+                &global_watch_waker,
+                &global_watch_stop,
+            );
+        }) {
             Ok(thread) => thread,
             Err(error) => {
                 stop.store(true, Ordering::SeqCst);
@@ -328,23 +329,22 @@ impl SchemaSyncAck {
         let tick = tick.max(MDL_CHECK_LOOK_DURATION);
         let ack_syncer = Arc::clone(&syncer);
         let ack_context = syncer_context.clone();
-        let thread = match crate::sql_node::sql_worker_thread("schema-sync-ack")
-            .spawn(move || {
-                run_ack_loop(
-                    &catalog,
-                    &opener,
-                    &pins,
-                    &min_job_id_refresher,
-                    ack_syncer.as_ref(),
-                    &ack_context,
-                    &schema_validator,
-                    &reload_waker,
-                    &reload_stats,
-                    tick,
-                    timeout,
-                    &stop_seen,
-                );
-            }) {
+        let thread = match crate::sql_node::sql_worker_thread("schema-sync-ack").spawn(move || {
+            run_ack_loop(
+                &catalog,
+                &opener,
+                &pins,
+                &min_job_id_refresher,
+                ack_syncer.as_ref(),
+                &ack_context,
+                &schema_validator,
+                &reload_waker,
+                &reload_stats,
+                tick,
+                timeout,
+                &stop_seen,
+            );
+        }) {
             Ok(thread) => thread,
             Err(error) => {
                 syncer_context.cancel();
@@ -431,9 +431,9 @@ fn handle_global_version_recv(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_ack_loop<S, P>(
+fn run_ack_loop<S>(
     catalog: &SharedCatalog,
-    opener: &RealOptimisticTransactionOpener<S, P>,
+    opener: &RealOptimisticTransactionOpener<S>,
     pins: &SchemaPinRegistry,
     min_job_id_refresher: &MinJobIdRefresher,
     syncer: &dyn SchemaVersionSyncer,
@@ -446,7 +446,6 @@ fn run_ack_loop<S, P>(
     stop: &AtomicBool,
 ) where
     S: StoreClient,
-    P: StorePdCapability,
 {
     // Go's `jobCache`: (job id -> version already acknowledged).
     let mut acked: BTreeMap<i64, i64> = BTreeMap::new();
@@ -995,7 +994,7 @@ mod tests {
             }
             fn close(&self) {}
         }
-        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
         let timeout = Duration::from_secs(5);
         crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         tidb_vardef::set_enable_mdl(false);

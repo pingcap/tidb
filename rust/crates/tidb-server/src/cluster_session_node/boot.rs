@@ -82,18 +82,31 @@ pub(crate) fn run_cluster_session_node_with_spill(
         &config.cluster_security,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    // Go `initDomainSysVars` registering `setGlobalResourceControl` over the
+    // driver's `EnableGlobalResourceControlFunc = tikv.EnableResourceControl`,
+    // before any global variable loads: the sysvar turns client-rust's
+    // resource-control dispatch on and off.
+    *tidb_session::vars::SET_GLOBAL_RESOURCE_CONTROL
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(|enable| {
+        if enable {
+            tikv_client::enable_resource_control();
+        } else {
+            tikv_client::disable_resource_control();
+        }
+    }));
+    // Go `domain.NewDomain`'s `etcdClient`: the node's one etcd client, which
+    // every owner, syncer, notifier and watch below shares.
+    let etcd = crate::real_tikv_node::connect_etcd_client(&config);
     // The cluster's regions as `SPLIT`, `SHOW TABLE ... REGIONS`,
     // `TABLESAMPLE REGIONS()` and the pre-split after CREATE TABLE reach them.
     let region_store: Arc<dyn tidb_executor::region_map::RegionStore> =
         Arc::new(tidb_exec::tikv_region_store::TikvRegionStore::new(
             tikv_store.clone(),
             config.pd_endpoints.clone(),
-            config.cluster_security.clone(),
         ));
-    let authority = ProductionReadProcessAuthority::connect_with_catalog_and_security(
-        config.pd_endpoints.clone(),
+    let authority = ProductionReadProcessAuthority::connect_with_store(
         COPROCESSOR_QUERY_TIMEOUT,
-        Arc::new(config.cluster_security.clone()),
         tikv_store,
         |opener| {
             // tiup's deploy->patch->start flow boots this node against a
@@ -155,10 +168,12 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // authority's shutdown drain, like the catalog reloader below.
     let (users, privilege_reloader) = node_accounts(&config, &authority)?;
     crate::real_tikv_node::load_cluster_startup_variables(&users, &authority.transaction_opener())?;
-    if let Some(pd) = authority.pd_client() {
+    // Go `domain_sysvars.go`: the TSO and follower sysvars tune the store's
+    // PD client (`store.GetPDClient().UpdateOption`).
+    if let Some(options) = authority.tikv_store().store().pd_client().pd_options() {
         users
             .global_vars()
-            .set_pd_region_policy(Arc::new(ProcessPdRegionPolicy(pd)));
+            .set_pd_region_policy(Arc::new(ProcessPdRegionPolicy(options)));
     }
     // The cluster-session path owns one process-wide sysvar reloader below.
     // Its persisted boot image was installed synchronously above, before this
@@ -182,7 +197,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // The account half of the same division: the reloader's tick is what makes
     // a peer's `GRANT` reach this node at all, and this watch is what makes it
     // arrive in a round trip instead of an interval.
-    let privilege_watcher = spawn_privilege_watch(&config, privilege_reloader.as_ref());
+    let privilege_watcher = spawn_privilege_watch(etcd.as_deref(), privilege_reloader.as_ref());
     // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
     // durable in `mysql.global_variables` the instant it commits, and this
     // reloader is what makes THIS node notice it -- one tick, or one round
@@ -197,7 +212,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
         sysvar_publication_fence.clone(),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
+    let sysvar_watcher =
+        crate::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
     // Publish the effective startup value immediately before the schema-ack
     // worker is created.  The sysvar reloader can perform an initial empty
     // snapshot while bootstrap tables are still converging; leaving the
@@ -238,7 +254,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // etcd still HAS the record; it just publishes nowhere, and
     // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
     // which is Go's `etcdCli == nil` answer.
-    let server_etcd = crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
+    let server_etcd = etcd.clone().map(|client| {
         Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
             as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
     });
@@ -290,17 +306,23 @@ pub(crate) fn run_cluster_session_node_with_spill(
         })
         .transpose()
         .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-    let discovery = authority
-        .pd_client()
-        .map(|pd| {
-            tidb_exec::cluster_discovery::PdClusterDiscovery::new(pd, &config.cluster_security).map(
-                |discovery| {
-                    Arc::new(discovery) as Arc<dyn tidb_domain::cluster_topology::ClusterDiscovery>
-                },
-            )
+    // Go `initResourceGroupsController`, after the server ID is fetched.
+    let resource_groups_controller = start_resource_groups_controller(
+        authority.tikv_store(),
+        server_identity.as_ref().map_or(0, |identity| identity.id()),
+    )?;
+    let discovery = Some(tidb_exec::cluster_discovery::PdClusterDiscovery::new(
+        authority.tikv_store().clone(),
+        &config.cluster_security,
+        COPROCESSOR_QUERY_TIMEOUT,
+    ))
+    .map(|discovery| {
+        discovery.map(|discovery| {
+            Arc::new(discovery) as Arc<dyn tidb_domain::cluster_topology::ClusterDiscovery>
         })
-        .transpose()
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    })
+    .transpose()
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     let cluster_topology = Arc::new(tidb_domain::cluster_topology::ClusterTopology::new(
         Arc::clone(&server_info),
         discovery,
@@ -310,32 +332,31 @@ pub(crate) fn run_cluster_session_node_with_spill(
         users.global_vars(),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let stats_owner: Arc<dyn tidb_owner::Manager> =
-        match crate::real_tikv_node::connect_schema_notifier(&config) {
-            Some(client) => Arc::new(tidb_owner::OwnerManager::new(
-                tidb_owner::Context::background(),
-                client as Arc<dyn tidb_owner::OwnerStore>,
-                super::STATS_OWNER_PROMPT,
-                server_info.local_server_info().static_info.id,
-                super::STATS_OWNER_KEY,
+    let stats_owner: Arc<dyn tidb_owner::Manager> = match etcd.clone() {
+        Some(client) => Arc::new(tidb_owner::OwnerManager::new(
+            tidb_owner::Context::background(),
+            client as Arc<dyn tidb_owner::OwnerStore>,
+            super::STATS_OWNER_PROMPT,
+            server_info.local_server_info().static_info.id,
+            super::STATS_OWNER_KEY,
+        )),
+        None => Arc::new(tidb_owner::MockManager::new(
+            tidb_owner::Context::background(),
+            server_info.local_server_info().static_info.id,
+            // Match the store-scoped mock DDL owner and Go store.UUID().
+            Some(&format!(
+                "embedded-authority-{}",
+                authority.transaction_opener().authority_id()
             )),
-            None => Arc::new(tidb_owner::MockManager::new(
-                tidb_owner::Context::background(),
-                server_info.local_server_info().static_info.id,
-                // Match the store-scoped mock DDL owner and Go store.UUID().
-                Some(&format!(
-                    "embedded-authority-{}",
-                    authority.transaction_opener().authority_id()
-                )),
-                super::STATS_OWNER_KEY,
-            )),
-        };
+            super::STATS_OWNER_KEY,
+        )),
+    };
     let (bindings, binding_reloader) = crate::cluster_binding_seam::start_binding_cache(
         authority.transaction_opener(),
         Arc::clone(&catalog),
         users.global_vars(),
         CONTROL_PLANE_TIMEOUT,
-        match crate::real_tikv_node::connect_schema_notifier(&config) {
+        match etcd.clone() {
             Some(client) => Arc::new(tidb_owner::OwnerManager::new(
                 tidb_owner::Context::background(),
                 client as Arc<dyn tidb_owner::OwnerStore>,
@@ -362,7 +383,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // on by nobody, and correctly spawns no acknowledger either.
     let schema_pins = Arc::new(super::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
-    let schema_sync_ack = match crate::real_tikv_node::connect_schema_notifier(&config) {
+    let schema_sync_ack = match etcd.clone() {
         Some(etcd) => Some(
             super::schema_sync::SchemaSyncAck::spawn(
                 Arc::clone(&catalog),
@@ -389,12 +410,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
     let schema_version_syncer = schema_sync_ack
         .as_ref()
         .map(super::schema_sync::SchemaSyncAck::syncer);
-    let auto_id_etcd =
-        crate::real_tikv_node::connect_schema_notifier(&config).ok_or_else(|| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-                "cluster AutoID discovery requires its configured etcd client",
-            ))
-        })?;
+    let auto_id_etcd = etcd.clone().ok_or_else(|| {
+        RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "cluster AutoID discovery requires its configured etcd client",
+        ))
+    })?;
     let auto_id_service = Arc::new(
         tidb_exec::auto_id_client::AutoIdClient::new(
             Arc::new(tidb_exec::auto_id_client::EtcdAutoIdLeader(auto_id_etcd)),
@@ -418,7 +438,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             authority.transaction_opener(),
             Arc::clone(&catalog),
             CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
+            etcd.clone(),
             Arc::clone(&server_info),
             schema_version_syncer,
             Arc::clone(&schema_validator),
@@ -435,55 +455,40 @@ pub(crate) fn run_cluster_session_node_with_spill(
     );
     // Go `InfoSyncer.initResourceManagerClient(pdCli)`: the resource-group
     // jobs write PD's resource manager through it.
-    tidb_domain::resource_manager_client::init_resource_manager_client(authority.pd_client().map(
-        |pd| {
-            Arc::new(PdResourceManagerClient { pd })
-                as Arc<dyn tidb_domain::resource_manager_client::ResourceManagerClient>
+    tidb_domain::resource_manager_client::init_resource_manager_client(Some(Arc::new(
+        PdResourceManagerClient {
+            store: authority.tikv_store().clone(),
         },
-    ));
+    )
+        as Arc<dyn tidb_domain::resource_manager_client::ResourceManagerClient>));
+    // Go `GlobalInfoSyncerInit(..., store.GetPDHTTPClient(), ...)`: the
+    // info syncer's managers share the store's PD HTTP client.
+    let pd_http_client = authority.tikv_store().pd_http_client();
     // Go `InfoSyncer` init's `affinity.InitManager(is.pdHTTPCli)`: the DDL
     // job workers create and delete PD affinity groups through it.
-    tidb_domain::affinity::init_manager(config.pd_endpoints.first().and_then(|endpoint| {
-        match tidb_exec::pd_affinity_client::PdHttpAffinityClient::with_security(
-            &format!("http://{endpoint}"),
-            &config.cluster_security,
-        ) {
-            Ok(client) => {
-                Some(Arc::new(client) as Arc<dyn tidb_domain::affinity::PdAffinityClient>)
-            }
-            Err(error) => {
-                eprintln!("affinity PD client startup: {error}");
-                None
-            }
-        }
+    tidb_domain::affinity::init_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_exec::pd_affinity_client::PdHttpAffinityClient::new(
+            client,
+        )) as Arc<dyn tidb_domain::affinity::PdAffinityClient>
     }));
     // Go `InfoSyncer.initLabelRuleManager`: PD's region-label rules, which
     // the DDL job workers write and `information_schema.attributes` reads.
-    tidb_executor::label_manager::init_label_rule_manager(config.pd_endpoints.first().and_then(
-        |endpoint| match tidb_exec::label_delivery::PdLabelManager::with_security(
-            &format!("http://{endpoint}"),
-            &config.cluster_security,
-        ) {
-            Ok(manager) => {
-                Some(Arc::new(manager) as Arc<dyn tidb_executor::label_manager::LabelRuleManager>)
-            }
-            Err(error) => {
-                eprintln!("label-rule PD client startup: {error}");
-                None
-            }
-        },
-    ));
+    tidb_executor::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_exec::label_delivery::PdLabelManager::new(client))
+            as Arc<dyn tidb_executor::label_manager::LabelRuleManager>
+    }));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
     let replica_poll = crate::cluster_session_node::build_tiflash_replica_poll(
         Arc::clone(&catalog),
-        &config.pd_endpoints,
+        pd_http_client,
         &config.cluster_security,
         cluster_ddl.clone(),
     );
-    let global_config_keeper = crate::global_config_sync::GlobalConfigKeeper::start(
-        authority.pd_client(),
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    let global_config_keeper =
+        crate::global_config_sync::GlobalConfigKeeper::start(Some(authority.tikv_store().clone()))
+            .map_err(|error| {
+                RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+            })?;
     let factory = ClusterSessionFactory::new(
         // Row reads and writes are DATA-plane traffic: a statement's snapshot
         // gets queue behind concurrent coprocessor scans on the same store,
@@ -500,13 +505,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
             Arc::new(authority.transaction_opener()),
             users.accounts(),
             CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
+            etcd.clone(),
         )),
         Arc::new(RealClusterSysvarWriter::new(
             Arc::new(authority.transaction_opener()),
             users.global_vars(),
             CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
+            etcd.clone(),
             sysvar_publication_fence,
         )),
         Arc::new(
@@ -545,9 +550,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     .with_server_identity(server_identity)
     .with_cluster_topology(cluster_topology)
     .with_cluster_peer_client(Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
-        authority.store_rpc_opener().ok_or_else(|| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown("store RPC owner is closed"))
-        })?,
+        authority.tikv_store().clone(),
     )))
     .with_cluster_config_client(Arc::new(
         tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
@@ -569,7 +572,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
         let opener = authority.transaction_opener();
         runner
             .start_min_start_ts_reporter(move || {
-                use tidb_txnkv::pd_capability::{PdCapability, TimestampFutureWait};
                 let mut active = tidb_txnkv::ACTIVE_START_TS.snapshot();
                 active.extend(
                     processes
@@ -578,8 +580,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
                         .map(|process| process.cur_txn_start_ts),
                 );
                 let internal = processes.internal_session_start_ts();
-                let version =
-                    TimestampFutureWait::wait(PdCapability::timestamp_future(opener.pd())?)?;
+                // Go `ReportMinStartTS`: `store.CurrentVersion(kv.GlobalTxnScope)`.
+                let version = opener.store().get_timestamp_async().wait()?;
                 let now = std::time::UNIX_EPOCH + Duration::from_millis(version >> 18);
                 for ts in internal {
                     let _ = tidb_txnkv::print_long_time_internal_txn(now, ts, false);
@@ -631,32 +633,25 @@ pub(crate) fn run_cluster_session_node_with_spill(
         Arc::new(authority.transaction_opener()),
         TRANSACTION_RPC_TIMEOUT,
     );
-    if let Some(pd) = authority.pd_client() {
-        factory.start_ru_stats_writer(
-            pd,
-            Arc::new(authority.transaction_opener()),
-            None,
-            TRANSACTION_RPC_TIMEOUT,
-        );
-    }
+    factory.start_ru_stats_writer(
+        authority.tikv_store().clone(),
+        Arc::new(authority.transaction_opener()),
+        TRANSACTION_RPC_TIMEOUT,
+    );
     // Go `Domain.Start` -> `gcworker.NewGCWorker` + `Start`: the GC leader
     // lease, safe points, lock resolution and delete ranges on TiKV.
-    let gc_worker = authority
-        .pd_client()
-        .map(|_| {
-            super::gc_worker::start_gc_worker(
-                &factory,
-                authority.tikv_store(),
-                Arc::new(authority.transaction_opener()),
-            )
-        })
-        .transpose()
-        .map_err(|error| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
-                "start gc worker failed: {error}"
-            )))
-        })?;
-    let workload_etcd = crate::real_tikv_node::connect_schema_notifier(&config);
+    let gc_worker = Some(super::gc_worker::start_gc_worker(
+        &factory,
+        authority.tikv_store(),
+        Arc::new(authority.transaction_opener()),
+    ))
+    .transpose()
+    .map_err(|error| {
+        RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+            "start gc worker failed: {error}"
+        )))
+    })?;
+    let workload_etcd = etcd.clone();
     let workload_store = workload_etcd
         .as_ref()
         .map(|client| Arc::clone(client) as Arc<dyn tidb_workloadrepo::RepositoryStore>);
@@ -716,6 +711,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
     }
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
+    // The controller stops in the closure, before the authority closes the
+    // store it runs on.
+    let tikv_store_for_shutdown = authority.tikv_store().clone();
 
     run_with_process_shutdown(
         (
@@ -818,11 +816,66 @@ pub(crate) fn run_cluster_session_node_with_spill(
             // internal workers and flushes statistics while timestamp and
             // identity leases still protect those storage transactions.
             drop(_status_server);
+            stop_resource_groups_controller(&tikv_store_for_shutdown, &resource_groups_controller);
             drop(server_id_keeper);
             drop(server_info_runner);
             outcome
         },
     )
+}
+
+/// Go `runaway.MaxWaitDuration`: the longest a request waits for its
+/// resource group's tokens.
+const RESOURCE_GROUP_MAX_WAIT_DURATION: Duration = Duration::from_secs(30);
+
+/// Go `Domain.initResourceGroupsController`: the node's resource-group
+/// controller over the store's PD client (`rmclient.NewResourceGroupController`
+/// with the server ID as its client ID and the store's keyspace -- none, so
+/// `NullKeyspaceID`), started and installed as client-rust's resource-control
+/// interceptor (`tikv.SetResourceControlInterceptor`).
+fn start_resource_groups_controller(
+    store: &tidb_txnkv::driver::tikv_store::TikvStore,
+    server_id: u64,
+) -> Result<
+    Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
+    RunConfiguredNodeError,
+> {
+    use tikv_client::pd_resource_group::controller as rmclient;
+    let provider: Arc<dyn rmclient::ResourceGroupProvider> = store.store().pd_client();
+    let controller = store
+        .block_on(rmclient::new_resource_group_controller(
+            server_id,
+            provider,
+            None,
+            tikv_client::tikv::NULLSPACE_ID,
+            vec![rmclient::with_max_wait_duration(
+                RESOURCE_GROUP_MAX_WAIT_DURATION,
+            )],
+        ))
+        .map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+        })?;
+    {
+        let _runtime = store.runtime().enter();
+        controller.start();
+    }
+    tikv_client::set_resource_control_interceptor(controller.clone());
+    Ok(controller)
+}
+
+/// Go `Domain.Close`'s controller teardown: the interceptor is removed and
+/// the controller's loop stopped.
+fn stop_resource_groups_controller(
+    store: &tidb_txnkv::driver::tikv_store::TikvStore,
+    controller: &Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
+) {
+    tikv_client::unset_resource_control_interceptor();
+    if let Err(error) = store.block_on(controller.stop()) {
+        eprintln!(
+            "{{\"event\":\"resource_groups_controller_stop_failed\",\"error\":{}}}",
+            serde_json::to_string(&error.to_string()).unwrap_or_default()
+        );
+    }
 }
 
 /// Renders the boot-time refusals for the node's ready event.
@@ -969,7 +1022,8 @@ mod status_tests {
     }
 }
 
-struct ProcessPdRegionPolicy(tidb_pd_client::PdClient);
+/// Go `store.GetPDClient().UpdateOption` for the TSO and follower sysvars.
+struct ProcessPdRegionPolicy(Arc<tikv_client::pd_options::Options>);
 impl std::fmt::Debug for ProcessPdRegionPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessPdRegionPolicy")
@@ -993,10 +1047,10 @@ impl tidb_session::vars::PdRegionPolicy for ProcessPdRegionPolicy {
     }
 }
 
-/// PD's `ResourceManagerClient` writes for the null keyspace this node
-/// serves.
+/// PD's `ResourceManagerClient` through the store's PD client, for the
+/// keyspace the store serves.
 struct PdResourceManagerClient {
-    pd: tidb_pd_client::PdClient,
+    store: tidb_txnkv::driver::tikv_store::TikvStore,
 }
 
 impl tidb_domain::resource_manager_client::ResourceManagerClient for PdResourceManagerClient {
@@ -1004,8 +1058,9 @@ impl tidb_domain::resource_manager_client::ResourceManagerClient for PdResourceM
         &self,
         group: tidb_proto::resource_manager::ResourceGroup,
     ) -> Result<String, String> {
-        self.pd
-            .add_resource_group(None, group)
+        let pd = self.store.store().pd_client();
+        self.store
+            .block_on(async move { pd.add_resource_group(group).await })
             .map_err(|error| error.to_string())
     }
 
@@ -1013,14 +1068,17 @@ impl tidb_domain::resource_manager_client::ResourceManagerClient for PdResourceM
         &self,
         group: tidb_proto::resource_manager::ResourceGroup,
     ) -> Result<String, String> {
-        self.pd
-            .modify_resource_group(None, group)
+        let pd = self.store.store().pd_client();
+        self.store
+            .block_on(async move { pd.modify_resource_group(group).await })
             .map_err(|error| error.to_string())
     }
 
     fn delete_resource_group(&self, name: &str) -> Result<String, String> {
-        self.pd
-            .delete_resource_group(None, name)
+        let pd = self.store.store().pd_client();
+        let name = name.to_owned();
+        self.store
+            .block_on(async move { pd.delete_resource_group(&name).await })
             .map_err(|error| error.to_string())
     }
 }

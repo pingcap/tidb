@@ -597,6 +597,11 @@ pub struct PushdownStatementContext {
     /// Go `SessionVars.DistSQLScanConcurrency()`, the request concurrency
     /// `SetFromSessionVars` gives every DistSQL request.
     pub dist_sql_scan_concurrency: u64,
+    /// Go `SessionVars.StoreBatchSize`, which `SetFromSessionVars` copies to
+    /// every coprocessor request.
+    pub store_batch_size: u64,
+    /// Go `SessionVars.TiFlashReplicaRead`, which places MPP tasks.
+    pub tiflash_replica_read: tidb_txnkv::ReplicaRead,
     /// Go's query-scoped per-store coprocessor limiter, shared by every
     /// remote scan in this statement.
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
@@ -640,6 +645,8 @@ impl Default for PushdownStatementContext {
             priority: tidb_distsql::Priority::NoPriority,
             not_fill_cache: false,
             dist_sql_scan_concurrency: tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64,
+            store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
+            tiflash_replica_read: tidb_txnkv::ReplicaRead::AllReplicas,
             query_cop_store_limiter: None,
             // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
             // behind it has no session value to send.
@@ -678,6 +685,8 @@ impl PushdownStatementContext {
             priority: kv_priority(ctx.statement_priority()),
             not_fill_cache: ctx.not_fill_cache(),
             dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
+            store_batch_size: ctx.store_batch_size(),
+            tiflash_replica_read: ctx.tiflash_replica_read(),
             query_cop_store_limiter: ctx.query_cop_store_limiter(),
             div_precision_increment: ctx.div_precision_increment(),
             staged_writes: ctx.staged_writes_handle(),
@@ -2007,13 +2016,22 @@ mod tests {
             commit(&fixture.buffer, &fixture.snapshot);
             let ctx = crate::StmtContext::for_query();
             let handles = [TableHandle::Int(3), TableHandle::Int(1)];
-            let staged = fixture.table.build_table_reader_from_routed_handles(
-                &handles, None, &[1], &[],
-                &crate::RowDecodeContext::legacy_default(&ctx.session_zone()),
-                &PushdownStatementContext::from_stmt(&ctx), 2,
-            ).unwrap().expect("the table probe remains remote");
+            let staged = fixture
+                .table
+                .build_table_reader_from_routed_handles(
+                    &handles,
+                    None,
+                    &[1],
+                    &[],
+                    &crate::RowDecodeContext::legacy_default(&ctx.session_zone()),
+                    &PushdownStatementContext::from_stmt(&ctx),
+                    2,
+                )
+                .unwrap()
+                .expect("the table probe remains remote");
             let lookup = KvTable::finish_routed_rows_by_handles(&handles, staged)
-                .unwrap().expect("remote table rows");
+                .unwrap()
+                .expect("remote table rows");
             assert_eq!(
                 lookup.0,
                 vec![
@@ -2871,11 +2889,9 @@ mod tests {
             index.1, average,
             "Go buildNoRangeIndexLookUpReader uses table average"
         );
-        assert!(
-            estimates.iter().any(|(index, bytes, avg)| !index
-                && *avg == Some(average)
-                && *bytes == 2.0 * average)
-        );
+        assert!(estimates
+            .iter()
+            .any(|(index, bytes, avg)| !index && *avg == Some(average) && *bytes == 2.0 * average));
     }
 
     #[test]
@@ -2942,18 +2958,16 @@ mod tests {
                     .all(|(_, bytes, avg)| avg.is_some_and(|avg| avg > 0.0 && *bytes >= avg)),
                 "per-task handle estimates: {table:?}"
             );
-            assert!(
-                scanner
-                    .requested_flags
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .all(|flags| *flags == ctx.push_down_flags())
-            );
+            assert!(scanner
+                .requested_flags
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|flags| *flags == ctx.push_down_flags()));
         }
     }
 
-/// `DAGRequest.flags` reaches the region from the STATEMENT, through the
+    /// `DAGRequest.flags` reaches the region from the STATEMENT, through the
     /// production request builder, and is not the literal `0` it used to be.
     ///
     /// `0` is TiKV's strictest branch: no truncation tolerated, no

@@ -522,6 +522,17 @@ mod tests {
     use tidb_datatype::Datum;
     use tidb_session::process::ProcessKillTarget;
 
+    /// The outgoing peer client over an embedded store, whose TiDB requests
+    /// cross the real socket through the mock store's redirector, as Go's
+    /// mockstore tests reach a peer's status server.
+    fn peer_client() -> tidb_exec::cluster_peer::ClusterPeerClient {
+        let (rpc, pd, _cluster) = tidb_unistore::mock::new(Vec::new()).unwrap();
+        let store =
+            tidb_unistore::mock::new_test_tikv_store(&rpc, pd, tikv_client::Config::default())
+                .unwrap();
+        tidb_exec::cluster_peer::ClusterPeerClient::new(store)
+    }
+
     #[derive(Default)]
     struct Target {
         queries: AtomicUsize,
@@ -1070,9 +1081,7 @@ mod tests {
             local,
             Some(discovery),
         ));
-        let peer = Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
-            tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap(),
-        ));
+        let peer = Arc::new(peer_client());
         session.set_server_info_syncer(syncer.clone());
         session.set_cluster_peer_client(peer.clone());
         let mut info = tidb_stmtsummary::v2::record::generate_stmt_exec_info_4_test("c1c2");
@@ -1510,9 +1519,7 @@ mod tests {
         let mut info = tidb_domain::serverinfo::ServerInfo::default();
         info.static_info.ip = server.local_addr().ip().to_string();
         info.static_info.status_port = server.local_addr().port() as usize;
-        let outbound = tidb_exec::cluster_peer::ClusterPeerClient::new(
-            tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap(),
-        );
+        let outbound = peer_client();
         let read = |table: &str| {
             let columns = tidb_executor::driver::infoschema_meta::table_schema(table).unwrap();
             let rows = outbound.scan(
@@ -1695,9 +1702,7 @@ mod tests {
         let mut address = tidb_domain::serverinfo::ServerInfo::default();
         address.static_info.ip = server.local_addr().ip().to_string();
         address.static_info.status_port = server.local_addr().port() as usize;
-        let outbound = Arc::new(tidb_exec::cluster_peer::ClusterPeerClient::new(
-            tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap(),
-        ));
+        let outbound = Arc::new(peer_client());
         for table in [
             "CLUSTER_STATEMENTS_SUMMARY",
             "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
@@ -2174,8 +2179,7 @@ mod tests {
         info.static_info.ip = server.local_addr().ip().to_string();
         info.static_info.status_port = server.local_addr().port() as usize;
         info.static_info.json_server_id = 17;
-        let owner = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
-        let outbound = tidb_exec::cluster_peer::ClusterPeerClient::new(owner);
+        let outbound = peer_client();
         let context = tidb_executor::StmtContext::for_query();
         let columns =
             tidb_executor::driver::infoschema_meta::table_schema("CLUSTER_PROCESSLIST").unwrap();

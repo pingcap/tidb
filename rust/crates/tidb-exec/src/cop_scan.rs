@@ -712,6 +712,7 @@ where
             priority: request.statement.priority,
             not_fill_cache: request.statement.not_fill_cache,
             dist_sql_scan_concurrency: request.statement.dist_sql_scan_concurrency,
+            store_batch_size: request.statement.store_batch_size,
             query_cop_store_limiter: request.statement.query_cop_store_limiter.clone(),
             warnings: request.statement.warnings.clone(),
             cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
@@ -783,6 +784,8 @@ struct RemoteScanPlan {
     not_fill_cache: bool,
     /// Go `SessionVars.DistSQLScanConcurrency()` for this request.
     dist_sql_scan_concurrency: u64,
+    /// Go `SessionVars.StoreBatchSize` for this request.
+    store_batch_size: u64,
     /// Query-scoped per-store limiter shared by all region tasks for this
     /// statement.
     query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
@@ -868,6 +871,7 @@ where
     // thresholds, rather than recreating session defaults on the worker.
     let mut context = DistSqlContext::new();
     context.request.dist_sql_concurrency = plan.dist_sql_scan_concurrency;
+    context.request.store_batch_size = plan.store_batch_size;
     context.request.resource_group_name = plan.resource_group_name;
     context.request.replica_read = plan.replica_read;
     context.request.load_based_replica_read_threshold_ns = plan.read_policy.busy_threshold_ns;

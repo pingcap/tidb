@@ -123,8 +123,6 @@ pub enum CopReadResponseError {
     Lock,
     /// The response carries TiKV's opaque other-error string.
     Other(String),
-    /// The response belongs to the unsupported batch protocol.
-    Batch,
 }
 
 /// One transport response envelope presented atomically to the coordinator.
@@ -176,13 +174,10 @@ impl CopReadTaskResponse {
         }
     }
 
-    /// Creates a response from the unsupported batch protocol.
+    /// The decoded response body, for its batched children.
     #[must_use]
-    pub fn batch(response: CoprocessorResponse) -> Self {
-        Self {
-            response,
-            error: Some(CopReadResponseError::Batch),
-        }
+    pub fn response_ref(&self) -> &CoprocessorResponse {
+        &self.response
     }
 
     /// Returns the exact decoded region error before coordinator mutation.
@@ -191,6 +186,15 @@ impl CopReadTaskResponse {
         matches!(self.error.as_ref(), Some(CopReadResponseError::Region))
             .then(|| self.response.region_error.as_ref())
             .flatten()
+    }
+
+    /// Returns the `other_error` message of the already-decoded response.
+    #[must_use]
+    pub fn other_error_ref(&self) -> Option<&str> {
+        match self.error.as_ref() {
+            Some(CopReadResponseError::Other(message)) => Some(message),
+            _ => None,
+        }
     }
 
     /// Returns the lock carried by the already-decoded response.
@@ -224,7 +228,10 @@ impl CopReadTaskResponse {
         let mut time = tikv_client::util::TimeDetail::default();
         if let Some(details) = &self.response.exec_details_v2 {
             if details.time_detail.is_some() || details.time_detail_v2.is_some() {
-                time.merge_from_pb(details.time_detail_v2.as_ref(), details.time_detail.as_ref());
+                time.merge_from_pb(
+                    details.time_detail_v2.as_ref(),
+                    details.time_detail.as_ref(),
+                );
             }
             scan.merge_from_pb(details.scan_detail_v2.as_ref());
         } else if let Some(details) = &self.response.exec_details {
@@ -260,6 +267,47 @@ pub struct CopReadAcceptedResponse {
     pub paging: CopPagingOutcome,
     /// Newly prepared continuation attempt, if ranges remain.
     pub next_attempt_id: Option<u64>,
+    /// TiKV answered with buckets newer than the task's: the arguments of
+    /// Go's `RegionCache.UpdateBucketsIfNeeded`, which the transport calls.
+    pub buckets_update: Option<BucketsUpdate>,
+}
+
+/// Go `handleCopResponse`'s `UpdateBucketsIfNeeded(task.region,
+/// task.bucketsVer, resp.GetLatestBucketsVersion())`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BucketsUpdate {
+    /// The task's region.
+    pub region_id: u64,
+    /// The task's region epoch conf version.
+    pub conf_ver: u64,
+    /// The task's region epoch version.
+    pub version: u64,
+    /// Bucket version the task was built with.
+    pub request_version: u64,
+    /// Newer bucket version TiKV returned.
+    pub latest_version: u64,
+}
+
+/// A batched child task its parent's response did not serve: Go
+/// `handleBatchCopResponse`'s remains, which run as tasks of their own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchedRemain {
+    /// The child task as it was batched.
+    pub task: RegionTaskEnvelope,
+    /// Why the child was not served.
+    pub cause: BatchedRemainCause,
+}
+
+/// Why a batched child task remains.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BatchedRemainCause {
+    /// The child's region moved: its ranges are located again.
+    RegionError(String),
+    /// The child met a lock: it is resolved, then the child runs again.
+    Locked(tidb_proto::KvrpcLockInfo),
+    /// The store answered nothing for the child (a client or busy-threshold
+    /// fallback): it runs again as is.
+    Unanswered,
 }
 
 /// Ownership token for one failed transport attempt.
@@ -321,8 +369,6 @@ pub enum CopReadTaskError {
     UnsupportedRequestType,
     /// Batch coprocessor requests require a separate transport protocol.
     BatchCoprocessor,
-    /// Store batching requires shared/unordered response dispatch.
-    StoreBatching,
     /// Unordered response publication is not owned by the task-local channel.
     UnorderedResponse,
     /// Partitioned range envelopes require a partition-aware coordinator.
@@ -348,15 +394,6 @@ pub enum CopReadTaskError {
     LockError,
     /// Other TiKV errors require the future transport error pipeline.
     OtherError(String),
-    /// Batch responses require shared/unordered dispatch and child matching.
-    BatchResponse,
-    /// TiKV observed bucket metadata newer than the prepared task.
-    NewerBuckets {
-        /// Bucket version carried by the prepared task.
-        request_version: u64,
-        /// Newer version returned by TiKV.
-        latest_version: u64,
-    },
     /// Cache restoration or admission rejected the response.
     Cache(CoprCacheError),
     /// Bounded response publication or paging advancement failed.
@@ -371,7 +408,6 @@ impl CopReadTaskError {
             Self::UnsupportedStore => "unsupported_store",
             Self::UnsupportedRequestType => "unsupported_request_type",
             Self::BatchCoprocessor => "batch_coprocessor",
-            Self::StoreBatching => "store_batching",
             Self::UnorderedResponse => "unordered_response",
             Self::PartitionedRanges => "partitioned_ranges",
             Self::MaxKeysRead => "max_keys_read",
@@ -384,8 +420,6 @@ impl CopReadTaskError {
             Self::RegionError => "region_error",
             Self::LockError => "lock_error",
             Self::OtherError(_) => "other_error",
-            Self::BatchResponse => "batch_response",
-            Self::NewerBuckets { .. } => "newer_buckets",
             Self::Cache(_) => "cache",
             Self::Paging(_) => "paging",
         }
@@ -396,13 +430,6 @@ impl std::fmt::Display for CopReadTaskError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OtherError(message) => write!(formatter, "coprocessor other error: {message}"),
-            Self::NewerBuckets {
-                request_version,
-                latest_version,
-            } => write!(
-                formatter,
-                "bucket version {latest_version} is newer than prepared version {request_version}"
-            ),
             Self::Cache(error) => error.fmt(formatter),
             Self::Paging(error) => error.fmt(formatter),
             _ => formatter.write_str(self.kind()),
@@ -498,18 +525,17 @@ impl CopReadTaskRuntime {
     ) -> Result<Self, CopReadTaskError> {
         validate_request(metadata)?;
         validate_topology(topology)?;
-        let envelopes =
-            build_region_tasks(metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
-        if envelopes
-            .iter()
-            .any(|task| !task.batch_task_list.is_empty())
-        {
-            return Err(CopReadTaskError::StoreBatching);
+        // Go `CopClient.Send`: `if !checkStoreBatchCopr(req) {
+        // req.StoreBatchSize = 0 }`, before the tasks are built.
+        let mut metadata = metadata.clone();
+        if !check_store_batch_copr(&metadata) {
+            metadata.store_batch_size = 0;
         }
+        let envelopes =
+            build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
 
         // Go copr.Send adjusts once after region tasks have been built. The
         // adjusted metadata is retained across paging and region retries.
-        let mut metadata = metadata.clone();
         let read_type = match metadata.closest_replica_read_adjuster.clone() {
             Some(adjuster) if adjuster.adjust(&mut metadata, envelopes.len()) => "hit",
             Some(_) => "miss",
@@ -762,16 +788,22 @@ impl CopReadTaskRuntime {
                 CopReadResponseError::Region => CopReadTaskError::RegionError,
                 CopReadResponseError::Lock => CopReadTaskError::LockError,
                 CopReadResponseError::Other(message) => CopReadTaskError::OtherError(message),
-                CopReadResponseError::Batch => CopReadTaskError::BatchResponse,
             });
         }
         let mut response = response.response;
-        if response.latest_buckets_version > prepared.task.buckets_version {
-            return Err(CopReadTaskError::NewerBuckets {
-                request_version: prepared.task.buckets_version,
-                latest_version: response.latest_buckets_version,
+        // Go refreshes the region's buckets in the background and serves the
+        // response: the ranges it covered were inside the region either way.
+        let buckets_update = (response.latest_buckets_version > prepared.task.buckets_version)
+            .then(|| {
+                let epoch = prepared.task.region_epoch.unwrap_or_default();
+                BucketsUpdate {
+                    region_id: prepared.task.region_id,
+                    conf_ver: epoch.conf_ver,
+                    version: epoch.version,
+                    request_version: prepared.task.buckets_version,
+                    latest_version: response.latest_buckets_version,
+                }
             });
-        }
 
         // Go `copIterator.Next`: the keys every response processed
         // (`ScanDetail.ProcessedKeys`) add to the statement-wide counter --
@@ -836,6 +868,7 @@ impl CopReadTaskRuntime {
             cache_outcome,
             paging,
             next_attempt_id,
+            buckets_update,
         })
     }
 
@@ -1066,10 +1099,144 @@ impl CopReadTaskRuntime {
         Err(CopReadTaskError::OtherError(message.into()))
     }
 
-    /// Fails closed on batch response delivery.
-    pub fn accept_batch_response(&self, attempt_id: u64) -> Result<(), CopReadTaskError> {
-        self.require_in_flight(attempt_id)?;
-        Err(CopReadTaskError::BatchResponse)
+    /// Go `handleBatchCopResponse` for the batched children of `attempt_id`,
+    /// whatever the parent's own outcome (`handleBatchRemainsOnErr`): each
+    /// served child's data is published on the parent's channel, a child
+    /// with an other error fails the read, and the rest are returned to run
+    /// as tasks of their own. The parent no longer carries its children.
+    pub fn accept_batch_responses(
+        &mut self,
+        attempt_id: u64,
+        response: &CoprocessorResponse,
+        callee_address: &str,
+    ) -> Result<Vec<BatchedRemain>, CopReadTaskError> {
+        let (prepared, logical_task_index) = {
+            let in_flight = self.require_in_flight(attempt_id)?;
+            (in_flight.prepared.clone(), in_flight.logical_task_index)
+        };
+        if prepared.task.batch_task_list.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut pending: BTreeMap<u64, RegionTaskEnvelope> = prepared
+            .task
+            .batch_task_list
+            .iter()
+            .map(|task| (task.task_id, task.clone()))
+            .collect();
+        self.tasks[logical_task_index].task.batch_task_list.clear();
+        let mut remains = Vec::new();
+        for batch in &response.batch_responses {
+            let task = pending.remove(&batch.task_id).ok_or_else(|| {
+                CopReadTaskError::OtherError(format!("task id {} not found", batch.task_id))
+            })?;
+            if let Some(region_error) = &batch.region_error {
+                remains.push(BatchedRemain {
+                    task,
+                    cause: BatchedRemainCause::RegionError(format!("{region_error:?}")),
+                });
+                continue;
+            }
+            if let Some(lock) = &batch.locked {
+                remains.push(BatchedRemain {
+                    task,
+                    cause: BatchedRemainCause::Locked(lock.clone()),
+                });
+                continue;
+            }
+            if !batch.other_error.is_empty() {
+                return Err(CopReadTaskError::OtherError(batch.other_error.clone()));
+            }
+            let child = CoprocessorResponse {
+                data: batch.data.clone(),
+                exec_details_v2: batch.exec_details_v2.clone(),
+                ..CoprocessorResponse::default()
+            };
+            // Go `copIterator.Next` counts every response's processed keys.
+            if let Some(counter) = &self.metadata.max_keys_read_counter {
+                let processed = child
+                    .exec_details_v2
+                    .as_ref()
+                    .and_then(|details| details.scan_detail_v2.as_ref())
+                    .map_or(0, |scan| scan.processed_versions);
+                let total = counter
+                    .fetch_add(processed, std::sync::atomic::Ordering::Relaxed)
+                    .saturating_add(processed);
+                if self.metadata.max_keys_read > 0 && total > self.metadata.max_keys_read {
+                    return Err(CopReadTaskError::MaxKeysRead);
+                }
+            }
+            let runtime = CopReadTaskResponse::success(child).runtime_sample(callee_address);
+            self.tasks[logical_task_index]
+                .paging
+                .accept_batched_child(batch.data.clone(), Some(runtime))?;
+        }
+        remains.extend(pending.into_values().map(|task| BatchedRemain {
+            task,
+            cause: BatchedRemainCause::Unanswered,
+        }));
+        Ok(remains)
+    }
+
+    /// Go `buildCopTasks(bo, task.ranges, ...)` for a batched child whose
+    /// region moved: its ranges over the refreshed `topology`.
+    pub fn child_retry_tasks(
+        &self,
+        child: &RegionTaskEnvelope,
+        topology: &[RegionTaskTopology],
+    ) -> Result<Vec<RegionTaskEnvelope>, CopReadTaskError> {
+        self.build_retry_tasks(child.ranges.clone(), topology)
+    }
+
+    /// Runs `tasks` -- a batched parent's remains -- as logical tasks of
+    /// their own, after the logical task `after_logical_task_id`, each with
+    /// one prepared attempt.
+    pub fn add_tasks_after(
+        &mut self,
+        after_logical_task_id: u64,
+        tasks: Vec<RegionTaskEnvelope>,
+    ) -> Result<CopReadTaskReplacement, CopReadTaskError> {
+        let after = self
+            .tasks
+            .iter()
+            .position(|task| task.task.task_id == after_logical_task_id)
+            .ok_or(CopReadTaskError::UnmatchedResponse)?;
+        let mut logical_task_ids = Vec::with_capacity(tasks.len());
+        let mut active_attempt_ids = Vec::with_capacity(tasks.len());
+        for (offset, mut task) in tasks.into_iter().enumerate() {
+            let logical_task_id = self.next_logical_task_id;
+            self.next_logical_task_id = self.next_logical_task_id.saturating_add(1);
+            task.task_id = logical_task_id;
+            // Go rebuilds remains without task channels.
+            task.response_channel_capacity = 2;
+            let paging = CopPagingState::new_with_shared_ema(
+                &task,
+                self.metadata.desc,
+                self.metadata.paging.max_size,
+                self.tasks[after].paging.generation(),
+                self.ema.clone(),
+            );
+            let index = after + 1 + offset;
+            self.tasks
+                .insert(index, LogicalCopReadTask { task, paging });
+            for deferred in self.deferred.values_mut() {
+                if *deferred >= index {
+                    *deferred = deferred.saturating_add(1);
+                }
+            }
+            for in_flight in self.in_flight.values_mut() {
+                if in_flight.logical_task_index >= index {
+                    in_flight.logical_task_index = in_flight.logical_task_index.saturating_add(1);
+                }
+            }
+            let ranges = self.tasks[index].task.ranges.clone();
+            let paging_size = self.tasks[index].task.paging_size;
+            active_attempt_ids.push(self.prepare_attempt(index, ranges, paging_size)?);
+            logical_task_ids.push(logical_task_id);
+        }
+        Ok(CopReadTaskReplacement {
+            logical_task_ids,
+            active_attempt_ids,
+        })
     }
 
     /// Drains the next bounded response event for one logical task.
@@ -1145,7 +1312,8 @@ impl CopReadTaskRuntime {
             self.data.clone(),
         )
         .with_paging_size(paging_size)
-        .with_max_keys_read(max_keys_read);
+        .with_max_keys_read(max_keys_read)
+        .with_batch_tasks(task.encode_batch_tasks());
         let lookup = self.cache.as_ref().and_then(|cache| {
             cache.prepare_request(
                 &mut request,
@@ -1185,12 +1353,7 @@ impl CopReadTaskRuntime {
     ) -> Result<Vec<RegionTaskEnvelope>, CopReadTaskError> {
         let mut metadata = self.metadata.as_ref().clone();
         metadata.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(ranges)));
-        let tasks =
-            build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
-        if tasks.iter().any(|task| !task.batch_task_list.is_empty()) {
-            return Err(CopReadTaskError::StoreBatching);
-        }
-        Ok(tasks)
+        build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)
     }
 }
 
@@ -1199,6 +1362,24 @@ fn allocate_paging_task_index(counter: &AtomicU32, paging_active: bool) -> u32 {
         return 0;
     }
     counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
+}
+
+/// Go `checkStoreBatchCopr`: whether a request may batch tasks by store.
+fn check_store_batch_copr(metadata: &KvRequestMetadata) -> bool {
+    // Non-DAG requests have no row-count hints, so batching them needs the
+    // caller's explicit acceptance of merged responses.
+    if (metadata.request_type != RequestType::Dag && !metadata.allow_batch_task_data_merge)
+        || metadata.store_type != StoreType::TiKv
+    {
+        return false;
+    }
+    if metadata.replica_read != crate::ReplicaReadType::Leader || metadata.keep_order {
+        return false;
+    }
+    if metadata.paging.enabled || metadata.paging.size_bytes > 0 {
+        return false;
+    }
+    !(metadata.request_source.internal && !metadata.allow_batch_task_data_merge)
 }
 
 pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopReadTaskError> {
@@ -1214,9 +1395,6 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     }
     if metadata.batch_cop {
         return Err(CopReadTaskError::BatchCoprocessor);
-    }
-    if metadata.store_batch_size > 0 {
-        return Err(CopReadTaskError::StoreBatching);
     }
     if !metadata.keep_order && !metadata.allow_unordered_response {
         return Err(CopReadTaskError::UnorderedResponse);

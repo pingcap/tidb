@@ -176,13 +176,14 @@ impl ReadTimestampValidator for PdReadTimestampValidator {
 async fn store_oracle_parts<PdC: PdClient>(
     pd: &Arc<PdC>,
 ) -> Result<(Arc<PdReadTimestampValidator>, ResolveLocksContext)> {
-    let store_oracle = crate::oracle::StoreOracle::default();
+    let pd_oracle = Arc::new(
+        PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
+            .await
+            .map_err(|error| crate::Error::StringError(error.to_string()))?,
+    );
+    let store_oracle = crate::oracle::StoreOracle::over_pd_oracle(pd_oracle.clone());
     let read_timestamp_validator = Arc::new(PdReadTimestampValidator {
-        oracle: Arc::new(
-            PdOracle::from_pd_client(pd.clone(), PdOracleOptions::default())
-                .await
-                .map_err(|error| crate::Error::StringError(error.to_string()))?,
-        ),
+        oracle: pd_oracle,
         store_oracle: store_oracle.clone(),
         safe_point: RwLock::new(None),
     });
@@ -1052,6 +1053,45 @@ mod latch_config_tests {
         reader.rollback().await.unwrap();
 
         assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// client-go's `KVStore.oracle` is a PD oracle: every timestamp the store
+    /// hands out passes through it and becomes its last timestamp, which read
+    /// validation (`ValidateReadTS`) and low-resolution reads use. A store
+    /// timestamp that bypassed it made the next read at that timestamp fetch
+    /// another TSO to validate.
+    #[tokio::test]
+    async fn the_stores_timestamps_pass_through_its_pd_oracle() {
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let client = Client::new_with_pd_client(Arc::new(pd), Config::default())
+            .await
+            .unwrap();
+        let global = crate::oracle::OracleOption {
+            txn_scope: crate::oracle::GLOBAL_TXN_SCOPE.to_owned(),
+        };
+        for _ in 0..3 {
+            let timestamp = client.current_timestamp().await.unwrap().version();
+            assert_eq!(
+                client
+                    .get_oracle()
+                    .get_low_resolution_timestamp(&global)
+                    .await
+                    .unwrap(),
+                timestamp
+            );
+        }
+        let mut txn = client.begin_optimistic().await.unwrap();
+        assert_eq!(
+            client
+                .get_oracle()
+                .get_low_resolution_timestamp(&global)
+                .await
+                .unwrap(),
+            txn.start_timestamp().version()
+        );
+        txn.rollback().await.unwrap();
     }
 
     #[tokio::test]

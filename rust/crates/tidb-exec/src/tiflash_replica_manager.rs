@@ -20,8 +20,8 @@
 //! Every tick, for each table whose `TiFlashReplica` is set but not yet
 //! available:
 //!
-//! 1. the table's region count comes from PD HTTP
-//!    `/stats/region?start_key=&end_key=` over the record range
+//! 1. the table's region count comes from the store's PD HTTP client's
+//!    `GetRegionStatusByKeyRange` over the record range
 //!    (`infosync.GetRegionCountFromPD`);
 //! 2. each live TiFlash store's STATUS address answers
 //!    `/tiflash/sync-status/keyspace/{NullspaceID}/table/{id}`
@@ -32,6 +32,10 @@
 //!    `availProgress >= 1.0` (ddl_tiflash_api.go:500);
 //! 4. the flip publishes through the same DDL transaction path Go uses
 //!    (`UpdateTableReplicaInfo` -> `ActionUpdateTiFlashReplicaStatus`).
+//!
+//! As in Go's `TiFlashReplicaManagerCtx`, every PD call goes through the
+//! store's PD HTTP client (`pdHTTPCli`), and the TiFlash status ports through
+//! `util.InternalHTTPClient`.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{mpsc, Arc, LazyLock, Mutex, RwLock};
@@ -39,6 +43,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use tidb_pd_client::{PdStore, PdStoreState};
+use tikv_client::pd_http;
+
+use crate::cluster_http::block_on_pd_http;
 
 /// Go `NullspaceID` (`tikv/keyspace`): the keyspace id a classic API-V1
 /// cluster dispatches and reports under.
@@ -46,8 +53,7 @@ pub const NULL_KEYSPACE_ID: u32 = 4294967295;
 
 /// Go `DefaultTiFlashPollInterval` (ddl_tiflash_api.go: `2 * time.Second`).
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-// PD's HTTP client and TiDB's InternalHTTPClient have different deadlines.
-const PD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+// TiDB's InternalHTTPClient deadline; the PD HTTP client carries its own.
 const TIFLASH_HTTP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 // Go infosync's process-scoped replica manager owns the shared progress image.
@@ -76,7 +82,8 @@ pub struct TiFlashReplicaManager {
     catalog: Arc<crate::catalog_watch::SharedCatalog>,
     stores: Box<dyn Fn() -> Result<Vec<PdStore>, String> + Send + Sync>,
     ddl: Arc<dyn TiFlashReplicaControl>,
-    pd_http: String,
+    /// Go `TiFlashReplicaManagerCtx.pdHTTPCli`.
+    pd_http_client: pd_http::Client,
     http: reqwest::blocking::Client,
     http_scheme: &'static str,
     state: Mutex<PollState>,
@@ -211,27 +218,16 @@ impl Drop for TiFlashReplicaPoller {
 }
 
 impl TiFlashReplicaManager {
-    /// Uses PD's HTTP store metadata, matching infosync.GetTiFlashStoresStat.
-    /// Retained five-tick discovery is shared with deterministic injected tests.
-    pub fn with_pd_http(
+    /// Go `TiFlashReplicaManagerCtx` over the store's PD HTTP client: store
+    /// metadata from `GetStoresStat` (`pdHTTPCli.GetStores`), matching
+    /// infosync.GetTiFlashStoresStat. The shared cluster CA and optional
+    /// client identity apply to the TiFlash status requests, as Go
+    /// InternalHTTPClient does. Retained five-tick discovery is shared with
+    /// deterministic injected tests.
+    pub fn with_pd_http_client(
         catalog: Arc<crate::catalog_watch::SharedCatalog>,
         ddl: Arc<dyn TiFlashReplicaControl>,
-        pd_http: String,
-    ) -> Result<Self, String> {
-        Self::with_pd_http_security(
-            catalog,
-            ddl,
-            pd_http,
-            &tidb_pd_client::ClusterSecurity::plaintext(),
-        )
-    }
-
-    /// Applies the shared cluster CA and optional client identity to both PD
-    /// discovery and TiFlash status requests, as Go InternalHTTPClient does.
-    pub fn with_pd_http_security(
-        catalog: Arc<crate::catalog_watch::SharedCatalog>,
-        ddl: Arc<dyn TiFlashReplicaControl>,
-        pd_http: String,
+        pd_http_client: pd_http::Client,
         security: &tidb_pd_client::ClusterSecurity,
     ) -> Result<Self, String> {
         let scheme = if security.is_tls_enabled() {
@@ -239,29 +235,16 @@ impl TiFlashReplicaManager {
         } else {
             "http"
         };
-        let pd_http = if security.is_tls_enabled() {
-            pd_http.replacen("http://", "https://", 1)
-        } else {
-            pd_http
-        };
-        let endpoint = pd_http.trim_end_matches('/').to_owned();
-        let client = crate::cluster_http::cluster_http_client(security)?;
-        let http = client.clone();
+        let client = crate::cluster_http::internal_http_client(security)?;
+        let stores_client = crate::cluster_http::info_syncer_pd_http_client(&pd_http_client);
         let mut manager = Self::new(
             catalog,
             move || {
-                let response = http
-                    .get(format!("{endpoint}/pd/api/v1/stores"))
-                    .timeout(PD_HTTP_TIMEOUT)
-                    .send()
-                    .map_err(|error| error.to_string())?
-                    .error_for_status()
-                    .map_err(|error| error.to_string())?;
-                let body: serde_json::Value = response.json().map_err(|error| error.to_string())?;
-                decode_http_stores(&body)
+                let stores = block_on_pd_http(stores_client.get_stores())?;
+                decode_http_stores(&stores)
             },
             ddl,
-            pd_http,
+            pd_http_client,
         )?;
         manager
             .state
@@ -274,14 +257,17 @@ impl TiFlashReplicaManager {
     }
 
     /// Binds discovery and DDL capabilities without opening another transaction path.
+    /// PD is reached through the info syncer's derivation of
+    /// `pd_http_client`, as Go's `initTiFlashReplicaManager` uses
+    /// `is.pdHTTPCli`.
     pub fn new(
         catalog: Arc<crate::catalog_watch::SharedCatalog>,
         stores: impl Fn() -> Result<Vec<PdStore>, String> + Send + Sync + 'static,
         ddl: Arc<dyn TiFlashReplicaControl>,
-        pd_http: String,
+        pd_http_client: pd_http::Client,
     ) -> Result<Self, String> {
-        // Reuse framing and connections. Each call supplies the deadline of
-        // its Go owner: PD HTTP client or TiDB util.InternalHTTPClient.
+        // Reuse framing and connections for the TiFlash status requests,
+        // which carry TiDB util.InternalHTTPClient's deadline.
         let http = reqwest::blocking::Client::builder()
             .build()
             .map_err(|error| error.to_string())?;
@@ -289,7 +275,7 @@ impl TiFlashReplicaManager {
             catalog,
             stores: Box::new(stores),
             ddl,
-            pd_http,
+            pd_http_client: crate::cluster_http::info_syncer_pd_http_client(&pd_http_client),
             http,
             http_scheme: "http",
             state: Mutex::new(PollState::default()),
@@ -347,7 +333,6 @@ impl TiFlashReplicaManager {
                 .clear();
             return Ok(());
         }
-        let endpoint = self.pd_http.trim_end_matches('/').to_owned();
         let catalog = self.catalog.load();
         let mut state = self.state.lock().expect("TiFlash poll state");
         if state.counter % 5 == 0 {
@@ -386,7 +371,7 @@ impl TiFlashReplicaManager {
             let Some(table) = replica_tables.iter().find(|table| table.id == id) else {
                 continue;
             };
-            if let Ok((_, progress)) = self.progress(id, table.count, &endpoint, &stores) {
+            if let Ok((_, progress)) = self.progress(id, table.count, &stores) {
                 self.record_progress(&mut state, id, progress);
             }
         }
@@ -395,44 +380,32 @@ impl TiFlashReplicaManager {
         // Legacy rule reconciliation remains here until configuration and
         // cleanup migrate to the DDL/GC owners. Go classic clusters do not
         // run refreshTiFlashPlacementRules in this poller.
-        let (rules_status, rules_body) = self.http_call(
-            "GET",
-            &format!("{endpoint}/pd/api/v1/config/rules/group/tiflash"),
-            None,
-            PD_HTTP_TIMEOUT,
+        // Go `GetTiFlashGroupRules` -> `GetPlacementRulesByGroup`.
+        let existing = block_on_pd_http(
+            self.pd_http_client
+                .get_placement_rules_by_group(tidb_placement::TIFLASH_RULE_GROUP_ID),
         )?;
-        if rules_status == 200 {
-            // PD may return null for an empty rules group.
-            let existing: Vec<serde_json::Value> = match serde_json::from_str(&rules_body) {
-                Ok(list) => list,
-                Err(_) => Vec::new(),
-            };
-            for rule in existing {
-                let id = rule
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned();
-                let desired = replica_tables
-                    .iter()
-                    .any(|table| id == format!("table-{}-r", table.id));
-                if desired || id.is_empty() {
-                    continue;
-                }
-                let (delete_status, delete_body) = self.http_call(
-                    "DELETE",
-                    &format!("{endpoint}/pd/api/v1/config/rule/tiflash/{id}"),
-                    None,
-                    PD_HTTP_TIMEOUT,
-                )?;
-                eprintln!(
-                    "{{\"event\":\"tiflash_rule_removed\",\"rule\":{id:?},\"status\":{delete_status},\"detail\":{delete_body:?}}}"
-                );
+        for rule in existing {
+            let id = rule.id;
+            let desired = replica_tables
+                .iter()
+                .any(|table| id == make_rule_id(table.id));
+            if desired || id.is_empty() {
+                continue;
             }
+            // Go `DeletePlacementRule`; a refused delete is retried next tick.
+            let result = block_on_pd_http(
+                self.pd_http_client
+                    .delete_placement_rule(tidb_placement::TIFLASH_RULE_GROUP_ID, &id),
+            );
+            let detail = result.err().unwrap_or_default();
+            eprintln!(
+                "{{\"event\":\"tiflash_rule_removed\",\"rule\":{id:?},\"detail\":{detail:?}}}"
+            );
         }
 
         if !replica_tables.is_empty() {
-            self.ensure_rule_group(&endpoint)?;
+            self.set_tiflash_group_config()?;
         }
         for table in &replica_tables {
             let table_id = table.id;
@@ -440,17 +413,9 @@ impl TiFlashReplicaManager {
 
             // Set one rule, like infosync.SetPlacementRule. A bundle for
             // the shared "tiflash" group would replace every sibling rule.
-            let rule = new_tiflash_rule(table_id, count, &table.labels);
-            let rule_body = serde_json::to_string(&rule).map_err(|error| error.to_string())?;
-            let (status, _) = self.http_call(
-                "POST",
-                &format!("{endpoint}/pd/api/v1/config/rule"),
-                Some(&rule_body),
-                PD_HTTP_TIMEOUT,
-            )?;
-            if status != 200 {
-                return Err(format!("placement rule sync refused by PD ({status})"));
-            }
+            let rule = make_new_rule(table_id, count, &table.labels);
+            block_on_pd_http(self.pd_http_client.set_placement_rule(&rule))
+                .map_err(|error| format!("placement rule sync refused by PD: {error}"))?;
 
             // Go `PostAccelerateScheduleBatch` (tiflash_manager.go:317):
             // nudge PD to schedule the table's regions onto the TiFlash
@@ -459,18 +424,12 @@ impl TiFlashReplicaManager {
             // The accelerate-schedule range is the SAME
             // `EncodeBytes`-escaped range the placement rule carries.
             let (accel_start, accel_end) = table_region_range(table_id);
-            let (accel_status, _) = self.http_call(
-                "POST",
-                &format!("{endpoint}/pd/api/v1/regions/accelerate-schedule/batch"),
-                Some(&format!(
-                    "[{{\"start_key\":\"{}\",\"end_key\":\"{}\"}}]",
-                    hex_upper(&accel_start),
-                    hex_upper(&accel_end)
-                )),
-                PD_HTTP_TIMEOUT,
-            )?;
-            if accel_status != 200 {
-                eprintln!("{{\"event\":\"tiflash_accelerate_refused\",\"status\":{accel_status}}}");
+            let key_ranges = [pd_http::new_key_range(accel_start, accel_end)];
+            if let Err(error) = block_on_pd_http(
+                self.pd_http_client
+                    .accelerate_schedule_in_batch(&key_ranges),
+            ) {
+                eprintln!("{{\"event\":\"tiflash_accelerate_refused\",\"error\":{error:?}}}");
             }
 
             if table.available || table.logical_available {
@@ -487,7 +446,7 @@ impl TiFlashReplicaManager {
                 continue;
             }
             let (one_replica_progress, full_progress) =
-                match self.progress(table_id, count, &endpoint, &stores) {
+                match self.progress(table_id, count, &stores) {
                     Ok(progress) => progress,
                     Err(error) => {
                         eprintln!("TiFlash progress for table {table_id}: {error}");
@@ -521,26 +480,17 @@ impl TiFlashReplicaManager {
         &self,
         table_id: i64,
         replica_count: u64,
-        endpoint: &str,
         stores: &[tidb_pd_client::PdStore],
     ) -> Result<(f64, f64), String> {
+        // Go `GetRegionCountFromPD`: `GetRegionStatusByKeyRange(.., true)`
+        // over the escaped binary memcomparable keys.
         let (start_key, end_key) = table_region_range(table_id);
-        let url = format!(
-            "{endpoint}/pd/api/v1/stats/region?start_key={}&end_key={}&count",
-            escape_key(&start_key),
-            escape_key(&end_key),
-        );
-        let (status, body) = self.http_call("GET", &url, None, PD_HTTP_TIMEOUT)?;
-        if status != 200 {
-            return Err(format!("stats/region answered {status}"));
-        }
-        let body: serde_json::Value =
-            serde_json::from_str(&body).map_err(|error| format!("stats/region body: {error}"))?;
-        let region_count = body
-            .get("count")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or_default();
-        if region_count == 0 {
+        let stats = block_on_pd_http(
+            self.pd_http_client
+                .get_region_status_by_key_range(&pd_http::new_key_range(start_key, end_key), true),
+        )?;
+        let region_count = stats.count;
+        if region_count <= 0 {
             return Err("region count getting from PD is 0".to_owned());
         }
 
@@ -574,39 +524,22 @@ impl TiFlashReplicaManager {
     }
 
     // Go infosync.SetTiFlashGroupConfig: group priority must precede individual rules.
-    fn ensure_rule_group(&self, endpoint: &str) -> Result<(), String> {
-        let (status, body) = self.http_call(
-            "GET",
-            &format!("{endpoint}/pd/api/v1/config/rule_group/tiflash"),
-            None,
-            PD_HTTP_TIMEOUT,
+    fn set_tiflash_group_config(&self) -> Result<(), String> {
+        let group_config = block_on_pd_http(
+            self.pd_http_client
+                .get_placement_rule_group_by_id(tidb_placement::TIFLASH_RULE_GROUP_ID),
         )?;
-        if status != 200 {
-            return Err(format!("TiFlash rule group lookup answered {status}"));
-        }
-        let group: Option<RuleGroup> =
-            serde_json::from_str(&body).map_err(|error| error.to_string())?;
-        if group.is_some_and(|group| {
-            group.index == tidb_placement::RULE_INDEX_TIFLASH && !group.r#override
-        }) {
+        if group_config.index == tidb_placement::RULE_INDEX_TIFLASH && !group_config.r#override {
             return Ok(());
         }
-        let body = serde_json::to_string(&RuleGroup {
-            id: tidb_placement::TIFLASH_RULE_GROUP_ID.to_owned(),
-            index: tidb_placement::RULE_INDEX_TIFLASH,
-            r#override: false,
-        })
-        .map_err(|error| error.to_string())?;
-        let (status, _) = self.http_call(
-            "POST",
-            &format!("{endpoint}/pd/api/v1/config/rule_group"),
-            Some(&body),
-            PD_HTTP_TIMEOUT,
-        )?;
-        if status != 200 {
-            return Err(format!("TiFlash rule group update answered {status}"));
-        }
-        Ok(())
+        block_on_pd_http(
+            self.pd_http_client
+                .set_placement_rule_group(&pd_http::RuleGroup {
+                    id: tidb_placement::TIFLASH_RULE_GROUP_ID.to_owned(),
+                    index: tidb_placement::RULE_INDEX_TIFLASH,
+                    r#override: false,
+                }),
+        )
     }
 }
 
@@ -622,69 +555,33 @@ impl Drop for TiFlashReplicaManager {
     }
 }
 
-fn decode_http_stores(body: &serde_json::Value) -> Result<Vec<PdStore>, String> {
-    let stores = body
-        .get("stores")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "PD stores response has no stores array".to_owned())?;
+// Go `GetTiFlashStoresStat`'s `pd.StoresInfo` as the poller reads it.
+fn decode_http_stores(stores: &pd_http::StoresInfo) -> Result<Vec<PdStore>, String> {
     stores
+        .stores
         .iter()
         .map(|entry| {
-            let store = entry
-                .get("store")
-                .ok_or_else(|| "PD stores entry has no store".to_owned())?;
-            let labels = store
-                .get("labels")
-                .and_then(serde_json::Value::as_array)
-                .map(|labels| {
-                    labels
-                        .iter()
-                        .filter_map(|label| {
-                            Some((
-                                label.get("key")?.as_str()?.to_owned(),
-                                label.get("value")?.as_str()?.to_owned(),
-                            ))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let name = store
-                .get("state_name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("Up");
+            let store = &entry.store;
+            let name = store.state_name.as_str();
             Ok(PdStore {
-                id: store
-                    .get("id")
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or_else(|| "PD store has no ID".to_owned())?,
-                address: store
-                    .get("address")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                status_address: store
-                    .get("status_address")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
+                id: u64::try_from(store.id)
+                    .map_err(|_| format!("PD store has an invalid ID {}", store.id))?,
+                address: store.address.clone(),
+                status_address: store.status_address.clone(),
                 state: if name == "Up" || name == "Disconnected" {
                     PdStoreState::Up
                 } else {
                     PdStoreState::Offline
                 },
                 node_state: tidb_pd_client::PdNodeState::Serving,
-                labels,
+                labels: store
+                    .labels
+                    .iter()
+                    .map(|label| (label.key.clone(), label.value.clone()))
+                    .collect(),
             })
         })
         .collect()
-}
-
-#[derive(Default, serde::Deserialize, serde::Serialize)]
-#[serde(default)]
-struct RuleGroup {
-    id: String,
-    index: i64,
-    r#override: bool,
 }
 
 /// Go helper.ComputeTiFlashStatus: a count line followed by space-separated IDs.
@@ -729,36 +626,33 @@ fn table_region_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
     (start, end)
 }
 
-/// Go infosync.MakeNewRule followed by the classic codec's EncodeRegionRange.
-fn new_tiflash_rule(table_id: i64, count: u64, labels: &[String]) -> tidb_placement::pd::Rule {
-    let (start, end) = table_region_range(table_id);
-    tidb_placement::pd::Rule {
+/// Go `infosync.MakeRuleID`: the rule ID for TiFlash with the given table ID.
+pub fn make_rule_id(id: i64) -> String {
+    format!("table-{id}-r")
+}
+
+/// Go `infosync.MakeNewRule` (over `makeBaseRule`): the TiFlash learner rule
+/// of one physical table. The raw keys are the record range; the classic
+/// (API V1) codec's `EncodeRange` leaves them as they are, and the rule's
+/// JSON carries them memcomparable-encoded in hex.
+pub fn make_new_rule(id: i64, count: u64, location_labels: &[String]) -> pd_http::Rule {
+    pd_http::Rule {
         group_id: tidb_placement::TIFLASH_RULE_GROUP_ID.to_owned(),
-        id: format!("table-{table_id}-r"),
+        id: make_rule_id(id),
         index: tidb_placement::RULE_INDEX_TIFLASH,
-        start_key_hex: hex_upper(&start),
-        end_key_hex: hex_upper(&end),
-        role: tidb_placement::pd::PeerRoleType::LEARNER,
-        is_witness: false,
+        r#override: false,
+        start_key: tidb_codec::gen_table_record_prefix(id),
+        end_key: tidb_codec::table_key::encode_table_prefix(id + 1),
+        role: pd_http::LEARNER,
         count: count as i64,
-        label_constraints: vec![tidb_placement::pd::LabelConstraint {
+        label_constraints: vec![pd_http::LabelConstraint {
             key: tidb_placement::ENGINE_LABEL_KEY.to_owned(),
-            op: tidb_placement::pd::LabelConstraintOp::IN,
+            op: pd_http::IN,
             values: vec![tidb_placement::ENGINE_LABEL_TIFLASH.to_owned()],
         }],
-        location_labels: labels.to_vec(),
+        location_labels: location_labels.to_vec(),
+        ..pd_http::Rule::default()
     }
-}
-
-// The PD region-stats query takes escaped binary keys, not hex strings.
-// Percent-encode bytes directly; converting the memcomparable keys to UTF-8
-// would replace marker bytes and change the range.
-fn escape_key(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("%{byte:02X}")).collect()
-}
-
-fn hex_upper(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
 }
 
 #[cfg(test)]
@@ -782,6 +676,16 @@ mod tests {
         }
     }
 
+    /// The PD HTTP client over a fake PD at `address` (`host:port`).
+    fn pd_http_client(address: &str) -> pd_http::Client {
+        tidb_txnkv::driver::tikv_store::new_pd_http_client_with_mock_service_discovery(
+            "test",
+            &[format!("http://{address}")],
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
     fn manager(ddl: Arc<Ddl>, calls: Arc<AtomicUsize>) -> TiFlashReplicaManager {
         let catalog = Arc::new(crate::catalog_watch::SharedCatalog::new(
             crate::cluster_catalog::ClusterCatalog {
@@ -798,7 +702,7 @@ mod tests {
                 Ok(vec![])
             },
             ddl,
-            "http://127.0.0.1:1".to_owned(),
+            pd_http_client("127.0.0.1:1"),
         )
         .unwrap()
     }
@@ -852,7 +756,7 @@ mod tests {
                 }
             },
             ddl,
-            String::new(),
+            pd_http_client("127.0.0.1:1"),
         )
         .unwrap();
         assert!(poller.poll_once().is_err());
@@ -1073,10 +977,11 @@ mod tests {
         *status_address.lock().unwrap() = http.address.clone();
         let ddl = Arc::new(Ddl::default());
         ddl.owner.store(true, Ordering::SeqCst);
-        let poller = TiFlashReplicaManager::with_pd_http(
+        let poller = TiFlashReplicaManager::with_pd_http_client(
             replica_catalog(&[(66661, false)]),
             ddl,
-            format!("http://{}", http.address),
+            pd_http_client(&http.address),
+            &tidb_pd_client::ClusterSecurity::plaintext(),
         )
         .unwrap();
         poller.poll_once().unwrap();
@@ -1106,14 +1011,9 @@ mod tests {
         });
         let poller = fixture_manager(&http, Arc::new(Ddl::default()), &[]);
         let mut store = http.store();
-        assert!(poller
-            .progress(7, 2, &poller.pd_http, &[store.clone()])
-            .is_err());
+        assert!(poller.progress(7, 2, &[store.clone()]).is_err());
         store.state = PdStoreState::Offline;
-        assert_eq!(
-            poller.progress(7, 2, &poller.pd_http, &[store]).unwrap(),
-            (0.0, 0.0)
-        );
+        assert_eq!(poller.progress(7, 2, &[store]).unwrap(), (0.0, 0.0));
     }
 
     /// Go helper.TestComputeTiFlashStatus: the first line is a count, not a region.
@@ -1277,7 +1177,7 @@ mod tests {
             replica_catalog(tables),
             move || Ok(vec![store.clone()]),
             ddl,
-            format!("http://{}", http.address),
+            pd_http_client(&http.address),
         )
         .unwrap()
     }
@@ -1313,10 +1213,8 @@ mod tests {
             .unwrap();
         assert!(group_index < first_rule_index);
         let group: serde_json::Value = serde_json::from_str(&requests[group_index].1).unwrap();
-        assert_eq!(
-            group,
-            serde_json::json!({"id": "tiflash", "index": 120, "override": false})
-        );
+        // Go `pd.RuleGroup` omits a false `override` (`json:",omitempty"`).
+        assert_eq!(group, serde_json::json!({"id": "tiflash", "index": 120}));
         assert_eq!(rules[0]["id"], "table-7-r");
         assert_eq!(rules[1]["id"], "table-8-r");
         for rule in rules {
@@ -1356,15 +1254,10 @@ mod tests {
             }
         });
         let poller = fixture_manager(&http, Arc::new(Ddl::default()), &[]);
+        assert_eq!(poller.progress(7, 2, &[http.store()]).unwrap(), (1.0, 0.5));
         assert_eq!(
             poller
-                .progress(7, 2, &poller.pd_http, &[http.store()])
-                .unwrap(),
-            (1.0, 0.5)
-        );
-        assert_eq!(
-            poller
-                .progress(7, 1, &poller.pd_http, &[http.store(), http.store()])
+                .progress(7, 1, &[http.store(), http.store()])
                 .unwrap(),
             (1.0, 1.0)
         );
@@ -1386,12 +1279,7 @@ mod tests {
             }
         });
         let poller = fixture_manager(&http, Arc::new(Ddl::default()), &[]);
-        assert_eq!(
-            poller
-                .progress(7, 2, &poller.pd_http, &[http.store()])
-                .unwrap(),
-            (1.0, 0.5),
-        );
+        assert_eq!(poller.progress(7, 2, &[http.store()]).unwrap(), (1.0, 0.5),);
     }
 
     #[test]
@@ -1404,9 +1292,7 @@ mod tests {
             }
         });
         let poller = fixture_manager(&http, Arc::new(Ddl::default()), &[]);
-        assert!(poller
-            .progress(7, 2, &poller.pd_http, &[http.store()])
-            .is_err());
+        assert!(poller.progress(7, 2, &[http.store()]).is_err());
     }
 
     #[test]

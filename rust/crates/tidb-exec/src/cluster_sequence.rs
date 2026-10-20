@@ -43,24 +43,21 @@ use tidb_executor::sequence::{
 };
 use tidb_meta::structure::encode_hash_data_key;
 use tidb_meta::{key, value};
-use tidb_pd_client::PdClient;
 use tidb_txnkv::rpc::UnaryCallContext;
+use tidb_txnkv::transaction::StoreClient;
 use tidb_txnkv::transaction::{
-    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener,
+    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener, RealTransaction,
 };
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use crate::cluster_auto_id::MAX_RESERVE_RETRIES;
 use crate::cluster_catalog::MetaSnapshot;
 
 /// One sequence's shared counter over the cluster meta keys.
-pub struct ClusterSequenceCounter<S = tikv_client::PdRpcClient, P = PdClient>
+pub struct ClusterSequenceCounter<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: RealOptimisticTransactionOpener<S, P>,
+    opener: RealOptimisticTransactionOpener<S>,
     /// Go's `SEV:<tableID>` field under the database hash key: the batch end.
     value_key: Vec<u8>,
     /// Go's `SEC:<tableID>` field under the same hash key; written only when
@@ -71,12 +68,11 @@ where
 
 /// The concrete transaction type [`RealOptimisticTransactionOpener::begin`]
 /// hands back.
-type CounterTransaction<S> = RealOptimisticTransaction<S>;
+type CounterTransaction<S> = RealTransaction<S>;
 
-impl<S, P> std::fmt::Debug for ClusterSequenceCounter<S, P>
+impl<S> std::fmt::Debug for ClusterSequenceCounter<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -86,15 +82,14 @@ where
     }
 }
 
-impl<S, P> ClusterSequenceCounter<S, P>
+impl<S> ClusterSequenceCounter<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     /// The counter for sequence `table_id` stored in database `db_id`.
     #[must_use]
     pub fn new(
-        opener: RealOptimisticTransactionOpener<S, P>,
+        opener: RealOptimisticTransactionOpener<S>,
         db_id: i64,
         table_id: i64,
         timeout: Duration,
@@ -175,10 +170,9 @@ enum CommitFailure {
     Failed(String),
 }
 
-impl<S, P> SequenceCounter for ClusterSequenceCounter<S, P>
+impl<S> SequenceCounter for ClusterSequenceCounter<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn alloc_seq_cache(&self, info: &SequenceInfo) -> Result<(i64, i64, i64), SequenceError> {
         let size = if info.cache { info.cache_value } else { 1 };

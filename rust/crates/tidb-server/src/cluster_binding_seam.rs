@@ -25,7 +25,7 @@ use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_session::binding_cache::SharedBindingCache;
 use tidb_session::vars::GlobalSysvars;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
 const BINDING_LEASE: Duration = Duration::from_secs(3);
@@ -72,8 +72,8 @@ pub trait ClusterBindings: Send + Sync {
     fn close(&self);
 }
 
-struct StoredBindings<S: StoreClient, P: StorePdCapability> {
-    opener: RealOptimisticTransactionOpener<S, P>,
+struct StoredBindings<S: StoreClient> {
+    opener: RealOptimisticTransactionOpener<S>,
     catalog: Arc<SharedClusterCatalog>,
     globals: GlobalSysvars,
     cache: SharedBindingCache,
@@ -86,7 +86,7 @@ struct StoredBindings<S: StoreClient, P: StorePdCapability> {
     record_range: RwLock<Option<(tidb_txnkv::Key, tidb_txnkv::Key)>>,
 }
 
-impl<S: StoreClient, P: StorePdCapability> ClusterBindings for StoredBindings<S, P> {
+impl<S: StoreClient> ClusterBindings for StoredBindings<S> {
     fn cache(&self) -> SharedBindingCache {
         self.cache.clone()
     }
@@ -220,8 +220,8 @@ impl Drop for BindingReloader {
 }
 
 /// Load the initial image before accepting connections, then follow peer changes.
-pub fn start_binding_cache<S, P>(
-    opener: RealOptimisticTransactionOpener<S, P>,
+pub fn start_binding_cache<S>(
+    opener: RealOptimisticTransactionOpener<S>,
     catalog: Arc<SharedClusterCatalog>,
     globals: GlobalSysvars,
     timeout: Duration,
@@ -229,7 +229,6 @@ pub fn start_binding_cache<S, P>(
 ) -> Result<(Arc<dyn ClusterBindings>, BindingReloader), String>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     let bindings: Arc<dyn ClusterBindings> = Arc::new(StoredBindings {
         opener,
@@ -347,7 +346,7 @@ mod tests {
                 unreachable!()
             }
         }
-        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
         let owner = Arc::new(tidb_owner::MockManager::new(
             tidb_owner::Context::background(),
             "binding-test".to_owned(),

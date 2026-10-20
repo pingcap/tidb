@@ -20,13 +20,14 @@ use crate::driver::tikv_store::TikvStore;
 use crate::rpc::UnaryCallContext;
 use crate::{MemBufferBackend, TikvTransactionDriver};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tikv_client::{PdClient, Timestamp, TimestampExt, TransactionOptions};
 
-/// One TiDB transaction (Go `KVTxn` from the node's store). Both optimistic
-/// and pessimistic modes use this engine: client-rust's transaction on the
-/// node's store, with the store's region cache, sender, lock resolver,
-/// oracle and txn safe point.
+/// One TiDB transaction (Go `tikvTxn` over `KVTxn` from the node's store):
+/// client-rust's transaction on the node's store, with the store's region
+/// cache, sender, lock resolver, oracle and txn safe point. Pessimistic mode
+/// is an option on it, as Go's `SetOption(kv.Pessimistic)` is
+/// (`KVTxn.SetPessimistic`), not another type.
 pub struct ClientTransaction<S: PdClient> {
     pub(super) engine: TikvTransactionDriver<S>,
     store: TikvStore<S>,
@@ -44,6 +45,16 @@ pub struct ClientTransaction<S: PdClient> {
     collect_snapshot_stats: bool,
     commit_mode: Arc<std::sync::Mutex<Option<CommittedProtocol>>>,
     schema_error: Arc<std::sync::Mutex<Option<super::SchemaLeaseError>>>,
+    /// Go `KVTxn.isPessimistic`.
+    pessimistic: bool,
+    /// The statement timestamp locking reads and locks use (Go
+    /// `LockCtx.ForUpdateTS`); the start timestamp until a statement
+    /// advances it.
+    for_update_ts: u64,
+    fair_locking: bool,
+    max_conflict_ts: u64,
+    lock_expired: Arc<std::sync::atomic::AtomicU32>,
+    statement_stage: Option<crate::StagingHandle>,
 }
 
 /// One point-read result. Physical diagnostics are supplied by the client engine.
@@ -53,10 +64,6 @@ pub struct SnapshotGetResult {
     pub start_ts: u64,
     /// Value returned by the union read, or absence.
     pub value: Option<Vec<u8>>,
-    /// Region of the last physical Get, absent for a local buffer hit.
-    pub region: Option<crate::region::RegionVerId>,
-    /// Transport publication evidence for the physical Get.
-    pub publication: Option<crate::rpc::TransactionBatchPublication>,
     /// Number of physical requests issued by this read.
     pub rpc_count: u64,
 }
@@ -64,7 +71,7 @@ pub struct SnapshotGetResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnapshotScanRegion {
     /// Region that served these rows.
-    pub region: crate::region::RegionVerId,
+    pub region: tikv_client::RegionVerId,
     /// Exclusive region boundary observed by the response.
     pub end_key: Vec<u8>,
     /// Rows from this serving region.
@@ -128,12 +135,18 @@ impl<S: PdClient> ClientTransaction<S> {
             collect_snapshot_stats: false,
             commit_mode,
             schema_error: Default::default(),
+            pessimistic: false,
+            for_update_ts: start_ts,
+            fair_locking: false,
+            max_conflict_ts: 0,
+            lock_expired: Default::default(),
+            statement_stage: None,
         })
     }
 
     /// The store's transaction at `start_ts`, its RPCs bound to `calls`.
-    /// Transactions start optimistic; the pessimistic wrapper promotes the
-    /// same transaction only when Go's statement mode needs row locks.
+    /// Transactions start optimistic; [`Self::set_pessimistic`] switches the
+    /// same transaction when Go's statement mode needs row locks.
     fn begin_on(
         store: &TikvStore<S>,
         start_ts: u64,
@@ -367,8 +380,6 @@ impl<S: PdClient> ClientTransaction<S> {
         Ok(SnapshotGetResult {
             start_ts: self.start_ts,
             value,
-            region: None,
-            publication: None,
             rpc_count: self.snapshot_point_rpc_counts().0.saturating_sub(before),
         })
     }
@@ -535,6 +546,7 @@ impl<S: PdClient> ClientTransaction<S> {
         mutations: Vec<super::BufferMutation>,
         call: &UnaryCallContext,
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
+        self.finish_statement(true).map_err(Self::read_error)?;
         self.stage_mutations(mutations)?;
         self.calls.set(call);
         let mut outcome = self
@@ -597,7 +609,7 @@ impl<S: PdClient> ClientTransaction<S> {
         let mut served = std::collections::BTreeMap::new();
         for page in pages {
             for (key, value) in page.pairs {
-                served.insert(key, (value, page.region, page.end_key.clone()));
+                served.insert(key, (value, page.region.clone(), page.end_key.clone()));
             }
         }
         let mut regions: Vec<SnapshotScanRegion> = Vec::new();
@@ -650,40 +662,19 @@ impl tikv_client::transaction::SchemaLeaseChecker for DriverSchemaChecker {
     }
 }
 
-/// TiDB's statement timestamp and options over the same client transaction.
-/// Lock ownership, constraints, retries and TTL all remain in client-rust.
-pub struct ClientPessimisticTransaction<S: PdClient> {
-    transaction: ClientTransaction<S>,
-    for_update_ts: u64,
-    fair_locking: bool,
-    max_conflict_ts: u64,
-    lock_expired: Arc<std::sync::atomic::AtomicU32>,
-    statement_stage: Option<crate::StagingHandle>,
-}
-impl<S: PdClient> ClientPessimisticTransaction<S> {
-    /// Promotes the same native transaction to pessimistic mode.
-    pub fn from_transaction(
-        mut transaction: ClientTransaction<S>,
-        _opened_at: Instant,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        transaction
-            .engine
+impl<S: PdClient> ClientTransaction<S> {
+    /// Go `KVTxn.SetPessimistic` (`SetOption(kv.Pessimistic)`): locks taken
+    /// from now on are pessimistic locks, and commit prewrites them as such.
+    pub fn set_pessimistic(&mut self, pessimistic: bool) {
+        self.engine
             .transaction_mut()
             .inner_mut()
-            .set_pessimistic(true);
-        let for_update_ts = transaction.start_ts();
-        Ok(Self {
-            transaction,
-            for_update_ts,
-            fair_locking: false,
-            max_conflict_ts: 0,
-            lock_expired: Default::default(),
-            statement_stage: None,
-        })
+            .set_pessimistic(pessimistic);
+        self.pessimistic = pessimistic;
     }
-    /// The immutable transaction start timestamp.
-    pub fn start_ts(&self) -> u64 {
-        self.transaction.start_ts()
+    /// Go `KVTxn.IsPessimistic`.
+    pub fn is_pessimistic(&self) -> bool {
+        self.pessimistic
     }
     /// The statement timestamp used by subsequent locking reads.
     pub fn for_update_ts(&self) -> u64 {
@@ -705,26 +696,9 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
     pub fn max_locked_with_conflict_ts(&self) -> u64 {
         self.max_conflict_ts
     }
-    /// Sets the protocols the client may choose for this transaction.
-    pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {
-        self.transaction.set_commit_protocol(protocol);
-    }
-    /// Attaches the SQL schema validity check to the native commit lifecycle.
-    pub fn set_schema_lease(&mut self, lease: SchemaLease) {
-        self.transaction.set_schema_lease(lease);
-    }
-    /// Borrows the same transaction for union-store reads or SQL staging.
-    pub fn snapshot(&mut self) -> &mut ClientTransaction<S> {
-        &mut self.transaction
-    }
-    /// Inspects the authoritative transaction without changing it.
-    pub fn snapshot_ref(&self) -> &ClientTransaction<S> {
-        &self.transaction
-    }
     /// Returns the native buffer keys carrying acquired-lock flags.
     pub fn locked_keys(&mut self) -> Vec<Vec<u8>> {
-        self.transaction
-            .engine
+        self.engine
             .locked_keys()
             .into_iter()
             .map(|k| k.as_bytes().to_vec())
@@ -736,17 +710,16 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
         key: &[u8],
         call: &UnaryCallContext,
     ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
-        self.transaction
-            .snapshot_get_at(key, self.for_update_ts, call)
+        self.snapshot_get_at(key, self.for_update_ts, call)
             .map(|r| r.value)
     }
     /// Opens the client statement scope, reusing the SQL staging owner when bound.
     pub fn start_statement(&mut self) {
-        if !self.transaction.sql_staging && self.statement_stage.is_none() {
-            self.statement_stage = Some(self.transaction.engine.staging());
+        if !self.sql_staging && self.statement_stage.is_none() {
+            self.statement_stage = Some(self.engine.staging());
         }
-        if self.fair_locking && !self.transaction.engine.is_statement_locking() {
-            self.transaction.engine.start_statement_locking();
+        if self.fair_locking && !self.engine.is_statement_locking() {
+            self.engine.start_statement_locking();
         }
     }
     /// Completes or cancels the native statement scope while retaining ordinary locks.
@@ -754,26 +727,26 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
         &mut self,
         successful: bool,
     ) -> Result<(), super::PessimisticLockFailure> {
-        if self.transaction.engine.is_statement_locking() {
+        if self.engine.is_statement_locking() {
             if successful {
-                self.transaction.engine.done_statement_locking()
+                self.engine.done_statement_locking()
             } else {
-                self.transaction.engine.cancel_statement_locking()
+                self.engine.cancel_statement_locking()
             }
             .map_err(lock_error)?;
         }
         if let Some(stage) = self.statement_stage.take() {
             if successful {
-                self.transaction.engine.release(stage);
+                self.engine.release(stage);
             } else {
-                self.transaction.engine.cleanup(stage);
+                self.engine.cleanup(stage);
             }
         }
         Ok(())
     }
     /// Allocates a fresh statement timestamp and forwards the native fair retry hook.
     pub fn advance_for_update_ts(&mut self) -> Result<u64, super::PessimisticLockFailure> {
-        let store = &self.transaction.store;
+        let store = &self.store;
         let timestamp = store
             .block_on(store.store().current_timestamp())
             .map_err(|error| {
@@ -789,15 +762,12 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
                 },
             ));
         }
-        if self.transaction.engine.is_statement_locking() {
-            self.transaction
-                .engine
-                .retry_statement_locking()
-                .map_err(lock_error)?;
+        if self.engine.is_statement_locking() {
+            self.engine.retry_statement_locking().map_err(lock_error)?;
         }
         if let Some(stage) = self.statement_stage.take() {
-            self.transaction.engine.cleanup(stage);
-            self.statement_stage = Some(self.transaction.engine.staging());
+            self.engine.cleanup(stage);
+            self.statement_stage = Some(self.engine.staging());
         }
         self.for_update_ts = timestamp;
         Ok(timestamp)
@@ -830,18 +800,14 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
         call: &UnaryCallContext,
         return_values: bool,
     ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
-        self.transaction.calls.set(call);
+        self.calls.set(call);
         self.start_statement();
         let before: std::collections::BTreeSet<_> = self.locked_keys().into_iter().collect();
         for key in presume_not_exists {
-            self.transaction
-                .engine
-                .mem_buffer()
-                .backend_mut()
-                .update_flags(
-                    &crate::Key::from(key.clone()),
-                    &[crate::FlagsOp::SetPresumeKeyNotExists],
-                );
+            self.engine.mem_buffer().backend_mut().update_flags(
+                &crate::Key::from(key.clone()),
+                &[crate::FlagsOp::SetPresumeKeyNotExists],
+            );
         }
         let wait_ms = match wait {
             super::LockWaitTime::NoWait => -1,
@@ -859,7 +825,7 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
         if return_values {
             context.init_return_values(keys.len());
         }
-        if self.for_update_ts > 0 && self.transaction.check_existence {
+        if self.for_update_ts > 0 && self.check_existence {
             context.init_check_existence(keys.len());
         }
         let newly_locked = keys
@@ -867,7 +833,6 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
             .filter(|key| {
                 !before.contains(*key)
                     && !self
-                        .transaction
                         .engine
                         .transaction_mut()
                         .inner_mut()
@@ -875,8 +840,7 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
             })
             .cloned()
             .collect();
-        self.transaction
-            .engine
+        self.engine
             .transaction_mut()
             .block_on(|transaction| {
                 let context = &mut context;
@@ -921,30 +885,14 @@ impl<S: PdClient> ClientPessimisticTransaction<S> {
             values,
         })
     }
-    /// Commits the authoritative buffer through the client protocol engine.
-    pub fn commit(
-        mut self,
-        mutations: Vec<super::BufferMutation>,
-        call: &UnaryCallContext,
-    ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
-        self.finish_statement(true)
-            .map_err(ClientTransaction::<S>::read_error)?;
-        self.transaction.commit(mutations, call)
-    }
     /// Cancels the active statement and rolls back the native transaction.
     pub fn rollback(
         mut self,
         call: &UnaryCallContext,
     ) -> Result<ReadOnlyTransaction, OptimisticCoordinatorError> {
-        self.transaction.calls.set(call);
-        self.finish_statement(false)
-            .map_err(ClientTransaction::<S>::read_error)?;
-        self.transaction.finish_without_writes()
-    }
-}
-impl<S: PdClient> crate::new_txn::TxnResourceGroup for ClientPessimisticTransaction<S> {
-    fn set_resource_group_name(&mut self, name: &str) {
-        self.transaction.set_resource_group_name(name);
+        self.calls.set(call);
+        self.finish_statement(false).map_err(Self::read_error)?;
+        self.finish_without_writes()
     }
 }
 fn lock_error(error: crate::TikvTransactionError) -> super::PessimisticLockFailure {

@@ -758,6 +758,12 @@ pub struct StmtContextData {
     /// `tidb_distsql_scan_concurrency`, which `SetFromSessionVars` copies to
     /// every coprocessor request as its concurrency and upper bound.
     dist_sql_scan_concurrency: u64,
+    /// Go `SessionVars.StoreBatchSize`: the session's `tidb_store_batch_size`,
+    /// which `SetFromSessionVars` copies to every coprocessor request.
+    store_batch_size: u64,
+    /// Go `SessionVars.TiFlashReplicaRead`: the session's
+    /// `tiflash_replica_read`, which places MPP tasks.
+    tiflash_replica_read: tidb_txnkv::ReplicaRead,
     /// Go `SessionVars.IsolationReadEngines`, in the session variable's
     /// canonical comma-separated spelling.
     isolation_read_engines: String,
@@ -2247,6 +2253,20 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `SessionVars.StoreBatchSize` for this statement.
+    #[must_use]
+    pub fn with_store_batch_size(mut self, store_batch_size: u64) -> Self {
+        self.store_batch_size = store_batch_size;
+        self
+    }
+
+    /// Sets Go `SessionVars.TiFlashReplicaRead` for this statement.
+    #[must_use]
+    pub fn with_tiflash_replica_read(mut self, policy: tidb_txnkv::ReplicaRead) -> Self {
+        self.tiflash_replica_read = policy;
+        self
+    }
+
     /// Sets Go `SessionVars.DistSQLScanConcurrency()` for this statement.
     #[must_use]
     pub fn with_dist_sql_scan_concurrency(mut self, concurrency: u64) -> Self {
@@ -2447,6 +2467,10 @@ impl StmtContext {
             statement_priority: tidb_ast::StatementPriority::None,
             not_fill_cache: false,
             dist_sql_scan_concurrency: DEFAULT_DIST_SQL_SCAN_CONCURRENCY,
+            store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
+            tiflash_replica_read: tidb_txnkv::get_tiflash_replica_read_by_str(
+                tidb_vardef::defaults::DEF_TIFLASH_REPLICA_READ,
+            ),
             isolation_read_engines: session.isolation_read_engines,
             select_limit: session.select_limit,
             connection_charset: session.connection_charset,
@@ -3402,11 +3426,13 @@ impl StmtContext {
     pub(crate) fn start_prepared_range_tracking(&self) {
         let state = self.statement_range_fallback();
         if !state.cache_started.swap(true, Ordering::AcqRel) {
-            state.tracker.set_cache_type(if self.non_prepared_plan_cache {
-                tidb_util::context::PlanCacheType::SessionNonPrepared
-            } else {
-                tidb_util::context::PlanCacheType::SessionPrepared
-            });
+            state
+                .tracker
+                .set_cache_type(if self.non_prepared_plan_cache {
+                    tidb_util::context::PlanCacheType::SessionNonPrepared
+                } else {
+                    tidb_util::context::PlanCacheType::SessionPrepared
+                });
             state
                 .tracker
                 .set_always_warn_skip_cache(self.always_warn_skip_plan_cache);
@@ -4229,6 +4255,18 @@ impl StmtContext {
         self.dist_sql_scan_concurrency
     }
 
+    /// Go `SessionVars.StoreBatchSize`.
+    #[must_use]
+    pub fn store_batch_size(&self) -> u64 {
+        self.store_batch_size
+    }
+
+    /// Go `SessionVars.TiFlashReplicaRead`.
+    #[must_use]
+    pub fn tiflash_replica_read(&self) -> tidb_txnkv::ReplicaRead {
+        self.tiflash_replica_read
+    }
+
     /// Go `StmtCtx.Priority` for this statement.
     #[must_use]
     pub fn statement_priority(&self) -> tidb_ast::StatementPriority {
@@ -4660,7 +4698,8 @@ impl StmtContext {
     /// `EXPLAIN FORMAT='verbose'` (`InVerboseExplain`), else `AppendExtraNote`,
     /// which only the slow log and statement summary read.
     pub fn append_planner_note(&self, message: &str) {
-        if self.in_explain_stmt && matches!(self.explain_format, Some(crate::ExplainFormat::Verbose))
+        if self.in_explain_stmt
+            && matches!(self.explain_format, Some(crate::ExplainFormat::Verbose))
         {
             self.append_note_parts(1105, message);
         } else {

@@ -145,6 +145,18 @@ pub trait KvConnect: Sized + Send + Sync + 'static {
     type KvClient: KvClient + Clone + Send + Sync + 'static;
 
     async fn connect(&self, address: &str) -> Result<Self::KvClient>;
+
+    /// client-go `Client.SendRequest`'s connection for a request whose
+    /// `StoreTp` is `store_type`. client-go's RPC client dials every store
+    /// type alike; a wrapper such as TiDB's mock-store `clientRedirector`
+    /// routes TiDB requests by it.
+    async fn connect_with_store_type(
+        &self,
+        address: &str,
+        _store_type: super::EndpointType,
+    ) -> Result<Self::KvClient> {
+        self.connect(address).await
+    }
 }
 
 #[derive(Clone)]
@@ -164,6 +176,38 @@ pub struct TikvConnect {
 }
 
 impl TikvConnect {
+    /// client-go `NewRPCClient` with the options `config` carries: timeouts,
+    /// message size, compression, keepalive, window sizes, connection count,
+    /// batching and tracing.
+    pub fn from_config(security_mgr: Arc<SecurityManager>, config: &crate::Config) -> Self {
+        Self::new_with_grpc_compression(
+            security_mgr,
+            config.timeout,
+            config.grpc_max_decoding_message_size,
+            &config.tikv_client.grpc_compression_type,
+            Duration::from_secs(config.tikv_client.grpc_keep_alive_time),
+            Duration::from_secs_f64(config.tikv_client.grpc_keep_alive_timeout),
+            u32::try_from(config.tikv_client.grpc_initial_window_size)
+                .ok()
+                .filter(|size| *size > 0),
+            u32::try_from(config.tikv_client.grpc_initial_conn_window_size)
+                .ok()
+                .filter(|size| *size > 0),
+            config.tikv_client.grpc_connection_count as usize,
+        )
+        .with_open_tracing(config.open_tracing_enable)
+        .with_tikv_client_config(config.tikv_client.clone())
+    }
+
+    /// client-go `NewRPCClient(WithSecurity(config.Security.ClusterSecurity()))`:
+    /// [`Self::from_config`] with the TLS settings `config` names.
+    pub fn new_rpc_client(config: &crate::Config) -> Result<Self> {
+        let security_mgr = config
+            .security_manager()
+            .map_err(|error| Error::StringError(error.to_string()))?;
+        Ok(Self::from_config(Arc::new(security_mgr), config))
+    }
+
     /// Construct a connector using client-go's default `none` request
     /// compression setting.
     pub fn new(
@@ -234,6 +278,15 @@ impl KvConnect for TikvConnect {
     type KvClient = KvRpcClient;
 
     async fn connect(&self, address: &str) -> Result<KvRpcClient> {
+        self.connect_with_store_type(address, super::EndpointType::TiKv)
+            .await
+    }
+
+    async fn connect_with_store_type(
+        &self,
+        address: &str,
+        store_type: super::EndpointType,
+    ) -> Result<KvRpcClient> {
         let mut clients = Vec::with_capacity(self.grpc_connection_count);
         let mut debug_clients = Vec::with_capacity(self.grpc_connection_count);
         for _ in 0..self.grpc_connection_count {
@@ -270,13 +323,16 @@ impl KvConnect for TikvConnect {
             clients.push(client);
             debug_clients.push(debug_client);
         }
-        // The worker owns only batchable physical requests; unsupported
-        // requests retain the unary path below.
-        Ok(
-            KvRpcClient::new_with_debug_clients(clients, debug_clients, self.timeout)
-                .with_open_tracing(self.open_tracing_enable)
-                .with_batch_worker(&self.batch_config),
-        )
+        let client = KvRpcClient::new_with_debug_clients(clients, debug_clients, self.timeout)
+            .with_open_tracing(self.open_tracing_enable);
+        // client-go `enableBatch := req.StoreTp == tikvrpc.TiKV`: TiFlash and
+        // TiDB pools never batch. The worker owns only batchable physical
+        // requests; unsupported requests retain the unary path below.
+        Ok(if store_type == super::EndpointType::TiKv {
+            client.with_batch_worker(&self.batch_config)
+        } else {
+            client
+        })
     }
 }
 
@@ -477,6 +533,40 @@ mod tests {
         let client = connector.connect(&address).await.unwrap();
         assert!(client.batch_worker.is_none());
         drop(client);
+        server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_connector_batches_only_tikv_typed_pools() {
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        let address = server.addr().unwrap();
+        let mut config = crate::config::TiKvClient::default();
+        config.max_batch_size = 8;
+        let connector = TikvConnect::new(
+            Arc::new(SecurityManager::default()),
+            Duration::from_secs(1),
+            4 * 1024 * 1024,
+        )
+        .with_tikv_client_config(config);
+        let tikv = connector
+            .connect_with_store_type(&address, crate::store::EndpointType::TiKv)
+            .await
+            .unwrap();
+        let tidb = connector
+            .connect_with_store_type(&address, crate::store::EndpointType::TiDb)
+            .await
+            .unwrap();
+        let tiflash = connector
+            .connect_with_store_type(&address, crate::store::EndpointType::TiFlash)
+            .await
+            .unwrap();
+        assert!(tikv.batch_worker.is_some());
+        assert!(tidb.batch_worker.is_none());
+        assert!(tiflash.batch_worker.is_none());
+        tikv.close();
+        drop((tikv, tidb, tiflash));
         server.stop().await.unwrap();
     }
 

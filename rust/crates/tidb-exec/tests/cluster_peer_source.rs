@@ -24,7 +24,6 @@ use tidb_proto::{
     tikvpb::tikv_server::{Tikv, TikvServer},
     tipb,
 };
-use tidb_txnkv::rpc::TonicCoprocessorClient;
 
 #[derive(Clone, Default)]
 struct Service(Arc<Mutex<Vec<(coprocessor::Request, tipb::DagRequest)>>>);
@@ -130,8 +129,12 @@ fn cluster_peer_batch_kill_and_memory_scan_share_protocol_and_fleet() {
         vec![address.to_string()]
     );
     assert!(peer_addresses(&[server.clone()], Some(18)).is_empty());
-    let owner = TonicCoprocessorClient::new().unwrap();
-    let client = ClusterPeerClient::new(owner.clone());
+    // The embedded store's TiDB requests cross the socket through the mock
+    // store's redirector, as Go's mockstore reaches a peer.
+    let (rpc, pd, _cluster) = tidb_unistore::mock::new(Vec::new()).unwrap();
+    let store =
+        tidb_unistore::mock::new_test_tikv_store(&rpc, pd, tikv_client::Config::default()).unwrap();
+    let client = ClusterPeerClient::new(store);
     let context = StmtContext::for_query();
     let zone = SessionTimeZone::utc();
     let id = tidb_util::globalconn::Gcid {
@@ -192,7 +195,6 @@ fn cluster_peer_batch_kill_and_memory_scan_share_protocol_and_fleet() {
         scan.columns.iter().map(|c| c.column_id).collect::<Vec<_>>(),
         vec![Some(1), Some(2)]
     );
-    assert_eq!(owner.active_address_count(), 1);
     drop(requests);
     let error = client
         .scan(&[server.clone()], 100, &columns, None, &context, &zone, 1)
@@ -234,7 +236,6 @@ fn cluster_peer_batch_kill_and_memory_scan_share_protocol_and_fleet() {
             .contains("interrupted"));
     });
     drop(client);
-    drop(owner);
     stop.send(()).unwrap();
     worker.join().unwrap();
 }

@@ -29,25 +29,26 @@
 //! about a `start_ts` just below it, which takes the *same* classification
 //! path a real overtaken read would take.
 
-use std::time::Duration;
-
-use tidb_pd_client::PdClient;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::{StorageDriverError, VisibilityError};
+use tikv_client::PdClient as _;
 
 #[test]
 #[ignore = "requires a running playground with GC_SAFE_POINT_PD_ADDR set"]
 fn a_start_ts_below_the_clusters_txn_safe_point_is_classified_not_hung() {
     let pd_address =
         std::env::var("GC_SAFE_POINT_PD_ADDR").expect("runner must provide GC_SAFE_POINT_PD_ADDR");
-    let pd = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
-        .expect("start the sole real PD authority");
-    assert_ne!(pd.cluster_id(), 0);
+    // The node's store loads and keeps the live txn safe point; PD is
+    // reached through it, as Go's TiDB reaches it through `GetPDClient()`.
+    let store = TikvStore::connect(vec![pd_address], tikv_client::Config::default())
+        .expect("the node's store loads the txn safe point");
+    assert_ne!(store.cluster_id(), 0);
 
     // The null keyspace: what a non-keyspace deployment reads under.
-    let live = pd
-        .get_gc_state(None)
-        .expect("a supported PD answers GetGCState; an older one must answer Unimplemented");
+    let pd = store.store().pd_client();
+    let live = store
+        .block_on(async move { pd.get_gc_state().await })
+        .expect("a supported PD answers GetGCState");
     assert!(
         !live.is_keyspace_level_gc,
         "a default playground is not keyspace-level GC"
@@ -55,10 +56,10 @@ fn a_start_ts_below_the_clusters_txn_safe_point_is_classified_not_hung() {
 
     // A safe point the cluster has genuinely reached still admits any newer
     // timestamp, so an ordinary read is unaffected by the check being present.
-    // The node's store loads and keeps the live txn safe point.
-    let store = TikvStore::connect(vec![pd_address], tikv_client::Config::default())
-        .expect("the node's store loads the txn safe point");
-    let now_ts = pd.get_timestamp().expect("allocate a real timestamp");
+    let now_ts = store
+        .get_timestamp_async()
+        .wait()
+        .expect("allocate a real timestamp");
     assert!(
         store.check_visibility(now_ts).is_ok(),
         "a fresh timestamp must be above the live txn safe point {}",

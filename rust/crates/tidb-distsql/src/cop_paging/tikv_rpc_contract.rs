@@ -19,7 +19,6 @@ use tidb_proto::{
     CoprocessorResponse, KvrpcContext, KvrpcPeer, KvrpcRegionEpoch, KvrpcRequestOrigin,
     KvrpcResourceControlContext,
 };
-use tidb_txnkv::region::{LeaderRequest, ReplicaReadMode};
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, ClientReplicaReadType, EndpointType,
     TraceInfo,
@@ -68,45 +67,6 @@ pub fn build_tikv_unary_request(
     trace: Option<&TraceInfo>,
     cluster_id: u64,
 ) -> TikvUnaryRequest {
-    build_tikv_unary_request_inner(
-        prepared,
-        metadata,
-        predicted_read_bytes,
-        trace,
-        cluster_id,
-        None,
-    )
-}
-
-/// Constructs a request whose peer and leader flags come from the selection
-/// made immediately before dispatch.
-#[must_use]
-pub fn build_tikv_unary_request_for_dispatch(
-    prepared: &PreparedCopReadTask,
-    metadata: &KvRequestMetadata,
-    predicted_read_bytes: u64,
-    trace: Option<&TraceInfo>,
-    cluster_id: u64,
-    selected: &LeaderRequest,
-) -> TikvUnaryRequest {
-    build_tikv_unary_request_inner(
-        prepared,
-        metadata,
-        predicted_read_bytes,
-        trace,
-        cluster_id,
-        Some(selected),
-    )
-}
-
-fn build_tikv_unary_request_inner(
-    prepared: &PreparedCopReadTask,
-    metadata: &KvRequestMetadata,
-    predicted_read_bytes: u64,
-    trace: Option<&TraceInfo>,
-    cluster_id: u64,
-    selected: Option<&LeaderRequest>,
-) -> TikvUnaryRequest {
     let task = prepared.task();
     let mut replica_read_type = map_replica_read_type(metadata.replica_read.raw());
     let mut replica_read = replica_read_type != ClientReplicaReadType::Leader;
@@ -114,17 +74,6 @@ fn build_tikv_unary_request_inner(
     if stale_read {
         replica_read_type = ClientReplicaReadType::Mixed;
         replica_read = false;
-    }
-    if let Some(selected) = selected {
-        replica_read_type = match selected.read_mode {
-            ReplicaReadMode::Leader => ClientReplicaReadType::Leader,
-            ReplicaReadMode::Follower => ClientReplicaReadType::Follower,
-            ReplicaReadMode::Mixed => ClientReplicaReadType::Mixed,
-            ReplicaReadMode::Learner => ClientReplicaReadType::Learner,
-            ReplicaReadMode::PreferLeader => ClientReplicaReadType::PreferLeader,
-        };
-        replica_read = selected.replica_read;
-        stale_read = selected.stale_read;
     }
 
     let input_request_source = request_source(&metadata.request_source);
@@ -145,24 +94,12 @@ fn build_tikv_unary_request_inner(
             conf_ver: epoch.conf_ver,
             version: epoch.version,
         }),
-        peer: selected.map_or_else(
-            || {
-                task.peer.map(|peer| KvrpcPeer {
-                    id: peer.id,
-                    store_id: peer.store_id,
-                    role: peer.role,
-                    is_witness: peer.is_witness,
-                })
-            },
-            |selected| {
-                Some(KvrpcPeer {
-                    id: selected.attempt.peer_id,
-                    store_id: selected.attempt.store_id,
-                    role: selected.role.as_i32(),
-                    is_witness: selected.is_witness,
-                })
-            },
-        ),
+        peer: task.peer.map(|peer| KvrpcPeer {
+            id: peer.id,
+            store_id: peer.store_id,
+            role: peer.role,
+            is_witness: peer.is_witness,
+        }),
         priority: metadata.priority.raw() as i32,
         isolation_level: metadata.isolation_level.raw() as i32,
         not_fill_cache: metadata.not_fill_cache,
@@ -234,9 +171,8 @@ pub fn decode_tikv_unary_response(
         let message = response.other_error.clone();
         return Ok(CopReadTaskResponse::other_error(response, message));
     }
-    if !response.batch_responses.is_empty() {
-        return Ok(CopReadTaskResponse::batch(response));
-    }
+    // Batched children ride a successful parent; the coordinator serves them
+    // (Go `handleBatchCopResponse`).
     Ok(CopReadTaskResponse::success(response))
 }
 

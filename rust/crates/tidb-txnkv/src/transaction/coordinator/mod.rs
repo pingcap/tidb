@@ -15,13 +15,11 @@
 //! TiDB store driver over the single client-rust transaction engine.
 mod opener;
 pub use super::client::{
-    ClientTransaction as RealOptimisticTransaction, SnapshotGetResult, SnapshotScanRegion,
+    ClientTransaction as RealTransaction, SnapshotGetResult, SnapshotScanRegion,
 };
 use super::mutation::MutationSetError;
 use crate::gc_state::VisibilityError;
-pub use opener::{
-    PdLockTimestampSource, RealOptimisticTransactionOpener, StoreClient, StorePdCapability,
-};
+pub use opener::{RealOptimisticTransactionOpener, StoreClient};
 use std::fmt;
 
 /// Concrete process/session authority errors rejected before a transaction opens.
@@ -47,7 +45,7 @@ pub enum OptimisticCoordinatorError {
     /// A snapshot exhausted a client-go retry category; retain its SQL identity.
     SnapshotBackoff {
         /// Longest effective backoff category.
-        kind: crate::region::RegionBackoffKind,
+        kind: crate::retry::RegionBackoffKind,
         /// Source backoff diagnostic for unregistered categories.
         detail: String,
     },
@@ -115,10 +113,6 @@ impl CommitProtocol {
     }
 }
 
-/// The one production pessimistic transaction.
-pub type ProductionPessimisticTransaction =
-    super::RealPessimisticTransaction<tikv_client::PdRpcClient>;
-
 /// The one production transaction: real TiKV transport, real PD-backed region
 /// topology, and real PD timestamps.
-pub type ProductionOptimisticTransaction = RealOptimisticTransaction<tikv_client::PdRpcClient>;
+pub type ProductionTransaction = RealTransaction<tikv_client::PdRpcClient>;

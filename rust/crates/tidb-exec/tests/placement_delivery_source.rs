@@ -16,7 +16,8 @@
 //!
 //! The contract is PD's own (`client/http/api.go` and `interface.go`):
 //! `POST /pd/api/v1/config/placement-rule?partial=true` carrying a JSON array
-//! of bundles. Asserting it against a real socket is what makes the wire
+//! of bundles, sent by the node's PD HTTP client (client-rust's port of
+//! `tikv/pd/client/http`). Asserting it against a real socket is what makes the wire
 //! shape verifiable rather than assumed -- a rule sent in the wrong shape
 //! fails SILENTLY, leaving the catalog claiming placement PD never received.
 
@@ -27,14 +28,28 @@ use std::time::Duration;
 use tidb_exec::placement_delivery::{put_rule_bundles, PlacementDeliveryError};
 use tidb_placement::new_bundle;
 
+/// The PD HTTP client over a fake PD at `endpoint` (`http://host:port`).
+fn pd_http_client(endpoint: &str) -> tikv_client::pd_http::Client {
+    tidb_txnkv::driver::tikv_store::new_pd_http_client_with_mock_service_discovery(
+        "test",
+        &[endpoint.to_owned()],
+        Vec::new(),
+    )
+    .expect("a PD HTTP client")
+}
+
 /// Accepts one request, answers `status`, and returns the raw request text.
-fn capture_one_request(listener: TcpListener, status: &'static str) -> std::thread::JoinHandle<String> {
+fn capture_one_request(
+    listener: TcpListener,
+    status: &'static str,
+) -> std::thread::JoinHandle<String> {
     std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("a connection");
         let mut buffer = [0_u8; 8192];
         let read = stream.read(&mut buffer).expect("a request");
         let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
-        let response = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let response =
+            format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         let _ = stream.write_all(response.as_bytes());
         let _ = stream.flush();
         request
@@ -50,7 +65,12 @@ fn a_bundle_delivery_is_gos_post_with_partial_true() {
     let mut bundle = new_bundle(7);
     bundle.index = 3;
     bundle.r#override = true;
-    put_rule_bundles(&endpoint, &[bundle], Duration::from_secs(5)).expect("PD accepted");
+    put_rule_bundles(
+        &pd_http_client(&endpoint),
+        &[bundle],
+        Duration::from_secs(5),
+    )
+    .expect("PD accepted");
 
     let request = server.join().expect("the server thread");
 
@@ -63,9 +83,12 @@ fn a_bundle_delivery_is_gos_post_with_partial_true() {
         "unexpected request line: {}",
         request.lines().next().unwrap_or_default()
     );
+    // Go's pdhttp sends no Content-Type; it names its caller instead.
     assert!(
-        request.to_ascii_lowercase().contains("content-type: application/json"),
-        "the body is JSON: {request}"
+        request
+            .to_ascii_lowercase()
+            .contains("x-caller-id: tidb-info-syncer"),
+        "the info syncer's client sends it: {request}"
     );
 
     // The body is a JSON ARRAY of bundles carrying PD's four field names.
@@ -77,7 +100,10 @@ fn a_bundle_delivery_is_gos_post_with_partial_true() {
     assert_eq!(sent["group_id"], "TiDB_DDL_7");
     assert_eq!(sent["group_index"], 3);
     assert_eq!(sent["group_override"], true);
-    assert!(sent.get("rules").is_some(), "rules is always present: {sent}");
+    assert!(
+        sent.get("rules").is_some(),
+        "rules is always present: {sent}"
+    );
 }
 
 #[test]
@@ -87,7 +113,8 @@ fn an_empty_bundle_list_is_not_sent_at_all() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
     let endpoint = format!("http://{}", listener.local_addr().expect("an address"));
     // No server thread: if a request were sent, this would hang or fail.
-    put_rule_bundles(&endpoint, &[], Duration::from_secs(5)).expect("nothing to send");
+    put_rule_bundles(&pd_http_client(&endpoint), &[], Duration::from_secs(5))
+        .expect("nothing to send");
     drop(listener);
 }
 
@@ -98,15 +125,23 @@ fn a_pd_rejection_is_reported_with_its_status() {
     let server = capture_one_request(listener, "400 Bad Request");
 
     let bundle = new_bundle(9);
-    let error = put_rule_bundles(&endpoint, &[bundle], Duration::from_secs(5))
-        .expect_err("PD refused");
+    let error = put_rule_bundles(
+        &pd_http_client(&endpoint),
+        &[bundle],
+        Duration::from_secs(5),
+    )
+    .expect_err("PD refused");
     let _ = server.join();
 
     // The statement has to fail when PD refuses: Go fails the DDL job rather
-    // than committing a catalog that claims placement PD never accepted.
+    // than committing a catalog that claims placement PD never accepted. The
+    // info syncer's response handler answers `ErrHTTPServiceError` with PD's
+    // body and without the status.
     match error {
-        PlacementDeliveryError::Rejected { status, .. } => assert_eq!(status, 400),
-        other => panic!("expected a rejection carrying PD's status, got {other:?}"),
+        PlacementDeliveryError::Request(detail) => {
+            assert!(detail.starts_with("[domain:8243]"), "{detail}")
+        }
+        other => panic!("expected PD's rejection, got {other:?}"),
     }
 }
 

@@ -52,6 +52,9 @@ pub struct CoprocessorRequestEnvelope {
     pub is_trace_enabled: bool,
     /// Task-local row paging size (field 10).
     pub paging_size: u64,
+    /// Encoded `coprocessor.StoreBatchTask`s batched into this request
+    /// (field 11, Go `copTask.ToPBBatchTasks`).
+    pub tasks: Vec<Vec<u8>>,
     /// Source connection identifier (field 12).
     pub connection_id: u64,
     /// Source connection alias (field 13).
@@ -114,6 +117,13 @@ impl CoprocessorRequestEnvelope {
     #[must_use]
     pub const fn with_paging_size(mut self, paging_size: u64) -> Self {
         self.paging_size = paging_size;
+        self
+    }
+
+    /// Attaches the batched child tasks (Go `req.Tasks = task.ToPBBatchTasks()`).
+    #[must_use]
+    pub fn with_batch_tasks(mut self, tasks: Vec<Vec<u8>>) -> Self {
+        self.tasks = tasks;
         self
     }
 
@@ -185,6 +195,9 @@ impl CoprocessorRequestEnvelope {
         if self.paging_size != 0 {
             encoding::uint64::encode(10, &self.paging_size, buf);
         }
+        for task in &self.tasks {
+            encode_bytes_field(11, task, buf);
+        }
         if self.connection_id != 0 {
             encoding::uint64::encode(12, &self.connection_id, buf);
         }
@@ -237,6 +250,9 @@ impl CoprocessorRequestEnvelope {
         }
         if self.paging_size != 0 {
             len += encoding::uint64::encoded_len(10, &self.paging_size);
+        }
+        for task in &self.tasks {
+            len += bytes_field_len(11, task.len());
         }
         if self.connection_id != 0 {
             len += encoding::uint64::encoded_len(12, &self.connection_id);

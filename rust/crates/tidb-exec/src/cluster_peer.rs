@@ -20,13 +20,64 @@ use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_domain::serverinfo::ServerInfo;
 use tidb_executor::{remote_scan::PushdownScanColumn, DriverError, MysqlError, StmtContext};
 use tidb_proto::{coprocessor, tipb};
-use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext, UnaryCancellation};
-use tidb_txnkv::{DirectUnaryClient, DirectUnaryRequest, EndpointType};
+use tidb_txnkv::driver::tikv_store::TikvStore;
+use tidb_txnkv::rpc::UnaryCancellation;
 
-/// Capability borrowing the production store RPC fleet. Unistore may retain an
-/// owned fleet because its storage requests do not otherwise need network RPC.
+/// Go copr's `SendReqCtx` to a TiDB address (`buildTiDBMemCopTasks`' tasks):
+/// the store's TiKV client, outside region routing.
+trait PeerSender: Send + Sync {
+    fn send(
+        &self,
+        address: &str,
+        request: coprocessor::Request,
+        timeout: Duration,
+        cancel: &UnaryCancellation,
+    ) -> Result<coprocessor::Response, tikv_client::Error>;
+}
+
+impl<S: tikv_client::PdClient> PeerSender for TikvStore<S> {
+    fn send(
+        &self,
+        address: &str,
+        request: coprocessor::Request,
+        timeout: Duration,
+        cancel: &UnaryCancellation,
+    ) -> Result<coprocessor::Response, tikv_client::Error> {
+        self.block_on(async {
+            // Go copr's `getEndpointType(kv.TiDB)`: the request's `StoreTp` is
+            // TiDB, which never batches and which the mock store redirects.
+            let send = self.store().send_request_with_store_type(
+                address,
+                &request,
+                tikv_client::tikv::EndpointType::TiDb,
+                timeout,
+            );
+            tokio::pin!(send);
+            let response = loop {
+                tokio::select! {
+                    response = &mut send => break response,
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {
+                        if cancel.is_cancelled() {
+                            break Err(tikv_client::Error::ContextCanceled);
+                        }
+                    }
+                }
+            }?;
+            response
+                .downcast::<coprocessor::Response>()
+                .map(|response| *response)
+                .map_err(|_| {
+                    tikv_client::Error::StringError("unexpected coprocessor response".to_owned())
+                })
+        })
+    }
+}
+
+/// Outgoing TiDB memory-table and KILL requests over the node's store, as
+/// Go's go through copr over the `KVStore`. On the embedded store they reach
+/// the peer through the mock store's `clientRedirector`, as Go's do.
 pub struct ClusterPeerClient {
-    transport: TonicCoprocessorClient,
+    sender: Arc<dyn PeerSender>,
 }
 
 /// Rows and peer warnings are published together at the statement boundary.
@@ -63,9 +114,11 @@ pub fn peer_addresses(servers: &[ServerInfo], server_id: Option<u64>) -> Vec<Str
 }
 
 impl ClusterPeerClient {
-    /// Retains a request capability; callers keep the unique process owner alive.
-    pub fn new(transport: TonicCoprocessorClient) -> Self {
-        Self { transport }
+    /// The client over `store`.
+    pub fn new<S: tikv_client::PdClient>(store: TikvStore<S>) -> Self {
+        Self {
+            sender: Arc::new(store),
+        }
     }
 
     /// Send Go's TypeKill DAG only to nodes matching the parsed global server ID.
@@ -279,47 +332,34 @@ impl ClusterPeerClient {
         dag: &tipb::DagRequest,
         cancel: &UnaryCancellation,
     ) -> Result<coprocessor::Response, String> {
-        let request = DirectUnaryRequest {
-            endpoint: EndpointType::TiDb,
-            replica_read_type: tidb_txnkv::ClientReplicaReadType::Leader,
-            replica_read: false,
-            stale_read: false,
-            input_request_source: String::new(),
-            predicted_read_bytes: 0,
-            read_replica_scope: "global".into(),
-            txn_scope: "global".into(),
-            context: Default::default(),
-            encoded_request: coprocessor::Request {
-                tp: 103,
-                start_ts: u64::MAX,
-                data: dag.encode_to_vec(),
-                ..Default::default()
-            }
-            .encode_to_vec(),
+        let request = coprocessor::Request {
+            tp: 103,
+            start_ts: u64::MAX,
+            data: dag.encode_to_vec(),
+            ..Default::default()
         };
         let timeout = tidb_config::config_tree::config::get_global_config()
             .tikv_client
             .copr_req_timeout;
-        let call =
-            UnaryCallContext::new(Duration::from_nanos(timeout.max(1) as u64), cancel.clone());
-        let response = self
-            .transport
-            .clone()
-            .send_request_with_context(address, &request, &call);
+        let response = self.sender.send(
+            address,
+            request,
+            Duration::from_nanos(timeout.max(1) as u64),
+            cancel,
+        );
         if cancel.is_cancelled() {
             return Err("Query execution was interrupted".into());
         }
         let response = match response {
-            Ok(response) => coprocessor::Response::decode(response.encoded_response)
-                .map_err(|error| error.to_string())?,
+            Ok(response) => response,
             // Go handleTiDBSendReqErr turns transport failures into warning rows.
             Err(error) => {
+                // `errors.Cause`: the connection annotation is not the kind.
                 let (code, message) = if matches!(
-                    error,
-                    tidb_txnkv::rpc::DirectUnaryClientError::Timeout { .. }
-                ) || error.grpc_code()
-                    == Some(tidb_txnkv::rpc::DirectUnaryGrpcCode::DeadlineExceeded)
-                {
+                    error.cause(),
+                    tikv_client::Error::GrpcAPI(status)
+                        if status.code() == tonic::Code::DeadlineExceeded
+                ) {
                     (9002, format!("TiDB server timeout, address is {address}"))
                 } else {
                     (1105, error.to_string())

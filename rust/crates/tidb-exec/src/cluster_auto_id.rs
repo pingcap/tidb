@@ -64,11 +64,10 @@ use tidb_executor::kv_table::AutoIdCall as UnaryCallContext;
 use tidb_executor::kv_table::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
-use tidb_pd_client::PdClient;
+use tidb_txnkv::transaction::StoreClient;
 use tidb_txnkv::transaction::{
     BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener,
 };
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 
 use crate::cluster_catalog::MetaSnapshot;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
@@ -619,22 +618,20 @@ fn auto_id_schema(db_id: i64, table: &TableInfo) -> i64 {
 /// table read this key as rarely as one connection does. A per-session store
 /// would be correct and would burn a whole step per connection.
 #[derive(Clone)]
-pub struct ClusterAutoIdStore<S = tikv_client::PdRpcClient, P = PdClient>
+pub struct ClusterAutoIdStore<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: RealOptimisticTransactionOpener<S, P>,
+    opener: RealOptimisticTransactionOpener<S>,
     /// Go's `mDBs` hash key the counter field hangs off.
     counter_key: Vec<u8>,
     /// How long each meta read and the commit may take.
     timeout: Duration,
 }
 
-impl<S, P> std::fmt::Debug for ClusterAutoIdStore<S, P>
+impl<S> std::fmt::Debug for ClusterAutoIdStore<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -644,15 +641,14 @@ where
     }
 }
 
-impl<S, P> ClusterAutoIdStore<S, P>
+impl<S> ClusterAutoIdStore<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     /// The counter for `table` in database `db_id`.
     #[must_use]
     pub fn new(
-        opener: RealOptimisticTransactionOpener<S, P>,
+        opener: RealOptimisticTransactionOpener<S>,
         db_id: i64,
         table: &TableInfo,
         timeout: Duration,
@@ -663,7 +659,7 @@ where
     /// The distinct AUTO_RANDOM counter for `table`.
     #[must_use]
     pub fn new_random(
-        opener: RealOptimisticTransactionOpener<S, P>,
+        opener: RealOptimisticTransactionOpener<S>,
         db_id: i64,
         table: &TableInfo,
         timeout: Duration,
@@ -672,7 +668,7 @@ where
     }
 
     pub fn over_key(
-        opener: RealOptimisticTransactionOpener<S, P>,
+        opener: RealOptimisticTransactionOpener<S>,
         counter_key: Vec<u8>,
         timeout: Duration,
     ) -> Self {
@@ -753,10 +749,9 @@ where
     }
 }
 
-impl<S, P> AutoIdStore for ClusterAutoIdStore<S, P>
+impl<S> AutoIdStore for ClusterAutoIdStore<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
         self.transact(|current| {

@@ -14,112 +14,72 @@
 
 //! The PD HTTP calls behind [`tidb_domain::affinity::PdAffinityClient`]:
 //! `CreateAffinityGroups`, `GetAffinityGroups`, `GetAllAffinityGroups` and
-//! `BatchDeleteAffinityGroups` as `tikv/pd/client/http` makes them, over the
-//! node's cluster HTTP client (the CA and client identity PD discovery uses).
+//! `BatchDeleteAffinityGroups` on the info syncer's derivation of the store's
+//! PD HTTP client, which Go hands to `affinity.InitManager(is.pdHTTPCli)`.
 
-use std::collections::BTreeMap;
-use std::time::Duration;
+use std::collections::HashMap;
 
 use tidb_domain::affinity::{
-    query_escape, AffinityGroupKeyRange, AffinityGroupStates, AffinityGroups, PdAffinityClient,
+    AffinityGroup, AffinityGroupState, AffinityGroupStates, AffinityGroups, PdAffinityClient,
     PdHttpError,
 };
+use tikv_client::pd_http;
 
-/// pd `AffinityGroups`.
-const AFFINITY_GROUPS: &str = "/pd/api/v2/affinity-groups";
-/// The request timeout the node's other PD HTTP calls use.
-const PD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// pd `CreateAffinityGroupInput`.
-#[derive(serde::Serialize)]
-struct CreateAffinityGroupInput<'a> {
-    ranges: &'a [AffinityGroupKeyRange],
-}
-
-/// pd `CreateAffinityGroupsRequest`.
-#[derive(serde::Serialize)]
-struct CreateAffinityGroupsRequest<'a> {
-    affinity_groups: BTreeMap<&'a str, CreateAffinityGroupInput<'a>>,
-}
-
-/// pd `AffinityGroupsResponse`.
-#[derive(serde::Deserialize)]
-struct AffinityGroupsResponse {
-    #[serde(default)]
-    affinity_groups: Option<AffinityGroupStates>,
-}
-
-/// pd `BatchDeleteAffinityGroupsRequest`.
-#[derive(serde::Serialize)]
-struct BatchDeleteAffinityGroupsRequest<'a> {
-    ids: &'a [String],
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    force: bool,
-}
-
-/// PD's affinity-group HTTP API at one endpoint.
+/// Go `pdhttp.Client` as the affinity manager calls it.
 pub struct PdHttpAffinityClient {
-    endpoint: String,
-    http: reqwest::blocking::Client,
+    pd_http_client: pd_http::Client,
 }
 
 impl PdHttpAffinityClient {
-    /// The client for `pd_http` (`http://host:port`), switched to HTTPS and
-    /// given the cluster identity when `security` enables TLS.
-    pub fn with_security(
-        pd_http: &str,
-        security: &tidb_pd_client::ClusterSecurity,
-    ) -> Result<Self, String> {
-        let endpoint = if security.is_tls_enabled() {
-            pd_http.replacen("http://", "https://", 1)
-        } else {
-            pd_http.to_owned()
-        };
-        Ok(Self {
-            endpoint: endpoint.trim_end_matches('/').to_owned(),
-            http: crate::cluster_http::cluster_http_client(security)?,
+    /// The client `affinity.InitManager(is.pdHTTPCli)` gets: the info
+    /// syncer's derivation of the store's PD HTTP client.
+    #[must_use]
+    pub fn new(pd_http_client: &pd_http::Client) -> Self {
+        Self {
+            pd_http_client: crate::cluster_http::info_syncer_pd_http_client(pd_http_client),
+        }
+    }
+
+    // One request on the store runtime; the info syncer's `ErrHTTPServiceError`
+    // stays a coded error, as Go's `*errors.Error` does.
+    fn request<T: Send>(
+        request: impl std::future::Future<Output = tikv_client::Result<T>> + Send,
+    ) -> Result<T, PdHttpError> {
+        crate::cluster_http::block_on_pd_http(request).map_err(|message| {
+            if crate::cluster_http::is_http_service_error(&message) {
+                PdHttpError::Coded {
+                    code: tidb_error::tidb::errcode::ErrHTTPServiceError,
+                    message,
+                }
+            } else {
+                PdHttpError::Message(message)
+            }
         })
     }
+}
 
-    /// pd `client.request`: a non-200 answer is the error
-    /// `request pd http api failed with status: '<status>', body: '<body>'`.
-    fn request(
-        &self,
-        method: reqwest::Method,
-        uri: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<Vec<u8>, PdHttpError> {
-        let mut request = self
-            .http
-            .request(method, format!("{}{uri}", self.endpoint))
-            .timeout(PD_HTTP_TIMEOUT);
-        if let Some(body) = body {
-            request = request
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(body);
-        }
-        let response = request
-            .send()
-            .map_err(|error| PdHttpError::Message(error.to_string()))?;
-        let status = response.status();
-        let bytes = response
-            .bytes()
-            .map_err(|error| PdHttpError::Message(error.to_string()))?
-            .to_vec();
-        if status != reqwest::StatusCode::OK {
-            return Err(PdHttpError::Message(format!(
-                "request pd http api failed with status: '{status}', body: '{}'",
-                String::from_utf8_lossy(&bytes)
-            )));
-        }
-        Ok(bytes)
-    }
-
-    fn groups_response(bytes: &[u8]) -> Result<AffinityGroupStates, PdHttpError> {
-        let response: AffinityGroupsResponse = serde_json::from_slice(bytes)
-            .map_err(|error| PdHttpError::Message(error.to_string()))?;
-        Ok(response.affinity_groups.unwrap_or_default())
-    }
+fn affinity_group_states(
+    states: HashMap<String, pd_http::AffinityGroupState>,
+) -> AffinityGroupStates {
+    states
+        .into_iter()
+        .map(|(id, state)| {
+            let group = state.affinity_group;
+            let state = AffinityGroupState {
+                group: AffinityGroup {
+                    id: group.id,
+                    create_timestamp: group.create_timestamp,
+                    leader_store_id: group.leader_store_id,
+                    voter_store_ids: group.voter_store_ids,
+                },
+                phase: state.phase,
+                range_count: state.range_count,
+                region_count: state.region_count,
+                affinity_region_count: state.affinity_region_count,
+            };
+            (id, state)
+        })
+        .collect()
 }
 
 impl PdAffinityClient for PdHttpAffinityClient {
@@ -128,55 +88,41 @@ impl PdAffinityClient for PdHttpAffinityClient {
         groups: &AffinityGroups,
         skip_exist_check: bool,
     ) -> Result<AffinityGroupStates, PdHttpError> {
-        let request = CreateAffinityGroupsRequest {
-            affinity_groups: groups
-                .iter()
-                .map(|(id, ranges)| (id.as_str(), CreateAffinityGroupInput { ranges }))
-                .collect(),
-        };
-        let body = serde_json::to_vec(&request)
-            .map_err(|error| PdHttpError::Message(error.to_string()))?;
-        let uri = if skip_exist_check {
-            format!("{AFFINITY_GROUPS}?skip_exist_check=true")
+        let affinity_groups = groups
+            .iter()
+            .map(|(id, ranges)| {
+                let ranges = ranges
+                    .iter()
+                    .map(|range| pd_http::AffinityGroupKeyRange {
+                        start_key: range.start_key.clone(),
+                        end_key: range.end_key.clone(),
+                    })
+                    .collect();
+                (id.clone(), ranges)
+            })
+            .collect::<HashMap<_, Vec<_>>>();
+        let opts = if skip_exist_check {
+            vec![pd_http::with_skip_exist_check()]
         } else {
-            AFFINITY_GROUPS.to_owned()
+            Vec::new()
         };
-        let bytes = self.request(reqwest::Method::POST, &uri, Some(body))?;
-        Self::groups_response(&bytes)
+        Self::request(
+            self.pd_http_client
+                .create_affinity_groups(&affinity_groups, &opts),
+        )
+        .map(affinity_group_states)
     }
 
     /// pd: with no ids this is `GetAllAffinityGroups`.
     fn get_affinity_groups(&self, ids: &[String]) -> Result<AffinityGroupStates, PdHttpError> {
-        if ids.is_empty() {
-            return self.get_all_affinity_groups();
-        }
-        let query = ids
-            .iter()
-            .map(|id| format!("ids={}", query_escape(id)))
-            .collect::<Vec<_>>()
-            .join("&");
-        let bytes = self.request(
-            reqwest::Method::GET,
-            &format!("{AFFINITY_GROUPS}?{query}"),
-            None,
-        )?;
-        Self::groups_response(&bytes)
+        Self::request(self.pd_http_client.get_affinity_groups(ids)).map(affinity_group_states)
     }
 
     fn get_all_affinity_groups(&self) -> Result<AffinityGroupStates, PdHttpError> {
-        let bytes = self.request(reqwest::Method::GET, AFFINITY_GROUPS, None)?;
-        Self::groups_response(&bytes)
+        Self::request(self.pd_http_client.get_all_affinity_groups()).map(affinity_group_states)
     }
 
-    /// pd: `POST` with the `?delete` query.
     fn batch_delete_affinity_groups(&self, ids: &[String], force: bool) -> Result<(), PdHttpError> {
-        let body = serde_json::to_vec(&BatchDeleteAffinityGroupsRequest { ids, force })
-            .map_err(|error| PdHttpError::Message(error.to_string()))?;
-        self.request(
-            reqwest::Method::POST,
-            &format!("{AFFINITY_GROUPS}?delete"),
-            Some(body),
-        )
-        .map(|_| ())
+        Self::request(self.pd_http_client.batch_delete_affinity_groups(ids, force))
     }
 }

@@ -59,11 +59,7 @@ pub use context::{
 pub use cop_paging::{
     calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
     paging_response_read_bytes, BatchBucketVersionUpdate, CopIterator, CopPagingError,
-    CopPagingOutcome, CopPagingState, DirectUnaryClient, DirectUnaryClientError,
-    DirectUnaryQueryResponse, DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse,
-    DirectUnaryRuntimeConfig, DirectUnaryTransportError, LockedResponseAction,
-    LockedResponseDelegate, LockedResponseObservation, OptimisticLockRecovery,
-    ReadEngineGeneration, RegionRetryWaiter,
+    CopPagingOutcome, CopPagingState, CopRuntimeConfig, ReadEngineGeneration,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,
@@ -101,14 +97,13 @@ pub use request_builder::{
     KvRequestBuildError, KvRequestBuilder, RequestBuilder, TableIndexRangeSpec, TableRangeSpec,
 };
 pub use response_channel::{
-    ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState,
-    CopResponseSink, ResponseChannelUnsupported, ResponseRuntimeStats, SelectResponseIter,
+    CopResponseSink, ResponseChannel, ResponseChannelError, ResponseChannelEvent,
+    ResponseChannelState, ResponseChannelUnsupported, ResponseRuntimeStats, SelectResponseIter,
 };
 pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
-pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSource};
-pub use tidb_txnkv::region;
+pub use tidb_txnkv::lock::{FixedTimestampSource, TimestampSource};
 pub use tidb_txnkv::{
     IsolationLevel, Priority as KvPriority, ReplicaRead, ReplicaReadType, RequestSource,
     RequestType, StoreLabel, StoreType, UnaryCallContext,
@@ -118,9 +113,7 @@ pub use tidb_util::paging::{
     calculate_seek_cnt as calculate_seek_count, grow_paging_size, MIN_ALLOWED_MAX_PAGING_SIZE,
     MIN_PAGING_SIZE, THRESHOLD as PAGING_THRESHOLD,
 };
-pub use transport::{
-    TransportBinding, TransportRequest, TransportRequestError,
-};
+pub use transport::{TransportBinding, TransportRequest, TransportRequestError};
 pub use warning::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 pub mod metrics;

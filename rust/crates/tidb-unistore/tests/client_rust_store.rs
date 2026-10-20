@@ -158,7 +158,12 @@ async fn gc_lock_resolution_clears_an_abandoned_lock_through_the_embedded_store(
 
     // A transaction that prewrote and vanished: its lock's TTL has passed.
     let start_ts = store.current_timestamp().await.unwrap().version();
-    let rpc = store.pd_client().kv_client("store1").await.unwrap();
+    // The embedded store's own client, behind the mock store's redirector.
+    let tidb_unistore::redirector::RedirectedClient::Mock(rpc) =
+        store.pd_client().kv_client("store1").await.unwrap()
+    else {
+        panic!("store1 is the embedded store, not a TiDB peer");
+    };
     {
         let mut handler = rpc.handler().lock().unwrap();
         let context = kvrpcpb::Context {

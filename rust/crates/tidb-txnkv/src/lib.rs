@@ -11,46 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-backed transactional KV primitives for the TiDB Rust rewrite.
-//!
-//! This foundation translates complete dependency-closed contracts from
-//! `pkg/kv/{key,version,keyflags,assertion,error,checker}.go` plus the bounded
-//! transaction-source bitfield in `pkg/kv/option.go`. The bounded RPC and
-//! region modules provide one real BatchCommands transport and one PD-backed
-//! region route. One concrete process authority now shares its PD worker,
-//! maintained RegionCache, lock resolver, and TiKV transport across reads and
-//! writes, for both optimistic and pessimistic transactions: a pessimistic
-//! transaction acquires statement-scoped locks at its own `for_update_ts` and
-//! then finishes through the same two-phase commit.
-//!
-//! Async commit, 1PC, fair (aggressive) locking's `WakeUpModeForceLock`,
-//! pessimistic value caching (`return_values`/`check_existence`), and TLS
-//! remain outside this boundary. So does most of the SQL seam. `BEGIN
-//! PESSIMISTIC` / `BEGIN OPTIMISTIC` / `@@tidb_txn_mode` now resolve to a mode
-//! the session records (`tidb-planner`'s `txn_mode`), and a lock failure maps
-//! to the SQL error TiDB reports for it (`tidb-exec`'s
-//! `pessimistic_lock_error`), but no SQL statement drives
-//! [`transaction::RealPessimisticTransaction`] yet.
-//!
-//! The reason recorded here used to be that "the real-TiKV node still refuses
-//! writes inside an explicit transaction, so there is no statement to take a
-//! lock for". That is no longer the whole picture, and the difference is
-//! observable: the CLUSTER-SESSION node runs multi-statement transactions
-//! today, so it has the statements -- it just runs them OPTIMISTICALLY while
-//! `@@tidb_txn_mode` answers `pessimistic`. Measured on a live server, two
-//! connections updating one row:
-//!
-//! ```text
-//! A: begin; update wc set b = 100 where a = 1;
-//! B: begin; update wc set b = 200 where a = 1;   -- returns at once
-//! A: commit;
-//! B: commit;  -- ERROR 9007 ... reason: Optimistic; final b = 100
-//! ```
-//!
-//! TiDB blocks B's UPDATE on A's lock, lets it through after A commits, and
-//! ends at `b = 200`. Binding this transaction type to DML inside an explicit
-//! transaction on that path is what closes the gap; the type is already here
-//! waiting for a driver.
+//! TiDB's `pkg/kv` and `pkg/store/driver`: the key, handle, option and error
+//! contracts, the memory buffer and union store, and the `tikvStore` driver
+//! over the node's client-rust store (`driver::tikv_store`), whose region
+//! cache, TiKV clients, lock resolver, oracle and PD client every
+//! transaction, coprocessor read and MPP request shares -- client-rust is
+//! the Rust client-go.
 
 mod assertion;
 mod batch_getter;
@@ -81,15 +47,11 @@ mod mpp_probe;
 mod mvcc_metadata;
 mod new_txn;
 mod option;
-pub mod pd_capability;
-mod pd_loader;
 mod prefix_ops;
 mod range_diagnostics;
-mod read_runtime;
-pub mod region;
 mod resource_group;
 mod resource_group_tag;
-mod retry;
+pub mod retry;
 pub mod rpc;
 mod tiflash;
 pub mod transaction;
@@ -116,10 +78,7 @@ pub use checker::{
 };
 pub use client::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
-    ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse,
-    DriverDefaults, DriverOptions, EndpointType, LockWaitInfoClient, PdClientConfig, PdOptions,
-    SecurityConfig, SynchronousBatchRequestDispatcher, TikvClientConfig, TikvDriverConfig,
-    TraceInfo, TxnLocalLatchesConfig,
+    ClientReplicaReadType, EndpointType, TraceInfo,
 };
 pub use counter::{get_int64, inc_int64, CounterError, CounterStorage};
 pub use driver::mem_buffer::{
@@ -128,10 +87,6 @@ pub use driver::mem_buffer::{
 };
 pub use driver::tikv_mem_buffer::{
     TikvMemBufferBackend, TikvMemBufferError, TikvMemBufferIterator, TikvMemBufferSnapshotGetter,
-};
-pub use driver::tikv_opener::{
-    TikvClusterSource, TikvCommitProtocol, TikvInProcessSource, TikvTransactionOpener,
-    TikvTransactionSource,
 };
 pub use driver::tikv_transaction::{TikvTransactionDriver, TikvTransactionError};
 pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
@@ -211,14 +166,10 @@ pub use option::{
     INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, INTERNAL_TXN_SYS_VAR, INTERNAL_TXN_TELEMETRY,
     INTERNAL_TXN_TOOLS, INTERNAL_TXN_TRACE, INTERNAL_TXN_TTL, INTERNAL_TXN_WORKLOAD_LEARNING,
 };
-pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
 pub use range_diagnostics::{
     ensure_monotonic_key_ranges, first_out_of_bound_key_range, min_start_and_max_end_key,
     range_issues_for_key_ranges, OutOfBoundReason, RangeIssueStats,
-};
-pub use read_runtime::{
-    ResolvingLock, ResolvingLocksGuard, SharedReadAuthority, SharedReadOpener, SharedReadRuntime,
 };
 pub use resource_group::{
     set_decode_table_id, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
@@ -228,18 +179,10 @@ pub use resource_group_tag::{
     FirstKeyRequest, ResourceGroupTagDecodeError,
 };
 pub use retry::{
-    retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,
-    RETRY_BACKOFF_CAP_MS,
+    retry_backoff_upper_bound_ms, should_retry_after_failure, RegionBackoffBudget,
+    RegionBackoffExhausted, RegionBackoffKind, RETRY_BACKOFF_BASE_MS, RETRY_BACKOFF_CAP_MS,
 };
-pub use rpc::{
-    batch::{
-        BatchCommandCompletion, BatchCommandEntry, BatchCommandTag, BatchCoprocessorPending,
-        BatchInflightError, BatchPublicationReceipt, BatchRoute, BatchWireError,
-        OpaqueBatchCommand,
-    },
-    DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
-    DirectUnaryTransportClass, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
-};
+pub use rpc::{UnaryCallContext, UnaryCancellation};
 pub use tiflash::{
     get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead,
     MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,

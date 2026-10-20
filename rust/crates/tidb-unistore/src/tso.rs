@@ -115,17 +115,11 @@ impl tidb_txnkv::lock::TimestampSource for Tso {
     }
 }
 
-/// Go `MockPD` as the coordinator's PD surface: the embedded oracle behind
-/// [`tidb_txnkv::pd_capability::PdCapability`]. Cluster identity is the
-/// bootstrap cluster; a timestamp future is already answered, because the
-/// oracle dispatches nothing; and the GC safe point is ZERO — the embedded
-/// store never garbage-collects, so no read floor ever rises, which is
-/// Go's own unistore behavior for a store whose safe-point loop has no PD
-/// to ask.
+/// The embedded node's oracle (Go `MockPD`'s TSO), shared by the store's
+/// MVCC layer and its PD client.
 #[derive(Clone, Debug, Default)]
 pub struct InProcessPd {
     tso: std::sync::Arc<Tso>,
-    external_ts: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl InProcessPd {
@@ -139,44 +133,6 @@ impl InProcessPd {
     #[must_use]
     pub fn oracle(&self) -> std::sync::Arc<Tso> {
         std::sync::Arc::clone(&self.tso)
-    }
-}
-
-impl tidb_txnkv::pd_capability::PdCapability for InProcessPd {
-    type TsFuture = tidb_txnkv::pd_capability::ReadyTimestamp;
-
-    fn cluster_id(&self) -> u64 {
-        crate::region_loader::IN_PROCESS_CLUSTER_ID
-    }
-
-    fn store_addresses(&self) -> Result<Vec<String>, String> {
-        Ok(vec![crate::client::IN_PROCESS_ADDRESS.to_owned()])
-    }
-
-    fn timestamp_future(&self) -> Result<Self::TsFuture, String> {
-        Ok(tidb_txnkv::pd_capability::ReadyTimestamp(
-            self.tso.get_composed_ts(),
-        ))
-    }
-
-    fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
-        use std::sync::atomic::Ordering;
-        let Some(ts) = value else {
-            return Ok(self.external_ts.load(Ordering::Acquire));
-        };
-        if ts > self.tso.get_composed_ts() {
-            return Err("external timestamp is greater than global tso".into());
-        }
-        self.external_ts
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
-                (ts >= old).then_some(ts)
-            })
-            .map_err(|_| "cannot decrease the external timestamp".to_owned())?;
-        Ok(ts)
-    }
-
-    fn gc_safe_point(&self) -> Result<u64, String> {
-        Ok(0)
     }
 }
 
@@ -235,27 +191,5 @@ mod tests {
         let first = tso.current_ts().expect("a ts");
         let second = tso.current_ts().expect("a ts");
         assert!(second > first, "fresh on every call, never repeated");
-    }
-
-    #[test]
-    fn the_embedded_pd_serves_the_coordinators_capability() {
-        use tidb_txnkv::pd_capability::{PdCapability, TimestampFutureWait};
-        let pd = InProcessPd::new();
-        assert_eq!(pd.cluster_id(), crate::region_loader::IN_PROCESS_CLUSTER_ID);
-        let first = pd
-            .timestamp_future()
-            .expect("dispatches")
-            .wait()
-            .expect("ts");
-        let second = pd
-            .timestamp_future()
-            .expect("dispatches")
-            .wait()
-            .expect("ts");
-        assert!(
-            second > first,
-            "the oracle stays monotonic through the seam"
-        );
-        assert_eq!(pd.gc_safe_point(), Ok(0), "no read floor ever rises");
     }
 }

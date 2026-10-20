@@ -40,8 +40,8 @@ use tidb_stats::{
     PartitionStatsItem, StatsLoadedStatus, TopN,
 };
 use tidb_txnkv::rpc::UnaryCallContext;
+use tidb_txnkv::transaction::StoreClient;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, RealOptimisticTransactionOpener};
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
 use tidb_util::sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
@@ -471,8 +471,8 @@ impl ResolvedClusterAnalyze {
 }
 
 /// Reads and merges the saved table-level ANALYZE options before execution.
-pub fn resolve_cluster_analyze_statement<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn resolve_cluster_analyze_statement<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     statement: &AnalyzeStatement,
     timeout: Duration,
     resource_group: &str,
@@ -893,8 +893,8 @@ fn final_column_choice(
 
 /// Saves the merged raw options in Go's later, independent restricted
 /// transaction. Callers treat failure as a statement warning.
-pub fn save_cluster_analyze_options<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn save_cluster_analyze_options<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
     row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
@@ -1039,8 +1039,8 @@ fn realtime_count_of(row_count: u64) -> i64 {
 }
 
 /// Runs and commits one `ANALYZE TABLE`.
-pub fn commit_cluster_analyze<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn commit_cluster_analyze<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     resolved: &ResolvedClusterAnalyze,
     resource_group: &str,
     timeout: Duration,
@@ -1401,8 +1401,8 @@ fn merge_analyze_report(report: &mut ClusterAnalyzeReport, next: ClusterAnalyzeR
     }
 }
 
-fn commit_cluster_global_stats<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn commit_cluster_global_stats<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     resolved: &ResolvedClusterAnalyze,
     report: &mut ClusterAnalyzeReport,
     column_ids: &[i64],
@@ -1629,8 +1629,8 @@ fn commit_cluster_global_stats<S: StoreClient, P: StorePdCapability>(
     Ok(())
 }
 
-fn record_analyze_history<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn record_analyze_history<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     version: u64,
     timeout: Duration,
@@ -2201,8 +2201,8 @@ fn merge_global_items<TZ: TimeZone + Sync>(
     Ok(result)
 }
 
-fn commit_global_stats_item<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn commit_global_stats_item<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     row_count: i64,
     modify_count: i64,
@@ -2273,8 +2273,8 @@ fn refresh_slow_stats_save_version(
     })
 }
 
-fn refresh_stats_meta_version<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn refresh_stats_meta_version<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     timeout: Duration,
     row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
@@ -2301,8 +2301,8 @@ fn refresh_stats_meta_version<S: StoreClient, P: StorePdCapability>(
     })
 }
 
-fn commit_cluster_analyze_target<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn commit_cluster_analyze_target<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     statement: &AnalyzeStatement,
     options: &tidb_executor::analyze::PhysicalAnalyzeOptions,
     timeout: Duration,
@@ -2364,7 +2364,7 @@ fn commit_cluster_analyze_target<S: StoreClient, P: StorePdCapability>(
             selected_columns_for_task,
             crate::cluster_analyze::sampling::scan_concurrency(
                 statement.scan_concurrency,
-                opener.pd(),
+                opener.store().pd_http_client(),
                 timeout,
             ),
             timeout,
@@ -2510,8 +2510,8 @@ fn commit_cluster_analyze_target<S: StoreClient, P: StorePdCapability>(
     Ok(receipt)
 }
 
-fn commit_cluster_independent_index<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn commit_cluster_independent_index<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     statement: &AnalyzeStatement,
     physical_id: Option<i64>,
     index_id: i64,
@@ -2606,8 +2606,8 @@ fn commit_cluster_independent_index<S: StoreClient, P: StorePdCapability>(
     Ok(receipt)
 }
 
-fn finish_analyze_save<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn finish_analyze_save<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     mut version: u64,
     started: Instant,
@@ -3035,7 +3035,7 @@ mod tests {
     use tidb_stats::histogram::{Bucket, Histogram};
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
     use tidb_stats::{FmSketch, GlobalStatsMergeMode, StatsLoadedStatus, MAX_SKETCH_SIZE};
-    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::rpc::UnaryCallContext;
     use tidb_txnkv::transaction::{
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,

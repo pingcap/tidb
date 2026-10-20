@@ -17,41 +17,29 @@
 //! boundary: PD's HTTP API, which is where placement rules live. Go reaches
 //! it through `github.com/tikv/pd/client/http` --
 //! `PDPlacementManager.PutRuleBundles` calls `SetPlacementRuleBundles`
-//! (`pkg/domain/infosync/placement_manager.go:66`) -- and nothing in this
-//! tree's gRPC PD client speaks it. `tikv/client-rust` does not either: it
-//! exports raw and transactional KV over gRPC and no PD administrative API,
-//! so it is not the analogue of the package Go uses here.
-//!
-//! The contract is read from PD's own client rather than guessed:
-//! `client/http/api.go` defines
-//! `PlacementRuleBundle = "/pd/api/v1/config/placement-rule"` and
-//! `PlacementRuleBundleWithPartialParameter(partial)` appending
-//! `?partial=%t`; `client/http/interface.go` shows `SetPlacementRuleBundles`
-//! marshalling `[]*GroupBundle` and POSTing it. TiDB passes `partial=true`.
+//! (`pkg/domain/infosync/placement_manager.go:66`) on the info syncer's
+//! derivation of the store's PD HTTP client -- and this module calls the
+//! same client-rust port of it (`tikv_client::pd_http`).
 //!
 //! The bundle JSON needs no wire type of its own: [`tidb_placement::Bundle`]
 //! already serialises to PD's four fields -- `group_id`, `group_index`,
-//! `group_override`, `rules`.
+//! `group_override`, `rules` -- which is why Go can cast it to
+//! `*pd.GroupBundle`; the cast here goes through that JSON.
 
 use std::time::Duration;
 
 use tidb_placement::Bundle;
+use tikv_client::pd_http;
 
 /// Why a bundle delivery did not happen.
 #[derive(Debug)]
 pub enum PlacementDeliveryError {
     /// The bundles could not be encoded.
     Encode(String),
-    /// The request could not be built or sent.
-    Transport(String),
-    /// PD answered, and not with success. Carries the status and body, which
-    /// is what PD puts its own diagnostic in.
-    Rejected {
-        /// The HTTP status PD returned.
-        status: u16,
-        /// PD's response body.
-        detail: String,
-    },
+    /// The PD HTTP request failed: it could not be sent, PD answered with a
+    /// status other than success (the error carries PD's body, which is what
+    /// PD puts its own diagnostic in), or it ran past its deadline.
+    Request(String),
     /// A runtime could not be started to drive the request.
     Runtime(String),
 }
@@ -60,22 +48,29 @@ impl std::fmt::Display for PlacementDeliveryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Encode(detail) => write!(formatter, "encoding placement bundles: {detail}"),
-            Self::Transport(detail) => write!(formatter, "sending placement bundles: {detail}"),
-            Self::Rejected { status, detail } => {
-                write!(
-                    formatter,
-                    "PD rejected the placement bundles ({status}): {detail}"
-                )
-            }
+            Self::Request(detail) => write!(formatter, "sending placement bundles: {detail}"),
             Self::Runtime(detail) => write!(formatter, "placement delivery runtime: {detail}"),
         }
     }
 }
 
-/// Go `PDPlacementManager.PutRuleBundles`: POSTs every bundle to PD.
-///
-/// `endpoint` is PD's client address, the same one the gRPC client connects
-/// to -- PD serves its HTTP API there as well.
+// One request on the store runtime, bounded by the caller's deadline (the
+// timer is created inside the runtime).
+fn request_pd<T: Send>(
+    timeout: Duration,
+    request: impl std::future::Future<Output = tikv_client::Result<T>> + Send,
+) -> Result<T, PlacementDeliveryError> {
+    tidb_txnkv::driver::tikv_store::block_on_store_runtime(async move {
+        tokio::time::timeout(timeout, request).await
+    })
+    .map_err(PlacementDeliveryError::Runtime)?
+    .map_err(|_| PlacementDeliveryError::Request("PD HTTP request timed out".to_owned()))?
+    .map_err(|error| PlacementDeliveryError::Request(error.to_string()))
+}
+
+/// Go `PDPlacementManager.PutRuleBundles`: POSTs every bundle to PD through
+/// `SetPlacementRuleBundles(ctx, bundles, true)`, on the info syncer's
+/// derivation of the store's PD HTTP client `pd_http_client`.
 ///
 /// Go sends `partial=true`, which means the named groups are replaced and
 /// groups this request does not mention are left alone. `partial=false` would
@@ -89,170 +84,76 @@ impl std::fmt::Display for PlacementDeliveryError {
 /// Returns [`PlacementDeliveryError`] when the bundles cannot be encoded, the
 /// request cannot be sent, or PD answers with a non-success status.
 pub fn put_rule_bundles(
-    endpoint: &str,
+    pd_http_client: &pd_http::Client,
     bundles: &[Bundle],
     timeout: Duration,
 ) -> Result<(), PlacementDeliveryError> {
     if bundles.is_empty() {
         return Ok(());
     }
-    let body = serde_json::to_vec(bundles)
+    // Go's `(*pd.GroupBundle)(bundle)` cast.
+    let rule_bundles = bundles
+        .iter()
+        .map(|bundle| serde_json::to_value(bundle).and_then(serde_json::from_value))
+        .collect::<Result<Vec<pd_http::GroupBundle>, _>>()
         .map_err(|error| PlacementDeliveryError::Encode(error.to_string()))?;
-    let url = format!(
-        "{}/pd/api/v1/config/placement-rule?partial=true",
-        endpoint.trim_end_matches('/')
-    );
-    // The DDL path is synchronous, so the request is driven on a
-    // current-thread runtime of its own -- the same shape `PdClient` uses to
-    // present a synchronous API over tonic.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| PlacementDeliveryError::Runtime(error.to_string()))?;
-    runtime.block_on(async move {
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
-        let response = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .body(body)
-            .send()
-            .await
-            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
-        let status = response.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        let detail = response.text().await.unwrap_or_default();
-        Err(PlacementDeliveryError::Rejected {
-            status: status.as_u16(),
-            detail,
-        })
-    })
-}
-
-/// Go `placement.TiFlashRuleGroupID`.
-const TIFLASH_RULE_GROUP_ID: &str = "tiflash";
-/// Go `placement.RuleIndexTiFlash`.
-const RULE_INDEX_TIFLASH: i64 = 120;
-
-/// Go `pdhttp`'s `rawKeyToKeyHexStr`: the memcomparable-encoded key in hex.
-fn raw_key_to_key_hex_str(key: &[u8]) -> String {
-    if key.is_empty() {
-        return String::new();
-    }
-    let mut encoded = Vec::new();
-    tidb_codec::encode_bytes(&mut encoded, key);
-    encoded.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// Go `infosync.MakeNewRule(id, 0, nil)` as the delete operation
-/// `SetPlacementRuleBatch` sends for a zero count (`pd.RuleOp` JSON).
-fn tiflash_rule_delete_op(physical_table_id: i64) -> serde_json::Value {
-    serde_json::json!({
-        "group_id": TIFLASH_RULE_GROUP_ID,
-        "id": format!("table-{physical_table_id}-r"),
-        "index": RULE_INDEX_TIFLASH,
-        "start_key": raw_key_to_key_hex_str(
-            &tidb_codec::table_key::gen_table_record_prefix(physical_table_id),
-        ),
-        "end_key": raw_key_to_key_hex_str(
-            &tidb_codec::table_key::encode_table_prefix(physical_table_id + 1),
-        ),
-        "role": "learner",
-        "is_witness": false,
-        "count": 0,
-        "label_constraints": [{"key": "engine", "op": "in", "values": ["tiflash"]}],
-        "action": "del",
-        "delete_by_id_prefix": false,
-    })
+    let pd_http_client = crate::cluster_http::info_syncer_pd_http_client(pd_http_client);
+    request_pd(
+        timeout,
+        pd_http_client.set_placement_rule_bundles(&rule_bundles, true),
+    )
 }
 
 /// Go `infosync.DeleteTiFlashPlacementRules`: removes the TiFlash replica
 /// rule of every physical table, through the TiFlash replica manager's
-/// `SetPlacementRuleBatch` (the `tiflash` rule group configured first, as
-/// `SetTiFlashGroupConfig` does, then one delete operation per table).
+/// `SetPlacementRuleBatch` -- `SetTiFlashGroupConfig` first, then one
+/// `RuleOpDel` per table's `MakeNewRule(id, 0, nil)` -- on the info syncer's
+/// derivation of the store's PD HTTP client `pd_http_client`.
 ///
 /// # Errors
 ///
 /// Returns [`PlacementDeliveryError`] when a request cannot be sent or PD
 /// answers with a non-success status.
 pub fn delete_tiflash_placement_rules(
-    endpoint: &str,
+    pd_http_client: &pd_http::Client,
     physical_table_ids: &[i64],
     timeout: Duration,
 ) -> Result<(), PlacementDeliveryError> {
-    let endpoint = endpoint.trim_end_matches('/').to_owned();
-    let operations: Vec<_> = physical_table_ids
+    let pd_http_client = crate::cluster_http::info_syncer_pd_http_client(pd_http_client);
+    let rule_ops: Vec<_> = physical_table_ids
         .iter()
         .map(|&id| tiflash_rule_delete_op(id))
         .collect();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| PlacementDeliveryError::Runtime(error.to_string()))?;
-    runtime.block_on(async move {
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
-        let rejected =
-            |status: reqwest::StatusCode, detail: String| PlacementDeliveryError::Rejected {
-                status: status.as_u16(),
-                detail,
-            };
-        // Go `SetTiFlashGroupConfig`: keep a group already at the TiFlash
-        // index without override; otherwise (re)write it.
-        let response = client
-            .get(format!(
-                "{endpoint}/pd/api/v1/config/rule_group/{TIFLASH_RULE_GROUP_ID}"
-            ))
-            .send()
-            .await
-            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(rejected(status, body));
-        }
-        let group: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-        let configured = group.get("index").and_then(serde_json::Value::as_i64)
-            == Some(RULE_INDEX_TIFLASH)
-            && !group
-                .get("override")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-        if !configured {
-            let response = client
-                .post(format!("{endpoint}/pd/api/v1/config/rule_group"))
-                .header("Content-Type", "application/json")
-                .body(
-                    serde_json::json!({"id": TIFLASH_RULE_GROUP_ID, "index": RULE_INDEX_TIFLASH})
-                        .to_string(),
-                )
-                .send()
-                .await
-                .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
-            let status = response.status();
-            if !status.is_success() {
-                return Err(rejected(status, response.text().await.unwrap_or_default()));
-            }
-        }
-        let response = client
-            .post(format!("{endpoint}/pd/api/v1/config/rules/batch"))
-            .header("Content-Type", "application/json")
-            .body(serde_json::Value::Array(operations).to_string())
-            .send()
-            .await
-            .map_err(|error| PlacementDeliveryError::Transport(error.to_string()))?;
-        let status = response.status();
-        if status.is_success() {
-            return Ok(());
-        }
-        Err(rejected(status, response.text().await.unwrap_or_default()))
-    })
+    // Go `SetTiFlashGroupConfig`: keep a group already at the TiFlash index
+    // without override; otherwise (re)write it.
+    let group_config = request_pd(
+        timeout,
+        pd_http_client.get_placement_rule_group_by_id(tidb_placement::TIFLASH_RULE_GROUP_ID),
+    )?;
+    if group_config.index != tidb_placement::RULE_INDEX_TIFLASH || group_config.r#override {
+        request_pd(
+            timeout,
+            pd_http_client.set_placement_rule_group(&pd_http::RuleGroup {
+                id: tidb_placement::TIFLASH_RULE_GROUP_ID.to_owned(),
+                index: tidb_placement::RULE_INDEX_TIFLASH,
+                r#override: false,
+            }),
+        )?;
+    }
+    request_pd(
+        timeout,
+        pd_http_client.set_placement_rule_in_batch(&rule_ops),
+    )
+}
+
+/// Go `doSetPlacementRuleBatch`'s operation for a zero-count
+/// `infosync.MakeNewRule(id, 0, nil)`: a `RuleOpDel`.
+fn tiflash_rule_delete_op(physical_table_id: i64) -> pd_http::RuleOp {
+    pd_http::RuleOp {
+        rule: crate::tiflash_replica_manager::make_new_rule(physical_table_id, 0, &[]),
+        action: pd_http::RULE_OP_DEL,
+        delete_by_id_prefix: false,
+    }
 }
 
 #[cfg(test)]
@@ -261,7 +162,7 @@ mod tiflash_rule_tests {
 
     #[test]
     fn a_tiflash_rule_delete_is_go_make_new_rule_with_a_zero_count() {
-        let op = tiflash_rule_delete_op(100);
+        let op = serde_json::to_value(tiflash_rule_delete_op(100)).unwrap();
         assert_eq!("tiflash", op["group_id"]);
         assert_eq!("table-100-r", op["id"]);
         assert_eq!(120, op["index"]);

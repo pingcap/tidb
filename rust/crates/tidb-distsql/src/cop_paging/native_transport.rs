@@ -20,14 +20,23 @@
 //! returns a region error (`handleCopResponse`), and resolving the locks a
 //! read meets (`handleLockErr`). Sending is the store's: client-go's
 //! `RegionRequestSender.SendReq`, which picks the replica and retries the
-//! failures and region errors it owns, charging the task's `Backoffer`.
+//! failures and region errors it owns, charging the task's `Backoffer`. The
+//! `Backoffer` carries the request's ctx interceptors, so TopSQL's KV-exec
+//! counter sees every RPC, retries included (Go
+//! `distsql.WithSQLKvExecCounterInterceptor`).
+//!
+//! Tasks split at the cached region's buckets (Go `SplitKeyRangesByBuckets`),
+//! a newer bucket version reported by TiKV refreshes them in the background
+//! (`UpdateBucketsIfNeeded`), and "Request range exceeds bound" rebuilds a
+//! task without buckets. A request that `checkStoreBatchCopr` admits batches
+//! tasks by store; the children's responses are served through the parent's
+//! channel and the children it did not serve run as tasks of their own
+//! (`handleBatchCopResponse`).
 //!
 //! # Narrowings, by name
 //!
-//! * Buckets and `StoreBatchCoprocessor` are not used yet (plan Step 6e-6).
-//! * TopSQL's KV-exec counter is marked once per task send, for the store
-//!   that answered; Go's `KvExecCounter.RPCInterceptor` marks every RPC,
-//!   retries included.
+//! * Go's `copIterator.GetStoreBatchInfo` counters (batched and fallback
+//!   task counts) are not kept: nothing in this node reports them.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -48,8 +57,8 @@ use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
 
 use super::{
-    build_tikv_unary_request, decode_tikv_unary_response, CopPagingState, CopReadTaskError,
-    CopReadTaskRuntime, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
+    build_tikv_unary_request, decode_tikv_unary_response, BatchedRemain, BatchedRemainCause,
+    CopPagingState, CopReadTaskError, CopReadTaskResponse, CopReadTaskRuntime, CopRuntimeConfig,
 };
 
 /// Why a read stopped: the task state machine's own errors keep their type,
@@ -82,7 +91,11 @@ impl From<String> for NativeCopError {
 impl From<NativeCopError> for QueryResponseError {
     fn from(error: NativeCopError) -> Self {
         match error {
-            NativeCopError::Task(error) => DirectUnaryTransportError::from(error).into(),
+            NativeCopError::Task(CopReadTaskError::MaxKeysRead) => Self::Sql {
+                code: tidb_error::tidb::errcode::ErrMaxKeysReadExceeded,
+                message: "tidb_max_keys_read limit exceeded".to_owned(),
+            },
+            NativeCopError::Task(error) => Self::Source(format!("cop read task failed: {error}")),
             // Go `ToTiDBErr`: an exhausted backoff is its class's storage error.
             NativeCopError::Client(error) => {
                 match tidb_txnkv::driver::tikv_transaction::client_backoff_kind(&error) {
@@ -110,6 +123,10 @@ impl From<NativeCopError> for QueryResponseError {
 /// its region-miss rebuilds and its lock resolution.
 const COP_NEXT_MAX_BACKOFF_MS: u64 = 20_000;
 
+/// Go `maxExceedsBoundRetries`: rebuilds without buckets after a
+/// bucket-less task still met "Request range exceeds bound".
+const MAX_EXCEEDS_BOUND_RETRIES: u32 = 3;
+
 /// Go `buildCopTasks`' locations: the regions covering `ranges`, as task
 /// topology.
 fn locate<S: NativeCopStore + ?Sized>(
@@ -133,6 +150,24 @@ fn region_topology(region: &tikv_client::RegionWithLeader) -> RegionTaskTopology
             role: peer.role,
             is_witness: peer.is_witness,
         });
+    // Go `SplitKeyRangesByBuckets` over the cached region's buckets
+    // (`loc.Buckets`, whose keys include the region's own bounds).
+    let (bucket_keys, buckets_version) = region.buckets.as_ref().map_or_else(
+        || (Vec::new(), 0),
+        |buckets| {
+            let keys = buckets
+                .keys
+                .iter()
+                .filter(|key| {
+                    key.as_slice() > region.region.start_key.as_slice()
+                        && (region.region.end_key.is_empty()
+                            || key.as_slice() < region.region.end_key.as_slice())
+                })
+                .cloned()
+                .collect();
+            (keys, buckets.version)
+        },
+    );
     RegionTaskTopology {
         region_id: region.region.id,
         region_epoch: Some(RegionTaskEpoch {
@@ -143,7 +178,8 @@ fn region_topology(region: &tikv_client::RegionWithLeader) -> RegionTaskTopology
         peer,
         start_key: region.region.start_key.clone(),
         end_key: region.region.end_key.clone(),
-        ..RegionTaskTopology::default()
+        bucket_keys,
+        buckets_version,
     }
 }
 
@@ -156,7 +192,7 @@ fn observation_time() -> Duration {
 /// Go `copr.CopClient` over the node's client-rust store.
 pub struct NativeCopTransport<S: ?Sized> {
     store: Arc<S>,
-    config: DirectUnaryRuntimeConfig,
+    config: CopRuntimeConfig,
     event_callback: Option<tidb_txnkv::EventCallback>,
 }
 
@@ -164,7 +200,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopTransport<S> {
     /// A transport over `store` with `config`'s timeout, cache and paging
     /// policy.
     #[must_use]
-    pub fn new(store: Arc<S>, config: DirectUnaryRuntimeConfig) -> Self {
+    pub fn new(store: Arc<S>, config: CopRuntimeConfig) -> Self {
         Self {
             store,
             config,
@@ -270,6 +306,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             logical_index: 0,
             closed: false,
             backoffers: BTreeMap::new(),
+            exceeds_bound: BTreeMap::new(),
             snapshot_locks: Arc::default(),
         };
         // Go's `copIteratorWorker`s run on the query worker runtime.
@@ -326,6 +363,10 @@ pub struct NativeCopResponse<S: ?Sized> {
     closed: bool,
     /// Go's per-task `bo`, by logical task.
     backoffers: BTreeMap<u64, CopBackoffer>,
+    /// Go `copTask.skipBuckets` and `exceedsBoundRetry`, by logical task: a
+    /// task present here was rebuilt without bucket splitting that many
+    /// times.
+    exceeds_bound: BTreeMap<u64, u32>,
     /// Go `ClientHelper`'s resolved and committed locks for this snapshot,
     /// shared by its tasks.
     snapshot_locks: Arc<std::sync::Mutex<SnapshotLockSet>>,
@@ -348,11 +389,33 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
     }
 
     fn backoffer(&mut self, logical_task_id: u64) -> CopBackoffer {
+        let counter = self.kv_exec_counter.clone();
         Arc::clone(self.backoffers.entry(logical_task_id).or_insert_with(|| {
-            Arc::new(tokio::sync::Mutex::new(tikv_client::tikv::Backoffer::new(
-                tikv_client::async_util::Cancellation::default(),
-                COP_NEXT_MAX_BACKOFF_MS,
-            )))
+            // Go `distsql.WithSQLKvExecCounterInterceptor` on the request's
+            // ctx: TopSQL's counter sees every RPC the task's sends issue,
+            // the sender's retries and lock resolution included.
+            let mut interceptors = tikv_client::RpcInterceptorChain::new();
+            interceptors.link(tikv_client::new_rpc_interceptor(
+                "kv-exec-counter",
+                move |target, _request, next| {
+                    counter.mark(target);
+                    Box::pin(next())
+                        as std::pin::Pin<
+                            Box<
+                                dyn std::future::Future<Output = tikv_client::RpcDispatchResult>
+                                    + Send
+                                    + '_,
+                            >,
+                        >
+                },
+            ));
+            Arc::new(tokio::sync::Mutex::new(
+                tikv_client::tikv::Backoffer::new(
+                    tikv_client::async_util::Cancellation::default(),
+                    COP_NEXT_MAX_BACKOFF_MS,
+                )
+                .with_rpc_interceptor(interceptors),
+            ))
         }))
     }
 
@@ -394,33 +457,77 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         let (encoded, address) = match sent {
             NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
             NativeCopSend::RegionError(error) => {
-                return self.rebuild_after_region_error(
-                    logical_task_id,
+                // No response reached the store: every batched child remains
+                // (Go `handleBatchRemainsOnErr` with an empty response).
+                let remains = self.runtime.accept_batch_responses(
                     attempt_id,
+                    &tidb_proto::CoprocessorResponse::default(),
+                    "",
+                )?;
+                self.rebuild_after_region_error(logical_task_id, attempt_id, &backoffer, error)?;
+                return self.schedule_batched_remains(
+                    logical_task_id,
                     &backoffer,
-                    error,
+                    &request.context,
+                    remains,
                 );
             }
         };
         let response =
             decode_tikv_unary_response(encoded.as_slice()).map_err(|error| error.to_string())?;
+        // Go `handleBatchCopResponse` / `handleBatchRemainsOnErr`: the batched
+        // children are served, or remain, whatever the parent's own outcome.
+        let remains =
+            self.runtime
+                .accept_batch_responses(attempt_id, response.response_ref(), &address)?;
+        self.handle_parent_response(
+            logical_task_id,
+            attempt_id,
+            &backoffer,
+            &request.context,
+            region,
+            address,
+            response,
+        )?;
+        self.schedule_batched_remains(logical_task_id, &backoffer, &request.context, remains)
+    }
+
+    /// Go `handleCopResponse` for the task's own response.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_parent_response(
+        &mut self,
+        logical_task_id: u64,
+        attempt_id: u64,
+        backoffer: &CopBackoffer,
+        context: &tidb_proto::KvrpcContext,
+        region: (u64, u64, u64),
+        address: String,
+        response: CopReadTaskResponse,
+    ) -> Result<(), NativeCopError> {
         if let Some(region_error) = response.region_error_ref() {
             let error = format!("{region_error:?}");
-            return self.rebuild_after_region_error(logical_task_id, attempt_id, &backoffer, error);
+            return self.rebuild_after_region_error(logical_task_id, attempt_id, backoffer, error);
         }
         if let Some(lock) = response.locked_ref().cloned() {
-            return self.retry_after_lock(
+            return self.retry_after_lock(logical_task_id, attempt_id, backoffer, context, &lock);
+        }
+        // Go `handleCopResponse`: stale bucket metadata can send ranges past
+        // the region's bounds; TiKV answers this other error, and the task
+        // is rebuilt without bucket splitting.
+        if let Some(message) = response
+            .other_error_ref()
+            .filter(|message| message.contains("Request range exceeds bound"))
+            .map(str::to_owned)
+        {
+            return self.rebuild_after_exceeds_bound(
                 logical_task_id,
                 attempt_id,
-                &backoffer,
-                &request.context,
-                &lock,
+                backoffer,
+                region,
+                message,
             );
         }
         let process_time_nanos = response.process_time_nanos();
-        if !address.is_empty() {
-            self.kv_exec_counter.mark(&address);
-        }
         let runtime_sample = response.runtime_sample(&address);
         let accepted = self.runtime.accept_response_with_runtime(
             attempt_id,
@@ -429,6 +536,13 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             Some(runtime_sample),
             observation_time(),
         )?;
+        if let Some(update) = accepted.buckets_update {
+            self.store.update_buckets_if_needed(
+                (update.region_id, update.conf_ver, update.version),
+                update.request_version,
+                update.latest_version,
+            );
+        }
         match accepted.next_attempt_id {
             Some(next_attempt_id) => {
                 self.active_attempts
@@ -490,6 +604,83 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         Ok(())
     }
 
+    /// Go `handleCopResponse`'s "Request range exceeds bound" arm: invalidate
+    /// the region, back off `BoRegionMiss` and rebuild the task's ranges
+    /// without bucket splitting -- at most [`MAX_EXCEEDS_BOUND_RETRIES`] times
+    /// once a bucket-less task still meets it.
+    fn rebuild_after_exceeds_bound(
+        &mut self,
+        logical_task_id: u64,
+        attempt_id: u64,
+        backoffer: &CopBackoffer,
+        region: (u64, u64, u64),
+        message: String,
+    ) -> Result<(), NativeCopError> {
+        let retry = match self.exceeds_bound.get(&logical_task_id) {
+            Some(&retry) if retry >= MAX_EXCEEDS_BOUND_RETRIES => {
+                return Err(format!(
+                    "request range exceeds bound persists after bucket-less retry and exceeded \
+                     retry budget, region_id:{}, region_ver:{}, retry:{retry}/{}, error:{message}",
+                    region.0, region.2, MAX_EXCEEDS_BOUND_RETRIES
+                )
+                .into());
+            }
+            Some(&retry) => retry + 1,
+            None => 1,
+        };
+        self.store.invalidate_region(region);
+        let failed = self.runtime.consume_region_error(attempt_id)?;
+        self.store.backoff_region_miss(
+            backoffer,
+            format!(
+                "Request range exceeds bound: region_id:{}, region_ver:{}, error:{message}",
+                region.0, region.2
+            ),
+        )?;
+        self.check_active()?;
+        let ranges: Vec<_> = self
+            .runtime
+            .retry_ranges_from(&failed)?
+            .into_iter()
+            .map(|range| (Vec::from(range.start_key), Vec::from(range.end_key)))
+            .collect();
+        // Go `buildCopTasks` with `skipBuckets`: split by region only.
+        let topology: Vec<_> = locate(self.store.as_ref(), &ranges)?
+            .into_iter()
+            .map(|mut region| {
+                region.bucket_keys.clear();
+                region
+            })
+            .collect();
+        let replacement = self.runtime.rebuild_region_attempts(failed, &topology)?;
+        if replacement.logical_task_ids.len() != replacement.active_attempt_ids.len()
+            || replacement.logical_task_ids.first() != Some(&logical_task_id)
+        {
+            return Err("region rebuild produced an invalid active tail"
+                .to_owned()
+                .into());
+        }
+        let backoffer = self.backoffers.remove(&logical_task_id);
+        self.active_attempts.remove(&logical_task_id);
+        self.logical_order.splice(
+            self.logical_index..=self.logical_index,
+            replacement.logical_task_ids.iter().copied(),
+        );
+        for (logical_task_id, attempt_id) in replacement
+            .logical_task_ids
+            .into_iter()
+            .zip(replacement.active_attempt_ids)
+        {
+            if let Some(backoffer) = &backoffer {
+                self.backoffers
+                    .insert(logical_task_id, Arc::clone(backoffer));
+            }
+            self.exceeds_bound.insert(logical_task_id, retry);
+            self.active_attempts.insert(logical_task_id, attempt_id);
+        }
+        Ok(())
+    }
+
     /// Go `handleLockErr`: resolve the lock, remember what was resolved for
     /// this snapshot's later sends, back off while its owner is alive, and
     /// send the same task again.
@@ -497,6 +688,32 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         &mut self,
         logical_task_id: u64,
         attempt_id: u64,
+        backoffer: &CopBackoffer,
+        context: &tidb_proto::KvrpcContext,
+        lock: &tidb_proto::KvrpcLockInfo,
+    ) -> Result<(), NativeCopError> {
+        self.handle_lock_err(backoffer, context, lock)?;
+        let failed = self.runtime.consume_failed_attempt(attempt_id)?;
+        let replacement = self.runtime.retry_transport_attempt(failed)?;
+        match (
+            replacement.logical_task_ids.as_slice(),
+            replacement.active_attempt_ids.as_slice(),
+        ) {
+            ([logical], [attempt]) if *logical == logical_task_id => {
+                self.active_attempts.insert(*logical, *attempt);
+                Ok(())
+            }
+            _ => Err("lock retry did not produce one attempt".to_owned().into()),
+        }
+    }
+}
+
+impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
+    /// Go `handleLockErr`'s resolution: resolve the lock, remember what was
+    /// resolved for this snapshot's later sends, and back off while its
+    /// owner is alive.
+    fn handle_lock_err(
+        &mut self,
         backoffer: &CopBackoffer,
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
@@ -521,18 +738,69 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
                 .backoff_lock_fast(backoffer, max_sleep_ms, format!("{lock:?}"))?;
         }
         self.check_active()?;
-        let failed = self.runtime.consume_failed_attempt(attempt_id)?;
-        let replacement = self.runtime.retry_transport_attempt(failed)?;
-        match (
-            replacement.logical_task_ids.as_slice(),
-            replacement.active_attempt_ids.as_slice(),
-        ) {
-            ([logical], [attempt]) if *logical == logical_task_id => {
-                self.active_attempts.insert(*logical, *attempt);
-                Ok(())
-            }
-            _ => Err("lock retry did not produce one attempt".to_owned().into()),
+        Ok(())
+    }
+
+    /// Go `handleBatchCopResponse`'s remains: a child whose region moved is
+    /// located again, a locked child waits for its lock, and each runs as a
+    /// task of its own after its parent, on the parent's `bo`.
+    fn schedule_batched_remains(
+        &mut self,
+        parent_logical_task_id: u64,
+        backoffer: &CopBackoffer,
+        context: &tidb_proto::KvrpcContext,
+        remains: Vec<BatchedRemain>,
+    ) -> Result<(), NativeCopError> {
+        if remains.is_empty() {
+            return Ok(());
         }
+        let mut tasks = Vec::new();
+        for remain in remains {
+            match remain.cause {
+                BatchedRemainCause::RegionError(error) => {
+                    self.store.backoff_region_miss(backoffer, error)?;
+                    let ranges: Vec<_> = remain
+                        .task
+                        .ranges
+                        .iter()
+                        .map(|range| {
+                            (
+                                Vec::from(range.start_key.clone()),
+                                Vec::from(range.end_key.clone()),
+                            )
+                        })
+                        .collect();
+                    let topology = locate(self.store.as_ref(), &ranges)?;
+                    tasks.extend(self.runtime.child_retry_tasks(&remain.task, &topology)?);
+                }
+                BatchedRemainCause::Locked(lock) => {
+                    self.handle_lock_err(backoffer, context, &lock)?;
+                    tasks.push(remain.task);
+                }
+                BatchedRemainCause::Unanswered => tasks.push(remain.task),
+            }
+        }
+        self.check_active()?;
+        let added = self
+            .runtime
+            .add_tasks_after(parent_logical_task_id, tasks)?;
+        let position = self
+            .logical_order
+            .iter()
+            .position(|id| *id == parent_logical_task_id)
+            .map_or(self.logical_order.len(), |position| position + 1);
+        self.logical_order
+            .splice(position..position, added.logical_task_ids.iter().copied());
+        for (logical_task_id, attempt_id) in added
+            .logical_task_ids
+            .into_iter()
+            .zip(added.active_attempt_ids)
+        {
+            self.backoffers
+                .insert(logical_task_id, Arc::clone(backoffer));
+            self.active_attempts.insert(logical_task_id, attempt_id);
+        }
+        Ok(())
     }
 }
 
@@ -667,6 +935,12 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                 logical_index: 0,
                 closed: false,
                 backoffers: BTreeMap::new(),
+                exceeds_bound: self
+                    .exceeds_bound
+                    .remove(&logical_task_id)
+                    .map(|retry| (logical_task_id, retry))
+                    .into_iter()
+                    .collect(),
                 snapshot_locks: Arc::clone(&self.snapshot_locks),
             })
             .collect()

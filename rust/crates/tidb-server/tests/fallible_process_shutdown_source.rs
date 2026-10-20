@@ -16,9 +16,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use tidb_exec::real_tikv_read::{
-    ReadProcessShutdownError, ReadProcessShutdownFailure, ReadProcessShutdownStage,
-};
+use tidb_exec::real_tikv_read::ReadProcessShutdownError;
 use tidb_server::{
     run_with_process_shutdown, ProcessReadAuthority, RunConfiguredNodeError, SqlNodeError,
 };
@@ -46,16 +44,7 @@ impl ProcessReadAuthority for ScriptedAuthority {
 }
 
 fn shutdown_failure() -> ReadProcessShutdownError {
-    ReadProcessShutdownError::StageFailures(vec![
-        ReadProcessShutdownFailure {
-            stage: ReadProcessShutdownStage::RegionCache,
-            message: "maintenance worker panicked".to_owned(),
-        },
-        ReadProcessShutdownFailure {
-            stage: ReadProcessShutdownStage::Pd,
-            message: "PD worker panicked".to_owned(),
-        },
-    ])
+    ReadProcessShutdownError::StoreClose("PD client close failed".to_owned())
 }
 
 #[test]
@@ -88,10 +77,7 @@ fn node_and_authority_failures_are_combined_after_factory_drop() {
         panic!("both independent failures must survive composition");
     };
     assert!(matches!(*run, RunConfiguredNodeError::Node(_)));
-    assert!(matches!(
-        authority,
-        ReadProcessShutdownError::StageFailures(failures) if failures.len() == 2
-    ));
+    assert!(matches!(authority, ReadProcessShutdownError::StoreClose(_)));
 }
 
 #[test]

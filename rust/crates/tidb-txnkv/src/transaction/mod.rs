@@ -15,7 +15,6 @@
 //! TiDB transaction adapters over the native client transaction engine.
 
 mod call_interceptor;
-mod command_client;
 mod coordinator;
 mod mutation;
 mod mutation_plan;
@@ -23,29 +22,22 @@ mod pessimistic;
 mod schema_lease;
 mod state;
 
-pub use command_client::{
-    DetachedCommitCompletion, PublishedCommand, TransactionBatchGetFuture,
-    TransactionBatchGetRequest, TransactionCommandClient, TransactionCommitRequest,
-    TransactionPrewriteRequest,
-};
 pub use coordinator::{
-    CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,
-    ProductionOptimisticTransaction, ProductionPessimisticTransaction, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, SnapshotGetResult, SnapshotScanRegion, StoreClient,
-    StorePdCapability,
+    CommitProtocol, OptimisticCoordinatorError, ProductionTransaction,
+    RealOptimisticTransactionOpener, RealTransaction, SnapshotGetResult, SnapshotScanRegion,
+    StoreClient,
 };
 pub use mutation::{BufferMutation, BufferMutationOp, MutationSetError};
 pub use mutation_plan::MutationPlan;
 pub use pessimistic::{
     AcquiredLocks, DeadlockDetail, DeadlockWaitChainItem, LockWaitTime, PessimisticLockFailure,
-    RealPessimisticTransaction,
 };
 pub use schema_lease::{SchemaLease, SchemaLeaseChecker, SchemaLeaseError};
 pub use state::{
     CleanupBatchFailure, CleanupFailedTransaction, CommittedProtocol, CommittedTransaction,
     OptimisticCommitOutcome, OptimisticTransactionReceipt, OptimisticTransactionState,
-    ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, TransactionAttemptPhase,
-    TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause, UndeterminedTransaction,
+    ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, TransactionCause,
+    UndeterminedTransaction,
 };
 
 /// TiDB facade over the native optimistic and pessimistic transaction owner.

@@ -30,7 +30,7 @@
 
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_executor::cluster_storage::DuplicateKeyHint;
-use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
 use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 
@@ -386,7 +386,7 @@ mod tests {
     };
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
     use tidb_executor::cluster_storage::DuplicateKeyHint;
-    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::{
         CommittedTransaction, DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
@@ -665,7 +665,7 @@ mod tests {
     #[test]
     fn excluded_busy_cap_keeps_the_current_error_generic() {
         let mut budget =
-            tidb_txnkv::region::RegionBackoffBudget::new(std::time::Duration::from_secs(20));
+            tidb_txnkv::retry::RegionBackoffBudget::new(std::time::Duration::from_secs(20));
         let exhausted = loop {
             match budget.next_delay(RegionBackoffKind::TikvServerBusy) {
                 Ok(_) => continue,

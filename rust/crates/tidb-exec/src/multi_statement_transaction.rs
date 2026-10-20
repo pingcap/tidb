@@ -63,8 +63,7 @@ use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError, PessimisticLockFailure,
-    RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
-    StoreClient, StorePdCapability,
+    RealOptimisticTransactionOpener, RealTransaction, StoreClient,
 };
 
 use crate::pessimistic_lock_error::{
@@ -167,40 +166,6 @@ pub enum TransactionEnd {
     RolledBack,
 }
 
-/// The two concrete transactions this node can hold open.
-///
-/// They are one type here because every statement path treats them alike except
-/// where the mode genuinely differs: only the pessimistic one can lock, and only
-/// the optimistic one can first learn of a conflict at `COMMIT`.
-enum OpenTransaction<S: StoreClient> {
-    Optimistic(Box<RealOptimisticTransaction<S>>),
-    Pessimistic(Box<RealPessimisticTransaction<S>>),
-}
-
-impl<S> OpenTransaction<S>
-where
-    S: StoreClient,
-{
-    fn transaction(&self) -> &RealOptimisticTransaction<S> {
-        match self {
-            Self::Optimistic(transaction) => transaction,
-            Self::Pessimistic(transaction) => transaction.snapshot_ref(),
-        }
-    }
-    fn transaction_mut(&mut self) -> &mut RealOptimisticTransaction<S> {
-        match self {
-            Self::Optimistic(transaction) => transaction,
-            Self::Pessimistic(transaction) => transaction.snapshot(),
-        }
-    }
-    fn start_ts(&self) -> u64 {
-        match self {
-            Self::Optimistic(transaction) => transaction.start_ts(),
-            Self::Pessimistic(transaction) => transaction.start_ts(),
-        }
-    }
-}
-
 /// Budget for the RPCs that end a transaction, matching client-go's
 /// `cleanupMaxBackoff = 20000` — see [`MultiStatementTransaction::transaction_end_call`].
 ///
@@ -213,7 +178,9 @@ pub struct MultiStatementTransaction<S = tikv_client::PdRpcClient>
 where
     S: tidb_txnkv::transaction::StoreClient,
 {
-    open: OpenTransaction<S>,
+    /// The transaction (Go `tikvTxn`); in pessimistic `mode` it is in
+    /// pessimistic mode (`SetOption(kv.Pessimistic)`).
+    open: Box<RealTransaction<S>>,
     mode: SessionTxnMode,
     /// The one table this node serves, needed to turn a clustered handle into
     /// the record key the buffer is keyed by.
@@ -247,8 +214,8 @@ where
 {
     /// Opens one explicit transaction in `mode` over the shared authorities.
     ///
-    pub fn begin<P: StorePdCapability>(
-        opener: &RealOptimisticTransactionOpener<S, P>,
+    pub fn begin(
+        opener: &RealOptimisticTransactionOpener<S>,
         mode: SessionTxnMode,
         fair_locking: bool,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
@@ -257,23 +224,18 @@ where
         lock_wait_timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let options = options.into();
-        let open = match mode {
-            SessionTxnMode::Optimistic => {
-                let mut transaction = opener.begin()?;
-                // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc` reaching the
-                // transaction; the commit-time eligibility check still decides.
-                options.apply(&mut transaction);
-                OpenTransaction::Optimistic(Box::new(transaction))
-            }
-            SessionTxnMode::Pessimistic => {
-                let mut transaction = opener.begin_pessimistic()?;
-                // `@@tidb_pessimistic_txn_fair_locking`. Only a pessimistic
-                // transaction locks, so only it can lock fairly.
-                transaction.set_fair_locking(fair_locking);
-                options.apply(transaction.snapshot());
-                OpenTransaction::Pessimistic(Box::new(transaction))
-            }
-        };
+        let mut transaction = opener.begin()?;
+        // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc` reaching the
+        // transaction; the commit-time eligibility check still decides.
+        options.apply(&mut transaction);
+        if mode.is_pessimistic() {
+            // Go `onTxnActiveFunc`: `txn.SetOption(kv.Pessimistic, true)`.
+            transaction.set_pessimistic(true);
+            // `@@tidb_pessimistic_txn_fair_locking`. Only a pessimistic
+            // transaction locks, so only it can lock fairly.
+            transaction.set_fair_locking(fair_locking);
+        }
+        let open = Box::new(transaction);
         Ok(Self {
             open,
             mode,
@@ -287,15 +249,15 @@ where
 
     /// Applies Go's per-statement fair-locking gate to the native lock owner.
     pub fn set_fair_locking(&mut self, enabled: bool) {
-        if let OpenTransaction::Pessimistic(transaction) = &mut self.open {
-            transaction.set_fair_locking(enabled);
+        if self.open.is_pessimistic() {
+            self.open.set_fair_locking(enabled);
         }
     }
 
     /// Refreshes the existence check requested by Go's statement lock context.
     pub fn set_statement_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
-        if let OpenTransaction::Pessimistic(transaction) = &mut self.open {
-            transaction.snapshot().set_statement_assertion_level(level);
+        if self.open.is_pessimistic() {
+            self.open.set_statement_assertion_level(level);
         }
     }
 
@@ -320,8 +282,7 @@ where
     /// The failure is statement-scoped, so the transaction stays open for
     /// exactly those two.
     pub fn check_lock_expired(&self) -> Result<(), TransactionStatementError> {
-        if matches!(&self.open, OpenTransaction::Pessimistic(transaction) if transaction.lock_expired())
-        {
+        if self.open.is_pessimistic() && self.open.lock_expired() {
             return Err(TransactionStatementError::Statement(LockSqlError {
                 code: tidb_error::tidb::errcode::ErrLockExpire,
                 state: *b"HY000",
@@ -379,7 +340,7 @@ where
     /// Whether the transaction has buffered any write yet.
     #[must_use]
     pub fn has_staged_writes(&self) -> bool {
-        !self.open.transaction().staged_entries().is_empty()
+        !self.open.staged_entries().is_empty()
     }
 
     /// The row image this transaction has staged for `handle`.
@@ -393,7 +354,6 @@ where
     pub fn staged_row(&self, handle: i64) -> Option<Option<Vec<u8>>> {
         let key = encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(handle));
         self.open
-            .transaction()
             .staged_value(&key)
             .map(|value| (!value.is_empty()).then_some(value))
     }
@@ -415,7 +375,7 @@ where
         ranges: &[SignedBigIntRange],
     ) -> Result<StagedRowOverlay, TransactionStatementError> {
         let mut overlay = Vec::new();
-        for (key, value) in self.open.transaction().staged_entries() {
+        for (key, value) in self.open.staged_entries() {
             // Only record keys carry rows; a secondary-index entry changes no
             // row the projection can return.
             let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(key.as_bytes())
@@ -460,7 +420,7 @@ where
             .expect("ReadOnlyScanPlan always owns executable TiKV scan fields")
             .columns;
         let mut overlay = Vec::new();
-        for (key, value) in self.open.transaction().staged_entries() {
+        for (key, value) in self.open.staged_entries() {
             let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(key.as_bytes())
             else {
                 continue;
@@ -540,7 +500,6 @@ where
                 warnings,
             } => {
                 self.open
-                    .transaction_mut()
                     .stage_mutations(mutations)
                     .map_err(coordinator_error)?;
                 Ok(ConfiguredWriteReport {
@@ -569,7 +528,6 @@ where
                 warnings,
             } => {
                 self.open
-                    .transaction_mut()
                     .stage_mutations(mutations)
                     .map_err(coordinator_error)?;
                 Ok(ConfiguredWriteReport {
@@ -587,15 +545,15 @@ where
     /// Go commit detail `WriteSize` and `WriteKeys` for the final coalesced
     /// transaction mutation set.
     pub fn write_details(&self) -> (isize, isize) {
-        self.open.transaction().staged_entries().iter().fold(
-            (0_isize, 0_isize),
-            |(size, keys), (key, value)| {
+        self.open
+            .staged_entries()
+            .iter()
+            .fold((0_isize, 0_isize), |(size, keys), (key, value)| {
                 (
                     size.wrapping_add(key.as_bytes().len().wrapping_add(value.len()) as isize),
                     keys.wrapping_add(1),
                 )
-            },
-        )
+            })
     }
 
     /// Plans a pessimistic conflict-resolving write until every key it might
@@ -619,15 +577,11 @@ where
         loop {
             let plan = plan_configured_write(self, write, &self.statement_call(), session_tz)
                 .map_err(|error| TransactionStatementError::write(&error))?;
-            let held = match &mut self.open {
-                OpenTransaction::Pessimistic(transaction) => transaction
-                    .locked_keys()
-                    .into_iter()
-                    .collect::<BTreeSet<_>>(),
-                OpenTransaction::Optimistic(_) => unreachable!(
-                    "conflict-write planning is called only for a pessimistic transaction"
-                ),
-            };
+            debug_assert!(
+                self.open.is_pessimistic(),
+                "conflict-write planning is called only for a pessimistic transaction"
+            );
+            let held = self.open.locked_keys().into_iter().collect::<BTreeSet<_>>();
             let missing = planned_mutation_keys(&plan)
                 .into_iter()
                 .filter(|key| !held.contains(key))
@@ -724,9 +678,11 @@ where
             ReadLockWait::Seconds(seconds) => LockWaitTime::Timeout(Duration::from_secs(seconds)),
         };
         let call = self.statement_call();
-        let OpenTransaction::Pessimistic(transaction) = &mut self.open else {
-            unreachable!("the pessimistic mode check above admits only a pessimistic transaction");
-        };
+        debug_assert!(
+            self.open.is_pessimistic(),
+            "the pessimistic mode check above admits only a pessimistic transaction"
+        );
+        let transaction = &mut self.open;
         let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
         // The session prelock path may already own these point-write keys.
         // Match Go's KVTxn.LockKeys behavior by omitting held keys from the
@@ -849,36 +805,21 @@ where
         } else {
             TransactionEnd::RolledBack
         };
-        match self.open {
-            OpenTransaction::Optimistic(transaction) => {
-                if !has_writes {
-                    transaction
-                        .finish_without_writes()
-                        .map_err(coordinator_error)?;
-                    return Ok(end);
-                }
-                let outcome = transaction
-                    .commit(Vec::new(), &call)
-                    .map_err(coordinator_error)?;
-                classify_commit_outcome(&outcome).map(|()| end)
-            }
-            OpenTransaction::Pessimistic(transaction) => {
-                if !has_writes {
-                    transaction.rollback(&call).map_err(coordinator_error)?;
-                    return Ok(end);
-                }
-                let outcome = transaction
-                    .commit(Vec::new(), &call)
-                    .map_err(coordinator_error)?;
-                classify_commit_outcome(&outcome).map(|()| end)
-            }
+        let transaction = self.open;
+        if !has_writes {
+            transaction.rollback(&call).map_err(coordinator_error)?;
+            return Ok(end);
         }
+        let outcome = transaction
+            .commit(Vec::new(), &call)
+            .map_err(coordinator_error)?;
+        classify_commit_outcome(&outcome).map(|()| end)
     }
 }
 
 /// Keys a tentative write would modify, in source mutation order.
 ///
-/// `RealPessimisticTransaction::acquire_locks` deduplicates and orders them
+/// `RealTransaction::acquire_locks` deduplicates and orders them
 /// before it reaches TiKV. Keeping this extraction order-preserving makes the
 /// write planner and the eventual transaction buffer describe the same set.
 fn planned_mutation_keys(plan: &ConfiguredWritePlan) -> Vec<Vec<u8>> {
@@ -910,7 +851,7 @@ where
         key: &[u8],
         call: &UnaryCallContext,
     ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
-        if let Some(value) = self.open.transaction().staged_value(key) {
+        if let Some(value) = self.open.staged_value(key) {
             return Ok((!value.is_empty()).then_some(value));
         }
         // Go `PointGetExecutor.get`'s order (`pkg/executor/point_get.go:656-680`):
@@ -926,13 +867,14 @@ where
                 return Ok(cached.clone());
             }
         }
-        let value = match &mut self.open {
-            OpenTransaction::Optimistic(transaction) => transaction.snapshot_get(key, call)?.value,
+        let value = if self.open.is_pessimistic() {
             // A pessimistic statement's retry reads its current for-update
             // timestamp, not the transaction's original start snapshot. The
             // latter remains the Prewrite start version, but using it here
             // after a lock conflict would recompute the same stale mutation.
-            OpenTransaction::Pessimistic(transaction) => transaction.for_update_get(key, call)?,
+            self.open.for_update_get(key, call)?
+        } else {
+            self.open.snapshot_get(key, call)?.value
         };
         if value.is_some() {
             self.statement_processed_keys = self.statement_processed_keys.wrapping_add(1);
@@ -1175,7 +1117,7 @@ mod tests {
     #[test]
     fn snapshot_backoff_keeps_its_sql_identity_in_explicit_transactions() {
         let error = tidb_txnkv::transaction::OptimisticCoordinatorError::SnapshotBackoff {
-            kind: tidb_txnkv::region::RegionBackoffKind::TxnLockFast,
+            kind: tidb_txnkv::retry::RegionBackoffKind::TxnLockFast,
             detail: "exhausted".to_owned(),
         };
         let write = super::ConfiguredWriteError::from(error.clone());

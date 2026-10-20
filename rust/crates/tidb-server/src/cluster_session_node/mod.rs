@@ -281,15 +281,15 @@ fn schema_shape_refusal(stmt: &tidb_ast::Stmt) -> Option<(u16, String)> {
             // `STATS_PERSISTENT` and `PRE_SPLIT_REGIONS` are outside Go's
             // ALTER TABLE option switch.
             let unsupported_option = alter.actions.iter().any(|action| match action {
-                tidb_ast::AlterTableAction::SetTableOptions { options } => options.iter().any(
-                    |option| {
+                tidb_ast::AlterTableAction::SetTableOptions { options } => {
+                    options.iter().any(|option| {
                         matches!(
                             option,
                             tidb_ast::TableOption::StatsPersistent
                                 | tidb_ast::TableOption::PreSplitRegions(_)
                         )
-                    },
-                ),
+                    })
+                }
                 _ => false,
             });
             unsupported_option.then(|| {
@@ -1609,18 +1609,15 @@ impl ClusterSessionFactory {
 
     /// Starts Go `Domain.requestUnitsWriterLoop` (`pkg/domain/domain.go:830`)
     /// over this node's PD ResourceManager, meta store and internal-session
-    /// pool. Go starts it unconditionally beside the other domain loops; it
-    /// needs a PD client, so a node without one (the embedded store) has no
-    /// ResourceManager to read and starts nothing.
-    pub(crate) fn start_ru_stats_writer<S, P>(
+    /// pool. Go starts it unconditionally beside the other domain loops,
+    /// over the store's PD client.
+    pub(crate) fn start_ru_stats_writer<S>(
         self: &Arc<Self>,
-        pd: tidb_pd_client::PdClient,
-        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>>,
-        keyspace_id: Option<u32>,
+        pd: tidb_txnkv::driver::tikv_store::TikvStore,
+        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
     ) where
         S: tidb_txnkv::transaction::StoreClient + 'static,
-        P: tidb_txnkv::transaction::StorePdCapability,
     {
         if self.ru_stats_writer.get().is_some() {
             return;
@@ -1629,7 +1626,6 @@ impl ClusterSessionFactory {
             pd,
             opener,
             self.advanced_sys_session_pool(),
-            keyspace_id,
             timeout,
         );
         let _ = self
@@ -1640,13 +1636,12 @@ impl ClusterSessionFactory {
     /// Installs the TiKV meta store that holds the cluster's BDR role, so
     /// sessions opened from now on answer ADMIN SET / UNSET / SHOW BDR ROLE
     /// from it.
-    pub(crate) fn install_bdr_role_store<S, P>(
+    pub(crate) fn install_bdr_role_store<S>(
         &self,
-        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>>,
+        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
     ) where
         S: tidb_txnkv::transaction::StoreClient + 'static,
-        P: tidb_txnkv::transaction::StorePdCapability + 'static,
     {
         let _ = self
             .bdr_role_store
@@ -5913,9 +5908,9 @@ impl ClusterServerSession {
     /// Go WAITS on the lock -- 1205 is a pessimistic-lock error, so the replay
     /// really did take locks -- and against a lock that clears in time it
     /// succeeds. This node cannot wait: it spends its budget of re-reads and
-    /// reports 9007. Closing that needs the pessimistic path
-    /// (`tidb_txnkv::transaction::pessimistic::RealPessimisticTransaction`
-    /// exists; nothing at this tier drives it), NOT a mode flag: locks have to
+    /// reports 9007. Closing that needs the pessimistic path (a
+    /// `tidb_txnkv::transaction::RealTransaction` in pessimistic mode exists;
+    /// nothing at this tier drives it), NOT a mode flag: locks have to
     /// be taken while the statement reads, and taking them after it has
     /// computed from a stale read would introduce exactly the lost update this
     /// seam exists to prevent.
@@ -6542,7 +6537,9 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
-                self.session.validate_ddl_preprocess(stmt).map_err(map_error)?;
+                self.session
+                    .validate_ddl_preprocess(stmt)
+                    .map_err(map_error)?;
                 // Go `DDLExec.executeCleanupTableLock` after the planner's
                 // SUPER check: the `IsCleanup` unlock job, none when no named
                 // table is locked.
@@ -6571,11 +6568,23 @@ impl ClusterServerSession {
                     if let tidb_ast::DdlStmt::DropTable(drop) = ddl.as_ref() {
                         let (persistent, local) = self.session.split_local_temporary_drop(drop);
                         if !local.is_empty() {
-                            let split = Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::DropTable(Box::new(persistent))));
+                            let split = Stmt::Ddl(tidb_ast::NodeBox::new(
+                                tidb_ast::DdlStmt::DropTable(Box::new(persistent)),
+                            ));
                             let context = self.session.ddl_statement_context();
-                            let statement = prepare_cluster_ddl_parsed(&split, self.session.current_database(), &context)
-                                .map_err(|error| SqlQueryError::new(error.code, error.sql_state(), error.to_string()))?
-                                .ok_or_else(|| SqlQueryError::unknown("DROP TABLE has no cluster metadata operation"))?;
+                            let statement = prepare_cluster_ddl_parsed(
+                                &split,
+                                self.session.current_database(),
+                                &context,
+                            )
+                            .map_err(|error| {
+                                SqlQueryError::new(error.code, error.sql_state(), error.to_string())
+                            })?
+                            .ok_or_else(|| {
+                                SqlQueryError::unknown(
+                                    "DROP TABLE has no cluster metadata operation",
+                                )
+                            })?;
                             return Ok(StatementRoute::MixedTemporaryDrop { statement, local });
                         }
                     }
@@ -7651,7 +7660,11 @@ impl ClusterServerSession {
         {
             self.control_transaction("COMMIT")?;
         }
-        match self.session.run_parsed(parsed.clone(), sql).map_err(map_error)? {
+        match self
+            .session
+            .run_parsed(parsed.clone(), sql)
+            .map_err(map_error)?
+        {
             tidb_session::StmtResult::Affected(affected_rows) => Ok(WriteOutcome {
                 affected_rows,
                 last_insert_id: self.session.statement_insert_id(),
@@ -7668,7 +7681,9 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
-    fn migration_session(&mut self) -> Option<&mut tidb_session::Session> { Some(&mut self.session) }
+    fn migration_session(&mut self) -> Option<&mut tidb_session::Session> {
+        Some(&mut self.session)
+    }
 
     fn record_parse_failure(&mut self, code: u16, message: String) {
         self.session.record_parse_failure_coded(code, message);
@@ -8551,7 +8566,9 @@ impl QuerySession for ClusterServerSession {
                 )));
             }
             StatementRoute::LocalTemporaryDdl => {
-                self.observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql, stmt))?;
+                self.observe_routed_write(sql, stmt, |node| {
+                    node.run_local_temporary_ddl(sql, stmt)
+                })?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
@@ -8773,35 +8790,36 @@ fn detached_storage() -> ClusterTableStorage {
     ClusterTableStorage::new(MutationBuffer::new(), slot)
 }
 
-/// Builds MPP over the existing process PD and region-cache capabilities.
+/// Builds MPP over the node's store (Go's `copr.MPPClient` over the
+/// `KVStore`).
 #[must_use]
 pub fn build_tiflash_mpp_source(
     authority: &tidb_exec::real_tikv_read::ProductionReadProcessAuthority,
     schema_version: impl Fn() -> i64 + Send + Sync + 'static,
 ) -> Option<tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource> {
     Some(tidb_exec::tiflash_mpp_scan::TiFlashMppScanSource::new(
-        authority.pd_client()?,
-        authority.region_cache_opener()?,
-        authority.store_rpc_opener()?,
+        authority.tikv_store().clone(),
         schema_version,
     ))
 }
 
 /// Spawns the TiFlash replica availability poller over the node's catalog
-/// watch, DDL executor, and PD seeds. A node that cannot reach PD
-/// simply never flips availability; the read path answers accordingly.
+/// watch, DDL executor, and the store's PD HTTP client (Go
+/// `initTiFlashReplicaManager` over `is.pdHTTPCli`). A store without a PD
+/// HTTP client simply never flips availability; the read path answers
+/// accordingly.
 #[must_use]
 pub fn build_tiflash_replica_poll(
     catalog: std::sync::Arc<tidb_exec::catalog_watch::SharedCatalog>,
-    pd_endpoints: &[String],
+    pd_http_client: Option<tikv_client::pd_http::Client>,
     security: &tidb_pd_client::ClusterSecurity,
     ddl: Arc<dyn tidb_exec::tiflash_replica_manager::TiFlashReplicaControl>,
 ) -> Option<tidb_exec::tiflash_replica_manager::TiFlashReplicaPoller> {
-    let endpoint = pd_endpoints.first()?;
-    let result = tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::with_pd_http_security(
+    let pd_http_client = pd_http_client?;
+    let result = tidb_exec::tiflash_replica_manager::TiFlashReplicaManager::with_pd_http_client(
         catalog,
         ddl,
-        format!("http://{endpoint}"),
+        pd_http_client,
         security,
     );
     match result {

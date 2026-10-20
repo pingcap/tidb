@@ -3416,6 +3416,132 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         load_balance: bool,
         labels: &[metapb::StoreLabel],
     ) -> std::result::Result<(metapb::Peer, metapb::Store), TiFlashSelectionError> {
+        let matches = |store_labels: &[metapb::StoreLabel]| {
+            labels.iter().all(|wanted| {
+                store_labels
+                    .iter()
+                    .any(|actual| actual.key == wanted.key && actual.value == wanted.value)
+            })
+        };
+        self.select_tiflash_peer_matching(region, load_balance, &matches)
+            .await
+    }
+
+    /// client-go `GetTiFlashRPCContext(bo, id, loadBalance, labelFilter)`:
+    /// the TiFlash peer, and its store, a batch task for `region` goes to.
+    pub async fn get_tiflash_rpc_context(
+        &self,
+        region: &RegionWithLeader,
+        load_balance: bool,
+        filter: TiFlashLabelFilter,
+    ) -> Result<
+        std::result::Result<(metapb::Peer, metapb::Store), TiFlashRpcContextUnavailableDetail>,
+    > {
+        let matches = |store_labels: &[metapb::StoreLabel]| filter.matches(store_labels);
+        match self
+            .select_tiflash_peer_matching(region, load_balance, &matches)
+            .await
+        {
+            Ok(selected) => Ok(Ok(selected)),
+            Err(TiFlashSelectionError {
+                source: Some(error),
+                ..
+            }) => Err(error),
+            Err(TiFlashSelectionError { detail, .. }) => Ok(Err(detail)),
+        }
+    }
+
+    /// client-go `GetAllValidTiFlashStores(id, currentStore, labelFilter)`:
+    /// the region's usable TiFlash stores, `current_store` first, and those of
+    /// them whose peer is not pending.
+    pub async fn get_all_valid_tiflash_stores(
+        &self,
+        ver_id: &RegionVerId,
+        current_store: StoreId,
+        filter: TiFlashLabelFilter,
+    ) -> (Vec<StoreId>, Vec<StoreId>) {
+        let mut all_stores = vec![current_store];
+        let mut non_pending_stores = Vec::new();
+        let (cached_region, store_epochs) = {
+            let mut regions = self.region_cache.write().await;
+            let Some(cached) = regions.ver_id_to_region.get_mut(ver_id) else {
+                return (all_stores, non_pending_stores);
+            };
+            if !cached.check_ttl(now_epoch_secs()) {
+                return (all_stores, non_pending_stores);
+            }
+            (cached.region.clone(), cached.store_epochs.clone())
+        };
+        let peers = {
+            let stores = self.store_cache.read().unwrap();
+            cached_region
+                .region
+                .peers
+                .iter()
+                .filter_map(|peer| {
+                    let store = stores.get(&peer.store_id)?;
+                    (EndpointType::from_store(&store.meta) == EndpointType::TiFlash).then(|| {
+                        (
+                            peer.store_id,
+                            store.meta.labels.clone(),
+                            store.resolve_state(),
+                            store.epoch.load(Ordering::Acquire),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let Some(current_index) = peers.iter().position(|peer| peer.0 == current_store) else {
+            return (all_stores, non_pending_stores);
+        };
+        for offset in 1..peers.len() {
+            let (store_id, labels, resolve_state, epoch) =
+                &peers[(current_index + offset) % peers.len()];
+            if *resolve_state == StoreResolveState::NeedCheck {
+                continue;
+            }
+            if store_epochs.get(store_id).copied().unwrap_or(0) != *epoch {
+                continue;
+            }
+            if !filter.matches(labels) {
+                continue;
+            }
+            all_stores.push(*store_id);
+        }
+        for store_id in &all_stores {
+            if !cached_region
+                .pending_peers
+                .iter()
+                .any(|peer| peer.store_id == *store_id)
+            {
+                non_pending_stores.push(*store_id);
+            }
+        }
+        (all_stores, non_pending_stores)
+    }
+
+    /// client-go `GetTiFlashStores(labelFilter)`: the cached TiFlash stores
+    /// `filter` admits.
+    pub fn get_tiflash_stores(&self, filter: TiFlashLabelFilter) -> Vec<Store> {
+        self.store_cache
+            .read()
+            .unwrap()
+            .values()
+            .filter(|store| {
+                store.resolve_state() == StoreResolveState::Resolved
+                    && EndpointType::from_store(&store.meta) == EndpointType::TiFlash
+                    && filter.matches(&store.meta.labels)
+            })
+            .map(|store| store.meta.clone())
+            .collect()
+    }
+
+    async fn select_tiflash_peer_matching(
+        &self,
+        region: &RegionWithLeader,
+        load_balance: bool,
+        matches: &(dyn Fn(&[metapb::StoreLabel]) -> bool + Send + Sync),
+    ) -> std::result::Result<(metapb::Peer, metapb::Store), TiFlashSelectionError> {
         let (cached_region, cursor, store_epochs) = {
             let mut regions = self.region_cache.write().await;
             let Some(cached) = regions.ver_id_to_region.get_mut(&region.ver_id()) else {
@@ -3494,12 +3620,7 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                 &peers[(start + offset) % peers.len()];
             store_ids.push(peer.store_id);
             peer_ids.push(peer.id);
-            if labels.iter().all(|wanted| {
-                store
-                    .labels
-                    .iter()
-                    .any(|actual| actual.key == wanted.key && actual.value == wanted.value)
-            }) {
+            if matches(&store.labels) {
                 if *resolve_state == StoreResolveState::Tombstone || store.address.is_empty() {
                     self.mark_region_reload_on_access(&cached_region.ver_id())
                         .await;

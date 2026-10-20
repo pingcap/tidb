@@ -20,18 +20,18 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tidb_codec::encode_bytes;
-use tidb_pd_client::PdClient;
 use tidb_proto::{
-    KvrpcAssertionLevel, KvrpcCommitRequest, KvrpcCommitRole, KvrpcContext, KvrpcMutation, KvrpcOp,
-    KvrpcPeer, KvrpcPrewriteRequest, KvrpcRegionEpoch, KvrpcRequestOrigin,
+    KvrpcAssertionLevel, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcCommitRole, KvrpcMutation,
+    KvrpcOp, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
 };
-use tidb_txnkv::region::RegionCache;
-use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
+use tidb_txnkv::driver::tikv_store::TikvStore;
+use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     BufferMutation, OptimisticCommitOutcome, OptimisticTransactionState,
     RealOptimisticTransactionOpener, TransactionCause,
 };
-use tidb_txnkv::{DirectUnaryClient, PdRegionLoader, SharedReadAuthority, SharedReadRuntime};
+
+use crate::realtikv_fixture::{connect, route, send, timestamp};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 const PHASE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -44,55 +44,16 @@ const HIGH_ROLLBACK_KEY: &[u8] = b"c28-stage-b-y";
 const OLDER_LOCK_KEY: &[u8] = b"c28-stage-b-d";
 const NEWER_LOCK_KEY: &[u8] = b"c28-stage-b-x";
 
-type RealRuntime = SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>;
-
-fn route(runtime: &RealRuntime, key: &[u8]) -> (String, KvrpcContext) {
-    let location = runtime
-        .locate_key(key)
-        .expect("RegionCache lifecycle remains live")
-        .expect("locate real fixture key");
-    let leader_id = location.leader_peer_id.expect("real region has a leader");
-    let leader = location
-        .peers
-        .iter()
-        .find(|peer| peer.id == leader_id)
-        .expect("leader peer is in region metadata");
-    let store = location
-        .stores
-        .iter()
-        .find(|store| store.id == leader.store_id)
-        .expect("leader store is hydrated");
-    (
-        store.address.clone(),
-        KvrpcContext {
-            region_id: location.region.id,
-            region_epoch: Some(KvrpcRegionEpoch {
-                conf_ver: location.region.epoch.conf_ver,
-                version: location.region.epoch.version,
-            }),
-            peer: Some(KvrpcPeer {
-                id: leader.id,
-                store_id: leader.store_id,
-                role: leader.role.as_i32(),
-                is_witness: leader.is_witness,
-            }),
-            request_source: "campaign28_real_lock_fixture".to_owned(),
-            request_origin: KvrpcRequestOrigin::TiDb as i32,
-            cluster_id: runtime.cluster_id(),
-            ..KvrpcContext::default()
-        },
-    )
-}
-
 fn prewrite_real_lock(
-    runtime: &RealRuntime,
+    store: &TikvStore,
     key: &[u8],
     value: &[u8],
     start_ts: u64,
     lock_ttl_ms: u64,
 ) {
-    let (address, context) = route(runtime, key);
+    let (address, context) = route(store, key);
     let request = KvrpcPrewriteRequest {
+        context: Some(context),
         mutations: vec![KvrpcMutation {
             op: KvrpcOp::Put as i32,
             key: key.to_vec(),
@@ -106,24 +67,15 @@ fn prewrite_real_lock(
         assertion_level: KvrpcAssertionLevel::Off as i32,
         ..KvrpcPrewriteRequest::default()
     };
-    let call = UnaryCallContext::with_timeout(RPC_TIMEOUT);
-    let mut pending = runtime
-        .client()
-        .try_lock()
-        .expect("fixture client is not borrowed")
-        .begin_transaction_prewrite(&address, None, &request, &context, &call)
-        .expect("publish real lock fixture");
-    let response = pending
-        .complete(&call)
-        .expect("complete real lock fixture")
-        .expect("decode real lock fixture response");
-    assert!(response.response.region_error.is_none());
-    assert!(response.response.errors.is_empty());
+    let response: KvrpcPrewriteResponse = send(store, &address, request, RPC_TIMEOUT);
+    assert!(response.region_error.is_none());
+    assert!(response.errors.is_empty());
 }
 
-fn commit_real_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, commit_ts: u64) {
-    let (address, context) = route(runtime, key);
+fn commit_real_lock(store: &TikvStore, key: &[u8], start_ts: u64, commit_ts: u64) {
+    let (address, context) = route(store, key);
     let request = KvrpcCommitRequest {
+        context: Some(context),
         start_version: start_ts,
         keys: vec![key.to_vec()],
         commit_version: commit_ts,
@@ -131,19 +83,9 @@ fn commit_real_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, commit_ts:
         primary_key: key.to_vec(),
         ..KvrpcCommitRequest::default()
     };
-    let call = UnaryCallContext::with_timeout(RPC_TIMEOUT);
-    let mut pending = runtime
-        .client()
-        .try_lock()
-        .expect("fixture client is not borrowed")
-        .begin_transaction_commit(&address, None, &request, &context, &call)
-        .expect("publish real fixture Commit");
-    let response = pending
-        .complete(&call)
-        .expect("complete real fixture Commit")
-        .expect("decode real fixture Commit response");
-    assert!(response.response.region_error.is_none());
-    assert!(response.response.error.is_none());
+    let response: KvrpcCommitResponse = send(store, &address, request, RPC_TIMEOUT);
+    assert!(response.region_error.is_none());
+    assert!(response.error.is_none());
 }
 
 fn phase_dir() -> PathBuf {
@@ -174,27 +116,11 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let pd_address = std::env::var("OPTIMISTIC_2PC_PD_ADDR")
         .expect("runner must provide OPTIMISTIC_2PC_PD_ADDR");
     let phase_dir = phase_dir();
-    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
-        .expect("start sole real PD authority");
-    let cluster_id = pd_owner.cluster_id();
+    let fixture_store = connect(&pd_address);
+    let cluster_id = fixture_store.cluster_id();
     assert_ne!(cluster_id, 0);
-    let loader = PdRegionLoader::from_client(pd_owner.clone());
-    let mut transport_owner =
-        TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
-    let shared = SharedReadAuthority::start_with_store_liveness(
-        transport_owner.clone(),
-        RegionCache::new(loader),
-    )
-    .expect("start sole real RegionCache authority");
-    assert_eq!(shared.cluster_id(), cluster_id);
-    let shared_read_opener = shared.opener();
     let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        tidb_txnkv::driver::tikv_store::TikvStore::connect(
-            vec![pd_address.clone()],
-            tikv_client::Config::default(),
-        )
-        .expect("the node's store"),
-        pd_owner.clone(),
+        fixture_store.clone(),
         RPC_TIMEOUT,
     )
     .expect("derive transaction opener without starting another authority");
@@ -210,10 +136,7 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         .snapshot_get(LOW_KEY, &UnaryCallContext::with_timeout(RPC_TIMEOUT))
         .expect("locate source region through real BatchCommands Get");
     assert!(before_split.value.is_none());
-    let fixture_runtime = shared_read_opener
-        .open_session()
-        .expect("open real lock-fixture session from the same authority");
-    let (stale_address, source_context) = route(&fixture_runtime, LOW_KEY);
+    let (stale_address, source_context) = route(&fixture_store, LOW_KEY);
     let mut encoded_split = Vec::new();
     encode_bytes(&mut encoded_split, SPLIT_KEY);
     let split_hex = encoded_split
@@ -282,11 +205,11 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         Some(b"low-sibling-v1".as_slice())
     );
     // The split put the primary's region and the secondary's apart.
-    let low_region = route(&fixture_runtime, LOW_KEY).1.region_id;
-    let high_region = route(&fixture_runtime, HIGH_KEY).1.region_id;
+    let low_region = route(&fixture_store, LOW_KEY).1.region_id;
+    let high_region = route(&fixture_store, HIGH_KEY).1.region_id;
     assert_eq!(
         low_region,
-        route(&fixture_runtime, LOW_SIBLING_KEY).1.region_id
+        route(&fixture_store, LOW_SIBLING_KEY).1.region_id
     );
     assert_ne!(low_region, high_region);
     let read_only = readback
@@ -415,11 +338,9 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
 
     // A real older lock must first be observed alive, waited to expiry,
     // resolved, then retried at the transaction's original start_ts.
-    let older_lock_start_ts = pd_owner
-        .get_timestamp()
-        .expect("allocate older fixture lock timestamp");
+    let older_lock_start_ts = timestamp(&fixture_store);
     prewrite_real_lock(
-        &fixture_runtime,
+        &fixture_store,
         OLDER_LOCK_KEY,
         b"expired-holder",
         older_lock_start_ts,
@@ -455,12 +376,10 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
     let newer_conflict = opener
         .begin()
         .expect("allocate transaction before the newer lock fixture");
-    let newer_lock_start_ts = pd_owner
-        .get_timestamp()
-        .expect("allocate newer fixture lock timestamp");
+    let newer_lock_start_ts = timestamp(&fixture_store);
     assert!(newer_lock_start_ts > newer_conflict.start_ts());
     prewrite_real_lock(
-        &fixture_runtime,
+        &fixture_store,
         NEWER_LOCK_KEY,
         b"newer-holder",
         newer_lock_start_ts,
@@ -485,12 +404,10 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         newer_conflict.cause,
         TransactionCause::WriteConflict { .. }
     ));
-    let newer_lock_commit_ts = pd_owner
-        .get_timestamp()
-        .expect("allocate newer fixture commit timestamp");
+    let newer_lock_commit_ts = timestamp(&fixture_store);
     assert!(newer_lock_commit_ts > newer_lock_start_ts);
     commit_real_lock(
-        &fixture_runtime,
+        &fixture_store,
         NEWER_LOCK_KEY,
         newer_lock_start_ts,
         newer_lock_commit_ts,
@@ -508,16 +425,6 @@ fn normal_optimistic_2pc_commits_two_regions_and_cleans_conflict() {
         .finish_without_writes()
         .expect("finish lock readback without writes");
 
-    drop(fixture_runtime);
-    drop(opener);
-    drop(shared_read_opener);
-    shared.shutdown().expect("stop sole RegionCache authority");
-    drop(shared);
-    transport_owner
-        .close()
-        .expect("stop sole BatchCommands authority");
-    drop(transport_owner);
-    pd_owner.shutdown().expect("stop sole PD authority");
     println!(
         "campaign28_optimistic_2pc status=passed cluster_id={cluster_id} start_ts={} commit_ts={} primary_region={} secondary_region={} rollback_start_ts={} older_lock_start_ts={} newer_lock_start_ts={} newer_lock_commit_ts={}",
         committed.receipt.start_ts,

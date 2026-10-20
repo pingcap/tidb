@@ -35,7 +35,6 @@ use tidb_util::sqlescape::{escape_sql, SqlArg};
 use super::{ClusterServerSession, ClusterSessionFactory, SessionContext};
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{QuerySession, QuerySessionFactory, SqlQueryError};
-use tidb_txnkv::pd_capability::PdCapability;
 
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
@@ -59,7 +58,7 @@ pub(crate) fn start_gc_worker(
         store.store().clone(),
         None,
     ));
-    let http_endpoint = opener.pd().http_endpoint();
+    let pd_http_client = store.pd_http_client();
     let worker = GcWorker::new(GcWorkerDeps {
         store: client.clone(),
         pd: client.clone(),
@@ -75,7 +74,7 @@ pub(crate) fn start_gc_worker(
                 .map_err(|error| error.to_string())
             }),
         )),
-        rules: Arc::new(NodeGcRules { http_endpoint }),
+        rules: Arc::new(NodeGcRules { pd_http_client }),
         gcv2: None,
     })
     .map_err(|error| error.to_string())?;
@@ -326,15 +325,16 @@ impl GcSession for NodeGcSession<'_> {
     }
 }
 
-/// `infosync`'s placement and label rule calls.
+/// `infosync`'s placement and label rule calls, over the store's PD HTTP
+/// client.
 struct NodeGcRules {
-    http_endpoint: Option<String>,
+    pd_http_client: Option<tikv_client::pd_http::Client>,
 }
 
 impl NodeGcRules {
-    fn endpoint(&self) -> GcResult<&str> {
-        self.http_endpoint
-            .as_deref()
+    fn pd_http_client(&self) -> GcResult<&tikv_client::pd_http::Client> {
+        self.pd_http_client
+            .as_ref()
             .ok_or_else(|| GcError::new("pd http client unavailable"))
     }
 }
@@ -342,7 +342,7 @@ impl NodeGcRules {
 impl GcRuleClient for NodeGcRules {
     fn delete_tiflash_placement_rules(&self, physical_table_ids: &[i64]) -> GcResult<()> {
         tidb_exec::placement_delivery::delete_tiflash_placement_rules(
-            self.endpoint()?,
+            self.pd_http_client()?,
             physical_table_ids,
             GC_RPC_TIMEOUT,
         )
@@ -350,8 +350,12 @@ impl GcRuleClient for NodeGcRules {
     }
 
     fn put_rule_bundles(&self, bundles: Vec<tidb_placement::Bundle>) -> GcResult<()> {
-        tidb_exec::placement_delivery::put_rule_bundles(self.endpoint()?, &bundles, GC_RPC_TIMEOUT)
-            .map_err(gc_error)
+        tidb_exec::placement_delivery::put_rule_bundles(
+            self.pd_http_client()?,
+            &bundles,
+            GC_RPC_TIMEOUT,
+        )
+        .map_err(gc_error)
     }
 
     fn get_label_rules(

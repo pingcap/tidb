@@ -258,12 +258,20 @@ pub use crate::pd::backoff as pd_backoff;
 /// Shared PD request batch collection and completion.
 pub use crate::pd::batch as pd_batch;
 pub use crate::pd::circuitbreaker as pd_circuitbreaker;
+/// PD's HTTP API client (`github.com/tikv/pd/client/http`).
+pub use crate::pd::http as pd_http;
 /// pd-client's keyspace GC configuration.
 pub use crate::pd::keyspace as pd_keyspace;
+/// pd-client's meta storage client interface (`clients/metastorage`).
+pub use crate::pd::metastorage as pd_metastorage;
 pub use crate::pd::metrics as pd_metrics;
 #[doc(inline)]
 pub use crate::pd::opt as pd_options;
 pub use crate::pd::region_service as pd_region_service;
+/// pd-client's resource group controller (`resource_group/controller`).
+pub use crate::pd::resource_group as pd_resource_group;
+/// pd-client's resource manager options and settings paths.
+pub use crate::pd::resource_manager_client as pd_resource_manager;
 #[doc(inline)]
 pub use crate::pd::service_discovery as pd_service_discovery;
 pub use crate::pd::tso_batch as pd_tso_batch;

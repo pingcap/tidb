@@ -248,10 +248,6 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
     cases.push((request, "batch_coprocessor"));
 
     let mut request = metadata(vec![range("a", "z")]);
-    request.store_batch_size = 2;
-    cases.push((request, "store_batching"));
-
-    let mut request = metadata(vec![range("a", "z")]);
     request.key_ranges =
         Some(RequestKeyRanges::new_partitioned(vec![vec![range("a", "z")]]).into());
     cases.push((request, "partitioned_ranges"));
@@ -379,10 +375,9 @@ fn embedded_response_errors_precede_cache_ema_paging_and_attempt_mutation() {
         ),
         (CopReadTaskResponse::lock_error(body.clone()), "lock_error"),
         (
-            CopReadTaskResponse::other_error(body.clone(), "boom"),
+            CopReadTaskResponse::other_error(body, "boom"),
             "other_error",
         ),
-        (CopReadTaskResponse::batch(body), "batch_response"),
     ];
     for (response, expected_kind) in errors {
         assert_eq!(
@@ -400,8 +395,37 @@ fn embedded_response_errors_precede_cache_ema_paging_and_attempt_mutation() {
     }
 }
 
+/// Go `handleCopResponse`: a response carrying newer buckets is served, and
+/// the region cache refreshes the region's buckets
+/// (`UpdateBucketsIfNeeded(task.region, task.bucketsVer, latest)`).
 #[test]
-fn response_errors_newer_buckets_invalid_hits_and_attempt_mismatches_fail_closed() {
+fn a_response_with_newer_buckets_is_served_and_asks_for_a_bucket_refresh() {
+    let metadata = metadata(vec![range("a", "z")]);
+    let mut topology = topology(1, "a", "z");
+    topology.bucket_keys = vec![b"m".to_vec()];
+    topology.buckets_version = 7;
+    let mut runtime = prepare(&metadata, &[topology], None).unwrap();
+    let accepted = runtime
+        .accept_response(
+            1,
+            CoprocessorResponse {
+                latest_buckets_version: 8,
+                ..response("done", "a", "m", 1)
+            },
+            None,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+    let update = accepted
+        .buckets_update
+        .expect("newer buckets ask for a refresh");
+    assert_eq!(update.region_id, 1);
+    assert_eq!(update.request_version, 7);
+    assert_eq!(update.latest_version, 8);
+}
+
+#[test]
+fn response_errors_invalid_hits_and_attempt_mismatches_fail_closed() {
     let metadata = metadata(vec![range("a", "z")]);
     let mut topology = topology(1, "a", "z");
     topology.bucket_keys = vec![b"m".to_vec()];
@@ -419,25 +443,6 @@ fn response_errors_newer_buckets_invalid_hits_and_attempt_mismatches_fail_closed
     assert_eq!(
         runtime.accept_other_error(1, "boom").unwrap_err().kind(),
         "other_error"
-    );
-    assert_eq!(
-        runtime.accept_batch_response(1).unwrap_err().kind(),
-        "batch_response"
-    );
-    assert_eq!(
-        runtime
-            .accept_response(
-                1,
-                CoprocessorResponse {
-                    latest_buckets_version: 8,
-                    ..CoprocessorResponse::default()
-                },
-                None,
-                Duration::ZERO,
-            )
-            .unwrap_err()
-            .kind(),
-        "newer_buckets"
     );
     assert_eq!(
         runtime

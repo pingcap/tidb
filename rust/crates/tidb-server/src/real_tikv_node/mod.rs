@@ -24,8 +24,7 @@ use tidb_exec::catalog_watch::{
 use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_read::{
-    ProductionReadProcessAuthority, ReadProcessShutdownError, ReadProcessShutdownStage,
-    RealOptimisticTransactionOpener,
+    ProductionReadProcessAuthority, ReadProcessShutdownError, RealOptimisticTransactionOpener,
 };
 use tidb_exec::real_tikv_stats::{
     load_stats_snapshot_and_loader, update_stats_cache_from_cluster, InitialStatsLoad,
@@ -33,10 +32,8 @@ use tidb_exec::real_tikv_stats::{
 use tidb_exec::stats_watch::{
     AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloader,
 };
-use tidb_pd_client::{
-    EtcdClient, EtcdWatcher, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
-};
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
+use tidb_pd_client::{EtcdClient, EtcdWatcher, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY};
+use tidb_txnkv::transaction::StoreClient;
 
 use crate::cluster_privileges::PrivilegeReloader;
 use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
@@ -47,7 +44,7 @@ mod schema_following;
 mod session_time_zone;
 
 pub(crate) use schema_following::{
-    connect_schema_notifier, note_reload, spawn_catalog_reloader, spawn_node_stats,
+    connect_etcd_client, note_reload, spawn_catalog_reloader, spawn_node_stats,
     spawn_privilege_watch, spawn_sysvar_watch,
 };
 pub(crate) use session_time_zone::RealTiKvSessionTimeZone;
@@ -195,13 +192,12 @@ fn load_cluster_sysvars_with_read(
     Ok(())
 }
 
-pub(crate) fn load_cluster_startup_variables<S, P>(
+pub(crate) fn load_cluster_startup_variables<S>(
     users: &ConfiguredUserStore,
-    opener: &RealOptimisticTransactionOpener<S, P>,
+    opener: &RealOptimisticTransactionOpener<S>,
 ) -> Result<(), RunConfiguredNodeError>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     let variables = tidb_exec::real_tikv_privileges::load_startup_variables_from_cluster(
         opener,
@@ -364,31 +360,14 @@ fn emit_process_shutdown_events(result: &Result<(), ReadProcessShutdownError>) {
         );
         return;
     }
-    for stage in [
-        ReadProcessShutdownStage::RegionCache,
-        ReadProcessShutdownStage::TikvTransport,
-        ReadProcessShutdownStage::Pd,
-    ] {
-        let failure = match result {
-            Err(ReadProcessShutdownError::StageFailures(failures)) => {
-                failures.iter().find(|failure| failure.stage == stage)
-            }
-            _ => None,
-        };
-        let stage_name = match stage {
-            ReadProcessShutdownStage::RegionCache => "region_cache",
-            ReadProcessShutdownStage::TikvTransport => "tikv_transport",
-            ReadProcessShutdownStage::Pd => "pd",
-        };
-        match failure {
-            Some(failure) => eprintln!(
-                "{{\"event\":\"process_shutdown_stage\",\"stage\":\"{stage_name}\",\"outcome\":\"error\",\"error\":{:?}}}",
-                failure.message
-            ),
-            None => eprintln!(
-                "{{\"event\":\"process_shutdown_stage\",\"stage\":\"{stage_name}\",\"outcome\":\"success\"}}"
-            ),
-        }
+    // Go `tikvStore.Close`.
+    match result {
+        Err(ReadProcessShutdownError::StoreClose(message)) => eprintln!(
+            "{{\"event\":\"process_shutdown_stage\",\"stage\":\"store\",\"outcome\":\"error\",\"error\":{message:?}}}"
+        ),
+        _ => eprintln!(
+            "{{\"event\":\"process_shutdown_stage\",\"stage\":\"store\",\"outcome\":\"success\"}}"
+        ),
     }
 }
 
@@ -466,7 +445,7 @@ mod tests {
     use std::sync::Mutex;
     use tidb_exec::real_tikv_ddl::ClusterDdlError;
     use tidb_exec::real_tikv_dml::ConfiguredWriteError;
-    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::TransactionCause;
 
     #[derive(Default)]

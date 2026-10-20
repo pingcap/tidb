@@ -1164,7 +1164,13 @@ where
     if let Some(injected) = failpoint_send_req_result(crate::store::Request::label(&request)) {
         return injected.map(|response| (response, None));
     }
-    let cancellation = backoffer.lock().await.cancellation().clone();
+    let (cancellation, caller_interceptor) = {
+        let backoffer = backoffer.lock().await;
+        (
+            backoffer.cancellation().clone(),
+            backoffer.rpc_interceptor().cloned(),
+        )
+    };
     if crate::store::Request::max_execution_duration_ms(&request) == 0 {
         crate::store::Request::set_max_execution_duration_ms(
             &mut request,
@@ -1172,7 +1178,9 @@ where
         );
     }
     let address = std::sync::Arc::new(Mutex::new(None::<String>));
-    let mut interceptors = crate::interceptor::RpcInterceptorChain::new();
+    // client-go runs the ctx's interceptors around every RPC the sender
+    // issues (`interceptor.GetRPCInterceptorFromCtx`).
+    let mut interceptors = caller_interceptor.unwrap_or_default();
     let recorded = std::sync::Arc::clone(&address);
     interceptors.link(crate::interceptor::new_rpc_interceptor(
         "send-req-ctx-address",
@@ -1316,6 +1324,49 @@ mod send_req_tests {
         assert_eq!(sent.load(AtomicOrdering::SeqCst), 2);
         // client-go passes `bo` by pointer: the sender's sleep is the caller's.
         assert!(backoffer.lock().await.total_sleep_ms() > 0);
+    }
+
+    /// client-go runs the ctx's interceptors (`WithRPCInterceptor` on
+    /// `bo.GetCtx()`) around every RPC the sender issues, its own retries
+    /// included -- how TiDB's KV-exec counter sees each one.
+    #[tokio::test]
+    async fn the_backoffers_interceptor_wraps_every_rpc() {
+        let (pd, sent) = client(|attempt| {
+            if attempt == 0 {
+                region_error(errorpb::Error {
+                    server_is_busy: Some(errorpb::ServerIsBusy::default()),
+                    ..Default::default()
+                })
+            } else {
+                coprocessor::Response::default()
+            }
+        });
+        let seen = Arc::new(AtomicUsize::new(0));
+        let counter = seen.clone();
+        let mut interceptors = crate::interceptor::RpcInterceptorChain::new();
+        interceptors.link(crate::interceptor::new_rpc_interceptor(
+            "count",
+            move |_target, _request, next| {
+                counter.fetch_add(1, AtomicOrdering::SeqCst);
+                Box::pin(next())
+                    as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
+            },
+        ));
+        let backoffer = Arc::new(tokio::sync::Mutex::new(
+            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000)
+                .with_rpc_interceptor(interceptors),
+        ));
+        send_req(
+            pd,
+            Keyspace::Disable,
+            request_to_region1(0),
+            backoffer,
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(sent.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(seen.load(AtomicOrdering::SeqCst), 2);
     }
 
     /// client-go `getRPCContext` finds no cached region at the request's

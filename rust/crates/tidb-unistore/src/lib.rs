@@ -104,7 +104,6 @@
 //! `testsetup` for the Go test binary, neither of which has an analogue here.
 
 pub mod arena;
-pub mod client;
 pub mod cluster;
 pub mod cophandler;
 pub mod detector;
@@ -118,7 +117,7 @@ pub mod mock_pd;
 pub mod mvcc;
 pub mod mvcc_store;
 pub mod pd;
-pub mod region_loader;
+pub mod redirector;
 pub mod region_manager;
 pub mod rpc;
 #[cfg(test)]

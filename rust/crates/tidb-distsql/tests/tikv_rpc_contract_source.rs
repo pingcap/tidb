@@ -210,13 +210,20 @@ fn raw_response_decode_classifies_errors_before_coordinator_mutation() {
         },
         "other_error",
     );
-    assert_response_error(
+    // Batched children ride a successful parent (Go `handleBatchCopResponse`):
+    // the decode keeps them for the coordinator to serve.
+    let decoded = decode_tikv_unary_response(
         CoprocessorResponse {
             batch_responses: vec![StoreBatchTaskResponse::default()],
             ..CoprocessorResponse::default()
-        },
-        "batch_response",
-    );
+        }
+        .encode_to_vec()
+        .as_slice(),
+    )
+    .unwrap();
+    assert!(decoded.other_error_ref().is_none());
+    assert!(decoded.region_error_ref().is_none());
+    assert_eq!(decoded.response_ref().batch_responses.len(), 1);
     assert_response_error(
         CoprocessorResponse {
             region_error: Some(RegionError {

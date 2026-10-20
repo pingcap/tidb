@@ -392,6 +392,10 @@ pub struct RetryBackoffer {
     sleep_by_type: BTreeMap<&'static str, u64>,
     times_by_type: BTreeMap<&'static str, u64>,
     configs: Vec<RetryConfig>,
+    /// client-go's `bo.GetCtx()` interceptor (`interceptor.WithRPCInterceptor`):
+    /// the caller's interceptors, run around every RPC a sender issues for
+    /// this backoffer, retries included.
+    rpc_interceptor: Option<crate::interceptor::RpcInterceptorChain>,
 }
 
 static NEXT_BACKOFFER_ID: AtomicU64 = AtomicU64::new(1);
@@ -423,7 +427,24 @@ impl RetryBackoffer {
             sleep_by_type: BTreeMap::new(),
             times_by_type: BTreeMap::new(),
             configs: Vec::new(),
+            rpc_interceptor: None,
         }
+    }
+
+    /// client-go `interceptor.WithRPCInterceptor(bo.GetCtx(), ...)`: every RPC
+    /// a sender issues for this backoffer runs inside `interceptor`.
+    #[must_use]
+    pub fn with_rpc_interceptor(
+        mut self,
+        interceptor: crate::interceptor::RpcInterceptorChain,
+    ) -> Self {
+        self.rpc_interceptor = Some(interceptor);
+        self
+    }
+
+    /// The interceptors [`Self::with_rpc_interceptor`] attached.
+    pub fn rpc_interceptor(&self) -> Option<&crate::interceptor::RpcInterceptorChain> {
+        self.rpc_interceptor.as_ref()
     }
 
     pub fn noop(cancellation: Cancellation) -> Self {
@@ -677,6 +698,7 @@ impl RetryBackoffer {
                 sleep_by_type: self.sleep_by_type.clone(),
                 times_by_type: self.times_by_type.clone(),
                 configs: self.configs.clone(),
+                rpc_interceptor: self.rpc_interceptor.clone(),
             },
             cancellation,
         )
@@ -866,6 +888,7 @@ impl Clone for RetryBackoffer {
             sleep_by_type: self.sleep_by_type.clone(),
             times_by_type: self.times_by_type.clone(),
             configs: self.configs.clone(),
+            rpc_interceptor: self.rpc_interceptor.clone(),
         }
     }
 }

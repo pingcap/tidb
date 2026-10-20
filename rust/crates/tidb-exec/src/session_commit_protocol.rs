@@ -35,7 +35,7 @@ impl SessionTransactionOptions {
     /// Applies the activation snapshot before the transaction is exposed.
     pub fn apply<S: tidb_txnkv::transaction::StoreClient>(
         self,
-        transaction: &mut tidb_txnkv::transaction::RealOptimisticTransaction<S>,
+        transaction: &mut tidb_txnkv::transaction::RealTransaction<S>,
     ) {
         transaction.set_commit_protocol(self.commit_protocol);
         transaction.set_assertion_level(self.assertion_level);

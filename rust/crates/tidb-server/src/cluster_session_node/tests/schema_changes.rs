@@ -12,7 +12,7 @@ use tidb_datatype::Datum;
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_ddl::classify_session_ddl_commit_error;
 use tidb_session::privilege::GlobalPriv;
-use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
     UndeterminedTransaction,

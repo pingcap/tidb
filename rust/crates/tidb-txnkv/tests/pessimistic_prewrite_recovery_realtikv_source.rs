@@ -22,18 +22,18 @@
 
 use std::time::Duration;
 
-use tidb_pd_client::PdClient;
 use tidb_proto::{
-    KvrpcAssertionLevel, KvrpcCommitRequest, KvrpcCommitRole, KvrpcContext, KvrpcMutation, KvrpcOp,
-    KvrpcPeer, KvrpcPessimisticAction, KvrpcPessimisticLockRequest, KvrpcPrewriteRequest,
-    KvrpcRegionEpoch, KvrpcRequestOrigin,
+    KvrpcAssertionLevel, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcCommitRole, KvrpcMutation,
+    KvrpcOp, KvrpcPessimisticAction, KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
+    KvrpcPrewriteRequest, KvrpcPrewriteResponse,
 };
-use tidb_txnkv::region::RegionCache;
-use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
+use tidb_txnkv::driver::tikv_store::TikvStore;
+use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener, TransactionCause,
 };
-use tidb_txnkv::{PdRegionLoader, SharedReadAuthority, SharedReadRuntime};
+
+use crate::realtikv_fixture::{route, send, timestamp};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -53,26 +53,12 @@ const ORPHAN_SECONDARY_KEY: &[u8] = b"pessimistic-prewrite-recovery-orphan-secon
 /// write record for it exists anywhere in the cluster.
 const ORPHAN_PRIMARY_KEY: &[u8] = b"pessimistic-prewrite-recovery-orphan-primary";
 
-type RealRuntime = SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>;
-
-/// Everything one claim needs: the PD authority that hands out timestamps, the
-/// opener the transaction under test uses, and a second session the fixture
-/// speaks raw kvproto through.
-///
-/// `authority` is held for its lifetime, not for its API. `SharedReadAuthority`
-/// owns the sole TiKV transport worker, so dropping it stops that worker and
-/// every session derived from it -- including `fixture` and `opener` -- answers
-/// `Closed` on its first RPC. Only a real cluster shows this: a scripted store
-/// has no worker to lose.
+/// Everything one claim needs: the node's store, which hands out timestamps
+/// and carries the fixture's raw kvproto, and the opener the transaction
+/// under test uses.
 struct Cluster {
-    #[expect(
-        dead_code,
-        reason = "held to keep the sole TiKV transport worker alive"
-    )]
-    authority: SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>,
-    pd: PdClient,
+    store: TikvStore,
     opener: RealOptimisticTransactionOpener,
-    fixture: RealRuntime,
     key_prefix: Vec<u8>,
 }
 
@@ -89,92 +75,28 @@ fn call() -> UnaryCallContext {
 fn connect() -> Cluster {
     let pd_address = std::env::var("PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR")
         .expect("runner must provide PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR");
-    let pd = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
-        .expect("start sole real PD authority");
-    assert_ne!(pd.cluster_id(), 0);
-    let transport = TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
-    let shared = SharedReadAuthority::start_with_store_liveness(
-        transport,
-        RegionCache::new(PdRegionLoader::from_client(pd.clone())),
-    )
-    .expect("start sole real RegionCache authority");
-    assert_eq!(shared.cluster_id(), pd.cluster_id());
-    let read_opener = shared.opener();
-    let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        tidb_txnkv::driver::tikv_store::TikvStore::connect(
-            vec![pd_address.clone()],
-            tikv_client::Config::default(),
-        )
-        .expect("the node's store"),
-        pd.clone(),
-        RPC_TIMEOUT,
-    )
-    .expect("derive transaction opener without starting another authority");
-    let fixture = read_opener
-        .open_session()
-        .expect("open the fixture session from the same authority");
-    // A fresh PD timestamp isolates repeated runs without deleting earlier
+    let store = crate::realtikv_fixture::connect(&pd_address);
+    assert_ne!(store.cluster_id(), 0);
+    let opener =
+        RealOptimisticTransactionOpener::from_process_capabilities(store.clone(), RPC_TIMEOUT)
+            .expect("derive the transaction opener over the store");
+    // A fresh timestamp isolates repeated runs without deleting earlier
     // fixtures or requiring a new cluster for each invocation.
-    let key_prefix = format!(
-        "recovery-test-{}-",
-        pd.get_timestamp().expect("fixture namespace")
-    )
-    .into_bytes();
+    let key_prefix = format!("recovery-test-{}-", timestamp(&store)).into_bytes();
     Cluster {
-        authority: shared,
-        pd,
+        store,
         opener,
-        fixture,
         key_prefix,
     }
-}
-
-/// Routes one key to its leader, so the fixture's raw requests go where a real
-/// client's would.
-fn route(runtime: &RealRuntime, key: &[u8]) -> (String, KvrpcContext) {
-    let location = runtime
-        .locate_key(key)
-        .expect("RegionCache lifecycle remains live")
-        .expect("locate real fixture key");
-    let leader_id = location.leader_peer_id.expect("real region has a leader");
-    let leader = location
-        .peers
-        .iter()
-        .find(|peer| peer.id == leader_id)
-        .expect("leader peer is in region metadata");
-    let store = location
-        .stores
-        .iter()
-        .find(|store| store.id == leader.store_id)
-        .expect("leader store is hydrated");
-    (
-        store.address.clone(),
-        KvrpcContext {
-            region_id: location.region.id,
-            region_epoch: Some(KvrpcRegionEpoch {
-                conf_ver: location.region.epoch.conf_ver,
-                version: location.region.epoch.version,
-            }),
-            peer: Some(KvrpcPeer {
-                id: leader.id,
-                store_id: leader.store_id,
-                role: leader.role.as_i32(),
-                is_witness: leader.is_witness,
-            }),
-            request_source: "pessimistic_prewrite_recovery_fixture".to_owned(),
-            request_origin: KvrpcRequestOrigin::TiDb as i32,
-            cluster_id: runtime.cluster_id(),
-            ..KvrpcContext::default()
-        },
-    )
 }
 
 /// Leaves a real pessimistic lock on `key`, the way a Go tidb-server's
 /// pessimistic DML does: `Op::PessimisticLock`, the key as its own primary, and
 /// a TTL the caller chooses so expiry is a decision rather than a race.
-fn hold_real_pessimistic_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, ttl_ms: u64) {
-    let (address, context) = route(runtime, key);
+fn hold_real_pessimistic_lock(store: &TikvStore, key: &[u8], start_ts: u64, ttl_ms: u64) {
+    let (address, context) = route(store, key);
     let request = KvrpcPessimisticLockRequest {
+        context: Some(context.clone()),
         mutations: vec![KvrpcMutation {
             op: KvrpcOp::PessimisticLock as i32,
             key: key.to_vec(),
@@ -190,22 +112,12 @@ fn hold_real_pessimistic_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, 
         wait_timeout: -1,
         ..KvrpcPessimisticLockRequest::default()
     };
-    let call = call();
-    let mut pending = runtime
-        .client()
-        .try_lock()
-        .expect("fixture client is not borrowed")
-        .begin_transaction_pessimistic_lock(&address, None, &request, &context, &call)
-        .expect("publish the real pessimistic lock fixture");
-    let response = pending
-        .complete(&call)
-        .expect("complete the real pessimistic lock fixture")
-        .expect("decode the real pessimistic lock fixture response");
-    assert!(response.response.region_error.is_none());
+    let response: KvrpcPessimisticLockResponse = send(store, &address, request, RPC_TIMEOUT);
+    assert!(response.region_error.is_none());
     assert!(
-        response.response.errors.is_empty(),
+        response.errors.is_empty(),
         "the fixture key must be lockable: {:?}",
-        response.response.errors
+        response.errors
     );
 }
 
@@ -215,14 +127,15 @@ fn hold_real_pessimistic_lock(runtime: &RealRuntime, key: &[u8], start_ts: u64, 
 /// Used only by the LIVE-lock claim, and it is the whole assertion there: it
 /// can only succeed if the lock this test's Prewrite met was left alone.
 fn commit_real_pessimistic_txn(
-    runtime: &RealRuntime,
+    store: &TikvStore,
     key: &[u8],
     value: &[u8],
     start_ts: u64,
     commit_ts: u64,
 ) {
-    let (address, context) = route(runtime, key);
+    let (address, context) = route(store, key);
     let prewrite = KvrpcPrewriteRequest {
+        context: Some(context.clone()),
         mutations: vec![KvrpcMutation {
             op: KvrpcOp::Put as i32,
             key: key.to_vec(),
@@ -238,27 +151,18 @@ fn commit_real_pessimistic_txn(
         assertion_level: KvrpcAssertionLevel::Off as i32,
         ..KvrpcPrewriteRequest::default()
     };
-    let call = call();
-    let mut pending = runtime
-        .client()
-        .try_lock()
-        .expect("fixture client is not borrowed")
-        .begin_transaction_prewrite(&address, None, &prewrite, &context, &call)
-        .expect("publish the fixture owner's Prewrite");
-    let response = pending
-        .complete(&call)
-        .expect("complete the fixture owner's Prewrite")
-        .expect("decode the fixture owner's Prewrite response");
-    assert!(response.response.region_error.is_none());
+    let response: KvrpcPrewriteResponse = send(store, &address, prewrite, RPC_TIMEOUT);
+    assert!(response.region_error.is_none());
     assert!(
-        response.response.errors.is_empty(),
+        response.errors.is_empty(),
         "the live lock's owner must still be able to prewrite on it -- a \
          PessimisticLockNotFound here IS the disaster this claim exists to \
          rule out: {:?}",
-        response.response.errors
+        response.errors
     );
 
     let commit = KvrpcCommitRequest {
+        context: Some(context.clone()),
         start_version: start_ts,
         keys: vec![key.to_vec()],
         commit_version: commit_ts,
@@ -266,18 +170,9 @@ fn commit_real_pessimistic_txn(
         primary_key: key.to_vec(),
         ..KvrpcCommitRequest::default()
     };
-    let mut pending = runtime
-        .client()
-        .try_lock()
-        .expect("fixture client is not borrowed")
-        .begin_transaction_commit(&address, None, &commit, &context, &call)
-        .expect("publish the fixture owner's Commit");
-    let response = pending
-        .complete(&call)
-        .expect("complete the fixture owner's Commit")
-        .expect("decode the fixture owner's Commit response");
-    assert!(response.response.region_error.is_none());
-    assert!(response.response.error.is_none());
+    let response: KvrpcCommitResponse = send(store, &address, commit, RPC_TIMEOUT);
+    assert!(response.region_error.is_none());
+    assert!(response.error.is_none());
 }
 
 /// Reads a key back through a transaction newer than every commit so far, so
@@ -301,11 +196,8 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
     let cluster = connect();
     let key = cluster.key(EXPIRED_LOCK_KEY);
 
-    let lock_start_ts = cluster
-        .pd
-        .get_timestamp()
-        .expect("allocate the abandoned lock's start timestamp");
-    hold_real_pessimistic_lock(&cluster.fixture, &key, lock_start_ts, EXPIRING_LOCK_TTL_MS);
+    let lock_start_ts = timestamp(&cluster.store);
+    hold_real_pessimistic_lock(&cluster.store, &key, lock_start_ts, EXPIRING_LOCK_TTL_MS);
     println!(
         "pessimistic_prewrite_recovery phase=locked key=expired lock_start_ts={lock_start_ts}"
     );
@@ -344,7 +236,7 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
         "pessimistic_prewrite_recovery status=passed claim=expired_resolved \
          cluster_id={} lock_start_ts={lock_start_ts} writer_start_ts={writer_start_ts} \
          commit_ts={}",
-        cluster.pd.cluster_id(),
+        cluster.store.cluster_id(),
         committed.receipt.commit_ts,
     );
 }
@@ -362,11 +254,8 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
     let cluster = connect();
     let key = cluster.key(LIVE_LOCK_KEY);
 
-    let lock_start_ts = cluster
-        .pd
-        .get_timestamp()
-        .expect("allocate the live lock's start timestamp");
-    hold_real_pessimistic_lock(&cluster.fixture, &key, lock_start_ts, LIVE_LOCK_TTL_MS);
+    let lock_start_ts = timestamp(&cluster.store);
+    hold_real_pessimistic_lock(&cluster.store, &key, lock_start_ts, LIVE_LOCK_TTL_MS);
     println!("pessimistic_prewrite_recovery phase=locked key=live lock_start_ts={lock_start_ts}");
 
     let writer = cluster
@@ -411,13 +300,10 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
 
     // The owner finishes its transaction. This is the assertion: it can only
     // succeed if its pessimistic lock was still there.
-    let commit_ts = cluster
-        .pd
-        .get_timestamp()
-        .expect("allocate the live lock owner's commit timestamp");
+    let commit_ts = timestamp(&cluster.store);
     assert!(commit_ts > lock_start_ts);
     commit_real_pessimistic_txn(
-        &cluster.fixture,
+        &cluster.store,
         &key,
         b"live-holder",
         lock_start_ts,
@@ -433,7 +319,7 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
         "pessimistic_prewrite_recovery status=passed claim=live_lock_survived \
          cluster_id={} lock_start_ts={lock_start_ts} writer_start_ts={writer_start_ts} \
          holder_commit_ts={commit_ts}",
-        cluster.pd.cluster_id(),
+        cluster.store.cluster_id(),
     );
 }
 
@@ -444,14 +330,15 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
 /// batches leaves behind, and it is the exact state that makes TiKV answer
 /// CheckTxnStatus on the primary with `TxnNotFound`.
 fn hold_orphan_secondary_lock(
-    runtime: &RealRuntime,
+    store: &TikvStore,
     primary: &[u8],
     secondary: &[u8],
     start_ts: u64,
     ttl_ms: u64,
 ) {
-    let (address, context) = route(runtime, secondary);
+    let (address, context) = route(store, secondary);
     let request = KvrpcPrewriteRequest {
+        context: Some(context.clone()),
         mutations: vec![KvrpcMutation {
             op: KvrpcOp::Put as i32,
             key: secondary.to_vec(),
@@ -466,22 +353,12 @@ fn hold_orphan_secondary_lock(
         assertion_level: KvrpcAssertionLevel::Off as i32,
         ..KvrpcPrewriteRequest::default()
     };
-    let call = call();
-    let mut pending = runtime
-        .client()
-        .try_lock()
-        .expect("fixture client is not borrowed")
-        .begin_transaction_prewrite(&address, None, &request, &context, &call)
-        .expect("publish the orphan secondary prewrite");
-    let response = pending
-        .complete(&call)
-        .expect("complete the orphan secondary prewrite")
-        .expect("decode the orphan secondary prewrite response");
-    assert!(response.response.region_error.is_none());
+    let response: KvrpcPrewriteResponse = send(store, &address, request, RPC_TIMEOUT);
+    assert!(response.region_error.is_none());
     assert!(
-        response.response.errors.is_empty(),
+        response.errors.is_empty(),
         "the orphan fixture key must be prewritable: {:?}",
-        response.response.errors
+        response.errors
     );
 }
 
@@ -506,12 +383,9 @@ fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
     let primary = cluster.key(ORPHAN_PRIMARY_KEY);
     let secondary = cluster.key(ORPHAN_SECONDARY_KEY);
 
-    let orphan_start_ts = cluster
-        .pd
-        .get_timestamp()
-        .expect("allocate the orphaned transaction's start timestamp");
+    let orphan_start_ts = timestamp(&cluster.store);
     hold_orphan_secondary_lock(
-        &cluster.fixture,
+        &cluster.store,
         &primary,
         &secondary,
         orphan_start_ts,

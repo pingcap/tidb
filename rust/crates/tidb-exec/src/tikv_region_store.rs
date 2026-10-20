@@ -19,26 +19,24 @@
 //! region statistics.
 //!
 //! It runs on the node's one client-rust store, as Go's `tikvStore` hands its
-//! one `KVStore` to region splitting.
-
-use std::sync::OnceLock;
+//! one `KVStore` to region splitting, and asks PD through that store's PD
+//! HTTP client (Go `store.GetPDHTTPClient()`).
 
 use tidb_executor::region_map::{RegionMeta, RegionStore};
-use tidb_pd_client::ClusterSecurity;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 
 /// Go `tikv.NewBackofferWithVars(ctx, 20000, nil)` in `getTableRegions`.
 const LOAD_REGIONS_BACKOFF_MS: u64 = 20_000;
 
-/// [`RegionStore`] over a TiKV cluster.
-pub struct TikvRegionStore {
+/// [`RegionStore`] over a node's store: a TiKV cluster's, or the embedded
+/// store's (which has no PD HTTP API, so no region statistics, as Go's
+/// `getRegionInfo` asks PD only for an etcd-backed store).
+pub struct TikvRegionStore<S: tikv_client::PdClient = tikv_client::PdRpcClient> {
     pd_endpoints: Vec<String>,
-    security: ClusterSecurity,
-    store: TikvStore,
-    http: OnceLock<Result<reqwest::blocking::Client, String>>,
+    store: TikvStore<S>,
 }
 
-impl std::fmt::Debug for TikvRegionStore {
+impl<S: tikv_client::PdClient> std::fmt::Debug for TikvRegionStore<S> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("TikvRegionStore")
@@ -47,29 +45,15 @@ impl std::fmt::Debug for TikvRegionStore {
     }
 }
 
-/// PD's `RegionInfo`, the fields Go's `getRegionInfo` copies.
-#[derive(serde::Deserialize, Default)]
-struct PdRegionInfo {
-    #[serde(default)]
-    written_bytes: u64,
-    #[serde(default)]
-    read_bytes: u64,
-    #[serde(default)]
-    approximate_size: i64,
-    #[serde(default)]
-    approximate_keys: i64,
-}
-
-impl TikvRegionStore {
+impl<S: tikv_client::PdClient> TikvRegionStore<S> {
     /// Region access over the node's store, whose PD answers at
-    /// `pd_endpoints` (PD's HTTP API answers there too).
+    /// `pd_endpoints` (none for the embedded store); region statistics come
+    /// from the store's PD HTTP client.
     #[must_use]
-    pub fn new(store: TikvStore, pd_endpoints: Vec<String>, security: ClusterSecurity) -> Self {
+    pub fn new(store: TikvStore<S>, pd_endpoints: Vec<String>) -> Self {
         Self {
             pd_endpoints,
-            security,
             store,
-            http: OnceLock::new(),
         }
     }
 
@@ -81,34 +65,25 @@ impl TikvRegionStore {
         self.store.block_on(future)
     }
 
-    /// Go `getRegionInfo`: PD's statistics for one region.
-    fn region_info(&self, region_id: u64) -> Result<PdRegionInfo, String> {
-        let Some(endpoint) = self.pd_endpoints.first() else {
-            return Ok(PdRegionInfo::default());
-        };
-        let http = self
-            .http
-            .get_or_init(|| crate::cluster_http::cluster_http_client(&self.security))
-            .as_ref()
-            .map_err(Clone::clone)?;
-        let scheme = if self.security.is_tls_enabled() {
-            "https"
-        } else {
-            "http"
-        };
-        let host = endpoint
-            .trim_start_matches("http://")
-            .trim_start_matches("https://");
-        http.get(format!("{scheme}://{host}/pd/api/v1/region/id/{region_id}"))
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(|error| error.to_string())?
-            .json::<PdRegionInfo>()
+    /// Go `getRegionInfo`: PD's statistics for one region, through
+    /// `helper.TryGetPDHTTPClient` (the store's PD HTTP client with caller ID
+    /// `tidb-store-helper`) and `GetRegionByID`. A store without PD
+    /// addresses keeps the regions' zero statistics.
+    fn region_info(&self, region_id: u64) -> Result<tikv_client::pd_http::RegionInfo, String> {
+        if self.pd_endpoints.is_empty() {
+            return Ok(tikv_client::pd_http::RegionInfo::default());
+        }
+        let pd_cli = self
+            .store
+            .pd_http_client()
+            .ok_or_else(|| "pd http client unavailable".to_owned())?
+            .with_caller_id("tidb-store-helper");
+        self.block_on(pd_cli.get_region_by_id(region_id))
             .map_err(|error| error.to_string())
     }
 }
 
-impl RegionStore for TikvRegionStore {
+impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
     fn split_regions(
         &self,
         keys: Vec<Vec<u8>>,
@@ -139,17 +114,17 @@ impl RegionStore for TikvRegionStore {
         start: &[u8],
         end: &[u8],
     ) -> Result<Vec<RegionMeta>, String> {
-        let cache = self.store.store().region_cache();
+        let pd = self.store.store().pd_client();
         let mut backoffer = tikv_client::retry::RetryBackoffer::new(
             tikv_client::async_util::Cancellation::default(),
             LOAD_REGIONS_BACKOFF_MS,
         );
+        let (start, end) = (start.to_vec().into(), end.to_vec().into());
         let regions = self
-            .block_on(cache.load_regions_in_key_range(
-                start.to_vec().into(),
-                end.to_vec().into(),
-                &mut backoffer,
-            ))
+            .block_on(async move {
+                pd.load_regions_in_key_range(start, end, &mut backoffer)
+                    .await
+            })
             .map_err(|error| error.to_string())?;
         let mut metas = Vec::with_capacity(regions.len());
         for region in regions {

@@ -16,23 +16,25 @@
 //!
 //! TiDB reaches etcd through exactly these addresses: `pkg/store/etcd.go`
 //! `NewEtcdCli` builds its `clientv3` from `store.EtcdAddrs()`, which are the
-//! PD endpoints this crate already dials for `pdpb.PD`. PD embeds a real etcd
+//! PD endpoints the node's store dials for `pdpb.PD`. PD embeds a real etcd
 //! server, so `etcdserverpb.KV` and `etcdserverpb.Watch` answer on the same
-//! channel — no second port, no second discovery.
+//! port — no second discovery. A node holds one [`EtcdClient`], as Go's
+//! domain holds one `etcdClient`.
 //!
 //! Two shapes live here because the two uses have opposite lifetimes:
 //!
-//! * [`EtcdClient`] is the bounded foreground client. Like [`crate::PdClient`]
-//!   it owns one worker thread with one current-thread Tokio runtime, so the
-//!   synchronous callers (a DDL commit path) never nest a runtime inside one
-//!   they already own. Each call tries the configured endpoints in order and
-//!   drops a channel that failed, so a restarted PD is picked up on the next
-//!   call rather than poisoning the client.
-//! * [`EtcdWatcher`] is a long-lived stream. It gets its own thread and
-//!   runtime rather than sharing the foreground worker, because a bidi stream
-//!   that blocks would otherwise stall every unary call queued behind it.
+//! * [`EtcdClient`] is the foreground client. Its synchronous calls run on
+//!   its own runtime's blocking pool, so the callers (a DDL commit path) never
+//!   nest a runtime inside one they already own, and, as Go's client
+//!   multiplexes its calls, no call waits behind another. Each call tries the
+//!   configured endpoints in order and drops a connection that failed, so a
+//!   restarted PD is picked up on the next call rather than poisoning the
+//!   client.
+//! * [`EtcdWatcher`] is a long-lived stream. It has its own connection,
+//!   thread and runtime: the foreground connections carry a per-request
+//!   `grpc-timeout`, which would end a stream after one timeout.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
@@ -45,8 +47,7 @@ use etcd_client::{
 };
 use tokio::sync::watch;
 
-use crate::client::normalize_endpoints;
-use crate::{ClusterSecurity, PdClientError};
+use crate::ClusterSecurity;
 
 /// Exact generated method path for the schema-version PUT.
 pub const ETCD_PUT_PATH: &str = "/etcdserverpb.KV/Put";
@@ -155,15 +156,53 @@ impl std::fmt::Display for EtcdError {
 
 impl std::error::Error for EtcdError {}
 
-impl From<PdClientError> for EtcdError {
-    fn from(error: PdClientError) -> Self {
-        match error {
-            PdClientError::InvalidEndpoint { endpoint, message } => {
-                Self::InvalidEndpoint { endpoint, message }
-            }
-            other => Self::Runtime(other.to_string()),
+/// Go `clientv3.Config.Endpoints`: a configured PD client URL, with
+/// `http://` added to a bare `host:port`.
+fn normalize_endpoint(endpoint: &str) -> Result<String, EtcdError> {
+    let invalid = |message: String| EtcdError::InvalidEndpoint {
+        endpoint: endpoint.to_owned(),
+        message,
+    };
+    if endpoint.is_empty() {
+        return Err(invalid("endpoint is empty".to_owned()));
+    }
+    if endpoint.contains("://")
+        && !endpoint.starts_with("http://")
+        && !endpoint.starts_with("https://")
+    {
+        return Err(invalid(
+            "only http and https endpoints are supported".to_owned(),
+        ));
+    }
+    let normalized = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        endpoint.to_owned()
+    } else {
+        format!("http://{endpoint}")
+    };
+    tonic::transport::Endpoint::from_shared(normalized.clone())
+        .map_err(|error| invalid(error.to_string()))?;
+    Ok(normalized)
+}
+
+/// The configured endpoints, normalized, first occurrence kept, optionally
+/// sorted.
+fn normalize_endpoints<I, S>(endpoints: I, sort: bool) -> Result<Vec<String>, EtcdError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+    for endpoint in endpoints {
+        let endpoint = normalize_endpoint(endpoint.as_ref())?;
+        if seen.insert(endpoint.clone()) {
+            normalized.push(endpoint);
         }
     }
+    if sort {
+        normalized.sort();
+    }
+    Ok(normalized)
 }
 
 enum EtcdCommand {
@@ -314,9 +353,9 @@ struct EtcdClientShared {
 
 /// A bounded synchronous etcd KV client over the PD endpoints.
 ///
-/// Cloning shares the worker; the last handle dropped stops it. Unlike
-/// [`crate::PdClient`] there is no owner/handle distinction, because nothing
-/// here holds a stream whose ownership has to be resolved at shutdown.
+/// Cloning shares the worker; the last handle dropped stops it. There is no
+/// owner/handle distinction, because nothing here holds a stream whose
+/// ownership has to be resolved at shutdown.
 #[derive(Clone)]
 pub struct EtcdClient {
     shared: Arc<EtcdClientShared>,
@@ -369,7 +408,11 @@ impl EtcdClient {
         let worker = std::thread::Builder::new()
             .name("etcd-kv".to_owned())
             .spawn(move || {
-                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                // A multi-thread runtime: commands block on it from the
+                // blocking pool, which only drives I/O on such a runtime.
+                let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .thread_name("etcd-kv-io")
                     .enable_all()
                     .build()
                 else {
@@ -378,14 +421,14 @@ impl EtcdClient {
                     // observable outcome as a shut-down worker.
                     return;
                 };
-                run_kv_worker(
-                    &runtime,
-                    &worker_endpoints,
+                let worker = Arc::new(KvWorker {
+                    runtime: runtime.handle().clone(),
+                    endpoints: worker_endpoints,
                     timeout,
-                    &worker_security,
-                    &receiver,
-                    &shutdown_rx,
-                );
+                    security: worker_security,
+                    clients: Mutex::new(HashMap::new()),
+                });
+                run_kv_worker(&runtime, worker, &receiver, &shutdown_rx);
             })
             .map_err(|error| EtcdError::Runtime(error.to_string()))?;
         Ok(Self {
@@ -954,15 +997,25 @@ fn parse_global_schema_version(value: &[u8]) -> Result<i64, EtcdError> {
     })
 }
 
+/// What every command shares: the endpoints, the default timeout, the
+/// security, and one connection per endpoint and timeout.
+struct KvWorker {
+    runtime: tokio::runtime::Handle,
+    endpoints: Vec<String>,
+    timeout: Duration,
+    security: Arc<ClusterSecurity>,
+    clients: Mutex<HashMap<(String, Duration), RawEtcdClient>>,
+}
+
+/// Go's etcd client multiplexes its calls over its connections, so one call
+/// never waits behind another: each command runs on the runtime's blocking
+/// pool, and the loop only orders `Close` and the shutdown answer.
 fn run_kv_worker(
     runtime: &tokio::runtime::Runtime,
-    endpoints: &[String],
-    timeout: Duration,
-    security: &ClusterSecurity,
+    worker: Arc<KvWorker>,
     receiver: &mpsc::Receiver<EtcdCommand>,
     shutdown: &watch::Receiver<bool>,
 ) {
-    let mut clients: HashMap<(String, Duration), RawEtcdClient> = HashMap::new();
     while let Ok(command) = receiver.recv() {
         match command {
             EtcdCommand::Close { reply } => {
@@ -1012,6 +1065,22 @@ fn run_kv_worker(
                 }
                 EtcdCommand::Close { .. } => unreachable!("handled above"),
             },
+            command => {
+                let worker = Arc::clone(&worker);
+                runtime.spawn_blocking(move || worker.handle(command));
+            }
+        }
+    }
+}
+
+impl KvWorker {
+    fn handle(&self, command: EtcdCommand) {
+        let runtime = &self.runtime;
+        let endpoints = self.endpoints.as_slice();
+        let timeout = self.timeout;
+        let security = &*self.security;
+        let clients = &self.clients;
+        match command {
             EtcdCommand::Put {
                 key,
                 value,
@@ -1021,7 +1090,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     operation_timeout,
                     security,
                     |runtime, mut client| {
@@ -1042,7 +1111,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     operation_timeout,
                     security,
                     |runtime, mut client| {
@@ -1062,7 +1131,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     operation_timeout,
                     security,
                     |runtime, mut client| {
@@ -1077,7 +1146,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| runtime.block_on(client.lease_revoke(id)).map(|_| ()),
@@ -1088,7 +1157,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1128,7 +1197,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1150,7 +1219,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1188,7 +1257,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1217,7 +1286,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1262,7 +1331,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1285,7 +1354,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1313,7 +1382,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1345,7 +1414,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1371,7 +1440,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1399,7 +1468,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1428,7 +1497,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     operation_timeout,
                     security,
                     |runtime, mut client| {
@@ -1443,7 +1512,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     timeout,
                     security,
                     |runtime, mut client| {
@@ -1463,7 +1532,7 @@ fn run_kv_worker(
                 let result = across_endpoints(
                     runtime,
                     endpoints,
-                    &mut clients,
+                    clients,
                     operation_timeout,
                     security,
                     |runtime, mut client| {
@@ -1481,6 +1550,7 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
+            EtcdCommand::Close { .. } => unreachable!("the worker loop answers Close"),
         }
     }
 }
@@ -1515,35 +1585,41 @@ where
 /// restarted PD gets a fresh connection on the next call instead of a
 /// permanently broken one.
 fn across_endpoints<T>(
-    runtime: &tokio::runtime::Runtime,
+    runtime: &tokio::runtime::Handle,
     endpoints: &[String],
-    clients: &mut HashMap<(String, Duration), RawEtcdClient>,
+    clients: &Mutex<HashMap<(String, Duration), RawEtcdClient>>,
     timeout: Duration,
     security: &ClusterSecurity,
-    mut call: impl FnMut(&tokio::runtime::Runtime, RawEtcdClient) -> Result<T, RawEtcdError>,
+    mut call: impl FnMut(&tokio::runtime::Handle, RawEtcdClient) -> Result<T, RawEtcdError>,
 ) -> Result<T, EtcdError> {
+    let lock = || {
+        clients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
     let mut last = None;
     for endpoint in endpoints {
         let cache_key = (endpoint.clone(), timeout);
-        if !clients.contains_key(&cache_key) {
-            match connect_etcd_client(runtime, endpoint, timeout, security) {
+        // The lock covers the map only: a slow dial or call never holds up
+        // another command.
+        let cached = lock().get(&cache_key).cloned();
+        let client = match cached {
+            Some(client) => client,
+            None => match connect_etcd_client(runtime, endpoint, timeout, security) {
                 Ok(client) => {
-                    clients.insert(cache_key.clone(), client);
+                    lock().insert(cache_key.clone(), client.clone());
+                    client
                 }
                 Err(error) => {
                     last = Some(error);
                     continue;
                 }
-            }
-        }
-        let client = clients
-            .get(&cache_key)
-            .expect("the client was just inserted")
-            .clone();
+            },
+        };
         match call(runtime, client) {
             Ok(value) => return Ok(value),
             Err(error) => {
-                clients.remove(&cache_key);
+                lock().remove(&cache_key);
                 let error = classify_rpc_error(endpoint, error);
                 // A confirmed missing lease is cluster state, not a failed
                 // endpoint. Do not hide it behind another peer's outage.
@@ -1611,7 +1687,7 @@ fn etcd_connect_options_with_tls(
 }
 
 fn connect_etcd_client(
-    runtime: &tokio::runtime::Runtime,
+    runtime: &tokio::runtime::Handle,
     endpoint: &str,
     timeout: Duration,
     security: &ClusterSecurity,

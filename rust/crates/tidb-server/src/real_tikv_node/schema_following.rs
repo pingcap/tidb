@@ -12,14 +12,15 @@ use super::*;
 use tidb_exec::real_tikv_catalog::ReloadedCatalogAt;
 use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
 
-/// Connects the best-effort etcd client this node announces its DDL through.
+/// Connects the node's one etcd client (Go `domain.NewDomain`'s
+/// `etcdClient`, from `store.EtcdAddrs()`).
 ///
-/// A failure here is a warning, never a startup error: the announcement only
-/// makes peers reload *sooner*, and Go itself carries on when the PUT fails
-/// (`pkg/ddl/job_worker.go` logs "update latest schema version failed" and
-/// continues outside MDL). Refusing to start because etcd was unreachable
-/// would trade an availability property for a latency one.
-pub(crate) fn connect_schema_notifier(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
+/// A failure here is a warning, never a startup error: Go's domain runs with
+/// `etcdCli == nil` too, its announcements only make peers reload *sooner*,
+/// and it carries on when a PUT fails (`pkg/ddl/job_worker.go` logs "update
+/// latest schema version failed" and continues outside MDL). The consumers
+/// that cannot run without etcd refuse on their own.
+pub(crate) fn connect_etcd_client(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
     match EtcdClient::connect_with_security(
         config.pd_endpoints.iter().map(String::as_str),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
@@ -42,24 +43,18 @@ pub(crate) fn connect_schema_notifier(config: &NodeConfig) -> Option<Arc<EtcdCli
 /// the reloader's own tick is the guarantee, and a node whose etcd is
 /// unreachable simply loses the promptness.
 pub(crate) fn spawn_privilege_watch(
-    config: &NodeConfig,
+    etcd: Option<&EtcdClient>,
     reloader: Option<&PrivilegeReloader>,
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
-    match EtcdWatcher::spawn_with_security(
-        config.pd_endpoints.iter().map(String::as_str),
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        Arc::new(config.cluster_security.clone()),
-        PRIVILEGE_UPDATE_KEY,
-        move |event| {
-            eprintln!(
-                "{{\"event\":\"privilege_watch_fired\",\"mod_revision\":{},\"value\":{}}}",
-                event.mod_revision,
-                json_string(&String::from_utf8_lossy(&event.value))
-            );
-            waker.nudge();
-        },
-    ) {
+    match etcd?.watch_key(PRIVILEGE_UPDATE_KEY, 0, move |event| {
+        eprintln!(
+            "{{\"event\":\"privilege_watch_fired\",\"mod_revision\":{},\"value\":{}}}",
+            event.mod_revision,
+            json_string(&String::from_utf8_lossy(&event.value))
+        );
+        waker.nudge();
+    }) {
         Ok(watcher) => Some(watcher),
         Err(error) => {
             emit_warning("privilege_watch_unavailable", &error.to_string());
@@ -74,23 +69,17 @@ pub(crate) fn spawn_privilege_watch(
 ///
 /// Mirrors [`spawn_privilege_watch`] exactly, on the sysvar key.
 pub(crate) fn spawn_sysvar_watch(
-    config: &NodeConfig,
+    etcd: Option<&EtcdClient>,
     reloader: Option<&crate::cluster_sysvar_seam::SysvarReloader>,
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
-    match EtcdWatcher::spawn_with_security(
-        config.pd_endpoints.iter().map(String::as_str),
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        Arc::new(config.cluster_security.clone()),
-        SYSVAR_UPDATE_KEY,
-        move |event| {
-            eprintln!(
-                "{{\"event\":\"sysvar_watch_fired\",\"mod_revision\":{}}}",
-                event.mod_revision
-            );
-            waker.nudge();
-        },
-    ) {
+    match etcd?.watch_key(SYSVAR_UPDATE_KEY, 0, move |event| {
+        eprintln!(
+            "{{\"event\":\"sysvar_watch_fired\",\"mod_revision\":{}}}",
+            event.mod_revision
+        );
+        waker.nudge();
+    }) {
         Ok(watcher) => Some(watcher),
         Err(error) => {
             emit_warning("sysvar_watch_unavailable", &error.to_string());
@@ -154,15 +143,14 @@ fn async_stats_load_interval(stats_lease: crate::node_config::StatsLease) -> Opt
 /// and a positive value is the exact tick for both ordinary and asynchronous
 /// loading. Stats have no schema-watch nudge; Go's own refresh is tick-only
 /// too.
-pub(crate) fn spawn_node_stats<S, P>(
+pub(crate) fn spawn_node_stats<S>(
     catalog: Arc<SharedCatalog>,
-    opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
+    opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
     stats_lease: crate::node_config::StatsLease,
     timeout: Duration,
 ) -> Result<(Arc<SharedStats>, StatsReloader, AsyncStatsLoader), StatsReloadError>
 where
     S: StoreClient,
-    P: tidb_txnkv::transaction::StorePdCapability,
 {
     let Some(reload_interval) = stats_lease.reload_interval() else {
         let shared = Arc::new(
@@ -309,14 +297,13 @@ where
 /// A failed pass is not fatal and does not stop the thread: the previously
 /// published catalog stays in force and the next tick tries again, which is
 /// what Go's reload loop does with a failed `Reload`.
-pub(crate) fn spawn_catalog_reloader<S, P>(
+pub(crate) fn spawn_catalog_reloader<S>(
     startup: ClusterCatalog,
-    transaction_opener: RealOptimisticTransactionOpener<S, P>,
+    transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
 ) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
 where
     S: StoreClient,
-    P: tidb_txnkv::transaction::StorePdCapability,
 {
     if schema_lease.is_zero() {
         return Err(CatalogReloadError::ZeroInterval);

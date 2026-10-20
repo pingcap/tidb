@@ -147,6 +147,14 @@ pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
     fn set_tso_rpc_concurrency(&self, _concurrency: isize) {}
 }
 
+/// Go `variable.SetGlobalResourceControl`: registered by the domain
+/// (`domain_sysvars.go` `setGlobalResourceControl`, which calls the driver's
+/// `EnableGlobalResourceControlFunc` / `DisableGlobalResourceControlFunc`,
+/// client-go's `tikv.EnableResourceControl` / `DisableResourceControl`), and
+/// called when `tidb_enable_resource_control` changes.
+pub static SET_GLOBAL_RESOURCE_CONTROL: RwLock<Option<Arc<dyn Fn(bool) + Send + Sync>>> =
+    RwLock::new(None);
+
 /// Storage-oracle authority installed once by the process session factory.
 pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {
     /// Reads the current timestamp from the storage authority.
@@ -1539,8 +1547,18 @@ impl GlobalSysvars {
         let enabled = self.global_bool_value(name, default);
         match name {
             tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL => {
-                tidb_vardef::ENABLE_RESOURCE_CONTROL
-                    .store(enabled, std::sync::atomic::Ordering::SeqCst);
+                // Go's SetGlobal: only a change reaches the domain's hook.
+                let previous = tidb_vardef::ENABLE_RESOURCE_CONTROL
+                    .swap(enabled, std::sync::atomic::Ordering::SeqCst);
+                if previous != enabled {
+                    let hook = SET_GLOBAL_RESOURCE_CONTROL
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    if let Some(hook) = hook {
+                        hook(enabled);
+                    }
+                }
             }
             tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE => {
                 tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE

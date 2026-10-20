@@ -74,8 +74,9 @@ pub use crate::retry::{
     BO_TIFLASH_RPC, BO_TIKV_RPC, BO_TXN_LOCK,
 };
 pub use crate::store::{
-    ClientEventListener, EndpointType, KvClient as Client, KvConnect, RegionStore, Request, Store,
-    TikvConnect,
+    BatchCoprocessorStreamRequest, BatchCoprocessorStreamResponse, ClientEventListener,
+    EndpointType, KvClient as Client, KvConnect, KvRpcClient, MppStreamRequest, MppStreamResponse,
+    RegionStore, Request, Store, TikvConnect,
 };
 pub use crate::transaction::unionstore::{
     KvIterator as Iterator, MemDb as MemDB, MemDbSnapshot as MemBufferSnapshot,
@@ -1388,8 +1389,24 @@ impl<PdC: PdClient> KvStore<PdC> {
         request: &dyn Request,
         timeout: Duration,
     ) -> Result<Box<dyn std::any::Any>> {
+        self.send_request_with_store_type(address, request, EndpointType::TiKv, timeout)
+            .await
+    }
+
+    /// [`Self::send_request`] for a request whose client-go `StoreTp` is
+    /// `store_type`, such as copr's TiDB memory-table requests to a peer's
+    /// status address.
+    pub async fn send_request_with_store_type(
+        &self,
+        address: &str,
+        request: &dyn Request,
+        store_type: EndpointType,
+        timeout: Duration,
+    ) -> Result<Box<dyn std::any::Any>> {
         use crate::store::KvClient as _;
-        let client = PdClient::kv_client(self.pd_client().as_ref(), address).await?;
+        let client =
+            PdClient::kv_client_with_store_type(self.pd_client().as_ref(), address, store_type)
+                .await?;
         client.dispatch_with_timeout(request, Some(timeout)).await
     }
 

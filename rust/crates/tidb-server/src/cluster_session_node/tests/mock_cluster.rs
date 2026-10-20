@@ -20,7 +20,7 @@ use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::session_commit_protocol::SessionTransactionOptions;
 use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_executor::storage::StorageError;
-use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
     RolledBackTransaction, TransactionCause,

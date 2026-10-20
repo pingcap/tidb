@@ -23,30 +23,26 @@ use std::time::Duration;
 use tidb_exec::meta_txn::MetaTxnStorage;
 use tidb_meta::transaction::Mutator;
 use tidb_model::Job;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_txnkv::{NewTxnStorage, NewTxnTransaction};
 
 /// Go `ddl.batchNumHistoryJobs`, the history read's page size.
 const BATCH_NUM_HISTORY_JOBS: i32 = 128;
 
-pub(super) struct ClusterDdlJobHistoryStore<S: StoreClient, P: StorePdCapability> {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+pub(super) struct ClusterDdlJobHistoryStore<S: StoreClient> {
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
 }
 
-impl<S: StoreClient, P: StorePdCapability> ClusterDdlJobHistoryStore<S, P> {
-    pub(super) fn new(
-        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
-        timeout: Duration,
-    ) -> Self {
+impl<S: StoreClient> ClusterDdlJobHistoryStore<S> {
+    pub(super) fn new(opener: Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<S, P> tidb_session::DdlJobHistoryStore for ClusterDdlJobHistoryStore<S, P>
+impl<S> tidb_session::DdlJobHistoryStore for ClusterDdlJobHistoryStore<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn all_ddl_jobs(&self) -> Result<(Vec<Job>, Vec<Job>), String> {
         // Go `GetAllDDLJobs`: `select job_meta from mysql.tidb_ddl_job ...

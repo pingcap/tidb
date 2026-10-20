@@ -23,8 +23,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tidb_pd_client::PdClient;
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::StoreClient;
 
 use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
 use tidb_exec::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
@@ -232,12 +231,11 @@ fn handle_server_state_watch<T>(
     }
 }
 
-struct ClusterSchemaSync<S, P>
+struct ClusterSchemaSync<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     catalog: Arc<SharedClusterCatalog>,
     /// The node's schema validator, renewed by this reload like the reload
     /// thread's own passes renew it.
@@ -255,15 +253,14 @@ struct SchedulerWorker {
     _adding_job_watcher: Option<tidb_pd_client::EtcdWatcher>,
 }
 
-struct PersistedDdlScheduler<S, P>
+struct PersistedDdlScheduler<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
-    schema_sync: Arc<ClusterSchemaSync<S, P>>,
+    schema_sync: Arc<ClusterSchemaSync<S>>,
     wake: Arc<(Mutex<u64>, Condvar)>,
     server_state: Arc<dyn Syncer>,
     server_state_context: ServerStateContext,
@@ -276,10 +273,9 @@ where
     del_range: Arc<std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>>,
 }
 
-impl<S, P> PersistedDdlScheduler<S, P>
+impl<S> PersistedDdlScheduler<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn notify(&self) {
         let (generation, condvar) = &*self.wake;
@@ -335,10 +331,10 @@ where
     }
 
     fn run_loop(
-        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+        opener: Arc<RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
-        schema_sync: Arc<ClusterSchemaSync<S, P>>,
+        schema_sync: Arc<ClusterSchemaSync<S>>,
         wake: Arc<(Mutex<u64>, Condvar)>,
         server_state: Arc<dyn Syncer>,
         server_state_context: ServerStateContext,
@@ -446,10 +442,9 @@ where
     }
 }
 
-impl<S, P> tidb_owner::Listener for PersistedDdlScheduler<S, P>
+impl<S> tidb_owner::Listener for PersistedDdlScheduler<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn on_become_owner(&self) {
         let mut worker = self
@@ -546,12 +541,11 @@ where
 
 /// The production catalog writer: the optimistic 2PC over the node's one
 /// process authority, followed by an inline reload of the node's own catalog.
-pub struct RealClusterDdl<S = tikv_client::PdRpcClient, P = PdClient>
+pub struct RealClusterDdl<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     catalog: Arc<SharedClusterCatalog>,
     timeout: Duration,
     auto_ids: Option<Arc<tidb_exec::auto_id_client::AutoIdClient>>,
@@ -559,8 +553,8 @@ where
     /// peers' watches fire promptly. `None` leaves them to their lease tick;
     /// a failed announcement is a warning, never a failed DDL.
     notifier: Option<Arc<EtcdClient>>,
-    schema_sync: Arc<ClusterSchemaSync<S, P>>,
-    scheduler: Arc<PersistedDdlScheduler<S, P>>,
+    schema_sync: Arc<ClusterSchemaSync<S>>,
+    scheduler: Arc<PersistedDdlScheduler<S>>,
     owner: Arc<dyn tidb_owner::Manager>,
     server_state: Arc<dyn Syncer>,
     server_state_context: ServerStateContext,
@@ -572,10 +566,9 @@ where
     job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
 }
 
-impl<S, P> RealClusterDdl<S, P>
+impl<S> RealClusterDdl<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     /// The node's row-ID allocators, for the rows the owner inserts into
     /// `mysql.*` tables (Go's internal INSERTs allocate from them).
@@ -607,7 +600,7 @@ where
     /// Binds the writer to an already-connected authority and the catalog slot
     /// the reload thread publishes into.
     pub fn new(
-        opener: RealOptimisticTransactionOpener<S, P>,
+        opener: RealOptimisticTransactionOpener<S>,
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -633,7 +626,7 @@ where
     /// loop. Go's domain owns one `MinJobIDRefresher`; both the scheduler and
     /// `refreshMDLCheckTableInfo` read that same monotonic lower bound.
     pub fn new_with_min_job_id_refresher(
-        opener: RealOptimisticTransactionOpener<S, P>,
+        opener: RealOptimisticTransactionOpener<S>,
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -973,7 +966,7 @@ mod schema_sync_tests {
                 panic!("disabled MDL must not clean per-job acknowledgement keys")
             }
         }
-        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
         crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
@@ -1216,7 +1209,7 @@ mod schema_sync_tests {
                 Err("etcd unavailable".into())
             }
         }
-        let (_authority, _pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
         let (outcome, _) = crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
@@ -2202,10 +2195,9 @@ mod schema_sync_tests {
     }
 }
 
-impl<S, P> ClusterSchemaSync<S, P>
+impl<S> ClusterSchemaSync<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn reload_catalog(&self) -> Result<(), String> {
         let _reload = self.catalog.lock_reload();
@@ -2223,20 +2215,18 @@ where
     }
 }
 
-impl<S, P> SchemaLoader for ClusterSchemaSync<S, P>
+impl<S> SchemaLoader for ClusterSchemaSync<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn reload(&self) -> Result<(), String> {
         self.reload_catalog()
     }
 }
 
-impl<S, P> DdlSchemaSync for ClusterSchemaSync<S, P>
+impl<S> DdlSchemaSync for ClusterSchemaSync<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn owner_id(&self) -> &str {
         &self.owner_id
@@ -2265,10 +2255,9 @@ where
     }
 }
 
-impl<S, P> ClusterDdl for RealClusterDdl<S, P>
+impl<S> ClusterDdl for RealClusterDdl<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn is_owner(&self) -> bool {
         self.owner.is_owner()
@@ -2283,10 +2272,9 @@ where
     }
 }
 
-impl<S, P> RealClusterDdl<S, P>
+impl<S> RealClusterDdl<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     /// [`ClusterDdl::execute`] for one target of a statement naming
     /// `targets` (Go's `DropTableArgs.Identifiers`: every table the DROP
@@ -2570,10 +2558,9 @@ fn reorg_meta_warnings(
         .collect()
 }
 
-impl<S, P> tidb_exec::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<S, P>
+impl<S> tidb_exec::tiflash_replica_manager::TiFlashReplicaControl for RealClusterDdl<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn is_owner(&self) -> bool {
         self.owner.is_owner()
@@ -2593,10 +2580,9 @@ where
     }
 }
 
-impl<S, P> Drop for RealClusterDdl<S, P>
+impl<S> Drop for RealClusterDdl<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn drop(&mut self) {
         self.server_state_context.cancel();
@@ -3102,9 +3088,14 @@ impl KvTableIndexBackfiller {
     ) -> Result<(), LockSqlError> {
         // Go `checkExchangePartitionRecordValidation`'s partition-type switch
         // refuses a KEY-partitioned table before any row is read.
-        if plan.partitioned.partition.as_ref().is_some_and(|partition| {
-            partition.read().partition_type == tidb_ast::PartitionType::KEY
-        }) {
+        if plan
+            .partitioned
+            .partition
+            .as_ref()
+            .is_some_and(|partition| {
+                partition.read().partition_type == tidb_ast::PartitionType::KEY
+            })
+        {
             return Err(LockSqlError {
                 code: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
                 state: *b"HY000",

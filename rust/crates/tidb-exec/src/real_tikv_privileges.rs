@@ -24,7 +24,7 @@
 use std::time::Duration;
 
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::StoreClient;
 
 use crate::cluster_catalog::{load_cluster_catalog, ClusterCatalog, MetaSnapshot};
 use crate::cluster_privilege_load::{
@@ -64,8 +64,8 @@ pub struct ClusterStartupVariables {
 /// The transaction is finished without writes, so the load leaves no locks
 /// behind and consumes exactly one PD timestamp — the same contract
 /// [`crate::real_tikv_catalog::load_catalog_from_cluster`] keeps.
-pub fn load_accounts_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_accounts_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<ClusterAccounts, SystemTableError> {
     let mut transaction = opener
@@ -107,8 +107,8 @@ pub fn load_accounts_from_cluster<S: StoreClient, P: StorePdCapability>(
 /// Keeping this separate from [`load_accounts_from_cluster`] lets recovery
 /// mode preserve that ordering without consulting any account or grant row.
 /// An unbootstrapped or partially bootstrapped keyspace returns no overrides.
-pub fn load_sysvars_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_sysvars_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<Vec<(String, String)>, SystemTableError> {
     load_sysvars_from_cluster_with_catalog_cache(opener, timeout, None)
@@ -122,8 +122,8 @@ pub fn load_sysvars_from_cluster<S: StoreClient, P: StorePdCapability>(
 pub type CatalogCache = std::sync::Mutex<Option<std::sync::Arc<ClusterCatalog>>>;
 
 /// [`load_sysvars_from_cluster`] with an optional caller-owned catalog cache.
-pub fn load_sysvars_from_cluster_with_catalog_cache<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_sysvars_from_cluster_with_catalog_cache<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     catalog_cache: Option<&CatalogCache>,
 ) -> Result<Vec<(String, String)>, SystemTableError> {
@@ -142,8 +142,8 @@ pub fn load_sysvars_from_cluster_with_catalog_cache<S: StoreClient, P: StorePdCa
 
 /// Reads the bootstrap-persisted system time zone and global variables from
 /// one consistent read-only snapshot.
-pub fn load_startup_variables_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_startup_variables_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<ClusterStartupVariables, SystemTableError> {
     let mut transaction = opener

@@ -19,10 +19,8 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
-use tidb_txnkv::driver::tikv_store::{store_runtime, TikvStore};
-use tidb_txnkv::{
-    Key, TikvInProcessSource, TikvTransactionDriver, TikvTransactionOpener, UnaryCallContext,
-};
+use tidb_txnkv::driver::tikv_store::TikvStore;
+use tidb_txnkv::{Key, TikvTransactionDriver, UnaryCallContext};
 use tidb_unistore::mock::StorePdClient;
 use tikv_client::proto::kvrpcpb;
 use tikv_client::TimestampExt;
@@ -46,36 +44,27 @@ impl Store {
         ));
         let (rpc, pd, _cluster) =
             tidb_unistore::mock::over(handler, Arc::clone(&regions), oracle, Vec::new()).unwrap();
-        let runtime = store_runtime().unwrap();
-        let store = runtime
-            .block_on(async {
-                let store_pd =
-                    tidb_unistore::mock::store_pd_client(&rpc, pd, tikv_client::Config::default())
-                        .await?;
-                tikv_client::tikv::KvStore::new_with_pd_client(
-                    Arc::new(store_pd),
-                    Arc::new(tikv_client::tikv::MockSafePointKv::new()),
-                    tikv_client::Config::default(),
-                )
-                .await
-            })
-            .unwrap();
+        let tikv_store =
+            tidb_unistore::mock::new_test_tikv_store(&rpc, pd, tikv_client::Config::default())
+                .unwrap();
         Self {
-            tikv_store: TikvStore::new(Arc::clone(&runtime), store),
-            runtime,
+            runtime: Arc::clone(tikv_store.runtime()),
+            tikv_store,
             regions,
         }
     }
+    /// Go `store.Begin()`: a transaction at a fresh oracle timestamp.
     fn begin(&self, pessimistic: bool) -> TikvTransactionDriver<StorePdClient> {
-        let opener = TikvTransactionOpener::new(
-            TikvInProcessSource::new(self.tikv_store.store().pd_client(), self.runtime.clone()),
-            self.runtime.clone(),
-        );
-        if pessimistic {
-            opener.begin_pessimistic().unwrap()
+        let options = if pessimistic {
+            tikv_client::TransactionOptions::new_pessimistic()
         } else {
-            opener.begin().unwrap()
-        }
+            tikv_client::TransactionOptions::new_optimistic()
+        };
+        let transaction = self
+            .tikv_store
+            .block_on(self.tikv_store.store().begin_with_options(options))
+            .unwrap();
+        TikvTransactionDriver::new(transaction, self.runtime.clone())
     }
     fn facade(&self) -> tidb_txnkv::transaction::client::ClientTransaction<StorePdClient> {
         tidb_txnkv::transaction::client::ClientTransaction::new_opened(
@@ -405,12 +394,10 @@ fn store_facade_preserves_schema_error_and_never_publishes_invalid_schema() {
 
 #[test]
 fn store_facade_fair_retry_and_statement_cancel_keep_transaction_locks() {
-    use tidb_txnkv::transaction::{client::ClientPessimisticTransaction, LockWaitTime};
+    use tidb_txnkv::transaction::LockWaitTime;
     let store = Store::new();
     let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
-    let mut txn =
-        ClientPessimisticTransaction::from_transaction(store.facade(), std::time::Instant::now())
-            .unwrap();
+    let mut txn = pessimistic(&store);
     let absent = std::collections::BTreeSet::new();
     txn.acquire_locks(&[b"prior".to_vec()], &absent, LockWaitTime::NoWait, &call)
         .unwrap();
@@ -442,12 +429,10 @@ fn store_facade_fair_retry_and_statement_cancel_keep_transaction_locks() {
 
 #[test]
 fn store_facade_lock_values_distinguish_missing_and_previously_locked_keys() {
-    use tidb_txnkv::transaction::{client::ClientPessimisticTransaction, LockWaitTime};
+    use tidb_txnkv::transaction::LockWaitTime;
     let store = Store::new();
     let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
-    let mut txn =
-        ClientPessimisticTransaction::from_transaction(store.facade(), std::time::Instant::now())
-            .unwrap();
+    let mut txn = pessimistic(&store);
     let absent = std::collections::BTreeSet::new();
     let result = txn
         .acquire_locks_returning_values(
@@ -636,14 +621,11 @@ fn resource_group(context: Option<&kvrpcpb::Context>) -> Option<String> {
         .map(|resource| resource.resource_group_name.clone())
 }
 
-fn pessimistic(
-    store: &Store,
-) -> tidb_txnkv::transaction::client::ClientPessimisticTransaction<StorePdClient> {
-    tidb_txnkv::transaction::client::ClientPessimisticTransaction::from_transaction(
-        store.facade(),
-        std::time::Instant::now(),
-    )
-    .unwrap()
+/// Go `onTxnActiveFunc`: the session's transaction in pessimistic mode.
+fn pessimistic(store: &Store) -> tidb_txnkv::transaction::client::ClientTransaction<StorePdClient> {
+    let mut transaction = store.facade();
+    transaction.set_pessimistic(true);
+    transaction
 }
 
 /// Go's session holds one `kv.Transaction` from `BEGIN` to `COMMIT`: its
@@ -806,7 +788,7 @@ fn txn_resource_group_is_attached_to_pessimistic_lock_rpc_context() {
     let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
     let (sent, recorder) = record_requests();
     let mut txn = pessimistic(&store);
-    txn.snapshot().add_rpc_interceptor(recorder);
+    txn.add_rpc_interceptor(recorder);
     txn.set_resource_group_name("analytics");
     txn.acquire_locks(
         &[b"a".to_vec()],
@@ -834,7 +816,7 @@ fn a_presumed_absent_key_carries_the_not_exists_assertion() {
     let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
     let (sent, recorder) = record_requests();
     let mut txn = pessimistic(&store);
-    txn.snapshot().add_rpc_interceptor(recorder);
+    txn.add_rpc_interceptor(recorder);
     let presumed = std::collections::BTreeSet::from([b"a".to_vec()]);
     txn.acquire_locks(
         &[b"a".to_vec(), b"b".to_vec()],
@@ -866,7 +848,7 @@ fn commit_declares_a_pessimistic_check_only_for_keys_it_actually_locked() {
     let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
     let (sent, recorder) = record_requests();
     let mut txn = pessimistic(&store);
-    txn.snapshot().add_rpc_interceptor(recorder);
+    txn.add_rpc_interceptor(recorder);
     txn.acquire_locks(
         &[b"locked".to_vec()],
         &std::collections::BTreeSet::new(),
@@ -934,7 +916,7 @@ fn a_returning_value_lock_carries_the_rows_answer() {
         .unwrap();
     let (sent, recorder) = record_requests();
     let mut txn = pessimistic(&store);
-    txn.snapshot().add_rpc_interceptor(recorder);
+    txn.add_rpc_interceptor(recorder);
     let acquired = txn
         .acquire_locks_returning_values(
             &[b"row".to_vec(), b"absent".to_vec()],
@@ -970,7 +952,7 @@ fn a_plain_lock_still_omits_return_values() {
     let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
     let (sent, recorder) = record_requests();
     let mut txn = pessimistic(&store);
-    txn.snapshot().add_rpc_interceptor(recorder);
+    txn.add_rpc_interceptor(recorder);
     txn.acquire_locks(
         &[b"row".to_vec()],
         &std::collections::BTreeSet::new(),

@@ -308,11 +308,15 @@ mod tests {
 
 /// client-go `KVStore.oracle`: the timestamp oracle a store's transactions,
 /// lock resolution and read validation use, replaced by `SetOracle` (tests
-/// install [`oracles::MockOracle`]). Until one is installed, timestamps come
-/// straight from the PD client's TSO, as the store's PD oracle answers them.
+/// install [`oracles::MockOracle`]). Until one is installed it is the store's
+/// PD oracle (client-go `NewKVStore`'s `oracles.NewPdOracle`), so every
+/// timestamp the store hands out updates the last timestamp read validation
+/// and low-resolution reads use; a client with no PD oracle reads the PD
+/// client's TSO directly.
 #[derive(Clone, Default)]
 pub struct StoreOracle {
     installed: std::sync::Arc<std::sync::RwLock<Option<std::sync::Arc<dyn Oracle>>>>,
+    pd_oracle: Option<std::sync::Arc<dyn Oracle>>,
 }
 
 impl std::fmt::Debug for StoreOracle {
@@ -324,6 +328,14 @@ impl std::fmt::Debug for StoreOracle {
 }
 
 impl StoreOracle {
+    /// The store oracle over the store's PD oracle.
+    pub fn over_pd_oracle(pd_oracle: std::sync::Arc<dyn Oracle>) -> Self {
+        Self {
+            installed: Default::default(),
+            pd_oracle: Some(pd_oracle),
+        }
+    }
+
     /// client-go `KVStore.SetOracle`.
     pub fn set(&self, oracle: std::sync::Arc<dyn Oracle>) {
         *self
@@ -346,14 +358,18 @@ impl StoreOracle {
         pd: &std::sync::Arc<PdC>,
     ) -> crate::Result<crate::Timestamp> {
         use crate::TimestampExt;
-        match self.installed() {
+        match self.installed().or_else(|| self.pd_oracle.clone()) {
             Some(oracle) => oracle
                 .get_timestamp(&OracleOption {
                     txn_scope: GLOBAL_TXN_SCOPE.to_owned(),
                 })
                 .await
                 .map(crate::Timestamp::from_version)
-                .map_err(|error| crate::Error::StringError(error.to_string())),
+                // The PD oracle boxes the PD client's own error: keep its type.
+                .map_err(|error| match error.downcast::<crate::Error>() {
+                    Ok(error) => *error,
+                    Err(error) => crate::Error::StringError(error.to_string()),
+                }),
             None => pd.clone().get_timestamp().await,
         }
     }

@@ -16,22 +16,31 @@
 
 use serde::Deserialize;
 use tidb_domain::cluster_topology::{ClusterDiscovery, ClusterServer, ClusterStore};
-use tidb_pd_client::{ClusterSecurity, PdClient};
+use tidb_pd_client::ClusterSecurity;
 use tidb_proto::metapb;
+use tidb_txnkv::driver::tikv_store::TikvStore;
 
 /// Shares the node's PD membership and internal HTTP security policy.
 pub struct PdClusterDiscovery {
-    pd: PdClient,
+    /// The node's store, whose PD client answers members and stores (Go
+    /// `store.GetPDClient()`).
+    store: TikvStore,
+    timeout: std::time::Duration,
     http: reqwest::blocking::Client,
     scheme: &'static str,
 }
 
 impl PdClusterDiscovery {
     /// No new PD worker, cache or TSO lifecycle is created.
-    pub fn new(pd: PdClient, security: &ClusterSecurity) -> Result<Self, String> {
+    pub fn new(
+        store: TikvStore,
+        security: &ClusterSecurity,
+        timeout: std::time::Duration,
+    ) -> Result<Self, String> {
         Ok(Self {
-            http: crate::cluster_http::cluster_http_client(security)?,
-            pd,
+            http: crate::cluster_http::internal_http_client(security)?,
+            store,
+            timeout,
             scheme: if security.is_tls_enabled() {
                 "https"
             } else {
@@ -40,20 +49,34 @@ impl PdClusterDiscovery {
         })
     }
 
+    /// Go `GetAllMembers`: every member's client URLs.
     fn members(&self) -> Vec<String> {
-        self.pd
-            .member_set()
-            .member_urls
-            .into_iter()
-            .map(|url| strip_scheme(&url).to_owned())
-            .collect()
+        let pd = self.store.store().pd_client();
+        let Ok(response) = self
+            .store
+            .block_on(async move { pd.get_all_members().await })
+        else {
+            return Vec::new();
+        };
+        let mut urls = Vec::new();
+        for url in response
+            .members
+            .iter()
+            .flat_map(|member| member.client_urls.iter())
+        {
+            let url = strip_scheme(url).to_owned();
+            if !urls.contains(&url) {
+                urls.push(url);
+            }
+        }
+        urls
     }
 
     fn get(&self, address: &str, path: &str) -> Result<reqwest::blocking::Response, String> {
         self.http
             .get(format!("{}://{address}{path}", self.scheme))
             .header("PD-Allow-follower-handle", "true")
-            .timeout(self.pd.timeout())
+            .timeout(self.timeout)
             .send()
             .map_err(|error| error.to_string())
     }
@@ -91,9 +114,10 @@ impl ClusterDiscovery for PdClusterDiscovery {
     }
 
     fn stores(&self) -> Result<Vec<ClusterStore>, String> {
+        let pd = self.store.store().pd_client();
         Ok(self
-            .pd
-            .all_store_metadata()
+            .store
+            .block_on(async move { tikv_client::PdClient::get_all_stores(pd.as_ref()).await })
             .map_err(|error| error.to_string())?
             .into_iter()
             .filter_map(project_store)

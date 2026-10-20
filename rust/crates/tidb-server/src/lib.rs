@@ -70,15 +70,14 @@ mod cursor_state;
 mod global_config_sync;
 pub mod handshake;
 mod handshake_response;
-pub mod http_status;
 pub mod http_settings;
-mod status_transport;
-pub mod peer_rpc;
+pub mod http_status;
 pub mod main_flags;
 mod mysql_connection;
 mod mysql_tls;
 mod native_password;
 mod node_config;
+pub mod peer_rpc;
 mod pipeline_session;
 mod query_metrics;
 mod real_tikv_node;
@@ -92,8 +91,8 @@ mod set_global_vars;
 mod shutdown_signal;
 pub mod signal_exit;
 mod sql_node;
+mod status_transport;
 mod unistore_node;
-mod unistore_region_store;
 pub mod wire_status;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
@@ -486,13 +485,17 @@ mod compute_topology_batch_tests {
         assert!(super::initialize_compute_topology(&config).is_ok());
         config.disaggregated_tiflash = true;
         assert!(super::initialize_compute_topology(&config)
-            .unwrap_err().to_string().contains("not implemented yet(gcp)"));
+            .unwrap_err()
+            .to_string()
+            .contains("not implemented yet(gcp)"));
         config.use_auto_scaler = false;
         assert!(super::initialize_compute_topology(&config).is_ok());
         config.use_auto_scaler = true;
         config.tiflash_compute_auto_scaler_type = "aws".into();
         config.auto_scaler_cluster_id.clear();
         assert!(super::initialize_compute_topology(&config)
-            .unwrap_err().to_string().contains("addr is empty"));
+            .unwrap_err()
+            .to_string()
+            .contains("addr is empty"));
     }
 }

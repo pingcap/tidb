@@ -29,12 +29,12 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 
 use tidb_domain::ru_stats::{
-    Consumption, DailyRuStats, GroupRuStats, ResourceGroupInfo, ResourceGroupWithRuStats,
-    RuStats, RuStatsDeps, RuStatsError, RuStatsWriter,
+    Consumption, DailyRuStats, GroupRuStats, ResourceGroupInfo, ResourceGroupWithRuStats, RuStats,
+    RuStatsDeps, RuStatsError, RuStatsWriter,
 };
 use tidb_exec::meta_txn::{MetaTxnError, MetaTxnStorage};
 use tidb_meta::transaction::Mutator;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 
 use super::{ClusterSessionFactory, ClusterStatsSessionContext, UsageWorkerStop};
@@ -44,31 +44,29 @@ use super::{ClusterSessionFactory, ClusterStatsSessionContext, UsageWorkerStop};
 struct InternalTxnOthers;
 
 /// The production dependencies of Go's RU statistics writer.
-pub(super) struct ClusterRuStatsDeps<S: StoreClient, P: StorePdCapability> {
-    pd: tidb_pd_client::PdClient,
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+pub(super) struct ClusterRuStatsDeps<S: StoreClient> {
+    /// The store whose PD client reads the resource manager, within the
+    /// store's keyspace (Go `store.GetPDClient()`).
+    pd: tidb_txnkv::driver::tikv_store::TikvStore,
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
-    keyspace_id: Option<u32>,
     timeout: Duration,
 }
 
-impl<S, P> ClusterRuStatsDeps<S, P>
+impl<S> ClusterRuStatsDeps<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     pub(super) fn new(
-        pd: tidb_pd_client::PdClient,
-        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+        pd: tidb_txnkv::driver::tikv_store::TikvStore,
+        opener: Arc<RealOptimisticTransactionOpener<S>>,
         pool: Arc<tidb_syssession::AdvancedSessionPool<ClusterStatsSessionContext>>,
-        keyspace_id: Option<u32>,
         timeout: Duration,
     ) -> Self {
         Self {
             pd,
             opener,
             pool,
-            keyspace_id,
             timeout,
         }
     }
@@ -90,7 +88,12 @@ where
         self.pool
             .with_session(|session| {
                 session
-                    .exec_restricted_sql(&InternalTxnOthers, &[use_current_session], sql, &arguments)
+                    .exec_restricted_sql(
+                        &InternalTxnOthers,
+                        &[use_current_session],
+                        sql,
+                        &arguments,
+                    )
                     .map(|(rows, _)| rows)
                     .map_err(|error| tidb_syssession::SysSessionError::new(error.to_string()))
             })
@@ -112,17 +115,17 @@ where
     }
 }
 
-impl<S, P> RuStatsDeps for ClusterRuStatsDeps<S, P>
+impl<S> RuStatsDeps for ClusterRuStatsDeps<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn list_resource_groups_with_ru_stats(
         &self,
     ) -> Result<Vec<ResourceGroupWithRuStats>, RuStatsError> {
+        let pd = self.pd.store().pd_client();
         let groups = self
             .pd
-            .list_resource_groups(self.keyspace_id, true)
+            .block_on(async move { pd.list_resource_groups(true).await })
             .map_err(|error| RuStatsError::Other(error.to_string()))?;
         Ok(groups
             .into_iter()
@@ -169,11 +172,16 @@ where
     fn persist_ru_stats(&self, stats: &RuStats) -> Result<(), RuStatsError> {
         let stored = domain_to_meta(stats);
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
-        run_in_new_txn(&RunInNewTxnContext::default(), &mut storage, true, |transaction| {
-            Mutator::new(&mut *transaction)
-                .set_ru_stats(Some(&stored))
-                .map_err(MetaTxnError::from)
-        })
+        run_in_new_txn(
+            &RunInNewTxnContext::default(),
+            &mut storage,
+            true,
+            |transaction| {
+                Mutator::new(&mut *transaction)
+                    .set_ru_stats(Some(&stored))
+                    .map_err(MetaTxnError::from)
+            },
+        )
         .map_err(|error| RuStatsError::Other(error.to_string()))
     }
 
@@ -346,7 +354,11 @@ mod tests {
             [&stats.latest, &stats.previous]
                 .map(|day| day.as_ref().map(|day| day.end_time.timestamp()))
         };
-        assert_eq!(instants(&restored), instants(&original), "the instants survive");
+        assert_eq!(
+            instants(&restored),
+            instants(&original),
+            "the instants survive"
+        );
         let groups = |stats: &RuStats| {
             [&stats.latest, &stats.previous].map(|day| day.as_ref().unwrap().stats.clone())
         };

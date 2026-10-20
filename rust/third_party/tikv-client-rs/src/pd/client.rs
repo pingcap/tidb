@@ -255,6 +255,77 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// [`Self::kv_client`] for a request bound to a store of `store_type`,
+    /// as client-go's `tikvrpc.Request.StoreTp` travels with the request.
+    async fn kv_client_with_store_type(
+        &self,
+        address: &str,
+        _store_type: crate::store::EndpointType,
+    ) -> Result<Self::KvClient> {
+        self.kv_client(address).await
+    }
+
+    /// client-go `RegionCache.GetTiFlashComputeStores`: the cluster's TiFlash
+    /// compute stores, from the region cache's own list. Clients without a
+    /// region cache refuse.
+    async fn get_tiflash_compute_stores(&self) -> Result<Vec<metapb::Store>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.InvalidateTiFlashComputeStores`: the next
+    /// [`Self::get_tiflash_compute_stores`] reloads the list from PD.
+    fn invalidate_tiflash_compute_stores(&self) {}
+
+    /// client-go `RegionCache.GetTiFlashRPCContext(bo, id, loadBalance,
+    /// labelFilter)`: the TiFlash peer and store a batch task for `region`
+    /// goes to, or why the region has none. Clients without a region cache
+    /// refuse.
+    async fn get_tiflash_rpc_context(
+        &self,
+        _region: &RegionWithLeader,
+        _load_balance: bool,
+        _filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Result<
+        std::result::Result<
+            (metapb::Peer, metapb::Store),
+            crate::region_cache::TiFlashRpcContextUnavailableDetail,
+        >,
+    > {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.GetAllValidTiFlashStores(id, currentStore,
+    /// labelFilter)`: the region's usable TiFlash stores, `current_store`
+    /// first, and those whose peer is not pending.
+    async fn get_all_valid_tiflash_stores(
+        &self,
+        _ver_id: &RegionVerId,
+        current_store: StoreId,
+        _filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> (Vec<StoreId>, Vec<StoreId>) {
+        (vec![current_store], Vec::new())
+    }
+
+    /// client-go `RegionCache.GetTiFlashStores(labelFilter)`.
+    fn get_tiflash_stores(
+        &self,
+        _filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Vec<metapb::Store> {
+        Vec::new()
+    }
+
+    /// client-go `RegionCache.LoadRegionsInKeyRange(bo, startKey, endKey)`:
+    /// every region in `[start_key, end_key)`, freshly loaded from PD. Clients
+    /// without a region cache refuse.
+    async fn load_regions_in_key_range(
+        &self,
+        _start_key: Key,
+        _end_key: Key,
+        _backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -443,6 +514,17 @@ pub trait PdClient: Send + Sync + 'static {
     /// `BucketVersionNotMatch` response. Custom clients without a region
     /// cache retain the source-compatible no-op default.
     async fn update_buckets(&self, _ver_id: RegionVerId, _version: u64, _keys: Vec<Vec<u8>>) {}
+
+    /// client-go `RegionCache.UpdateBucketsIfNeeded`: a response advertised
+    /// buckets newer than the request's, so the region is reloaded in the
+    /// background. Clients without a region cache ignore it.
+    fn update_buckets_if_needed(
+        &self,
+        _ver_id: RegionVerId,
+        _request_version: u64,
+        _latest_version: u64,
+    ) {
+    }
 
     /// Records TiKV's estimated server queue delay. Custom PD clients that
     /// do not own a region/store cache retain a no-op default.
@@ -1553,6 +1635,16 @@ where
             .await;
     }
 
+    fn update_buckets_if_needed(
+        &self,
+        ver_id: RegionVerId,
+        request_version: u64,
+        latest_version: u64,
+    ) {
+        self.region_cache
+            .update_buckets_if_needed(ver_id, request_version, latest_version);
+    }
+
     fn record_server_load(&self, store_id: StoreId, estimated_wait_ms: u32) {
         self.region_cache
             .record_server_load(store_id, estimated_wait_ms);
@@ -1590,6 +1682,67 @@ where
 
     async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
         PdRpcClient::kv_client(self, address).await
+    }
+
+    async fn kv_client_with_store_type(
+        &self,
+        address: &str,
+        store_type: crate::store::EndpointType,
+    ) -> Result<KvC::KvClient> {
+        PdRpcClient::kv_client_with_store_type(self, address, store_type).await
+    }
+
+    async fn get_tiflash_compute_stores(&self) -> Result<Vec<metapb::Store>> {
+        self.region_cache.get_tiflash_compute_stores().await
+    }
+
+    fn invalidate_tiflash_compute_stores(&self) {
+        self.region_cache.invalidate_tiflash_compute_stores();
+    }
+
+    async fn get_tiflash_rpc_context(
+        &self,
+        region: &RegionWithLeader,
+        load_balance: bool,
+        filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Result<
+        std::result::Result<
+            (metapb::Peer, metapb::Store),
+            crate::region_cache::TiFlashRpcContextUnavailableDetail,
+        >,
+    > {
+        self.region_cache
+            .get_tiflash_rpc_context(region, load_balance, filter)
+            .await
+    }
+
+    async fn get_all_valid_tiflash_stores(
+        &self,
+        ver_id: &RegionVerId,
+        current_store: StoreId,
+        filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> (Vec<StoreId>, Vec<StoreId>) {
+        self.region_cache
+            .get_all_valid_tiflash_stores(ver_id, current_store, filter)
+            .await
+    }
+
+    fn get_tiflash_stores(
+        &self,
+        filter: crate::region_cache::TiFlashLabelFilter,
+    ) -> Vec<metapb::Store> {
+        self.region_cache.get_tiflash_stores(filter)
+    }
+
+    async fn load_regions_in_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .load_regions_in_key_range(start_key, end_key, backoffer)
+            .await
     }
 }
 
@@ -1638,25 +1791,7 @@ impl PdRpcClient<TikvConnect, Cluster> {
         };
         let client = PdRpcClient::new_with_codec_resolver(
             config.clone(),
-            |security_mgr| {
-                TikvConnect::new_with_grpc_compression(
-                    security_mgr,
-                    config.timeout,
-                    config.grpc_max_decoding_message_size,
-                    &config.tikv_client.grpc_compression_type,
-                    Duration::from_secs(config.tikv_client.grpc_keep_alive_time),
-                    Duration::from_secs_f64(config.tikv_client.grpc_keep_alive_timeout),
-                    u32::try_from(config.tikv_client.grpc_initial_window_size)
-                        .ok()
-                        .filter(|size| *size > 0),
-                    u32::try_from(config.tikv_client.grpc_initial_conn_window_size)
-                        .ok()
-                        .filter(|size| *size > 0),
-                    config.tikv_client.grpc_connection_count as usize,
-                )
-                .with_open_tracing(config.open_tracing_enable)
-                .with_tikv_client_config(config.tikv_client.clone())
-            },
+            |security_mgr| TikvConnect::from_config(security_mgr, &config),
             |security_mgr| async move {
                 let mut options = super::opt::Options::new();
                 options.timeout = config.timeout;
@@ -1691,41 +1826,13 @@ impl PdRpcClient<TikvConnect, Cluster> {
             },
         )
         .await?;
-        if enable_preload {
-            let mut backoffer =
-                RetryBackoffer::new(crate::async_util::Cancellation::default(), 20_000);
-            if let Err(error) = client
-                .region_cache
-                .refresh_region_index(&mut backoffer)
-                .await
-            {
-                log::debug!("preload region index failed: {error}");
-            }
-        }
-        if regions_refresh_interval > 0 {
-            client
-                .region_cache
-                .start_background_refresh(Duration::from_secs(regions_refresh_interval));
-        } else {
-            client.region_cache.start_background_gc();
-        }
-        let health_feedback_requester = Arc::new(StoreHealthFeedbackRequester {
-            kv_connect: client.kv_connect.clone(),
-            kv_client_cache: client.kv_client_cache.clone(),
-            kv_client_versions: client.kv_client_versions.clone(),
-            kv_client_lifecycle: client.kv_client_lifecycle.clone(),
-            kv_client_closed: client.kv_client_closed.clone(),
-            event_listener: client.region_cache.client_event_listener(),
-        });
         client
-            .region_cache
-            .set_health_feedback_callback(Arc::new(move |address| {
-                let requester = health_feedback_requester.clone();
-                Box::pin(async move { requester.request(&address).await })
-            }));
-        client
-            .region_cache
-            .start_background_store_maintenance(Duration::from_secs(stores_refresh_interval));
+            .start_region_cache_workers(
+                enable_preload,
+                regions_refresh_interval,
+                stores_refresh_interval,
+            )
+            .await;
         Ok(client)
     }
 }
@@ -1737,6 +1844,14 @@ enum PdCodecConfig {
         mode: KeyMode,
         keyspace_name: String,
     },
+}
+
+impl<KvC: KvConnect + Send + Sync + 'static> PdRpcClient<KvC, RetryClient<Cluster>> {
+    /// Go `pd.Client.GetServiceDiscovery`: this client's PD membership, the
+    /// leader first, for `pd_http::new_client_with_service_discovery`.
+    pub fn get_service_discovery(&self) -> Arc<dyn crate::pd::http::ServiceDiscovery> {
+        self.pd.get_service_discovery()
+    }
 }
 
 impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
@@ -1753,6 +1868,200 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
             .clone()
             .advance_txn_safe_point(keyspace_id, target)
             .await
+    }
+
+    /// pd-client `GetAllMembers` (Go `store.GetPDClient().GetAllMembers`).
+    pub async fn get_all_members(&self) -> Result<pdpb::GetMembersResponse>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd.clone().get_all_members().await
+    }
+
+    /// pd-client `StoreGlobalConfig`.
+    pub async fn store_global_config(
+        &self,
+        config_path: String,
+        changes: Vec<pdpb::GlobalConfigItem>,
+    ) -> Result<()>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd
+            .clone()
+            .store_global_config(config_path, changes)
+            .await
+    }
+
+    /// pd-client `ListResourceGroups` within this client's keyspace.
+    pub async fn list_resource_groups(
+        &self,
+        with_ru_stats: bool,
+    ) -> Result<Vec<crate::proto::resource_manager::ResourceGroup>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .list_resource_groups(keyspace_id, with_ru_stats)
+            .await
+    }
+
+    /// pd-client `AddResourceGroup` within this client's keyspace.
+    pub async fn add_resource_group(
+        &self,
+        group: crate::proto::resource_manager::ResourceGroup,
+    ) -> Result<String>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .put_resource_group(keyspace_id, group, true)
+            .await
+    }
+
+    /// pd-client `ModifyResourceGroup` within this client's keyspace.
+    pub async fn modify_resource_group(
+        &self,
+        group: crate::proto::resource_manager::ResourceGroup,
+    ) -> Result<String>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .put_resource_group(keyspace_id, group, false)
+            .await
+    }
+
+    /// pd-client `DeleteResourceGroup` within this client's keyspace.
+    pub async fn delete_resource_group(&self, name: &str) -> Result<String>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .delete_resource_group(keyspace_id, name.to_owned())
+            .await
+    }
+
+    /// pd-client `GetResourceGroup` within this client's keyspace; `None`
+    /// when PD answers without a group.
+    pub async fn get_resource_group(
+        &self,
+        name: &str,
+        with_ru_stats: bool,
+    ) -> Result<Option<crate::proto::resource_manager::ResourceGroup>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        let keyspace_id = self.gc_keyspace_id()?;
+        self.pd
+            .clone()
+            .get_resource_group(keyspace_id, name.to_owned(), with_ru_stats)
+            .await
+    }
+
+    /// pd-client `AcquireTokenBuckets` over the resource manager token stream.
+    pub async fn acquire_token_buckets(
+        &self,
+        request: crate::proto::resource_manager::TokenBucketsRequest,
+    ) -> Result<Vec<crate::proto::resource_manager::TokenBucketResponse>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd.clone().acquire_token_buckets(request).await
+    }
+
+    /// pd-client `LoadResourceGroups`: every resource group stored under this
+    /// client's keyspace settings prefix, and the meta storage revision.
+    /// Values that do not decode are skipped.
+    pub async fn load_resource_groups(
+        &self,
+    ) -> Result<(Vec<crate::proto::resource_manager::ResourceGroup>, i64)>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        use prost::Message as _;
+        let prefix = super::resource_manager_client::group_settings_path_prefix_bytes(
+            self.gc_keyspace_id()?,
+        );
+        let resp = self
+            .meta_storage_get(&prefix, &[super::opt::with_prefix()])
+            .await?;
+        let header = resp.header.clone().unwrap_or_default();
+        if let Some(error) = header.error {
+            return Err(crate::Error::StringError(error.message));
+        }
+        let groups = resp
+            .kvs
+            .iter()
+            .filter_map(|item| {
+                crate::proto::resource_manager::ResourceGroup::decode(item.value.as_slice()).ok()
+            })
+            .collect();
+        Ok((groups, header.revision))
+    }
+
+    /// pd-client meta storage `Get`.
+    pub async fn meta_storage_get(
+        &self,
+        key: &[u8],
+        opts: &[super::opt::MetaStorageOption],
+    ) -> Result<crate::proto::meta_storagepb::GetResponse>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd
+            .clone()
+            .meta_storage_get(super::meta_storage_client::get_request(key, opts))
+            .await
+    }
+
+    /// pd-client meta storage `Put`.
+    pub async fn meta_storage_put(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        opts: &[super::opt::MetaStorageOption],
+    ) -> Result<crate::proto::meta_storagepb::PutResponse>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd
+            .clone()
+            .meta_storage_put(super::meta_storage_client::put_request(key, value, opts))
+            .await
+    }
+
+    /// pd-client meta storage `Watch`; the channel closes when the watch
+    /// stream ends or the receiver is dropped.
+    pub async fn meta_storage_watch(
+        &self,
+        key: &[u8],
+        opts: &[super::opt::MetaStorageOption],
+    ) -> Result<tokio::sync::mpsc::Receiver<super::metastorage::WatchResponse>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd
+            .clone()
+            .meta_storage_watch(super::meta_storage_client::watch_request(key, opts))
+            .await
+    }
+
+    /// The PD client's options (pd-client `UpdateOption`): TSO follower
+    /// proxy, batch wait, RPC concurrency, follower handle.
+    pub fn pd_options(&self) -> Option<std::sync::Arc<super::opt::Options>>
+    where
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        self.pd.options()
     }
 
     fn gc_keyspace_id(&self) -> Result<u32> {
@@ -1817,8 +2126,14 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         enable_codec: bool,
     ) -> Result<PdRpcClient<KvC, P>>
     where
+        KvC: Clone,
         P: RetryClientTrait + Send + Sync + 'static,
     {
+        let (enable_preload, regions_refresh_interval, stores_refresh_interval) = (
+            config.enable_preload,
+            config.regions_refresh_interval,
+            config.stores_refresh_interval,
+        );
         let mode = if enable_codec {
             KeyMode::Txn
         } else {
@@ -1844,8 +2159,57 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
             },
         )
         .await?;
-        client.region_cache.start_background_gc();
+        client
+            .start_region_cache_workers(
+                enable_preload,
+                regions_refresh_interval,
+                stores_refresh_interval,
+            )
+            .await;
         Ok(client)
+    }
+
+    /// client-go `NewRegionCache`'s background work, which `NewKVStore`
+    /// starts whatever PD client it is given: the optional preload, the
+    /// region refresh (or cache GC), store health feedback and store
+    /// maintenance.
+    async fn start_region_cache_workers(
+        &self,
+        enable_preload: bool,
+        regions_refresh_interval: u64,
+        stores_refresh_interval: u64,
+    ) where
+        KvC: Clone,
+        P: RetryClientTrait + Send + Sync + 'static,
+    {
+        if enable_preload {
+            let mut backoffer =
+                RetryBackoffer::new(crate::async_util::Cancellation::default(), 20_000);
+            if let Err(error) = self.region_cache.refresh_region_index(&mut backoffer).await {
+                log::debug!("preload region index failed: {error}");
+            }
+        }
+        if regions_refresh_interval > 0 {
+            self.region_cache
+                .start_background_refresh(Duration::from_secs(regions_refresh_interval));
+        } else {
+            self.region_cache.start_background_gc();
+        }
+        let health_feedback_requester = Arc::new(StoreHealthFeedbackRequester {
+            kv_connect: self.kv_connect.clone(),
+            kv_client_cache: self.kv_client_cache.clone(),
+            kv_client_versions: self.kv_client_versions.clone(),
+            kv_client_lifecycle: self.kv_client_lifecycle.clone(),
+            kv_client_closed: self.kv_client_closed.clone(),
+            event_listener: self.region_cache.client_event_listener(),
+        });
+        self.region_cache
+            .set_health_feedback_callback(Arc::new(move |address| {
+                let requester = health_feedback_requester.clone();
+                Box::pin(async move { requester.request(&address).await })
+            }));
+        self.region_cache
+            .start_background_store_maintenance(Duration::from_secs(stores_refresh_interval));
     }
 
     fn configured_security(config: &Config) -> Result<Arc<SecurityManager>> {
@@ -1929,6 +2293,16 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
     }
 
     pub(crate) async fn kv_client(&self, address: &str) -> Result<KvC::KvClient> {
+        self.kv_client_with_store_type(address, crate::store::EndpointType::TiKv)
+            .await
+    }
+
+    /// The cached client for `address`, dialled for `store_type` on a miss.
+    pub(crate) async fn kv_client_with_store_type(
+        &self,
+        address: &str,
+        store_type: crate::store::EndpointType,
+    ) -> Result<KvC::KvClient> {
         if self.kv_client_closed.load(Ordering::Acquire) {
             return Err(crate::Error::StringError("rpc client is closed".to_owned()));
         }
@@ -1950,7 +2324,10 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         // version (`CloseAddrVer`) and the request gets a new one.
         recycle_idle_kv_client(&self.kv_client_cache, address).await;
         info!("connect to tikv endpoint: {:?}", address);
-        let client = self.kv_connect.connect(address).await?;
+        let client = self
+            .kv_connect
+            .connect_with_store_type(address, store_type)
+            .await?;
         let mut cache = self.kv_client_cache.write().await;
         let version = {
             let mut versions = self.kv_client_versions.write().await;
@@ -2486,6 +2863,72 @@ pub mod test {
         assert_eq!(kv1.addr, "foo");
         assert_eq!(kv2.addr, "foo");
         assert_eq!(connects.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_kv_client_dials_with_the_requests_store_type() {
+        #[derive(Clone)]
+        struct TypedConnect {
+            dialled: Arc<std::sync::Mutex<Vec<crate::store::EndpointType>>>,
+        }
+
+        #[async_trait]
+        impl KvConnect for TypedConnect {
+            type KvClient = MockKvClient;
+
+            async fn connect(&self, address: &str) -> Result<Self::KvClient> {
+                self.connect_with_store_type(address, crate::store::EndpointType::TiKv)
+                    .await
+            }
+
+            async fn connect_with_store_type(
+                &self,
+                address: &str,
+                store_type: crate::store::EndpointType,
+            ) -> Result<Self::KvClient> {
+                self.dialled.lock().unwrap().push(store_type);
+                let mut client = MockKvClient::default();
+                client.addr = address.to_owned();
+                Ok(client)
+            }
+        }
+
+        let dialled = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dialled_clone = dialled.clone();
+        let client = PdRpcClient::new(
+            Config::default(),
+            move |_| TypedConnect {
+                dialled: dialled_clone.clone(),
+            },
+            |sm| async move {
+                Ok(RetryClient::new_with_cluster(
+                    sm,
+                    Config::default().timeout,
+                    MockCluster,
+                ))
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let peer = PdClient::kv_client_with_store_type(
+            &client,
+            "tidb-1:10080",
+            crate::store::EndpointType::TiDb,
+        )
+        .await
+        .unwrap();
+        let store = PdClient::kv_client(&client, "tikv-1").await.unwrap();
+        assert_eq!(peer.addr, "tidb-1:10080");
+        assert_eq!(store.addr, "tikv-1");
+        assert_eq!(
+            *dialled.lock().unwrap(),
+            vec![
+                crate::store::EndpointType::TiDb,
+                crate::store::EndpointType::TiKv
+            ]
+        );
     }
 
     #[tokio::test]

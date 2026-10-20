@@ -22,14 +22,11 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use tidb_pd_client::PdClient;
-use tidb_txnkv::region::RegionCache;
-use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
+use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     BufferMutation, LockWaitTime, OptimisticTransactionState, PessimisticLockFailure,
     RealOptimisticTransactionOpener,
 };
-use tidb_txnkv::{PdRegionLoader, SharedReadAuthority};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 /// Distinct per-run prefix so a reused cluster cannot leak state between runs.
@@ -42,6 +39,15 @@ fn call() -> UnaryCallContext {
     UnaryCallContext::with_timeout(RPC_TIMEOUT)
 }
 
+/// Go `onTxnActiveFunc`: a pessimistic session's transaction is set to
+/// pessimistic mode as it activates.
+fn pessimistic<S: tikv_client::PdClient>(
+    mut transaction: tidb_txnkv::transaction::RealTransaction<S>,
+) -> tidb_txnkv::transaction::RealTransaction<S> {
+    transaction.set_pessimistic(true);
+    transaction
+}
+
 fn no_presumption() -> BTreeSet<Vec<u8>> {
     BTreeSet::new()
 }
@@ -51,33 +57,17 @@ fn no_presumption() -> BTreeSet<Vec<u8>> {
 fn two_transactions_serialize_on_one_real_pessimistic_lock() {
     let pd_address = std::env::var("PESSIMISTIC_LOCK_PD_ADDR")
         .expect("runner must provide PESSIMISTIC_LOCK_PD_ADDR");
-    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
-        .expect("start sole real PD authority");
-    let cluster_id = pd_owner.cluster_id();
+    let store = crate::realtikv_fixture::connect(&pd_address);
+    let cluster_id = store.cluster_id();
     assert_ne!(cluster_id, 0);
-    let loader = PdRegionLoader::from_client(pd_owner.clone());
-    let transport_owner =
-        TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
-    let shared = SharedReadAuthority::start_with_store_liveness(
-        transport_owner.clone(),
-        RegionCache::new(loader),
-    )
-    .expect("start sole real RegionCache authority");
-    assert_eq!(shared.cluster_id(), cluster_id);
-    let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        tidb_txnkv::driver::tikv_store::TikvStore::connect(
-            vec![pd_address.clone()],
-            tikv_client::Config::default(),
-        )
-        .expect("the node's store"),
-        pd_owner.clone(),
-        RPC_TIMEOUT,
-    )
-    .expect("derive transaction opener without starting another authority");
+    let opener =
+        RealOptimisticTransactionOpener::from_process_capabilities(store.clone(), RPC_TIMEOUT)
+            .expect("derive transaction opener without starting another authority");
 
     // Holder locks the contended key at its own for_update_ts.
     let mut holder = opener
-        .begin_pessimistic()
+        .begin()
+        .map(pessimistic)
         .expect("open the holding pessimistic transaction");
     let held = holder
         .acquire_locks(
@@ -98,7 +88,8 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
     // makes TiKV answer rather than queue, so the proof needs no timing
     // assumption: the failure itself is the evidence the lock is real.
     let mut waiter = opener
-        .begin_pessimistic()
+        .begin()
+        .map(pessimistic)
         .expect("open the blocked pessimistic transaction");
     assert_ne!(waiter.start_ts(), holder.start_ts());
     let blocked = waiter
@@ -176,14 +167,7 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
     );
     let commit_ts = outcome.receipt().commit_ts;
     assert!(commit_ts > outcome.receipt().start_ts);
-    println!(
-        "pessimistic_lock_realtikv phase=released commit_ts={commit_ts} primary_region={}",
-        outcome
-            .receipt()
-            .region_attempts
-            .first()
-            .map_or(0, |region| region.id)
-    );
+    println!("pessimistic_lock_realtikv phase=released commit_ts={commit_ts}");
 
     // The waiter's original for_update_ts predates the holder's commit, so
     // taking the key now must first advance to a statement timestamp that can
@@ -228,25 +212,17 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
 fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
     let pd_address = std::env::var("PESSIMISTIC_LOCK_PD_ADDR")
         .expect("runner must provide PESSIMISTIC_LOCK_PD_ADDR");
-    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
-        .expect("start sole real PD authority");
-    let cluster_id = pd_owner.cluster_id();
-    let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        tidb_txnkv::driver::tikv_store::TikvStore::connect(
-            vec![pd_address.clone()],
-            tikv_client::Config::default(),
-        )
-        .expect("the node's store"),
-        pd_owner.clone(),
-        RPC_TIMEOUT,
-    )
-    .expect("derive transaction opener without starting another authority");
+    let store = crate::realtikv_fixture::connect(&pd_address);
+    let cluster_id = store.cluster_id();
+    let opener = RealOptimisticTransactionOpener::from_process_capabilities(store, RPC_TIMEOUT)
+        .expect("derive transaction opener without starting another authority");
 
     // The fair-locking reader opens first, so its `for_update_ts` is older than
     // the commit that is about to land. That ordering is what makes TiKV take
     // the ForceLock branch at all.
     let mut reader = opener
-        .begin_pessimistic()
+        .begin()
+        .map(pessimistic)
         .expect("open the fair-locking pessimistic transaction");
     reader.set_fair_locking(true);
     let reader_for_update_ts = reader.for_update_ts();
@@ -310,7 +286,8 @@ fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
         .rollback(&call())
         .expect("the fair lock is released at the timestamp it really carries");
     let mut prober = opener
-        .begin_pessimistic()
+        .begin()
+        .map(pessimistic)
         .expect("open the probing pessimistic transaction");
     prober
         .acquire_locks(

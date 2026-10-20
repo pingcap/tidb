@@ -646,18 +646,12 @@ pub(super) fn blocking<T>(work: impl FnOnce() -> T) -> T {
 }
 
 pub(super) fn completion_error(error: CompletionError) -> QueryResponseError {
-    use super::DirectUnaryTransportError;
-    use tidb_txnkv::rpc::DirectUnaryClientError;
-
     match error {
         CompletionError::Cancelled => QueryResponseError::Cancelled,
         CompletionError::DeadlineExceeded => {
-            QueryResponseError::Source(DirectUnaryTransportError::DeadlineExceeded.to_string())
+            QueryResponseError::Source(super::cop_config::QUERY_DEADLINE_EXCEEDED.to_owned())
         }
-        other => QueryResponseError::Source(
-            DirectUnaryTransportError::Client(DirectUnaryClientError::Runtime(other.to_string()))
-                .to_string(),
-        ),
+        other => QueryResponseError::Source(format!("cop worker failed: {other}")),
     }
 }
 

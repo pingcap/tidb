@@ -46,14 +46,14 @@ use tidb_meta::transaction::{RawRangeVisitor, RawTransaction};
 use tidb_meta::MetaError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, StoreClient, StorePdCapability,
+    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener, RealTransaction,
+    StoreClient,
 };
 use tidb_txnkv::{NewTxnError, NewTxnStorage, NewTxnTransaction, OptionKey, TxnOptionValue};
 
 use crate::cluster_catalog::prefix_scan_end;
 
-type LiveTransaction<S> = RealOptimisticTransaction<S>;
+type LiveTransaction<S> = RealTransaction<S>;
 
 /// Why an attempt failed, carrying Go's retry classification.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -317,22 +317,21 @@ where
 
 /// Go `kv.Storage.Begin` for [`tidb_txnkv::run_in_new_txn`]: one fresh live
 /// transaction per attempt.
-pub struct MetaTxnStorage<'opener, S: StoreClient, P> {
-    opener: &'opener RealOptimisticTransactionOpener<S, P>,
+pub struct MetaTxnStorage<'opener, S: StoreClient> {
+    opener: &'opener RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 }
 
-impl<'opener, S: StoreClient, P> MetaTxnStorage<'opener, S, P> {
+impl<'opener, S: StoreClient> MetaTxnStorage<'opener, S> {
     /// Binds the opener and the per-request deadline each attempt stamps.
-    pub fn new(opener: &'opener RealOptimisticTransactionOpener<S, P>, timeout: Duration) -> Self {
+    pub fn new(opener: &'opener RealOptimisticTransactionOpener<S>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<S, P> NewTxnStorage for MetaTxnStorage<'_, S, P>
+impl<S> NewTxnStorage for MetaTxnStorage<'_, S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     type Transaction = MetaTxn<S>;
     type Error = MetaTxnError;

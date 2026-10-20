@@ -15,7 +15,6 @@
 //! All ordinary `tidb-distsql` integration tests in one process.
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
-mod active_cancellation_source;
 mod chblock_source;
 mod chunk_decode_source;
 mod cop_paging_source;
@@ -23,18 +22,6 @@ mod cop_read_task_runtime_source;
 mod copr_cache_source;
 mod coprocessor_request_source;
 mod default_datum_source;
-mod direct_unary_batch_admission;
-mod direct_unary_client_fixture;
-mod direct_unary_dispatch_contract;
-mod direct_unary_forwarding_source;
-mod direct_unary_paging_and_close;
-mod direct_unary_query_seed;
-mod direct_unary_region_errors;
-mod direct_unary_request_refusals;
-mod direct_unary_retry_budget;
-mod direct_unary_store_not_match;
-mod direct_unary_store_selection;
-mod direct_unary_transport_failures;
 mod mock_response_iteration_source;
 mod paging_source;
 mod query_runtime_source;
@@ -50,5 +37,3 @@ mod signed_handle_range_request_source;
 mod table_handle_ranges_source;
 mod tiflash_replica_read_source;
 mod tikv_rpc_contract_source;
-mod transaction_runtime;
-mod transport_failure_source;

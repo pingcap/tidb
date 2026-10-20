@@ -19,10 +19,6 @@ pub mod cop_store;
 pub mod mem_buffer;
 pub mod read;
 pub mod tikv_mem_buffer;
-pub mod tikv_opener;
-pub mod tikv_pd_bridge;
 pub mod tikv_store;
 pub mod tikv_transaction;
 pub mod transaction_error;
-
-pub mod client_bridge;

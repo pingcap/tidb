@@ -21,7 +21,7 @@ use tidb_distsql::cop_paging::decode_tikv_unary_response;
 use tidb_distsql::{
     calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
     paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingState,
-    DirectUnaryRuntimeConfig, ReadEngineGeneration, RegionTaskEnvelope, RegionTaskTopology,
+    CopRuntimeConfig, ReadEngineGeneration, RegionTaskEnvelope, RegionTaskTopology,
     RequestKeyRange, ResponseChannelEvent,
 };
 use tidb_proto::{
@@ -165,10 +165,7 @@ fn paging_generation_defaults_to_the_source_kernel_type() {
         ReadEngineGeneration::Classic
     };
     assert_eq!(ReadEngineGeneration::from_kernel_type(), expected);
-    assert_eq!(
-        DirectUnaryRuntimeConfig::default().read_engine_generation,
-        expected
-    );
+    assert_eq!(CopRuntimeConfig::default().read_engine_generation, expected);
 }
 
 #[test]

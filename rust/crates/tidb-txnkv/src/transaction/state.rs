@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::region::{RegionBackoffKind, RegionVerId};
-use crate::rpc::TransactionBatchPublication;
+use crate::retry::RegionBackoffKind;
 
 /// Typed error identity used by executor/server mapping and receipts.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,12 +138,6 @@ impl std::fmt::Display for TransactionCause {
 pub struct SecondaryCommitFailure {
     /// Exact encoded secondary keys whose commit was not confirmed.
     pub keys: Vec<Vec<u8>>,
-    /// Exact region epoch used by the last attempt.
-    pub region: Option<RegionVerId>,
-    /// Physical leader address used by the last attempt.
-    pub address: Option<String>,
-    /// Publication identity when admission reached BatchCommands.
-    pub publication: Option<TransactionBatchPublication>,
     /// Typed failure identity.
     pub cause: TransactionCause,
 }
@@ -154,57 +147,8 @@ pub struct SecondaryCommitFailure {
 pub struct CleanupBatchFailure {
     /// Exact possibly-prewritten keys still outstanding.
     pub keys: Vec<Vec<u8>>,
-    /// Exact region epoch used by the last cleanup attempt.
-    pub region: Option<RegionVerId>,
-    /// Physical leader address used by the last cleanup attempt.
-    pub address: Option<String>,
-    /// Publication identity when admission reached BatchCommands.
-    pub publication: Option<TransactionBatchPublication>,
     /// Typed cleanup failure.
     pub cause: TransactionCause,
-}
-
-/// Transaction command represented by one causal physical attempt receipt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TransactionAttemptPhase {
-    /// Optimistic lock creation.
-    Prewrite,
-    /// Commit of the current batch containing the deterministic primary key.
-    PrimaryCommit,
-    /// Synchronous commit of a non-primary batch.
-    SecondaryCommit,
-    /// Cleanup of possibly-prewritten keys.
-    BatchRollback,
-}
-
-/// Definitive or ambiguous result attached to one physical attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TransactionAttemptResult {
-    /// The command was accepted without a region or key error.
-    Confirmed,
-    /// A decoded, definitive response requires a newly-routed retry.
-    Retry(TransactionCause),
-    /// A decoded response or pre-publication failure ended this command.
-    DefinitiveFailure(TransactionCause),
-    /// Publication occurred but no definitive TiKV result was decoded.
-    Ambiguous(TransactionCause),
-}
-
-/// Causal route and result for one concrete BatchCommands attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TransactionAttemptReceipt {
-    /// Logical transaction command.
-    pub phase: TransactionAttemptPhase,
-    /// Exact encoded keys sent on this attempt.
-    pub keys: Vec<Vec<u8>>,
-    /// Exact region epoch used to build the request context.
-    pub region: RegionVerId,
-    /// Physical leader address selected for this attempt.
-    pub address: String,
-    /// Publication identity, absent only when admission failed before publication.
-    pub publication: Option<TransactionBatchPublication>,
-    /// Definitive retry/failure/success or ambiguous completion classification.
-    pub result: TransactionAttemptResult,
 }
 
 /// Truthful terminal classification at the normal-2PC publication boundary.
@@ -238,7 +182,7 @@ pub enum CommittedProtocol {
     OnePc,
 }
 
-/// Physical transaction evidence retained for a caller or live receipt.
+/// What a transaction attempt did, for its caller.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OptimisticTransactionReceipt {
     /// Shared process authority identity that opened this transaction.
@@ -257,32 +201,12 @@ pub struct OptimisticTransactionReceipt {
     pub mutation_count: usize,
     /// Source-shaped lock TTL including size and elapsed read time.
     pub lock_ttl_ms: u64,
-    /// Exact region epochs observed while grouping or regrouping.
-    pub region_attempts: Vec<RegionVerId>,
-    /// Successful Prewrite publications.
-    pub prewrite_publications: Vec<TransactionBatchPublication>,
-    /// Every Prewrite publication, including definitive region retries.
-    pub prewrite_attempt_publications: Vec<TransactionBatchPublication>,
-    /// Every primary Commit publication, including definitive region retries.
-    pub primary_publications: Vec<TransactionBatchPublication>,
-    /// Confirmed secondary Commit publications.
-    pub secondary_publications: Vec<TransactionBatchPublication>,
-    /// Every secondary Commit publication, including region retries.
-    pub secondary_attempt_publications: Vec<TransactionBatchPublication>,
-    /// Confirmed BatchRollback publications.
-    pub rollback_publications: Vec<TransactionBatchPublication>,
-    /// Every BatchRollback publication, including region retries.
-    pub rollback_attempt_publications: Vec<TransactionBatchPublication>,
-    /// Causal phase/key/region/address/publication/result history for every write attempt.
-    pub attempt_history: Vec<TransactionAttemptReceipt>,
 }
 
 impl OptimisticTransactionReceipt {
-    /// Starts one transaction's evidence from the facts known at Prewrite: who
+    /// Starts one transaction's receipt from the facts known at Prewrite: who
     /// opened it, at which timestamp, under which primary key, and how many
-    /// mutations it admitted. Every physical publication is appended as it
-    /// happens, so a fresh receipt records an attempt that has published
-    /// nothing yet.
+    /// mutations it admitted.
     #[must_use]
     pub fn new(
         authority_id: u64,
@@ -298,15 +222,6 @@ impl OptimisticTransactionReceipt {
             primary_key,
             mutation_count,
             lock_ttl_ms: 0,
-            region_attempts: Vec::new(),
-            prewrite_publications: Vec::new(),
-            prewrite_attempt_publications: Vec::new(),
-            primary_publications: Vec::new(),
-            secondary_publications: Vec::new(),
-            secondary_attempt_publications: Vec::new(),
-            rollback_publications: Vec::new(),
-            rollback_attempt_publications: Vec::new(),
-            attempt_history: Vec::new(),
         }
     }
 }
@@ -417,9 +332,6 @@ mod tests {
             },
             cleanup_failures: vec![CleanupBatchFailure {
                 keys: vec![b"p".to_vec()],
-                region: None,
-                address: Some("127.0.0.1:1".to_owned()),
-                publication: None,
                 cause: TransactionCause::Transport {
                     detail: "rollback timeout".to_owned(),
                 },

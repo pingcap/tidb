@@ -84,6 +84,17 @@ pub trait NativeCopStore: Send + Sync + 'static {
         max_sleep_ms: u64,
         reason: String,
     ) -> Result<(), tikv_client::Error>;
+
+    /// Go `RegionCache.UpdateBucketsIfNeeded(region, requestVer, latestVer)`.
+    fn update_buckets_if_needed(
+        &self,
+        region: (u64, u64, u64),
+        request_version: u64,
+        latest_version: u64,
+    );
+
+    /// Go `RegionCache.InvalidateCachedRegion(region)`.
+    fn invalidate_region(&self, region: (u64, u64, u64));
 }
 
 impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
@@ -198,6 +209,31 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
                 .await
                 .map_err(tikv_client::Error::from)
         })
+    }
+
+    fn invalidate_region(&self, region: (u64, u64, u64)) {
+        let pd = self.store().pd_client();
+        self.block_on(async move {
+            pd.invalidate_region_cache(tikv_client::tikv::new_region_ver_id(
+                region.0, region.1, region.2,
+            ))
+            .await;
+        });
+    }
+
+    fn update_buckets_if_needed(
+        &self,
+        region: (u64, u64, u64),
+        request_version: u64,
+        latest_version: u64,
+    ) {
+        // The reload is spawned on the store's runtime.
+        let _guard = self.runtime().enter();
+        self.store().pd_client().update_buckets_if_needed(
+            tikv_client::tikv::new_region_ver_id(region.0, region.1, region.2),
+            request_version,
+            latest_version,
+        );
     }
 
     fn backoff_lock_fast(

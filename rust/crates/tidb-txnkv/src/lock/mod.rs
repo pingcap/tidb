@@ -12,17 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! TiDB lock observations and adapters to client-rust's shared resolver.
+//! The lock-resolution state TiDB's reads keep around client-rust's resolver
+//! (the store's `GetLockResolver()`): the snapshot's resolved and committed
+//! locks, and the timestamp source a read session draws from.
 
-mod model;
 mod resolver;
 
-pub use model::{
-    decode_blocking_lock_observation, decode_lock_observation, BlockingLock, LockAdmissionError,
-    OptimisticLock, PessimisticLock,
-};
-pub use resolver::{
-    resolve_blocking_locks, resolve_blocking_locks_with_backoff, resolve_optimistic_locks,
-    FixedTimestampSource, LockRecoveryClient, LockRecoveryError, LockRecoveryResult,
-    SnapshotLockSet, TimestampSource,
-};
+pub use resolver::{FixedTimestampSource, LockRecoveryResult, SnapshotLockSet, TimestampSource};

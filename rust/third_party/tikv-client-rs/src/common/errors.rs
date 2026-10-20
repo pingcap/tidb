@@ -232,6 +232,15 @@ Use the async TransactionClient instead, or create and use SyncTransactionClient
 }
 
 impl Error {
+    /// client-go `errors.Cause` over `internal/client.ErrConn`: the error a
+    /// connection annotation wraps, for callers that classify by kind.
+    pub fn cause(&self) -> &Error {
+        match self {
+            Error::Connection { source, .. } => source.cause(),
+            error => error,
+        }
+    }
+
     /// Returns the target and generation carried by a transport error.
     pub(crate) fn connection_info(&self) -> Option<(&str, u64)> {
         match self {
@@ -319,4 +328,29 @@ macro_rules! internal_err {
     ($f:tt, $($arg:expr),+) => ({
         internal_err!(format!($f, $($arg),+))
     });
+}
+
+#[cfg(test)]
+mod cause_tests {
+    use super::Error;
+
+    /// client-go `errors.Cause` sees through `ErrConn` to the transport error.
+    #[test]
+    fn cause_unwraps_connection_annotations() {
+        let error = Error::Connection {
+            source: Box::new(Error::Connection {
+                source: Box::new(Error::GrpcAPI(tonic::Status::deadline_exceeded("deadline"))),
+                address: "127.0.0.1:1".to_owned(),
+                version: 2,
+            }),
+            address: "127.0.0.1:1".to_owned(),
+            version: 1,
+        };
+        assert!(matches!(
+            error.cause(),
+            Error::GrpcAPI(status) if status.code() == tonic::Code::DeadlineExceeded
+        ));
+        let plain = Error::StringError("plain".to_owned());
+        assert!(matches!(plain.cause(), Error::StringError(_)));
+    }
 }

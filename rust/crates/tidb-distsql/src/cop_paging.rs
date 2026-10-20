@@ -14,34 +14,25 @@
 
 //! Connected adaptive-paging continuation from the coprocessor worker.
 
+mod cop_config;
 mod cop_iterator;
 mod cop_read_task_runtime;
-mod direct_unary_query_transport;
-mod forwarding;
-mod lock_recovery;
 mod native_transport;
 mod tikv_rpc_contract;
-mod transport_failure;
 
+pub use cop_config::CopRuntimeConfig;
 pub use cop_iterator::CopIterator;
 pub use cop_read_task_runtime::{
-    CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskReplacement,
-    CopReadTaskResponse, CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
+    BatchedRemain, BatchedRemainCause, BucketsUpdate, CopReadAcceptedResponse,
+    CopReadResponseError, CopReadTaskError, CopReadTaskReplacement, CopReadTaskResponse,
+    CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
-pub use direct_unary_query_transport::{
-    DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
-    DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
-    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation, RegionRetryWaiter,
-};
-pub use lock_recovery::OptimisticLockRecovery;
 pub use native_transport::{
     CopBackoffer, NativeCopResponse, NativeCopSend, NativeCopStore, NativeCopTransport,
 };
 pub use tikv_rpc_contract::{
-    build_tikv_unary_request, build_tikv_unary_request_for_dispatch, decode_tikv_unary_response,
-    TikvUnaryRequest,
+    build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,
 };
-pub use transport_failure::{classify_transport_failure, TransportFailureAction};
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -290,8 +281,13 @@ impl CopPagingState {
             responses: ResponseChannel::new(),
             // A zero source capacity denotes the non-ordered shared response
             // path. This task-local seam still needs one rendezvous slot so a
-            // synchronous producer can hand the response to its consumer.
-            response_capacity: task.response_channel_capacity.max(1),
+            // synchronous producer can hand the response to its consumer, and
+            // one more per batched child, whose data comes back with this
+            // task's response (Go sends both into the shared channel).
+            response_capacity: task
+                .response_channel_capacity
+                .max(1)
+                .saturating_add(task.batch_task_list.len()),
             queued_responses: 0,
         }
     }
@@ -393,6 +389,27 @@ impl CopPagingState {
             next_paging_size: self.paging_size,
             observed_read_bytes: read_bytes,
         })
+    }
+
+    /// Go `handleBatchCopResponse`: one batched child's data, served through
+    /// this task's channel. The child's ranges are its own, so nothing here
+    /// advances this task's continuation.
+    pub(super) fn accept_batched_child(
+        &mut self,
+        data: prost::bytes::Bytes,
+        runtime: Option<crate::ResponseRuntimeStats>,
+    ) -> Result<(), CopPagingError> {
+        if self.queued_responses >= self.response_capacity {
+            return Err(CopPagingError::Backpressure {
+                capacity: self.response_capacity,
+            });
+        }
+        match runtime {
+            Some(runtime) => self.responses.push_result_with_runtime(data, runtime)?,
+            None => self.responses.push_result(data)?,
+        }
+        self.queued_responses += 1;
+        Ok(())
     }
 
     /// Builds a retry continuation for a region or lock error without growing

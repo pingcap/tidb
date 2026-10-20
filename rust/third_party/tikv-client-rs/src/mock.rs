@@ -76,6 +76,7 @@ impl MockKvClient {
     }
 }
 
+#[derive(Clone)]
 pub struct MockKvConnect;
 
 pub struct MockCluster;

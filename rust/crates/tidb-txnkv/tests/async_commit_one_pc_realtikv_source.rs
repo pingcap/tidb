@@ -21,17 +21,38 @@
 //! PD + TiKV playground and read the committed rows back at the derived commit
 //! timestamp, which is the only way to show the derivation was correct.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_pd_client::PdClient;
-use tidb_txnkv::region::RegionCache;
-use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     BufferMutation, CommitProtocol, CommittedProtocol, OptimisticCommitOutcome,
-    RealOptimisticTransactionOpener, TransactionAttemptPhase,
+    RealOptimisticTransactionOpener,
 };
-use tidb_txnkv::{PdRegionLoader, SharedReadAuthority};
+
+/// Records the label of every RPC the transaction sends (client-go's
+/// `kv.RPCInterceptor`), retries included.
+fn record_rpc_labels(
+    transaction: &mut tidb_txnkv::transaction::RealTransaction<tikv_client::PdRpcClient>,
+) -> Arc<Mutex<Vec<&'static str>>> {
+    let labels = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&labels);
+    transaction.add_rpc_interceptor(tikv_client::new_rpc_interceptor(
+        "rpc-labels",
+        move |_target, request, next| {
+            seen.lock().unwrap().push(request.label());
+            Box::pin(next())
+                as std::pin::Pin<
+                    Box<
+                        dyn std::future::Future<Output = tikv_client::RpcDispatchResult>
+                            + Send
+                            + '_,
+                    >,
+                >
+        },
+    ));
+    labels
+}
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -44,33 +65,13 @@ const ONE_PC_KEY: &[u8] = b"one-pc-proof-a";
 fn opener(protocol: CommitProtocol) -> (RealOptimisticTransactionOpener, u64) {
     let pd_address =
         std::env::var("ASYNC_COMMIT_PD_ADDR").expect("runner must provide ASYNC_COMMIT_PD_ADDR");
-    let pd_owner = PdClient::connect_seeds([pd_address.clone()], Duration::from_secs(10))
-        .expect("start sole real PD authority");
-    let cluster_id = pd_owner.cluster_id();
+    let store = crate::realtikv_fixture::connect(&pd_address);
+    let cluster_id = store.cluster_id();
     assert_ne!(cluster_id, 0);
-    let transport_owner =
-        TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
-    let shared = SharedReadAuthority::start_with_store_liveness(
-        transport_owner,
-        RegionCache::new(PdRegionLoader::from_client(pd_owner.clone())),
-    )
-    .expect("start sole real RegionCache authority");
-    assert_eq!(shared.cluster_id(), cluster_id);
-    let opener = RealOptimisticTransactionOpener::from_process_capabilities(
-        tidb_txnkv::driver::tikv_store::TikvStore::connect(
-            vec![pd_address.clone()],
-            tikv_client::Config::default(),
-        )
-        .expect("the node's store"),
-        pd_owner,
-        RPC_TIMEOUT,
-    )
-    .expect("derive transaction opener without starting another authority")
-    .with_commit_protocol(protocol);
-    // The authority owners are deliberately leaked for the life of the test
-    // process: dropping them here would tear down the transport the returned
-    // opener still routes through.
-    std::mem::forget(shared);
+    let opener =
+        RealOptimisticTransactionOpener::from_process_capabilities(store.clone(), RPC_TIMEOUT)
+            .expect("derive transaction opener without starting another authority")
+            .with_commit_protocol(protocol);
     (opener, cluster_id)
 }
 
@@ -129,14 +130,6 @@ fn a_real_async_commit_transaction_commits_at_its_prewrite_timestamps() {
         receipt.commit_ts > start_ts,
         "TiKV must answer with a min_commit_ts past the start timestamp"
     );
-    for publication in &receipt.prewrite_publications {
-        println!(
-            "async_commit_realtikv phase=prewrite tag={} request_id={} physical_address={}",
-            publication.tag().field_number(),
-            publication.request_id(),
-            publication.physical_address(),
-        );
-    }
 
     // The transaction is readable at the timestamp the prewrites derived, which
     // is the observable proof that the derivation was the real commit point.
@@ -160,9 +153,8 @@ fn a_real_async_commit_transaction_commits_at_its_prewrite_timestamps() {
 
     println!(
         "async_commit_realtikv status=passed cluster_id={cluster_id} start_ts={start_ts} \
-         commit_ts={} prewrite_batches={}",
+         commit_ts={}",
         receipt.commit_ts,
-        receipt.prewrite_publications.len(),
     );
 }
 
@@ -179,8 +171,9 @@ fn a_real_one_pc_transaction_publishes_no_commit_command() {
         async_commit: true,
         one_pc: true,
     });
-    let transaction = opener.begin().expect("allocate one real start timestamp");
+    let mut transaction = opener.begin().expect("allocate one real start timestamp");
     let start_ts = transaction.start_ts();
+    let labels = record_rpc_labels(&mut transaction);
 
     let outcome = transaction
         .commit(
@@ -205,32 +198,20 @@ fn a_real_one_pc_transaction_publishes_no_commit_command() {
     );
     assert!(receipt.commit_ts > start_ts);
 
-    // The load-bearing evidence: every physical attempt this transaction made
-    // was a Prewrite, so no Commit RPC followed it.
+    // The load-bearing evidence: the transaction prewrote and sent no Commit
+    // or rollback RPC after it.
+    let labels = labels.lock().unwrap().clone();
     assert!(
-        receipt
-            .attempt_history
+        labels.contains(&"kv_prewrite"),
+        "no prewrite RPC: {labels:?}"
+    );
+    assert!(
+        labels
             .iter()
-            .all(|attempt| attempt.phase == TransactionAttemptPhase::Prewrite),
-        "a 1PC transaction published a non-prewrite command: {:?}",
-        receipt.attempt_history
+            .all(|label| !matches!(*label, "kv_commit" | "kv_batch_rollback" | "kv_cleanup")),
+        "a 1PC transaction sent a commit or rollback RPC: {labels:?}"
     );
-    assert!(receipt.primary_publications.is_empty());
-    assert!(receipt.secondary_attempt_publications.is_empty());
-    assert!(receipt.rollback_attempt_publications.is_empty());
-    for publication in &receipt.prewrite_publications {
-        println!(
-            "one_pc_realtikv phase=prewrite tag={} request_id={} physical_address={}",
-            publication.tag().field_number(),
-            publication.request_id(),
-            publication.physical_address(),
-        );
-    }
-    println!(
-        "one_pc_realtikv phase=no_commit_rpc attempts={} primary_publications={}",
-        receipt.attempt_history.len(),
-        receipt.primary_publications.len(),
-    );
+    println!("one_pc_realtikv phase=no_commit_rpc rpcs={labels:?}");
 
     let mut reader = opener
         .begin_read_only()

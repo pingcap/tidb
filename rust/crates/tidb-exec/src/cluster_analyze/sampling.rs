@@ -299,41 +299,31 @@ fn concurrency_for_stores(stores: u64) -> u64 {
     }
 }
 
-pub(crate) fn scan_concurrency<P: tidb_txnkv::transaction::StorePdCapability>(
+/// Go `adaptiveAnlayzeDistSQLConcurrency`: the store count comes from
+/// `helper.TryGetPDHTTPClient` (the store's PD HTTP client, caller ID
+/// `tidb-store-helper`) and `GetStores`.
+pub(crate) fn scan_concurrency(
     configured: i64,
-    pd: &P,
+    pd_http_client: Option<tikv_client::pd_http::Client>,
     timeout: std::time::Duration,
 ) -> u64 {
     if configured > 0 {
         return configured as u64;
     }
     let count = (|| -> Result<u64, String> {
-        let endpoint = pd
-            .http_endpoint()
-            .ok_or_else(|| "no PD HTTP endpoint".to_owned())?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| e.to_string())?;
-        runtime.block_on(async {
-            let response = reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .map_err(|e| e.to_string())?
-                .get(format!(
-                    "{}/pd/api/v1/stores",
-                    endpoint.trim_end_matches('/')
-                ))
-                .send()
+        let pd_cli = pd_http_client
+            .ok_or_else(|| "pd http client unavailable".to_owned())?
+            .with_caller_id("tidb-store-helper");
+        let stores_stat = crate::cluster_http::block_on_pd_http(async {
+            tokio::time::timeout(timeout, pd_cli.get_stores())
                 .await
-                .map_err(|e| e.to_string())?
-                .error_for_status()
-                .map_err(|e| e.to_string())?;
-            let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-            json.get("count")
-                .and_then(serde_json::Value::as_u64)
-                .ok_or_else(|| "PD stores response omitted count".to_owned())
-        })
+                .unwrap_or_else(|_| {
+                    Err(tikv_client::Error::StringError(
+                        "PD stores request timed out".to_owned(),
+                    ))
+                })
+        })?;
+        u64::try_from(stores_stat.count).map_err(|error| error.to_string())
     })();
     match count {
         Ok(count) => concurrency_for_stores(count),
@@ -381,8 +371,8 @@ impl Drop for SamplingCancellation {
     }
 }
 
-pub(crate) fn analyze_table<S, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
+pub(crate) fn analyze_table<S>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
     table: &TableInfo,
     physical_id: i64,
     statement: &super::AnalyzeStatement,
@@ -397,7 +387,6 @@ pub(crate) fn analyze_table<S, P>(
 ) -> Result<super::AnalyzeReport, AnalyzeError>
 where
     S: tidb_txnkv::transaction::StoreClient,
-    P: tidb_txnkv::transaction::StorePdCapability,
 {
     let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
     let _cancel_guard = SamplingCancellation::start(killer, cancellation.clone())?;
@@ -516,8 +505,8 @@ fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_distsql::Iso
 
 /// Uses the process-owned region cache and lock recovery; only sampled
 /// collector responses cross the TiKV boundary.
-pub(super) fn collect_regions<S, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
+pub(super) fn collect_regions<S>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
     schema: &SamplingSchema,
     plan: &AnalyzePlan,
     request: tipb::AnalyzeReq,
@@ -533,7 +522,6 @@ pub(super) fn collect_regions<S, P>(
 ) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError>
 where
     S: tidb_txnkv::transaction::StoreClient,
-    P: tidb_txnkv::transaction::StorePdCapability,
 {
     use prost::Message;
     use tidb_stats::row_sample_collector::{RowSampleCollector, SamplePolicy};
@@ -599,8 +587,8 @@ where
 
 /// Go analyzeIndexNDVPushDown uses index keys for prefix and virtual-column NDV. A single
 /// column's NULL range has a separate histogram and never enters its sketch.
-fn collect_index_ndv<S, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
+fn collect_index_ndv<S>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
     physical_id: i64,
     index: &tidb_executor::analyze::AnalyzedIndex,
     common_handle: bool,
@@ -613,7 +601,6 @@ fn collect_index_ndv<S, P>(
 ) -> Result<(i64, tidb_stats::FmSketch), AnalyzeError>
 where
     S: tidb_txnkv::transaction::StoreClient,
-    P: tidb_txnkv::transaction::StorePdCapability,
 {
     use prost::Message;
     let error = |e: String| AnalyzeError::unsupported(e);
@@ -827,8 +814,8 @@ mod tests {
 /// Go's ANALYZE sends its sampling and index requests through the store's
 /// coprocessor client (`copr.CopClient` over the `KVStore`): here the node's
 /// client-rust store, which the opener carries.
-fn native_transport<S: tidb_txnkv::transaction::StoreClient, P>(
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S, P>,
+fn native_transport<S: tidb_txnkv::transaction::StoreClient>(
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
     timeout: std::time::Duration,
 ) -> Result<
     tidb_distsql::cop_paging::NativeCopTransport<dyn tidb_txnkv::driver::cop_store::NativeCopStore>,
@@ -839,7 +826,7 @@ fn native_transport<S: tidb_txnkv::transaction::StoreClient, P>(
         .ok_or_else(|| "ANALYZE needs the node's store".to_owned())?;
     Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
         std::sync::Arc::clone(store),
-        tidb_distsql::DirectUnaryRuntimeConfig {
+        tidb_distsql::CopRuntimeConfig {
             default_timeout: timeout,
             ..Default::default()
         },

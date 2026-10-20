@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //! TiDB lock errors and statement contracts over client-rust.
-pub use super::client::ClientPessimisticTransaction as RealPessimisticTransaction;
 use super::TransactionCause;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -163,7 +162,7 @@ pub struct AcquiredLocks {
     /// Keys fair locking locked *despite* a conflict, with the commit
     /// timestamp of the version that beat this statement.
     ///
-    /// Non-empty only under [`RealPessimisticTransaction::set_fair_locking`].
+    /// Non-empty only under [`crate::transaction::RealTransaction::set_fair_locking`].
     /// Each entry says "the lock exists, but at this higher timestamp": the
     /// statement's own result is stale and must be recomputed, while the lock
     /// itself carries over to the retry. Go turns the same fact into
@@ -175,7 +174,7 @@ pub struct AcquiredLocks {
     /// (`pkg/executor/point_get.go:614 InitReturnValues(1)`; the response
     /// lands in `TxnCtx.SetPessimisticLockCache`, and the executor's own
     /// `get` then reads from that cache instead of storage). Empty unless
-    /// [`RealPessimisticTransaction::acquire_locks_returning_values`] was
+    /// [`crate::transaction::RealTransaction::acquire_locks_returning_values`] was
     /// used. A key maps to `None` when TiKV reports it absent.
     pub values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }

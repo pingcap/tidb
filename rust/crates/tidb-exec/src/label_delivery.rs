@@ -12,122 +12,116 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `infosync.PDLabelManager` over PD's region-label HTTP API (pd
+//! Go `infosync.PDLabelManager` over PD's region-label HTTP API: pd
 //! `client/http`'s `SetRegionLabelRule`, `PatchRegionLabelRules`,
-//! `GetAllRegionLabelRules` and `GetRegionLabelRulesByIDs`), over the node's
-//! cluster HTTP client (the CA and client identity PD discovery uses).
+//! `GetAllRegionLabelRules` and `GetRegionLabelRulesByIDs` on the info
+//! syncer's derivation of the store's PD HTTP client.
+//!
+//! Go converts between `label.Rule` and `pd.LabelRule` with a type cast;
+//! here a rule is copied field by field into PD's type, and PD's answers are
+//! decoded into TiDB's through the JSON shape the two share.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 use tidb_executor::ddl_label::{LabelCodec, LabelRulePatch, Rule};
 use tidb_executor::label_manager::{filter_rules_by_keyspace, LabelRuleManager};
+use tikv_client::pd_http;
 
-/// pd `RegionLabelRule`.
-const REGION_LABEL_RULE: &str = "/pd/api/v1/config/region-label/rule";
-/// pd `RegionLabelRules`.
-const REGION_LABEL_RULES: &str = "/pd/api/v1/config/region-label/rules";
-/// pd `RegionLabelRulesByIDs`.
-const REGION_LABEL_RULES_BY_IDS: &str = "/pd/api/v1/config/region-label/rules/ids";
-/// The request timeout the node's other PD HTTP calls use.
-const PD_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+use crate::cluster_http::block_on_pd_http;
 
-/// Go `PDLabelManager`: PD's region-label rules at one endpoint.
+/// Go `PDLabelManager`: PD's region-label rules through `pdHTTPCli`.
 pub struct PdLabelManager {
-    endpoint: String,
-    http: reqwest::blocking::Client,
+    pd_http_client: pd_http::Client,
 }
 
 impl std::fmt::Debug for PdLabelManager {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PdLabelManager")
-            .field("endpoint", &self.endpoint)
             .finish_non_exhaustive()
     }
 }
 
 impl PdLabelManager {
-    /// The manager for `pd_http` (`http://host:port`), switched to HTTPS and
-    /// given the cluster identity when `security` enables TLS.
-    pub fn with_security(
-        pd_http: &str,
-        security: &tidb_pd_client::ClusterSecurity,
-    ) -> Result<Self, String> {
-        let endpoint = if security.is_tls_enabled() {
-            pd_http.replacen("http://", "https://", 1)
-        } else {
-            pd_http.to_owned()
-        };
-        Ok(Self {
-            endpoint: endpoint.trim_end_matches('/').to_owned(),
-            http: crate::cluster_http::cluster_http_client(security)?,
-        })
+    /// Go `initLabelRuleManager`'s `&PDLabelManager{is.pdHTTPCli}`: the
+    /// manager over the info syncer's derivation of the store's PD HTTP
+    /// client.
+    #[must_use]
+    pub fn new(pd_http_client: &pd_http::Client) -> Self {
+        Self {
+            pd_http_client: crate::cluster_http::info_syncer_pd_http_client(pd_http_client),
+        }
     }
+}
 
-    /// pd `client.request`: a non-200 answer is the error
-    /// `request pd http api failed with status: '<status>', body: '<body>'`.
-    fn request(
-        &self,
-        method: reqwest::Method,
-        uri: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<Vec<u8>, String> {
-        let mut request = self
-            .http
-            .request(method, format!("{}{uri}", self.endpoint))
-            .timeout(PD_HTTP_TIMEOUT);
-        if let Some(body) = body {
-            request = request
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(body);
-        }
-        let response = request.send().map_err(|error| error.to_string())?;
-        let status = response.status();
-        let bytes = response
-            .bytes()
-            .map_err(|error| error.to_string())?
-            .to_vec();
-        if status != reqwest::StatusCode::OK {
-            return Err(format!(
-                "request pd http api failed with status: '{status}', body: '{}'",
-                String::from_utf8_lossy(&bytes)
-            ));
-        }
-        Ok(bytes)
+// Go's `(*pd.LabelRule)(rule)` cast.
+fn to_pd_label_rule(rule: &Rule) -> pd_http::LabelRule {
+    pd_http::LabelRule {
+        id: rule.id.clone(),
+        index: rule.index,
+        labels: rule
+            .labels
+            .snapshot()
+            .into_iter()
+            .map(|label| pd_http::RegionLabel {
+                key: label.key,
+                value: label.value,
+                ttl: label.ttl,
+                start_at: label.start_at,
+            })
+            .collect(),
+        rule_type: rule.rule_type.clone(),
+        data: rule
+            .data
+            .as_ref()
+            .map_or(serde_json::Value::Null, |data| data.read().clone()),
     }
+}
+
+// Go's `(*label.Rule)(labelRule)` cast.
+fn from_pd_label_rule(label_rule: &pd_http::LabelRule) -> Result<Rule, String> {
+    serde_json::to_value(label_rule)
+        .and_then(serde_json::from_value)
+        .map_err(|error| error.to_string())
 }
 
 impl LabelRuleManager for PdLabelManager {
     fn put_label_rule(&self, rule: &Rule) -> Result<(), String> {
-        let body = serde_json::to_vec(rule).map_err(|error| error.to_string())?;
-        self.request(reqwest::Method::POST, REGION_LABEL_RULE, Some(body))
-            .map(|_| ())
+        block_on_pd_http(
+            self.pd_http_client
+                .set_region_label_rule(&to_pd_label_rule(rule)),
+        )
     }
 
     fn update_label_rules(&self, patch: &LabelRulePatch) -> Result<(), String> {
-        let body = serde_json::to_vec(patch).map_err(|error| error.to_string())?;
-        self.request(reqwest::Method::PATCH, REGION_LABEL_RULES, Some(body))
-            .map(|_| ())
+        let patch = pd_http::LabelRulePatch {
+            set_rules: patch
+                .set_rules
+                .snapshot()
+                .iter()
+                .map(to_pd_label_rule)
+                .collect(),
+            delete_rules: patch.delete_rules.snapshot(),
+        };
+        block_on_pd_http(self.pd_http_client.patch_region_label_rules(&patch))
     }
 
     fn get_all_label_rules(&self, codec: &dyn LabelCodec) -> Result<Vec<Rule>, String> {
-        let bytes = self.request(reqwest::Method::GET, REGION_LABEL_RULES, None)?;
-        let rules: Option<Vec<Rule>> =
-            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-        Ok(filter_rules_by_keyspace(rules.unwrap_or_default(), codec))
+        let label_rules = block_on_pd_http(self.pd_http_client.get_all_region_label_rules())?;
+        let rules = label_rules
+            .iter()
+            .map(from_pd_label_rule)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(filter_rules_by_keyspace(rules, codec))
     }
 
     fn get_label_rules(&self, rule_ids: &[String]) -> Result<BTreeMap<String, Rule>, String> {
-        let body = serde_json::to_vec(rule_ids).map_err(|error| error.to_string())?;
-        let bytes = self.request(reqwest::Method::GET, REGION_LABEL_RULES_BY_IDS, Some(body))?;
-        let rules: Option<Vec<Rule>> =
-            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-        Ok(rules
-            .unwrap_or_default()
-            .into_iter()
-            .map(|rule| (rule.id.clone(), rule))
-            .collect())
+        let label_rules =
+            block_on_pd_http(self.pd_http_client.get_region_label_rules_by_ids(rule_ids))?;
+        label_rules
+            .iter()
+            .map(|label_rule| Ok((label_rule.id.clone(), from_pd_label_rule(label_rule)?)))
+            .collect()
     }
 }
 
@@ -226,9 +220,14 @@ mod tests {
             .expect("POST response");
         });
 
-        let manager =
-            PdLabelManager::with_security(&endpoint, &tidb_pd_client::ClusterSecurity::default())
-                .expect("manager");
+        let pd_http_client =
+            tidb_txnkv::driver::tikv_store::new_pd_http_client_with_mock_service_discovery(
+                "test",
+                &[endpoint],
+                Vec::new(),
+            )
+            .expect("PD HTTP client");
+        let manager = PdLabelManager::new(&pd_http_client);
         let ids = vec!["schema/db/t".to_owned()];
         let rules = manager.get_label_rules(&ids).expect("GET rules");
         assert_eq!(rules.len(), 1);

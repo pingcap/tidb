@@ -31,7 +31,7 @@ use tidb_datatype::FieldType;
 use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
@@ -101,8 +101,8 @@ impl StatsTarget {
 
 /// Reads one column or index statistics item through one fresh read-only
 /// transaction, Go sync-load's storage boundary.
-pub fn load_stats_item_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_stats_item_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     loader: &ClusterStatsLoader,
     table_id: i64,
@@ -137,8 +137,8 @@ pub fn load_stats_item_from_cluster<S: StoreClient, P: StorePdCapability>(
 /// transaction, so a concurrent `ANALYZE` cannot splice two generations into
 /// one column distribution.  This is a direct foreground read and does not
 /// publish anything to the shared statistics cache.
-pub fn read_column_distribution_stats_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn read_column_distribution_stats_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     loader: &ClusterStatsLoader,
     physical_table_id: i64,
@@ -170,8 +170,8 @@ pub fn read_column_distribution_stats_from_cluster<S: StoreClient, P: StorePdCap
     loaded
 }
 
-fn load_stats_item_payload_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+fn load_stats_item_payload_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     loader: &ClusterStatsLoader,
     table_id: i64,
@@ -195,8 +195,8 @@ fn load_stats_item_payload_from_cluster<S: StoreClient, P: StorePdCapability>(
 /// Go `storage.LoadNeededHistograms`: drain the process-wide asynchronous
 /// statistics demand against the latest schema and shared statistics cache.
 /// Every item is removed after its one attempt, including storage failures.
-pub fn load_needed_histograms_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_needed_histograms_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     tables: &[StatsTarget],
     shared: &SharedStats,
@@ -333,8 +333,8 @@ fn skips_internal_column(item: &tidb_model::TableItemID) -> bool {
 /// metadata-only columns. It is selected by `performance.lite-init-stats`,
 /// independently of the statistics lease. A table with no
 /// `mysql.stats_meta` row becomes [`TableStatsState::Pseudo`].
-pub fn load_stats_snapshot_and_loader<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_stats_snapshot_and_loader<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     tables: &[StatsTarget],
     table_ids: &[i64],
@@ -520,8 +520,8 @@ fn initial_stats_cache_is_full(consumed: u64, total_memory: u64, memory_quota: i
     consumed >= total_memory / 4 || (memory_quota != 0 && consumed >= memory_quota.max(0) as u64)
 }
 
-struct ClusterStatsRefreshSource<'a, S: StoreClient, P> {
-    opener: &'a RealOptimisticTransactionOpener<S, P>,
+struct ClusterStatsRefreshSource<'a, S: StoreClient> {
+    opener: &'a RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     loader: &'a ClusterStatsLoader,
     targets: BTreeMap<i64, &'a StatsTarget>,
@@ -530,10 +530,9 @@ struct ClusterStatsRefreshSource<'a, S: StoreClient, P> {
     load_all: bool,
 }
 
-impl<S, P> StatsRefreshSource for ClusterStatsRefreshSource<'_, S, P>
+impl<S> StatsRefreshSource for ClusterStatsRefreshSource<'_, S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     type Error = SystemTableError;
 
@@ -613,8 +612,8 @@ where
 /// skip, metadata-only reuse, and monotonic maximum all come from the shared
 /// `tidb-stats-handle-cache` implementation rather than a second snapshot
 /// refresh policy.
-pub fn update_stats_cache_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn update_stats_cache_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     tables: &[StatsTarget],
     shared: &SharedStats,
@@ -657,8 +656,8 @@ pub fn update_stats_cache_from_cluster<S: StoreClient, P: StorePdCapability>(
 /// recording runs afterward in its own best-effort transaction and therefore
 /// cannot turn a successful refresh into an error. `record_history` is the
 /// already-evaluated Go historical-stats/cache-initialization gate.
-pub fn update_stats_meta_version_for_gc<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn update_stats_meta_version_for_gc<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     physical_id: i64,
     timeout: Duration,
     record_history: bool,
@@ -678,8 +677,8 @@ pub fn update_stats_meta_version_for_gc<S: StoreClient, P: StorePdCapability>(
 }
 
 /// Pinned Go `storage.UpdateStatsVersion` over real TiKV.
-pub fn update_stats_version<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn update_stats_version<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<u64, PessimisticStatementTransactionError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
@@ -692,8 +691,8 @@ pub fn update_stats_version<S: StoreClient, P: StorePdCapability>(
 }
 
 /// Pinned Go `storage.ChangeGlobalStatsID` over real TiKV.
-pub fn change_global_stats_id<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn change_global_stats_id<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     from: i64,
     to: i64,
     timeout: Duration,
@@ -708,8 +707,8 @@ pub fn change_global_stats_id<S: StoreClient, P: StorePdCapability>(
 }
 
 /// Pinned Go `RecordHistoricalStatsMeta` as its own pessimistic transaction.
-pub fn record_historical_stats_meta<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn record_historical_stats_meta<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     version: u64,
     source: &str,

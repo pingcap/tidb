@@ -22,9 +22,7 @@ use std::time::Duration;
 use tidb_datatype::Time;
 use tidb_executor::cluster_storage::MutationBuffer;
 use tidb_stats::StatsLockTransaction;
-use tidb_txnkv::transaction::{
-    BufferMutation, RealOptimisticTransactionOpener, StoreClient, StorePdCapability,
-};
+use tidb_txnkv::transaction::{BufferMutation, RealOptimisticTransactionOpener, StoreClient};
 
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_lock::{
@@ -78,8 +76,8 @@ impl std::error::Error for ClusterStatsLockCommitError {}
 
 /// Runs Go `pkg/statistics/handle/lockstats` against the cluster tables in one
 /// transaction independent of the caller's user transaction.
-pub fn commit_cluster_stats_lock<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn commit_cluster_stats_lock<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     statement: &ClusterStatsLockStatement,
     timeout: Duration,
 ) -> Result<ClusterStatsLockReport, ClusterStatsLockCommitError> {

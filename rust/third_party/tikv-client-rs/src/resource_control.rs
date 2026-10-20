@@ -311,6 +311,18 @@ pub trait ResourceGroupController: Send + Sync {
         response: ResponseInfo,
     ) -> Result<ResponseWaitResult>;
 
+    /// Settlement that may wait for tokens, client-go's `OnResponseWait`
+    /// call for dispatched RPCs. Controllers that never wait keep the
+    /// default, which settles through [`ResourceGroupController::on_response_wait`].
+    async fn on_response_wait_async(
+        &self,
+        resource_group_name: &str,
+        request: RequestInfo,
+        response: ResponseInfo,
+    ) -> Result<ResponseWaitResult> {
+        self.on_response_wait(resource_group_name, request, response)
+    }
+
     /// Background work is charged and reported by TiKV itself, so client-go
     /// bypasses controller-side admission and settlement for it.
     fn is_background_request(&self, _resource_group_name: &str, _request_source: &str) -> bool {

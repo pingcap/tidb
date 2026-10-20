@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use tidb_executor::cluster_storage::ClusterSnapshot;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{RealOptimisticTransaction, RealOptimisticTransactionOpener};
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::StoreClient;
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
@@ -34,7 +34,7 @@ use crate::cluster_catalog::{
 /// Holding the transaction for the whole load is the point: every key the
 /// loader reads is served at the same `start_ts`.
 pub struct TransactionMetaSnapshot<'transaction, S: tidb_txnkv::transaction::StoreClient> {
-    transaction: &'transaction mut RealOptimisticTransaction<S>,
+    transaction: &'transaction mut RealTransaction<S>,
     /// One read request's deadline. Go bounds each storage request, not the
     /// statement issuing them: every cop task takes
     /// `TiKVClient.CoprReqTimeout` (default 120s,
@@ -54,10 +54,7 @@ impl<'transaction, S: tidb_txnkv::transaction::StoreClient>
     TransactionMetaSnapshot<'transaction, S>
 {
     /// Binds one transaction and the per-request deadline every read stamps.
-    pub fn new(
-        transaction: &'transaction mut RealOptimisticTransaction<S>,
-        timeout: Duration,
-    ) -> Self {
+    pub fn new(transaction: &'transaction mut RealTransaction<S>, timeout: Duration) -> Self {
         Self {
             transaction,
             timeout,
@@ -285,8 +282,8 @@ impl PagedMetaSnapshot for SnapshotMetaSnapshot {
 ///
 /// The transaction is opened for reading only and finished without writes, so
 /// the load leaves no locks behind and consumes exactly one PD timestamp.
-pub fn load_catalog_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn load_catalog_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
     let mut transaction = opener
@@ -308,8 +305,8 @@ pub fn load_catalog_from_cluster<S: StoreClient, P: StorePdCapability>(
 /// diffs, and any object a diff points at are all read at that one timestamp,
 /// so a pass never publishes a blend of two schema versions. The transaction
 /// is read-only and finished without writes, leaving no locks behind.
-pub fn reload_catalog_from_cluster<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn reload_catalog_from_cluster<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     current: &ClusterCatalog,
 ) -> Result<ReloadedCatalogAt, ClusterCatalogError> {

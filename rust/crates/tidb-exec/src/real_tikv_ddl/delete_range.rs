@@ -50,14 +50,13 @@ impl DelRangeEmulator {
 }
 
 /// Go `delRange.start` for a store without delete-range support.
-pub fn start_del_range_emulator<S, P>(
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+pub fn start_del_range_emulator<S>(
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     row_ids: Option<Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<DelRangeEmulator, String>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     let (wake, woken) = sync_channel(DEL_BACK_LOG);
     std::thread::Builder::new()
@@ -67,14 +66,13 @@ where
     Ok(DelRangeEmulator { wake })
 }
 
-fn run_emulator<S, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
+fn run_emulator<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     row_ids: Option<&Arc<dyn crate::table_from_meta::TableAutoIds>>,
     woken: &Receiver<()>,
 ) where
     S: StoreClient,
-    P: StorePdCapability,
 {
     while woken.recv().is_ok() {
         if let Err(error) = do_del_range_work(opener, timeout, row_ids) {
@@ -93,14 +91,13 @@ struct DelRangeTables {
 }
 
 /// Go `delRange.doDelRangeWork`: every recorded range, worked off in turn.
-pub fn do_del_range_work<S, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
+pub fn do_del_range_work<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     row_ids: Option<&Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     let (tables, rows) = reorg_transaction(opener, timeout, |meta, _, _, _| {
         let catalog = load_cluster_catalog(meta).map_err(DdlPlanError::from)?;
@@ -124,8 +121,8 @@ where
 }
 
 /// Go `delRange.doTask`.
-fn do_task<S, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
+fn do_task<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     row_ids: Option<&Arc<dyn crate::table_from_meta::TableAutoIds>>,
     tables: &DelRangeTables,
@@ -133,7 +130,6 @@ fn do_task<S, P>(
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     let task = &row.task;
     let mut old_start_key = task.start_key.clone();
@@ -198,8 +194,8 @@ where
 /// Go `util.CompleteDeleteRange(sctx, dr, true)`: in one transaction, the
 /// row copied into `gc_delete_range_done` (`INSERT IGNORE ... SELECT`) and
 /// removed from `gc_delete_range`.
-fn complete_delete_range<S, P>(
-    opener: &Arc<RealOptimisticTransactionOpener<S, P>>,
+fn complete_delete_range<S>(
+    opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     row_ids: Option<&Arc<dyn crate::table_from_meta::TableAutoIds>>,
     tables: &DelRangeTables,
@@ -207,7 +203,6 @@ fn complete_delete_range<S, P>(
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     reorg_transaction(opener, timeout, |meta, _, _, _| {
         let rows = tables

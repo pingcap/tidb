@@ -24,7 +24,7 @@ use crate::sql_node::{QuerySession, QuerySessionFactory};
 use std::sync::Arc;
 use tidb_datatype::Datum;
 use tidb_session::vars::GlobalSysvars;
-use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
 };

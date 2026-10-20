@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tidb_datatype::Datum;
 use tidb_session::privilege::GlobalPriv;
-use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
 };

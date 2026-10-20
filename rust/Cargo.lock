@@ -3582,6 +3582,7 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-ttl",
  "tidb-txnkv",
+ "tidb-unistore",
  "tidb-util",
  "tidb-vardef",
  "tikv-client",
@@ -3854,7 +3855,6 @@ name = "tidb-pd-client"
 version = "0.0.0"
 dependencies = [
  "etcd-client",
- "prometheus 0.13.4",
  "prost 0.14.4",
  "rustls",
  "tidb-proto",

@@ -22,10 +22,9 @@
 //! worker-local (`Rc<RefCell<..>>`)"
 //! (`tidb-exec/src/cluster_table_storage.rs`).
 //!
-//! That justification is worth a compile-time fact rather than a comment: the
-//! shared halves are `Arc<Mutex<C>>` and `BackgroundRegionCache<L>`, and the
-//! capability traits the opener demands are all `Send + Sync + 'static`
-//! (`transaction/coordinator/opener.rs`). If this test compiles, nothing in
+//! That justification is worth a compile-time fact rather than a comment: a
+//! transaction reads over the node's shared client-rust store, whose handle
+//! is `Send + Sync`. If this test compiles, nothing in
 //! the type system forces the pin, and moving a transaction onto the
 //! connection worker -- the shape client-go has -- is open.
 //!
@@ -37,6 +36,5 @@ fn assert_send<T: Send>() {}
 
 #[test]
 fn a_production_transaction_can_be_owned_by_the_connection_worker() {
-    assert_send::<tidb_txnkv::transaction::ProductionOptimisticTransaction>();
-    assert_send::<tidb_txnkv::transaction::ProductionPessimisticTransaction>();
+    assert_send::<tidb_txnkv::transaction::ProductionTransaction>();
 }

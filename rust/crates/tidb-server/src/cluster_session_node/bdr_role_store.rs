@@ -26,27 +26,23 @@ use std::time::Duration;
 
 use tidb_exec::meta_txn::{MetaTxnError, MetaTxnStorage};
 use tidb_meta::transaction::Mutator;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 
-pub(super) struct ClusterBdrRoleStore<S: StoreClient, P: StorePdCapability> {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+pub(super) struct ClusterBdrRoleStore<S: StoreClient> {
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
 }
 
-impl<S: StoreClient, P: StorePdCapability> ClusterBdrRoleStore<S, P> {
-    pub(super) fn new(
-        opener: Arc<RealOptimisticTransactionOpener<S, P>>,
-        timeout: Duration,
-    ) -> Self {
+impl<S: StoreClient> ClusterBdrRoleStore<S> {
+    pub(super) fn new(opener: Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<S, P> tidb_session::BdrRoleStore for ClusterBdrRoleStore<S, P>
+impl<S> tidb_session::BdrRoleStore for ClusterBdrRoleStore<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn get(&self) -> Result<String, String> {
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);

@@ -1254,20 +1254,13 @@ mod tests {
 
     /// The context a client sends for the region holding the raw `key`.
     fn ctx_for(handler: &KvHandler, key: &[u8]) -> Option<kvrpcpb::Context> {
-        let region = crate::region_loader::InProcessRegionLoader::new(Arc::clone(&handler.regions))
-            .region_by_key(key)
-            .unwrap();
-        let leader = region
-            .peers
-            .iter()
-            .find(|peer| Some(peer.id) == region.leader_peer_id)
+        let (region, leader) = handler
+            .regions
+            .get_region_by_key(&crate::region_manager::encode_region_key(key))
             .unwrap();
         Some(kvrpcpb::Context {
-            region_id: region.region.id,
-            region_epoch: Some(tidb_proto::metapb::RegionEpoch {
-                conf_ver: region.region.epoch.conf_ver,
-                version: region.region.epoch.version,
-            }),
+            region_id: region.id,
+            region_epoch: region.region_epoch.clone(),
             peer: Some(tidb_proto::metapb::Peer {
                 id: leader.id,
                 store_id: leader.store_id,

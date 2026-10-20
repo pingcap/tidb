@@ -19,8 +19,7 @@ use std::time::Duration;
 
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_stats_lock::{commit_cluster_stats_lock, ClusterStatsLockReport};
-use tidb_pd_client::PdClient;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use crate::sql_node::{cluster_stats_lock_error, SqlQueryError};
 
@@ -34,31 +33,28 @@ pub trait ClusterStatsLock: Send + Sync {
 }
 
 /// The production TiKV-backed lockstats transaction.
-pub struct RealClusterStatsLock<S = tikv_client::PdRpcClient, P = PdClient>
+pub struct RealClusterStatsLock<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
 }
 
-impl<S, P> RealClusterStatsLock<S, P>
+impl<S> RealClusterStatsLock<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     /// Binds the route to an already-connected transaction authority.
     #[must_use]
-    pub fn new(opener: Arc<RealOptimisticTransactionOpener<S, P>>, timeout: Duration) -> Self {
+    pub fn new(opener: Arc<RealOptimisticTransactionOpener<S>>, timeout: Duration) -> Self {
         Self { opener, timeout }
     }
 }
 
-impl<S, P> ClusterStatsLock for RealClusterStatsLock<S, P>
+impl<S> ClusterStatsLock for RealClusterStatsLock<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn execute(
         &self,

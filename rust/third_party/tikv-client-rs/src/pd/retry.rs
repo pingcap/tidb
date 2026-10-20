@@ -216,6 +216,98 @@ pub trait RetryClientTrait {
         Err(Error::Unimplemented)
     }
 
+    /// The client's dynamic options (pd-client `UpdateOption`), when it has
+    /// any.
+    fn options(&self) -> Option<Arc<super::opt::Options>> {
+        None
+    }
+
+    /// pd-client `GetAllMembers`.
+    async fn get_all_members(self: Arc<Self>) -> Result<pdpb::GetMembersResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `StoreGlobalConfig`.
+    async fn store_global_config(
+        self: Arc<Self>,
+        _config_path: String,
+        _changes: Vec<pdpb::GlobalConfigItem>,
+    ) -> Result<()> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `ListResourceGroups` within `keyspace_id`.
+    async fn list_resource_groups(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _with_ru_stats: bool,
+    ) -> Result<Vec<crate::proto::resource_manager::ResourceGroup>> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `AddResourceGroup` (`add`) or `ModifyResourceGroup` within
+    /// `keyspace_id`, answering PD's response body.
+    async fn put_resource_group(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _group: crate::proto::resource_manager::ResourceGroup,
+        _add: bool,
+    ) -> Result<String> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `DeleteResourceGroup` within `keyspace_id`.
+    async fn delete_resource_group(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _name: String,
+    ) -> Result<String> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `GetResourceGroup` within `keyspace_id`; `None` when PD
+    /// answers without a group.
+    async fn get_resource_group(
+        self: Arc<Self>,
+        _keyspace_id: u32,
+        _name: String,
+        _with_ru_stats: bool,
+    ) -> Result<Option<crate::proto::resource_manager::ResourceGroup>> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client `AcquireTokenBuckets` over the resource manager token stream.
+    async fn acquire_token_buckets(
+        self: Arc<Self>,
+        _request: crate::proto::resource_manager::TokenBucketsRequest,
+    ) -> Result<Vec<crate::proto::resource_manager::TokenBucketResponse>> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client meta storage `Get`.
+    async fn meta_storage_get(
+        self: Arc<Self>,
+        _request: crate::proto::meta_storagepb::GetRequest,
+    ) -> Result<crate::proto::meta_storagepb::GetResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client meta storage `Put`.
+    async fn meta_storage_put(
+        self: Arc<Self>,
+        _request: crate::proto::meta_storagepb::PutRequest,
+    ) -> Result<crate::proto::meta_storagepb::PutResponse> {
+        Err(Error::Unimplemented)
+    }
+
+    /// pd-client meta storage `Watch`; the channel closes when the stream ends.
+    async fn meta_storage_watch(
+        self: Arc<Self>,
+        _request: crate::proto::meta_storagepb::WatchRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<super::metastorage::WatchResponse>> {
+        Err(Error::Unimplemented)
+    }
+
     async fn advance_txn_safe_point(
         self: Arc<Self>,
         _keyspace_id: u32,
@@ -263,6 +355,8 @@ pub struct RetryClient<Cl = Cluster> {
     cancellation: Cancellation,
     timeout: Duration,
     initial_keyspace: Option<keyspacepb::KeyspaceMeta>,
+    // pd-client's token dispatcher, created on the first token request.
+    token_dispatcher: tokio::sync::OnceCell<super::resource_manager_client::TokenDispatcher>,
 }
 
 impl<Cl> RetryClient<Cl> {
@@ -280,6 +374,7 @@ impl<Cl> RetryClient<Cl> {
             cancellation: Cancellation::default(),
             timeout,
             initial_keyspace: None,
+            token_dispatcher: tokio::sync::OnceCell::new(),
         }
     }
 }
@@ -548,6 +643,103 @@ impl RetryClient<Cluster> {
     pub async fn cluster_id(&self) -> u64 {
         self.cluster.read().await.0.id()
     }
+
+    /// Go `createTokenDispatcher`: the dispatcher reads the current leader
+    /// from the published cluster and stops with this client.
+    fn create_token_dispatcher(&self) -> super::resource_manager_client::TokenDispatcher {
+        let connect_cluster = Arc::downgrade(&self.cluster);
+        let leader_cluster = Arc::downgrade(&self.cluster);
+        let refresh = self.reconnect.clone();
+        super::resource_manager_client::TokenDispatcher::new(
+            Arc::new(move || {
+                let cluster = connect_cluster.clone();
+                async move {
+                    let cluster = cluster.upgrade().ok_or(Error::ContextCanceled)?;
+                    let connect = cluster.read().await.0.resource_manager_token_client();
+                    connect.await
+                }
+                .boxed()
+            }),
+            Arc::new(move || {
+                let cluster = leader_cluster.clone();
+                async move {
+                    let cluster = cluster.upgrade()?;
+                    let guard = cluster.read().await;
+                    guard.0.resource_manager_leader_url()
+                }
+                .boxed()
+            }),
+            Arc::new(move || refresh.members_changed.notify_one()),
+            self.cancellation.clone(),
+        )
+    }
+
+    /// Go `respForMetaStorageErr`: transport errors schedule a membership
+    /// check; header errors are errors too. Both record the failure duration.
+    fn meta_storage_result<T>(
+        &self,
+        result: Result<T>,
+        start: Instant,
+        header: impl FnOnce(&T) -> Option<&crate::proto::meta_storagepb::ResponseHeader>,
+        failed: &prometheus::Histogram,
+    ) -> Result<T> {
+        match result {
+            Err(error) => {
+                failed.observe(start.elapsed().as_secs_f64());
+                self.reconnect.members_changed.notify_one();
+                Err(error)
+            }
+            Ok(response) => {
+                if let Some(error) = header(&response).and_then(|header| header.error.as_ref()) {
+                    failed.observe(start.elapsed().as_secs_f64());
+                    return Err(Error::StringError(
+                        super::meta_storage_client::meta_storage_error_text(error),
+                    ));
+                }
+                Ok(response)
+            }
+        }
+    }
+
+    /// Go `pd.Client.GetServiceDiscovery`, for the PD HTTP client: the
+    /// members this client discovered, the leader first, as its membership
+    /// refreshes. A membership check scheduled through it wakes this client's
+    /// member refresh. The view does not keep the client alive; once the
+    /// client is dropped it has no members.
+    pub fn get_service_discovery(&self) -> Arc<dyn super::http::ServiceDiscovery> {
+        Arc::new(MemberServiceDiscovery {
+            cluster: Arc::downgrade(&self.cluster),
+            refresh: Arc::downgrade(&self.reconnect),
+        })
+    }
+}
+
+// The PD client's membership as the HTTP client's service discovery.
+struct MemberServiceDiscovery {
+    cluster: std::sync::Weak<RwLock<(Cluster, Instant)>>,
+    refresh: std::sync::Weak<DiscoveryRefresh>,
+}
+
+#[async_trait]
+impl super::http::ServiceDiscovery for MemberServiceDiscovery {
+    async fn get_all_service_clients(&self) -> Vec<super::http::ServiceClient> {
+        let Some(cluster) = self.cluster.upgrade() else {
+            return Vec::new();
+        };
+        let urls = cluster.read().await.0.service_client_urls();
+        urls.into_iter()
+            .map(|(url, is_leader)| super::http::ServiceClient::new(url, is_leader))
+            .collect()
+    }
+
+    fn schedule_check_member_changed(&self) {
+        if let Some(refresh) = self.refresh.upgrade() {
+            refresh.members_changed.notify_one();
+        }
+    }
+
+    // The PD client owns its discovery; the HTTP client never closes it.
+    async fn close(&self) {}
 }
 
 #[async_trait]
@@ -814,6 +1006,206 @@ impl RetryClientTrait for RetryClient<Cluster> {
         retry!(self, "get_gc_state", |cluster| {
             cluster.get_gc_state(keyspace_id, self.timeout)
         })
+    }
+
+    fn options(&self) -> Option<Arc<super::opt::Options>> {
+        Some(self.connection.options.clone())
+    }
+
+    async fn get_all_members(self: Arc<Self>) -> Result<pdpb::GetMembersResponse> {
+        retry!(self, "get_all_members", |cluster| {
+            cluster.get_all_members(self.timeout)
+        })
+    }
+
+    async fn store_global_config(
+        self: Arc<Self>,
+        config_path: String,
+        mut changes: Vec<pdpb::GlobalConfigItem>,
+    ) -> Result<()> {
+        // Go's StoreGlobalConfig is one leader RPC, not retried, projecting
+        // each item's name, value, kind and payload.
+        for item in &mut changes {
+            item.error = None;
+        }
+        let request = {
+            let cluster = self.cluster.read().await;
+            cluster
+                .0
+                .store_global_config(config_path, changes, self.timeout)
+        };
+        request.await
+    }
+
+    async fn list_resource_groups(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        with_ru_stats: bool,
+    ) -> Result<Vec<crate::proto::resource_manager::ResourceGroup>> {
+        retry!(self, "list_resource_groups", |cluster| {
+            cluster.list_resource_groups(keyspace_id, with_ru_stats, self.timeout)
+        })
+    }
+
+    async fn put_resource_group(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        group: crate::proto::resource_manager::ResourceGroup,
+        add: bool,
+    ) -> Result<String> {
+        retry!(self, "put_resource_group", |cluster| {
+            cluster.put_resource_group(keyspace_id, group.clone(), add, self.timeout)
+        })
+    }
+
+    async fn delete_resource_group(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        name: String,
+    ) -> Result<String> {
+        retry!(self, "delete_resource_group", |cluster| {
+            cluster.delete_resource_group(keyspace_id, name.clone(), self.timeout)
+        })
+    }
+
+    async fn get_resource_group(
+        self: Arc<Self>,
+        keyspace_id: u32,
+        name: String,
+        with_ru_stats: bool,
+    ) -> Result<Option<crate::proto::resource_manager::ResourceGroup>> {
+        // Go's GetResourceGroup is one unretried RPC; a leader change
+        // schedules a membership check.
+        let request = {
+            let cluster = self.cluster.read().await;
+            cluster
+                .0
+                .get_resource_group(keyspace_id, name, with_ru_stats)
+        };
+        let result = request.await;
+        if let Err(error) = &result {
+            if super::errs::is_leader_change(Some(error)) {
+                self.reconnect.members_changed.notify_one();
+            }
+        }
+        result
+    }
+
+    async fn acquire_token_buckets(
+        self: Arc<Self>,
+        request: crate::proto::resource_manager::TokenBucketsRequest,
+    ) -> Result<Vec<crate::proto::resource_manager::TokenBucketResponse>> {
+        let this: &Self = &self;
+        let dispatcher = self
+            .token_dispatcher
+            .get_or_init(|| async move { this.create_token_dispatcher() })
+            .await;
+        dispatcher
+            .acquire_token_buckets(request, &self.cancellation)
+            .await
+    }
+
+    async fn meta_storage_get(
+        self: Arc<Self>,
+        request: crate::proto::meta_storagepb::GetRequest,
+    ) -> Result<crate::proto::meta_storagepb::GetResponse> {
+        let start = Instant::now();
+        let request = {
+            let cluster = self.cluster.read().await;
+            cluster.0.meta_storage_get(request, self.timeout)
+        };
+        let result = request.await;
+        let metrics = super::metrics::global_metrics();
+        metrics
+            .cmd_duration_get
+            .observe(start.elapsed().as_secs_f64());
+        self.meta_storage_result(
+            result,
+            start,
+            |response| response.header.as_ref(),
+            &metrics.cmd_failed_duration_get,
+        )
+    }
+
+    async fn meta_storage_put(
+        self: Arc<Self>,
+        request: crate::proto::meta_storagepb::PutRequest,
+    ) -> Result<crate::proto::meta_storagepb::PutResponse> {
+        let start = Instant::now();
+        let request = {
+            let cluster = self.cluster.read().await;
+            cluster.0.meta_storage_put(request, self.timeout)
+        };
+        let result = request.await;
+        let metrics = super::metrics::global_metrics();
+        metrics
+            .cmd_duration_put
+            .observe(start.elapsed().as_secs_f64());
+        self.meta_storage_result(
+            result,
+            start,
+            |response| response.header.as_ref(),
+            &metrics.cmd_failed_duration_put,
+        )
+    }
+
+    async fn meta_storage_watch(
+        self: Arc<Self>,
+        request: crate::proto::meta_storagepb::WatchRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<super::metastorage::WatchResponse>> {
+        let open = {
+            let cluster = self.cluster.read().await;
+            cluster.0.meta_storage_watch(request)
+        };
+        let mut stream = open.await?;
+        let (events, receiver) = tokio::sync::mpsc::channel(100);
+        let cancellation = self.cancellation.clone();
+        tokio::spawn(async move {
+            loop {
+                let message = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return,
+                    _ = events.closed() => return,
+                    message = stream.message() => message,
+                };
+                let resp = match message {
+                    Ok(Some(resp)) => resp,
+                    Ok(None) => {
+                        log::warn!("watch stream closed");
+                        return;
+                    }
+                    Err(error) => {
+                        log::warn!("watch stream closed, error: {error}");
+                        return;
+                    }
+                };
+                // A compacted watch revision requires watching again from
+                // the higher compact revision.
+                let mut compact_revision = 0;
+                if let Some(error) = resp
+                    .header
+                    .as_ref()
+                    .and_then(|header| header.error.as_ref())
+                {
+                    if error.r#type == crate::proto::meta_storagepb::ErrorType::DataCompacted as i32
+                    {
+                        compact_revision = resp.compact_revision;
+                        log::info!(
+                            "watch stream closed due to data compacted, required watch revision: {compact_revision}, err: {}",
+                            super::meta_storage_client::meta_storage_error_text(error)
+                        );
+                    }
+                }
+                let response = super::metastorage::WatchResponse {
+                    events: resp.events,
+                    compact_revision,
+                };
+                if events.send(response).await.is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(receiver)
     }
 
     async fn advance_txn_safe_point(

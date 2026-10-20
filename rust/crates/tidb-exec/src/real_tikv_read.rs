@@ -41,14 +41,12 @@ use std::time::Duration;
 use prost::Message;
 use tidb_ast::{QueryStmt, Stmt};
 use tidb_datatype::SessionTimeZone;
-use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
-    signed_handle_ranges_to_kv_ranges, CancelHandle, CoprCache, CoprCacheConfig,
-    DirectUnaryRuntimeConfig, EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime,
-    QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope, ResponseChannel,
-    SelectInput, SignedHandleRange, TimestampSource, WarningCollector,
+    signed_handle_ranges_to_kv_ranges, CancelHandle, CopRuntimeConfig, CoprCache, CoprCacheConfig,
+    EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime, QueryResultContext,
+    QueryTransport, RequestBuilder, RequestEnvelope, ResponseChannel, SelectInput,
+    SignedHandleRange, TimestampSource, WarningCollector,
 };
-use tidb_pd_client::{PdClient, PdClientError};
 use tidb_planner::read_only_scan::{
     configured_catalog::ConfiguredCatalog, lower_prepared_point_read, ConfiguredColumnKind,
     ConfiguredPreparedPointReadTemplate, ConfiguredTable, PreparedPlanError, ReadOnlyScanError,
@@ -56,9 +54,6 @@ use tidb_planner::read_only_scan::{
 };
 use tidb_protocol::ColumnInfo;
 use tidb_txnkv::driver::tikv_store::TikvStore;
-use tidb_txnkv::{
-    rpc::TonicCoprocessorClient, DirectUnaryClient, PdRegionLoader, SharedReadAuthority,
-};
 
 use crate::dag_request::{
     construct_read_only_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
@@ -141,10 +136,10 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
     fn open_session_transport(&self) -> Result<Self::Transport, String> {
         Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
             Arc::clone(&self.tikv_store),
-            DirectUnaryRuntimeConfig {
+            CopRuntimeConfig {
                 default_timeout: self.default_timeout,
                 shared_cache: self.copr_cache.clone(),
-                ..DirectUnaryRuntimeConfig::default()
+                ..CopRuntimeConfig::default()
             },
         ))
     }
@@ -174,11 +169,8 @@ fn next_read_authority_id() -> u64 {
 /// runtime. The returned transport deliberately has no `Send` bound because
 /// the fixed server worker creates and consumes it on one thread.
 ///
-/// Campaign 21's production implementation owns one
-/// `TonicCoprocessorRuntime` and one
-/// `tidb_txnkv::SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>`.
-/// This method calls `DirectUnaryQueryTransport::from_read_authority`; it does
-/// not call either authority's startup constructor.
+/// The production implementation reads through the node's client-rust store
+/// (`NativeCopTransport` over `TikvStore`).
 pub trait RealTiKvSessionTransportFactory: Send + Sync {
     /// Worker-local transport type created for one admitted connection.
     type Transport: QueryTransport;
@@ -423,82 +415,37 @@ where
     }
 }
 
-/// Unique lifecycle owner for production PD, RegionCache, and TiKV transport.
+/// The node's read and write authority over its client-rust store (Go's
+/// `tikvStore`): the session opener, the transaction opener and the
+/// coprocessor cache, all over the one `KVStore`.
 pub struct ProductionReadProcessAuthority {
     opener: ProductionOpener,
-    /// Write capability over the same already-running PD, RegionCache, and
-    /// TiKV transport this authority owns. It holds only cloneable handles, so
-    /// retaining it starts no second worker and creates no second client.
-    ///
-    /// Removed on shutdown to release the transaction safe-point refresher
-    /// before closing the cluster clients it uses.
+    /// Write capability over the same store. It holds only cloneable
+    /// handles, so retaining it starts no second worker or client.
     transaction_opener: Option<RealOptimisticTransactionOpener>,
     admission: ReadSessionAdmissionOwner,
-    lifecycle: ProductionReadLifecycle,
     copr_cache: Option<CoprCache>,
-    /// The node's client-rust store (Go `tikvStore`'s `*tikv.KVStore`), whose
-    /// txn safe point the transactions above check reads against.
+    /// The node's client-rust store (Go `tikvStore`'s `*tikv.KVStore`).
     tikv_store: TikvStore,
 }
 
 enum ProductionOpener {
-    Open(RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource>),
+    Open(RealTiKvReadSessionOpener<ProductionReadSessionFactory, OracleTimestampSource>),
     Closed,
 }
 
-struct ProductionReadLifecycle {
-    region_cache: ProductionRegionLifecycle,
-    transport: ProductionTransportLifecycle,
-    pd: ProductionPdLifecycle,
-}
-
-enum ProductionRegionLifecycle {
-    Running(SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>),
-    Closed,
-}
-
-enum ProductionTransportLifecycle {
-    Running(TonicCoprocessorClient),
-    Closed,
-}
-
-enum ProductionPdLifecycle {
-    Running(PdClient),
-    Closed,
-}
-
-/// One stage in the dependency-ordered production read shutdown.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReadProcessShutdownStage {
-    /// Stop and join RegionCache maintenance before its dependencies.
-    RegionCache,
-    /// Stop and join the TiKV transport after RegionCache.
-    TikvTransport,
-    /// Stop and join PD only after every dependent worker has stopped.
-    Pd,
-}
-
-/// One stage-specific failure retained without skipping later stages.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReadProcessShutdownFailure {
-    /// Stage that returned the failure.
-    pub stage: ReadProcessShutdownStage,
-    /// Typed stage error rendered at the composition boundary.
-    pub message: String,
-}
-
-/// Rejection or aggregate failure from explicit process shutdown.
+/// Rejection or failure from explicit process shutdown.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadProcessShutdownError {
-    /// Connection-local sessions must drain before any process stage stops.
+    /// Connection-local sessions must drain before the store closes.
     ActiveSessions {
         /// Number of live session leases observed by the unique authority.
         active: usize,
     },
     /// The internal admission lock was poisoned before shutdown linearized.
     AdmissionPoisoned,
-    /// Every stage was attempted in order; these stages failed.
-    StageFailures(Vec<ReadProcessShutdownFailure>),
+    /// Go `tikvStore.Close` failed.
+    StoreClose(String),
 }
 
 impl fmt::Display for ReadProcessShutdownError {
@@ -513,95 +460,12 @@ impl fmt::Display for ReadProcessShutdownError {
             Self::AdmissionPoisoned => {
                 formatter.write_str("read session admission lock is poisoned")
             }
-            Self::StageFailures(failures) => {
-                formatter.write_str("read process shutdown failed")?;
-                for failure in failures {
-                    write!(formatter, "; {:?}: {}", failure.stage, failure.message)?;
-                }
-                Ok(())
-            }
+            Self::StoreClose(message) => write!(formatter, "close the store: {message}"),
         }
     }
 }
 
 impl std::error::Error for ReadProcessShutdownError {}
-
-/// Fallible process lifecycle used by production and deterministic order tests.
-pub trait ReadProcessShutdownStages {
-    /// Stops and joins RegionCache maintenance.
-    fn shutdown_region_cache(&mut self) -> Result<(), String>;
-    /// Stops and joins the TiKV transport.
-    fn shutdown_tikv_transport(&mut self) -> Result<(), String>;
-    /// Stops and joins PD.
-    fn shutdown_pd(&mut self) -> Result<(), String>;
-}
-
-/// Attempts every process stage in dependency order and aggregates failures.
-pub fn shutdown_read_process(
-    active_sessions: usize,
-    stages: &mut impl ReadProcessShutdownStages,
-) -> Result<(), ReadProcessShutdownError> {
-    if active_sessions != 0 {
-        return Err(ReadProcessShutdownError::ActiveSessions {
-            active: active_sessions,
-        });
-    }
-    let mut failures = Vec::new();
-    for (stage, result) in [
-        (
-            ReadProcessShutdownStage::RegionCache,
-            stages.shutdown_region_cache(),
-        ),
-        (
-            ReadProcessShutdownStage::TikvTransport,
-            stages.shutdown_tikv_transport(),
-        ),
-        (ReadProcessShutdownStage::Pd, stages.shutdown_pd()),
-    ] {
-        if let Err(message) = result {
-            failures.push(ReadProcessShutdownFailure { stage, message });
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(ReadProcessShutdownError::StageFailures(failures))
-    }
-}
-
-impl ReadProcessShutdownStages for ProductionReadLifecycle {
-    fn shutdown_region_cache(&mut self) -> Result<(), String> {
-        let authority =
-            std::mem::replace(&mut self.region_cache, ProductionRegionLifecycle::Closed);
-        match authority {
-            ProductionRegionLifecycle::Running(authority) => {
-                authority.shutdown().map_err(|error| error.to_string())
-            }
-            ProductionRegionLifecycle::Closed => Ok(()),
-        }
-    }
-
-    fn shutdown_tikv_transport(&mut self) -> Result<(), String> {
-        // Probes borrow this fleet; join them before retiring its generation.
-        tidb_txnkv::global_mpp_failed_store_prober().stop();
-        let transport =
-            std::mem::replace(&mut self.transport, ProductionTransportLifecycle::Closed);
-        match transport {
-            ProductionTransportLifecycle::Running(mut transport) => {
-                transport.close().map_err(|error| error.to_string())
-            }
-            ProductionTransportLifecycle::Closed => Ok(()),
-        }
-    }
-
-    fn shutdown_pd(&mut self) -> Result<(), String> {
-        let pd = std::mem::replace(&mut self.pd, ProductionPdLifecycle::Closed);
-        match pd {
-            ProductionPdLifecycle::Running(pd) => pd.shutdown().map_err(|error| error.to_string()),
-            ProductionPdLifecycle::Closed => Ok(()),
-        }
-    }
-}
 
 impl ProductionReadProcessAuthority {
     /// Bootstraps PD, region maintenance, and tonic exactly once per process.
@@ -617,12 +481,8 @@ impl ProductionReadProcessAuthority {
         Self::connect_with_catalog(pd_endpoints, timeout, |_| Ok(table))
     }
 
-    /// Bootstraps the same authorities, then chooses the served table from the
+    /// Connects the node's store, then chooses the served table from the
     /// catalog this cluster actually stores.
-    ///
-    /// The load runs on the authority that has just been started, so the node
-    /// opens exactly one PD client, one region cache, and one transport even
-    /// though it reads the catalog before it knows what it serves.
     pub fn connect_with_catalog<I, E, F>(
         pd_endpoints: I,
         timeout: Duration,
@@ -637,27 +497,16 @@ impl ProductionReadProcessAuthority {
         let security = tidb_pd_client::ClusterSecurity::plaintext();
         let tikv_store = TikvStore::connect_with_security(pd_endpoints.clone(), &security)
             .map_err(RealTiKvReadError::Transport)?;
-        Self::connect_with_catalog_and_security(
-            pd_endpoints,
-            timeout,
-            Arc::new(security),
-            tikv_store,
-            choose_table,
-        )
+        Self::connect_with_store(timeout, tikv_store, choose_table)
     }
 
-    /// Bootstraps PD and store traffic from the same captured cluster security.
-    /// `tikv_store` is the node's client-rust store over the same cluster.
-    pub fn connect_with_catalog_and_security<I, E, F>(
-        pd_endpoints: I,
+    /// The authority over the node's store, `tikv_store`.
+    pub fn connect_with_store<F>(
         timeout: Duration,
-        security: Arc<tidb_pd_client::ClusterSecurity>,
         tikv_store: TikvStore,
         choose_table: F,
     ) -> Result<Self, RealTiKvReadError>
     where
-        I: IntoIterator<Item = E>,
-        E: Into<String>,
         F: FnOnce(&RealOptimisticTransactionOpener) -> Result<ConfiguredTable, String>,
     {
         let copr_cache = configured_coprocessor_cache(
@@ -665,21 +514,8 @@ impl ProductionReadProcessAuthority {
                 .tikv_client
                 .copr_cache,
         )?;
-        let mut pd_options = tikv_client::pd_options::Options::new();
-        pd_options.timeout = timeout;
-        pd_options.enable_forwarding = tidb_config::tikvcfg::get_global_config().enable_forwarding;
-        let pd =
-            PdClient::connect_seeds_with_options(pd_endpoints, Arc::clone(&security), pd_options)?;
-        let cluster_id = pd.cluster_id();
-        let timestamp_source = PdTimestampSource::new(pd.clone());
-        let loader = PdRegionLoader::from_client(pd.clone());
-        let cache = RegionCache::new(loader);
-        let transport_owner = TonicCoprocessorClient::with_security(security)
-            .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
-        debug_assert!(transport_owner.is_transport_owner());
-        let read_authority =
-            SharedReadAuthority::start_with_store_liveness(transport_owner.clone(), cache)
-                .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
+        let cluster_id = tikv_store.cluster_id();
+        let timestamp_source = OracleTimestampSource::new(tikv_store.clone());
         let factory = ProductionReadSessionFactory {
             tikv_store: Arc::new(tikv_store.clone()),
             default_timeout: timeout,
@@ -687,15 +523,12 @@ impl ProductionReadProcessAuthority {
         };
         // Go's `tikvStore.Begin` over the node's one `KVStore`: transactions
         // share its region cache, sender, lock resolver and txn safe point.
-        let transaction_opener = RealOptimisticTransactionOpener::from_process_capabilities(
-            tikv_store.clone(),
-            pd.clone(),
-            timeout,
-        )
-        .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?
-        // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`, resolved once for
-        // the node exactly as `@@tidb_pessimistic_txn_fair_locking` is.
-        .with_commit_protocol(crate::session_commit_protocol::bootstrap_commit_protocol());
+        let transaction_opener =
+            RealOptimisticTransactionOpener::from_process_capabilities(tikv_store.clone(), timeout)
+                .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?
+                // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`, resolved once for
+                // the node exactly as `@@tidb_pessimistic_txn_fair_locking` is.
+                .with_commit_protocol(crate::session_commit_protocol::bootstrap_commit_protocol());
         let table = choose_table(&transaction_opener).map_err(RealTiKvReadError::Catalog)?;
         let (opener, admission) = RealTiKvReadSessionOpener::new_with_admission_owner(
             table,
@@ -708,11 +541,6 @@ impl ProductionReadProcessAuthority {
             transaction_opener: Some(transaction_opener),
             admission,
             copr_cache,
-            lifecycle: ProductionReadLifecycle {
-                region_cache: ProductionRegionLifecycle::Running(read_authority),
-                transport: ProductionTransportLifecycle::Running(transport_owner),
-                pd: ProductionPdLifecycle::Running(pd),
-            },
             tikv_store,
         })
     }
@@ -738,41 +566,12 @@ impl ProductionReadProcessAuthority {
     #[must_use]
     pub fn opener(
         &self,
-    ) -> RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource> {
+    ) -> RealTiKvReadSessionOpener<ProductionReadSessionFactory, OracleTimestampSource> {
         self.opener_ref().clone()
     }
 
-    /// A request-only handle to the process PD owner for domain background work.
-    pub fn pd_client(&self) -> Option<PdClient> {
-        match &self.lifecycle.pd {
-            ProductionPdLifecycle::Running(client) => Some(client.clone()),
-            ProductionPdLifecycle::Closed => None,
-        }
-    }
-
-    /// Borrowed store RPC capability; the process retains shutdown/join ownership.
-    pub fn store_rpc_opener(&self) -> Option<TonicCoprocessorClient> {
-        match &self.lifecycle.transport {
-            ProductionTransportLifecycle::Running(client) => Some(client.clone()),
-            ProductionTransportLifecycle::Closed => None,
-        }
-    }
-
-    /// Opens MPP requests against the same process region cache as row reads.
-    pub fn region_cache_opener(
-        &self,
-    ) -> Option<tidb_txnkv::region::BackgroundRegionCache<PdRegionLoader>> {
-        match &self.lifecycle.region_cache {
-            ProductionRegionLifecycle::Running(authority) => Some(authority.region_cache_opener()),
-            ProductionRegionLifecycle::Closed => None,
-        }
-    }
-
-    /// Cloneable write capability over this same authority.
-    ///
-    /// Reads and writes therefore share one PD worker, one RegionCache, one
-    /// TiKV BatchCommands transport, and one shutdown order; the returned
-    /// opener reconnects nothing.
+    /// Cloneable write capability over the same store; it reconnects
+    /// nothing.
     #[must_use]
     pub fn transaction_opener(&self) -> RealOptimisticTransactionOpener {
         self.transaction_opener
@@ -784,8 +583,10 @@ impl ProductionReadProcessAuthority {
     /// Opens one connection-local production session.
     pub fn open_session(
         &self,
-    ) -> Result<RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>, RealTiKvReadError>
-    {
+    ) -> Result<
+        RealTiKvReadSession<ProductionReadTransport, OracleTimestampSource>,
+        RealTiKvReadError,
+    > {
         self.opener_ref().open_session()
     }
 
@@ -801,25 +602,7 @@ impl ProductionReadProcessAuthority {
         self.opener_ref().authority_id()
     }
 
-    /// Stable identity of the sole maintained read authority.
-    #[must_use]
-    pub const fn read_authority_id(&self) -> u64 {
-        match &self.lifecycle.region_cache {
-            ProductionRegionLifecycle::Running(authority) => authority.authority_id(),
-            ProductionRegionLifecycle::Closed => 0,
-        }
-    }
-
-    /// Whether the retained transport value is the unique worker owner.
-    #[must_use]
-    pub const fn owns_transport_worker(&self) -> bool {
-        match &self.lifecycle.transport {
-            ProductionTransportLifecycle::Running(transport) => transport.is_transport_owner(),
-            ProductionTransportLifecycle::Closed => false,
-        }
-    }
-
-    /// Rejects active sessions, then always attempts RegionCache, TiKV, and PD.
+    /// Rejects active sessions, then closes the store (Go `tikvStore.Close`).
     pub fn shutdown(&mut self) -> Result<(), ReadProcessShutdownError> {
         self.admission.close_admission()?;
         if let Some(cache) = self.copr_cache.take() {
@@ -827,14 +610,18 @@ impl ProductionReadProcessAuthority {
         }
         let opener = std::mem::replace(&mut self.opener, ProductionOpener::Closed);
         drop(opener);
-        // Stop the transaction safe-point refresher before its PD client.
         drop(self.transaction_opener.take());
-        shutdown_read_process(0, &mut self.lifecycle)
+        // Go `mppStoreProber.Stop`: its probes send through the store.
+        tidb_txnkv::global_mpp_failed_store_prober().stop();
+        let store = self.tikv_store.store().clone();
+        self.tikv_store
+            .block_on(store.close())
+            .map_err(|error| ReadProcessShutdownError::StoreClose(error.to_string()))
     }
 
     const fn opener_ref(
         &self,
-    ) -> &RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource> {
+    ) -> &RealTiKvReadSessionOpener<ProductionReadSessionFactory, OracleTimestampSource> {
         match &self.opener {
             ProductionOpener::Open(opener) => opener,
             ProductionOpener::Closed => panic!("production read authority is closed"),
@@ -842,35 +629,24 @@ impl ProductionReadProcessAuthority {
     }
 }
 
-/// A clone of the sole PD worker used as TiDB's timestamp-oracle capability.
-#[derive(Clone)]
-pub struct PdTimestampSource {
-    client: PdClient,
+/// Go `store.GetOracle()`: the node's client-rust store's oracle as TiDB's
+/// timestamp capability.
+#[derive(Clone, Debug)]
+pub struct OracleTimestampSource {
+    store: TikvStore,
 }
 
-impl fmt::Debug for PdTimestampSource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PdTimestampSource")
-            .field("cluster_id", &self.client.cluster_id())
-            .field("leader", &self.client.member_set().leader_url)
-            .finish()
-    }
-}
-
-impl PdTimestampSource {
-    /// Shares the already-bootstrapped PD worker; this opens no runtime.
+impl OracleTimestampSource {
+    /// The oracle of `store`; this opens nothing.
     #[must_use]
-    pub const fn new(client: PdClient) -> Self {
-        Self { client }
+    pub const fn new(store: TikvStore) -> Self {
+        Self { store }
     }
 }
 
-impl TimestampSource for PdTimestampSource {
+impl TimestampSource for OracleTimestampSource {
     fn current_ts(&self) -> Result<u64, String> {
-        self.client
-            .get_timestamp()
-            .map_err(|error| error.to_string())
+        self.store.get_timestamp_async().wait()
     }
 }
 
@@ -939,8 +715,6 @@ impl RealTiKvQuery {
 /// Fail-closed construction or execution error.
 #[derive(Debug)]
 pub enum RealTiKvReadError {
-    /// PD bootstrap or timestamp acquisition failed.
-    Pd(PdClientError),
     /// TiKV transport construction failed.
     Transport(String),
     /// SQL is outside the visible milestone grammar/catalog boundary.
@@ -958,7 +732,6 @@ pub enum RealTiKvReadError {
 impl fmt::Display for RealTiKvReadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pd(error) => write!(formatter, "PD read control plane failed: {error}"),
             Self::Transport(message) => write!(formatter, "TiKV transport failed: {message}"),
             Self::Catalog(message) => write!(formatter, "cluster catalog load failed: {message}"),
             Self::Plan(error) => write!(formatter, "read-only SQL rejected: {error}"),
@@ -970,12 +743,6 @@ impl fmt::Display for RealTiKvReadError {
 }
 
 impl std::error::Error for RealTiKvReadError {}
-
-impl From<PdClientError> for RealTiKvReadError {
-    fn from(error: PdClientError) -> Self {
-        Self::Pd(error)
-    }
-}
 
 impl From<ReadOnlyScanError> for RealTiKvReadError {
     fn from(error: ReadOnlyScanError) -> Self {
@@ -990,7 +757,7 @@ impl From<DagRequestBuildError> for RealTiKvReadError {
 }
 
 /// One worker-local read session retaining query and lazy response state.
-pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSource> {
+pub struct RealTiKvReadSession<T = ProductionReadTransport, S = OracleTimestampSource> {
     table: Arc<ConfiguredTable>,
     transport: T,
     timestamp_source: S,

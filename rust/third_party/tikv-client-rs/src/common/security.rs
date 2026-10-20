@@ -86,6 +86,16 @@ impl SecurityManager {
         self.ca_path.is_some()
     }
 
+    /// The CA, certificate and private-key PEM paths, for HTTP clients that
+    /// build their own TLS connector from the same configuration.
+    pub(crate) fn tls_paths(&self) -> (Option<&Path>, Option<&Path>, Option<&Path>) {
+        (
+            self.ca_path.as_deref(),
+            self.cert_path.as_deref(),
+            self.key_path.as_deref(),
+        )
+    }
+
     /// Connect to gRPC server using TLS connection. If TLS is not configured, use normal connection.
     pub async fn connect<Factory, Client>(
         &self,
@@ -232,6 +242,11 @@ impl SecurityManager {
             initial_stream_window_size,
             initial_connection_window_size,
         )?;
+        // rustls needs a process crypto provider; this crate builds rustls
+        // with `ring` only, so that is the one installed when none is.
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
         let mut tls = ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca));
         if let Some((cert, key)) = identity {
             tls = tls.identity(Identity::from_pem(cert, key));

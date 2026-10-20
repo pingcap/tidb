@@ -1011,12 +1011,12 @@ mod tests {
         };
         let mut snapshot = RegionSnapshot(vec![
             tidb_txnkv::transaction::SnapshotScanRegion {
-                region: tidb_txnkv::region::RegionVerId::new(1, 1, 1),
+                region: tikv_client::tikv::new_region_ver_id(1, 1, 1),
                 end_key: key(&two, 1),
                 pairs: vec![(key(&one, 1), Vec::new()), (key(&two, 1), Vec::new())],
             },
             tidb_txnkv::transaction::SnapshotScanRegion {
-                region: tidb_txnkv::region::RegionVerId::new(2, 1, 1),
+                region: tikv_client::tikv::new_region_ver_id(2, 1, 1),
                 end_key: Vec::new(),
                 pairs: vec![(key(&two, 2), Vec::new()), (key(&two, 3), Vec::new())],
             },

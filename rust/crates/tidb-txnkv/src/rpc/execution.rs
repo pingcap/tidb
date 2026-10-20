@@ -15,11 +15,10 @@
 //! Shared native scheduling with connection-scoped task lifetimes.
 
 use std::future::Future;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll, Wake, Waker};
 
 use tokio::runtime::{Handle, Runtime};
-use tokio::task::{AbortHandle, JoinSet};
 
 /// Workers driving the transport runtime; see [`execution_runtime`].
 ///
@@ -30,6 +29,26 @@ use tokio::task::{AbortHandle, JoinSet};
 /// query runtime (one worker per available core) so the h2 framing and
 /// response decode scale the way gRPC-go's per-connection goroutines spread
 /// across `GOMAXPROCS`.
+
+/// Why [`wait_with_call`] stopped waiting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompletionError {
+    /// The call's cancellation fired.
+    Cancelled,
+    /// The call's deadline passed.
+    DeadlineExceeded,
+}
+
+impl std::fmt::Display for CompletionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Cancelled => "call cancelled",
+            Self::DeadlineExceeded => "call deadline exceeded",
+        })
+    }
+}
+
+impl std::error::Error for CompletionError {}
 
 /// The transport runtime: tonic/h2 framing, the batch stream loops, PD and
 /// TTL keep-alive. Connection scopes and transport joins own their lifetime,
@@ -101,75 +120,6 @@ pub fn query_worker_runtime() -> Result<&'static Runtime, String> {
         .map_err(Clone::clone)
 }
 
-/// One physical channel generation, including tonic/h2 background work.
-/// Only the channel-pool owner closes and joins this scope; clones can spawn.
-#[derive(Clone)]
-pub(in crate::rpc) struct ConnectionTasks {
-    runtime: Handle,
-    tasks: Arc<Mutex<Option<JoinSet<()>>>>,
-}
-
-impl ConnectionTasks {
-    pub(in crate::rpc) fn new(runtime: &Handle) -> Self {
-        Self {
-            runtime: runtime.clone(),
-            tasks: Arc::new(Mutex::new(Some(JoinSet::new()))),
-        }
-    }
-
-    pub(in crate::rpc) fn is_closed(&self) -> bool {
-        self.tasks
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .is_none()
-    }
-
-    pub(in crate::rpc) fn spawn<F>(&self, task: F) -> Option<AbortHandle>
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        let mut guard = self.tasks.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(tasks) = guard.as_mut() else {
-            // Future destruction may release endpoint executor clones.
-            drop(guard);
-            return None;
-        };
-        while tasks.try_join_next().is_some() {}
-        Some(tasks.spawn_on(task, &self.runtime))
-    }
-
-    /// Awaited by the transport owner, never from a task in this scope.
-    pub(in crate::rpc) async fn close(&self) {
-        let tasks = self
-            .tasks
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .take();
-        if let Some(mut tasks) = tasks {
-            // Do not hold the scope lock while aborted futures are dropped:
-            // tonic may try to spawn another task during connection teardown.
-            tasks.shutdown().await;
-        }
-    }
-
-    /// Fallback for an unwinding owner. Dropping JoinSet aborts its tasks.
-    pub(in crate::rpc) fn abort(&self) {
-        let tasks = self
-            .tasks
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .take();
-        drop(tasks);
-    }
-}
-
-/// Bridge only synchronous public APIs. Async producers and the command owner
-/// never use this path. Returning a Tokio worker before parking also permits
-/// callers hosted on that scheduler without starving their own RPC tasks.
-pub(in crate::rpc) fn wait<F: Future>(future: F) -> F::Output {
-    blocking(|| futures::executor::block_on(future))
-}
-
 struct ThreadWake(std::thread::Thread);
 
 impl Wake for ThreadWake {
@@ -188,7 +138,7 @@ impl Wake for ThreadWake {
 pub fn wait_with_call<F: Future>(
     future: F,
     call: &super::UnaryCallContext,
-) -> Result<F::Output, super::CompletionError> {
+) -> Result<F::Output, CompletionError> {
     thread_local! {
         static WAKE: Waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
     }
@@ -199,16 +149,16 @@ pub fn wait_with_call<F: Future>(
             let mut cx = Context::from_waker(waker);
             loop {
                 if cancelled.as_mut().poll(&mut cx).is_ready() {
-                    return Err(super::CompletionError::Cancelled);
+                    return Err(CompletionError::Cancelled);
                 }
                 if call.timeout().is_zero() {
-                    return Err(super::CompletionError::DeadlineExceeded);
+                    return Err(CompletionError::DeadlineExceeded);
                 }
                 if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
                     return if call.cancellation().is_cancelled() {
-                        Err(super::CompletionError::Cancelled)
+                        Err(CompletionError::Cancelled)
                     } else if call.timeout().is_zero() {
-                        Err(super::CompletionError::DeadlineExceeded)
+                        Err(CompletionError::DeadlineExceeded)
                     } else {
                         Ok(result)
                     };
@@ -232,14 +182,5 @@ fn blocking<T>(work: impl FnOnce() -> T) -> T {
         tokio::task::block_in_place(work)
     } else {
         work()
-    }
-}
-
-impl<F> hyper::rt::Executor<F> for ConnectionTasks
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    fn execute(&self, task: F) {
-        self.spawn(task);
     }
 }

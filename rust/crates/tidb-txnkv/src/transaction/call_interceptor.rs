@@ -38,7 +38,7 @@ use crate::rpc::UnaryCallContext;
 /// One page a scan's region answered.
 #[derive(Clone, Debug)]
 pub(crate) struct ScanPage {
-    pub(crate) region: crate::region::RegionVerId,
+    pub(crate) region: tikv_client::RegionVerId,
     pub(crate) end_key: Vec<u8>,
     pub(crate) pairs: Vec<(Vec<u8>, Vec<u8>)>,
 }
@@ -129,7 +129,7 @@ impl CallInterceptor {
         let context = context.cloned().unwrap_or_default();
         let epoch = context.region_epoch.unwrap_or_default();
         pages.push(ScanPage {
-            region: crate::region::RegionVerId::new(
+            region: tikv_client::tikv::new_region_ver_id(
                 context.region_id,
                 epoch.conf_ver,
                 epoch.version,

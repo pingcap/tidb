@@ -18,12 +18,15 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigStore, GlobalConfigSyncer};
 
-struct PdStore(tidb_pd_client::PdClient);
+/// Go's `GlobalConfigSyncer` over `store.GetPDClient()`.
+struct PdStore(tidb_txnkv::driver::tikv_store::TikvStore);
 
 impl GlobalConfigStore for PdStore {
     fn store_global_config(&self, path: &str, items: Vec<GlobalConfigItem>) -> Result<(), String> {
+        let pd = self.0.store().pd_client();
+        let path = path.to_owned();
         self.0
-            .store_global_config(path, items)
+            .block_on(async move { pd.store_global_config(path, items).await })
             .map_err(|error| error.to_string())
     }
 }
@@ -35,7 +38,9 @@ pub(crate) struct GlobalConfigKeeper {
 }
 
 impl GlobalConfigKeeper {
-    pub(crate) fn start(pd: Option<tidb_pd_client::PdClient>) -> std::io::Result<Self> {
+    pub(crate) fn start(
+        pd: Option<tidb_txnkv::driver::tikv_store::TikvStore>,
+    ) -> std::io::Result<Self> {
         Self::with_store(pd.map(|pd| Arc::new(PdStore(pd)) as Arc<dyn GlobalConfigStore>))
     }
 

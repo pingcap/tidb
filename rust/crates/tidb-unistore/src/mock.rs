@@ -25,6 +25,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use tidb_txnkv::driver::tikv_store::{store_runtime, TikvStore};
 use tikv_client::proto::keyspacepb::KeyspaceMeta;
 
 use crate::cluster::Cluster;
@@ -32,14 +33,16 @@ use crate::kv_handler::KvHandler;
 use crate::mock_pd::MockPd;
 use crate::mvcc_store::MvccStore;
 use crate::pd::PdClient;
+use crate::redirector::ClientRedirector;
 use crate::region_manager::InProcessRegionManager;
 use crate::rpc::{RpcClient, RpcConnect};
 use crate::tso::Tso;
 
 /// client-rust's PD client over the embedded store: its region cache, store
-/// clients and routing over unistore's PD client and RPC client, the part
-/// client-go's `KVStore` builds over Go's.
-pub type StorePdClient = tikv_client::PdRpcClient<RpcConnect, PdClient>;
+/// clients and routing over unistore's PD client and RPC client -- wrapped,
+/// as Go's mock store wraps it, in the [`ClientRedirector`] that sends TiDB
+/// requests to real peers -- the part client-go's `KVStore` builds over Go's.
+pub type StorePdClient = tikv_client::PdRpcClient<ClientRedirector, PdClient>;
 
 /// Go `New(path, pdAddrs, currentKeyspaceID, clusterKeyspaces)` over an
 /// in-memory store: no store or region exists until the caller bootstraps
@@ -80,6 +83,29 @@ pub async fn store_pd_client(
     pd: Arc<PdClient>,
     config: tikv_client::Config,
 ) -> tikv_client::Result<StorePdClient> {
-    tikv_client::PdRpcClient::new_with_pd_client(config, RpcConnect::new(rpc.clone()), pd, true)
-        .await
+    let connect = ClientRedirector::new(RpcConnect::new(rpc.clone()), &config)?;
+    tikv_client::PdRpcClient::new_with_pd_client(config, connect, pd, true).await
+}
+
+/// client-go `tikv.NewTestTiKVStore` as Go's `mockstore` opens it over
+/// unistore: the node's store over unistore's RPC client (behind the
+/// [`ClientRedirector`]) and PD client, on the process's store runtime.
+pub fn new_test_tikv_store(
+    rpc: &RpcClient,
+    pd: Arc<PdClient>,
+    config: tikv_client::Config,
+) -> Result<TikvStore<StorePdClient>, String> {
+    let runtime = store_runtime()?;
+    let store = runtime
+        .block_on(async {
+            let store_pd = store_pd_client(rpc, pd, config.clone()).await?;
+            tikv_client::tikv::KvStore::new_with_pd_client(
+                Arc::new(store_pd),
+                Arc::new(tikv_client::tikv::MockSafePointKv::new()),
+                config,
+            )
+            .await
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(TikvStore::new(runtime, store))
 }

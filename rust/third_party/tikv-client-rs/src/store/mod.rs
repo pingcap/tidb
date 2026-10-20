@@ -22,6 +22,7 @@ use futures::stream::BoxStream;
 pub use self::client::ClientEventListener;
 pub use self::client::KvClient;
 pub use self::client::KvConnect;
+pub use self::client::KvRpcClient;
 pub use self::client::TikvConnect;
 #[allow(unused_imports)]
 pub use self::command::{BatchCommandRequest, BatchCommandResponse, CommandType};

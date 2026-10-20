@@ -19,7 +19,6 @@
 //! TiKV store keeps them, so a region error carries the region exactly as
 //! TiKV's would and a client decodes it the same way. Lookups by key take
 //! encoded keys, the form client-go's codec PD client sends;
-//! [`crate::region_loader`] is that codec side for the node's region cache.
 //!
 //! # Narrowings, by name
 //!

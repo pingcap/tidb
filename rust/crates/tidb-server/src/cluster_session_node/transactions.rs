@@ -54,8 +54,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tidb_pd_client::PdClient;
-use tidb_txnkv::transaction::{StoreClient, StorePdCapability};
+use tidb_txnkv::transaction::StoreClient;
 
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, lock_pessimistic_statement_with, mutation_buffer_from_mutations,
@@ -74,7 +73,7 @@ use tidb_executor::cluster_storage::{
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::SchemaLeaseChecker;
-use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure, RealPessimisticTransaction};
+use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure, RealTransaction};
 use tidb_txnkv::Key;
 
 use crate::sql_node::SqlQueryError;
@@ -930,33 +929,30 @@ pub(crate) fn prefetched_write_snapshot(
 
 /// The production transaction tier: real read-only transactions and the
 /// optimistic 2PC, both over the node's one process authority.
-pub struct RealClusterTransactions<S = tikv_client::PdRpcClient, P = PdClient>
+pub struct RealClusterTransactions<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     /// The opener stamped with each resource group already seen. Go keeps
     /// the group name on the request context; the Rust opener carries it,
     /// so every statement used to clone the whole opener for its group. A
     /// session's group rarely changes, so the stamped clone is kept and
     /// shared. Bounded by the number of distinct groups this node serves.
-    group_openers: Arc<Mutex<Vec<GroupOpener<S, P>>>>,
+    group_openers: Arc<Mutex<Vec<GroupOpener<S>>>>,
 }
 
 /// One resource group's stamped opener; see `RealClusterTransactions::group_openers`.
-type GroupOpener<S, P> = (Arc<str>, Arc<RealOptimisticTransactionOpener<S, P>>);
+type GroupOpener<S> = (Arc<str>, Arc<RealOptimisticTransactionOpener<S>>);
 
-struct RealPendingSnapshot<S, P>(PreparedStatementSnapshot<S, P>)
+struct RealPendingSnapshot<S>(PreparedStatementSnapshot<S>)
+where
+    S: StoreClient;
+
+impl<S> PendingClusterSnapshot for RealPendingSnapshot<S>
 where
     S: StoreClient,
-    P: StorePdCapability;
-
-impl<S, P> PendingClusterSnapshot for RealPendingSnapshot<S, P>
-where
-    S: StoreClient,
-    P: StorePdCapability,
 {
     fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.0
@@ -966,14 +962,13 @@ where
     }
 }
 
-impl<S, P> RealClusterTransactions<S, P>
+impl<S> RealClusterTransactions<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     /// Binds the tier to an already-connected authority's write capability.
     #[must_use]
-    pub fn new(opener: RealOptimisticTransactionOpener<S, P>, timeout: Duration) -> Self {
+    pub fn new(opener: RealOptimisticTransactionOpener<S>, timeout: Duration) -> Self {
         Self {
             opener: Arc::new(opener),
             timeout,
@@ -984,7 +979,7 @@ where
     fn opener_for_resource_group(
         &self,
         resource_group: &str,
-    ) -> Arc<RealOptimisticTransactionOpener<S, P>> {
+    ) -> Arc<RealOptimisticTransactionOpener<S>> {
         let mut cached = self
             .group_openers
             .lock()
@@ -1013,10 +1008,13 @@ where
     ) -> Result<RealAdvisoryLockLease<S>, AdvisoryLockError> {
         let key = tidb_exec::mysql_bootstrap::advisory_lock_key(name)
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
+        // Go's advisory lock session: a pessimistic transaction that locks and
+        // never publishes, holding its lock until rollback.
         let mut transaction = self
             .opener
-            .begin_pessimistic_lock_only()
+            .begin()
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
+        transaction.set_pessimistic(true);
         let wait = if timeout.is_zero() {
             LockWaitTime::NoWait
         } else {
@@ -1047,7 +1045,7 @@ struct RealAdvisoryLockLease<S>
 where
     S: StoreClient,
 {
-    transaction: Option<RealPessimisticTransaction<S>>,
+    transaction: Option<RealTransaction<S>>,
     end_timeout: Duration,
 }
 
@@ -1063,10 +1061,7 @@ where
     }
 }
 
-fn finish_advisory_transaction<S: StoreClient>(
-    transaction: RealPessimisticTransaction<S>,
-    timeout: Duration,
-) {
+fn finish_advisory_transaction<S: StoreClient>(transaction: RealTransaction<S>, timeout: Duration) {
     let call = UnaryCallContext::with_timeout(timeout);
     let _ = transaction.rollback(&call);
 }
@@ -1101,27 +1096,23 @@ fn map_advisory_lock_failure(failure: PessimisticLockFailure) -> AdvisoryLockErr
 /// [`PendingClusterTransaction`] over one real opener: the timestamp future
 /// dispatched at statement start, opened as an optimistic or pessimistic
 /// session transaction when first needed.
-struct PendingSessionTransaction<S, P>
+struct PendingSessionTransaction<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
-    opener: Arc<RealOptimisticTransactionOpener<S, P>>,
-    start_ts: P::TsFuture,
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
+    start_ts: tidb_txnkv::driver::tikv_store::StoreTimestampFuture,
     timeout: Duration,
     pessimistic: bool,
     fair_locking: bool,
     options: SessionTransactionOptions,
 }
 
-impl<S, P> PendingClusterTransaction for PendingSessionTransaction<S, P>
+impl<S> PendingClusterTransaction for PendingSessionTransaction<S>
 where
     S: StoreClient + Send + Sync + 'static,
-    P: StorePdCapability + Send + Sync + 'static,
-    P::TsFuture: Send,
 {
     fn wait(self: Box<Self>) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        use tidb_txnkv::pd_capability::TimestampFutureWait;
         let options = self.options;
         let start_ts = match self.start_ts.wait() {
             Ok(start_ts) => start_ts,
@@ -1168,25 +1159,28 @@ where
     }
 }
 
-impl<S, P> ClusterTransactions for RealClusterTransactions<S, P>
+impl<S> ClusterTransactions for RealClusterTransactions<S>
 where
     S: StoreClient,
-    P: StorePdCapability,
 {
     fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
-        self.opener.pd().external_timestamp(value)
+        self.opener.store().external_timestamp(value)
     }
 
     fn record_region_stats(
         &self,
         table_id: i64,
     ) -> Result<Option<tidb_exec::pd_approximate_count::RegionCountStats>, String> {
-        let Some(endpoint) =
-            tidb_txnkv::pd_capability::PdCapability::http_endpoint(self.opener.pd())
-        else {
+        let store = self.opener.store();
+        let Some(pd_http_client) = store.pd_http_client() else {
             return Ok(None);
         };
-        tidb_exec::pd_approximate_count::load_record_region_stats(&endpoint, table_id, self.timeout)
+        store
+            .block_on(tidb_exec::pd_approximate_count::load_record_region_stats(
+                &pd_http_client,
+                table_id,
+                self.timeout,
+            ))
             .map(Some)
     }
 
@@ -1623,45 +1617,104 @@ mod tests {
     #[test]
     fn session_activation_retains_options_after_timestamp_future_failure() {
         use std::sync::atomic::AtomicBool;
-        use tidb_txnkv::pd_capability::{PdCapability, TimestampFutureWait};
+        use tikv_client::oracle::{
+            Oracle, OracleOption, OracleResult, ReadTimestampValidator, TimestampFuture,
+        };
 
-        #[derive(Clone)]
-        struct FailingPd {
-            inner: tidb_unistore::tso::InProcessPd,
+        /// The store's oracle, failing the next dispatched timestamp once:
+        /// client-go's `SetOracle` with a test oracle.
+        struct FailingOnce {
+            inner: Arc<dyn Oracle>,
             fail: Arc<AtomicBool>,
         }
-        struct TimestampResult(Result<u64, String>);
-        impl TimestampFutureWait for TimestampResult {
-            fn wait(self) -> Result<u64, String> {
-                self.0
+        struct Failed;
+        #[async_trait::async_trait]
+        impl TimestampFuture for Failed {
+            async fn wait(&self) -> OracleResult<u64> {
+                Err("injected timestamp wait failure".into())
             }
         }
-        impl PdCapability for FailingPd {
-            type TsFuture = TimestampResult;
-            fn cluster_id(&self) -> u64 {
-                self.inner.cluster_id()
-            }
-            fn gc_safe_point(&self) -> Result<u64, String> {
-                self.inner.gc_safe_point()
-            }
-            fn timestamp_future(&self) -> Result<Self::TsFuture, String> {
-                Ok(TimestampResult(
-                    if self.fail.swap(false, Ordering::AcqRel) {
-                        Err("injected timestamp wait failure".to_owned())
-                    } else {
-                        self.inner.timestamp_future()?.wait()
-                    },
-                ))
+        #[async_trait::async_trait]
+        impl ReadTimestampValidator for FailingOnce {
+            async fn validate_read_timestamp(
+                &self,
+                read_timestamp: u64,
+                is_stale_read: bool,
+                option: &OracleOption,
+            ) -> OracleResult<()> {
+                self.inner
+                    .validate_read_timestamp(read_timestamp, is_stale_read, option)
+                    .await
             }
         }
-        let stack = crate::unistore_node::in_process_stack().unwrap();
+        #[async_trait::async_trait]
+        impl Oracle for FailingOnce {
+            async fn get_timestamp(&self, option: &OracleOption) -> OracleResult<u64> {
+                self.inner.get_timestamp(option).await
+            }
+            fn get_timestamp_async(&self, option: &OracleOption) -> Box<dyn TimestampFuture> {
+                if self.fail.swap(false, Ordering::AcqRel) {
+                    Box::new(Failed)
+                } else {
+                    self.inner.get_timestamp_async(option)
+                }
+            }
+            async fn get_low_resolution_timestamp(
+                &self,
+                option: &OracleOption,
+            ) -> OracleResult<u64> {
+                self.inner.get_low_resolution_timestamp(option).await
+            }
+            fn get_low_resolution_timestamp_async(
+                &self,
+                option: &OracleOption,
+            ) -> Box<dyn TimestampFuture> {
+                self.inner.get_low_resolution_timestamp_async(option)
+            }
+            fn set_low_resolution_timestamp_update_interval(
+                &self,
+                update_interval: Duration,
+            ) -> OracleResult<()> {
+                self.inner
+                    .set_low_resolution_timestamp_update_interval(update_interval)
+            }
+            async fn get_stale_timestamp(
+                &self,
+                transaction_scope: &str,
+                previous_seconds: u64,
+            ) -> OracleResult<u64> {
+                self.inner
+                    .get_stale_timestamp(transaction_scope, previous_seconds)
+                    .await
+            }
+            fn is_expired(&self, lock_timestamp: u64, ttl: u64, option: &OracleOption) -> bool {
+                self.inner.is_expired(lock_timestamp, ttl, option)
+            }
+            fn until_expired(&self, lock_timestamp: u64, ttl: u64, option: &OracleOption) -> i64 {
+                self.inner.until_expired(lock_timestamp, ttl, option)
+            }
+            fn close(&self) {}
+            async fn get_external_timestamp(&self) -> OracleResult<u64> {
+                self.inner.get_external_timestamp().await
+            }
+            async fn set_external_timestamp(&self, timestamp: u64) -> OracleResult<()> {
+                self.inner.set_external_timestamp(timestamp).await
+            }
+            async fn get_all_tso_keyspace_group_min_timestamp(&self) -> OracleResult<u64> {
+                self.inner.get_all_tso_keyspace_group_min_timestamp().await
+            }
+        }
+        let stack =
+            crate::unistore_node::in_process_stack(&tidb_pd_client::ClusterSecurity::plaintext())
+                .unwrap();
         let fail = Arc::new(AtomicBool::new(false));
+        let store = stack.tikv_store.store();
+        store.set_oracle(Arc::new(FailingOnce {
+            inner: store.get_oracle(),
+            fail: fail.clone(),
+        }));
         let opener = RealOptimisticTransactionOpener::from_capabilities(
             (*stack.tikv_store).clone(),
-            FailingPd {
-                inner: stack.pd,
-                fail: fail.clone(),
-            },
             Duration::from_secs(3),
         )
         .unwrap();

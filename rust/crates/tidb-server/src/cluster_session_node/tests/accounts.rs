@@ -11,7 +11,7 @@ use crate::cluster_account_seam::{ClusterAccountWriter, PendingAccountChange};
 use crate::ConfiguredUserStore;
 use std::sync::atomic::Ordering;
 use tidb_session::privilege::PrivilegeRegistry;
-use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
 };

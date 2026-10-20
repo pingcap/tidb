@@ -921,10 +921,21 @@ mod tiflash_cluster_http_tests {
                 databases: vec![],
             },
         ));
-        let manager = TiFlashReplicaManager::with_pd_http_security(
+        // The store's PD HTTP client trusts the cluster CA, as
+        // `TikvStore::connect` builds it (Go `pdhttp.WithTLSConfig`).
+        let pd_http_client =
+            tidb_txnkv::driver::tikv_store::new_pd_http_client_with_mock_service_discovery(
+                "test",
+                &[format!("https://{address}")],
+                vec![tikv_client::pd_http::with_tls_config(Arc::new(
+                    tikv_client::SecurityManager::load_ca(&ca_path).unwrap(),
+                ))],
+            )
+            .unwrap();
+        let manager = TiFlashReplicaManager::with_pd_http_client(
             catalog,
             Arc::new(Owner),
-            format!("http://{address}"),
+            pd_http_client,
             &security,
         )
         .unwrap();

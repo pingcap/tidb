@@ -42,10 +42,6 @@ tonic-prost.workspace = true
 name = "all"
 path = "tests/all.rs"
 
-[[test]]
-name = "lock_resolver_source"
-path = "tests/lock_resolver_source.rs"
-
 [[bench]]
 name = "kv"
 harness = false

@@ -32,15 +32,15 @@ use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_exec::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, RealOptimisticTransactionOpener, StoreClient, StorePdCapability,
+    OptimisticCommitOutcome, RealOptimisticTransactionOpener, StoreClient,
 };
 use tidb_util::timeutil::infer_system_tz;
 
 /// Plans and commits the bootstrap on one transaction.
 ///
 /// Bootstrap reads and writes share one transaction timestamp.
-pub fn publish_bootstrap<S: StoreClient, P: StorePdCapability>(
-    opener: &RealOptimisticTransactionOpener<S, P>,
+pub fn publish_bootstrap<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<(OptimisticCommitOutcome, i64), String> {
     let call = UnaryCallContext::with_timeout(timeout);
@@ -91,7 +91,7 @@ pub fn notify_committed_bootstrap(
 mod tests {
     use super::{notify_committed_bootstrap, SchemaVersionNotifier};
     use std::cell::Cell;
-    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::{
         CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
         RolledBackTransaction, TransactionCause, UndeterminedTransaction,
