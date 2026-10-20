@@ -771,6 +771,8 @@ func TestVectorIndexExplain(t *testing.T) {
 	)).Rows())
 	require.Contains(t, boundedPlan, "annIndex:COSINE")
 	require.Contains(t, boundedPlan, "Selection")
+	require.Contains(t, boundedPlan, "le(vec_cosine_distance(test.t1.vec")
+	require.Contains(t, boundedPlan, "0.4)")
 	require.Less(t, strings.Index(boundedPlan, "Selection"), strings.Index(boundedPlan, "annIndex:COSINE"), boundedPlan)
 
 	// A bound for a different query vector must retain the regular scan path.
