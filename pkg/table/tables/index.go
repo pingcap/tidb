@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -44,13 +46,14 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+	encoder             codec.Encoder
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
-func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
-		if types.NeedRestoredData(&col.FieldType) {
+		if types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate) {
 			return true
 		}
 	}
@@ -59,10 +62,21 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+	return NewIndexWithCollate(collate.NewCollationEnabled(), physicalID, tblInfo, indexInfo)
+}
+
+// NewIndexWithCollate builds a new Index object with the specified collation setting.
+func NewIndexWithCollate(
+	useNewCollate bool,
+	physicalID int64,
+	tblInfo *model.TableInfo,
+	indexInfo *model.IndexInfo,
+) table.Index {
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
+		encoder:  codec.NewEncoder(useNewCollate),
 	}
 	return index
 }
@@ -89,7 +103,8 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 			idxTblID = c.tblInfo.ID
 		}
 	}
-	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+	key, distinct, err = tablecodec.GenIndexKey(c.encoder, loc, c.tblInfo, c.idxInfo,
+		idxTblID, indexedValues, h, buf)
 	err = ec.HandleError(err)
 	return
 }
@@ -98,9 +113,11 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
-		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+		c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
 	})
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
+
+	idx, err := tablecodec.GenIndexValuePortal(c.encoder.UseNewCollate(), loc, c.tblInfo,
+		c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
@@ -245,9 +262,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
 		c.initNeedRestoreData.Do(func() {
-			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+			c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
 		})
-		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
+		idxVal, err := tablecodec.GenIndexValuePortal(c.encoder.UseNewCollate(), loc, c.tblInfo, c.idxInfo,
 			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, nil)
 		err = ec.HandleError(err)
 		if err != nil {

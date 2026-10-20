@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
@@ -67,7 +69,7 @@ func BenchmarkEncode(b *testing.B) {
 func BenchmarkEncodeFromOldRow(b *testing.B) {
 	b.ReportAllocs()
 	oldRow := types.MakeDatums(1, "abc", 1.1)
-	oldRowData, err := tablecodec.EncodeOldRow(nil, oldRow, []int64{1, 2, 3}, nil, nil)
+	oldRowData, err := tablecodec.EncodeOldRow(codec.NewEncoder(collate.NewCollationEnabled()), nil, oldRow, []int64{1, 2, 3}, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
