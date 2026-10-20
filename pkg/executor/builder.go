@@ -113,14 +113,15 @@ type executorBuilder struct {
 	hasLock bool
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness           bool
-	txnScope              string
-	readReplicaScope      string
-	inUpdateStmt          bool
-	inDeleteStmt          bool
-	inInsertStmt          bool
-	inSelectLockStmt      bool
-	inMViewDeltaMergeStmt bool
+	isStaleness                   bool
+	txnScope                      string
+	readReplicaScope              string
+	inUpdateStmt                  bool
+	inDeleteStmt                  bool
+	inInsertStmt                  bool
+	inSelectLockStmt              bool
+	inMViewDeltaMergeStmt         bool
+	inMViewCompleteDeltaApplyStmt bool
 
 	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
 	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
@@ -221,6 +222,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildPurgeMaterializedViewLog(v)
 	case *plannercore.MViewDeltaMerge:
 		return b.buildMViewDeltaMerge(v)
+	case *plannercore.MViewCompleteDeltaApply:
+		return b.buildMViewCompleteDeltaApply(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *physicalop.Delete:
@@ -2546,7 +2549,7 @@ func (b *executorBuilder) buildExpand(v *physicalop.PhysicalExpand) exec.Executo
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2579,7 +2582,7 @@ func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physical
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2608,7 +2611,7 @@ func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	}
 
 	txnManager := sessiontxn.GetTxnManager(b.sctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt {
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt {
 		return txnManager.GetStmtForUpdateTS()
 	}
 	return txnManager.GetStmtReadTS()
@@ -2621,7 +2624,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	var err error
 
 	txnManager := sessiontxn.GetTxnManager(b.sctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt {
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt {
 		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
 	} else {
 		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()
@@ -3881,8 +3884,14 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 }
 
 func (b *executorBuilder) newDataReaderBuilderWithSnapshot(p base.PhysicalPlan, snapshot *plannercore.DataReaderSnapshot) (*dataReaderBuilder, error) {
-	if snapshot == nil || snapshot.TS == 0 || snapshot.InfoSchema == nil {
-		return nil, errors.New("snapshot is nil or invalid")
+	if snapshot == nil {
+		return nil, errors.New("snapshot is nil")
+	}
+	if snapshot.TS == 0 {
+		return nil, errors.New("snapshot ts is zero")
+	}
+	if snapshot.InfoSchema == nil {
+		return nil, errors.New("snapshot infoschema is nil")
 	}
 	builderForDataReader := *b
 	builderForDataReader.forDataReaderBuilder = true

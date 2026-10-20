@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -83,7 +85,73 @@ func TestValidateMViewCompleteDeltaWritableInputColTypesAllowsNullableInput(t *t
 	unsignedInputTp := inputTp.Clone()
 	unsignedInputTp.AddFlag(mysql.UnsignedFlag)
 	err := validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{unsignedInputTp}, []int{0})
-	require.ErrorContains(t, err, "type mismatch")
+	require.EqualError(t, err, fmt.Sprintf(
+		"MViewCompleteDeltaApply writable input col id 0 type mismatch, target col `a` expects %s but input is %s",
+		targetTp.String(), unsignedInputTp.String(),
+	))
+}
+
+func TestMViewCompleteDeltaApplyMappingDiagnostics(t *testing.T) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	valid := newTestMViewCompleteDeltaTargetTable(tp)
+	nonPublic := newTestMViewCompleteDeltaTargetTable(tp)
+	nonPublic.Columns[0].State = model.StateWriteOnly
+	nonPublic.ResetColumnsCache()
+	nilCol := newTestMViewCompleteDeltaTargetTable(tp)
+	nilCol.WritableCols()[0] = nil
+	negativeOffset := newTestMViewCompleteDeltaTargetTable(tp)
+	negativeOffset.Columns[0].Offset = -1
+	invalidOffset := newTestMViewCompleteDeltaTargetTable(tp)
+	invalidOffset.Columns[0].Offset = 2
+
+	for _, tc := range []struct {
+		name     string
+		target   table.Table
+		inputIDs []int
+		err      string
+	}{
+		{"nil_table", nil, nil, "MViewCompleteDeltaApply target table is nil"},
+		{"empty_writable", &tables.TableCommon{}, nil, "MViewCompleteDeltaApply target table has no writable columns"},
+		{"non_public", nonPublic, []int{0}, "MViewCompleteDeltaApply does not support target table with non-public writable columns"},
+		{"input_count", valid, nil, "MViewCompleteDeltaApply row input column mapping length 0 != target public column count 1"},
+		{"nil_column", nilCol, []int{0}, "MViewCompleteDeltaApply target writable column at offset 0 is nil"},
+		{"negative_offset", negativeOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset -1 out of range [0,1)"},
+		{"invalid_offset", invalidOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset 2 out of range [0,1)"},
+	} {
+		t.Run("writable/"+tc.name, func(t *testing.T) {
+			_, err := buildMViewCompleteDeltaWritableInputColIDs(tc.target, tc.inputIDs)
+			require.EqualError(t, err, tc.err)
+		})
+	}
+
+	for _, tc := range []struct {
+		name          string
+		target        table.Table
+		groupKeys     []int
+		currentIDs    []int
+		recomputedIDs []int
+		err           string
+	}{
+		{"nil_table", nil, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target table is nil"},
+		{"input_count", valid, []int{0}, []int{0}, nil, "MViewCompleteDeltaApply writable input mapping length mismatch: current=1 recomputed=0"},
+		{"non_public", nonPublic, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply does not support target table with non-public writable columns"},
+		{"empty_group_keys", valid, nil, []int{0}, []int{1}, "MViewCompleteDeltaApply group key offsets are empty"},
+		{"invalid_group_key", valid, []int{0, 2}, []int{0}, []int{1}, "MViewCompleteDeltaApply group key offset 2 at index 1 out of range [0,1)"},
+		{"nil_column", nilCol, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target writable column at offset 0 is nil"},
+		{"negative_offset", negativeOffset, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target writable column `a` offset -1 out of range [0,1)"},
+		{"invalid_offset", invalidOffset, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target writable column `a` offset 2 out of range [0,1)"},
+	} {
+		t.Run("compare/"+tc.name, func(t *testing.T) {
+			_, _, _, err := buildMViewCompleteDeltaCompareMappings(tc.target, tc.groupKeys, tc.currentIDs, tc.recomputedIDs)
+			require.EqualError(t, err, tc.err)
+		})
+	}
+
+	ids, err := buildMViewCompleteDeltaWritableInputColIDs(valid, []int{4})
+	require.NoError(t, err)
+	require.Equal(t, []int{4}, ids)
+	_, _, _, err = buildMViewCompleteDeltaCompareMappings(valid, []int{0}, []int{4}, []int{5})
+	require.NoError(t, err)
 }
 
 type mviewCompleteDeltaApplyOpenProbeChild struct {
@@ -118,6 +186,56 @@ func TestMViewCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testi
 	err := applyExec.Open(context.Background())
 	require.ErrorContains(t, err, "writable input col id 1")
 	require.False(t, child.opened)
+}
+
+func TestMViewRefreshSourceExecutorConcurrency(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		builder    executorBuilder
+		numWorkers int64
+	}{
+		{name: "read", numWorkers: 4},
+		{name: "insert", builder: executorBuilder{inInsertStmt: true}},
+		{name: "update", builder: executorBuilder{inUpdateStmt: true}},
+		{name: "delete", builder: executorBuilder{inDeleteStmt: true}},
+		{name: "lock", builder: executorBuilder{hasLock: true}},
+		{name: "fast_refresh", builder: executorBuilder{inMViewDeltaMergeStmt: true}},
+		{name: "complete_delta_apply", builder: executorBuilder{inMViewCompleteDeltaApplyStmt: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sctx := mock.NewContext()
+			sctx.GetSessionVars().SetProjectionConcurrency(4)
+			b := tc.builder
+			b.sctx = sctx
+			col := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+			schema := expression.NewSchema(col)
+			child := physicalop.PhysicalTableDual{RowCount: 1}.Init(sctx, &property.StatsInfo{RowCount: 1}, 0)
+			child.SetSchema(schema)
+			// Keep the estimate above the chunk threshold so the small-result shortcut
+			// cannot hide a missing write-statement concurrency guard.
+			stats := &property.StatsInfo{RowCount: float64(sctx.GetSessionVars().MaxChunkSize * 2)}
+
+			t.Run("projection", func(t *testing.T) {
+				plan := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(sctx, stats, 0)
+				plan.SetSchema(schema)
+				plan.SetChildren(child)
+				e := b.build(plan)
+				require.NoError(t, b.err)
+				require.IsType(t, (*ProjectionExec)(nil), e)
+				require.Equal(t, tc.numWorkers, e.(*ProjectionExec).numWorkers)
+			})
+
+			t.Run("expand", func(t *testing.T) {
+				plan := physicalop.PhysicalExpand{LevelExprs: [][]expression.Expression{{col}}}.Init(sctx, stats, 0)
+				plan.SetSchema(schema)
+				plan.SetChildren(child)
+				e := b.build(plan)
+				require.NoError(t, b.err)
+				require.IsType(t, (*ExpandExec)(nil), e)
+				require.Equal(t, tc.numWorkers, e.(*ExpandExec).numWorkers)
+			})
+		})
+	}
 }
 
 func TestStorageClassTransitionTimeZoneSetup(t *testing.T) {
