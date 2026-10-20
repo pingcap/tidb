@@ -113,14 +113,15 @@ type executorBuilder struct {
 	hasLock bool
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness           bool
-	txnScope              string
-	readReplicaScope      string
-	inUpdateStmt          bool
-	inDeleteStmt          bool
-	inInsertStmt          bool
-	inSelectLockStmt      bool
-	inMViewDeltaMergeStmt bool
+	isStaleness                   bool
+	txnScope                      string
+	readReplicaScope              string
+	inUpdateStmt                  bool
+	inDeleteStmt                  bool
+	inInsertStmt                  bool
+	inSelectLockStmt              bool
+	inMViewDeltaMergeStmt         bool
+	inMViewCompleteDeltaApplyStmt bool
 
 	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
 	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
@@ -221,6 +222,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildPurgeMaterializedViewLog(v)
 	case *plannercore.MViewDeltaMerge:
 		return b.buildMViewDeltaMerge(v)
+	case *plannercore.MViewCompleteDeltaApply:
+		return b.buildMViewCompleteDeltaApply(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *physicalop.Delete:
