@@ -107,7 +107,9 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
         match result {
             Ok(job_id) => Some(job_id),
             Err(error) => {
-                eprintln!("{{\"event\":\"insert_analyze_job_failed\",\"error\":{error:?}}}");
+                // Go `AddNewAnalyzeJob`.
+                tidb_stats_handle_logutil::stats_err_verbose_logger()
+                    .error("failed to insert analyze job", &[crate::zap_error(error)]);
                 None
             }
         }
@@ -123,7 +125,12 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             )
             .map_err(|error| error.to_string())
         }) {
-            eprintln!("{{\"event\":\"start_analyze_job_failed\",\"error\":{error:?}}}");
+            // Go `autoanalyze.startAnalyzeJob`.
+            log_update_analyze_job_failed(
+                &tidb_stats_handle_logutil::stats_logger(),
+                "pending->running".to_owned(),
+                error,
+            );
         }
     }
 
@@ -138,7 +145,12 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             )
             .map_err(|error| error.to_string())
         }) {
-            eprintln!("{{\"event\":\"update_analyze_job_failed\",\"error\":{error:?}}}");
+            // Go `autoanalyze.updateAnalyzeJobProgress`.
+            log_update_analyze_job_failed(
+                &tidb_stats_handle_logutil::stats_logger(),
+                format!("process {processed_rows} rows"),
+                error,
+            );
         }
     }
 
@@ -164,9 +176,33 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             )
             .map_err(|error| error.to_string())
         }) {
-            eprintln!("{{\"event\":\"finish_analyze_job_failed\",\"error\":{error:?}}}");
+            // Go `autoanalyze.finishAnalyzeJob`, through the plain logger.
+            let state = if failure.is_some() {
+                "failed"
+            } else {
+                "finished"
+            };
+            log_update_analyze_job_failed(
+                &tidb_util::logutil::bg_logger(),
+                format!("running->{state}"),
+                error,
+            );
         }
     }
+}
+
+fn log_update_analyze_job_failed(
+    logger: &tidb_util::logutil::Logger,
+    update: String,
+    error: impl std::fmt::Display,
+) {
+    logger.warn(
+        "failed to update analyze job",
+        &[
+            tidb_log::Field::new("update", tidb_log::Value::Str(update)),
+            crate::zap_error(error),
+        ],
+    );
 }
 
 impl ClusterServerSession {
@@ -374,6 +410,8 @@ impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
                 error.message,
             ))
         })?;
+        // Not log content (Go has no such per-statement summary):
+        // rust/scripts/run-realtikv-analyze.sh reads this JSON line.
         eprintln!(
             "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
              \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\
@@ -456,14 +494,10 @@ impl tidb_session::stats_statement_service::StatsStatementService for ClusterSta
         json: &tidb_executor::load_stats::JsonTable,
         historical_stats_enabled: bool,
     ) -> Result<(), tidb_executor::DriverError> {
-        let report = self
-            .analyze
+        // Go's LOAD STATS path logs nothing on success.
+        self.analyze
             .load_stats(json, historical_stats_enabled)
             .map_err(into_driver_error)?;
-        eprintln!(
-            "{{\"event\":\"cluster_stats_loaded\",\"tables\":{},\"items\":{}}}",
-            report.table_count, report.item_count
-        );
         Ok(())
     }
 }

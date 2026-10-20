@@ -188,10 +188,12 @@ fn finish_stats_handler(
         // subscriber failure and returns nil. Mark this handler's event
         // processed as well: leaving it pending would retry mutations which
         // Go does not retry at the notifier boundary.
-        eprintln!(
-            "{{\"event\":\"stats_ddl_event_failed\",\"schema_change\":{},\"error\":{}}}",
-            serde_json::to_string(&event.to_string()).unwrap_or_else(|_| "\"unknown\"".to_owned()),
-            serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unknown\"".to_owned())
+        tidb_stats_handle_logutil::stats_err_verbose_sample_logger().warn(
+            "Failed to handle DDL event",
+            &[
+                tidb_log::Field::new("event", tidb_log::Value::Str(event.to_string())),
+                crate::zap_error(error),
+            ],
         );
     }
     Ok(())

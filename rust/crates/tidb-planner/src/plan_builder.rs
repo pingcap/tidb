@@ -3943,8 +3943,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     alias: alias.clone(),
                     text: fields
                         .text(index)
-                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                        .map(str::to_owned)
+                        .map(|bytes| tidb_hack::raw_bytes::bytes_to_str(bytes).into_owned())
                         .filter(|text| !text.is_empty()),
                     hidden: false,
                 }),
@@ -4011,8 +4010,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     alias: alias.clone(),
                     text: fields
                         .text(index)
-                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                        .map(str::to_owned)
+                        .map(|bytes| tidb_hack::raw_bytes::bytes_to_str(bytes).into_owned())
                         .filter(|text| !text.is_empty()),
                     hidden: false,
                 }),

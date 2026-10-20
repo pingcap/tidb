@@ -12,6 +12,7 @@ autotests = false
 flate2.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-hack = { path = "../tidb-hack" }
 tidb-error = { path = "../tidb-error" }
 zstd.workspace = true
 

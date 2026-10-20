@@ -168,6 +168,8 @@ where
         ) {
             Ok(_) => {
                 let receipt = self.stats.receipt();
+                // Not log content (Go logs no success here):
+                // rust/scripts/run-realtikv-analyze.sh reads this JSON line.
                 eprintln!(
                     "{{\"event\":\"stats_reloaded_after_analyze\",\"loaded\":{},\"pseudo\":{}}}",
                     receipt.loaded, receipt.pseudo

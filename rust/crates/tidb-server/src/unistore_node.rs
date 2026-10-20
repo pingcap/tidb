@@ -448,6 +448,7 @@ pub(crate) fn run_unistore_cluster_session(
     // logs and continues, as Go's does.
     let _status_server = if config.report_status {
         let schema_factory = Arc::clone(&factory);
+        crate::log_status_listen(&config.status_host, config.status_port);
         match crate::http_status::start_status_listener_with_routes(
             &config.status_host,
             config.status_port,
@@ -461,15 +462,9 @@ pub(crate) fn run_unistore_cluster_session(
                 security: config.cluster_security.clone(),
             },
         ) {
-            Ok(server) => {
-                eprintln!(
-                    "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
-                    server.local_addr()
-                );
-                Some(server)
-            }
+            Ok(server) => Some(server),
             Err(error) => {
-                eprintln!("{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}");
+                crate::log_status_listen_failed(&error);
                 None
             }
         }
@@ -482,6 +477,9 @@ pub(crate) fn run_unistore_cluster_session(
         crate::shutdown_signal::install(move || shutdown.shutdown()).map_err(|error| {
             RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
         })?;
+    // Not log content (Go's counterpart is the "server is running MySQL
+    // protocol" entry logged at bind): rust/scripts wait for this JSON
+    // readiness line on stderr and read its fields.
     eprintln!(
         "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"stats_loaded\":{},\"stats_pseudo\":{}}}",
         config.max_connections,
@@ -558,13 +556,14 @@ pub(crate) fn unistore_cluster_session_stack(
     tidb_domain::resource_manager_client::init_resource_manager_client(None);
 
     // The bootstrap: every boot, because the store is empty every boot.
+    let bootstrap_started = std::time::Instant::now();
     let (outcome, schema_version) =
         crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     let schema_version =
         crate::bootstrap_publish::notify_committed_bootstrap(&outcome, schema_version, None)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    eprintln!("{{\"event\":\"bootstrap_committed\",\"schema_version\":{schema_version}}}");
+    crate::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
     // Go `EnableSplitTableRegion` (config `split-table`): the bootstrap cut
     // every system table's region on the fresh store.
     if tidb_config::config_tree::config::get_global_config().split_table {
@@ -576,18 +575,13 @@ pub(crate) fn unistore_cluster_session_stack(
     // real row before any account statement rewrites the set -- see
     // `cluster_account_seam::seed_cluster_accounts` for what happened when it
     // did not.
-    let seeded = crate::cluster_account_seam::seed_cluster_accounts(
+    // Go's root INSERT in `doDMLWorks` logs nothing.
+    crate::cluster_account_seam::seed_cluster_accounts(
         &opener,
         &users.accounts(),
         IN_PROCESS_TIMEOUT,
     )
     .map_err(engine)?;
-    if !seeded.is_empty() {
-        eprintln!(
-            "{{\"event\":\"accounts_seeded\",\"identities\":{}}}",
-            seeded.len()
-        );
-    }
 
     let (startup, startup_lease_grant_ts) =
         tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)

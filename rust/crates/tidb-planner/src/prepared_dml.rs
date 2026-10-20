@@ -474,9 +474,9 @@ fn literal_bind_value(expr: &Expr) -> Option<PreparedBindValue> {
         // the target column's type picks how the text is parsed, in
         // `tidb-exec`'s `configured_stored_value`.
         Expr::Decimal(text) => Some(PreparedBindValue::Bytes(text.clone().into_bytes())),
-        Expr::String(value) | Expr::RawString(value) => {
-            Some(PreparedBindValue::Bytes(value.clone().into_bytes()))
-        }
+        Expr::String(value) | Expr::RawString(value) => Some(PreparedBindValue::Bytes(
+            tidb_hack::raw_bytes::str_to_bytes(value).into_owned(),
+        )),
         literal if is_integer_literal_shape(literal) => match parse_signed_integer(literal) {
             Some(value) => Some(PreparedBindValue::Int(value)),
             // A positive digit literal too large for `i64` (e.g. the top half

@@ -174,9 +174,12 @@ fn detect_and_update_job_version(
         return None;
     }
     if let Err(error) = detect_and_update_job_version_once(server_info) {
-        eprintln!(
-            "{{\"event\":\"detect_job_version_failed\",\"error\":{}}}",
-            serde_json::to_string(&error).unwrap_or_default()
+        tidb_ddl_logutil::ddl_logger().warn(
+            "detect job version failed",
+            &[tidb_log::Field::new(
+                "err",
+                tidb_log::Value::Str(error.to_string()),
+            )],
         );
     }
     if job_version_settled() {
@@ -191,9 +194,12 @@ fn detect_and_update_job_version(
                 _ => return,
             }
             if let Err(error) = detect_and_update_job_version_once(&server_info) {
-                eprintln!(
-                    "{{\"event\":\"detect_job_version_failed\",\"error\":{}}}",
-                    serde_json::to_string(&error).unwrap_or_default()
+                tidb_ddl_logutil::sample_logger().warn(
+                    "detect job version failed",
+                    &[tidb_log::Field::new(
+                        "err",
+                        tidb_log::Value::Str(error.to_string()),
+                    )],
                 );
             }
             if job_version_settled() {
@@ -315,18 +321,14 @@ where
                 if let Err(error) =
                     owner.set_owner_op_value(&tidb_owner::Context::background(), op)
                 {
-                    eprintln!(
-                        "{{\"level\":\"warning\",\"event\":\"ddl_owner_state_update_failed\",\"error\":{}}}",
-                        serde_json::to_string(&error)
-                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    tidb_ddl_logutil::ddl_logger().warn(
+                        "the owner sets global state to owner operator value failed",
+                        &[crate::zap_error(error)],
                     );
                 }
             }
-            Err(error) => eprintln!(
-                "{{\"level\":\"warning\",\"event\":\"ddl_global_state_reload_failed\",\"error\":{}}}",
-                serde_json::to_string(&error.to_string())
-                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-            ),
+            Err(error) => tidb_ddl_logutil::ddl_logger()
+                .warn("get global state failed", &[crate::zap_error(error)]),
         }
     }
 
@@ -402,16 +404,21 @@ where
                                 }
                             }
                             Ok(PersistedDdlJobOutcome::Paused) => {}
-                            Err(error) => eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_step_failed\",\"job_id\":{},\"error\":{}}}",
-                                job.id, serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned())),
+                            Err(error) => tidb_ddl_logutil::ddl_logger().info(
+                                "transit one job step and wait sync failed",
+                                &[
+                                    crate::zap_error(error),
+                                    tidb_log::Field::new(
+                                        "job",
+                                        tidb_log::Value::Str(job.to_string()),
+                                    ),
+                                ],
+                            ),
                         }
                     }
                 }
-                Err(error) => eprintln!(
-                    "{{\"level\":\"warning\",\"event\":\"ddl_job_scan_failed\",\"error\":{}}}",
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                ),
+                Err(error) => tidb_ddl_logutil::sample_logger()
+                    .warn("load and deliver jobs failed", &[crate::zap_error(error)]),
             }
 
             let (generation, condvar) = &*wake;
@@ -468,6 +475,8 @@ where
             }) {
                 Ok(watcher) => Some(watcher),
                 Err(error) => {
+                    // Not log content: Go's etcd watch cannot fail to start,
+                    // so this degraded state has no Go line; kept on stderr.
                     eprintln!(
                         "{{\"level\":\"warning\",\"event\":\"ddl_job_notify_watch_failed\",\"error\":{}}}",
                         serde_json::to_string(&error.to_string())
@@ -546,7 +555,6 @@ where
     S: StoreClient,
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    catalog: Arc<SharedClusterCatalog>,
     timeout: Duration,
     auto_ids: Option<Arc<tidb_exec::auto_id_client::AutoIdClient>>,
     /// The etcd client this node announces its catalog changes through, so
@@ -725,7 +733,6 @@ where
         Ok(Self {
             auto_ids: None,
             opener,
-            catalog,
             timeout,
             notifier,
             schema_sync,
@@ -756,15 +763,10 @@ where
     /// A failed reload is not a failed DDL: the change is committed in the
     /// cluster, and the lease tick will pick it up. Reporting the statement as
     /// failed would be a lie about what the cluster now holds, so the failure
-    /// is emitted and the statement stands.
+    /// is dropped and the statement stands. Go has no such inline reload and
+    /// so no log line for it.
     fn refresh_catalog(&self) {
-        if let Err(error) = self.reload_catalog() {
-            eprintln!(
-                "{{\"event\":\"catalog_reload_after_ddl_failed\",\"schema_version\":{},\"error\":{:?}}}",
-                self.catalog.load().schema_version,
-                error
-            );
-        }
+        let _ = self.reload_catalog();
     }
 
     fn notify_new_job_submitted(&self) {
@@ -776,11 +778,8 @@ where
             return;
         };
         if let Err(error) = etcd.put(ADDING_DDL_JOB_NOTIFY_KEY, b"0") {
-            eprintln!(
-                "{{\"level\":\"info\",\"event\":\"notify_new_ddl_job_failed\",\"error\":{}}}",
-                serde_json::to_string(&error.to_string())
-                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-            );
+            tidb_ddl_logutil::ddl_logger()
+                .info("notify new DDL job failed", &[crate::zap_error(error)]);
         }
     }
 

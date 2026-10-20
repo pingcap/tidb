@@ -2054,14 +2054,22 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         listener
             .set_nonblocking(true)
             .map_err(SqlNodeError::Listener)?;
-        eprintln!(
-            "{{\"event\":\"mysql_tls\",\"enabled\":{},\"origin\":{:?}}}",
-            tls.current().is_some(),
-            tls.current()
-                .as_ref()
-                .map_or("none", |material| material.origin())
-        );
-        factory.install_tls_manager(tls.clone(), tls.variables());
+        let tls_variables = tls.variables();
+        if tls.current().is_some() {
+            // Go `NewServer`, once a TLS config is in place.
+            let client_verification = tls_variables
+                .iter()
+                .any(|(name, value)| *name == "ssl_ca" && !value.is_empty());
+            tidb_util::logutil::bg_logger().info(
+                "mysql protocol server secure connection is enabled",
+                &[tidb_log::Field::new(
+                    "client verification enabled",
+                    tidb_log::Value::Bool(client_verification),
+                )],
+            );
+        }
+        crate::log_mysql_listening(&config.host.to_string(), config.port);
+        factory.install_tls_manager(tls.clone(), tls_variables);
         let tls_rotation = TlsRotation::start(Arc::clone(&tls));
         let session_manager = factory.session_manager();
         let server_memory_limit = session_manager
@@ -2282,9 +2290,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             // simply grows by one dedicated thread for this socket.
             match available_workers.try_recv() {
                 Ok(worker_index) => {
-                    eprintln!(
-                        "{{\"event\":\"connection_dispatch\",\"connection_key\":{connection_key},\"worker_index\":{worker_index}}}"
-                    );
                     if worker_senders[worker_index]
                         .send(ConnectionWork {
                             stream,
@@ -2298,9 +2303,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                     }
                 }
                 Err(mpsc::TryRecvError::Empty) => {
-                    eprintln!(
-                        "{{\"event\":\"connection_dispatch_dedicated\",\"connection_key\":{connection_key},\"worker_index\":{next_worker_index}}}"
-                    );
                     let index = next_worker_index;
                     next_worker_index += 1;
                     let job = dedicated_connection_job(
@@ -2335,8 +2337,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         drop(available_sender);
         drop(terminal_sender);
         workers.append(&mut dedicated_workers);
-        let drain_result =
-            drain_workers(workers, &active_sockets, self.shutdown_grace, &self.tracker);
+        let drain_result = drain_workers(workers, &active_sockets, self.shutdown_grace);
         combine_node_results(accept_result, drain_result)
     }
 }
@@ -2399,8 +2400,39 @@ fn serve_connection_work<F: QuerySessionFactory>(
             tls: tls.as_ref(),
         },
     ) {
-        let message = error.to_string();
-        eprintln!("{{\"event\":\"connection_error\",\"error\":{message:?}}}");
+        log_connection_error(&error, peer_addr);
+    }
+}
+
+/// Go's log line for a connection that ended in `error`: `onConn`'s
+/// handshake and lost-PD rejections, or `clientConn.Run`'s close reasons.
+/// A clean end of stream and a recovered panic (already logged where it was
+/// caught) log nothing more, like Go.
+fn log_connection_error(error: &MysqlConnectionError, peer_addr: SocketAddr) {
+    use tidb_protocol::PacketError;
+    let logger = tidb_util::logutil::bg_logger();
+    match error {
+        MysqlConnectionError::Handshake(_) => logger.warn(
+            "Server.onConn handshake",
+            &[
+                crate::zap_error(error),
+                tidb_log::Field::new("remote addr", tidb_log::Value::Str(peer_addr.to_string())),
+            ],
+        ),
+        MysqlConnectionError::ResultUndetermined(message) => logger.warn(
+            "result undetermined, close this connection",
+            &[crate::zap_error(message)],
+        ),
+        MysqlConnectionError::Io(io) if io.kind() == std::io::ErrorKind::ConnectionAborted => {
+            logger.warn("reject connection due to lost connection to PD", &[]);
+        }
+        MysqlConnectionError::Packet(PacketError::EndOfStream)
+        | MysqlConnectionError::Panicked(_)
+        | MysqlConnectionError::PartialResult(_) => {}
+        MysqlConnectionError::Io(_) | MysqlConnectionError::Packet(_) => logger.warn(
+            "read packet failed, close this connection",
+            &[crate::zap_error(error)],
+        ),
     }
 }
 
@@ -2505,10 +2537,6 @@ where
                 drop(terminal_sender);
                 let mut failures = vec![SqlNodeError::WorkerSpawn(error)];
                 failures.extend(join_worker_failures(workers));
-                eprintln!(
-                    "{{\"event\":\"process_shutdown_stage\",\"stage\":\"connections\",\"outcome\":\"error\",\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"forced_connections\":0}}",
-                    tracker.active(), tracker.accepted(), tracker.completed(), tracker.failed(),
-                );
                 return Err(collapse_node_failures(failures));
             }
         };
@@ -2549,8 +2577,10 @@ fn drain_workers(
     workers: Vec<WorkerHandle>,
     active_sockets: &ActiveSockets,
     grace: Duration,
-    tracker: &ConnectionTracker,
 ) -> Result<(), SqlNodeError> {
+    // Go `Server.DrainClients`' log lines mark the same phases.
+    let logger = tidb_util::logutil::bg_logger();
+    logger.info("start drain clients", &[]);
     let mut failures = Vec::new();
     if let Err(error) = active_sockets.cancel_queries() {
         failures.push(error);
@@ -2558,39 +2588,42 @@ fn drain_workers(
     let deadline = Instant::now() + grace;
     loop {
         match active_sockets.len() {
-            Ok(0) => break,
+            Ok(0) => {
+                logger.info("all sessions quit in drain wait time", &[]);
+                break;
+            }
             Ok(_) if Instant::now() < deadline => std::thread::sleep(ACCEPT_POLL_INTERVAL),
-            Ok(_) => break,
+            Ok(_) => {
+                logger.info("timeout waiting all sessions quit", &[]);
+                break;
+            }
             Err(error) => {
                 failures.push(error);
                 break;
             }
         }
     }
-    let forced = match active_sockets.len() {
-        Ok(0) => 0,
+    // Go `KillAllConnections`.
+    logger.info(
+        "kill all connections.",
+        &[tidb_log::Field::new(
+            "category",
+            tidb_log::Value::Str("server".to_owned()),
+        )],
+    );
+    match active_sockets.len() {
+        Ok(0) => {}
         Ok(_) => {
-            let (forced, error) = active_sockets.shutdown_all();
+            let (_, error) = active_sockets.shutdown_all();
             failures.extend(error);
-            forced
         }
         Err(error) => {
             failures.push(error);
-            let (forced, error) = active_sockets.shutdown_all();
+            let (_, error) = active_sockets.shutdown_all();
             failures.extend(error);
-            forced
         }
-    };
+    }
     failures.extend(join_worker_failures(workers));
-    let outcome = if failures.is_empty() {
-        "success"
-    } else {
-        "error"
-    };
-    eprintln!(
-        "{{\"event\":\"process_shutdown_stage\",\"stage\":\"connections\",\"outcome\":\"{outcome}\",\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"forced_connections\":{forced}}}",
-        tracker.active(), tracker.accepted(), tracker.completed(), tracker.failed(),
-    );
     if failures.is_empty() {
         Ok(())
     } else {
@@ -3191,13 +3224,7 @@ mod tests {
             join: std::thread::spawn(|| {}),
         }];
 
-        let error = drain_workers(
-            workers,
-            sockets.as_ref(),
-            Duration::ZERO,
-            &ConnectionTracker::default(),
-        )
-        .unwrap_err();
+        let error = drain_workers(workers, sockets.as_ref(), Duration::ZERO).unwrap_err();
 
         assert!(matches!(error, SqlNodeError::WorkerStatePoisoned));
         assert!(cancellation.is_cancelled());

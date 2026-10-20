@@ -121,20 +121,17 @@ pub(crate) fn run_cluster_session_node_with_spill(
             )
             .map_err(|error| error.to_string())?;
             if !accounts.bootstrap.already_bootstrapped() {
-                let (outcome, schema_version) = crate::bootstrap_publish::publish_bootstrap(
-                    opener,
-                    COPROCESSOR_QUERY_TIMEOUT,
-                )
-                .map_err(|error| error.to_string())?;
-                let schema_version = crate::bootstrap_publish::notify_committed_bootstrap(
+                let started = std::time::Instant::now();
+                let (outcome, schema_version) =
+                    crate::bootstrap_publish::publish_bootstrap(opener, COPROCESSOR_QUERY_TIMEOUT)
+                        .map_err(|error| error.to_string())?;
+                crate::bootstrap_publish::notify_committed_bootstrap(
                     &outcome,
                     schema_version,
                     None,
                 )
                 .map_err(|error| error.to_string())?;
-                eprintln!(
-                    "{{\"event\":\"cluster_bootstrap_published\",\"schema_version\":{schema_version}}}"
-                );
+                crate::bootstrap_publish::log_bootstrap_successful(started);
                 // Go `EnableSplitTableRegion`: the bootstrap cut every system
                 // table's region (re-cutting an existing boundary is a no-op).
                 if tidb_config::config_tree::config::get_global_config().split_table {
@@ -792,6 +789,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 crate::real_tikv_node::emit_connections_startup_failure(&error);
                 RunConfiguredNodeError::Signal(error)
             })?;
+            // Not log content (Go's counterpart is the "server is running
+            // MySQL protocol" entry logged at bind): rust/scripts wait for
+            // this JSON readiness line on stderr and read its fields.
             eprintln!(
             "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"skipped_tables\":[{skipped}],\"stats_loaded\":{},\"stats_pseudo\":{}}}",
             config.max_connections,
@@ -876,12 +876,8 @@ fn stop_resource_groups_controller(
     controller: &Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
 ) {
     tikv_client::unset_resource_control_interceptor();
-    if let Err(error) = store.block_on(controller.stop()) {
-        eprintln!(
-            "{{\"event\":\"resource_groups_controller_stop_failed\",\"error\":{}}}",
-            serde_json::to_string(&error.to_string()).unwrap_or_default()
-        );
-    }
+    // Go cancels the controller's context and logs nothing.
+    let _ = store.block_on(controller.stop());
 }
 
 /// Renders the boot-time refusals for the node's ready event.
@@ -910,6 +906,7 @@ fn start_cluster_status(
     if !config.report_status {
         return Ok(None);
     }
+    crate::log_status_listen(&config.status_host, config.status_port);
     match crate::http_status::start_status_listener_with_routes(
         &config.status_host,
         config.status_port,
@@ -923,15 +920,9 @@ fn start_cluster_status(
             security: config.cluster_security.clone(),
         },
     ) {
-        Ok(server) => {
-            eprintln!(
-                "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
-                server.local_addr()
-            );
-            Ok(Some(server))
-        }
+        Ok(server) => Ok(Some(server)),
         Err(error) => {
-            eprintln!("{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}");
+            crate::log_status_listen_failed(&error);
             Err(error)
         }
     }

@@ -54,7 +54,10 @@ impl GlobalConfigKeeper {
                     if let Err(error) = running.store_global_config(item) {
                         // Go logs and continues. Retrying here could overwrite a
                         // newer value published by another TiDB node.
-                        eprintln!("{}", serde_json::json!({"event": "global_config_syncer_store_failed", "error": error}));
+                        tidb_util::logutil::bg_logger().error(
+                            "global config syncer store failed",
+                            &[crate::zap_error(error)],
+                        );
                     }
                 }
             })?;
@@ -73,8 +76,8 @@ impl Drop for GlobalConfigKeeper {
     fn drop(&mut self) {
         self.syncer.stop();
         if let Some(worker) = self.worker.take() {
-            if worker.join().is_err() {
-                eprintln!("global config syncer panicked");
+            if let Err(payload) = worker.join() {
+                crate::log_recovered_panic("globalConfigSyncerKeeper", payload.as_ref());
             }
         }
     }

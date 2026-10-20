@@ -638,9 +638,10 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
             reads: RefCell::new(None),
         };
         if let Err(error) = self.row_stats_cache.update_by_id(&source, &physical_ids) {
-            eprintln!(
-                "{{\"event\":\"information_schema_stats_cache_update_failed\",\"error\":{}}}",
-                serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            // Go `updateStatsCacheIfNeed`.
+            tidb_util::logutil::bg_logger().warn(
+                "cannot update stats cache for tables",
+                &[crate::zap_error(error)],
             );
         }
 
@@ -1565,13 +1566,23 @@ impl ClusterSessionFactory {
             return;
         }
         for process_id in tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.all() {
-            eprintln!(
-                "{{\"event\":\"auto_analyze_exceeded_window\",\"process_id\":{process_id},\"now\":{},\"start\":{},\"end\":{}}}",
-                serde_json::to_string(&now.to_rfc3339()).unwrap_or_else(|_| "\"\"".to_owned()),
-                serde_json::to_string(&parameters.start_time)
-                    .unwrap_or_else(|_| "\"\"".to_owned()),
-                serde_json::to_string(&parameters.end_time)
-                    .unwrap_or_else(|_| "\"\"".to_owned()),
+            // Go `Domain.CheckAutoAnalyzeWindows`.
+            tidb_stats_handle_logutil::stats_logger().warn(
+                "Kill auto analyze process because it exceeded the window",
+                &[
+                    tidb_log::Field::new("processID", tidb_log::Value::U64(process_id)),
+                    tidb_log::Field::new(
+                        "now",
+                        tidb_log::Value::Str(tidb_log::format_time(
+                            &now.with_timezone(&chrono::Local).fixed_offset(),
+                        )),
+                    ),
+                    tidb_log::Field::new(
+                        "start",
+                        tidb_log::Value::Str(parameters.start_time.clone()),
+                    ),
+                    tidb_log::Field::new("end", tidb_log::Value::Str(parameters.end_time.clone())),
+                ],
             );
             self.processes.kill(process_id, true);
         }
@@ -2000,9 +2011,21 @@ impl ClusterSessionFactory {
                         transaction.commit(&staged).map_err(|error| error.message)
                     })();
                     if let Err(error) = result {
-                        eprintln!(
-                            "{{\"event\":\"record_historical_stats_meta_failed\",\"version\":{read_ts},\"source\":\"flush stats\",\"table_id\":{},\"error\":{error:?}}}",
-                            update.table_id
+                        // Go `statsHistoryImpl.RecordHistoricalStatsMeta`.
+                        tidb_stats_handle_logutil::stats_logger().warn(
+                            "record historical stats meta failed",
+                            &[
+                                tidb_log::Field::new("version", tidb_log::Value::U64(read_ts)),
+                                tidb_log::Field::new(
+                                    "source",
+                                    tidb_log::Value::Str("flush stats".to_owned()),
+                                ),
+                                tidb_log::Field::new(
+                                    "tableID",
+                                    tidb_log::Value::I64(update.table_id),
+                                ),
+                                crate::zap_error(error),
+                            ],
                         );
                     }
                 }
@@ -2331,14 +2354,10 @@ impl AnalyzeJobsCleanupWorker {
                             match timestamp_before(Duration::from_secs(7 * 24 * 60 * 60)) {
                                 Ok(cutoff) => {
                                     if let Err(error) = factory.delete_analyze_jobs_before(cutoff) {
-                                        eprintln!(
-                                            "{{\"event\":\"gc_analyze_history_failed\",\"error\":{error:?}}}"
-                                        );
+                                        log_gc_analyze_history_failed(error);
                                     }
                                 }
-                                Err(error) => eprintln!(
-                                    "{{\"event\":\"gc_analyze_history_failed\",\"error\":{error:?}}}"
-                                ),
+                                Err(error) => log_gc_analyze_history_failed(error),
                             }
                         }
                     }
@@ -2349,9 +2368,7 @@ impl AnalyzeJobsCleanupWorker {
                                 if let Err(error) = factory
                                     .cleanup_corrupted_analyze_jobs_on_current_instance(cutoff)
                                 {
-                                    eprintln!(
-                                        "{{\"event\":\"cleanup_analyze_jobs_current_instance_failed\",\"error\":{error:?}}}"
-                                    );
+                                    log_cleanup_analyze_jobs_current_instance_failed(error);
                                 }
                                 if factory
                                     .stats_owner
@@ -2361,15 +2378,14 @@ impl AnalyzeJobsCleanupWorker {
                                     if let Err(error) = factory
                                         .cleanup_corrupted_analyze_jobs_on_dead_instances(cutoff)
                                     {
-                                        eprintln!(
-                                            "{{\"event\":\"cleanup_analyze_jobs_dead_instances_failed\",\"error\":{error:?}}}"
+                                        tidb_util::logutil::bg_logger().warn(
+                                            "cleanup analyze jobs on dead instances failed",
+                                            &[crate::zap_error(error)],
                                         );
                                     }
                                 }
                             }
-                            Err(error) => eprintln!(
-                                "{{\"event\":\"cleanup_analyze_jobs_current_instance_failed\",\"error\":{error:?}}}"
-                            ),
+                            Err(error) => log_cleanup_analyze_jobs_current_instance_failed(error),
                         }
                     }
                 }
@@ -2380,6 +2396,18 @@ impl AnalyzeJobsCleanupWorker {
             thread: Some(thread),
         }
     }
+}
+
+// Go `Domain.analyzeJobsCleanupWorker`'s lines.
+fn log_gc_analyze_history_failed(error: impl std::fmt::Display) {
+    tidb_util::logutil::bg_logger().warn("gc analyze history failed", &[crate::zap_error(error)]);
+}
+
+fn log_cleanup_analyze_jobs_current_instance_failed(error: impl std::fmt::Display) {
+    tidb_util::logutil::bg_logger().warn(
+        "cleanup analyze jobs on current instance failed",
+        &[crate::zap_error(error)],
+    );
 }
 
 impl Drop for AnalyzeJobsCleanupWorker {
@@ -2516,7 +2544,9 @@ impl Drop for ClusterSessionFactory {
             .is_some_and(StatsUsageWorkers::stop_before_shutdown_flush);
         if flush_stats {
             if let Err(error) = self.dump_stats_delta_to_kv(true, &[], "default") {
-                eprintln!("{{\"event\":\"dump_stats_delta_failed\",\"error\":{error:?}}}");
+                // Go `Handle.FlushStats`.
+                tidb_stats_handle_logutil::stats_logger()
+                    .warn("dump stats delta fail", &[crate::zap_error(error)]);
             }
         }
     }
@@ -2875,8 +2905,24 @@ impl ClusterHistoricalStatsHandle {
         }
 
         if let Err(error) = self.clear_outdated_history_stats() {
-            eprintln!(
-                "{{\"event\":\"clear_outdated_historical_stats_failed\",\"error\":{error:?}}}"
+            // Go `StatsGC.GCStats`, with `vardef.HistoricalStatsDuration`.
+            let duration = self
+                .global_vars
+                .get(tidb_vardef::tidb_vars::TIDB_HISTORICAL_STATS_DURATION)
+                .ok()
+                .and_then(|configured| {
+                    serde_json::from_value::<tidb_config::configtypes::Duration>(
+                        serde_json::Value::String(configured),
+                    )
+                    .ok()
+                })
+                .map_or(0, |duration| duration.0);
+            tidb_util::logutil::bg_logger().warn(
+                "failed to gc outdated historical stats",
+                &[
+                    tidb_log::Field::new("duration", tidb_log::Value::Duration(duration)),
+                    crate::zap_error(error),
+                ],
             );
         }
         self.commit_stats_plan(|snapshot, _| {
@@ -3106,9 +3152,13 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
             is_partition,
         )?
         else {
-            eprintln!(
-                "{{\"event\":\"no stats data to record\",\"dbName\":{database_name:?},\"tableName\":{:?}}}",
-                table.name
+            // Go `RecordHistoricalStatsToStorage`.
+            tidb_stats_handle_logutil::stats_logger().warn(
+                "no stats data to record",
+                &[
+                    tidb_log::Field::new("dbName", tidb_log::Value::Str(database_name.to_string())),
+                    tidb_log::Field::new("tableName", tidb_log::Value::Str(table.name.clone())),
+                ],
             );
             return Ok(0);
         };
@@ -3203,8 +3253,13 @@ impl HistoricalStatsRuntime {
                         handle.as_ref(),
                         &ClusterHistoricalStatsMetrics,
                     ) {
-                        eprintln!(
-                            "{{\"event\":\"dump_historical_stats_failed\",\"table_id\":{table_id},\"error\":{error:?}}}"
+                        // Go `Domain.StartHistoricalStatsWorker`.
+                        tidb_util::logutil::bg_logger().warn(
+                            "dump historical stats failed",
+                            &[
+                                crate::zap_error(error),
+                                tidb_log::Field::new("tableID", tidb_log::Value::I64(table_id)),
+                            ],
                         );
                     }
                 }
@@ -3242,11 +3297,38 @@ fn spawn_usage_worker(
                     return;
                 };
                 if let Err(error) = action(&factory) {
-                    eprintln!("{{\"event\":{log_name:?},\"error\":{error:?}}}");
+                    log_usage_worker_failure(&log_name, error);
                 }
             }
         })
         .expect("spawning statistics usage worker")
+}
+
+// Go `subscriber.handle`'s best-effort DROP SCHEMA line: one entry whichever
+// half of `delayedDeleteStats4PhysicalID` failed.
+fn log_stats_gc_version_failed(physical_id: i64, error: String) {
+    tidb_stats_handle_logutil::stats_logger().error(
+        "Failed to update stats meta version for gc",
+        &[
+            tidb_log::Field::new("tableID", tidb_log::Value::I64(physical_id)),
+            crate::zap_error(error),
+        ],
+    );
+}
+
+// The failure line of the Go worker each usage worker ports:
+// `indexUsageWorker`, `dumpColStatsUsageWorker`, `deltaUpdateTickerWorker`.
+fn log_usage_worker_failure(name: &str, error: String) {
+    let error = [crate::zap_error(error)];
+    match name {
+        "index-usage-gc" => {
+            tidb_stats_handle_logutil::stats_logger().error("gc index usage failed", &error);
+        }
+        "column-stats-usage-dump" => {
+            tidb_util::logutil::bg_logger().warn("dump column stats usage failed", &error);
+        }
+        _ => tidb_util::logutil::bg_logger().warn("dump stats delta failed", &error),
+    }
 }
 
 fn persist_column_stats_usage_batches(
@@ -4962,15 +5044,18 @@ impl Drop for ClusterServerSession {
         // driver session would otherwise edit when it drops.
         if tidb_config::config_tree::config::table_lock_enabled() {
             if let Some(statement) = self.session.cluster_unlock_tables_statement() {
-                if let Err(error) = self
+                if self
                     .ddl
                     .execute(&statement, &self.session.ddl_statement_context())
+                    .is_err()
                 {
-                    eprintln!(
-                        "{{\"event\":\"release_table_lock_failed\",\"conn\":{},\"error\":{}}}",
-                        self.session.connection_id(),
-                        serde_json::to_string(&format!("{error:?}"))
-                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+                    // Go `session.Close` logs the connection, not the error.
+                    tidb_util::logutil::bg_logger().error(
+                        "release table lock failed",
+                        &[tidb_log::Field::new(
+                            "conn",
+                            tidb_log::Value::U64(self.session.connection_id()),
+                        )],
                     );
                 }
                 self.session.finish_cluster_lock_job(&statement);
@@ -6872,16 +6957,10 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        let changed = self
-            .session
+        // Go logs nothing for a successful account statement.
+        self.session
             .run_account_statement_with(sql, &ClusterAccountService(Arc::clone(&self.accounts)))
             .map_err(map_error)?;
-        if !changed.is_empty() {
-            eprintln!(
-                "{{\"event\":\"cluster_accounts_changed\",\"users\":{}}}",
-                serde_json::to_string(&changed).unwrap_or_else(|_| "[]".to_owned())
-            );
-        }
         // Go answers an account statement with an OK packet carrying no rows,
         // whether it changed anything or was an `IF [NOT] EXISTS` no-op.
         Ok(WriteOutcome {
@@ -6909,10 +6988,22 @@ impl ClusterServerSession {
             .session
             .run_global_var_statement_with(sql, &ClusterSysvarService(Arc::clone(&self.sysvars)))
             .map_err(map_error)?;
-        if !changed.is_empty() {
-            eprintln!(
-                "{{\"event\":\"cluster_sysvars_changed\",\"variables\":{}}}",
-                serde_json::to_string(&changed).unwrap_or_else(|_| "[]".to_owned())
+        // Go `SetExecutor.setSysVariable`'s line for each global assignment.
+        for name in &changed {
+            let mut value = self.session.vars().get_global(name).unwrap_or_default();
+            if name == tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI {
+                value = tidb_ast::redact_url(&value);
+            }
+            tidb_util::logutil::bg_logger().info(
+                "set global var",
+                &[
+                    tidb_log::Field::new(
+                        "conn",
+                        tidb_log::Value::U64(self.session.connection_id()),
+                    ),
+                    tidb_log::Field::new("name", tidb_log::Value::Str(name.clone())),
+                    tidb_log::Field::new("val", tidb_log::Value::Str(value)),
+                ],
             );
         }
         // Go answers a `SET` with an OK packet carrying no rows.
@@ -7053,11 +7144,14 @@ impl ClusterServerSession {
             }
             ActionType::ACTION_FLASHBACK_CLUSTER => self.stage_stats_version_refresh(),
             ActionType::ACTION_ADD_INDEX => Ok(()),
-            other => {
-                eprintln!(
-                    "{{\"event\":\"unhandled_stats_schema_change\",\"action\":{}}}",
-                    serde_json::to_string(&format!("{other:?}"))
-                        .unwrap_or_else(|_| "\"unknown\"".to_owned())
+            _ => {
+                // Go `subscriber.handle`'s default case.
+                tidb_stats_handle_logutil::stats_logger().error(
+                    "Unhandled schema change event",
+                    &[tidb_log::Field::new(
+                        "type",
+                        tidb_log::Value::Str(event.to_string()),
+                    )],
                 );
                 Ok(())
             }
@@ -7218,10 +7312,7 @@ impl ClusterServerSession {
                 if !best_effort {
                     return Err(SqlQueryError::unknown(error));
                 }
-                eprintln!(
-                    "{{\"event\":\"stats_schema_gc_version_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
-                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
-                );
+                log_stats_gc_version_failed(physical_id, error);
                 continue;
             }
             if let Err(error) = self.record_schema_change_history(
@@ -7234,10 +7325,7 @@ impl ClusterServerSession {
                 if !best_effort {
                     return Err(SqlQueryError::unknown(error));
                 }
-                eprintln!(
-                    "{{\"event\":\"stats_schema_history_failed\",\"physical_id\":{physical_id},\"error\":{}}}",
-                    serde_json::to_string(&error).unwrap_or_else(|_| "\"unknown\"".to_owned())
-                );
+                log_stats_gc_version_failed(physical_id, error);
             }
         }
         Ok(())

@@ -631,7 +631,7 @@ fn pin_field_names(stmt: &mut Stmt) -> bool {
             select
                 .fields
                 .original_text(index)
-                .map(|bytes| String::from_utf8_lossy(bytes).trim().to_owned())
+                .map(|bytes| tidb_hack::raw_bytes::bytes_to_str(bytes).trim().to_owned())
                 .filter(|text| !text.is_empty())
         })
         .collect();

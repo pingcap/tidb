@@ -132,29 +132,8 @@ pub(crate) fn node_accounts(
             ),
         )));
     }
+    // Go's privilege cache logs nothing on a successful load.
     let loaded = crate::cluster_privileges::registry_from_cluster(&accounts.privileges);
-    let skipped = loaded
-        .skipped
-        .iter()
-        .map(|skip| {
-            format!(
-                "{{\"source\":{:?},\"account\":{:?},\"privilege\":{:?}}}",
-                skip.source, skip.account, skip.privilege
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    eprintln!(
-        "{{\"event\":\"privileges_loaded\",\"bootstrap\":{:?},\"accounts\":{},\"db_grants\":{},\"table_grants\":{},\"column_grants\":{},\"dynamic_grants\":{},\"role_edges\":{},\"sysvars\":{},\"skipped\":[{skipped}]}}",
-        accounts.bootstrap.to_string(),
-        loaded.account_count,
-        accounts.privileges.db_grants.len(),
-        accounts.privileges.table_grants.len(),
-        accounts.privileges.column_grants.len(),
-        accounts.privileges.dynamic_grants.len(),
-        accounts.privileges.role_edges.len(),
-        accounts.sysvars.len(),
-    );
     let users = ConfiguredUserStore::from_accounts(loaded.registry);
     // Seed the same startup snapshot's global variables now; `run_bound_*`
     // immediately replaces this with a fresh complete image and starts the
@@ -285,10 +264,11 @@ pub(crate) fn privilege_reload_interval(has_etcd_watch: bool) -> Duration {
     }
 }
 
+/// Go `Server.Run`'s line when the listeners cannot be set up.
 pub(crate) fn emit_connections_startup_failure(error: &impl std::fmt::Display) {
-    eprintln!(
-        "{{\"event\":\"process_shutdown_stage\",\"stage\":\"connections\",\"outcome\":\"error\",\"active\":0,\"accepted\":0,\"completed\":0,\"failed\":0,\"forced_connections\":0,\"error\":{:?}}}",
-        error.to_string()
+    tidb_log::error(
+        "failed to create the server",
+        &[crate::zap_error(error), crate::zap_stack()],
     );
 }
 
@@ -314,9 +294,8 @@ where
     A: ProcessReadAuthority,
     R: FnOnce(F) -> Result<(), RunConfiguredNodeError>,
 {
-    run_with_process_shutdown_and_final(factory, authority, run, || {
-        eprintln!("{{\"event\":\"sql_node_stopped\",\"outcome\":\"success\"}}");
-    })
+    // Go logs no final line once the server stopped.
+    run_with_process_shutdown_and_final(factory, authority, run, || {})
 }
 
 fn run_with_process_shutdown_and_final<F, A, R, S>(
@@ -348,26 +327,13 @@ where
 }
 
 fn emit_process_shutdown_events(result: &Result<(), ReadProcessShutdownError>) {
-    if matches!(
-        result,
-        Err(ReadProcessShutdownError::ActiveSessions { .. })
-            | Err(ReadProcessShutdownError::AdmissionPoisoned)
-    ) {
-        let error = result.as_ref().expect_err("matched shutdown error");
-        eprintln!(
-            "{{\"event\":\"process_shutdown_rejected\",\"error\":{:?}}}",
-            error.to_string()
+    // Go `closeDDLOwnerMgrDomainAndStorage`: `terror.Log(storage.Close())`
+    // logs a failed close only.
+    if let Err(ReadProcessShutdownError::StoreClose(message)) = result {
+        tidb_log::error(
+            "encountered error",
+            &[crate::zap_error(message), crate::zap_stack()],
         );
-        return;
-    }
-    // Go `tikvStore.Close`.
-    match result {
-        Err(ReadProcessShutdownError::StoreClose(message)) => eprintln!(
-            "{{\"event\":\"process_shutdown_stage\",\"stage\":\"store\",\"outcome\":\"error\",\"error\":{message:?}}}"
-        ),
-        _ => eprintln!(
-            "{{\"event\":\"process_shutdown_stage\",\"stage\":\"store\",\"outcome\":\"success\"}}"
-        ),
     }
 }
 
@@ -393,6 +359,9 @@ pub enum RunConfiguredNodeError {
         /// Ordered process authority shutdown failure.
         authority: ReadProcessShutdownError,
     },
+    /// The loggers could not be set up (Go `setupLog`) or flushed at exit
+    /// (Go `syncLog`).
+    Log(String),
 }
 
 impl std::fmt::Display for RunConfiguredNodeError {
@@ -414,6 +383,7 @@ impl std::fmt::Display for RunConfiguredNodeError {
                 formatter,
                 "node failed: {run}; read authority shutdown also failed: {authority}"
             ),
+            Self::Log(error) => formatter.write_str(error),
         }
     }
 }
@@ -429,7 +399,7 @@ impl std::error::Error for RunConfiguredNodeError {
             | Self::Combined {
                 authority: error, ..
             } => Some(error),
-            Self::Engine(_) => None,
+            Self::Engine(_) | Self::Log(_) => None,
         }
     }
 }

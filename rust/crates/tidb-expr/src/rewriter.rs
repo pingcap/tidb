@@ -2025,16 +2025,18 @@ fn rewrite_leaf_literal(
             result_type::null_literal_type(),
         ))),
         Expr::String(text) => {
+            // The literal's exact bytes: a client byte that is not UTF-8
+            // travels in the text as its `raw_bytes` escape.
+            let bytes = tidb_hack::raw_bytes::str_to_bytes(text).into_owned();
             let (charset, collation) = resolver.connection_charset_info();
             let mut field_type = FieldType::new(FieldTypeCode::VarString);
-            field_type.set_flen(text.len() as i64);
+            field_type.set_flen(bytes.len() as i64);
             field_type.set_charset_name(charset);
             field_type.set_collation_name(collation);
             // Go `DefaultTypeForValue` adds NotNull for every non-nil value.
             field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
             field_type.set_decimal(-1);
-            let datum =
-                Datum::new_collation_string(text.as_bytes().to_vec(), field_type.collation());
+            let datum = Datum::new_collation_string(bytes, field_type.collation());
             Ok(Expression::Constant(Constant::new(datum, field_type)))
         }
         // Go's parser folds a decimal literal into a `*MyDecimal` value whose
@@ -2247,8 +2249,9 @@ fn rewrite_leaf_literal(
             }
             let collation = tidb_datatype::Collation::from_name(&collation_name)
                 .ok_or(EvalError::Unsupported("unknown character introducer"))?;
+            let bytes = tidb_hack::raw_bytes::str_to_bytes(value).into_owned();
             let mut ft = FieldType::new(FieldTypeCode::VarString);
-            ft.set_flen(value.len() as i64);
+            ft.set_flen(bytes.len() as i64);
             ft.set_charset_name(charset);
             ft.set_collation_name(collation_name);
             // Go `DefaultTypeForValue` adds NotNull for every non-nil value,
@@ -2260,9 +2263,9 @@ fn rewrite_leaf_literal(
             );
             let datum = if collation == tidb_datatype::Collation::Binary {
                 ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
-                Datum::Bytes(value.as_bytes().to_vec())
+                Datum::Bytes(bytes)
             } else {
-                Datum::new_collation_string(value.as_bytes().to_vec(), collation)
+                Datum::new_collation_string(bytes, collation)
             };
             Ok(Expression::Constant(Constant::new(datum, ft)))
         }

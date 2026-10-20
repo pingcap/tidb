@@ -68,24 +68,20 @@ use tidb_session::privilege::plugin_needs_cleartext;
 
 /// Decodes one client SQL payload per `@@character_set_client`.
 ///
-/// Go keeps COM_QUERY bytes raw — the parser scans them and string literals
-/// stay tagged with the client charset; TiDB's Latin-1 is a byte-preserving
-/// compatibility encoding end to end (`FindEncodingTakeUTF8AsNoop`). This
-/// pipeline's SQL text is a Rust `String`, so the wire transcodes instead:
-/// client bytes decode to UTF-8 here, and `ResultEncoder` encodes results
-/// back per `@@character_set_results` — the same client-visible round trip.
-///
-/// NAMED NARROWING: for a latin1 client sending non-ASCII bytes, Go stores
-/// the RAW latin1 bytes while this path stores their UTF-8 spelling, so
-/// `HEX()` over such data diverges (Go `E9`, here `C3A9`); the text a
-/// client reads back is identical.
+/// Go keeps COM_QUERY bytes raw: the scanner reads them as a `string`, and
+/// only its literal conversions (`Scanner.convert2Connection` for string
+/// literals, `convert2System` for identifiers) consult the client encoding.
+/// For utf8/utf8mb4, latin1, binary, and every name `charset.FindEncoding`
+/// maps to binary, those conversions start from the raw bytes, so the text
+/// here carries them losslessly ([`tidb_hack::raw_bytes`]: valid UTF-8 as is,
+/// any other byte as its escape character) and the parser applies Go's
+/// conversions over the exact bytes.
 ///
 /// `gbk`/`gb18030` decode through the ported encoding registry with Go's
-/// strict `OpDecode` (an invalid group is refused, not replaced). Every
-/// other charset requires valid UTF-8, as before.
+/// strict `OpDecode` (an invalid group is refused, not replaced). `ascii`
+/// requires valid UTF-8, as before.
 fn decode_client_sql(bytes: &[u8], charset: &str) -> Result<String, ()> {
     match charset {
-        "latin1" => Ok(bytes.iter().map(|&b| char::from(b)).collect()),
         "gbk" | "gb18030" => {
             let result = tidb_datatype::find_encoding(charset)
                 .transform(bytes, tidb_datatype::TransformOp::DECODE);
@@ -94,9 +90,10 @@ fn decode_client_sql(bytes: &[u8], charset: &str) -> Result<String, ()> {
             }
             String::from_utf8(result.bytes().to_vec()).map_err(|_| ())
         }
-        _ => std::str::from_utf8(bytes)
+        "ascii" => std::str::from_utf8(bytes)
             .map(str::to_owned)
             .map_err(|_| ()),
+        _ => Ok(tidb_hack::raw_bytes::bytes_to_str(bytes).into_owned()),
     }
 }
 
@@ -1188,12 +1185,8 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     // Go `server.go:303` + `conn.go:435-439`: the connection gauge enters
     // under the default label and leaves under the session's last group.
     crate::query_metrics::note_connection_start();
-    eprintln!(
-        "{{\"event\":\"connection_begin\",\"connection_id\":{},\"active\":{},\"accepted\":{}}}",
-        lease.id(),
-        tracker.active(),
-        tracker.accepted()
-    );
+    // Go `server.go:591`, once a connection is accepted.
+    tidb_util::logutil::bg_logger().debug("accept new connection success", &[]);
     let shutdown = cancellation.clone();
     let mut commands = ConnectionCommandCounts::default();
     // Keep worker containment for setup or cleanup panics. Command Run owns
@@ -1227,19 +1220,9 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     drop(lease);
     record_connection_exit_metrics(&result);
     crate::query_metrics::note_connection_end();
-    eprintln!(
-        "{{\"event\":\"connection_closed\",\"connection_id\":{connection_id},\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"text_query_commands\":{},\"stmt_prepare_commands\":{},\"stmt_prepare_successes\":{},\"stmt_execute_commands\":{},\"stmt_execute_successes\":{},\"stmt_close_commands\":{}}}",
-        tracker.active(),
-        tracker.accepted(),
-        tracker.completed(),
-        tracker.failed(),
-        commands.text_query_commands,
-        commands.stmt_prepare_commands,
-        commands.stmt_prepare_successes,
-        commands.stmt_execute_commands,
-        commands.stmt_execute_successes,
-        commands.stmt_close_commands,
-    );
+    // Go `onConn`'s deferred `logutil.Logger(ctx).Debug("connection closed")`.
+    tidb_util::logutil::with_conn_id(&tidb_util::logutil::bg_logger(), connection_id)
+        .debug("connection closed", &[]);
     result
 }
 
@@ -1798,7 +1781,11 @@ impl<S: QuerySession> CommandConnection<S> {
                     &message,
                     protocol_41,
                 ) {
-                    eprintln!("{{\"event\":\"connection_panic_write_error\",\"connection_id\":{connection_id},\"error\":{error:?}}}");
+                    // Go `terror.Log(cc.writeError(...))`.
+                    tidb_log::error(
+                        "encountered error",
+                        &[crate::zap_error(error), crate::zap_stack()],
+                    );
                 }
                 Err(MysqlConnectionError::Panicked(message))
             }
@@ -1820,7 +1807,15 @@ fn connection_panic_message(payload: Box<dyn std::any::Any + Send>, connection_i
         .map(|s| (*s).to_owned())
         .or_else(|| payload.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "non-string panic payload".to_owned());
-    eprintln!("{{\"event\":\"connection_panic\",\"connection_id\":{connection_id},\"error\":{message:?}}}");
+    // Go `clientConn.Run`'s recover: "connection running loop panic" with
+    // `err` and `stack` under the connection's `conn` field.
+    tidb_util::logutil::with_conn_id(&tidb_util::logutil::bg_logger(), connection_id).error(
+        "connection running loop panic",
+        &[
+            tidb_log::Field::new("err", tidb_log::Value::Str(message.clone())),
+            crate::zap_stack(),
+        ],
+    );
     message
 }
 
@@ -3590,18 +3585,31 @@ mod decode_client_sql_tests {
     use super::decode_client_sql;
 
     #[test]
-    fn latin1_bytes_decode_one_to_one() {
-        // 0xE9 is latin1 'é' — Go admits the raw byte (byte-preserving
-        // latin1); here it becomes the UTF-8 spelling of U+00E9.
-        let sql = decode_client_sql(b"SELECT 'h\xe9llo'", "latin1").expect("decodes");
-        assert_eq!(sql, "SELECT 'héllo'");
+    fn noop_client_charsets_carry_the_raw_bytes() {
+        // Go scans COM_QUERY bytes raw for latin1, binary, utf8mb4, and any
+        // name `FindEncoding` maps to binary: UTF-8 sent by a terminal under
+        // a latin1 connection stays UTF-8 (no double encoding), and a byte
+        // that is not UTF-8 survives as its escape for the parser.
+        for charset in ["latin1", "binary", "utf8mb4", "utf8", "not-a-charset"] {
+            assert_eq!(
+                decode_client_sql("SELECT HEX('└─é')".as_bytes(), charset).as_deref(),
+                Ok("SELECT HEX('└─é')"),
+                "{charset}"
+            );
+            let sql = decode_client_sql(b"SELECT 'h\xe9llo'", charset).expect("decodes");
+            assert_eq!(
+                tidb_hack::raw_bytes::str_to_bytes(&sql).as_ref(),
+                b"SELECT 'h\xe9llo'",
+                "{charset}"
+            );
+        }
     }
 
     #[test]
-    fn utf8_clients_still_require_valid_utf8() {
-        assert!(decode_client_sql(b"SELECT '\xe9'", "utf8mb4").is_err());
+    fn ascii_clients_still_require_valid_utf8() {
+        assert!(decode_client_sql(b"SELECT '\xe9'", "ascii").is_err());
         assert_eq!(
-            decode_client_sql(b"SELECT 1", "utf8mb4").as_deref(),
+            decode_client_sql(b"SELECT 1", "ascii").as_deref(),
             Ok("SELECT 1")
         );
     }

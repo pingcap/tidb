@@ -2805,3 +2805,171 @@ fn query_column_definitions_carry_result_field_names() {
     drop(client);
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
+
+/// Sends one COM_QUERY of raw bytes and returns the result's column names and
+/// cells exactly as the wire carries them.
+fn run_query_bytes(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &[u8],
+) -> (Vec<Vec<u8>>, Vec<Vec<Vec<u8>>>) {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql);
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let first = reader.read_packet().unwrap();
+    assert_ne!(first[0], 0xff, "query errored: {first:?}");
+    let column_count = usize::from(first[0]);
+    let names = (0..column_count)
+        .map(|_| {
+            let packet = reader.read_packet().unwrap();
+            let mut remaining = packet.as_slice();
+            // catalog, schema, table, org_table, then name.
+            for _ in 0..4 {
+                read_length_encoded_string(&mut remaining);
+            }
+            read_length_encoded_string(&mut remaining)
+        })
+        .collect();
+    let mut rows = Vec::new();
+    loop {
+        let packet = reader.read_packet().unwrap();
+        if packet[0] == 0xfe && packet.len() < 9 + 4 {
+            break;
+        }
+        let mut remaining = packet.as_slice();
+        rows.push(
+            (0..column_count)
+                .map(|_| read_length_encoded_string(&mut remaining))
+                .collect(),
+        );
+    }
+    (names, rows)
+}
+
+/// Go scans a latin1/binary/utf8mb4 client's COM_QUERY bytes raw and its
+/// `ResultEncoder` passes latin1 and binary results through unchanged
+/// (`encodingLatin1.Transform` returns its source). Captured against TiDB with
+/// the stock `mysql` client:
+///
+/// * `--default-character-set=latin1` (handshake collation 8: client and
+///   results latin1, connection utf8mb4): a UTF-8 terminal's `└─é` is
+///   `E29494E29480C3A9` and reads back as the same bytes, a raw `0xE9` is
+///   `?` (`3F`), the column of `HEX('\xE9')` is `HEX(0xe9)`, and EXPLAIN's
+///   tree glyphs go out as their UTF-8 bytes, not `??`;
+/// * after `SET NAMES latin1`, `HEX('\xE9')` is `E9`;
+/// * `--default-character-set=gbk` (collation 28): `HEX('\xC4\xE3')` is
+///   `C4E3`, and the cell reads back as the same GBK bytes;
+/// * `--default-character-set=binary` (collation 63): `HEX('\xE9')` is `E9`.
+#[test]
+fn client_charset_bytes_reach_storage_and_results_like_go() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let store = users();
+        let factory = PipelineSessionFactory::with_configured_store(&store);
+        let mut reports = Vec::new();
+        for _ in 0..3 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            reports.push(
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    &factory,
+                    &store,
+                    &worker_tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap(),
+            );
+        }
+        reports
+    });
+    let glyphs = "\u{2514}\u{2500}\u{e9}".as_bytes();
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_eq!(
+        handshake_reply(&mut client, &mut reader, 0, 8)[0],
+        0,
+        "auth OK"
+    );
+    let (names, rows) = run_query_bytes(
+        &mut client,
+        &mut reader,
+        &[b"SELECT HEX('", glyphs, b"'), HEX('\xe9'), '", glyphs, b"'"].concat(),
+    );
+    assert_eq!(
+        names,
+        [
+            [b"HEX('", glyphs, b"')"].concat(),
+            b"HEX(0xe9)".to_vec(),
+            glyphs.to_vec(),
+        ]
+    );
+    assert_eq!(
+        rows,
+        [[
+            b"E29494E29480C3A9".to_vec(),
+            b"3F".to_vec(),
+            glyphs.to_vec()
+        ]]
+    );
+    run_write(&mut client, &mut reader, "USE test");
+    run_write(
+        &mut client,
+        &mut reader,
+        "CREATE TABLE glyphs (id INT PRIMARY KEY, v INT)",
+    );
+    let (_, plan) = run_query_bytes(
+        &mut client,
+        &mut reader,
+        b"EXPLAIN SELECT v FROM glyphs WHERE id < 3",
+    );
+    assert!(
+        plan.iter()
+            .any(|row| row[0].starts_with("\u{2514}\u{2500}".as_bytes())),
+        "{plan:?}"
+    );
+    run_write(&mut client, &mut reader, "SET NAMES latin1");
+    let (_, rows) = run_query_bytes(&mut client, &mut reader, b"SELECT HEX('\xe9'), '\xe9'");
+    assert_eq!(rows, [[b"E9".to_vec(), b"\xe9".to_vec()]]);
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_eq!(
+        handshake_reply(&mut client, &mut reader, 0, 28)[0],
+        0,
+        "auth OK"
+    );
+    let (_, rows) = run_query_bytes(
+        &mut client,
+        &mut reader,
+        b"SELECT HEX('\xc4\xe3'), '\xc4\xe3'",
+    );
+    assert_eq!(rows, [[b"C4E3".to_vec(), b"\xc4\xe3".to_vec()]]);
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_eq!(
+        handshake_reply(&mut client, &mut reader, 0, 63)[0],
+        0,
+        "auth OK"
+    );
+    let (_, rows) = run_query_bytes(&mut client, &mut reader, b"SELECT HEX('\xe9'), '\xe9'");
+    assert_eq!(rows, [[b"E9".to_vec(), b"\xe9".to_vec()]]);
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+
+    let reports = worker.join().unwrap();
+    assert!(reports
+        .iter()
+        .all(|report| report.exit == ConnectionExit::Quit));
+}

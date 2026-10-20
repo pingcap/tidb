@@ -62,11 +62,6 @@ pub fn publish_bootstrap<S: StoreClient>(
         bootstrap_mysql_schema(&mut snapshot, start_ts, &environment)
             .map_err(|error| error.to_string())?
     };
-    eprintln!(
-        "{{\"event\":\"bootstrap_publishing\",\"tables\":{},\"schema_version\":{},\"start_ts\":{start_ts}}}",
-        write.created_tables.len(),
-        write.schema_version
-    );
     let schema_version = write.schema_version;
     let outcome = transaction
         .commit(write.mutations, &call)
@@ -85,6 +80,19 @@ pub fn notify_committed_bootstrap(
     commit_outcome_to_sql_error(outcome).map_err(|error| error.message)?;
     notify_schema_version(notifier, schema_version);
     Ok(schema_version)
+}
+
+/// Go `session.bootstrap`'s line once the owner finished the bootstrap.
+pub(crate) fn log_bootstrap_successful(started: std::time::Instant) {
+    tidb_util::logutil::bg_logger().info(
+        "bootstrap successful",
+        &[tidb_log::Field::new(
+            "take time",
+            tidb_log::Value::Duration(
+                i64::try_from(started.elapsed().as_nanos()).unwrap_or(i64::MAX),
+            ),
+        )],
+    );
 }
 
 #[cfg(test)]

@@ -598,6 +598,17 @@ where
     TimeoutSyncer::wrap(sink, timeout_seconds)
 }
 
+/// Wraps a file sink the way `InitLogger` does for `is-buffered` file
+/// configs (zap `BufferedWriteSyncer` with `buffer-size` and
+/// `buffer-flush-interval`; zero values take zap's 256KiB / 30s defaults).
+pub fn buffered_write_syncer(
+    sink: Arc<dyn WriteSyncer>,
+    buffer_size: i64,
+    buffer_flush_interval_ns: i64,
+) -> Arc<dyn WriteSyncer> {
+    BufferedSyncer::wrap(sink, buffer_size, buffer_flush_interval_ns)
+}
+
 #[derive(Debug)]
 struct FileSinkState {
     sequence: u64,

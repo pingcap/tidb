@@ -1157,55 +1157,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
             let cluster = self.cluster.read().await;
             cluster.0.meta_storage_watch(request)
         };
-        let mut stream = open.await?;
-        let (events, receiver) = tokio::sync::mpsc::channel(100);
-        let cancellation = self.cancellation.clone();
-        tokio::spawn(async move {
-            loop {
-                let message = tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => return,
-                    _ = events.closed() => return,
-                    message = stream.message() => message,
-                };
-                let resp = match message {
-                    Ok(Some(resp)) => resp,
-                    Ok(None) => {
-                        log::warn!("watch stream closed");
-                        return;
-                    }
-                    Err(error) => {
-                        log::warn!("watch stream closed, error: {error}");
-                        return;
-                    }
-                };
-                // A compacted watch revision requires watching again from
-                // the higher compact revision.
-                let mut compact_revision = 0;
-                if let Some(error) = resp
-                    .header
-                    .as_ref()
-                    .and_then(|header| header.error.as_ref())
-                {
-                    if error.r#type == crate::proto::meta_storagepb::ErrorType::DataCompacted as i32
-                    {
-                        compact_revision = resp.compact_revision;
-                        log::info!(
-                            "watch stream closed due to data compacted, required watch revision: {compact_revision}, err: {}",
-                            super::meta_storage_client::meta_storage_error_text(error)
-                        );
-                    }
-                }
-                let response = super::metastorage::WatchResponse {
-                    events: resp.events,
-                    compact_revision,
-                };
-                if events.send(response).await.is_err() {
-                    return;
-                }
-            }
-        });
-        Ok(receiver)
+        Ok(spawn_watch_forwarder(open, self.cancellation.clone()))
     }
 
     async fn advance_txn_safe_point(
@@ -1453,6 +1405,99 @@ async fn refresh_timestamp_cached(
     }
 }
 
+/// A watch's response stream: tonic's, or a test's.
+#[async_trait]
+pub(crate) trait WatchStream: Send {
+    async fn message(
+        &mut self,
+    ) -> std::result::Result<Option<crate::proto::meta_storagepb::WatchResponse>, tonic::Status>;
+}
+
+#[async_trait]
+impl WatchStream for tonic::codec::Streaming<crate::proto::meta_storagepb::WatchResponse> {
+    async fn message(
+        &mut self,
+    ) -> std::result::Result<Option<crate::proto::meta_storagepb::WatchResponse>, tonic::Status>
+    {
+        tonic::codec::Streaming::message(self).await
+    }
+}
+
+/// pd-client meta storage `Watch`'s channel and receiving goroutine.
+///
+/// pd-client's `Watch` returns its channel once grpc-go has created the
+/// stream, and receives in a goroutine. tonic's call resolves only on
+/// the response headers, which PD sends with the first event, so the
+/// stream is opened inside the receiving task: awaited here, a watch
+/// on a quiet key never returned, and the resource-group controller's
+/// main loop waited in it forever (never reaching its loop, and never
+/// seeing its own cancellation). A failure to open closes the channel,
+/// which a watcher treats as a closed watch to retry.
+pub(crate) fn spawn_watch_forwarder<S: WatchStream + 'static>(
+    open: impl std::future::Future<Output = Result<S>> + Send + 'static,
+    cancellation: Cancellation,
+) -> tokio::sync::mpsc::Receiver<super::metastorage::WatchResponse> {
+    let (events, receiver) = tokio::sync::mpsc::channel(100);
+    tokio::spawn(async move {
+        let opened = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return,
+            _ = events.closed() => return,
+            opened = open => opened,
+        };
+        let mut stream = match opened {
+            Ok(stream) => stream,
+            Err(error) => {
+                log::warn!("watch stream open failed, error: {error}");
+                return;
+            }
+        };
+        loop {
+            let message = tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return,
+                _ = events.closed() => return,
+                message = stream.message() => message,
+            };
+            let resp = match message {
+                Ok(Some(resp)) => resp,
+                Ok(None) => {
+                    log::warn!("watch stream closed");
+                    return;
+                }
+                Err(error) => {
+                    log::warn!("watch stream closed, error: {error}");
+                    return;
+                }
+            };
+            // A compacted watch revision requires watching again from
+            // the higher compact revision.
+            let mut compact_revision = 0;
+            if let Some(error) = resp
+                .header
+                .as_ref()
+                .and_then(|header| header.error.as_ref())
+            {
+                if error.r#type == crate::proto::meta_storagepb::ErrorType::DataCompacted as i32 {
+                    compact_revision = resp.compact_revision;
+                    log::info!(
+                        "watch stream closed due to data compacted, required watch revision: {compact_revision}, err: {}",
+                        super::meta_storage_client::meta_storage_error_text(error)
+                    );
+                }
+            }
+            let response = super::metastorage::WatchResponse {
+                events: resp.events,
+                compact_revision,
+            };
+            if events.send(response).await.is_err() {
+                return;
+            }
+        }
+    });
+    receiver
+}
+
 #[cfg(test)]
 mod test {
     use std::sync::atomic::AtomicUsize;
@@ -1464,6 +1509,67 @@ mod test {
 
     use super::*;
     use crate::internal_err;
+
+    /// A watch stream answering scripted responses, then nothing.
+    struct ScriptedWatch(std::collections::VecDeque<crate::proto::meta_storagepb::WatchResponse>);
+
+    #[async_trait]
+    impl WatchStream for ScriptedWatch {
+        async fn message(
+            &mut self,
+        ) -> std::result::Result<Option<crate::proto::meta_storagepb::WatchResponse>, tonic::Status>
+        {
+            match self.0.pop_front() {
+                Some(response) => Ok(Some(response)),
+                None => std::future::pending().await,
+            }
+        }
+    }
+
+    // pd-client's `Watch` returns its channel once the stream is created and
+    // receives in a goroutine; tonic resolves the call only on PD's headers,
+    // which come with the first event. The channel must come back before the
+    // stream opens, or a watch on a quiet key never returns (the resource
+    // group controller's main loop hung there, so it never stopped).
+    #[tokio::test]
+    async fn a_watch_answers_its_channel_before_the_stream_opens() {
+        let cancellation = Cancellation::default();
+        let (open, opened) = tokio::sync::oneshot::channel::<ScriptedWatch>();
+        let mut receiver = spawn_watch_forwarder(
+            async move { Ok(opened.await.expect("the test opens the stream")) },
+            cancellation.clone(),
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), receiver.recv())
+                .await
+                .is_err(),
+            "nothing arrives while the stream is opening"
+        );
+        let response = crate::proto::meta_storagepb::WatchResponse {
+            events: vec![Default::default()],
+            ..Default::default()
+        };
+        let _ = open.send(ScriptedWatch(vec![response].into()));
+        assert_eq!(receiver.recv().await.unwrap().events.len(), 1);
+        cancellation.cancel();
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_watch_whose_stream_never_opens_ends_on_cancellation() {
+        let cancellation = Cancellation::default();
+        let mut receiver = spawn_watch_forwarder(
+            std::future::pending::<Result<ScriptedWatch>>(),
+            cancellation.clone(),
+        );
+        cancellation.cancel();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+                .await
+                .expect("cancellation ends the watch")
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn logical_command_metrics_do_not_count_recovered_attempts_as_failures() {

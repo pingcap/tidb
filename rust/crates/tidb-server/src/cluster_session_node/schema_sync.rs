@@ -490,7 +490,20 @@ fn run_ack_loop<S>(
         if reported_loaded_version != Some((mdl_enabled, loaded)) {
             match syncer.update_self_version(syncer_context, 0, loaded) {
                 Ok(()) => reported_loaded_version = Some((mdl_enabled, loaded)),
-                Err(error) => emit_warning("schema_sync_self_version_put_failed", &error),
+                // Go `issyncer.Syncer.Reload`.
+                Err(error) => tidb_util::logutil::bg_logger().info(
+                    "update self version failed",
+                    &[
+                        tidb_log::Field::new(
+                            "oldSchemaVersion",
+                            tidb_log::Value::I64(
+                                reported_loaded_version.map_or(0, |(_, version)| version),
+                            ),
+                        ),
+                        tidb_log::Field::new("neededSchemaVersion", tidb_log::Value::I64(loaded)),
+                        crate::zap_error(error),
+                    ],
+                ),
             }
         }
 
@@ -546,16 +559,16 @@ fn run_ack_loop<S>(
                                 {
                                     catalog.store(refreshed);
                                 }
-                                Ok(_) => {}
-                                Err(refresh_error) => {
-                                    emit_warning(
-                                        "schema_sync_catalog_refresh_failed",
-                                        &refresh_error,
-                                    );
-                                }
+                                // Go resolves the table from a fresh session
+                                // and has no such refresh to log.
+                                Ok(_) | Err(_) => {}
                             }
                         }
-                        emit_warning("schema_sync_mdl_read_failed", &error);
+                        // Go `refreshMDLCheckTableInfo`.
+                        tidb_util::logutil::bg_logger().warn(
+                            "get mdl info from tidb_mdl_info failed",
+                            &[crate::zap_error(error)],
+                        );
                     }
                 }
             }
@@ -565,12 +578,24 @@ fn run_ack_loop<S>(
             // CheckOldRunningTxn.
             let due = acks_due(loaded, pins, &mdl_jobs, &acked);
             for job in due {
+                // Go `MDLCheckLoop`'s lines around each self-version ack.
+                let ack_fields = [
+                    tidb_log::Field::new("jobID", tidb_log::Value::I64(job.job_id)),
+                    tidb_log::Field::new("version", tidb_log::Value::I64(job.version)),
+                ];
+                tidb_util::logutil::bg_logger()
+                    .info("mdl gets lock, update self version to owner", &ack_fields);
                 match syncer.update_self_version(syncer_context, job.job_id, job.version) {
                     Ok(()) => {
                         acked.insert(job.job_id, job.version);
                     }
                     Err(error) => {
-                        emit_warning("schema_sync_ack_put_failed", &error);
+                        let mut fields = ack_fields.to_vec();
+                        fields.push(crate::zap_error(error));
+                        tidb_util::logutil::bg_logger().warn(
+                            "mdl gets lock, update self version to owner failed",
+                            &fields,
+                        );
                     }
                 }
             }
@@ -614,10 +639,6 @@ fn should_retry_mdl_scan(loaded_version: i64, jobs: &[MdlJob]) -> bool {
     jobs.is_empty() || !jobs.iter().any(|job| job.version == loaded_version)
 }
 
-fn emit_warning(event: &str, error: &impl std::fmt::Display) {
-    eprintln!("{{\"event\":\"{event}\",\"error\":\"{error}\"}}");
-}
-
 /// How long one requested reload pass is given before it is asked for again.
 const MUST_RELOAD_PASS_WAIT: Duration = Duration::from_secs(5);
 
@@ -636,7 +657,8 @@ fn recover_schema_syncer(
     catalog: &SharedCatalog,
     stop: &AtomicBool,
 ) -> bool {
-    eprintln!("{{\"event\":\"schema_syncer_session_lost\"}}");
+    let logger = tidb_util::logutil::bg_logger();
+    logger.info("reload schema in loop, schema syncer need restart", &[]);
     validator.stop();
     loop {
         if stop.load(Ordering::SeqCst) {
@@ -645,7 +667,10 @@ fn recover_schema_syncer(
         match syncer.restart(syncer_context) {
             Ok(()) => break,
             Err(error) => {
-                emit_warning("schema_syncer_restart_failed", &error);
+                logger.error(
+                    "restart the schema syncer failed",
+                    &[crate::zap_error(error)],
+                );
                 sleep_sliced(Duration::from_secs(1), stop);
             }
         }
@@ -655,7 +680,7 @@ fn recover_schema_syncer(
     }
     let version = catalog.load().schema_version;
     validator.restart(version);
-    eprintln!("{{\"event\":\"schema_syncer_restarted\",\"schema_version\":{version}}}");
+    logger.info("schema syncer restarted", &[]);
     true
 }
 

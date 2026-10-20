@@ -48,6 +48,8 @@ pub(crate) fn spawn_privilege_watch(
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
     match etcd?.watch_key(PRIVILEGE_UPDATE_KEY, 0, move |event| {
+        // Not log content (Go logs no watch receipt):
+        // rust/scripts/run-realtikv-convergence.sh reads this JSON line.
         eprintln!(
             "{{\"event\":\"privilege_watch_fired\",\"mod_revision\":{},\"value\":{}}}",
             event.mod_revision,
@@ -73,11 +75,10 @@ pub(crate) fn spawn_sysvar_watch(
     reloader: Option<&crate::cluster_sysvar_seam::SysvarReloader>,
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
-    match etcd?.watch_key(SYSVAR_UPDATE_KEY, 0, move |event| {
-        eprintln!(
-            "{{\"event\":\"sysvar_watch_fired\",\"mod_revision\":{}}}",
-            event.mod_revision
-        );
+    match etcd?.watch_key(SYSVAR_UPDATE_KEY, 0, move |_event| {
+        // Go `LoadSysVarCacheLoop`, woken by the watch.
+        tidb_util::logutil::bg_logger()
+            .debug("Rebuilding sysvar cache from etcd watch event.", &[]);
         waker.nudge();
     }) {
         Ok(watcher) => Some(watcher),
@@ -88,6 +89,8 @@ pub(crate) fn spawn_sysvar_watch(
     }
 }
 
+// Not log content: a degraded state Go does not have (its etcd connect
+// failure stops startup; its watches cannot fail to start), kept on stderr.
 fn emit_warning(event: &str, detail: &str) {
     eprintln!(
         "{{\"event\":\"{event}\",\"level\":\"warning\",\"error\":{}}}",
@@ -210,7 +213,9 @@ where
                     &async_shared,
                     &loader,
                 ) {
-                    emit_warning("async_stats_load_failed", &error.to_string());
+                    // Go `Domain.asyncLoadHistogram`.
+                    tidb_stats_handle_logutil::stats_err_verbose_sample_logger()
+                        .warn("Load histograms failed", &[crate::zap_error(error)]);
                 }
             }),
         )?;
@@ -229,9 +234,33 @@ where
             let targets = current_stats_targets(&update_catalog);
             if first_pass {
                 first_pass = false;
+                // Go `Domain.initStats`' log lines.
+                let stats_logger = tidb_stats_handle_logutil::stats_logger();
                 let result = if skip_initial {
+                    stats_logger.info(
+                        "Skipping initial stats due to skip-grant-table being set",
+                        &[],
+                    );
                     Ok(StatsReloadReadResult::Unchanged)
                 } else {
+                    let started = std::time::Instant::now();
+                    let init_fields = |started: std::time::Instant| {
+                        vec![
+                            tidb_log::Field::new(
+                                "isLiteInitStats",
+                                tidb_log::Value::Bool(matches!(
+                                    initial_mode,
+                                    InitialStatsLoad::Lite
+                                )),
+                            ),
+                            tidb_log::Field::new(
+                                "duration",
+                                tidb_log::Value::Duration(
+                                    i64::try_from(started.elapsed().as_nanos()).unwrap_or(i64::MAX),
+                                ),
+                            ),
+                        ]
+                    };
                     match load_stats_snapshot_and_loader(
                         &update_opener,
                         timeout,
@@ -243,14 +272,15 @@ where
                             *update_loader
                                 .write()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(located);
-                            let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
-                            eprintln!(
-                                "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
-                                receipt.loaded, receipt.pseudo
-                            );
+                            stats_logger.info("Init stats succeed", &init_fields(started));
                             Ok(StatsReloadReadResult::Publish(snapshot))
                         }
-                        Err(error) => Err(error.to_string()),
+                        Err(error) => {
+                            let mut fields = init_fields(started);
+                            fields.push(crate::zap_error(&error));
+                            stats_logger.error("Init stats failed", &fields);
+                            Err(error.to_string())
+                        }
                     }
                 };
                 return result;
@@ -377,6 +407,10 @@ pub(crate) fn note_reload(
             CatalogReloadPass::Diffs(catalog)
         }
         ReloadedCatalog::Full { catalog, reason } => {
+            // Go `issyncer.Syncer.Reload`'s line for a full load.
+            tidb_util::logutil::bg_logger().info("full load and reset schema validator", &[]);
+            // Not log content: rust/scripts/run-realtikv-ddl.sh reads this
+            // JSON line from stderr.
             eprintln!(
                 "{{\"event\":\"catalog_full_reload\",\"schema_version\":{},\"reason\":\"{reason}\"}}",
                 catalog.schema_version

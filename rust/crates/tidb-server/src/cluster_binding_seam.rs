@@ -283,13 +283,33 @@ impl BindingReloader {
                             if now < deadlines[index] {
                                 continue;
                             }
-                            let (label, result) = match index {
-                                0 => ("reload", target.reload()),
-                                1 => ("GC", target.gc()),
-                                _ => ("usage", target.write_usage()),
-                            };
-                            if let Err(error) = result {
-                                eprintln!("binding {label} failed: {error}");
+                            // Go `globalBindHandleWorkerLoop`'s lines.
+                            let logger = tidb_util::logutil::bg_logger();
+                            match index {
+                                0 => {
+                                    if let Err(error) = target.reload() {
+                                        logger.error(
+                                            "update bindinfo failed",
+                                            &[crate::zap_error(error)],
+                                        );
+                                    }
+                                }
+                                1 => {
+                                    if let Err(error) = target.gc() {
+                                        logger.error(
+                                            "GC bind record failed",
+                                            &[crate::zap_error(error)],
+                                        );
+                                    }
+                                }
+                                _ => {
+                                    if let Err(error) = target.write_usage() {
+                                        logger.warn(
+                                            "BindingHandle.UpdateBindingUsageInfoToStorage",
+                                            &[crate::zap_error(error)],
+                                        );
+                                    }
+                                }
                             }
                             let interval = if index == 2 {
                                 next_usage()
@@ -310,8 +330,8 @@ impl BindingReloader {
                     }
                 }));
                 target.close();
-                if result.is_err() {
-                    eprintln!("binding maintenance worker panicked");
+                if let Err(payload) = result {
+                    crate::log_recovered_panic("globalBindHandleWorkerLoop", payload.as_ref());
                 }
             })
             .map_err(|error| {

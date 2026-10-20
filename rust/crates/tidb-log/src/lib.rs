@@ -36,8 +36,9 @@ pub use global::{
     with, GlobalRestore,
 };
 pub use log::{
-    init_logger, init_logger_with_write_syncer, init_test_logger, lock_with_timeout, Logger,
-    LoggerOptions, MemorySink, SugaredLogger, ZapProperties, ZAP_ENCODING_NAME,
+    buffered_write_syncer, init_logger, init_logger_with_write_syncer, init_test_logger,
+    lock_with_timeout, Logger, LoggerOptions, MemorySink, SugaredLogger, ZapProperties,
+    ZAP_ENCODING_NAME,
 };
 pub use text_encoder::{
     caller_string, default_time_encoder, format_time, short_caller_encoder, Entry, Field, Level,

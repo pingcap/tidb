@@ -329,7 +329,12 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
         tidb_errmsg::extend(Some(&mut error));
         error.message
     });
-    let message = extended.as_deref().map(str::as_bytes).unwrap_or(message);
+    // An excerpt of the client's SQL (a parse error's `near` text) carries a
+    // byte that is not UTF-8 as its `raw_bytes` escape; Go sends the bytes.
+    let message = extended
+        .as_deref()
+        .map(tidb_hack::raw_bytes::str_to_bytes)
+        .unwrap_or(std::borrow::Cow::Borrowed(message));
     let payload = encode_error_packet(&ErrorPacket::new(code, state, message, protocol_41));
     write_payload(output, sequence, &payload)
 }

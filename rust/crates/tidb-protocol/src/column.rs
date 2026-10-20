@@ -131,16 +131,17 @@ impl ColumnInfo {
                 .encode_meta(bytes)
                 .unwrap_or_else(|_| bytes.to_vec())
         };
-        append_length_encoded_bytes(buffer, Some(&meta(self.schema.as_bytes())));
-        append_length_encoded_bytes(buffer, Some(&meta(self.table.as_bytes())));
-        append_length_encoded_bytes(buffer, Some(&meta(self.org_table.as_bytes())));
+        // A name taken from the client's SQL (an alias, a literal) carries a
+        // byte that is not UTF-8 as its `raw_bytes` escape; Go's names are
+        // those exact bytes.
+        let raw = |name: &str| tidb_hack::raw_bytes::str_to_bytes(name).into_owned();
+        append_length_encoded_bytes(buffer, Some(&meta(&raw(&self.schema))));
+        append_length_encoded_bytes(buffer, Some(&meta(&raw(&self.table))));
+        append_length_encoded_bytes(buffer, Some(&meta(&raw(&self.org_table))));
+        append_length_encoded_bytes(buffer, Some(&meta(self.truncate_name(&raw(&self.name)))));
         append_length_encoded_bytes(
             buffer,
-            Some(&meta(self.truncate_name(self.name.as_bytes()))),
-        );
-        append_length_encoded_bytes(
-            buffer,
-            Some(&meta(self.truncate_name(self.org_name.as_bytes()))),
+            Some(&meta(self.truncate_name(&raw(&self.org_name)))),
         );
 
         buffer.push(0x0c);

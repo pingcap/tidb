@@ -1197,11 +1197,7 @@ where
                 // failed timestamp future is logged and the transaction is
                 // opened on a fresh synchronous timestamp instead of failing
                 // the statement (only unistore propagates the error).
-                eprintln!(
-                    "{{\"event\":\"wait tso failed\",\"level\":\"warning\",\"error\":{}}}",
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                );
+                tidb_util::logutil::bg_logger().warn("wait tso failed", &[crate::zap_error(error)]);
                 return if self.pessimistic {
                     SessionTransaction::begin_pessimistic(self.opener, self.timeout, options)
                         .map(|mut transaction| {

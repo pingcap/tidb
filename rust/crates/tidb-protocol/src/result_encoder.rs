@@ -286,28 +286,13 @@ fn charset_from_collation_id(id: u16) -> Option<ResultCharset> {
 fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
     match charset {
         // Go's FindEncodingTakeUTF8AsNoop deliberately uses the binary
-        // encoder for UTF-8. Keep these paths allocation-only.
+        // encoder for UTF-8, and its Latin-1 encoder's `Transform` returns
+        // the source (`encoding_latin1.go`). Keep these paths allocation-only.
         ResultCharset::Unknown
         | ResultCharset::Binary
+        | ResultCharset::Latin1
         | ResultCharset::Utf8
         | ResultCharset::Utf8Mb4 => src.to_vec(),
-        // Go's Latin-1 encoder is ALSO a byte-preserving NOP — because Go's
-        // internal bytes under a latin1 connection ARE the raw latin1 bytes.
-        // This stack's internal text is UTF-8 (the wire decodes latin1 input
-        // to UTF-8, `decode_client_sql`), so the symmetric half re-encodes
-        // here: codepoints at or below U+00FF become their latin1 byte,
-        // anything else Go's replacement `?`. The client-visible round trip
-        // is identical to Go's; only internal byte spellings differ (the
-        // named HEX narrowing beside the input decode).
-        ResultCharset::Latin1 => match std::str::from_utf8(src) {
-            Ok(text) => text
-                .chars()
-                .map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?'))
-                .collect(),
-            // Non-UTF-8 source bytes are already client-charset bytes
-            // (a binary column); pass them through as Go does.
-            Err(_) => src.to_vec(),
-        },
         ResultCharset::Ascii | ResultCharset::Gbk | ResultCharset::Gb18030 => {
             find_encoding(match charset {
                 ResultCharset::Ascii => "ascii",
@@ -326,15 +311,9 @@ fn encode_with_charset_owned(src: Vec<u8>, charset: ResultCharset) -> Vec<u8> {
     match charset {
         ResultCharset::Unknown
         | ResultCharset::Binary
+        | ResultCharset::Latin1
         | ResultCharset::Utf8
         | ResultCharset::Utf8Mb4 => src,
-        ResultCharset::Latin1 => match std::str::from_utf8(&src) {
-            Ok(text) => text
-                .chars()
-                .map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?'))
-                .collect(),
-            Err(_) => src,
-        },
         ResultCharset::Ascii | ResultCharset::Gbk | ResultCharset::Gb18030 => {
             find_encoding(match charset {
                 ResultCharset::Ascii => "ascii",
@@ -392,6 +371,22 @@ mod tests {
         let bytes = [0xff, 0x00, 0xc3, 0x28];
         assert_eq!(encoder.encode_meta(&bytes).unwrap(), bytes);
         assert_eq!(encoder.encode_data(&bytes).unwrap(), bytes);
+    }
+
+    #[test]
+    fn source_latin1_result_is_byte_preserving() {
+        // Go `encodingLatin1.Transform` returns its source: UTF-8 server text
+        // (EXPLAIN's tree glyphs) and raw latin1 bytes both go out unchanged
+        // under `character_set_results = latin1`.
+        let mut encoder = ResultEncoder::new("latin1").expect("registered charset");
+        encoder
+            .update_data_encoding(UTF8MB4_DEFAULT_COLLATION_ID)
+            .expect("utf8mb4 registry row");
+        for bytes in ["└─é".as_bytes(), b"\xe9", b"\xff\x00\xc3\x28"] {
+            assert_eq!(encoder.encode_meta(bytes).unwrap(), bytes);
+            assert_eq!(encoder.encode_data(bytes).unwrap(), bytes);
+            assert_eq!(encoder.encode_data_owned(bytes.to_vec()).unwrap(), bytes);
+        }
     }
 
     #[test]

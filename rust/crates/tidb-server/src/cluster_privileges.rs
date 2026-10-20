@@ -475,14 +475,19 @@ fn run_one_privilege_reload_pass(
         }
         Ok(accounts) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
-            eprintln!(
-                "{{\"event\":\"privilege_reload_failed\",\"error\":{:?}}}",
-                format!("cluster reports {}", accounts.bootstrap)
+            // Go `LoadPrivilegeLoop`'s failed reload.
+            tidb_util::logutil::bg_logger().error(
+                "load privilege failed",
+                &[crate::zap_error(format!(
+                    "cluster reports {}",
+                    accounts.bootstrap
+                ))],
             );
         }
         Err(error) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
-            eprintln!("{{\"event\":\"privilege_reload_failed\",\"error\":{error:?}}}");
+            tidb_util::logutil::bg_logger()
+                .error("load privilege failed", &[crate::zap_error(error)]);
         }
     }
 }

@@ -29,6 +29,7 @@ use crate::util::{back_quote, escape_string_literal};
 use crate::{
     Expr, LoadDataFields, LoadDataLines, NodeText, QueryStmt, RestoreContext, StatementPriority,
 };
+use tidb_datatype::Encoding;
 
 /// The source spelling of a [`SelectStmt`].
 ///
@@ -748,20 +749,21 @@ impl SelectFieldList {
 
     /// Appends a field and records its exact source bytes.
     pub fn push_with_text(&mut self, field: SelectField, source: impl Into<Vec<u8>>) {
-        self.push_with_text_and_projection_offset(field, source, None);
+        self.push_with_text_and_projection_offset(field, None, source, None);
     }
 
-    /// Appends a parsed field with its source bytes and the decoded byte
-    /// length of the first adjacent string literal, when concatenation
-    /// occurred.
+    /// Appends a parsed field with its source bytes in `encoding` (Go
+    /// `SelectField.SetText(enc, text)`) and the decoded byte length of the
+    /// first adjacent string literal, when concatenation occurred.
     pub fn push_with_text_and_projection_offset(
         &mut self,
         field: SelectField,
+        encoding: Option<Encoding>,
         source: impl Into<Vec<u8>>,
         projection_offset: Option<usize>,
     ) {
         let mut text = NodeText::default();
-        text.set_text(None, source);
+        text.set_text(encoding, source);
         self.written_literal.push(was_written_as_literal(&field));
         self.projection_offsets.push(projection_offset);
         self.fields.push(field);

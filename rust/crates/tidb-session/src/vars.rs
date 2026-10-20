@@ -2841,9 +2841,18 @@ impl SessionVars {
     }
 
     /// Go `SessionVars.BuildParserConfig`: the switches every statement this
-    /// session parses runs under.
+    /// session parses runs under, plus the scanner encodings of
+    /// `SessionVars.GetParseParams` (`CharsetConnection` from
+    /// `character_set_connection`, `CharsetClient` from
+    /// `character_set_client`, whose read error is Go's empty name).
     #[must_use]
     pub fn build_parser_config(&self) -> tidb_parser::ParserConfig {
+        static CLIENT: crate::sysvar::StaticSysVarIndex =
+            crate::sysvar::StaticSysVarIndex::new("character_set_client");
+        static CONNECTION: crate::sysvar::StaticSysVarIndex =
+            crate::sysvar::StaticSysVarIndex::new("character_set_connection");
+        let charset_client = self.system_value_at(CLIENT.get()).unwrap_or_default();
+        let charset_connection = self.system_value_at(CONNECTION.get()).unwrap_or_default();
         tidb_parser::ParserConfig {
             enable_window_function: self.enable_window_function,
             enable_strict_double_type_check: self
@@ -2852,6 +2861,8 @@ impl SessionVars {
                     tidb_vardef::defaults::DEF_ENABLE_STRICT_DOUBLE_TYPE_CHECK,
                     |value| value.eq_ignore_ascii_case("ON") || value == "1",
                 ),
+            charset_client: tidb_datatype::find_encoding(&charset_client),
+            charset_connection: tidb_datatype::find_encoding(&charset_connection),
         }
     }
 

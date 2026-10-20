@@ -133,7 +133,13 @@ impl MysqlServerTls {
         require_secure: bool,
     ) -> Result<Self, MysqlTlsError> {
         if !matches!(min_version, "" | "TLSv1.2" | "TLSv1.3") {
-            eprintln!("Invalid TLS version {min_version:?}, using TLSv1.2 minimum");
+            tidb_util::logutil::bg_logger().warn(
+                "Invalid TLS version, using default instead",
+                &[tidb_log::Field::new(
+                    "tls-version",
+                    tidb_log::Value::Str(min_version.to_owned()),
+                )],
+            );
         }
         let versions: &[&'static rustls::SupportedProtocolVersion] = if min_version == "TLSv1.3" {
             &[&rustls::version::TLS13]
@@ -349,9 +355,10 @@ impl rustls::server::ResolvesServerCert for PemResolver {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match next {
             Ok(key) => *current = Arc::new(key),
-            Err(error) => {
-                eprintln!("Could not reload server certificate, using the old one: {error}")
-            }
+            Err(error) => tidb_util::logutil::bg_logger().warn(
+                "could not load server certificate, using the old one",
+                &[crate::zap_error(error)],
+            ),
         }
         Some(Arc::clone(&current))
     }
@@ -488,7 +495,10 @@ impl MysqlTlsManager {
         // Go's automatic rotation stores the loader result, including nil on
         // failure. SQL reload has its separate rollback policy below.
         let next = self.load().unwrap_or_else(|error| {
-            eprintln!("TLS Certificate rotation failed: {error}");
+            tidb_util::logutil::bg_logger().warn(
+                "TLS Certificate rotation failed",
+                &[crate::zap_error(error)],
+            );
             None
         });
         *self
@@ -509,8 +519,11 @@ impl tidb_session::process::TlsManager for MysqlTlsManager {
             {
                 return Err(error.to_string());
             }
-            Err(error) => {
-                eprintln!("Reload TLS failed; NO ROLLBACK ON ERROR disables new TLS: {error}");
+            Err(_) => {
+                tidb_util::logutil::bg_logger().warn(
+                    "reload TLS fail but keep working without TLS due to 'no rollback on error'",
+                    &[],
+                );
                 None
             }
         };

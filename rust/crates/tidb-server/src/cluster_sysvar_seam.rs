@@ -512,10 +512,9 @@ where
             },
         );
         if let Some(error) = refresh_error {
-            eprintln!(
-                "{{\"event\":\"sysvar_post_commit_refresh_failed\",\"level\":\"warning\",\"error\":{}}}",
-                serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned())
-            );
+            // Go `NotifyUpdateSysVarCache`'s local rebuild failure.
+            tidb_util::logutil::bg_logger()
+                .error("rebuilding sysvar cache failed", &[crate::zap_error(error)]);
         }
         notify_sysvar_update(self.notifier.as_deref(), &changed);
         Ok(changed)
@@ -530,17 +529,16 @@ where
 /// every reader's own 30-second reload tick still finds them (see
 /// `pkg/domain/domain.go` `LoadSysVarCacheLoop`). Only a committed change is
 /// ever announced.
-pub fn notify_sysvar_update(notifier: Option<&EtcdClient>, changed: &[String]) {
+pub fn notify_sysvar_update(notifier: Option<&EtcdClient>, _changed: &[String]) {
     let Some(notifier) = notifier else {
         return;
     };
-    let names = serde_json::to_string(changed).unwrap_or_else(|_| "[]".to_owned());
-    match notifier.notify_sysvar_update() {
-        Ok(()) => eprintln!("{{\"event\":\"sysvar_update_notified\",\"variables\":{names}}}"),
-        Err(error) => eprintln!(
-            "{{\"event\":\"sysvar_update_notify_failed\",\"level\":\"warning\",\"variables\":{names},\"error\":{}}}",
-            serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned())
-        ),
+    // Silent on success, like Go.
+    if let Err(error) = notifier.notify_sysvar_update() {
+        tidb_util::logutil::bg_logger().warn(
+            "notify update sysvar cache failed",
+            &[crate::zap_error(error)],
+        );
     }
 }
 

@@ -335,17 +335,14 @@ where
 /// for the same reason this does: the rows are already durable, and every
 /// reader's own reload interval still finds them. Only a committed change is
 /// ever announced.
-pub fn notify_privilege_update(notifier: Option<&EtcdClient>, changed: &[String]) {
+pub fn notify_privilege_update(notifier: Option<&EtcdClient>, _changed: &[String]) {
     let Some(notifier) = notifier else {
         return;
     };
-    let users = serde_json::to_string(changed).unwrap_or_else(|_| "[]".to_owned());
-    match notifier.notify_privilege_update() {
-        Ok(()) => eprintln!("{{\"event\":\"privilege_update_notified\",\"users\":{users}}}"),
-        Err(error) => eprintln!(
-            "{{\"event\":\"privilege_update_notify_failed\",\"level\":\"warning\",\"users\":{users},\"error\":{}}}",
-            serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned())
-        ),
+    // Go `Domain.notifyUpdatePrivilege` is silent on success.
+    if let Err(error) = notifier.notify_privilege_update() {
+        tidb_util::logutil::bg_logger()
+            .warn("notify update privilege failed", &[crate::zap_error(error)]);
     }
 }
 

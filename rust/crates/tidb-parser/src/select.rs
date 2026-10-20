@@ -1153,12 +1153,13 @@ impl Parser {
 
     pub(crate) fn parse_select_list(&mut self) -> PResult<tidb_ast::SelectFieldList> {
         let mut fields = tidb_ast::SelectFieldList::default();
+        let encoding = Some(self.text_encoding());
         let (field, text, projection_offset) = self.parse_select_field()?;
-        fields.push_with_text_and_projection_offset(field, text, projection_offset);
+        fields.push_with_text_and_projection_offset(field, encoding, text, projection_offset);
         while self.is_op(",") {
             self.bump();
             let (field, text, projection_offset) = self.parse_select_field()?;
-            fields.push_with_text_and_projection_offset(field, text, projection_offset);
+            fields.push_with_text_and_projection_offset(field, encoding, text, projection_offset);
         }
         Ok(fields)
     }
@@ -1187,8 +1188,10 @@ impl Parser {
             SelectField::Expr { expr, alias }
         };
         let end = self.peek().offset;
+        // Go `sf.SetText(p.connectionEncoding, strings.TrimSpace(..))`: the
+        // client's exact bytes, which `Text()` decodes.
         let text = if end > start {
-            self.source[start..end].trim().as_bytes().to_vec()
+            crate::raw_bytes::str_to_bytes(self.source[start..end].trim()).into_owned()
         } else {
             Vec::new()
         };

@@ -36,15 +36,16 @@
 
 pub mod file_sink;
 pub mod hex;
+mod tracing_bridge;
 
 use std::collections::HashMap;
+use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset, Local};
-use tidb_log::{Entry, Field, Level, TextEncoder};
+use tidb_log::{Entry, Field, Level, LoggerOptions, TextEncoder, WriteSyncer};
 
 use crate::stringutil::go_to_lower;
 use file_sink::{RotatingFile, SharedSink, Sink};
@@ -135,43 +136,26 @@ pub fn format_slow_log_time(t: &DateTime<FixedOffset>) -> String {
     formatted
 }
 
-fn level_ord(l: Level) -> u8 {
-    match l {
-        Level::Debug => 0,
-        Level::Info => 1,
-        Level::Warn => 2,
-        Level::Error => 3,
-        Level::DPanic => 4,
-        Level::Panic => 5,
-        Level::Fatal => 6,
-    }
-}
-
-/// A settable level shared between loggers (zap `AtomicLevel`).
+/// A settable level shared between loggers (zap `AtomicLevel`). After
+/// [`init_logger`] it is the very level of the `pingcap/log` global logger
+/// (Go `log.ReplaceGlobals(gl, props)` publishes `props.Level`), so
+/// [`set_level`] and `log.SetLevel` move one threshold.
 #[derive(Clone)]
-pub struct AtomicLevel(Arc<AtomicU8>);
+pub struct AtomicLevel(tidb_log::AtomicLevel);
 
 impl AtomicLevel {
     fn new(l: Level) -> AtomicLevel {
-        AtomicLevel(Arc::new(AtomicU8::new(level_ord(l))))
+        AtomicLevel(tidb_log::AtomicLevel::new(l))
     }
     fn enabled(&self, l: Level) -> bool {
-        level_ord(l) >= self.0.load(SeqCst)
+        l >= self.0.get()
     }
     fn set(&self, l: Level) {
-        self.0.store(level_ord(l), SeqCst);
+        self.0.set(l);
     }
     /// The current level, for tests/introspection.
     pub fn get(&self) -> Level {
-        match self.0.load(SeqCst) {
-            0 => Level::Debug,
-            1 => Level::Info,
-            2 => Level::Warn,
-            3 => Level::Error,
-            4 => Level::DPanic,
-            5 => Level::Panic,
-            _ => Level::Fatal,
-        }
+        self.0.get()
     }
 }
 
@@ -200,6 +184,10 @@ struct LoggerInner {
     encoder: TextEncoder,
     encoding: Encoding,
     sink: SharedSink,
+    // The zap write syncer over `sink`: buffering (`is-buffered`) and the
+    // write timeout (`timeout`) wrap it exactly as `pingcap/log` wraps
+    // lumberjack.
+    output: Arc<dyn WriteSyncer>,
     level: AtomicLevel,
 }
 
@@ -214,6 +202,7 @@ impl Logger {
         encoder: TextEncoder,
         encoding: Encoding,
         sink: SharedSink,
+        output: Arc<dyn WriteSyncer>,
         level: AtomicLevel,
     ) -> Logger {
         Logger {
@@ -221,6 +210,7 @@ impl Logger {
                 encoder,
                 encoding,
                 sink,
+                output,
                 level,
             }),
         }
@@ -228,10 +218,12 @@ impl Logger {
 
     /// A no-op-ish default logger writing to stdout at info level.
     pub fn stdout() -> Logger {
+        let sink: SharedSink = Arc::new(Mutex::new(Sink::Stdout));
         Logger::new(
             TextEncoder::default(),
             Encoding::Unified,
-            Arc::new(Mutex::new(Sink::Stdout)),
+            Arc::clone(&sink),
+            sink_syncer(&sink),
             AtomicLevel::new(Level::Info),
         )
     }
@@ -243,6 +235,7 @@ impl Logger {
                 encoder: self.inner.encoder.with_fields(fields),
                 encoding: self.inner.encoding.clone(),
                 sink: Arc::clone(&self.inner.sink),
+                output: Arc::clone(&self.inner.output),
                 level: self.inner.level.clone(),
             }),
         }
@@ -259,24 +252,32 @@ impl Logger {
         Arc::ptr_eq(&self.inner.sink, &other.inner.sink)
     }
 
-    fn enabled(&self, level: Level) -> bool {
+    /// Whether an entry at `level` passes this logger's level gate (zap
+    /// `Core.Enabled`).
+    pub fn enabled(&self, level: Level) -> bool {
         self.inner.level.enabled(level)
     }
 
     #[track_caller]
     fn emit(&self, level: Level, msg: &str, fields: &[Field]) {
+        let loc = std::panic::Location::caller();
+        self.emit_at(level, loc.file(), loc.line(), msg, fields);
+    }
+
+    /// Writes one entry whose caller is `file:line` (the zap caller of an
+    /// entry that did not come from a `#[track_caller]` call site).
+    pub fn emit_at(&self, level: Level, file: &str, line: u32, msg: &str, fields: &[Field]) {
         if !self.enabled(level) {
             return;
         }
-        let loc = std::panic::Location::caller();
         let now: DateTime<FixedOffset> = Local::now().fixed_offset();
-        let line = match self.inner.encoding {
+        let encoded = match self.inner.encoding {
             Encoding::Unified => {
                 let ent = Entry {
                     time: now,
                     level,
                     logger_name: String::new(),
-                    caller: Some((loc.file().to_string(), loc.line())),
+                    caller: Some((file.to_string(), line)),
                     message: msg.to_string(),
                     stack: String::new(),
                 };
@@ -286,7 +287,11 @@ impl Logger {
                 format!("# Time: {}\n{}\n", format_slow_log_time(&now), msg)
             }
         };
-        self.inner.sink.lock().unwrap().write_line(&line);
+        let _ = self.inner.output.write(encoded.as_bytes());
+        // zap's ioCore syncs after entries above ErrorLevel.
+        if level > Level::Error {
+            let _ = self.inner.output.sync();
+        }
     }
 
     /// Debug-level log.
@@ -331,10 +336,12 @@ fn read_globals<R>(f: impl FnOnce(&Globals) -> R) -> R {
     let mut w = GLOBALS.write().unwrap();
     if w.is_none() {
         let level = AtomicLevel::new(Level::Info);
+        let sink: SharedSink = Arc::new(Mutex::new(Sink::Stdout));
         let l = Logger::new(
             TextEncoder::default(),
             Encoding::Unified,
-            Arc::new(Mutex::new(Sink::Stdout)),
+            Arc::clone(&sink),
+            sink_syncer(&sink),
             level.clone(),
         );
         *w = Some(Globals {
@@ -372,6 +379,7 @@ pub fn err_verbose_logger() -> Logger {
 pub fn set_level(level: &str) -> Result<(), String> {
     let l = parse_level(level)?;
     read_globals(|g| g.level.set(l));
+    tracing_bridge::level_changed();
     Ok(())
 }
 
@@ -380,38 +388,126 @@ pub fn get_level() -> Level {
     read_globals(|g| g.level.get())
 }
 
-fn validate_compression(c: &str) -> Result<bool, String> {
-    match c {
-        "" => Ok(false),
-        "gzip" => Ok(true),
-        other => Err(format!("unsupported compression: {other}")),
+/// Flushes the global loggers' buffered output (Go `log.Sync`).
+pub fn sync() -> io::Result<()> {
+    read_globals(|g| g.global.inner.output.sync())
+}
+
+// zap `WriteSyncer` over a shared sink.
+struct SinkSyncer(SharedSink);
+
+impl WriteSyncer for SinkSyncer {
+    fn write(&self, bytes: &[u8]) -> io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .write_bytes(bytes)
+            .map(|()| bytes.len())
+    }
+
+    fn sync(&self) -> io::Result<()> {
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .sync()
     }
 }
 
+fn sink_syncer(sink: &SharedSink) -> Arc<dyn WriteSyncer> {
+    Arc::new(SinkSyncer(Arc::clone(sink)))
+}
+
+// `pingcap/log.initFileLog`: the file checks run before the compression
+// setting is validated.
 fn build_sink(file: &FileLogConfig) -> Result<SharedSink, String> {
     if file.filename.is_empty() {
         return Ok(Arc::new(Mutex::new(Sink::Stdout)));
     }
-    let compress = validate_compression(&file.compression)?;
-    let rf = RotatingFile::open_with_max_days(
+    let mut rf = RotatingFile::open_with_max_days(
         Path::new(&file.filename),
         file.max_size,
         file.max_backups,
         file.max_days,
-        compress,
+        false,
     )
     .map_err(|e| e.to_string())?;
+    rf.compress = match file.compression.as_str() {
+        "" => false,
+        "gzip" => true,
+        other => return Err(format!("can't set compression to `{other}`")),
+    };
     Ok(Arc::new(Mutex::new(Sink::File(rf))))
 }
 
-// Go `newSlowQueryLogConfig`/`newGeneralLogConfig`: same file settings,
-// dedicated filename, level pinned to the default (info).
-fn sub_file_config(cfg: &LogConfig, filename: &str) -> FileLogConfig {
-    let mut file = cfg.config.file.clone();
-    if !filename.is_empty() {
-        file.filename = filename.to_string();
+// `pingcap/log.InitLogger`'s output: the file sink, buffered when
+// `is-buffered` is set (stdout is never buffered).
+fn build_output(file: &FileLogConfig, sink: &SharedSink) -> Arc<dyn WriteSyncer> {
+    let output = sink_syncer(sink);
+    if !file.filename.is_empty() && file.is_buffered {
+        tidb_log::buffered_write_syncer(output, file.buffer_size, file.buffer_flush_interval)
+    } else {
+        output
     }
-    file
+}
+
+// `pingcap/log.InitLogger` for a dedicated logger whose entries this crate
+// encodes itself: the sink, its write syncer with the configured write
+// timeout (`InitLoggerWithWriteSyncer`), and a fresh level from `level`.
+fn init_dedicated(
+    config: &tidb_log::Config,
+) -> Result<(SharedSink, Arc<dyn WriteSyncer>, AtomicLevel), String> {
+    let sink = build_sink(&config.file)?;
+    let level = AtomicLevel::new(parse_level(&config.level)?);
+    let mut output = build_output(&config.file, &sink);
+    if config.timeout > 0 {
+        output = tidb_log::lock_with_timeout(Arc::new(DynSyncer(output)), config.timeout as u64);
+    }
+    Ok((sink, output, level))
+}
+
+// Adapts a shared trait object to `lock_with_timeout`'s sized parameter.
+struct DynSyncer(Arc<dyn WriteSyncer>);
+
+impl WriteSyncer for DynSyncer {
+    fn write(&self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.write(bytes)
+    }
+
+    fn sync(&self) -> io::Result<()> {
+        self.0.sync()
+    }
+}
+
+// Go `newSlowQueryLogConfig`/`newGeneralLogConfig`: the global config with
+// the level reset to the default (info) and, when one is configured, the
+// dedicated filename.
+fn sub_log_config(cfg: &LogConfig, filename: &str) -> tidb_log::Config {
+    let mut config = cfg.config.clone();
+    config.level = String::new();
+    if !filename.is_empty() {
+        config.file.filename = filename.to_string();
+    }
+    config
+}
+
+// Go `log.InitLogger(&cfg.Config, opts...)` with logutil's
+// `zap.AddStacktrace(zapcore.FatalLevel)` option and the wrapped core's
+// fields, followed by `log.ReplaceGlobals(gl, props)`: the `pingcap/log`
+// global (`tidb_log::info` and friends) writes through the same sink, the
+// same timeout-wrapped syncer and the same level as [`bg_logger`].
+fn init_global(
+    cfg: &LogConfig,
+    core_fields: &[Field],
+) -> Result<(SharedSink, tidb_log::ZapProperties), String> {
+    let sink = build_sink(&cfg.config.file)?;
+    let output = build_output(&cfg.config.file, &sink);
+    let (gl, props) =
+        tidb_log::init_logger_with_write_syncer(&cfg.config, Arc::clone(&output), output)?;
+    let gl = gl
+        .with_options(LoggerOptions::default().with_stacktrace_level(Level::Fatal))
+        .with_fields(core_fields);
+    let _ = tidb_log::replace_globals(gl);
+    Ok((sink, props))
 }
 
 /// Initializes global, slow-query, and general loggers (Go `InitLogger`).
@@ -423,28 +519,36 @@ pub fn init_logger(cfg: &LogConfig) -> Result<(), String> {
 /// logger after attaching fields to its core, so every emitted entry carries
 /// them even when the call site supplies no context fields.
 pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> Result<(), String> {
-    let level = AtomicLevel::new(parse_level(&cfg.config.level)?);
-
+    let (global_sink, props) = init_global(cfg, core_fields)?;
+    let level = AtomicLevel(props.level.clone());
     let encoder = TextEncoder::new(&cfg.config)?.with_fields(core_fields);
-    let global_sink = build_sink(&cfg.config.file)?;
     let global = Logger::new(
         encoder,
         Encoding::Unified,
         Arc::clone(&global_sink),
+        Arc::clone(&props.syncer),
         level.clone(),
     );
 
-    // Error-verbose logger: same sink, never suppresses verbose errors.
-    let err_verbose = if !cfg.config.disable_error_verbose {
+    // Error-verbose logger: same sink, never suppresses verbose errors. Go
+    // builds it with `InitLoggerWithWriteSyncer(&newLogCfg, props.Syncer,
+    // props.ErrSyncer)`, which parses its own level from the config: it
+    // does not follow later `SetLevel` calls.
+    let err_verbose = if cfg.config.format == "json" || !cfg.config.disable_error_verbose {
         global.clone()
     } else {
         let mut c = cfg.config.clone();
         c.disable_error_verbose = false;
+        let mut output = Arc::clone(&props.syncer);
+        if c.timeout > 0 {
+            output = tidb_log::lock_with_timeout(Arc::new(DynSyncer(output)), c.timeout as u64);
+        }
         Logger::new(
             TextEncoder::new(&c)?.with_fields(core_fields),
             Encoding::Unified,
             Arc::clone(&global_sink),
-            level.clone(),
+            output,
+            AtomicLevel::new(parse_level(&c.level)?),
         )
     };
 
@@ -457,32 +561,34 @@ pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> R
                 TextEncoder::default(),
                 Encoding::SlowLog,
                 Arc::clone(&global_sink),
+                Arc::clone(&props.syncer),
                 level.clone(),
             )
         } else {
-            let file = sub_file_config(cfg, &cfg.slow_query_file);
-            let sink = build_sink(&file)?;
+            let (sink, output, level) = init_dedicated(&sub_log_config(cfg, &cfg.slow_query_file))?;
             Logger::new(
                 TextEncoder::default(),
                 Encoding::SlowLog,
                 sink,
-                AtomicLevel::new(Level::Info),
+                output,
+                level,
             )
         };
 
-    let general =
-        if cfg.general_log_file.is_empty() || cfg.general_log_file == cfg.config.file.filename {
-            global.clone()
-        } else {
-            let file = sub_file_config(cfg, &cfg.general_log_file);
-            let sink = build_sink(&file)?;
-            Logger::new(
-                TextEncoder::new(&cfg.config)?,
-                Encoding::Unified,
-                sink,
-                AtomicLevel::new(Level::Info),
-            )
-        };
+    let general = if cfg.general_log_file.is_empty()
+        || cfg.general_log_file == cfg.config.file.filename
+    {
+        global.clone()
+    } else {
+        let (sink, output, level) = init_dedicated(&sub_log_config(cfg, &cfg.general_log_file))?;
+        Logger::new(
+            TextEncoder::new(&cfg.config)?,
+            Encoding::Unified,
+            sink,
+            output,
+            level,
+        )
+    };
 
     *GLOBALS.write().unwrap() = Some(Globals {
         global,
@@ -491,40 +597,43 @@ pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> R
         err_verbose,
         level,
     });
+    tracing_bridge::install();
     Ok(())
 }
 
 /// Replaces the global loggers (Go `ReplaceLogger`).
 pub fn replace_logger(cfg: &LogConfig) -> Result<(), String> {
-    let level = AtomicLevel::new(parse_level(&cfg.config.level)?);
-
-    let global_sink = build_sink(&cfg.config.file)?;
+    let (global_sink, props) = init_global(cfg, &[])?;
+    let level = AtomicLevel(props.level.clone());
     let global = Logger::new(
         TextEncoder::new(&cfg.config)?,
         Encoding::Unified,
         global_sink,
+        Arc::clone(&props.syncer),
         level.clone(),
     );
 
     // Go ReplaceLogger calls both dedicated constructors unconditionally.
     // Each constructor initializes its own write syncer, even when an empty
     // sub-logger filename resolves to the same path as the global logger.
-    let slow_file = sub_file_config(cfg, &cfg.slow_query_file);
-    let slow_sink = build_sink(&slow_file)?;
+    let (slow_sink, slow_output, slow_level) =
+        init_dedicated(&sub_log_config(cfg, &cfg.slow_query_file))?;
     let slow_query = Logger::new(
         TextEncoder::default(),
         Encoding::SlowLog,
         slow_sink,
-        AtomicLevel::new(Level::Info),
+        slow_output,
+        slow_level,
     );
 
-    let general_file = sub_file_config(cfg, &cfg.general_log_file);
-    let general_sink = build_sink(&general_file)?;
+    let (general_sink, general_output, general_level) =
+        init_dedicated(&sub_log_config(cfg, &cfg.general_log_file))?;
     let general = Logger::new(
         TextEncoder::new(&cfg.config)?,
         Encoding::Unified,
         general_sink,
-        AtomicLevel::new(Level::Info),
+        general_output,
+        general_level,
     );
 
     // Go ReplaceLogger does not update errVerboseLogger.
@@ -536,12 +645,10 @@ pub fn replace_logger(cfg: &LogConfig) -> Result<(), String> {
         err_verbose,
         level,
     });
+    tracing_bridge::install();
 
     let config = serde_json::to_string(&cfg.config).map_err(|e| e.to_string())?;
-    bg_logger().info(
-        &format!("replaced global logger with config: {config}"),
-        &[],
-    );
+    tidb_log::s().infof(format_args!("replaced global logger with config: {config}"));
     Ok(())
 }
 
@@ -1196,7 +1303,9 @@ mod tests {
             false,
         );
         init_logger(&conf).unwrap();
-        bg_logger().info(&"x".repeat(1024 * 1024), &[]);
+        // lumberjack mills (age-prunes) when the first write opens the
+        // existing file, before any rotation.
+        bg_logger().info("open the existing log", &[]);
 
         assert!(!expired.exists(), "expired lumberjack backup was retained");
         assert!(lookalike.exists(), "non-backup lookalike was deleted");
@@ -1451,5 +1560,257 @@ mod tests {
         let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
         assert_eq!(files.len(), 2, "expected rotation to produce 2 files");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn fresh_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "tidb_logutil_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn file_config(filename: &std::path::Path, max_size: i64) -> FileLogConfig {
+        FileLogConfig {
+            filename: filename.to_string_lossy().to_string(),
+            max_size,
+            ..Default::default()
+        }
+    }
+
+    /// `pingcap/log.initFileLog` probes the path and removes the probe;
+    /// lumberjack creates the file on the first write with mode 0600.
+    #[test]
+    fn log_file_is_created_on_first_write_with_lumberjack_mode() {
+        let _g = guard();
+        let dir = fresh_dir("create");
+        let filename = dir.join("nested").join("tidb.log");
+        let conf = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            file_config(&filename, 300),
+            false,
+        );
+        init_logger(&conf).unwrap();
+        assert!(dir.join("nested").is_dir(), "initFileLog creates the dir");
+        assert!(!filename.exists(), "lumberjack opens the file lazily");
+        bg_logger().info("first line", &[]);
+        assert!(filename.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&filename).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        let conf = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            file_config(&dir, 300),
+            false,
+        );
+        assert_eq!(
+            init_logger(&conf).err().as_deref(),
+            Some("can't use directory as log file name")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The unified log format line exactly as `pingcap/log`'s text encoder
+    /// lays it out: `[time] [LEVEL] [file:line] [message] [k=v]...`, with
+    /// the message and keys/values quoted only when they need it.
+    #[test]
+    fn unified_line_shape_matches_pingcap_log() {
+        let _g = guard();
+        let dir = fresh_dir("shape");
+        let filename = dir.join("tidb.log");
+        let conf = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            file_config(&filename, 300),
+            false,
+        );
+        init_logger(&conf).unwrap();
+        let line_no = line!() + 1;
+        bg_logger().info(
+            "server is running MySQL protocol",
+            &[
+                Field::new("addr", Value::Str("0.0.0.0:4000".into())),
+                Field::new("listening on addr", Value::Str("a b".into())),
+                Field::new("quote", Value::Str("x\"y".into())),
+                Field::new("conn", Value::U64(7)),
+            ],
+        );
+        bg_logger().info("acquireServerID", &[]);
+        let content = std::fs::read_to_string(&filename).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        let header =
+            regex::Regex::new(r"^\[\d{4}/\d\d/\d\d \d\d:\d\d:\d\d\.\d{3} [+-]\d\d:\d\d\] ")
+                .unwrap();
+        assert!(header.is_match(lines[0]), "{}", lines[0]);
+        let (_, rest) = lines[0].split_once("] ").unwrap();
+        assert_eq!(
+            rest,
+            format!(
+                "[INFO] [mod.rs:{line_no}] [\"server is running MySQL protocol\"] \
+                 [addr=0.0.0.0:4000] [\"listening on addr\"=\"a b\"] [quote=\"x\\\"y\"] \
+                 [conn=7]"
+            )
+        );
+        assert!(lines[1].ends_with("] [acquireServerID]"), "{}", lines[1]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Go `log.ReplaceGlobals(gl, props)`: the `pingcap/log` global writes to
+    /// the same file at the same level, `SetLevel` moves both, and logutil's
+    /// `AddStacktrace(FatalLevel)` keeps stacks off ERROR entries.
+    #[test]
+    fn pingcap_log_global_shares_file_and_level() {
+        let _g = guard();
+        let dir = fresh_dir("global");
+        let filename = dir.join("tidb.log");
+        let conf = new_log_config(
+            "warn",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            file_config(&filename, 300),
+            false,
+        );
+        init_logger(&conf).unwrap();
+        tidb_log::info("filtered info", &[]);
+        bg_logger().info("filtered bg info", &[]);
+        tidb_log::warn("global warn", &[]);
+        tidb_log::error("global error", &[]);
+        set_level("info").unwrap();
+        assert_eq!(tidb_log::get_level(), Level::Info);
+        tidb_log::info("global info after set level", &[]);
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(!content.contains("filtered"), "{content}");
+        assert!(content.contains("[WARN] [mod.rs:"), "{content}");
+        assert!(content.contains("[\"global warn\"]"), "{content}");
+        assert!(
+            content.contains("[\"global info after set level\"]"),
+            "{content}"
+        );
+        assert!(!content.contains("stack="), "{content}");
+        assert_eq!(content.lines().count(), 3, "{content}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// lumberjack's thresholds: opening an existing file rotates when
+    /// `size + len >= max`, an open file rotates when `size + len > max`,
+    /// and a single write longer than `max` is refused without rotating.
+    #[test]
+    fn rotation_thresholds_follow_lumberjack() {
+        let _g = guard();
+        let dir = fresh_dir("threshold");
+        let filename = dir.join("tidb.log");
+        let max = 1024 * 1024;
+        let mut sink =
+            file_sink::RotatingFile::open(&filename, 1, 0, false).expect("rotating file");
+        // Existing file: exactly `max - 4` bytes; a 4-byte write reaches max.
+        std::fs::write(&filename, vec![b'a'; max - 4]).unwrap();
+        sink.write(b"bbbb").unwrap();
+        let backups = || {
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter(|entry| entry.file_name() != "tidb.log")
+                .count()
+        };
+        assert_eq!(backups(), 1, "size + len >= max rotates on open");
+        assert_eq!(std::fs::read(&filename).unwrap(), b"bbbb");
+
+        // Open file: filling exactly to max does not rotate; one more byte
+        // does.
+        sink.write(&vec![b'c'; max - 4]).unwrap();
+        assert_eq!(backups(), 1);
+        assert_eq!(std::fs::metadata(&filename).unwrap().len(), max as u64);
+        sink.write(b"d").unwrap();
+        assert_eq!(backups(), 2, "size + len > max rotates");
+
+        let error = sink.write(&vec![b'e'; max + 1]).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("write length {} exceeds maximum file size {max}", max + 1)
+        );
+        assert_eq!(backups(), 2);
+        assert_eq!(std::fs::read(&filename).unwrap(), b"d");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `max-backups` keeps the newest backups, counting `x.log` and
+    /// `x.log.gz` as one.
+    #[test]
+    fn max_backups_keeps_newest_backups() {
+        let _g = guard();
+        let dir = fresh_dir("backups");
+        let filename = dir.join("tidb.log");
+        for (name, body) in [
+            ("tidb-2026-01-01T00-00-00.000.log", "oldest"),
+            ("tidb-2026-01-02T00-00-00.000.log", "middle"),
+            ("tidb-2026-01-03T00-00-00.000.log.gz", "newest"),
+        ] {
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+        std::fs::write(&filename, b"seed").unwrap();
+        let mut sink =
+            file_sink::RotatingFile::open(&filename, 1, 2, false).expect("rotating file");
+        sink.write(b"line\n").unwrap();
+        assert!(!dir.join("tidb-2026-01-01T00-00-00.000.log").exists());
+        assert!(dir.join("tidb-2026-01-02T00-00-00.000.log").exists());
+        assert!(dir.join("tidb-2026-01-03T00-00-00.000.log.gz").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `tracing` events from ported call sites land in the log file as
+    /// unified-format entries with their structured fields.
+    #[test]
+    fn tracing_events_reach_the_log_file() {
+        let _g = guard();
+        let dir = fresh_dir("tracing");
+        let filename = dir.join("tidb.log");
+        let conf = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            file_config(&filename, 300),
+            false,
+        );
+        init_logger(&conf).unwrap();
+        let line_no = line!() + 1;
+        ::tracing::warn!(error = %"disk full", "spill to disk failed");
+        ::tracing::debug!("filtered debug");
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(
+            content.ends_with(&format!(
+                "[WARN] [mod.rs:{line_no}] [\"spill to disk failed\"] [error=\"disk full\"]\n"
+            )),
+            "{content}"
+        );
+        assert!(!content.contains("filtered"), "{content}");
+
+        // `SetLevel` reaches `tracing`'s cached static filter too.
+        set_level("debug").unwrap();
+        ::tracing::trace!("trace logs at debug");
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(
+            content.contains("[DEBUG] [mod.rs:") && content.contains("[\"trace logs at debug\"]"),
+            "{content}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

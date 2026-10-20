@@ -23,6 +23,7 @@
 
 pub mod go_strconv;
 mod map;
+pub mod raw_bytes;
 
 use std::cell::UnsafeCell;
 use std::fmt;

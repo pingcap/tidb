@@ -78,11 +78,13 @@ pub fn expression_field_display_name(
     expr: &tidb_ast::Expr,
 ) -> String {
     let inner = inner_field_expr(expr);
+    // `Text()` keeps the client's bytes outside string literals; a byte that
+    // is not UTF-8 travels as its `raw_bytes` escape.
     let text = || {
-        fields
-            .text(index)
-            .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .map_or_else(|| expr.restore(), str::to_owned)
+        fields.text(index).map_or_else(
+            || expr.restore(),
+            |bytes| tidb_hack::raw_bytes::bytes_to_str(bytes).into_owned(),
+        )
     };
     // Go: `NAME_CONST` names the column by its FIRST argument's value, which
     // MySQL documents as the function's whole purpose. Go evaluates that
@@ -184,9 +186,12 @@ fn literal_label_value(expr: &tidb_ast::Expr) -> Option<String> {
 /// are not "graphic" in MySQL's sense.
 ///
 /// `tidb-mysql` owns the exact source category tables, so this does not depend
-/// on the Unicode version bundled with Rust.
+/// on the Unicode version bundled with Rust. A raw byte that is not UTF-8
+/// (a `raw_bytes` escape) decodes in Go as `utf8.RuneError`, a graphic symbol.
 fn trim_leading_non_graphic(value: &str) -> &str {
-    value.trim_start_matches(|c: char| !tidb_mysql::is_range_graph(c))
+    value.trim_start_matches(|c: char| {
+        !tidb_mysql::is_range_graph(c) && !tidb_hack::raw_bytes::is_escape(c)
+    })
 }
 
 /// Go `getInnerFromParenthesesAndUnaryPlus`: strips enclosing parentheses and

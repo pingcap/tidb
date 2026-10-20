@@ -155,6 +155,154 @@ fn latin1_is_a_byte_preserving_utf8_alias() {
     );
 }
 
+/// A statement as the client's raw bytes: the wire carries a byte that is not
+/// UTF-8 as its `raw_bytes` escape (`decode_client_sql`).
+fn run_bytes(session: &mut Session, sql: &[u8]) -> Result<StmtResult, DriverError> {
+    session.run(&tidb_hack::raw_bytes::bytes_to_str(sql))
+}
+
+/// Go scans a latin1, binary, or utf8mb4 client's SQL bytes raw
+/// (`encodingLatin1`/`encodingBin` are `encoding.Nop`, and a UTF-8 client's
+/// literal is kept as written), converting a string literal only into the
+/// connection charset. Every expectation is a TiDB capture (testkit, the same
+/// statements in order): a utf8mb4 client stores a raw `0xE9` in a latin1
+/// column and is refused 1366 by a utf8mb4 one; a latin1 client on a utf8mb4
+/// connection (the stock `mysql --default-character-set=latin1` handshake)
+/// sends `0xE9` as `?` and terminal UTF-8 unchanged -- never double-encoded;
+/// `SET NAMES latin1`/`binary` keep `0xE9` as is.
+#[test]
+fn noop_client_charsets_keep_the_raw_literal_bytes() {
+    let mut session = charset_session();
+    let glyphs = "\u{2514}\u{2500}\u{e9}".as_bytes();
+    let with_glyphs = |prefix: &[u8], suffix: &[u8]| [prefix, glyphs, suffix].concat();
+    let incorrect = |session: &mut Session, sql: &[u8]| {
+        let error = run_bytes(session, sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1366, "Incorrect string value '\\xE9' for column 'a'"),
+            "{sql:?}"
+        );
+    };
+
+    // utf8mb4 client, strict mode.
+    incorrect(&mut session, b"INSERT INTO u1 VALUES ('\xe9')");
+    incorrect(&mut session, b"INSERT INTO u1 VALUES ('a\xe9b')");
+    run_bytes(&mut session, b"INSERT INTO l1 VALUES ('\xe9')").unwrap();
+    assert_eq!(
+        row_text(run_bytes(
+            &mut session,
+            b"SELECT HEX('\xe9'), HEX('a\xe9b')"
+        )),
+        vec![vec!["E9", "61E962"]]
+    );
+    session.run("SET sql_mode = ''").unwrap();
+    run_bytes(&mut session, b"INSERT INTO u1 VALUES ('a\xe9b')").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1366",
+            "Incorrect string value '\\xE9' for column 'a'"
+        ]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT HEX(a) FROM u1")),
+        vec![vec!["613F62"]]
+    );
+    session.run("SET sql_mode = DEFAULT").unwrap();
+
+    // latin1 client, utf8mb4 connection.
+    session.run("SET character_set_client = latin1").unwrap();
+    assert_eq!(
+        row_text(run_bytes(
+            &mut session,
+            &with_glyphs(b"SELECT HEX('\xe9'), HEX('", b"')")
+        )),
+        vec![vec!["3F", "E29494E29480C3A9"]]
+    );
+    run_bytes(&mut session, b"INSERT INTO l1 VALUES ('\xe9')").unwrap();
+    run_bytes(
+        &mut session,
+        &with_glyphs(b"INSERT INTO u1 VALUES ('", b"')"),
+    )
+    .unwrap();
+
+    // SET NAMES latin1.
+    session.run("SET NAMES latin1").unwrap();
+    assert_eq!(
+        row_text(run_bytes(
+            &mut session,
+            &with_glyphs(b"SELECT HEX('\xe9'), HEX('", b"'), COLLATION('\xe9')")
+        )),
+        vec![vec!["E9", "E29494E29480C3A9", "latin1_bin"]]
+    );
+    run_bytes(&mut session, b"INSERT INTO l1 VALUES ('\xe9')").unwrap();
+    run_bytes(
+        &mut session,
+        &with_glyphs(b"INSERT INTO l1 VALUES ('", b"')"),
+    )
+    .unwrap();
+    incorrect(&mut session, b"INSERT INTO u1 VALUES ('\xe9')");
+    run_bytes(
+        &mut session,
+        &with_glyphs(b"INSERT INTO u1 VALUES ('", b"')"),
+    )
+    .unwrap();
+
+    // SET NAMES binary.
+    session.run("SET NAMES binary").unwrap();
+    assert_eq!(
+        row_text(run_bytes(
+            &mut session,
+            b"SELECT HEX('\xe9'), COLLATION('\xe9')"
+        )),
+        vec![vec!["E9", "binary"]]
+    );
+    incorrect(&mut session, b"INSERT INTO u1 VALUES ('\xe9')");
+    run_bytes(&mut session, b"INSERT INTO l1 VALUES ('\xff')").unwrap();
+
+    session.run("SET NAMES utf8mb4").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT HEX(a) FROM l1")),
+        vec![
+            vec!["E9"],
+            vec!["3F"],
+            vec!["E9"],
+            vec!["E29494E29480C3A9"],
+            vec!["FF"]
+        ]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT HEX(a) FROM u1")),
+        vec![
+            vec!["613F62"],
+            vec!["E29494E29480C3A9"],
+            vec!["E29494E29480C3A9"]
+        ]
+    );
+}
+
+/// Go `Scanner.convert2System`: a utf8mb4 client's identifier turns an
+/// invalid byte into `?` with warning 1300; a latin1 client's keeps it with
+/// no warning. Captured: `select 1 as \`a\xE9\`` warns
+/// `Invalid utf8mb4 character string: 'E9'` only under the utf8mb4 client.
+#[test]
+fn client_identifier_bytes_convert_like_go() {
+    let mut session = Session::new();
+    run_bytes(&mut session, b"SELECT 1 AS `a\xe9`").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1300",
+            "Invalid utf8mb4 character string: 'E9'"
+        ]]
+    );
+    session.run("SET character_set_client = latin1").unwrap();
+    run_bytes(&mut session, b"SELECT 1 AS `a\xe9`").unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+}
+
 /// `CHARSET gbk` with no `COLLATE` resolves to `gbk_chinese_ci`, not
 /// `gbk_bin` -- TiDB leaves the Chinese charsets at their registry default.
 /// Captured: `ORDER BY` on the gbk column follows GBK weights (`列` before

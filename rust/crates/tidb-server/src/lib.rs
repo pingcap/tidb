@@ -163,6 +163,141 @@ pub use wire_status::{
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_util::traceevent::register_with_client_go();
     config.install_process_globals();
+    setup_log()?;
+    let result = run_node_with_log(config);
+    // Go `main`: `syncLog()` after the server exited; a failed sync turns
+    // the exit into a generic failure.
+    if let Err(error) = tidb_util::logutil::sync() {
+        eprintln!("sync log err: {error}");
+        if result.is_ok() {
+            return Err(RunConfiguredNodeError::Log(error.to_string()));
+        }
+    }
+    result
+}
+
+/// Go `cmd/tidb-server/main.go` `setupLog`:
+/// `logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())`.
+/// The log level, file and slow-query file already carry the `-L`,
+/// `--log-file` and `--log-slow-query` overrides (`overrideConfig`).
+fn setup_log() -> Result<(), RunConfiguredNodeError> {
+    let log = tidb_config::config_tree::config::get_global_config()
+        .log
+        .to_log_config();
+    let file = tidb_util::logutil::FileLogConfig {
+        filename: log.file.filename,
+        max_size: log.file.max_size,
+        max_days: log.file.max_days,
+        max_backups: log.file.max_backups,
+        compression: log.file.compression,
+        is_buffered: log.file.is_buffered,
+        buffer_size: log.file.buffer_size,
+        buffer_flush_interval: log.file.buffer_flush_interval,
+    };
+    let mut log_config = tidb_util::logutil::new_log_config(
+        &log.level,
+        &log.format,
+        &log.slow_query_file,
+        &log.general_log_file,
+        file,
+        log.disable_timestamp,
+    );
+    log_config.config.disable_error_verbose = log.disable_error_verbose;
+    log_config.config.timeout = log.timeout;
+    // `keyspace.WrapZapcoreWithKeyspace`: entries carry `keyspaceName` only
+    // when a keyspace is configured.
+    let keyspace_name = tidb_util::keyspace::get_keyspace_name_by_settings();
+    let core_fields = if tidb_util::keyspace::is_keyspace_name_empty(&keyspace_name) {
+        Vec::new()
+    } else {
+        vec![tidb_log::Field::new(
+            "keyspaceName",
+            tidb_log::Value::Str(keyspace_name),
+        )]
+    };
+    tidb_util::logutil::init_logger_with_core_fields(&log_config, &core_fields)
+        .map_err(RunConfiguredNodeError::Log)
+}
+
+/// zap `zap.Error(err)` under TiDB's default `disable-error-stack`: an
+/// `error` field carrying the error text.
+pub(crate) fn zap_error(error: impl std::fmt::Display) -> tidb_log::Field {
+    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))
+}
+
+/// zap `zap.Stack("stack")`: the current stack trace.
+pub(crate) fn zap_stack() -> tidb_log::Field {
+    tidb_log::Field::new(
+        "stack",
+        tidb_log::Value::Str(std::backtrace::Backtrace::force_capture().to_string()),
+    )
+}
+
+/// Go `util.Recover(metrics.LabelDomain, funcInfo, nil, false)`'s line for a
+/// domain worker whose panic surfaced when it was joined. The panicking
+/// thread's stack is gone by then, so the entry carries no `stack` field.
+pub(crate) fn log_recovered_panic(func_info: &str, payload: &(dyn std::any::Any + Send)) {
+    let recovered = payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    tidb_util::logutil::bg_logger().error(
+        "panic in the recoverable goroutine",
+        &[
+            tidb_log::Field::new("label", tidb_log::Value::Str("domain".to_owned())),
+            tidb_log::Field::new("funcInfo", tidb_log::Value::Str(func_info.to_owned())),
+            tidb_log::Field::new("r", tidb_log::Value::Str(recovered)),
+        ],
+    );
+}
+
+/// Go `net.JoinHostPort`.
+pub(crate) fn join_host_port(host: &str, port: impl std::fmt::Display) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Go `listenStatusHTTPServer`'s line, logged before the status port is
+/// bound.
+pub(crate) fn log_status_listen(host: &str, port: u16) {
+    tidb_util::logutil::bg_logger().info(
+        "for status and metrics report",
+        &[tidb_log::Field::new(
+            "listening on addr",
+            tidb_log::Value::Str(join_host_port(host, port)),
+        )],
+    );
+}
+
+/// Go `listenStatusHTTPServer`'s line when the status port cannot be bound.
+pub(crate) fn log_status_listen_failed(error: &std::io::Error) {
+    tidb_util::logutil::bg_logger().info("listen failed", &[zap_error(error)]);
+}
+
+/// Go `Server.initTiDBListener`'s line once the MySQL port is bound.
+pub(crate) fn log_mysql_listening(host: &str, port: impl std::fmt::Display) {
+    tidb_util::logutil::bg_logger().info(
+        "server is running MySQL protocol",
+        &[tidb_log::Field::new(
+            "addr",
+            tidb_log::Value::Str(join_host_port(host, port)),
+        )],
+    );
+}
+
+/// Go `printInfo`: the TiDB info is always printed, whatever the level.
+fn print_info() {
+    let level = tidb_log::get_level();
+    tidb_log::set_level(tidb_log::Level::Info);
+    tidb_util::printer::print_tidb_info();
+    tidb_log::set_level(level);
+}
+
+fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     initialize_compute_topology(&config.global_config)?;
     tidb_txnkv::global_mpp_failed_store_prober().run();
     let _mpp_prober_cleanup = MppProberCleanup;
@@ -176,7 +311,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         tidb_domain::domainutil::REPAIR_INFO
             .set_repair_table_list(global_config.repair_table_list.clone());
     }
-    tidb_util::printer::print_tidb_info();
+    print_info();
     start_system_time_monitor();
     let spill_storage = open_spill_storage(&config)?;
     let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
@@ -255,7 +390,8 @@ fn start_statement_observation() -> StatementObservationCleanup {
             file_max_backups: instance.stmt_summary_file_max_backups,
         };
         if let Err(error) = tidb_stmtsummary::v2::stmtsummary::setup(&summary_config) {
-            eprintln!("{error}");
+            tidb_util::logutil::bg_logger()
+                .error("failed to setup statements summary", &[zap_error(error)]);
         }
     }
     tidb_util::topsql_stmtstats::setup_aggregator();
@@ -497,5 +633,117 @@ mod compute_topology_batch_tests {
             .unwrap_err()
             .to_string()
             .contains("addr is empty"));
+    }
+}
+
+#[cfg(test)]
+mod setup_log_tests {
+    use std::path::{Path, PathBuf};
+
+    // `setupLog` reads and replaces process globals (the global config and
+    // the loggers); the Go binary runs it once, so these tests run one at a
+    // time.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "tidb_rust_setup_log_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn boot_logging(dir: &Path, config: &str, flags: &[&str]) {
+        let config_path = dir.join("tidb.toml");
+        std::fs::write(&config_path, config).unwrap();
+        let config_path = config_path.to_string_lossy().into_owned();
+        let mut arguments = vec![
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--store",
+            "tikv",
+            "--config",
+            &config_path,
+        ];
+        arguments.extend_from_slice(flags);
+        let config = crate::NodeConfig::parse(arguments).expect("node config");
+        config.install_process_globals();
+        super::setup_log().expect("setupLog");
+    }
+
+    /// Go `overrideConfig`: `--log-file`, `-L` and `--log-slow-query` win
+    /// over `log.file.filename`, `log.level` and `log.slow-query-file`.
+    #[test]
+    fn log_flags_override_the_config_file() {
+        let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+        let dir = scratch("flags");
+        let from_config = dir.join("from-config.log");
+        let from_flag = dir.join("from-flag.log");
+        let slow = dir.join("slow.log");
+        boot_logging(
+            &dir,
+            &format!(
+                "[log]\nlevel = \"error\"\nslow-query-file = {:?}\n[log.file]\nfilename = {:?}\n",
+                dir.join("config-slow.log"),
+                from_config
+            ),
+            &[
+                "--log-file",
+                &from_flag.to_string_lossy(),
+                "-L",
+                "info",
+                "--log-slow-query",
+                &slow.to_string_lossy(),
+            ],
+        );
+        tidb_util::logutil::bg_logger().info("info passes the flag's level", &[]);
+        tidb_log::info("the pingcap/log global writes the same file", &[]);
+        tidb_util::logutil::slow_query_logger().info("slow entry", &[]);
+        let content = std::fs::read_to_string(&from_flag).unwrap();
+        assert!(content.contains("[INFO] [lib.rs:"), "{content}");
+        assert!(
+            content.contains("[\"info passes the flag's level\"]"),
+            "{content}"
+        );
+        assert!(
+            content.contains("[\"the pingcap/log global writes the same file\"]"),
+            "{content}"
+        );
+        assert!(!from_config.exists());
+        let slow_content = std::fs::read_to_string(&slow).unwrap();
+        assert!(slow_content.starts_with("# Time: "), "{slow_content}");
+        assert!(slow_content.ends_with("\nslow entry\n"), "{slow_content}");
+        assert!(!dir.join("config-slow.log").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Without the flags, the config file names the log file and level.
+    #[test]
+    fn config_file_names_the_log_file_and_level() {
+        let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+        let dir = scratch("config");
+        let from_config = dir.join("from-config.log");
+        boot_logging(
+            &dir,
+            &format!(
+                "[log]\nlevel = \"warn\"\nslow-query-file = {:?}\n[log.file]\nfilename = {:?}\n",
+                dir.join("slow.log"),
+                from_config
+            ),
+            &[],
+        );
+        tidb_util::logutil::bg_logger().info("filtered by the config level", &[]);
+        tidb_util::logutil::bg_logger().warn("warn passes", &[]);
+        let content = std::fs::read_to_string(&from_config).unwrap();
+        assert!(!content.contains("filtered"), "{content}");
+        assert!(content.contains("[WARN] [lib.rs:"), "{content}");
+        assert_eq!(tidb_log::get_level(), tidb_log::Level::Warn);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

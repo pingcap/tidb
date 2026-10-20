@@ -44,9 +44,9 @@ impl ReplicaReadChecker {
             .spawn(move || loop {
                 let setting = globals.get("tidb_replica_read").unwrap_or_default();
                 if let Err(error) = topology.check_replica_read(&setting) {
-                    eprintln!(
-                        "{}",
-                        serde_json::json!({"event": "check_replica_read_failed", "error": error})
+                    tidb_util::logutil::bg_logger().warn(
+                        "refresh replicaRead flag failed",
+                        &[crate::zap_error(error)],
                     );
                 }
                 match stopped.recv_timeout(interval) {
@@ -65,8 +65,8 @@ impl Drop for ReplicaReadChecker {
     fn drop(&mut self) {
         let _ = self.stop.send(());
         if let Some(worker) = self.worker.take() {
-            if worker.join().is_err() {
-                eprintln!("closest replica-read checker panicked");
+            if let Err(payload) = worker.join() {
+                crate::log_recovered_panic("closestReplicaReadCheckLoop", payload.as_ref());
             }
         }
     }

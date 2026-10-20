@@ -319,6 +319,8 @@ fn report_unbuildable_table(schema: &str, table: &TableInfo, reason: &str) {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert((table.id, table.update_ts));
     if first {
+        // Not log content: Go builds every stored table, so it has no such
+        // line. The corpus replay gate reads this JSON event from stderr.
         eprintln!(
             "{{\"level\":\"warning\",\"event\":\"table_skipped\",\"table\":{:?},\"reason\":{:?}}}",
             format!("{schema}.{}", table.name.original()),
