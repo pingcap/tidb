@@ -221,7 +221,7 @@ func TestMViewRefreshSourceExecutorConcurrency(t *testing.T) {
 				plan.SetChildren(child)
 				e := b.build(plan)
 				require.NoError(t, b.err)
-				require.IsType(t, &ProjectionExec{}, e)
+				require.IsType(t, (*ProjectionExec)(nil), e)
 				require.Equal(t, tc.numWorkers, e.(*ProjectionExec).numWorkers)
 			})
 
@@ -231,7 +231,7 @@ func TestMViewRefreshSourceExecutorConcurrency(t *testing.T) {
 				plan.SetChildren(child)
 				e := b.build(plan)
 				require.NoError(t, b.err)
-				require.IsType(t, &ExpandExec{}, e)
+				require.IsType(t, (*ExpandExec)(nil), e)
 				require.Equal(t, tc.numWorkers, e.(*ExpandExec).numWorkers)
 			})
 		})
