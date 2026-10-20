@@ -1620,8 +1620,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
-	err := do.BindingHandle().LoadFromStorageToCache(true, false)
+	err := do.LoadBindingHandle()
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1633,6 +1632,42 @@ func (do *Domain) InitBindingHandle() error {
 		return err
 	}
 	do.globalBindHandleWorkerLoop(owner)
+	return nil
+}
+
+// LoadBindingHandle loads existing bindings without starting binding maintenance.
+func (do *Domain) LoadBindingHandle() error {
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	return do.BindingHandle().LoadFromStorageToCache(true, false)
+}
+
+// LoadBindingLoop loads bindings and periodically refreshes the cache. It only
+// starts the LoadFromStorageToCache path; unlike InitBindingHandle, it does not
+// start binding ownership, GC, or usage persistence.
+func (do *Domain) LoadBindingLoop() error {
+	if err := do.LoadBindingHandle(); err != nil {
+		return err
+	}
+	if bindinfo.Lease == 0 {
+		return nil
+	}
+
+	do.wg.Run(func() {
+		defer util.Recover(metrics.LabelDomain, "loadBindingLoop", nil, false)
+		ticker := time.NewTicker(bindinfo.Lease)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-do.exit:
+				do.BindingHandle().Close()
+				return
+			case <-ticker.C:
+				if err := do.BindingHandle().LoadFromStorageToCache(false, false); err != nil {
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
+				}
+			}
+		}
+	}, "loadBindingLoop")
 	return nil
 }
 
@@ -1661,7 +1696,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false, false)
 				if err != nil {
-					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
