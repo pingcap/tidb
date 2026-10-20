@@ -313,7 +313,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		}
 		for i := 0; i < len(miniTables); i += tablesPerJob {
 			end := min(i+tablesPerJob, len(miniTables))
-			dropSchemaEvent := notifier.NewDropSchemaEventWithMiniTables(dbInfo, miniTables[i:end])
+			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, miniTables[i:end])
 			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, int64(i/tablesPerJob), w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)

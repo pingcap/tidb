@@ -488,15 +488,6 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	}
 }
 
-// NewDropSchemaEvent creates a schema change event whose type is ActionDropSchema.
-func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *SchemaChangeEvent {
-	miniTables := make([]*MiniTableInfoForSchemaEvent, len(tables))
-	for i, table := range tables {
-		miniTables[i] = NewMiniTableInfoForSchemaEvent(table)
-	}
-	return NewDropSchemaEventWithMiniTables(dbInfo, miniTables)
-}
-
 // NewMiniTableInfoForSchemaEvent extracts the table information required by a drop schema event.
 func NewMiniTableInfoForSchemaEvent(table *model.TableInfo) *MiniTableInfoForSchemaEvent {
 	miniTable := &MiniTableInfoForSchemaEvent{
@@ -515,8 +506,8 @@ func NewMiniTableInfoForSchemaEvent(table *model.TableInfo) *MiniTableInfoForSch
 	return miniTable
 }
 
-// NewDropSchemaEventWithMiniTables creates a drop schema event from already-extracted table information.
-func NewDropSchemaEventWithMiniTables(
+// NewDropSchemaEvent creates a drop schema event from already-extracted table information.
+func NewDropSchemaEvent(
 	dbInfo *model.DBInfo,
 	tables []*MiniTableInfoForSchemaEvent,
 ) *SchemaChangeEvent {

@@ -125,7 +125,7 @@ func TestDropSchemaEventMiniTableInfo(t *testing.T) {
 		},
 	}, miniTable)
 
-	event := NewDropSchemaEventWithMiniTables(
+	event := NewDropSchemaEvent(
 		&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")},
 		[]*MiniTableInfoForSchemaEvent{miniTable},
 	)
