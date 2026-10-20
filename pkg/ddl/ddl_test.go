@@ -932,6 +932,116 @@ func TestBuildCreateMaterializedViewImportSQLDiskQuota(t *testing.T) {
 	require.Contains(t, sql, "WITH disable_precheck, disk_quota='100gib'")
 }
 
+func TestValidateMaterializedViewSourceState(t *testing.T) {
+	base := &model.TableInfo{
+		ID:    1,
+		Name:  pmodel.NewCIStr("base"),
+		State: model.StatePublic,
+	}
+	require.NoError(t, validateMaterializedViewSourceState("test", base))
+
+	view := base.Clone()
+	view.View = &model.ViewInfo{}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", view), "is not BASE TABLE")
+
+	building := base.Clone()
+	building.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildBuilding}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", building), "initial build is in progress")
+
+	deferred := base.Clone()
+	deferred.MaterializedView = &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildDeferred}
+	require.ErrorContains(t, validateMaterializedViewSourceState("test", deferred), "initial build has not completed")
+}
+
+func TestValidateMaterializedViewSourceMLog(t *testing.T) {
+	source := &model.TableInfo{
+		ID:    1,
+		Name:  pmodel.NewCIStr("mv_parent"),
+		State: model.StatePublic,
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID: 2,
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:                  2,
+		Name:                pmodel.NewCIStr("$mlog$mv_parent"),
+		State:               model.StatePublic,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 1},
+	}
+	require.NoError(t, validateMaterializedViewSourceMLog("test", source, mlog))
+
+	wrongBase := mlog.Clone()
+	wrongBase.MaterializedViewLog.BaseTableID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongBase), "is not a materialized view log")
+
+	wrongID := mlog.Clone()
+	wrongID.ID = 3
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, wrongID), "is not a materialized view log")
+
+	notMLog := mlog.Clone()
+	notMLog.MaterializedViewLog = nil
+	require.ErrorContains(t, validateMaterializedViewSourceMLog("test", source, notMLog), "is not a materialized view log")
+}
+
+func TestOnCreateMaterializedViewBaseCheckNestedSource(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(source, mlog *model.TableInfo)
+		err    string
+	}{
+		{name: "ready"},
+		{name: "building", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildBuilding
+		}, err: "initial build is in progress"},
+		{name: "deferred", mutate: func(source, _ *model.TableInfo) {
+			source.MaterializedView.InitBuildState = model.MViewInitBuildDeferred
+		}, err: "initial build has not completed"},
+		{name: "source_not_public", mutate: func(source, _ *model.TableInfo) {
+			source.State = model.StateWriteOnly
+		}, err: "not in public"},
+		{name: "wrong_mlog_source", mutate: func(_, mlog *model.TableInfo) {
+			mlog.MaterializedViewLog.BaseTableID = 99
+		}, err: "invalid materialized view log metadata"},
+		{name: "mlog_not_public", mutate: func(_, mlog *model.TableInfo) {
+			mlog.State = model.StateWriteOnly
+		}, err: "invalid materialized view log metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := createMockStore(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}))
+				source := &model.TableInfo{
+					ID: 2, Name: pmodel.NewCIStr("mv_parent"), State: model.StatePublic,
+					MaterializedView:     &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildReady},
+					MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 3},
+				}
+				mlog := &model.TableInfo{
+					ID: 3, Name: pmodel.NewCIStr("$mlog$mv_parent"), State: model.StatePublic,
+					MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: source.ID},
+				}
+				if tc.mutate != nil {
+					tc.mutate(source, mlog)
+				}
+				require.NoError(t, m.CreateTableOrView(1, source))
+				require.NoError(t, m.CreateTableOrView(1, mlog))
+				actual, err := onCreateMaterializedViewBaseCheck(m, 1, source.ID, "test")
+				if tc.err == "" {
+					require.NoError(t, err)
+					require.Equal(t, source.ID, actual.ID)
+				} else {
+					require.ErrorContains(t, err, tc.err)
+					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+				}
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestBuildCreateMaterializedViewImportSQLThreadAndDiskQuota(t *testing.T) {
 	mvTblInfo := &model.TableInfo{
 		Name: pmodel.NewCIStr("mv"),
