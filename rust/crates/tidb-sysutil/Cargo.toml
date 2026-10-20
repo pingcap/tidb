@@ -1,0 +1,36 @@
+[package]
+name = "tidb-sysutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native owner of the pinned github.com/pingcap/sysutil diagnostics service"
+
+# The Darwin host readers call Mach, sysctl and IOKit directly, as the pinned
+# gopsutil does through cgo. Only `host::darwin` opts back in; the crate root
+# denies unsafe code everywhere else.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+flate2.workspace = true
+futures.workspace = true
+nix = { workspace = true, features = ["feature", "fs", "net", "sched"] }
+regex.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-log = { path = "../tidb-log" }
+tidb-proto = { path = "../tidb-proto" }
+tokio = { workspace = true }
+tonic.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-stream = { workspace = true, features = ["net"] }

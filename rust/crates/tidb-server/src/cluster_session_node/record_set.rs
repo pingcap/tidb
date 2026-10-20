@@ -188,10 +188,16 @@ impl ClusterServerSession {
     ) -> Result<QueryResult<'a>, SqlQueryError> {
         // Only a replayable locking/write statement drains before returning.
         // Its retained chunks escape after the existing lock/retry loop succeeds.
+        // Go `TiDBContext.ExecuteStmt` (`pkg/server/driver_tidb.go:376`)
+        // appends every error `session.ExecuteStmt` returns to the statement
+        // context. The session files its own planning and execution errors;
+        // the transaction activation, snapshot and lock steps below are this
+        // node's, so their failures are filed here.
         self.prepare_statement_context(
             resource_group,
             shape != StatementReadShape::AutocommitWrite,
-        )?;
+        )
+        .map_err(|error| self.record_statement_failure(error))?;
         let buffers_rows = shape == StatementReadShape::LockingRead
             && self
                 .explicit
@@ -215,10 +221,20 @@ impl ClusterServerSession {
                     }
                     Ok(opened)
                 },
-            )?;
+            );
+            // Go `handlePessimisticSelectForUpdate` drains and locks inside
+            // `ExecStmt.Exec`, so a lock failure (3572 NOWAIT, 1205 timeout,
+            // 1213 deadlock) is an `ExecuteStmt` error Go appends.
+            let opened = match opened {
+                Ok(opened) => opened,
+                Err(error) if buffers_rows => return Err(self.record_statement_failure(error)),
+                Err(error) => return Err(error),
+            };
             (opened, None)
         } else {
-            let snapshot = self.begin_read_statement(shape, resource_group)?;
+            let snapshot = self
+                .begin_read_statement(shape, resource_group)
+                .map_err(|error| self.record_statement_failure(error))?;
             match run(&mut self.session) {
                 Ok(opened) => (opened, Some(snapshot)),
                 Err(error) => {

@@ -658,6 +658,117 @@ fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
     assert_eq!(cluster.publications.load(Ordering::Acquire), 2);
 }
 
+/// The `Error` row `SHOW WARNINGS` / `SHOW ERRORS` report after a failure,
+/// followed by the counts `@@warning_count` / `@@error_count` read back.
+fn assert_failure_filed(session: &mut ClusterServerSession, error: &SqlQueryError) {
+    let row = vec![
+        Datum::Bytes(b"Error".to_vec()),
+        Datum::Int(i64::from(error.code)),
+        Datum::Bytes(error.message.clone().into_bytes()),
+    ];
+    assert_eq!(rows(session, "SHOW WARNINGS"), vec![row.clone()]);
+    assert_eq!(rows(session, "SHOW ERRORS"), vec![row]);
+    let counts: Vec<Vec<String>> = rows(session, "SELECT @@warning_count, @@error_count")
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|datum| match datum {
+                    Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+                    other => panic!("a system variable reads as text, got {other:?}"),
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(counts, vec![vec!["1".to_owned(), "1".to_owned()]]);
+}
+
+/// Go `TiDBContext.ExecuteStmt` (`pkg/server/driver_tidb.go:376`) appends the
+/// COMMIT's error to the statement context, so after a 9007 at COMMIT both
+/// `SHOW WARNINGS` and `SHOW ERRORS` carry the conflict (Go live, `BEGIN
+/// OPTIMISTIC; UPDATE ...; COMMIT` losing to another session's UPDATE:
+/// `Error | 9007 | Write conflict, txnStartTS=...`, and `@@warning_count`,
+/// `@@error_count` both 1).
+#[test]
+fn a_failed_commit_files_its_error_in_the_warning_buffer() {
+    let (mut loser, cluster) = open_session();
+    loser
+        .execute_write("SET SESSION tidb_txn_mode = 'optimistic'")
+        .expect("select optimistic conflict semantics");
+    loser
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    loser.control_transaction("BEGIN").expect("begin");
+    loser
+        .execute_write("UPDATE t SET v = 50 WHERE id = 1")
+        .expect("staged");
+    open_session_on(&cluster)
+        .execute_write("UPDATE t SET v = 99 WHERE id = 1")
+        .expect("the racing writer commits first");
+
+    let error = loser
+        .control_transaction("COMMIT")
+        .expect_err("the prewrite loses to the newer commit");
+    assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
+    assert_failure_filed(&mut loser, &error);
+}
+
+/// Go `handlePessimisticSelectForUpdate` locks inside `ExecStmt.Exec`, so the
+/// lock failure of a `SELECT ... FOR UPDATE` is an `ExecuteStmt` error that
+/// `driver_tidb.go:376` appends (Go live: `Error | 3572 | Statement aborted
+/// because lock(s) could not be acquired immediately and NOWAIT is set.` after
+/// `FOR UPDATE NOWAIT`, `Error | 1205 | Lock wait timeout exceeded; try
+/// restarting transaction` after a timed-out `FOR UPDATE`). Both the point
+/// read, which locks before it runs, and the range read, which locks the rows
+/// it selected, file the row.
+#[test]
+fn a_failed_locking_read_files_its_error_in_the_warning_buffer() {
+    use tidb_txnkv::transaction::PessimisticLockFailure;
+    for (sql, failure, code) in [
+        (
+            "SELECT v FROM t WHERE id = 1 FOR UPDATE NOWAIT",
+            PessimisticLockFailure::LockAcquireFailAndNoWaitSet { key: b"k".to_vec() },
+            3572,
+        ),
+        (
+            "SELECT v FROM t WHERE id = 1 FOR UPDATE",
+            PessimisticLockFailure::LockWaitTimeout { key: b"k".to_vec() },
+            1205,
+        ),
+        (
+            "SELECT v FROM t WHERE id >= 1 FOR UPDATE",
+            PessimisticLockFailure::LockWaitTimeout { key: b"k".to_vec() },
+            1205,
+        ),
+    ] {
+        let (mut session, cluster) = open_session();
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        *cluster.fail_next_lock.lock().unwrap() = Some(failure);
+        let error = match session.execute(sql) {
+            Ok(_) => panic!("{sql}: the lock is refused"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, code, "{sql}: {}", error.message);
+        assert_failure_filed(&mut session, &error);
+    }
+}
+
+/// A locking read whose failure the session already filed (planning's 1146)
+/// carries that one row, not a second copy from the node's door.
+#[test]
+fn a_locking_read_error_the_session_filed_is_not_filed_twice() {
+    let (mut session, _cluster) = open_session();
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    let error = match session.execute("SELECT v FROM nosuch WHERE id = 1 FOR UPDATE") {
+        Ok(_) => panic!("the table does not exist"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, 1146, "{}", error.message);
+    assert_failure_filed(&mut session, &error);
+}
+
 /// The same race under autocommit publishes normally: each statement is its
 /// own transaction at its own timestamp, so there is no older `start_ts` to
 /// conflict with. Nothing about autocommit changed.

@@ -104,24 +104,28 @@ pub fn start_status_listener_with_routes(
         tokio::net::TcpListener::from_std(listener)?
     };
     let (stop, stopped) = tokio::sync::oneshot::channel();
-    let config = tidb_config::config_tree::config::get_global_config()
-        .status
-        .clone();
+    let global = tidb_config::config_tree::config::get_global_config();
+    let config = global.status.clone();
+    // Go `NewRPCServer`: the diagnostics service searches the configured log file.
+    let diagnostics = tidb_sysutil::DiagnosticsServer::new(global.log.file.filename.clone());
     let worker = std::thread::Builder::new()
         .name("tidb-status".into())
         .spawn(move || {
             runtime.block_on(async move {
-                let router = if let Some(peer) = routes.peer.clone() {
-                    tonic::service::Routes::new(
-                        tidb_proto::tikvpb::tikv_server::TikvServer::new(peer)
-                            .max_encoding_message_size(
-                                config.grpc_max_send_msg_size.max(0) as usize
-                            ),
+                let max_send = config.grpc_max_send_msg_size.max(0) as usize;
+                let mut grpc = tonic::service::Routes::new(
+                    tidb_proto::diagnosticspb::diagnostics_server::DiagnosticsServer::new(
+                        diagnostics,
                     )
-                    .into_axum_router()
-                } else {
-                    axum::Router::new()
-                };
+                    .max_encoding_message_size(max_send),
+                );
+                if let Some(peer) = routes.peer.clone() {
+                    grpc = grpc.add_service(
+                        tidb_proto::tikvpb::tikv_server::TikvServer::new(peer)
+                            .max_encoding_message_size(max_send),
+                    );
+                }
+                let router = grpc.into_axum_router();
                 let router = router.fallback(move |request: axum::extract::Request| {
                     let (tracker, version, git_hash, routes) = (
                         tracker.clone(),
@@ -280,6 +284,103 @@ mod tests {
         assert!(
             TcpListener::bind(address).is_ok(),
             "status owner leaked its listening socket"
+        );
+    }
+
+    /// Go `NewRPCServer` registers the diagnostics service on the status
+    /// port: the server-info cluster tables read this node through it, and a
+    /// log search reports the node's missing log location as a warning.
+    #[test]
+    fn status_port_serves_diagnostics_to_cluster_tables() {
+        let server = start_status_listener(
+            "127.0.0.1",
+            0,
+            Arc::new(ConnectionTracker::default()),
+            "test".into(),
+            "test".into(),
+        )
+        .unwrap();
+        let info = tidb_domain::serverinfo::ServerInfo {
+            static_info: tidb_domain::serverinfo::StaticInfo {
+                id: "diagnostics".to_owned(),
+                ip: "127.0.0.1".to_owned(),
+                port: 4000,
+                status_port: usize::from(server.local_addr().port()),
+                server_id_getter: Some(Arc::new(|| 1)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(info, None));
+        let mut session = tidb_session::Session::new();
+        session.set_server_info_syncer(syncer);
+        session.set_cluster_diagnostics_client(Arc::new(
+            tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient::new(&Default::default())
+                .unwrap(),
+        ));
+        let rows = |session: &mut tidb_session::Session, sql: &str| -> Vec<Vec<String>> {
+            let tidb_session::StmtResult::Rows(rows) = session.run(sql).unwrap() else {
+                panic!("rows")
+            };
+            rows.iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|datum| match (datum.as_raw_bytes(), datum) {
+                            (Some(bytes), _) => String::from_utf8_lossy(bytes).into_owned(),
+                            (None, tidb_datatype::Datum::Int(value)) => value.to_string(),
+                            (None, tidb_datatype::Datum::UInt(value)) => value.to_string(),
+                            (None, other) => format!("{other:?}"),
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        let systeminfo = rows(
+            &mut session,
+            "SELECT type, instance, system_type, system_name FROM information_schema.cluster_systeminfo",
+        );
+        assert!(!systeminfo.is_empty());
+        assert!(systeminfo
+            .iter()
+            .all(|row| row[0] == "tidb" && row[1] == "127.0.0.1:4000" && row[2] == "system"));
+        let hardware = rows(
+            &mut session,
+            "SELECT device_type, name FROM information_schema.cluster_hardware WHERE device_type = 'cpu'",
+        );
+        let names: Vec<&str> = hardware.iter().map(|row| row[1].as_str()).collect();
+        if cfg!(any(target_os = "linux", target_os = "macos")) {
+            assert_eq!(
+                names,
+                [
+                    "cpu-arch",
+                    "cpu-logical-cores",
+                    "cpu-physical-cores",
+                    "cpu-frequency",
+                    "cache"
+                ]
+            );
+        }
+        assert_eq!(
+            rows(
+                &mut session,
+                "SELECT count(*) FROM information_schema.cluster_load WHERE type = 'tikv'"
+            ),
+            [["0"]]
+        );
+        assert!(rows(
+            &mut session,
+            "SELECT * FROM information_schema.cluster_log WHERE time > '2020-01-01 00:00:00' \
+             AND time < '2020-01-02 00:00:00' AND message LIKE '%x%'"
+        )
+        .is_empty());
+        let warnings = rows(&mut session, "SHOW WARNINGS");
+        assert_eq!(
+            warnings,
+            [[
+                "Warning",
+                "1105",
+                "rpc error: code = Unknown desc = empty log file location configuration"
+            ]]
         );
     }
 

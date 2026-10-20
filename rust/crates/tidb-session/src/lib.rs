@@ -732,6 +732,7 @@ pub struct Session {
     server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
+    cluster_diagnostics: Option<Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>>,
     cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
     /// The domain identity getter shared with server-info publication.
     server_id_getter: Arc<dyn Fn() -> u64 + Send + Sync>,
@@ -1060,6 +1061,7 @@ impl Session {
             server_info_syncer: None,
             cluster_topology: None,
             cluster_config: None,
+            cluster_diagnostics: None,
             cluster_peer: None,
             // Go's Domain reports `serverIDForStandalone` until etcd assigns
             // one (`domain.go:752-753`), and the connection-ID allocator
@@ -1453,6 +1455,15 @@ impl Session {
         self.cluster_config = Some(client);
     }
 
+    /// Installs the process's shared diagnostics gRPC client, which the
+    /// server-info and log cluster tables read through.
+    pub fn set_cluster_diagnostics_client(
+        &mut self,
+        client: Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>,
+    ) {
+        self.cluster_diagnostics = Some(client);
+    }
+
     /// Installs the shared outgoing TiDB coprocessor capability.
     pub fn set_cluster_peer_client(
         &mut self,
@@ -1795,11 +1806,77 @@ impl Session {
         Ok(rows)
     }
 
+    /// Go `infoschema.GetClusterServerInfo` filtered by the scans'
+    /// `FilterClusterServerInfo` needs, or None when this session has no
+    /// cluster discovery or diagnostics client (an embedded session, which
+    /// reads these tables as empty).
+    #[allow(clippy::type_complexity)]
+    fn cluster_diagnostics_servers(
+        &mut self,
+        matches: impl Fn(&str, &str) -> bool,
+    ) -> Result<
+        Option<(
+            Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>,
+            Vec<tidb_domain::cluster_topology::ClusterServer>,
+        )>,
+        DriverError,
+    > {
+        let (Some(client), Some(topology)) = (
+            self.cluster_diagnostics.clone(),
+            self.cluster_topology.clone(),
+        ) else {
+            return Ok(None);
+        };
+        let mut warnings = Vec::new();
+        let servers = topology.servers(&mut warnings);
+        for warning in warnings {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
+        let servers = servers
+            .map_err(DriverError::unsupported)?
+            .into_iter()
+            .filter(|server| matches(&server.server_type, &server.address))
+            .collect();
+        Ok(Some((client, servers)))
+    }
+
+    /// Go `clusterServerInfoRetriever.retrieve` after its privilege check:
+    /// ask every matching server's diagnostics service; a server that fails
+    /// is a warning.
+    pub(crate) fn cluster_server_info_table_rows(
+        &mut self,
+        tp: tidb_proto::diagnosticspb::ServerInfoType,
+        extractors: &[tidb_planner::memtable_predicate_extractor::ClusterTableExtractor],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        let extractors: Vec<_> = extractors
+            .iter()
+            .filter(|extractor| !extractor.skip_request)
+            .collect();
+        if extractors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some((client, servers)) = self.cluster_diagnostics_servers(|tp, addr| {
+            extractors.iter().any(|extractor| {
+                (extractor.node_types.is_empty() || extractor.node_types.contains(tp))
+                    && (extractor.instances.is_empty() || extractor.instances.contains(addr))
+            })
+        })?
+        else {
+            return Ok(Vec::new());
+        };
+        let mut warnings = Vec::new();
+        let rows = client.fetch_server_info(&servers, tp, &mut warnings);
+        for warning in warnings {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
+        Ok(rows)
+    }
+
     /// Go `clusterLogRetriever.retrieve` and `initialize`: a contradiction
     /// reads nothing; otherwise PROCESS is required, and the search needs a
     /// start time, an end time, and at least one pattern, level, instance or
-    /// node type. The log search itself (diagnostics `SearchLog` against each
-    /// server) is not ported, so a search Go would send is refused.
+    /// node type. Each matching server's diagnostics `SearchLog` stream is
+    /// merged by time; a failing server is a warning.
     fn cluster_log_table_rows(
         &mut self,
         extractors: &[tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor],
@@ -1811,21 +1888,48 @@ impl Session {
             return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
         }
         let refusal = if extractor.start_time == 0 {
-            "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`"
+            Some("denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
         } else if extractor.end_time == 0 {
-            "denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`"
+            Some("denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
         } else if extractor.patterns.is_empty()
             && extractor.log_levels.is_empty()
             && extractor.instances.is_empty()
             && extractor.node_types.is_empty()
         {
-            "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)"
+            Some("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
         } else {
-            "CLUSTER_LOG search is not supported"
+            None
         };
-        Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-            tidb_executor::EvalError::Unsupported(refusal),
-        )))
+        if let Some(refusal) = refusal {
+            return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
+                tidb_executor::EvalError::Unsupported(refusal),
+            )));
+        }
+        let extractor = extractor.clone();
+        let Some((client, servers)) = self.cluster_diagnostics_servers(|tp, addr| {
+            (extractor.node_types.is_empty() || extractor.node_types.contains(tp))
+                && (extractor.instances.is_empty() || extractor.instances.contains(addr))
+        })?
+        else {
+            return Ok(Vec::new());
+        };
+        let request = tidb_proto::diagnosticspb::SearchLogRequest {
+            start_time: extractor.start_time,
+            end_time: extractor.end_time,
+            levels: extractor
+                .log_levels
+                .iter()
+                .map(|level| tidb_sysutil::parse_log_level(level) as i32)
+                .collect(),
+            patterns: extractor.patterns.clone(),
+            target: 0,
+        };
+        let mut warnings = Vec::new();
+        let rows = client.search_log(&servers, &request, &mut warnings);
+        for warning in warnings {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
+        Ok(rows)
     }
 
     /// Go's seven-source GetClusterServerInfo in dataForTiDBClusterInfo column order.

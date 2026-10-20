@@ -48,6 +48,8 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-util = { path = "../tidb-util" }
 chrono.workspace = true
 crossbeam-channel = "0.5"
+futures.workspace = true
+hyper-util = { version = "0.1", features = ["tokio"] }
 prost.workspace = true
 regex.workspace = true
 serde.workspace = true
@@ -58,7 +60,9 @@ reqwest = { workspace = true, features = ["blocking"] }
 tidb-placement = { path = "../tidb-placement" }
 
 [dev-dependencies]
+tidb-sysutil = { path = "../tidb-sysutil" }
 tidb-unistore = { path = "../tidb-unistore" }
+tempfile.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 chrono-tz.workspace = true
 sha2.workspace = true

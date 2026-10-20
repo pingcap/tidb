@@ -724,6 +724,10 @@ pub(crate) fn unistore_cluster_session_stack(
         tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,
     ))
+    .with_cluster_diagnostics_client(Arc::new(
+        tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient::new(&config.cluster_security)
+            .map_err(|error| engine(SqlQueryError::unknown(error)))?,
+    ))
     .with_stats_owner(stats_owner);
     let factory = match spill_storage {
         Some(storage) => factory.with_spill_storage(storage),

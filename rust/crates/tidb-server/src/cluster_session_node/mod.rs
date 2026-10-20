@@ -1082,6 +1082,7 @@ pub struct ClusterSessionFactory {
     connection_ids: Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
+    cluster_diagnostics: Option<Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>>,
     cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     global_vars: GlobalSysvars,
@@ -1254,6 +1255,7 @@ impl ClusterSessionFactory {
             ),
             cluster_topology: None,
             cluster_config: None,
+            cluster_diagnostics: None,
             cluster_peer: None,
             global_vars,
             boot_skipped,
@@ -2156,6 +2158,17 @@ impl ClusterSessionFactory {
         client: Arc<tidb_exec::cluster_config::ClusterConfigClient>,
     ) -> Self {
         self.cluster_config = Some(client);
+        self
+    }
+
+    /// Shares the diagnostics gRPC client the server-info and log cluster
+    /// tables read through with every SQL session.
+    #[must_use]
+    pub fn with_cluster_diagnostics_client(
+        mut self,
+        client: Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>,
+    ) -> Self {
+        self.cluster_diagnostics = Some(client);
         self
     }
 
@@ -3688,6 +3701,9 @@ impl ClusterSessionFactory {
         if let Some(client) = &self.cluster_config {
             session.set_cluster_config_client(Arc::clone(client));
         }
+        if let Some(client) = &self.cluster_diagnostics {
+            session.set_cluster_diagnostics_client(Arc::clone(client));
+        }
         if let Some(topology) = &self.cluster_topology {
             session.set_cluster_topology(Arc::clone(topology));
         }
@@ -4964,6 +4980,20 @@ impl Drop for ClusterServerSession {
 }
 
 impl ClusterServerSession {
+    /// Go `TiDBContext.ExecuteStmt` (`pkg/server/driver_tidb.go:376`): every
+    /// error `session.ExecuteStmt` returns is appended to the statement
+    /// context as an `Error`-level warning, which `SHOW WARNINGS`, `SHOW
+    /// ERRORS`, `@@warning_count` and `@@error_count` then report. The
+    /// session's own statement pipeline files the errors it raises; this is
+    /// the door for the steps this node runs outside it (COMMIT's prewrite,
+    /// the locking read's lock). A row the session already filed for the
+    /// same error is not filed twice.
+    fn record_statement_failure(&mut self, error: SqlQueryError) -> SqlQueryError {
+        self.session
+            .record_ddl_failure(error.code, error.message.clone());
+        error
+    }
+
     fn control_transaction_parsed_inner(
         &mut self,
         _sql: &str,
@@ -7946,7 +7976,9 @@ impl QuerySession for ClusterServerSession {
         if observed {
             self.session.begin_routed_statement_observation(sql, stmt);
         }
-        let result = self.control_transaction_parsed_inner(sql, stmt);
+        let result = self
+            .control_transaction_parsed_inner(sql, stmt)
+            .map_err(|error| self.record_statement_failure(error));
         if observed {
             self.session
                 .finish_routed_statement_observation(result.is_ok(), 0);

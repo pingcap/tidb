@@ -39,6 +39,7 @@ mod cluster_bdr;
 pub mod cluster_catalog;
 pub mod cluster_config;
 pub mod cluster_ddl;
+pub mod cluster_diagnostics;
 pub mod cluster_discovery;
 mod cluster_http;
 pub mod cluster_index_id;

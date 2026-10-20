@@ -3544,12 +3544,15 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crossbeam-channel",
+ "futures",
+ "hyper-util",
  "prost 0.14.4",
  "regex",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",
@@ -3579,6 +3582,7 @@ dependencies = [
  "tidb-stats",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-usage",
+ "tidb-sysutil",
  "tidb-tablecodec",
  "tidb-ttl",
  "tidb-txnkv",
@@ -4073,6 +4077,7 @@ dependencies = [
  "tidb-stats-handle-util",
  "tidb-stmtsummary",
  "tidb-syssession",
+ "tidb-sysutil",
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-unistore",
@@ -4119,12 +4124,14 @@ dependencies = [
  "tidb-naming",
  "tidb-parser",
  "tidb-planner",
+ "tidb-proto",
  "tidb-ristretto",
  "tidb-stats",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-util",
  "tidb-stmtsummary",
+ "tidb-sysutil",
  "tidb-tablecodec",
  "tidb-tikvutil",
  "tidb-txnkv",
@@ -4403,6 +4410,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-sysutil"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "futures",
+ "libc",
+ "nix",
+ "regex",
+ "tempfile",
+ "tidb-datatype",
+ "tidb-log",
+ "tidb-proto",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+]
+
+[[package]]
 name = "tidb-tablecodec"
 version = "0.0.0"
 dependencies = [
@@ -4554,6 +4579,7 @@ dependencies = [
  "tidb-naming",
  "tidb-parser",
  "tidb-proto",
+ "tidb-sysutil",
  "tidb-tikvutil",
  "tidb-vardef",
  "tikv-client",

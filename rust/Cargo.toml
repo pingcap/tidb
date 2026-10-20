@@ -12,6 +12,7 @@ members = [
     "crates/tidb-hack",
     "crates/tidb-hash",
     "crates/tidb-ristretto",
+    "crates/tidb-sysutil",
     "crates/tidb-hint",
     "crates/tidb-kvcache",
     "crates/tidb-naming",

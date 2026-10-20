@@ -29,6 +29,10 @@ pub mod coprocessor {
 /// Complete region-error contract shared with the native client.
 pub use tikv_client_kvproto::errorpb;
 
+/// Complete diagnostics service (`ServerInfo`, `SearchLog`) shared with the
+/// native client.
+pub use tikv_client_kvproto::diagnosticspb;
+
 /// Complete KV request contract shared with the native client.
 pub mod kvrpcpb {
     pub use tikv_client_kvproto::deadlock::WaitForEntry;

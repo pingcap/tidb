@@ -44,6 +44,7 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-sysutil = { path = "../tidb-sysutil" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 tidb-vardef = { path = "../tidb-vardef" }
 tikv-client.workspace = true

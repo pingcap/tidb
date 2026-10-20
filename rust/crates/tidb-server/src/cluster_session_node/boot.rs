@@ -556,6 +556,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
         tidb_exec::cluster_config::ClusterConfigClient::new(&config.cluster_security)
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
     ))
+    .with_cluster_diagnostics_client(Arc::new(
+        tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient::new(&config.cluster_security)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
+    ))
     .with_stats_owner(stats_owner)
     .with_schema_pins(schema_pins)
     .with_schema_validator(Arc::clone(&schema_validator))

@@ -177,11 +177,23 @@ fn memory_source() -> io::Result<MemorySource> {
     } else {
         MemorySource::Host
     };
-    let _ = MEMORY_SOURCE.compare_exchange(0, selected as u8, Ordering::AcqRel, Ordering::Acquire);
+    let won = MEMORY_SOURCE
+        .compare_exchange(0, selected as u8, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok();
+    if won && matches!(selected, MemorySource::Cgroup) {
+        // Go `InitMemoryHook`: the diagnostics service reports the cgroup
+        // capacity too (`sysutil.RegisterGetMemoryCapacity(MemTotalCGroup)`).
+        tidb_sysutil::register_get_memory_capacity(sysutil_memory_capacity);
+    }
     Ok(match MEMORY_SOURCE.load(Ordering::Acquire) {
         2 => MemorySource::Cgroup,
         _ => MemorySource::Host,
     })
+}
+
+/// Go `MemTotalCGroup` as sysutil's capacity reader.
+fn sysutil_memory_capacity() -> Result<u64, String> {
+    mem_total().map_err(|error| error.to_string())
 }
 
 fn effective_memory_limit() -> io::Result<u64> {

@@ -16,7 +16,8 @@
 use super::*;
 
 impl ClusterSessionFactory {
-    pub(crate) fn peer_service(&self) -> crate::peer_rpc::PeerService {
+    pub(crate) fn peer_service(self: &Arc<Self>) -> crate::peer_rpc::PeerService {
+        let broadcast = Arc::downgrade(self);
         let catalog = Arc::clone(&self.catalog);
         let stats = Arc::clone(&self.stats);
         let auto_ids = Arc::clone(&self.auto_ids);
@@ -47,6 +48,39 @@ impl ClusterSessionFactory {
             session
         }))
         .with_cluster_peer_client(self.cluster_peer.clone())
+        // Go `IsFromRemote` plans run on this instance alone; this node's
+        // statements never broadcast, so an internal session runs it as-is.
+        .with_broadcast_query_runner(Arc::new(move |query: &str| {
+            let factory = broadcast
+                .upgrade()
+                .ok_or("broadcast session factory is stopped")?;
+            factory
+                .advanced_sys_session_pool()
+                .with_session(|lease| {
+                    lease.with_session_context(|context| {
+                        let mut slot = context
+                            .state
+                            .session
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let session = slot.as_mut().ok_or_else(|| {
+                            tidb_syssession::SysSessionError::new("broadcast session is closed")
+                        })?;
+                        let result = (|| -> Result<(), String> {
+                            let mut result = session.execute(query).map_err(|e| e.message)?;
+                            let source = result.source();
+                            source.finish().map_err(|e| e.to_string())?;
+                            source.close().map_err(|e| e.to_string())?;
+                            Ok(())
+                        })();
+                        if result.is_err() {
+                            lease.avoid_reuse();
+                        }
+                        Ok(result)
+                    })
+                })
+                .map_err(|e| e.to_string())?
+        }))
     }
 
     pub(crate) fn status_settings(self: &Arc<Self>) -> crate::http_settings::Settings {

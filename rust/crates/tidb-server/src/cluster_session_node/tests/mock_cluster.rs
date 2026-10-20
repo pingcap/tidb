@@ -67,6 +67,10 @@ pub(super) struct MockCluster {
     pub(super) fail_next_begin: AtomicBool,
     /// Makes this many pessimistic lock attempts report a newer read timestamp.
     pub(super) retry_pessimistic_locks: AtomicUsize,
+    /// One-shot statement-scoped failure for the next pessimistic lock
+    /// attempt: the 3572 NOWAIT refusal or the 1205 timeout TiKV answers
+    /// when another transaction holds the key.
+    pub(super) fail_next_lock: Mutex<Option<tidb_txnkv::transaction::PessimisticLockFailure>>,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
@@ -617,6 +621,16 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.lock_staged_keys_with_assertions(keys, Default::default(), Default::default(), wait)
     }
 
+    /// A pessimistic locking read is a current read, at a fresh timestamp.
+    fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        if !self.pessimistic {
+            return Err(
+                "only a pessimistic transaction opens a current locking snapshot".to_owned(),
+            );
+        }
+        self.snapshot_at(self.cluster.timestamp())
+    }
+
     fn fresh_statement_snapshot(&self, _locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
         if !self.pessimistic {
             return Err("only a pessimistic transaction reads at a statement timestamp".to_owned());
@@ -643,6 +657,11 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.cluster.lock_waits.lock().unwrap().push(wait);
         if !self.pessimistic {
             return Err("only a pessimistic transaction locks statement keys".to_owned());
+        }
+        if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
+            return Ok(LockKeysOutcome::StatementError(
+                tidb_exec::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+            ));
         }
         if self
             .cluster

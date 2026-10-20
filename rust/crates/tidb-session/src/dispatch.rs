@@ -1258,17 +1258,43 @@ impl Session {
                 .any(|name| table_name.eq_ignore_ascii_case(name))
             {
                 // Go `clusterServerInfoRetriever.retrieve`: hardware needs
-                // CONFIG, load and system info PROCESS; with no cluster
-                // server to ask, the tables answer no rows.
-                let (privilege, name) = if table_name.eq_ignore_ascii_case("CLUSTER_HARDWARE") {
-                    (crate::privilege::GlobalPriv::Config, "CONFIG")
+                // CONFIG, load and system info PROCESS, checked before the
+                // extractor's SkipRequest.
+                use tidb_proto::diagnosticspb::ServerInfoType;
+                let (privilege, name, tp) = if table_name.eq_ignore_ascii_case("CLUSTER_HARDWARE") {
+                    (
+                        crate::privilege::GlobalPriv::Config,
+                        "CONFIG",
+                        ServerInfoType::HardwareInfo,
+                    )
+                } else if table_name.eq_ignore_ascii_case("CLUSTER_LOAD") {
+                    (
+                        crate::privilege::GlobalPriv::Process,
+                        "PROCESS",
+                        ServerInfoType::LoadInfo,
+                    )
                 } else {
-                    (crate::privilege::GlobalPriv::Process, "PROCESS")
+                    (
+                        crate::privilege::GlobalPriv::Process,
+                        "PROCESS",
+                        ServerInfoType::SystemInfo,
+                    )
                 };
                 if !self.has_scoped_privilege("", "", privilege) {
                     return Err(DriverError::SpecificAccessDenied(name.to_owned()));
                 }
-                Vec::new()
+                let extractors: Vec<_> = scans
+                    .iter()
+                    .filter(|scan| scan.table.eq_ignore_ascii_case(&table_name))
+                    .map(|scan| {
+                        scan.extractor
+                            .as_ref()
+                            .and_then(tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor::as_cluster_table)
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                self.cluster_server_info_table_rows(tp, &extractors)?
             } else if table_name.eq_ignore_ascii_case("DDL_JOBS") {
                 // Go `DDLJobsReaderExec`: the running jobs, then the history.
                 let (running, history) = self.all_ddl_jobs()?;
