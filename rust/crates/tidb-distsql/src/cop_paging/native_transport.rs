@@ -24,9 +24,6 @@
 //!
 //! # Narrowings, by name
 //!
-//! * Tasks are sent one at a time in task order; Go's `copIteratorWorker`
-//!   pool sends them concurrently. An unordered read is still answered in
-//!   task order, which an unordered reader accepts.
 //! * Buckets and `StoreBatchCoprocessor` are not used yet (plan Step 6e-6).
 //! * The answering store's address is not reported to the per-store
 //!   runtime statistics or the TopSQL KV-exec counter.
@@ -353,7 +350,8 @@ impl<S: NativeCopStore> QueryTransport for NativeCopTransport<S> {
                 dispatch.operation
             ));
         }
-        // Tasks are answered in order (see the module narrowings).
+        // Each task source answers its own tasks in order; the worker pool
+        // above it keeps or relaxes the order across tasks.
         let mut coordinator_metadata = metadata.clone();
         coordinator_metadata.keep_order = true;
         CopPagingState::validate_read_request(&coordinator_metadata)
@@ -373,8 +371,9 @@ impl<S: NativeCopStore> QueryTransport for NativeCopTransport<S> {
             self.config.seed_read_bytes,
         )
         .map_err(|error| error.to_string())?;
+        let keep_order = metadata.keep_order;
         let mut metadata = runtime.request_metadata().clone();
-        metadata.keep_order = coordinator_metadata.keep_order;
+        metadata.keep_order = keep_order;
         let mut logical_order = Vec::new();
         let mut active_attempts = BTreeMap::new();
         for (attempt_id, task) in runtime.initial_tasks() {
@@ -406,16 +405,22 @@ impl<S: NativeCopStore> QueryTransport for NativeCopTransport<S> {
             cancellation,
             call,
             timeout,
-            metadata,
+            metadata: Arc::new(metadata),
             runtime,
             logical_order,
             active_attempts,
             logical_index: 0,
             closed: false,
             backoffers: BTreeMap::new(),
-            snapshot_locks: SnapshotLockSet::default(),
+            snapshot_locks: Arc::default(),
         };
-        Ok(Some(super::CopIterator::new(source, None, None)))
+        // Go's `copIteratorWorker`s run on the query worker runtime.
+        tidb_txnkv::rpc::query_worker_runtime()?;
+        Ok(Some(super::CopIterator::new(
+            source,
+            Some(super::cop_iterator::start_concurrent::<NativeCopResponse<S>>),
+            request.cop_lite_worker(),
+        )))
     }
 }
 
@@ -454,7 +459,7 @@ pub struct NativeCopResponse<S> {
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
     timeout: Duration,
-    metadata: crate::KvRequestMetadata,
+    metadata: Arc<crate::KvRequestMetadata>,
     runtime: CopReadTaskRuntime,
     logical_order: Vec<u64>,
     active_attempts: BTreeMap<u64, u64>,
@@ -462,8 +467,9 @@ pub struct NativeCopResponse<S> {
     closed: bool,
     /// Go's per-task `bo`, by logical task.
     backoffers: BTreeMap<u64, CopBackoffer>,
-    /// Go `ClientHelper`'s resolved and committed locks for this snapshot.
-    snapshot_locks: SnapshotLockSet,
+    /// Go `ClientHelper`'s resolved and committed locks for this snapshot,
+    /// shared by its tasks.
+    snapshot_locks: Arc<std::sync::Mutex<SnapshotLockSet>>,
 }
 
 impl<S: NativeCopStore> NativeCopResponse<S> {
@@ -512,7 +518,10 @@ impl<S: NativeCopStore> NativeCopResponse<S> {
             self.cluster_id,
         );
         // Go `ClientHelper.SendReqCtx` stamps both lock sets on every send.
-        self.snapshot_locks.stamp(&mut request.context);
+        self.snapshot_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stamp(&mut request.context);
         let mut wire = tidb_proto::CoprocessorRequest::decode(request.encoded_request.as_slice())
             .map_err(|error| error.to_string())?;
         wire.context = Some(request.context.clone());
@@ -640,7 +649,10 @@ impl<S: NativeCopStore> NativeCopResponse<S> {
         let recovered =
             self.store
                 .resolve_lock(backoffer, context, lock, self.metadata.start_ts)?;
-        self.snapshot_locks.absorb(&recovered);
+        self.snapshot_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .absorb(&recovered);
         if !recovered.ttl.is_zero() {
             let max_sleep_ms = u64::try_from(recovered.ttl.as_millis()).unwrap_or(u64::MAX);
             self.store
@@ -738,4 +750,62 @@ impl<S: NativeCopStore> super::cop_iterator::CopTaskSource for NativeCopResponse
     fn use_task_worker(&mut self) {}
 
     fn set_waker(&mut self, _waker: std::task::Waker) {}
+}
+
+impl<S: NativeCopStore> super::cop_iterator::CopWorkerSource for NativeCopResponse<S> {
+    fn keep_order(&self) -> bool {
+        self.metadata.keep_order
+    }
+
+    fn concurrency(&self) -> usize {
+        usize::try_from(self.metadata.concurrency)
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    fn task(&self) -> &crate::RegionTaskEnvelope {
+        self.runtime.first_task()
+    }
+
+    fn use_row_hints(&self) -> bool {
+        !self.metadata.request_source.internal
+    }
+
+    fn start_worker(&mut self) {}
+
+    /// Go `copIterator.open`: one source per task for the worker pool, unless
+    /// one worker would take them all in order anyway.
+    fn into_tasks(mut self) -> Vec<Self> {
+        if self.metadata.concurrency <= 1
+            && (self.metadata.request_source.internal || !self.runtime.has_small_tasks())
+        {
+            return vec![self];
+        }
+        self.runtime
+            .take_tasks()
+            .into_iter()
+            .map(|(logical_task_id, runtime)| Self {
+                store: Arc::clone(&self.store),
+                cluster_id: self.cluster_id,
+                trace: self.trace.clone(),
+                event_callback: self.event_callback.clone(),
+                cancellation: Arc::clone(&self.cancellation),
+                call: self.call.clone(),
+                timeout: self.timeout,
+                metadata: Arc::clone(&self.metadata),
+                runtime,
+                logical_order: vec![logical_task_id],
+                active_attempts: self
+                    .active_attempts
+                    .remove(&logical_task_id)
+                    .map(|attempt_id| (logical_task_id, attempt_id))
+                    .into_iter()
+                    .collect(),
+                logical_index: 0,
+                closed: false,
+                backoffers: BTreeMap::new(),
+                snapshot_locks: Arc::clone(&self.snapshot_locks),
+            })
+            .collect()
+    }
 }
