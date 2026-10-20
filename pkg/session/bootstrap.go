@@ -733,6 +733,9 @@ const (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
 		filter_hash VARCHAR(64) NOT NULL,
+		source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_hash VARCHAR(64) NOT NULL DEFAULT '',
 		start_ts BIGINT UNSIGNED NOT NULL,
 		restored_ts BIGINT UNSIGNED NOT NULL,
 		upstream_cluster_id BIGINT UNSIGNED,
@@ -741,8 +744,9 @@ const (
 		cmd TEXT,
 		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
-		UNIQUE KEY unique_registration_params (
+		UNIQUE KEY unique_registration_params_v2 (
 			filter_hash,
+			route_hash,
 			start_ts,
 			restored_ts,
 			upstream_cluster_id,
@@ -1316,11 +1320,19 @@ const (
 	// ...
 	// next version should start with 239
 
+	// version 239
+	// Add restore name routing identity to mysql.tidb_restore_registry:
+	// `source_filter_strings`, `route_strings`, `route_hash` and the
+	// `unique_registration_params_v2` unique index that replaces
+	// `unique_registration_params` (whose key does not include `route_hash`, so
+	// two independent restores sharing a source filter but routing to different
+	// targets would collide).
+	version239 = 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version232
+var currentBootstrapVersion int64 = version239
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1508,6 +1520,7 @@ var (
 		upgradeToVer230,
 		upgradeToVer231,
 		upgradeToVer232,
+		upgradeToVer239,
 	}
 )
 
@@ -3536,6 +3549,25 @@ func upgradeToVer232(s sessiontypes.Session, ver int64) {
 	// no-op.
 	addMaxNodeCountColumns(s)
 	addIUserIndexes(s)
+}
+
+// upgradeToVer239 adds the restore name routing identity to
+// mysql.tidb_restore_registry. The DDLs are reentrant so a cluster that already
+// ran a partially completed migration converges on the same schema, and a fresh
+// cluster created from CreateRestoreRegistryTable skips them via
+// ErrColumnExists / ErrDupKeyName / ErrCantDropFieldOrKey.
+func upgradeToVer239(s sessiontypes.Session, ver int64) {
+	if ver >= version239 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_hash VARCHAR(64) NOT NULL DEFAULT '' AFTER route_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, `ALTER TABLE mysql.tidb_restore_registry
+		ADD UNIQUE INDEX unique_registration_params_v2 (
+			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
