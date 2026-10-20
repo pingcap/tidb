@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -356,6 +357,15 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
 		// Rollback the changes, note that no new partitions has been used yet!
 		// so only metadata rollback and we can cancel the DDL
+		if tblInfo.Affinity != nil && len(pi.NewPartitionIDs) != 0 {
+			replacementDefs := make([]model.PartitionDefinition, 0, len(pi.NewPartitionIDs))
+			for _, id := range pi.NewPartitionIDs {
+				replacementDefs = append(replacementDefs, model.PartitionDefinition{ID: id})
+			}
+			if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, replacementDefs); deleteErr != nil {
+				logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+			}
+		}
 		tblInfo.Partition.NewPartitionIDs = nil
 		tblInfo.Partition.DDLAction = model.ActionNone
 		tblInfo.Partition.DDLState = model.StateNone
