@@ -693,6 +693,159 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	return joinPlan, nil
 }
 
+<<<<<<< HEAD
+=======
+// buildLateralJoin builds a LogicalApply for LATERAL derived tables.
+// LATERAL makes left-side columns available to the right-side subquery,
+// which is semantically equivalent to a correlated subquery.
+func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan base.LogicalPlan, joinNode *ast.Join) (base.LogicalPlan, error) {
+	// NATURAL JOIN and USING clauses are not supported with LATERAL derived tables.
+	// These clauses match columns by name between two tables, but LATERAL subqueries
+	// define their own output column names which typically don't match the left-side table.
+	if joinNode.NaturalJoin {
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("NATURAL JOIN is not supported with LATERAL")
+	}
+	if joinNode.Using != nil {
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("USING clause is not supported with LATERAL")
+	}
+
+	// Extract correlated columns from right side that reference left side.
+	// Use FullSchema when leftPlan contains a USING/NATURAL join, so we capture
+	// correlated columns that reference the redundant (merged) join columns.
+	// Walk through wrapper operators (e.g., LogicalSelection) to find FullSchema.
+	outerSchema := leftPlan.Schema()
+	if fullSchema, _ := findJoinFullSchema(leftPlan); fullSchema != nil {
+		outerSchema = fullSchema
+	}
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, outerSchema)
+
+	// Determine join type based on AST.
+	// Supports INNER JOIN, comma syntax (which the parser represents as CrossJoin) and LEFT JOIN.
+	// RIGHT JOIN will be added in a follow-up PR.
+	var joinType base.JoinType
+	switch joinNode.Tp {
+	case ast.LeftJoin:
+		joinType = base.LeftOuterJoin
+		// Once the Apply is decorrelated into a plain LogicalJoin it becomes a candidate
+		// for the outer-join simplification rules, same as a non-LATERAL LEFT JOIN.
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
+	case ast.RightJoin:
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("RIGHT JOIN is not supported with LATERAL")
+	default:
+		// Comma syntax (ast.CrossJoin) and explicit INNER JOIN
+		joinType = base.InnerJoin
+	}
+
+	// Build LogicalApply (leveraging existing correlated subquery infrastructure)
+	// Note: We enable decorrelation optimization, which will attempt to convert the
+	// nested loop (LogicalApply) into a more efficient join when safe. The decorrelator
+	// is conservative and will only transform patterns it can prove are semantically equivalent.
+	// Complex cases (aggregates with correlation, non-deterministic functions, etc.) will
+	// remain as Apply and use nested loop execution.
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
+
+	ap := logicalop.LogicalApply{
+		LogicalJoin:   logicalop.LogicalJoin{JoinType: joinType},
+		CorCols:       corCols,
+		NoDecorrelate: false, // Allow decorrelation; optimizer will decide if safe
+		IsLateral:     true,  // Mark as LATERAL join to prevent unsafe elimination in PruneColumns
+	}.Init(b.ctx, b.getSelectOffset())
+
+	ap.SetChildren(leftPlan, rightPlan)
+	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
+
+	// A LEFT JOIN null-extends the inner (right) side when the LATERAL subquery
+	// produces no row for an outer row, so its columns lose any NOT NULL flag.
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.Schema(), leftPlan.Schema().Len(), ap.Schema().Len())
+	}
+
+	// Clone output names to avoid sharing FieldName structs that might be mutated later.
+	// Do NOT override DBName here: derived-table outputs already carry DBName="" from
+	// buildResultSetNode, and real-table columns inside a nested right subtree (e.g.
+	// t2 in "t2 CROSS JOIN LATERAL(...)") must keep their original DBName so that
+	// schema-qualified references like ORDER BY test.t2.a continue to resolve.
+	outputNames := make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len())
+	for i, name := range leftPlan.OutputNames() {
+		outputNames[i] = name.Clone()
+	}
+	for i, name := range rightPlan.OutputNames() {
+		outputNames[leftPlan.Schema().Len()+i] = name.Clone()
+	}
+	ap.SetOutputNames(outputNames)
+
+	// Set FullSchema and FullNames for USING clause handling (consistent with buildJoin).
+	// Even though LATERAL typically doesn't use USING, LogicalApply extends LogicalJoin
+	// which has these fields, so we should set them for correctness.
+	var lFullSchema, rFullSchema *expression.Schema
+	var lFullNames, rFullNames types.NameSlice
+	if fullSchema, fullNames := findJoinFullSchema(leftPlan); fullSchema != nil {
+		lFullSchema = fullSchema
+		lFullNames = fullNames
+	} else {
+		lFullSchema = leftPlan.Schema()
+		lFullNames = leftPlan.OutputNames()
+	}
+	// When buildLateralJoin is triggered by condition (b) (correlated columns in a nested
+	// right subtree), rightPlan may itself be a LogicalJoin or LogicalApply with its own
+	// FullSchema from a USING/NATURAL join on the right side. Propagate it upward the same
+	// way buildJoin does for the right child.
+	if fullSchema, fullNames := findJoinFullSchema(rightPlan); fullSchema != nil {
+		rFullSchema = fullSchema
+		rFullNames = fullNames
+	} else {
+		rFullSchema = rightPlan.Schema()
+		rFullNames = rightPlan.OutputNames()
+	}
+
+	ap.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+
+	// Mirror the schema adjustment above on FullSchema, which additionally carries the
+	// redundant USING/NATURAL columns of the two sides.
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.FullSchema, lFullSchema.Len(), ap.FullSchema.Len())
+	}
+
+	ap.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	for _, lName := range lFullNames {
+		name := *lName
+		ap.FullNames = append(ap.FullNames, &name)
+	}
+	for _, rName := range rFullNames {
+		name := *rName
+		ap.FullNames = append(ap.FullNames, &name)
+	}
+
+	// Mark inner CTEs against FullSchema so correlations via USING/NATURAL
+	// merged columns are detected and the CTE storage is reset per outer row.
+	setIsInApplyForCTE(rightPlan, ap.FullSchema)
+
+	// Handle ON conditions if present
+	if joinNode.On != nil {
+		b.curClause = onClause
+		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, ap, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if newPlan != ap {
+			return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("ON condition contains subqueries")
+		}
+		onCondition := expression.SplitCNFItems(onExpr)
+		ap.AttachOnConds(onCondition)
+	}
+
+	// Merge handle maps (copied from buildJoin)
+	handleMap1 := b.handleHelper.popMap()
+	handleMap2 := b.handleHelper.popMap()
+	b.handleHelper.mergeAndPush(handleMap1, handleMap2)
+
+	// Set join hints if any
+	ap.LogicalJoin.SetPreferredJoinTypeAndOrder(b.TableHints())
+
+	return ap, nil
+}
+
+>>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 // buildUsingClause eliminate the redundant columns and ordering columns based
 // on the "USING" clause.
 //
