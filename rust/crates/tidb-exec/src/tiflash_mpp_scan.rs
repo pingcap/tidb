@@ -1230,6 +1230,7 @@ fn cancel_task_meta(meta: &TaskMeta) -> TaskMeta {
 
 /// Go `MPPClient.CancelMPPTasks`: `CmdMPPCancel` to the task's store.
 async fn cancel_mpp_task<S: tikv_client::PdClient>(target: &MppTarget<S>, meta: TaskMeta) {
+    let (start_ts, mpp_version) = (meta.start_ts, meta.mpp_version);
     let request = tidb_proto::mpp::CancelTaskRequest {
         meta: Some(meta),
         ..Default::default()
@@ -1249,7 +1250,15 @@ async fn cancel_mpp_task<S: tikv_client::PdClient>(target: &MppTarget<S>, meta: 
     .await
     {
         target.invalidate_compute_cache();
-        eprintln!("tiflash mpp: cancel failed: {error}");
+        tidb_util::logutil::bg_logger().warn(
+            "cancel task error",
+            &[
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                tidb_log::Field::new("query id", tidb_log::Value::U64(start_ts)),
+                tidb_log::Field::new("on addr", tidb_log::Value::Str(target.address.clone())),
+                tidb_log::Field::new("mpp-version", tidb_log::Value::I64(mpp_version)),
+            ],
+        );
     }
 }
 

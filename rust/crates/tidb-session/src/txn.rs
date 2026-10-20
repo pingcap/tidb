@@ -41,6 +41,11 @@ pub struct HistoricalRead {
 pub type HistoricalReadProvider =
     dyn Fn(u64, &str, Option<&Catalog>) -> Result<HistoricalRead, DriverError> + Send + Sync;
 
+/// A server's Go `sessionctx.Context.Txn(true)` for the running statement:
+/// opens the statement's (lazily activated) transaction, which publishes its
+/// start timestamp to the session's `CurrentTso`.
+pub type StatementTxnActivator = dyn Fn() + Send + Sync;
+
 /// SET-time validation and schema loading, without replacing the active row snapshot.
 pub type SnapshotSchemaProvider =
     dyn Fn(u64, &str, bool) -> Result<Catalog, DriverError> + Send + Sync;
@@ -549,6 +554,27 @@ impl Session {
         provider: std::sync::Arc<HistoricalReadProvider>,
     ) {
         self.historical_read_provider = Some(provider);
+    }
+
+    /// Installs the server's activation of a statement's transaction, which
+    /// owns the statement snapshot this session only reads through.
+    pub fn set_statement_txn_activator(
+        &mut self,
+        activator: std::sync::Arc<StatementTxnActivator>,
+    ) {
+        self.statement_txn_activator = Some(activator);
+    }
+
+    /// Go `Ctx().Txn(true)` from an executor builder that needs the
+    /// statement's start timestamp without reading a row
+    /// (`executorBuilder.buildShow` for `SHOW MASTER STATUS`): activating the
+    /// transaction is what publishes `TxnCtx.StartTS`. An open transaction
+    /// already published its own; a session no server drives has no lazy
+    /// statement transaction to activate.
+    pub(crate) fn activate_statement_txn(&self) {
+        if let Some(activate) = &self.statement_txn_activator {
+            activate();
+        }
     }
 
     /// Installs the store's SET-time schema loader. The boolean requests timestamp

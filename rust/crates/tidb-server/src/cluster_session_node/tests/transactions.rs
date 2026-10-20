@@ -544,6 +544,28 @@ fn current_tso_follows_the_cluster_transaction_lifecycle() {
     );
 }
 
+/// Go `executorBuilder.buildShow` activates the transaction for `SHOW MASTER
+/// STATUS` ("show master status need start ts") and `fetchShowMasterStatus`
+/// reports `TxnCtx.StartTS`: an autocommit statement that reads no table
+/// still answers the timestamp it activated, and an explicit transaction
+/// answers its own.
+#[test]
+fn show_master_status_reports_the_activated_start_ts() {
+    let (mut session, cluster) = open_session();
+    let status = rows(&mut session, "SHOW MASTER STATUS");
+    let Datum::Int(position) = status[0][1] else {
+        panic!("SHOW MASTER STATUS's Position is a signed integer")
+    };
+    assert!(position > 0, "the statement activates its transaction");
+    assert_eq!(position as u64, cluster.clock.load(Ordering::Acquire));
+
+    session.control_transaction("BEGIN").expect("begin");
+    let current = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
+    let status = rows(&mut session, "SHOW MASTER STATUS");
+    assert_eq!(status[0][1], current[0][0]);
+    session.control_transaction("COMMIT").expect("commit");
+}
+
 /// Repeatable read, which holding one transaction is what buys: a statement
 /// inside `BEGIN` cannot see a commit made after `BEGIN`, because there is
 /// no newer timestamp for it to see it at. Go's default isolation level.

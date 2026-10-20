@@ -849,7 +849,7 @@ mod tiflash_cluster_http_tests {
         fn is_owner(&self) -> bool {
             true
         }
-        fn update_replica_status(&self, _: i64, _: bool) -> Result<(), String> {
+        fn update_replica_status(&self, _: i64, _: bool) -> Result<(), (u16, String)> {
             Ok(())
         }
     }

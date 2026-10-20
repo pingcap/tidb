@@ -42,6 +42,7 @@ use std::sync::{mpsc, Arc, LazyLock, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use tidb_log::{Field, Value};
 use tidb_pd_client::{PdStore, PdStoreState};
 use tikv_client::pd_http;
 
@@ -73,8 +74,9 @@ pub fn cached_replica_progress(physical_id: i64) -> Option<f64> {
 pub trait TiFlashReplicaControl: Send + Sync {
     /// Whether this node currently owns DDL work.
     fn is_owner(&self) -> bool;
-    /// Go UpdateTableReplicaInfo through the ordinary DDL execution path.
-    fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), String>;
+    /// Go UpdateTableReplicaInfo through the ordinary DDL execution path. A
+    /// failure carries its MySQL error code and message.
+    fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), (u16, String)>;
 }
 
 /// One poller over the node's catalog and PD membership. It owns no transaction.
@@ -130,6 +132,7 @@ impl BackoffElement {
 
 struct ReplicaTable {
     id: i64,
+    is_partition: bool,
     count: u64,
     labels: Vec<String>,
     available: bool,
@@ -147,9 +150,10 @@ fn replica_tables(catalog: &crate::cluster_catalog::ClusterCatalog) -> Vec<Repli
             if replica.count == 0 {
                 continue;
             }
-            let mut append = |id, available| {
+            let mut append = |id, is_partition, available| {
                 tables.push(ReplicaTable {
                     id,
+                    is_partition,
                     count: replica.count,
                     labels: replica.location_labels.iter().cloned().collect(),
                     available,
@@ -161,12 +165,12 @@ fn replica_tables(catalog: &crate::cluster_catalog::ClusterCatalog) -> Vec<Repli
                 for definitions in [&partition.definitions, &partition.adding_definitions] {
                     definitions.with_visible(|definitions| {
                         for p in definitions {
-                            append(p.id, replica.is_partition_available(p.id));
+                            append(p.id, true, replica.is_partition_available(p.id));
                         }
                     });
                 }
             } else {
-                append(stored.id, replica.available);
+                append(stored.id, false, replica.available);
             }
         }
     }
@@ -203,10 +207,10 @@ impl TiFlashReplicaPoller {
     /// Wakes an idle poller and joins any current pass. Idempotent.
     pub fn shutdown(&mut self) {
         let _ = self.stop.send(());
+        // Go runs `PollTiFlashRoutine` without a recover: a panic is the
+        // panic hook's report, not a log line.
         if let Some(worker) = self.worker.take() {
-            if worker.join().is_err() {
-                eprintln!("TiFlash replica poll worker panicked");
-            }
+            let _ = worker.join();
         }
     }
 }
@@ -286,7 +290,8 @@ impl TiFlashReplicaManager {
     pub fn spawn(self) -> TiFlashReplicaPoller {
         TiFlashReplicaPoller::start(POLL_INTERVAL, move || {
             if let Err(error) = self.poll_once() {
-                eprintln!("tiflash replica poll: {error}");
+                tidb_ddl_logutil::ddl_logger()
+                    .warn("refreshTiFlashTicker returns error", &[zap_error(&error)]);
             }
         })
     }
@@ -394,13 +399,10 @@ impl TiFlashReplicaManager {
                 continue;
             }
             // Go `DeletePlacementRule`; a refused delete is retried next tick.
-            let result = block_on_pd_http(
+            // Go's poller has no such pass and no line for it.
+            let _ = block_on_pd_http(
                 self.pd_http_client
                     .delete_placement_rule(tidb_placement::TIFLASH_RULE_GROUP_ID, &id),
-            );
-            let detail = result.err().unwrap_or_default();
-            eprintln!(
-                "{{\"event\":\"tiflash_rule_removed\",\"rule\":{id:?},\"detail\":{detail:?}}}"
             );
         }
 
@@ -422,15 +424,15 @@ impl TiFlashReplicaManager {
             // store; without this the learner peers can wait on the
             // balance loop.
             // The accelerate-schedule range is the SAME
-            // `EncodeBytes`-escaped range the placement rule carries.
+            // `EncodeBytes`-escaped range the placement rule carries. Go
+            // returns a refusal to its DDL job and logs nothing; here the
+            // next tick retries.
             let (accel_start, accel_end) = table_region_range(table_id);
             let key_ranges = [pd_http::new_key_range(accel_start, accel_end)];
-            if let Err(error) = block_on_pd_http(
+            let _ = block_on_pd_http(
                 self.pd_http_client
                     .accelerate_schedule_in_batch(&key_ranges),
-            ) {
-                eprintln!("{{\"event\":\"tiflash_accelerate_refused\",\"error\":{error:?}}}");
-            }
+            );
 
             if table.available || table.logical_available {
                 if refill_pending {
@@ -443,13 +445,23 @@ impl TiFlashReplicaManager {
                 .get_mut(&table_id)
                 .is_some_and(|entry| !entry.tick())
             {
+                tidb_ddl_logutil::ddl_logger().info(
+                    "Escape checking available status due to backoff",
+                    &[Field::new("tableId", Value::I64(table_id))],
+                );
                 continue;
             }
             let (one_replica_progress, full_progress) =
                 match self.progress(table_id, count, &stores) {
                     Ok(progress) => progress,
                     Err(error) => {
-                        eprintln!("TiFlash progress for table {table_id}: {error}");
+                        tidb_ddl_logutil::ddl_logger().error(
+                            "get tiflash sync progress failed",
+                            &[
+                                zap_error(&error),
+                                Field::new("tableID", Value::I64(table_id)),
+                            ],
+                        );
                         continue;
                     }
                 };
@@ -463,13 +475,38 @@ impl TiFlashReplicaManager {
             } else if state.backoff.len() < 1000 {
                 state.backoff.entry(table_id).or_default();
             }
-            eprintln!(
-                "{{\"event\":\"tiflash_replica_progress\",\"table_id\":{table_id},\
-                     \"available\":{available},\"one\":{one_replica_progress},\
-                     \"full\":{full_progress}}}"
-            );
-            if let Err(error) = self.ddl.update_replica_status(table_id, available) {
-                eprintln!("updating TiFlash replica status for table {table_id}: {error}");
+            // Go ddl_tiflash_api.go:505-515.
+            let progress_fields = [
+                Field::new("tableID", Value::I64(table_id)),
+                Field::new("progress", Value::F64(full_progress)),
+                Field::new("availProgress", Value::F64(one_replica_progress)),
+            ];
+            let message = if full_progress != 1.0 {
+                if available {
+                    "Tiflash replica is available but some Region replicas is being built"
+                } else {
+                    "Tiflash replica is not available"
+                }
+            } else {
+                "Tiflash replica is available and all Region replicas have been built"
+            };
+            tidb_ddl_logutil::ddl_logger().info(message, &progress_fields);
+            if let Err((code, error)) = self.ddl.update_replica_status(table_id, available) {
+                let fields = [
+                    zap_error(&error),
+                    Field::new("tableID", Value::I64(table_id)),
+                    Field::new("isPartition", Value::Bool(table.is_partition)),
+                ];
+                if code == tidb_error::tidb::errcode::ErrNoSuchTable && table.is_partition {
+                    // May be due to blocking add partition.
+                    tidb_ddl_logutil::ddl_logger().info(
+                        "updating TiFlash replica status err, maybe false alarm by blocking add",
+                        &fields,
+                    );
+                } else {
+                    tidb_ddl_logutil::ddl_logger()
+                        .error("updating TiFlash replica status err", &fields);
+                }
             }
         }
         Ok(())
@@ -607,12 +644,20 @@ fn parse_sync_status(body: &str) -> Result<Vec<i64>, String> {
         .collect::<Result<_, _>>()?;
     // Go warns on count disagreement but accepts the successfully parsed IDs.
     if expected != regions.len() as i64 {
-        eprintln!(
-            "TiFlash sync-status count check failed: claimed {expected}, read {}",
-            regions.len()
+        tidb_util::logutil::bg_logger().warn(
+            "ComputeTiFlashStatus count check failed",
+            &[
+                Field::new("claim", Value::I64(expected)),
+                Field::new("real", Value::I64(regions.len() as i64)),
+            ],
         );
     }
     Ok(regions)
+}
+
+/// zap `zap.Error(err)`.
+fn zap_error(error: &str) -> Field {
+    Field::new("error", Value::Str(error.to_owned()))
 }
 
 fn table_region_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
@@ -670,7 +715,11 @@ mod tests {
         fn is_owner(&self) -> bool {
             self.owner.load(Ordering::SeqCst)
         }
-        fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), String> {
+        fn update_replica_status(
+            &self,
+            table_id: i64,
+            available: bool,
+        ) -> Result<(), (u16, String)> {
             self.updates.lock().unwrap().push((table_id, available));
             Ok(())
         }
@@ -1265,6 +1314,39 @@ mod tests {
         let requests = http.requests.lock().unwrap();
         assert!(requests[0].0.contains("%FF"));
         assert!(requests[0].0.ends_with("&count"));
+    }
+
+    /// Points the global logger at a fresh file and returns the file.
+    fn capture_log(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tidb-{name}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = tidb_util::logutil::new_file_log_config(300);
+        file.filename = path.to_string_lossy().into_owned();
+        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_util::logutil::init_logger(&config).unwrap();
+        path
+    }
+
+    /// Go `ComputeTiFlashStatus` warns on a count mismatch and keeps the IDs.
+    #[test]
+    fn sync_status_count_mismatch_logs_go_warning() {
+        let path = capture_log("tiflash-sync-status");
+        assert_eq!(
+            parse_sync_status("3\n1009 1010\n").unwrap(),
+            vec![1009, 1010]
+        );
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.ends_with("[\"ComputeTiFlashStatus count check failed\"] [claim=3] [real=2]\n"),
+            "{content}"
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

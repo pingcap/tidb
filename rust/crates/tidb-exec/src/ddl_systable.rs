@@ -309,10 +309,12 @@ impl MinJobIdRefresher {
             Ok(next) => self
                 .current_min_job_id
                 .store(current.max(next), Ordering::SeqCst),
-            Err(error) => eprintln!(
-                "{{\"level\":\"info\",\"message\":\"get min job ID failed\",\"error\":{}}}",
-                serde_json::to_string(&error.to_string())
-                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            Err(error) => tidb_ddl_logutil::ddl_logger().info(
+                "get min job ID failed",
+                &[tidb_log::Field::new(
+                    "error",
+                    tidb_log::Value::Str(error.to_string()),
+                )],
             ),
         }
     }

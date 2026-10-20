@@ -36,6 +36,7 @@
 
 pub mod file_sink;
 pub mod hex;
+mod log_bridge;
 mod tracing_bridge;
 
 use std::collections::HashMap;
@@ -380,6 +381,7 @@ pub fn set_level(level: &str) -> Result<(), String> {
     let l = parse_level(level)?;
     read_globals(|g| g.level.set(l));
     tracing_bridge::level_changed();
+    log_bridge::level_changed();
     Ok(())
 }
 
@@ -598,6 +600,7 @@ pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> R
         level,
     });
     tracing_bridge::install();
+    log_bridge::install();
     Ok(())
 }
 
@@ -646,6 +649,7 @@ pub fn replace_logger(cfg: &LogConfig) -> Result<(), String> {
         level,
     });
     tracing_bridge::install();
+    log_bridge::install();
 
     let config = serde_json::to_string(&cfg.config).map_err(|e| e.to_string())?;
     tidb_log::s().infof(format_args!("replaced global logger with config: {config}"));
@@ -1815,6 +1819,55 @@ mod tests {
             content.contains("[DEBUG] [mod.rs:") && content.contains("[\"trace logs at debug\"]"),
             "{content}"
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `log` records (client-rust's) land in the log file as unified-format
+    /// entries at their mapped level, filtered by the configured level, with
+    /// the Rust call site in the caller slot.
+    #[test]
+    fn log_records_reach_the_log_file() {
+        let _g = guard();
+        let dir = fresh_dir("log-bridge");
+        let filename = dir.join("tidb.log");
+        let conf = new_log_config(
+            "warn",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            file_config(&filename, 300),
+            false,
+        );
+        init_logger(&conf).unwrap();
+        let line_no = line!() + 1;
+        ::log::warn!("updating pd client");
+        ::log::info!("filtered info");
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(
+            content.ends_with(&format!(
+                "[WARN] [mod.rs:{line_no}] [\"updating pd client\"]\n"
+            )),
+            "{content}"
+        );
+        assert!(!content.contains("filtered"), "{content}");
+
+        // `SetLevel` reaches `log`'s static filter too; TRACE logs at debug.
+        set_level("debug").unwrap();
+        ::log::trace!("trace logs at debug");
+        ::log::error!("connect to tikv endpoint: {:?}", "127.0.0.1:20160");
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(
+            content.contains("[DEBUG] [mod.rs:") && content.contains("[\"trace logs at debug\"]"),
+            "{content}"
+        );
+        assert!(
+            content.ends_with("[\"connect to tikv endpoint: \\\"127.0.0.1:20160\\\"\"]\n"),
+            "{content}"
+        );
+        set_level("error").unwrap();
+        ::log::warn!("filtered warn");
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(!content.contains("filtered"), "{content}");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

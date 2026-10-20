@@ -3945,6 +3945,9 @@ fn table_output_columns(
             if column.id == tidb_model::column::EXTRA_PHYS_TBL_ID {
                 return Ok(HandleOutputColumn::PhysicalTableId);
             }
+            if column.id == tidb_model::column::EXTRA_ROW_CHECKSUM_ID {
+                return Ok(HandleOutputColumn::RowChecksum);
+            }
             table
                 .columns
                 .iter()

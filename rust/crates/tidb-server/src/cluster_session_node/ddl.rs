@@ -2565,7 +2565,7 @@ where
         self.owner.is_owner()
     }
 
-    fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), String> {
+    fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), (u16, String)> {
         self.execute(
             &DdlStatement::UpdateTiFlashReplicaStatus {
                 table_id,
@@ -2575,7 +2575,7 @@ where
             &tidb_executor::StmtContext::for_query(),
         )
         .map(|_| ())
-        .map_err(|error| error.message)
+        .map_err(|error| (error.code, error.message))
     }
 }
 

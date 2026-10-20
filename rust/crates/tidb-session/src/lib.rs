@@ -768,6 +768,9 @@ pub struct Session {
     /// The node's storage-backed current lock-wait reader.
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
     historical_read_provider: Option<Arc<txn::HistoricalReadProvider>>,
+    /// The server's activation of the statement's transaction; see
+    /// [`Self::set_statement_txn_activator`].
+    statement_txn_activator: Option<Arc<txn::StatementTxnActivator>>,
     snapshot_schema_provider: Option<Arc<txn::SnapshotSchemaProvider>>,
     snapshot_schema: Option<(u64, Catalog)>,
     /// Statement-only SnapshotTS override; the ordinary transaction stays intact.
@@ -1096,6 +1099,7 @@ impl Session {
             session_index_usage_collector: None,
             data_lock_waits: None,
             historical_read_provider: None,
+            statement_txn_activator: None,
             snapshot_schema_provider: None,
             snapshot_schema: None,
             statement_snapshot: None,
@@ -1349,7 +1353,9 @@ mod table_lock;
 pub use table_lock::ClusterDdlLockEffect;
 mod table_privilege;
 mod txn;
-pub use txn::{HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider};
+pub use txn::{
+    HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider, StatementTxnActivator,
+};
 mod user_table;
 pub mod util_config;
 mod variables;

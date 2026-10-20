@@ -436,6 +436,12 @@ pub const DEFAULT_RESOURCE_GROUP_NAME: &str = "default";
 impl ResourceGroupInfo {
     /// Go meta's `defaultRGroupMeta`: the `default` group every store has,
     /// ID 1 (`defaultGroupID`), unlimited and burstable at medium priority.
+    ///
+    /// It is what `GetResourceGroup`/`ListResourceGroups` answer while no
+    /// `default` group is persisted, so it carries no background settings:
+    /// the bootstrap's `ALTER RESOURCE GROUP default BACKGROUND=
+    /// (TASK_TYPES='stats')` reaches a reader only through the meta record
+    /// that DDL stores.
     #[must_use]
     pub fn default_group() -> Self {
         Self {
@@ -443,13 +449,6 @@ impl ResourceGroupInfo {
                 ru_rate: UNLIMITED_RU_RATE,
                 burst_limit: -1,
                 priority: MEDIUM_PRIORITY_VALUE,
-                // Go's bootstrap ends with `ALTER RESOURCE GROUP default
-                // BACKGROUND=(TASK_TYPES='stats')`, so the persisted default
-                // group always carries it.
-                background: Some(ResourceGroupShared::new(ResourceGroupBackgroundSettings {
-                    job_types: Some(vec!["stats".to_owned()]),
-                    resource_util_limit: 0,
-                })),
                 ..ResourceGroupSettings::default()
             })),
             id: 1,

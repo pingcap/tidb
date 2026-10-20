@@ -15,6 +15,7 @@ workspace = true
 tidb-util = { path = "../tidb-util" }
 async-trait.workspace = true
 bytes.workspace = true
+chrono.workspace = true
 futures.workspace = true
 futures-timer.workspace = true
 hyper.workspace = true

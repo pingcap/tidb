@@ -20,3 +20,8 @@ tidb-domain = { path = "../tidb-domain" }
 tidb-config = { path = "../tidb-config" }
 # Go `variable.EnableMDL`.
 tidb-vardef = { path = "../tidb-vardef" }
+# Go `logutil.BgLogger`/`DDLLogger` and `strconv.Quote` for the log lines.
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-log = { path = "../tidb-log" }
+tidb-util = { path = "../tidb-util" }

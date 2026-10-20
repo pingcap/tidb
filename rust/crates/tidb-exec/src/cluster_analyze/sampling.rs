@@ -310,10 +310,18 @@ pub(crate) fn scan_concurrency(
     if configured > 0 {
         return configured as u64;
     }
+    let Some(pd_cli) = pd_http_client else {
+        tidb_util::logutil::bg_logger().warn(
+            "fail to TryGetPDHTTPClient",
+            &[tidb_log::Field::new(
+                "error",
+                tidb_log::Value::Str("pd http client unavailable".to_owned()),
+            )],
+        );
+        return concurrency_for_stores(0);
+    };
+    let pd_cli = pd_cli.with_caller_id("tidb-store-helper");
     let count = (|| -> Result<u64, String> {
-        let pd_cli = pd_http_client
-            .ok_or_else(|| "pd http client unavailable".to_owned())?
-            .with_caller_id("tidb-store-helper");
         let stores_stat = crate::cluster_http::block_on_pd_http(async {
             tokio::time::timeout(timeout, pd_cli.get_stores())
                 .await
@@ -328,7 +336,10 @@ pub(crate) fn scan_concurrency(
     match count {
         Ok(count) => concurrency_for_stores(count),
         Err(error) => {
-            eprintln!("cannot determine adaptive ANALYZE concurrency: {error}");
+            tidb_util::logutil::bg_logger().warn(
+                "fail to get stores info",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
+            );
             concurrency_for_stores(0)
         }
     }

@@ -75,11 +75,19 @@ fn run_emulator<S>(
     S: StoreClient,
 {
     while woken.recv().is_ok() {
+        // Go `terror.Log(errors.Trace(err))`.
         if let Err(error) = do_del_range_work(opener, timeout, row_ids) {
-            eprintln!(
-                "{{\"level\":\"warning\",\"event\":\"del_range_emulator_failed\",\"error\":{}}}",
-                serde_json::to_string(&error.to_string())
-                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            tidb_log::error(
+                "encountered error",
+                &[
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    tidb_log::Field::new(
+                        "stack",
+                        tidb_log::Value::Str(
+                            std::backtrace::Backtrace::force_capture().to_string(),
+                        ),
+                    ),
+                ],
             );
         }
     }
@@ -180,11 +188,12 @@ where
             Ok(((), mutations))
         });
         if let Err(error) = update {
-            eprintln!(
-                "{{\"level\":\"warning\",\"event\":\"del_range_update_failed\",\"job_id\":{},\"error\":{}}}",
-                task.job_id,
-                serde_json::to_string(&error.to_string())
-                    .unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            tidb_ddl_logutil::ddl_logger().error(
+                "delRange emulator update task failed",
+                &[tidb_log::Field::new(
+                    "error",
+                    tidb_log::Value::Str(error.to_string()),
+                )],
             );
         }
         old_start_key = next_start_key;

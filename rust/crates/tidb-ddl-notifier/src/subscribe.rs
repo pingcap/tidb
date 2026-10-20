@@ -20,7 +20,21 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use tidb_log::{Field, Value};
+use tidb_util::logutil::{bg_logger, with_category, Logger};
+
 use crate::SchemaChangeEvent;
+
+/// Go `start`'s `logutil.Logger(ctx)` after `logutil.WithCategory(ctx,
+/// "ddl-notifier")`.
+fn notifier_logger() -> Logger {
+    with_category(&bg_logger(), "ddl-notifier")
+}
+
+/// zap `zap.Error(err)`.
+fn zap_error(error: &NotifierError) -> Field {
+    Field::new("error", Value::Str(error.to_string()))
+}
 
 /// Go `notifier.ErrNotReadyRetryLater` plus ordinary handler/store failures.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -207,9 +221,9 @@ impl DdlNotifier {
         assert!((0..64).contains(&id.0), "illegal HandlerID: {}", id.0);
         let mut handlers = self.handlers.lock().expect("handler lock poisoned");
         if handlers.contains_key(&id) {
-            eprintln!(
-                "{{\"event\":\"ddl_notifier_handler_already_registered\",\"id\":{}}}",
-                id.0
+            bg_logger().error(
+                "HandlerID already registered",
+                &[Field::new("id", Value::I64(i64::from(id.0)))],
             );
             return;
         }
@@ -240,9 +254,7 @@ impl DdlNotifier {
                 Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if let Err(error) = process_events(pool.as_ref(), store.as_ref(), &handlers) {
-                        eprintln!(
-                            "{{\"event\":\"ddl_notifier_process_failed\",\"error\":{error:?}}}"
-                        );
+                        notifier_logger().error("Error processing events", &[zap_error(&error)]);
                     }
                 }
             }
@@ -315,9 +327,14 @@ fn process_events(
                     ) {
                         skipped.insert(*id);
                         if error != NotifierError::NotReadyRetryLater {
-                            eprintln!(
-                                "{{\"event\":\"ddl_notifier_handler_failed\",\"ddl_job_id\":{},\"sub_job_id\":{},\"handler\":\"{}\",\"error\":{error:?}}}",
-                                change.ddl_job_id, change.sub_job_id, id
+                            notifier_logger().error(
+                                "Error processing change",
+                                &[
+                                    Field::new("ddlJobID", Value::I64(change.ddl_job_id)),
+                                    Field::new("subJobID", Value::I64(change.sub_job_id)),
+                                    Field::new("handler", Value::Str(id.to_string())),
+                                    zap_error(&error),
+                                ],
                             );
                         }
                     }
@@ -331,9 +348,13 @@ fn process_events(
                     );
                     pool.put(delete_session);
                     if let Err(error) = deleted {
-                        eprintln!(
-                            "{{\"event\":\"ddl_notifier_delete_failed\",\"ddl_job_id\":{},\"sub_job_id\":{},\"error\":{error:?}}}",
-                            change.ddl_job_id, change.sub_job_id
+                        notifier_logger().error(
+                            "Error deleting change",
+                            &[
+                                Field::new("ddlJobID", Value::I64(change.ddl_job_id)),
+                                Field::new("subJobID", Value::I64(change.sub_job_id)),
+                                zap_error(&error),
+                            ],
                         );
                     }
                 }
@@ -566,6 +587,57 @@ mod tests {
         process_events(pool.as_ref(), store.as_ref(), &handlers).unwrap();
         assert_eq!(*seen.lock().unwrap(), [1, 2, 3]);
         assert!(store.rows.lock().unwrap().is_empty());
+    }
+
+    /// Points the global logger at a fresh file and returns the file.
+    fn capture_log(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tidb-{name}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = tidb_util::logutil::new_file_log_config(300);
+        file.filename = path.to_string_lossy().into_owned();
+        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_util::logutil::init_logger(&config).unwrap();
+        path
+    }
+
+    /// Go's "HandlerID already registered" and "Error processing change".
+    #[test]
+    fn duplicate_registration_and_handler_failure_log_go_lines() {
+        let path = capture_log("ddl-notifier");
+        let pool: Arc<dyn SessionPool> = Arc::new(MockPool);
+        let store = Arc::new(MockStore::default());
+        let notifier = DdlNotifier::new(
+            Arc::clone(&pool),
+            Arc::clone(&store) as Arc<dyn Store>,
+            Duration::from_millis(10),
+        );
+        notifier.register_handler(TEST_HANDLER_ID, Arc::new(|_, _| Err("boom".into())));
+        notifier.register_handler(TEST_HANDLER_ID, Arc::new(|_, _| Ok(())));
+        let mut publish = pool.get().unwrap();
+        publish_schema_change_to_store(publish.as_mut(), 7, -1, event(7), store.as_ref()).unwrap();
+        pool.put(publish);
+        let handlers = notifier.handlers.lock().unwrap().clone();
+        process_events(pool.as_ref(), store.as_ref(), &handlers).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[ERROR] [subscribe.rs:"), "{content}");
+        assert!(
+            content.contains("[\"HandlerID already registered\"] [id=0]\n"),
+            "{content}"
+        );
+        assert!(
+            content.contains(
+                "[\"Error processing change\"] [category=ddl-notifier] [ddlJobID=7] \
+                 [subJobID=-1] [handler=TestHandler] [error=boom]\n"
+            ),
+            "{content}"
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

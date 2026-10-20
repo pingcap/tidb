@@ -15,7 +15,9 @@ workspace = true
 [dependencies]
 etcd-client.workspace = true
 rustls.workspace = true
+tidb-log = { path = "../tidb-log" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-util = { path = "../tidb-util" }
 tikv-client.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

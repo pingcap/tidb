@@ -498,17 +498,21 @@ fn run_one_pass(
             stats.full_reloads.fetch_add(1, Ordering::AcqRel);
             emit_reloaded(schema_version, "full", trigger);
         }
+        // Go `SyncLoop`'s line for a failed `Reload` (issyncer's logger is
+        // `BgLogger`).
         Err(message) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
-            eprintln!(
-                "{{\"event\":\"catalog_reload_failed\",\"schema_version\":{},\"error\":{}}}",
-                current.schema_version,
-                serde_json::to_string(&message).unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            tidb_util::logutil::bg_logger().error(
+                "reload schema in loop failed",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(message))],
             );
         }
     }
 }
 
+// Not a log line: rust/scripts/run-realtikv-ddl-notify.sh counts these on
+// stderr to prove the watch leg reloads. Go logs its loader's own
+// "diff/full load InfoSchema success" lines instead.
 fn emit_reloaded(schema_version: i64, how: &str, trigger: &str) {
     eprintln!(
         "{{\"event\":\"catalog_reloaded\",\"schema_version\":{schema_version},\"how\":\"{how}\",\"trigger\":\"{trigger}\"}}"

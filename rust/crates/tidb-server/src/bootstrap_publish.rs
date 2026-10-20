@@ -63,6 +63,13 @@ pub fn publish_bootstrap<S: StoreClient>(
             .map_err(|error| error.to_string())?
     };
     let schema_version = write.schema_version;
+    // Go's `onAlterResourceGroup` calls `infosync.ModifyResourceGroup` inside
+    // the job step, before the step's transaction commits, and a failure
+    // cancels the job -- which `mustExecute` turns into a fatal bootstrap.
+    if let Err(error) = write.resource_group_update.apply() {
+        let _ = transaction.rollback(&call);
+        return Err(format!("update resource group failed: {error}"));
+    }
     let outcome = transaction
         .commit(write.mutations, &call)
         .map_err(|error| error.to_string())?;

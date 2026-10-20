@@ -82,6 +82,16 @@ pub(crate) fn run_cluster_session_node_with_spill(
         &config.cluster_security,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    // Go `InfoSyncer.initResourceManagerClient(pdCli)`, which
+    // `domain.Init` runs before `BootstrapSession` reaches `bootstrap`: the
+    // resource-group jobs -- the bootstrap's own `ALTER RESOURCE GROUP
+    // default` among them -- write PD's resource manager through it.
+    tidb_domain::resource_manager_client::init_resource_manager_client(Some(Arc::new(
+        PdResourceManagerClient {
+            store: tikv_store.clone(),
+        },
+    )
+        as Arc<dyn tidb_domain::resource_manager_client::ResourceManagerClient>));
     // Go `initDomainSysVars` registering `setGlobalResourceControl` over the
     // driver's `EnableGlobalResourceControlFunc = tikv.EnableResourceControl`,
     // before any global variable loads: the sysvar turns client-rust's
@@ -452,14 +462,6 @@ pub(crate) fn run_cluster_session_node_with_spill(
         .with_auto_ids(auto_id_service.clone())
         .with_row_ids(Arc::clone(&node_auto_ids)),
     );
-    // Go `InfoSyncer.initResourceManagerClient(pdCli)`: the resource-group
-    // jobs write PD's resource manager through it.
-    tidb_domain::resource_manager_client::init_resource_manager_client(Some(Arc::new(
-        PdResourceManagerClient {
-            store: authority.tikv_store().clone(),
-        },
-    )
-        as Arc<dyn tidb_domain::resource_manager_client::ResourceManagerClient>));
     // Go `GlobalInfoSyncerInit(..., store.GetPDHTTPClient(), ...)`: the
     // info syncer's managers share the store's PD HTTP client.
     let pd_http_client = authority.tikv_store().pd_http_client();

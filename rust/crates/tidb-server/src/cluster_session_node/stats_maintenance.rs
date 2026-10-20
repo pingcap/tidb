@@ -71,7 +71,8 @@ impl StatsMaintenanceWorker {
                         // This existing owner also checks the auto-analyze window
                         // after errors, matching the Go worker's continuation.
                         if let Err(error) = active.gc_stats(lease, schema_lease) {
-                            eprintln!("GC stats failed: {error}");
+                            tidb_util::logutil::bg_logger()
+                                .warn("GC stats failed", &[crate::zap_error(error)]);
                         }
                     }
                 }
@@ -157,8 +158,9 @@ impl StatsMaintenanceWorker {
                         tick(kind);
                     }
                 }));
-                if result.is_err() {
-                    eprintln!("statistics maintenance worker panicked");
+                // Go `defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)`.
+                if let Err(payload) = result {
+                    crate::log_recovered_panic("gcStatsWorker", payload.as_ref());
                 }
             })
             .map_err(|error| format!("start statistics maintenance: {error}"))?;
@@ -176,10 +178,9 @@ impl StatsMaintenanceWorker {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
         self.stop.wake.notify_all();
+        // The worker recovers and logs its own panic, as Go's does.
         if let Some(thread) = self.thread.take() {
-            if thread.join().is_err() {
-                eprintln!("statistics maintenance worker failed during shutdown");
-            }
+            let _ = thread.join();
         }
         if let Some(factory) = self.factory.take() {
             if let Some(owner) = &factory.stats_owner {

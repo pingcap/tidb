@@ -2258,6 +2258,8 @@ impl Session {
                 )));
             }
             tidb_ast::AdminStmt::ShowMasterStatus => {
+                // Go `buildShow`: "show master status need start ts".
+                self.activate_statement_txn();
                 return Ok(Some(crate::show_admin::master_status_output(
                     self.current_tso().value(),
                 )));
@@ -2315,6 +2317,8 @@ impl Session {
                 // `('tidb-binlog', position, '', '', '')` row at the
                 // session's current TSO.
                 if show.kind == tidb_ast::ShowInspectionKind::BinaryLogStatus {
+                    // Go `buildShow` activates the transaction for both.
+                    self.activate_statement_txn();
                     return Ok(Some(crate::show_admin::master_status_output(
                         self.current_tso().value(),
                     )));

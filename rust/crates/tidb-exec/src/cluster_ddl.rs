@@ -5691,7 +5691,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     let cancelling = active.job.is_cancelling();
     let was_rollingback = active.job.is_rollingback();
     let previous_schema_version = active.job.last_schema_version;
-    let outcome = recover_ddl_action(ddl_job_id, || {
+    let outcome = recover_ddl_action(|| {
         if cancelling {
             plan_cancel_persisted_ddl_job(&catalog, &mut active, start_ts)
         } else {
@@ -7366,7 +7366,7 @@ fn count_ddl_action_panic(job: &mut Job, load_limit: &dyn Fn() -> i64) {
 // complete plan returns; unwinding drops guards, and the caller discards the
 // incomplete outputs before publishing a checkpoint. This is why asserting
 // unwind safety for the action's borrowed snapshot/buffer is sound.
-pub(crate) fn recover_ddl_action<T>(job_id: i64, action: impl FnOnce() -> T) -> Result<T, ()> {
+pub(crate) fn recover_ddl_action<T>(action: impl FnOnce() -> T) -> Result<T, ()> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).map_err(|panic| {
         tidb_util::panic_metrics::PANIC_TOTAL
             .with_label_values(&["ddl-worker"])
@@ -7376,8 +7376,21 @@ pub(crate) fn recover_ddl_action<T>(job_id: i64, action: impl FnOnce() -> T) -> 
             .map(String::as_str)
             .or_else(|| panic.downcast_ref::<&str>().copied())
             .unwrap_or("non-string panic payload");
-        eprintln!("{{\"level\":\"error\",\"event\":\"ddl_job_action_panic\",\"job_id\":{job_id},\"error\":{}}}",
-            serde_json::to_string(message).unwrap_or_default());
+        // Go `tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s
+        // runOneJobStep", w), ...)`. Rust runs jobs on no numbered worker,
+        // so `funcInfo` names the step without Go's `worker N, tp T` prefix.
+        tidb_util::logutil::bg_logger().error(
+            "panic in the recoverable goroutine",
+            &[
+                tidb_log::Field::new("label", tidb_log::Value::Str("ddl-worker".to_owned())),
+                tidb_log::Field::new("funcInfo", tidb_log::Value::Str("runOneJobStep".to_owned())),
+                tidb_log::Field::new("r", tidb_log::Value::Str(message.to_owned())),
+                tidb_log::Field::new(
+                    "stack",
+                    tidb_log::Value::Str(std::backtrace::Backtrace::force_capture().to_string()),
+                ),
+            ],
+        );
     })
 }
 

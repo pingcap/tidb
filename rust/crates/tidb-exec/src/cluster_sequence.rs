@@ -313,32 +313,14 @@ where
         };
         // Go `AlterSequence` RESTART PUTs the counter directly. This node does
         // not serve `ALTER SEQUENCE`; the arm exists so the trait contract
-        // holds should that change.
+        // holds should that change. Go returns a failure to the statement and
+        // logs nothing; this contract has no error to return.
         let call = UnaryCallContext::with_timeout(self.timeout);
-        match self.opener.begin() {
-            Ok(transaction) => {
-                match BufferMutation::set(self.value_key.clone(), value::encode_int_value(stored)) {
-                    Ok(mutation) => {
-                        if let Err(error) = transaction.commit(vec![mutation], &call) {
-                            eprintln!(
-                                "{{\"event\":\"sequence_restart_commit_failed\",\"error\":{:?}}}",
-                                error
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "{{\"event\":\"sequence_restart_mutation_failed\",\"error\":{:?}}}",
-                            error
-                        );
-                    }
-                }
-            }
-            Err(error) => {
-                eprintln!(
-                    "{{\"event\":\"sequence_restart_open_failed\",\"error\":{:?}}}",
-                    error
-                );
+        if let Ok(transaction) = self.opener.begin() {
+            if let Ok(mutation) =
+                BufferMutation::set(self.value_key.clone(), value::encode_int_value(stored))
+            {
+                let _ = transaction.commit(vec![mutation], &call);
             }
         }
     }

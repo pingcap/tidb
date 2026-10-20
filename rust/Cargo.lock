@@ -3410,8 +3410,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ast",
+ "tidb-log",
  "tidb-model",
  "tidb-owner",
+ "tidb-util",
 ]
 
 [[package]]
@@ -3489,6 +3491,7 @@ dependencies = [
  "tidb-ast",
  "tidb-config",
  "tidb-error",
+ "tidb-log",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -3862,7 +3865,9 @@ dependencies = [
  "etcd-client",
  "prost 0.14.4",
  "rustls",
+ "tidb-log",
  "tidb-proto",
+ "tidb-util",
  "tikv-client",
  "tokio",
  "tokio-stream",
@@ -4000,7 +4005,11 @@ name = "tidb-schemaver"
 version = "0.0.0"
 dependencies = [
  "tidb-config",
+ "tidb-ddl-logutil",
  "tidb-domain",
+ "tidb-hack",
+ "tidb-log",
+ "tidb-util",
  "tidb-vardef",
 ]
 
@@ -4396,6 +4405,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-exec",
  "tidb-kvcache",
+ "tidb-log",
  "tidb-model",
  "tidb-parser",
  "tidb-util",
@@ -4491,6 +4501,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "chrono",
  "futures",
  "futures-timer",
  "hyper 1.10.1",
@@ -4557,6 +4568,7 @@ dependencies = [
  "fs4",
  "getrandom 0.3.4",
  "libproc",
+ "log",
  "nix",
  "num-traits",
  "prometheus 0.14.0",

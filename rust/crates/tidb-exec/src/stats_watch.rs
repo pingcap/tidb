@@ -901,28 +901,20 @@ fn run_one_stats_reload_pass(
         Ok(StatsReloadReadResult::Publish(next)) => {
             let current = shared.load();
             if snapshots_differ(&current, &next) {
-                let receipt = receipt_of(&next);
                 shared.store(next);
                 stats.reloads.fetch_add(1, Ordering::AcqRel);
-                eprintln!(
-                    "{{\"event\":\"stats_reloaded\",\"loaded\":{},\"pseudo\":{}}}",
-                    receipt.loaded, receipt.pseudo
-                );
             }
         }
         Ok(StatsReloadReadResult::Updated) => {
-            let receipt = shared.receipt();
             stats.reloads.fetch_add(1, Ordering::AcqRel);
-            eprintln!(
-                "{{\"event\":\"stats_reloaded\",\"loaded\":{},\"pseudo\":{}}}",
-                receipt.loaded, receipt.pseudo
-            );
         }
+        // Go `loadStatsWorker`'s line for a failed `statsHandle.Update`; a
+        // successful reload logs nothing.
         Err(message) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
-            eprintln!(
-                "{{\"event\":\"stats_reload_failed\",\"error\":{}}}",
-                serde_json::to_string(&message).unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            tidb_util::logutil::bg_logger().warn(
+                "update stats info failed",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(message))],
             );
         }
     }

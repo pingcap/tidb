@@ -1055,6 +1055,110 @@ fn fill_handle_columns_if(
     Ok(())
 }
 
+/// Go `fillRowChecksum` for one point-get row: `NULL` for a row in the old
+/// format, otherwise the decimal text of `RowData.Checksum` over every table
+/// column sorted by ID -- the stored values (`DecodeRowWithMapNew`), the
+/// handle columns the value does not carry (`DecodeHandleToDatumMap`), and
+/// each still-missing column's `GetColOriginDefaultValue`.
+pub(crate) fn row_checksum(
+    table: &super::KvTable,
+    handle: &TableHandle,
+    value: &[u8],
+    context: &RowDecodeContext,
+) -> Result<Datum, KvTableError> {
+    if !tidb_codec::is_new_format(value) {
+        return Ok(Datum::Null);
+    }
+    let decode_error = |error: &dyn std::fmt::Debug| KvTableError::Decode(format!("{error:?}"));
+    let zone = context.zone();
+    let columns = table.columns.as_slice();
+    let column_types = columns
+        .iter()
+        .map(|column| (column.id, column.field_type.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut datums = decode_table_row_to_map(value, &column_types, Some(zone))
+        .map_err(|error| decode_error(&error))?;
+    // Go: `PKIsHandle` names the integer handle column, `IsCommonHandle`
+    // the primary index's columns in index order.
+    let handle_column_ids = match table.pk_handle_offset() {
+        Some(offset) => vec![columns[offset].id],
+        None => table
+            .common_handle_offsets()
+            .iter()
+            .map(|offset| columns[*offset].id)
+            .collect(),
+    };
+    let kv_handle: tidb_txnkv::Handle = match handle {
+        TableHandle::Int(value) => tidb_txnkv::IntHandle::new(*value).into(),
+        TableHandle::Common(encoded) => CommonHandle::new(encoded.clone())
+            .map_err(|error| decode_error(&error))?
+            .into(),
+    };
+    tidb_tablecodec::decode_handle_to_datum_map(
+        Some(&kv_handle),
+        &handle_column_ids,
+        &column_types,
+        Some(zone),
+        &mut datums,
+    )
+    .map_err(|error| decode_error(&error))?;
+    let mut row = tidb_codec::RowData::default();
+    for column in columns {
+        let datum = match datums.remove(&column.id) {
+            Some(datum) => datum,
+            None => column_origin_default_for_checksum(column, context)?,
+        };
+        row.columns.push(tidb_codec::DatumColumn {
+            id: column.id,
+            field_type: column.field_type.clone(),
+            datum,
+        });
+    }
+    row.columns.sort_by_key(|column| column.id);
+    let checksum = row
+        .checksum(Some(zone))
+        .map_err(|error| decode_error(&error))?;
+    Ok(Datum::new_string(checksum.to_string()))
+}
+
+/// Go `table.GetColOriginDefaultValue` with its `getColDefaultValueFromNil`
+/// arms, under the statement's own strictness.
+fn column_origin_default_for_checksum(
+    column: &KvColumn,
+    context: &RowDecodeContext,
+) -> Result<Datum, KvTableError> {
+    if column.origin_default.is_some() {
+        return column
+            .origin_default_value(context.type_flags(), context.zone())
+            .map_err(|error| KvTableError::Decode(error.to_string()));
+    }
+    if column.field_type.flags() & NOT_NULL_FLAG == 0 {
+        return Ok(Datum::Null);
+    }
+    if column.field_type.code() == tidb_datatype::FieldTypeCode::Enum {
+        let value = column
+            .field_type
+            .with_elems_visible(|elements| tidb_datatype::parse_enum_value(elements, 1))
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+        return Ok(Datum::new_enum(value, column.field_type.collation()));
+    }
+    if column
+        .field_type
+        .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT)
+    {
+        return Ok(crate::bad_null::zero_value(&column.field_type));
+    }
+    let message = format!("Field '{}' doesn't have a default value", column.name);
+    if !context.expression().strict() {
+        context.expression().append_warning_parts(1364, &message);
+        return Ok(crate::bad_null::zero_value(&column.field_type));
+    }
+    Err(KvTableError::ColumnCast(crate::MysqlError::new(
+        tidb_error::mysql::errcode::ErrNoDefaultForField,
+        message,
+    )))
+}
+
 #[cfg(test)]
 mod legacy_enum_set_tests {
     use super::*;

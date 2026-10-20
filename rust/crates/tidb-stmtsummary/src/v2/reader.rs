@@ -658,6 +658,20 @@ fn parse_end_ts(path: &Path) -> Result<i64, String> {
     }
 }
 
+/// Go `logutil.BgLogger().Warn(msg, zap.Error(err), zap.String("path", path))`.
+fn log_file_failure(msg: &str, error: impl std::fmt::Display, path: &Path) {
+    tidb_util::logutil::bg_logger().warn(
+        msg,
+        &[
+            tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+            tidb_log::Field::new(
+                "path",
+                tidb_log::Value::Str(path.to_string_lossy().into_owned()),
+            ),
+        ],
+    );
+}
+
 impl StmtFile {
     /// Go `(*stmtFile).close`. Rust closes the descriptor on drop, so this
     /// only detaches the handle; it cannot fail where Go's `Close` could.
@@ -669,10 +683,7 @@ impl StmtFile {
     /// Go `(*stmtFile).closeAndLogError`.
     fn close_and_log_error(&mut self) {
         if let Err(error) = self.close() {
-            eprintln!(
-                "failed to close statements file [path={:?}] [error={error}]",
-                self.path
-            );
+            log_file_failure("failed to close statements file", error, &self.path);
         }
     }
 }
@@ -750,8 +761,10 @@ pub(crate) fn new_stmt_files_with_read_dir(
         Ok(file) => Some(file),
         Err(error) => {
             if !error.contains("No such file or directory") && !error.contains("os error 2") {
-                eprintln!(
-                    "failed to snapshot current statements file [path={filename}] [error={error}]"
+                log_file_failure(
+                    "failed to snapshot current statements file",
+                    error,
+                    Path::new(&filename),
                 );
             }
             None
@@ -1484,9 +1497,10 @@ fn schedule_tasks(
                     let opened = match open_stmt_file(file.path()) {
                         Ok(opened) => opened,
                         Err(error) => {
-                            eprintln!(
-                                "failed to open or parse statements file [path={:?}] [error={error}]",
-                                file.path()
+                            log_file_failure(
+                                "failed to open or parse statements file",
+                                error,
+                                file.path(),
                             );
                             continue;
                         }

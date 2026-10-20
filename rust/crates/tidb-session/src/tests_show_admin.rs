@@ -14,9 +14,10 @@ use crate::*;
 /// `SHOW PLUGINS` is Go's `fetchShowPlugins` over `plugin.GetAll()` and
 /// `SHOW PROFILES` is its literal `// empty result` arm, so both answer
 /// their column list and no rows. `SHOW MASTER STATUS` reports the pseudo
-/// binlog file and the CURRENT transaction's start timestamp -- which is
-/// zero outside a transaction, exactly as `@@tidb_current_ts` is, because
-/// Go reads the same `TxnCtx.StartTS`.
+/// binlog file and the statement transaction's start timestamp, the
+/// `TxnCtx.StartTS` Go's `buildShow` activates; a session with no server
+/// activator installed has none to activate. The activated case is the
+/// cluster node's `show_master_status_reports_the_activated_start_ts`.
 #[test]
 fn plugins_profiles_and_master_status() {
     let mut session = Session::new();

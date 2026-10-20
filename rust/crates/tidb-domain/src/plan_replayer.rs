@@ -932,8 +932,29 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
             // panicking dump is swallowed and the worker loop survives.
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle_task(&task)));
-            if result.is_err() {
-                eprintln!("PlanReplayerTaskDumpWorker recovered from a panicking dump");
+            if let Err(payload) = result {
+                let recovered = payload
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_owned())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_default();
+                tidb_util::logutil::bg_logger().error(
+                    "panic in the recoverable goroutine",
+                    &[
+                        tidb_log::Field::new("label", tidb_log::Value::Str("domain".to_owned())),
+                        tidb_log::Field::new(
+                            "funcInfo",
+                            tidb_log::Value::Str("PlanReplayerTaskDumpWorker".to_owned()),
+                        ),
+                        tidb_log::Field::new("r", tidb_log::Value::Str(recovered)),
+                        tidb_log::Field::new(
+                            "stack",
+                            tidb_log::Value::Str(
+                                std::backtrace::Backtrace::force_capture().to_string(),
+                            ),
+                        ),
+                    ],
+                );
             }
         }
     }

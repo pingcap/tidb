@@ -3624,6 +3624,18 @@ impl ClusterSessionFactory {
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_restricted_sql(true);
         {
+            // Go `Txn(true)`: asking the bound statement snapshot for its
+            // timestamp is its activation, which publishes the statement's
+            // start ts (`StatementReadTs`).
+            let activation_slot = Arc::clone(&slot);
+            session.set_statement_txn_activator(Arc::new(move || {
+                activation_slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .start_ts();
+            }));
+        }
+        {
             let transactions = Arc::clone(&self.transactions);
             let historical_catalog = Arc::clone(&self.catalog);
             let historical_storage = storage.snapshot_only();

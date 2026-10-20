@@ -45,6 +45,7 @@ use etcd_client::{
     Error as RawEtcdError, EventType, GetOptions, PutOptions, SortOrder, SortTarget, Txn, TxnOp,
     TxnOpResponse,
 };
+use tidb_log::{Field, Value};
 use tokio::sync::watch;
 
 use crate::ClusterSecurity;
@@ -878,7 +879,7 @@ impl EtcdClient {
         retry_cnt: usize,
         timeout: Duration,
     ) -> Result<(), EtcdError> {
-        retry_delete(retry_cnt, || self.delete_with_timeout(key, timeout))
+        retry_delete(key, retry_cnt, || self.delete_with_timeout(key, timeout))
     }
 
     /// Deletes every key under the prefix -- Go's
@@ -1555,7 +1556,7 @@ impl KvWorker {
     }
 }
 
-fn retry_delete<F>(retry_cnt: usize, mut delete: F) -> Result<(), EtcdError>
+fn retry_delete<F>(key: &[u8], retry_cnt: usize, mut delete: F) -> Result<(), EtcdError>
 where
     F: FnMut() -> Result<(), EtcdError>,
 {
@@ -1564,10 +1565,13 @@ where
         match delete() {
             Ok(()) => return Ok(()),
             Err(error) => {
-                eprintln!(
-                    "{{\"level\":\"warn\",\"event\":\"etcd-cli delete key failed\",\"attempt\":{},\"retry_cnt\":{},\"error\":{error:?}}}",
-                    attempt + 1,
-                    retry_cnt,
+                tidb_util::logutil::bg_logger().warn(
+                    "etcd-cli delete key failed",
+                    &[
+                        Field::new("key", Value::Str(String::from_utf8_lossy(key).into_owned())),
+                        Field::new("error", Value::Str(error.to_string())),
+                        Field::new("retryCnt", Value::I64(attempt as i64)),
+                    ],
                 );
                 last_error = Some(error);
                 if attempt + 1 < retry_cnt {
@@ -2295,7 +2299,7 @@ mod tests {
     #[test]
     fn delete_retry_repeats_until_success_and_preserves_zero_count_contract() {
         let mut attempts = 0;
-        let result = retry_delete(3, || {
+        let result = retry_delete(b"k", 3, || {
             attempts += 1;
             if attempts == 3 {
                 Ok(())
@@ -2308,13 +2312,52 @@ mod tests {
 
         let mut called = false;
         assert_eq!(
-            retry_delete(0, || {
+            retry_delete(b"k", 0, || {
                 called = true;
                 Ok(())
             }),
             Ok(())
         );
         assert!(!called);
+    }
+
+    /// Points the global logger at a fresh file and returns the file.
+    fn capture_log(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tidb-{name}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = tidb_util::logutil::new_file_log_config(300);
+        file.filename = path.to_string_lossy().into_owned();
+        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_util::logutil::init_logger(&config).unwrap();
+        path
+    }
+
+    /// Go `DeleteKeyFromEtcd` logs each failed attempt with its 0-based count.
+    #[test]
+    fn delete_retry_logs_each_failed_attempt_like_go() {
+        let path = capture_log("etcd-delete");
+        let _ = retry_delete(b"/tidb/ddl/all_schema_versions/1", 2, || {
+            Err(EtcdError::Closed)
+        });
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[WARN] [etcd.rs:"), "{content}");
+        for retry in 0..2 {
+            assert!(
+                content.contains(&format!(
+                    "[\"etcd-cli delete key failed\"] \
+                     [key=/tidb/ddl/all_schema_versions/1] \
+                     [error=\"the etcd client is closed\"] [retryCnt={retry}]\n"
+                )),
+                "{content}"
+            );
+        }
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

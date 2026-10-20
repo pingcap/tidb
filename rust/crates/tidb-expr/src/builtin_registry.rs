@@ -507,6 +507,22 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
                 "MATCH_AGAINST() is only supported in starter deployment mode".into(),
             )
         }
+        // Go `tidbRowChecksumFunctionClass.getFunction` refuses every build
+        // with `ErrNotSupportedYet.GenWithStack(...)`, which REPLACES the
+        // 1235 message rather than formatting it: the checksum exists only
+        // as the fast point plan's select field (`tryExtractRowChecksumColumn`).
+        "tidb_row_checksum" => {
+            use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+            // Go `ErrNotSupportedYet`: `ClassExpression.NewStd(1235)`.
+            static ERR_NOT_SUPPORTED_YET: std::sync::LazyLock<TerrorError> =
+                std::sync::LazyLock::new(|| {
+                    TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1235))
+                });
+            return crate::EvalError::Conversion(ERR_NOT_SUPPORTED_YET.generate_with_stack(
+                "FUNCTION tidb_row_checksum can only be used as a select field in a fast point \
+                 plan",
+            ));
+        }
         _ => None,
     };
     if let Some(display_name) = unavailable {
@@ -573,6 +589,22 @@ mod tests {
         assert_eq!(
             unresolved_error("default_func", None),
             EvalError::FunctionNotExists("DEFAULT".to_owned())
+        );
+    }
+
+    /// Go `tidbRowChecksumFunctionClass.getFunction`: 1235 whose message is
+    /// the whole `GenWithStack` text, not the catalog's "doesn't yet support".
+    #[test]
+    fn tidb_row_checksum_refuses_to_build_with_gos_1235() {
+        let EvalError::Conversion(error) = unresolved_error("tidb_row_checksum", None) else {
+            panic!("TIDB_ROW_CHECKSUM keeps its registered 1235 identity");
+        };
+        let error = error.to_sql_error();
+        assert_eq!(error.code, 1235);
+        assert_eq!(error.state, "42000");
+        assert_eq!(
+            error.message,
+            "FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan"
         );
     }
 

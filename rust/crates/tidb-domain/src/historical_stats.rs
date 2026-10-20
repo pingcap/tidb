@@ -458,7 +458,13 @@ impl<S> HistoricalStatsWorker<S> {
             return;
         }
         if !self.tbl_ch.try_send(table_id) {
-            eprintln!("discard dump historical stats task: table-id={table_id}");
+            tidb_util::logutil::bg_logger().warn(
+                "discard dump historical stats task",
+                &[tidb_log::Field::new(
+                    "table-id",
+                    tidb_log::Value::I64(table_id),
+                )],
+            );
         }
     }
 
@@ -714,8 +720,26 @@ mod tests {
         });
     }
 
+    /// Points the global logger at a fresh file and returns the file.
+    fn capture_log(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tidb-{name}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = tidb_util::logutil::new_file_log_config(300);
+        file.filename = path.to_string_lossy().into_owned();
+        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_util::logutil::init_logger(&config).unwrap();
+        path
+    }
+
     #[test]
-    fn a_full_mailbox_silently_drops_the_overflow() {
+    fn a_full_mailbox_drops_the_overflow_with_go_warning() {
+        let path = capture_log("historical-stats");
         with_dump_switch(true, || {
             let worker = HistoricalStatsWorker::with_capacity((), 2);
             worker.send_tbl_to_dump_historical_stats(1);
@@ -723,9 +747,16 @@ mod tests {
             worker.send_tbl_to_dump_historical_stats(3);
             assert_eq!(worker.get_one_historical_stats_table(), 1);
             assert_eq!(worker.get_one_historical_stats_table(), 2);
-            // The dropped one is simply gone.
+            // The dropped one is gone; the caller sees nothing.
             assert_eq!(worker.get_one_historical_stats_table(), -1);
         });
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("[WARN] [historical_stats.rs:")
+                && content.ends_with("[\"discard dump historical stats task\"] [table-id=3]\n"),
+            "{content}"
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

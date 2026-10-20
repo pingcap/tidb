@@ -150,6 +150,7 @@
 use std::fmt::Write as _;
 
 use chrono::{DateTime, Datelike as _, Duration, LocalResult, NaiveDate, Offset as _, TimeZone};
+use tidb_log::{Field, Value};
 
 /// Go `maxRetryCount` (`ru_stats.go:37`). The write is retried while
 /// `count > maxRetryCount` is false, i.e. eleven attempts in total.
@@ -740,9 +741,12 @@ pub fn generate_sql(stats: &RuStats) -> Result<Option<String>, RuStatsError> {
             // Go warns with the group's name and id, then skips it
             // (`ru_stats.go:274-276`). A fresh cluster's `default` group has
             // no consumption yet, so this is the line such a round logs.
-            eprintln!(
-                "{{\"level\":\"warn\",\"msg\":\"group ru consumption statistics data is empty\",\"name\":\"{}\",\"id\":{}}}",
-                g.name, g.id
+            tidb_util::logutil::bg_logger().warn(
+                "group ru consumption statistics data is empty",
+                &[
+                    Field::new("name", Value::Str(g.name.clone())),
+                    Field::new("id", Value::I64(g.id)),
+                ],
             );
             continue;
         };
@@ -1506,8 +1510,12 @@ where
             match writer.do_write_ru_statistics() {
                 Ok(()) => break None,
                 Err(error) => {
-                    eprintln!(
-                        "{{\"level\":\"error\",\"msg\":\"failed to insert request_unit_by_group data\",\"retry\":{count},\"error\":\"{error}\"}}"
+                    tidb_util::logutil::bg_logger().error(
+                        "failed to insert request_unit_by_group data",
+                        &[
+                            Field::new("error", Value::Str(error.to_string())),
+                            Field::new("retry", Value::I64(i64::from(count))),
+                        ],
                     );
                     count += 1;
                     if count > MAX_RETRY_COUNT {
@@ -1518,20 +1526,39 @@ where
             }
         };
         // Go attempts the GC once per owned round and only warns on failure.
+        // Go's message spells "rowd".
         if let Err(error) = writer.gc_outdated_records(&last_time) {
-            eprintln!(
-                "{{\"level\":\"warn\",\"msg\":\"[ru_stats] gc outdated rows failed, will try next time\",\"error\":\"{error}\"}}"
+            tidb_util::logutil::bg_logger().warn(
+                "[ru_stats] gc outdated rowd failed, will try next time.",
+                &[Field::new("error", Value::Str(error.to_string()))],
             );
         }
         // Go logs every owned round's outcome at Info (`ru_stats.go:97-98`),
-        // including the last write error when the retries ran out.
-        eprintln!(
-            "{{\"level\":\"info\",\"msg\":\"[ru_stats] finish write ru historical data\",\"end_time\":\"{}\",\"interval\":\"{}\",\"cost_ms\":{},\"error\":{}}}",
-            last_time.fixed_offset().format(GO_DATE_TIME_LAYOUT),
-            writer.interval,
-            started.elapsed().as_millis(),
-            last_error.map_or_else(|| "null".to_owned(), |error| format!("\"{error}\""))
-        );
+        // including the last write error when the retries ran out; a nil
+        // `zap.Error` adds no field. `interval` is Go's `ruStatsInterval`.
+        let mut fields = vec![
+            Field::new(
+                "end_time",
+                Value::Str(
+                    last_time
+                        .fixed_offset()
+                        .format(GO_DATE_TIME_LAYOUT)
+                        .to_string(),
+                ),
+            ),
+            Field::new(
+                "interval",
+                Value::Duration(RU_STATS_INTERVAL.num_nanoseconds().unwrap_or(i64::MAX)),
+            ),
+            Field::new(
+                "cost",
+                Value::Duration(i64::try_from(started.elapsed().as_nanos()).unwrap_or(i64::MAX)),
+            ),
+        ];
+        if let Some(error) = last_error {
+            fields.push(Field::new("error", Value::Str(error.to_string())));
+        }
+        tidb_util::logutil::bg_logger().info("[ru_stats] finish write ru historical data", &fields);
     }
     // Go: nextTime := lastTime.Add(ruStatsInterval); dur := time.Until(nextTime).
     next_wakeup(&last_time)

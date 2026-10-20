@@ -978,4 +978,29 @@ mod startup_schema_lease_tests {
         let (_, result) = validator.check(commit_ts, version, Some(&[]), false);
         assert_eq!(result, ValidatorResult::Succ);
     }
+
+    /// Go `doDDLWorks`' `ALTER RESOURCE GROUP default
+    /// BACKGROUND=(TASK_TYPES='stats')` is a real DDL job: its group lands in
+    /// meta, so a node loading the published bootstrap reads the background
+    /// setting from storage rather than from an in-memory default.
+    #[test]
+    fn the_published_bootstrap_stores_the_default_group_background() {
+        let (_pd, opener) = in_process_write_stack().expect("embedded write stack");
+        crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+            .expect("bootstrap publish");
+        let (startup, _) =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+                .expect("startup catalog");
+        let default = startup
+            .resource_groups
+            .iter()
+            .find(|group| group.name.lowercase() == tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
+            .expect("the default group");
+        let job_types = default
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.background.as_ref())
+            .and_then(|background| background.read().job_types.clone());
+        assert_eq!(job_types, Some(vec!["stats".to_owned()]));
+    }
 }

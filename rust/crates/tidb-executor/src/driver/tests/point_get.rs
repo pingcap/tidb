@@ -2078,6 +2078,64 @@ fn try_fast_plan_accepts_a_primary_key_point_read() {
     );
 }
 
+/// Go `tryExtractRowChecksumColumn` + `fillRowChecksum`: in a fast point
+/// plan a bare `TIDB_ROW_CHECKSUM()` is a column holding the decimal CRC32 of
+/// the row's columns sorted by ID (here the handle `1` as a little-endian
+/// int64, then `'one'` length-prefixed). Anywhere else the function class
+/// refuses to build with 1235.
+#[test]
+fn row_checksum_is_a_fast_point_plan_select_field() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fast_checksum (id INT PRIMARY KEY, c VARCHAR(10))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fast_checksum VALUES (1, 'one')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_select_on(
+            "SELECT TIDB_ROW_CHECKSUM(), c FROM fast_checksum WHERE id = 1",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![
+            Datum::new_string("3673005425"),
+            Datum::new_string("one")
+        ]]
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT TIDB_ROW_CHECKSUM() FROM fast_checksum WHERE id IN (1, 2)",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::new_string("3673005425")]]
+    );
+    for sql in [
+        "SELECT TIDB_ROW_CHECKSUM() IS NULL FROM fast_checksum WHERE id = 1",
+        "SELECT TIDB_ROW_CHECKSUM() FROM fast_checksum",
+    ] {
+        let error = run_select_on(sql, &catalog, &ctx)
+            .expect_err("outside a fast point plan the function class refuses")
+            .to_mysql_error();
+        assert_eq!(error.code, 1235, "{sql}");
+        assert_eq!(
+            error.message,
+            "FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan",
+            "{sql}"
+        );
+    }
+}
+
 #[test]
 fn fast_point_get_uses_gos_smaller_index_hint_check() {
     let mut catalog = Catalog::default();

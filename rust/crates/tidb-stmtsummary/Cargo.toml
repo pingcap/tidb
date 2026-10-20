@@ -22,6 +22,7 @@ tidb-exec = { path = "../tidb-exec" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-log = { path = "../tidb-log" }
 tidb-util = { path = "../tidb-util" }
 tikv-client = { path = "../../third_party/tikv-client-rs" }
 

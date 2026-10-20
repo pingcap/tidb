@@ -878,6 +878,9 @@ pub(crate) enum HandleOutputColumn {
     ExtraHandle,
     /// The physical record keyspace retained alongside each handle.
     PhysicalTableId,
+    /// Go's `ExtraRowChecksumID` column of a fast point plan
+    /// (`fillRowChecksum`), computed from the encoded row value.
+    RowChecksum,
 }
 
 /// Reads rows for an already-known handle list, one per pull: the source
@@ -1098,6 +1101,7 @@ impl HandleSourceExec {
         index: usize,
         handle: &TableHandle,
         row: &[Datum],
+        stored_value: Option<&[u8]>,
         remote: bool,
     ) -> Result<(), ExecError> {
         let visible = visible_of(&self.table, row);
@@ -1149,6 +1153,21 @@ impl HandleSourceExec {
                             })?;
                         req.append_int64(output, physical_id);
                     }
+                    HandleOutputColumn::RowChecksum => {
+                        let stored_value = stored_value.ok_or_else(|| {
+                            ExecError::unsupported(
+                                "a row checksum needs the encoded row value of a point get",
+                            )
+                        })?;
+                        let checksum = crate::kv_table::row_checksum(
+                            &self.table,
+                            handle,
+                            stored_value,
+                            &self.decode_context,
+                        )
+                        .map_err(ExecError::from)?;
+                        req.append_datum(output, &checksum);
+                    }
                 }
             }
         } else {
@@ -1189,7 +1208,7 @@ impl Executor for HandleSourceExec {
                 let Some((index, handle, row)) = rows.pop_front() else {
                     return Ok(());
                 };
-                self.append_handle_row(req, index, &handle, &row, true)?;
+                self.append_handle_row(req, index, &handle, &row, None, true)?;
                 self.cursor += 1;
                 self.produced.set(self.produced.get() + 1);
                 continue;
@@ -1224,6 +1243,7 @@ impl Executor for HandleSourceExec {
                     index,
                     handle.expect("cursor indexes handles"),
                     &row,
+                    Some(value),
                     false,
                 )?;
                 self.produced.set(self.produced.get() + 1);

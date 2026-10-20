@@ -657,6 +657,7 @@ fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, limit: i64) ->
 fn refresh_ddl_error_count_limit<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
+    ddl_job_id: i64,
 ) -> i64 {
     let refreshed = (|| -> Result<_, String> {
         let mut tx = opener
@@ -685,8 +686,13 @@ fn refresh_ddl_error_count_limit<S: StoreClient>(
     match refreshed {
         Ok(Some(limit)) => tidb_vardef::set_ddl_error_count_limit(limit),
         Ok(None) => {}
-        Err(error) => eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_global_variable_refresh_failed\",\"error\":{}}}",
-            serde_json::to_string(&error).unwrap_or_default()),
+        // Go's `jobCtx.logger` is `DDLLogger().With(zap.Int64("jobID", ...))`.
+        Err(error) => tidb_ddl_logutil::ddl_logger()
+            .with_fields(&[tidb_log::Field::new(
+                "jobID",
+                tidb_log::Value::I64(ddl_job_id),
+            )])
+            .error("load DDL global variable failed", &[zap_error(error)]),
     }
     tidb_vardef::ddl_error_count_limit()
 }
@@ -822,8 +828,13 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                         version,
                         schema_sync.owner_id(),
                     ) {
-                        eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_mdl_info_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
-                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                        tidb_ddl_logutil::ddl_logger().warn(
+                            "unexpected error when clean mdl info",
+                            &[
+                                tidb_log::Field::new("job ID", tidb_log::Value::I64(ddl_job_id)),
+                                zap_error(error),
+                            ],
+                        );
                     }
                 }
             }
@@ -831,13 +842,22 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 if let Err(error) =
                     add_index_reorg::clean_ddl_reorg_handles(&opener, timeout, ddl_job_id)
                 {
-                    eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_reorg_handle_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
-                    serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                    // Go also carries `zap.Stringer("job", job)`; this loop
+                    // holds only the job's id.
+                    tidb_ddl_logutil::ddl_logger().warn(
+                        "Failed removing the DDL reorg entry in tidb_ddl_reorg",
+                        &[zap_error(error)],
+                    );
                 }
                 if schema_state.mdl_enabled {
                     if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
-                        eprintln!("{{\"level\":\"warning\",\"event\":\"ddl_job_versions_cleanup_failed\",\"job_id\":{ddl_job_id},\"error\":{}}}",
-                        serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned()));
+                        tidb_ddl_logutil::ddl_logger().warn(
+                            "delete versions failed",
+                            &[
+                                tidb_log::Field::new("job ID", tidb_log::Value::I64(ddl_job_id)),
+                                zap_error(error),
+                            ],
+                        );
                     }
                 }
                 return Ok(PersistedDdlJobOutcome::Finished);
@@ -1643,7 +1663,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
             phase.ddl_job_id,
             start_ts,
             phase.schema_state.clone(),
-            &|| refresh_ddl_error_count_limit(&opener, timeout),
+            &|| refresh_ddl_error_count_limit(&opener, timeout, phase.ddl_job_id),
         ) {
             Ok(PersistedDdlJobPlan::Paused) => {
                 transaction
@@ -1707,7 +1727,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                     Ok(())
                 })
         };
-        let staged = recover_ddl_action(phase.ddl_job_id, stage_action);
+        let staged = recover_ddl_action(stage_action);
         let failure = match staged {
             Ok(Ok(())) => None,
             Err(()) => Some(PersistedDdlJobFailure::Panic),
@@ -1727,7 +1747,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                         ddl_job_id,
                         start_ts,
                         failure,
-                        &|| refresh_ddl_error_count_limit(&opener, timeout),
+                        &|| refresh_ddl_error_count_limit(&opener, timeout, ddl_job_id),
                     )
                 });
             let checkpoint = match checkpoint {
@@ -1950,14 +1970,25 @@ pub fn notify_schema_version(notifier: Option<&dyn SchemaVersionNotifier>, versi
         return;
     };
     match notifier.notify(version) {
+        // Not a log line: rust/scripts/run-realtikv-ddl-notify.sh greps it on
+        // stderr. Go logs nothing on success.
         Ok(()) => eprintln!(
             "{{\"event\":\"schema_version_notified\",\"schema_version\":{version}}}"
         ),
-        Err(error) => eprintln!(
-            "{{\"event\":\"schema_version_notify_failed\",\"level\":\"warning\",\"schema_version\":{version},\"error\":{}}}",
-            serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned())
+        // Go `updateGlobalVersionAndWaitSynced`.
+        Err(error) => tidb_ddl_logutil::ddl_logger().info(
+            "update latest schema version failed",
+            &[
+                tidb_log::Field::new("ver", tidb_log::Value::I64(version)),
+                zap_error(error),
+            ],
         ),
     }
+}
+
+/// zap `zap.Error(err)`.
+fn zap_error(error: impl fmt::Display) -> tidb_log::Field {
+    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))
 }
 
 #[cfg(test)]

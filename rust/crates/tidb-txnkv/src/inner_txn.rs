@@ -219,11 +219,24 @@ pub fn print_long_time_internal_txn(
     } else {
         "internal session"
     };
-    eprintln!(
-        "An internal transaction running by {owner} lasts long time: time={:?} startTS={} start_time={:?}",
-        observation.elapsed,
-        observation.start_ts,
-        tso_time(observation.start_ts)
+    // zap's `zap.Time` renders through the encoder's time layout, in the
+    // local zone `oracle.GetTimeFromTS` returns.
+    let start_time: chrono::DateTime<chrono::Local> = tso_time(observation.start_ts).into();
+    tidb_util::logutil::bg_logger().info(
+        &format!("An internal transaction running by {owner} lasts long time"),
+        &[
+            tidb_log::Field::new(
+                "time",
+                tidb_log::Value::Duration(
+                    i64::try_from(observation.elapsed.as_nanos()).unwrap_or(i64::MAX),
+                ),
+            ),
+            tidb_log::Field::new("startTS", tidb_log::Value::U64(observation.start_ts)),
+            tidb_log::Field::new(
+                "start time",
+                tidb_log::Value::Str(tidb_log::format_time(&start_time.fixed_offset())),
+            ),
+        ],
     );
     Some(observation)
 }
@@ -258,6 +271,46 @@ pub fn get_min_inner_txn_start_ts(
 mod tests {
     use super::*;
     use std::time::{Duration, UNIX_EPOCH};
+
+    /// Points the global logger at a fresh file and returns the file.
+    fn capture_log(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tidb-{name}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = tidb_util::logutil::new_file_log_config(300);
+        file.filename = path.to_string_lossy().into_owned();
+        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_util::logutil::init_logger(&config).unwrap();
+        path
+    }
+
+    /// Go `PrintLongTimeInternalTxn`'s line: the elapsed time, the start TS
+    /// and its physical time in the encoder's time layout.
+    #[test]
+    fn long_running_internal_txn_logs_go_line() {
+        let path = capture_log("inner-txn");
+        let start_ms: u64 = 1_700_000_000_000;
+        let start_ts = start_ms << 18;
+        let now = UNIX_EPOCH + Duration::from_millis(start_ms) + Duration::from_secs(301);
+        assert!(print_long_time_internal_txn(now, start_ts, true).is_some());
+        let start_time: chrono::DateTime<chrono::Local> =
+            (UNIX_EPOCH + Duration::from_millis(start_ms)).into();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.ends_with(&format!(
+                "[\"An internal transaction running by RunInNewTxn lasts long time\"] \
+                 [time=5m1s] [startTS={start_ts}] [\"start time\"=\"{}\"]\n",
+                tidb_log::format_time(&start_time.fixed_offset())
+            )),
+            "{content}"
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn cluster_lifecycle_batch_snapshot_guards_share_tso_and_retire_independently() {

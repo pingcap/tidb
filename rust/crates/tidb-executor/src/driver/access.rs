@@ -45,6 +45,23 @@ struct FastPointOutput {
     table_alias: String,
 }
 
+/// Go `ast.TiDBRowChecksum`.
+const TIDB_ROW_CHECKSUM: &str = "tidb_row_checksum";
+
+/// The [`FastPointOutput::offsets`] entry of the checksum column: it is no
+/// stored column's offset, so every reader that requires one declines it.
+const ROW_CHECKSUM_OUTPUT_OFFSET: usize = usize::MAX;
+
+/// Go `tryExtractRowChecksumColumn`'s type: `TypeString` in the default
+/// charset and collation for that type, `MaxBlobWidth` wide, no decimals.
+fn row_checksum_field_type() -> FieldType {
+    FieldType::new(tidb_datatype::FieldTypeCode::String)
+        .with_charset_name(tidb_mysql::charset::DefaultCharset)
+        .with_collation_name(tidb_mysql::charset::DefaultCollationName)
+        .with_flen(tidb_mysql::consts::MaxBlobWidth as i64)
+        .with_decimal(0)
+}
+
 /// One residual `column = ?`/`column = const` conjunct of a cached point
 /// read: the equality the key lookup cannot answer, so the decoded row must.
 #[derive(Clone, Debug)]
@@ -2031,6 +2048,16 @@ fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
         .zip(&output.columns)
         .enumerate()
         .map(|(position, (offset, (name, field_type)))| {
+            // Go `tryExtractRowChecksumColumn`: ID and UniqueID are both
+            // `ExtraRowChecksumID`, and OrigName is the lowercase call text.
+            if *offset == ROW_CHECKSUM_OUTPUT_OFFSET {
+                let id = tidb_model::column::EXTRA_ROW_CHECKSUM_ID;
+                let mut column = Column::new(id, field_type.clone());
+                column.id = id;
+                column.index = position as i64;
+                column.orig_name = format!("{TIDB_ROW_CHECKSUM}()");
+                return column;
+            }
             let id = table
                 .columns
                 .get(*offset)
@@ -2547,6 +2574,24 @@ fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option
                 });
                 offsets.push(offset);
                 columns.push((name, field_type));
+            }
+            // Go `buildSchemaFromFields` asks `tryExtractRowChecksumColumn`
+            // before requiring a column name: a bare zero-argument
+            // `TIDB_ROW_CHECKSUM()` is the point get's checksum column.
+            SelectField::Expr {
+                expr: tidb_ast::Expr::Func { name, args, .. },
+                alias,
+            } if args.is_empty() && name.eq_ignore_ascii_case(TIDB_ROW_CHECKSUM) => {
+                // `origName` is `FnName` plus "()", with the name as written.
+                let written = select
+                    .fields
+                    .original_text(field_index)
+                    .and_then(|text| text.split(|byte| *byte == b'(').next())
+                    .map(|text| String::from_utf8_lossy(text.trim_ascii_end()).into_owned())
+                    .unwrap_or_else(|| name.clone());
+                let name = alias.clone().unwrap_or_else(|| format!("{written}()"));
+                offsets.push(ROW_CHECKSUM_OUTPUT_OFFSET);
+                columns.push((name, row_checksum_field_type()));
             }
             SelectField::Expr { .. } => return None,
             SelectField::Wildcard(qualifier) => {

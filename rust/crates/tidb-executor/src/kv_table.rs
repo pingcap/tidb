@@ -86,6 +86,7 @@ pub(crate) use table_scan::{FinishedLookup, FinishedLookupChunk};
 use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use auto_id::AutoIdAllocator;
 use row_decoder::fill_handle_columns;
+pub(crate) use row_decoder::row_checksum;
 use std::collections::HashSet;
 pub(crate) use table_meta::NOT_NULL_FLAG;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};

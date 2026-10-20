@@ -25,6 +25,7 @@ use tidb_codec::table_key::{
     encode_row_key_with_handle, encode_table_index_prefix, gen_table_prefix, RecordHandle,
 };
 use tidb_executor::region_map::RegionStore;
+use tidb_log::{Field, Value};
 use tidb_model::TableInfo;
 
 /// Go `GlobalScatterGroupID`.
@@ -50,12 +51,21 @@ fn sharding_bits(table: &TableInfo) -> u64 {
     }
 }
 
-fn log_failure(event: &str, table: &TableInfo, error: &str) {
-    eprintln!(
-        "{{\"level\":\"warning\",\"event\":\"{event}\",\"table\":{},\"error\":{}}}",
-        serde_json::to_string(table.name.original()).unwrap_or_default(),
-        serde_json::to_string(error).unwrap_or_default()
+/// Go's "pre split some table (index) regions failed" lines.
+fn log_pre_split_failure(msg: &str, table: &TableInfo, region_count: usize, error: &str) {
+    tidb_ddl_logutil::ddl_logger().warn(
+        msg,
+        &[
+            Field::new("table", Value::Str(table.name.original().to_owned())),
+            Field::new("successful region count", Value::I64(region_count as i64)),
+            zap_error(error),
+        ],
     );
+}
+
+/// zap `zap.Error(err)`.
+fn zap_error(error: &str) -> Field {
+    Field::new("error", Value::Str(error.to_owned()))
 }
 
 /// Go `preSplitAndScatter` for a table just created. `scatter_scope` is
@@ -157,7 +167,12 @@ fn pre_split_physical_table_by_shard_row_id(
     let (scatter, table_id) = scatter_config(scope, table.id);
     let (mut region_ids, error) = store.split_regions(keys, scatter, Some(table_id));
     if let Some(error) = error {
-        log_failure("pre_split_table_regions_failed", table, &error);
+        log_pre_split_failure(
+            "pre split some table regions failed",
+            table,
+            region_ids.len(),
+            &error,
+        );
     }
     region_ids.extend(split_index_region(store, table, scatter, physical_id));
     region_ids
@@ -175,7 +190,8 @@ fn split_record_region(
     let (region_ids, error) =
         store.split_regions(vec![gen_table_prefix(physical_id)], scatter, Some(table_id));
     if let Some(error) = error {
-        log_failure("split_table_region_failed", table, &error);
+        // It will be automatically split by TiKV later.
+        tidb_ddl_logutil::ddl_logger().warn("split table region failed", &[zap_error(&error)]);
     }
     match region_ids.as_slice() {
         [region_id] => *region_id,
@@ -206,7 +222,12 @@ fn split_index_region(
     }
     let (region_ids, error) = store.split_regions(keys, scatter, Some(physical_id));
     if let Some(error) = error {
-        log_failure("pre_split_index_regions_failed", table, &error);
+        log_pre_split_failure(
+            "pre split some table index regions failed",
+            table,
+            region_ids.len(),
+            &error,
+        );
     }
     region_ids
 }
@@ -216,9 +237,12 @@ fn split_index_region(
 fn wait_scatter_region_finish(store: &dyn RegionStore, region_ids: &[u64]) {
     for &region_id in region_ids {
         if let Err(error) = store.wait_scatter_region_finish(region_id, 0) {
-            eprintln!(
-                "{{\"level\":\"warning\",\"event\":\"wait_scatter_region_failed\",\"region_id\":{region_id},\"error\":{}}}",
-                serde_json::to_string(&error).unwrap_or_default()
+            tidb_ddl_logutil::ddl_logger().warn(
+                "wait scatter region failed",
+                &[
+                    Field::new("regionID", Value::U64(region_id)),
+                    zap_error(&error),
+                ],
             );
             break;
         }
@@ -242,22 +266,17 @@ pub fn split_bootstrap_tables(store: &dyn RegionStore, previous_ddl_table_versio
             .map(|table| gen_table_prefix(table.id))
             .collect();
         let (_, error) = store.split_regions(keys, false, Some(GLOBAL_SCATTER_GROUP_ID));
+        // Go `splitAndScatterTable`.
         if let Some(error) = error {
-            eprintln!(
-                "{{\"level\":\"warning\",\"event\":\"split_ddl_tables_failed\",\"error\":{}}}",
-                serde_json::to_string(&error).unwrap_or_default()
-            );
+            tidb_util::logutil::bg_logger().warn("split table region failed", &[zap_error(&error)]);
         }
     }
     for table in tidb_metadef::BOOTSTRAP_TABLES {
         let (_, error) =
             store.split_regions(vec![gen_table_prefix(table.id)], false, Some(table.id));
+        // Go's `CREATE TABLE` runs `SplitRecordRegion`.
         if let Some(error) = error {
-            eprintln!(
-                "{{\"level\":\"warning\",\"event\":\"split_bootstrap_table_failed\",\"table\":\"{}\",\"error\":{}}}",
-                table.name,
-                serde_json::to_string(&error).unwrap_or_default()
-            );
+            tidb_ddl_logutil::ddl_logger().warn("split table region failed", &[zap_error(&error)]);
         }
     }
 }

@@ -204,6 +204,11 @@ pub struct BootstrapWrite {
     pub diff: SchemaDiff,
     /// The `mysql.*` tables created, in the order they were written.
     pub created_tables: Vec<TableInfo>,
+    /// The resource-manager write of `doDDLWorks`' `ALTER RESOURCE GROUP
+    /// default BACKGROUND=(TASK_TYPES='stats')` (`onAlterResourceGroup`'s
+    /// `infosync.ModifyResourceGroup`), which the committing caller makes
+    /// before the meta record it pairs with is published.
+    pub resource_group_update: crate::cluster_ddl::ResourceGroupUpdate,
 }
 
 /// Plans the whole `mysql` schema, its seed rows, and the bootstrap marker.
@@ -220,6 +225,12 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
     refuse_if_present(snapshot)?;
 
     let mut mutations = Vec::new();
+    // Go `bootstrap`'s first step, `InitMDLVariableForBootstrap`:
+    // `Mutator.SetMetadataLock(true)` before any bootstrap DDL runs.
+    mutations.push(BufferMutation::set(
+        key::metadata_lock_kv_key(),
+        b"1".to_vec(),
+    )?);
     let database = DBInfo {
         id: SYSTEM_DATABASE_ID,
         name: CiString::new(SYSTEM_DB),
@@ -343,6 +354,18 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         value::serialize_db_info(&test_database).map_err(encode_error)?,
     )?);
 
+    // Go `doDDLWorks` ends with `ALTER RESOURCE GROUP default
+    // BACKGROUND=(TASK_TYPES='stats')`, whose `onAlterResourceGroup` stores
+    // the group with `UpdateResourceGroup` (the unpersisted default needs no
+    // existence check) and tells the resource manager.
+    let (default_group, resource_group_update) = bootstrap_default_resource_group()?;
+    mutations.push(BufferMutation::set(
+        key::resource_group_kv_key(default_group.id),
+        serde_json::to_vec(&default_group)
+            .map(|json| value::attach_magic_byte(&json))
+            .map_err(encode_error)?,
+    )?);
+
     // Go `InitTiDBSchemaCacheSize`: publish the source default only when no
     // persisted setting exists.
     if read_schema_cache_size(snapshot)?.is_none() {
@@ -378,7 +401,47 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         schema_version,
         diff,
         created_tables,
+        resource_group_update,
     })
+}
+
+/// The `default` group `doDDLWorks`' `ALTER RESOURCE GROUP default
+/// BACKGROUND=(TASK_TYPES='stats')` (`kv.InternalTxnStats`) leaves behind.
+///
+/// Go `executor.AlterResourceGroup` reads the group from the info schema --
+/// meta's unpersisted `defaultRGroupMeta` on a fresh store -- and
+/// `buildResourceGroup` gives it a fresh `Background` whose `JobTypes` are
+/// `["stats"]`, then `Adjust`s; `onAlterResourceGroup` keeps the stored
+/// group's ID, name and state and replaces only its settings. The proto is
+/// `resourcegroup.NewGroupFromOptions` over those settings, which is what
+/// the job sends through `infosync.ModifyResourceGroup`.
+fn bootstrap_default_resource_group() -> Result<
+    (
+        tidb_model::ResourceGroupInfo,
+        crate::cluster_ddl::ResourceGroupUpdate,
+    ),
+    BootstrapError,
+> {
+    let mut group = tidb_model::ResourceGroupInfo::default_group();
+    let settings = group
+        .settings
+        .get_or_insert_with(|| Box::new(tidb_model::ResourceGroupSettings::new()));
+    settings.background = Some(tidb_model::ResourceGroupShared::new(
+        tidb_model::ResourceGroupBackgroundSettings {
+            job_types: Some(vec![tidb_txnkv::INTERNAL_TXN_STATS.to_owned()]),
+            resource_util_limit: 0,
+        },
+    ));
+    settings.adjust();
+    let proto = tidb_ddl_resourcegroup::new_group_from_options(
+        group.name.lowercase(),
+        group.settings.as_deref(),
+    )
+    .map_err(encode_error)?;
+    Ok((
+        group,
+        crate::cluster_ddl::ResourceGroupUpdate::Modify(Box::new(proto)),
+    ))
 }
 
 /// Plans the whole `mysql` schema — the named entry point for a caller that
@@ -680,6 +743,70 @@ mod source_tests {
             read_schema_cache_size(&mut snapshot).unwrap(),
             Some(536_870_912)
         );
+    }
+
+    /// Go `bootstrap` persists `InitMDLVariableForBootstrap`'s metadata-lock
+    /// flag and `doDDLWorks`' `ALTER RESOURCE GROUP default
+    /// BACKGROUND=(TASK_TYPES='stats')`: the meta record its
+    /// `onAlterResourceGroup` stores and the group it sends to the resource
+    /// manager. The JSON is Go's `json.Marshal` of that group.
+    #[test]
+    fn bootstrap_persists_default_group_background_and_metadata_lock() {
+        const GO_DEFAULT_GROUP: &str = r#"{"ru_per_sec":2147483647,"priority":8,"cpu_limit":"","io_read_bandwidth":"","io_write_bandwidth":"","burst_limit":-1,"runaway":null,"background":{"job_types":["stats"],"utilization_limit":0},"id":1,"name":{"O":"default","L":"default"},"state":5}"#;
+        let mut snapshot = Snapshot::default();
+        let environment = BootstrapEnvironment {
+            system_tz: "UTC".to_owned(),
+            new_collation_enabled: true,
+            cluster_id: 1,
+            current_timestamp: Time::from_date_checked(
+                2026,
+                10,
+                20,
+                0,
+                0,
+                0,
+                0,
+                TimeType::Timestamp,
+                0,
+            )
+            .unwrap(),
+            ddl_table_version: 0,
+        };
+        let write = plan_mysql_bootstrap(&mut snapshot, 1, &environment).unwrap();
+        let stored = |raw_key: Vec<u8>| {
+            write
+                .mutations
+                .iter()
+                .filter(|mutation| mutation.key() == raw_key)
+                .map(|mutation| mutation.value().to_vec())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(stored(key::metadata_lock_kv_key()), vec![b"1".to_vec()]);
+        assert_eq!(
+            stored(key::resource_group_kv_key(1)),
+            vec![value::attach_magic_byte(GO_DEFAULT_GROUP.as_bytes())]
+        );
+        let crate::cluster_ddl::ResourceGroupUpdate::Modify(proto) = &write.resource_group_update
+        else {
+            panic!("the bootstrap modifies the resource manager's default group");
+        };
+        assert_eq!(proto.name, "default");
+        assert_eq!(proto.priority, 8);
+        assert_eq!(
+            proto
+                .background_settings
+                .as_ref()
+                .map(|background| background.job_types.clone()),
+            Some(vec!["stats".to_owned()])
+        );
+        let fill_rate = proto
+            .r_u_settings
+            .as_ref()
+            .and_then(|settings| settings.r_u.as_ref())
+            .and_then(|bucket| bucket.settings.as_ref())
+            .map(|settings| (settings.fill_rate, settings.burst_limit));
+        assert_eq!(fill_rate, Some((2_147_483_647, -1)));
     }
 
     #[test]

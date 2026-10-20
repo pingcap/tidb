@@ -53,8 +53,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tidb_ddl_logutil::ddl_logger;
 use tidb_domain::serverinfo::ServerInfo;
 use tidb_domain::serverinfo_syncer::{join_host_port, EtcdOps};
+use tidb_log::{Field, Value};
+use tidb_util::logutil::bg_logger;
 
 use crate::{
     mdl_enabled, AllServerInfo, Context, DoneCh, GlobalVerRx, SharedRecv, SyncSummary, Syncer,
@@ -157,7 +160,7 @@ pub(crate) fn put_kv_to_etcd(
     lease: Option<i64>,
 ) -> Result<(), String> {
     let mut last = String::new();
-    for _ in 0..retry_cnt {
+    for i in 0..retry_cnt {
         if let Err(error) = ctx.err() {
             return Err(error.to_string());
         }
@@ -168,7 +171,7 @@ pub(crate) fn put_kv_to_etcd(
         match outcome {
             Ok(()) => return Ok(()),
             Err(error) => {
-                log_warn("etcd-cli put kv failed", &[("key", key)]);
+                log_put_kv_failed(key, value, &error, i);
                 last = error;
                 std::thread::sleep(KEY_OP_RETRY_INTERVAL);
             }
@@ -188,14 +191,14 @@ pub(crate) fn put_kv_to_etcd_mono(
     value: &str,
 ) -> Result<(), String> {
     let mut last = String::new();
-    for _ in 0..retry_cnt {
+    for i in 0..retry_cnt {
         if let Err(error) = ctx.err() {
             return Err(error.to_string());
         }
         let prev_revision = match etcd.get_with_mod_revision(key) {
             Ok((_, revision)) => revision,
             Err(error) => {
-                log_warn("etcd-cli put kv failed", &[("key", key)]);
+                log_put_kv_failed(key, value, &error, i);
                 last = error;
                 std::thread::sleep(KEY_OP_RETRY_INTERVAL);
                 continue;
@@ -204,7 +207,7 @@ pub(crate) fn put_kv_to_etcd_mono(
         let swapped = match etcd.compare_and_swap(key, prev_revision, value.as_bytes()) {
             Ok(swapped) => swapped,
             Err(error) => {
-                log_warn("etcd-cli put kv failed", &[("key", key)]);
+                log_put_kv_failed(key, value, &error, i);
                 last = error;
                 std::thread::sleep(KEY_OP_RETRY_INTERVAL);
                 continue;
@@ -214,7 +217,7 @@ pub(crate) fn put_kv_to_etcd_mono(
             return Ok(());
         }
         last = "performing compare-and-swap during PutKVToEtcd failed".to_owned();
-        log_warn("etcd-cli put kv failed", &[("key", key)]);
+        log_put_kv_failed(key, value, &last, i);
         std::thread::sleep(KEY_OP_RETRY_INTERVAL);
     }
     Err(last)
@@ -223,11 +226,18 @@ pub(crate) fn put_kv_to_etcd_mono(
 /// Go `util.DeleteKeyFromEtcd`: DELETE with retries.
 fn delete_key_from_etcd(etcd: &dyn EtcdOps, retry_cnt: u32, key: &str) -> Result<(), String> {
     let mut last = String::new();
-    for _ in 0..retry_cnt {
+    for i in 0..retry_cnt {
         match etcd.delete(key) {
             Ok(()) => return Ok(()),
             Err(error) => {
-                log_warn("etcd-cli delete key failed", &[("key", key)]);
+                bg_logger().warn(
+                    "etcd-cli delete key failed",
+                    &[
+                        Field::new("key", Value::Str(key.to_owned())),
+                        zap_error(&error),
+                        Field::new("retryCnt", Value::I64(i64::from(i))),
+                    ],
+                );
                 last = error;
             }
         }
@@ -235,22 +245,22 @@ fn delete_key_from_etcd(etcd: &dyn EtcdOps, retry_cnt: u32, key: &str) -> Result
     Err(last)
 }
 
-fn log_warn(event: &str, fields: &[(&str, &str)]) {
-    let pairs = fields
-        .iter()
-        .map(|(k, v)| format!("{k:?}:{v:?}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let suffix = if pairs.is_empty() {
-        String::new()
-    } else {
-        format!(",{pairs}")
-    };
-    eprintln!("{{\"level\":\"warn\",\"event\":\"{event}\"{suffix}}}");
+// Go `util.PutKVToEtcd`/`PutKVToEtcdMono`'s line for one failed attempt.
+fn log_put_kv_failed(key: &str, value: &str, error: &str, retry_cnt: u32) {
+    ddl_logger().warn(
+        "etcd-cli put kv failed",
+        &[
+            Field::new("key", Value::Str(key.to_owned())),
+            Field::new("value", Value::Str(value.to_owned())),
+            zap_error(error),
+            Field::new("retryCnt", Value::I64(i64::from(retry_cnt))),
+        ],
+    );
 }
 
-fn log_info(event: &str, message: &str) {
-    eprintln!("{{\"level\":\"info\",\"event\":\"{event}\",\"message\":{message:?}}}");
+/// zap `zap.Error(err)`.
+fn zap_error(error: impl std::fmt::Display) -> Field {
+    Field::new("error", Value::Str(error.to_string()))
 }
 
 /// Go `nodeVersions`: one DDL job's per-node reported versions, plus the
@@ -531,8 +541,14 @@ impl GlobalVerWatcher {
                     })
                     .ok();
             }
+            // Go's `etcdCli.Watch` cannot fail here: its errors arrive on
+            // the channel, whose close makes the consumer rewatch. A watch
+            // this seam cannot start leaves no channel to close, a Rust-only
+            // degraded state Go has no line for.
             Err(error) => {
-                log_warn("watch global schema version failed", &[("error", &error)]);
+                eprintln!(
+                    "{{\"level\":\"warn\",\"event\":\"watch global schema version failed\",\"error\":{error:?}}}"
+                );
             }
         }
     }
@@ -613,9 +629,12 @@ impl EtcdSyncer {
                 Err(error) => {
                     last_error = error;
                     if failed_count % 15 == 0 {
-                        log_warn(
+                        bg_logger().warn(
                             "failed to establish new session to etcd",
-                            &[("ownerInfo", &log_prefix), ("error", &last_error)],
+                            &[
+                                Field::new("ownerInfo", Value::Str(log_prefix.clone())),
+                                zap_error(&last_error),
+                            ],
                         );
                     }
                     std::thread::sleep(NEW_SESSION_RETRY_INTERVAL);
@@ -809,13 +828,23 @@ impl Syncer for EtcdSyncer {
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
                             .clone();
+                        let job_fields = [
+                            Field::new("ddl job id", Value::I64(job_id)),
+                            Field::new("ver", Value::I64(latest_ver)),
+                        ];
                         match info {
                             Some(info) => {
-                                log_info("syncer check all versions, someone is not synced", &info)
+                                let mut fields = vec![Field::new("info", Value::Str(info))];
+                                fields.extend(job_fields);
+                                ddl_logger().info(
+                                    "syncer check all versions, someone is not synced",
+                                    &fields,
+                                )
                             }
-                            None => {
-                                log_info("syncer check all versions, all nodes are not synced", "")
-                            }
+                            None => ddl_logger().info(
+                                "syncer check all versions, all nodes are not synced",
+                                &job_fields,
+                            ),
                         }
                         break;
                     }
@@ -828,8 +857,11 @@ impl Syncer for EtcdSyncer {
                 // Get all the schema versions from etcd.
                 let entries = match self.etcd.get_prefix(DDL_ALL_SCHEMA_VERSIONS) {
                     Ok(entries) => entries,
-                    Err(_error) => {
-                        log_info("syncer check all versions failed, continue checking.", "");
+                    Err(error) => {
+                        ddl_logger().info(
+                            "syncer check all versions failed, continue checking.",
+                            &[zap_error(error)],
+                        );
                         continue;
                     }
                 };
@@ -867,7 +899,7 @@ impl Syncer for EtcdSyncer {
     fn sync_job_schema_ver_loop(&self, ctx: &Context) {
         loop {
             self.sync_job_schema_ver(ctx);
-            log_info("schema version sync loop interrupted, retrying...", "");
+            ddl_logger().info("schema version sync loop interrupted, retrying...", &[]);
             if ctx.sleep(Duration::from_secs(1)).is_err() {
                 return;
             }
@@ -888,7 +920,7 @@ impl Syncer for EtcdSyncer {
             KEY_OP_DEFAULT_RETRY_CNT,
             &self.self_schema_ver_path,
         ) {
-            log_warn("remove self version path failed", &[("error", &error)]);
+            ddl_logger().error("remove self version path failed", &[zap_error(error)]);
         }
     }
 }
@@ -915,8 +947,8 @@ impl EtcdSyncer {
     fn sync_job_schema_ver(&self, ctx: &Context) {
         let (entries, revision) = match self.etcd.get_prefix_with_rev(&self.job_node_ver_prefix) {
             Ok(result) => result,
-            Err(_error) => {
-                log_info("get all job versions failed", "");
+            Err(error) => {
+                ddl_logger().info("get all job versions failed", &[zap_error(error)]);
                 return;
             }
         };
@@ -940,8 +972,8 @@ impl EtcdSyncer {
             .watch(&self.job_node_ver_prefix, revision + 1, true, true)
         {
             Ok(stream) => stream,
-            Err(_error) => {
-                log_warn("watch job version failed", &[("error", "start failed")]);
+            Err(error) => {
+                ddl_logger().warn("watch job version failed", &[zap_error(error)]);
                 return;
             }
         };
@@ -955,7 +987,7 @@ impl EtcdSyncer {
                     self.handle_job_schema_ver_kv(&event.key, &event.value, event.deleted);
                 }
                 crate::Recv::Item(Err(error)) => {
-                    log_warn("watch job version failed", &[("error", &error)]);
+                    ddl_logger().warn("watch job version failed", &[zap_error(&error)]);
                     stream.stop_watching();
                     return;
                 }
@@ -978,8 +1010,25 @@ impl EtcdSyncer {
         let Some((job_id, tidb_id, schema_ver)) =
             decode_job_version_event(key, value, deleted, &self.job_node_ver_prefix)
         else {
-            eprintln!(
-                "{{\"level\":\"error\",\"event\":\"invalid job version kv\",\"key\":{key:?},\"type\":{event_type:?}}}"
+            // `zap.Stringer("kv", kv)` renders the etcd `KeyValue` in proto
+            // compact text; the watch seam carries only its key and value,
+            // not its revisions.
+            let mut kv = format!(
+                "key:{} ",
+                tidb_hack::go_strconv::quote_bytes(key.as_bytes())
+            );
+            if !value.is_empty() {
+                kv.push_str(&format!(
+                    "value:{} ",
+                    tidb_hack::go_strconv::quote_bytes(value)
+                ));
+            }
+            ddl_logger().error(
+                "invalid job version kv",
+                &[
+                    Field::new("kv", Value::Str(kv)),
+                    Field::new("type", Value::Str(event_type.to_owned())),
+                ],
             );
             return;
         };
@@ -1035,17 +1084,37 @@ fn is_updated_latest_version(
 ) -> bool {
     let ver = match val.parse::<i64>() {
         Ok(ver) => ver,
-        Err(_error) => {
-            eprintln!(
-                "{{\"level\":\"info\",\"event\":\"syncer check all versions, convert value to int failed, continue checking.\",\"ddl\":{key:?},\"value\":{val:?}}}"
+        Err(error) => {
+            // Go `strconv.Atoi`'s `*NumError`.
+            let reason = match error.kind() {
+                std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
+                    "value out of range"
+                }
+                _ => "invalid syntax",
+            };
+            ddl_logger().info(
+                "syncer check all versions, convert value to int failed, continue checking.",
+                &[
+                    Field::new("ddl", Value::Str(key.to_owned())),
+                    Field::new("value", Value::Str(val.to_owned())),
+                    zap_error(format!(
+                        "strconv.Atoi: parsing {}: {reason}",
+                        tidb_hack::go_strconv::quote_bytes(val.as_bytes())
+                    )),
+                ],
             );
             return false;
         }
     };
     if ver < latest_ver {
         if not_match_ver_cnt.is_multiple_of(interval_cnt) {
-            eprintln!(
-                "{{\"level\":\"info\",\"event\":\"syncer check all versions, someone is not synced, continue checking\",\"ddl\":{key:?},\"currentVer\":{ver},\"latestVer\":{latest_ver}}}"
+            ddl_logger().info(
+                "syncer check all versions, someone is not synced, continue checking",
+                &[
+                    Field::new("ddl", Value::Str(key.to_owned())),
+                    Field::new("currentVer", Value::I64(ver)),
+                    Field::new("latestVer", Value::I64(latest_ver)),
+                ],
             );
         }
         return false;
@@ -2117,5 +2186,51 @@ mod tests {
             .store(0, AtomicOrdering::Release);
         put_kv_to_etcd_mono(&ctx, &etcd, 3, "testKey", "1").unwrap();
         assert_eq!(Some(b"1".to_vec()), etcd.get_value("testKey"));
+    }
+
+    /// Points the global logger at a fresh file and returns the file.
+    fn capture_log(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tidb-{name}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = tidb_util::logutil::new_file_log_config(300);
+        file.filename = path.to_string_lossy().into_owned();
+        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_util::logutil::init_logger(&config).unwrap();
+        path
+    }
+
+    /// Go `isUpdatedLatestVersion`'s two lines, with `strconv.Atoi`'s error.
+    #[test]
+    fn is_updated_latest_version_logs_go_lines() {
+        let path = capture_log("schemaver-check");
+        assert!(!is_updated_latest_version("v/a", "x", 5, 0, 10));
+        assert!(!is_updated_latest_version("v/b", "3", 5, 0, 10));
+        // Only every `intervalCnt`-th mismatch logs.
+        assert!(!is_updated_latest_version("v/c", "3", 5, 1, 10));
+        assert!(is_updated_latest_version("v/d", "5", 5, 0, 10));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains(
+                "[\"syncer check all versions, convert value to int failed, continue checking.\"] \
+                 [category=ddl] [ddl=v/a] [value=x] \
+                 [error=\"strconv.Atoi: parsing \\\"x\\\": invalid syntax\"]\n"
+            ),
+            "{content}"
+        );
+        assert!(
+            content.contains(
+                "[\"syncer check all versions, someone is not synced, continue checking\"] \
+                 [category=ddl] [ddl=v/b] [currentVer=3] [latestVer=5]\n"
+            ),
+            "{content}"
+        );
+        assert!(!content.contains("ddl=v/c"), "{content}");
+        let _ = std::fs::remove_file(path);
     }
 }

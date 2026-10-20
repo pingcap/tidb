@@ -1901,15 +1901,9 @@ impl Session {
                 // warn-and-serve-cache refresh, so it never returns Err; a
                 // seam provider that does is served with zero size columns
                 // for this statement rather than failing the query, matching
-                // Go's reader never failing on a stats refresh error.
-                Err(error) => {
-                    storage_statistics_failed = true;
-                    eprintln!(
-                        "{{\"event\":\"information_schema_stats_refresh_failed\",\"error\":{}}}",
-                        serde_json::to_string(&error)
-                            .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                    )
-                }
+                // Go's reader never failing on a stats refresh error. Go has
+                // no line for it: its refresh warning is the provider's.
+                Err(_) => storage_statistics_failed = true,
             }
         }
         let mut scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
