@@ -1532,6 +1532,7 @@ impl Session {
                     affected_rows: affected,
                     error,
                     chunk_sizes: self.chunk_sizes(),
+                    cop_selects: Vec::new(),
                 });
                 let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
                     .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;

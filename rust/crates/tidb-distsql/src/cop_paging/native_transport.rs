@@ -38,9 +38,10 @@
 //! * Go's `copIterator.GetStoreBatchInfo` counters (batched and fallback
 //!   task counts) are not kept: nothing in this node reports them.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
 
@@ -52,7 +53,9 @@ use crate::{
     CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     ResponseChannelEvent, TransportRequest,
 };
-pub use tidb_txnkv::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
+pub use tidb_txnkv::driver::cop_store::{
+    CopBackoffer, CopRpcTrace, CopRpcTraces, NativeCopSend, NativeCopStore,
+};
 use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
 
@@ -67,6 +70,8 @@ use super::{
 enum NativeCopError {
     Task(CopReadTaskError),
     Client(tikv_client::Error),
+    /// Go `copIterator.Next`'s `CheckVisibility` failure.
+    Visibility(tidb_txnkv::VisibilityError),
     Other(String),
 }
 
@@ -117,9 +122,105 @@ impl From<NativeCopError> for QueryResponseError {
                     None => Self::Source(error.to_string()),
                 }
             }
+            // Go `kvStore.CheckVisibility` -> `ToTiDBErr`: `ErrTxnAbortedByGC`
+            // (9006) or `ErrPDServerTimeout`.
+            NativeCopError::Visibility(error) => {
+                match tidb_txnkv::to_tidb_driver_error(&error.into_storage_driver_error()) {
+                    tidb_txnkv::ConvertedDriverError::Terror(converted) => Self::Sql {
+                        code: u16::try_from(converted.code().value())
+                            .expect("registered storage error fits the MySQL protocol"),
+                        message: converted.message().to_owned(),
+                    },
+                    other => Self::Source(other.to_string()),
+                }
+            }
             NativeCopError::Other(message) => Self::Source(message),
         }
     }
+}
+
+/// One `regionRequest.SendReqCtx` of a traced statement: the send to one
+/// region, with the physical RPCs (`rpcClient.SendRequest`) it made.
+#[derive(Clone, Debug)]
+pub struct SendReqCtxTrace {
+    /// `req.RegionId`.
+    pub region_id: u64,
+    /// When the send started.
+    pub start: Instant,
+    /// When the send returned.
+    pub end: Instant,
+    /// The physical RPCs that brought back execution details.
+    pub rpcs: Vec<CopRpcTrace>,
+    /// The earlier send of the same `distsql.Select` this one is nested
+    /// under: client-go's `SendReqCtx` puts its span into the backoffer's
+    /// ctx (`bo.SetCtx`), so a later send on the same backoffer is its child.
+    pub parent: Option<usize>,
+}
+
+/// The sends of one `distsql.Select` (one `CopClient.Send`), in order.
+pub type DistSqlSelectTrace = Arc<Mutex<Vec<SendReqCtxTrace>>>;
+
+/// What `TRACE` collects from the coprocessor client: Go's statement span
+/// that `regionRequest.SendReqCtx` and `rpcClient.SendRequest` open their
+/// spans under, with `util.ContextWithTraceExecDetails` set.
+#[derive(Debug, Default)]
+pub struct CopTraceRecorder {
+    selects: Mutex<Vec<DistSqlSelectTrace>>,
+}
+
+impl CopTraceRecorder {
+    /// One coprocessor send's trace, opened when the request is sent.
+    fn begin_select(&self) -> DistSqlSelectTrace {
+        let select = DistSqlSelectTrace::default();
+        self.selects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Arc::clone(&select));
+        select
+    }
+
+    /// Every coprocessor send's region sends, in send order.
+    #[must_use]
+    pub fn selects(&self) -> Vec<Vec<SendReqCtxTrace>> {
+        self.selects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|select| {
+                select
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+            })
+            .collect()
+    }
+}
+
+thread_local! {
+    static TRACE_EXEC_DETAILS: RefCell<Option<Arc<CopTraceRecorder>>> = const { RefCell::new(None) };
+}
+
+/// Restores the previous recorder when the traced statement ends.
+#[must_use = "the recorder is removed when the guard drops"]
+pub struct TraceExecDetailsGuard {
+    previous: Option<Arc<CopTraceRecorder>>,
+}
+
+impl Drop for TraceExecDetailsGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        TRACE_EXEC_DETAILS.with(|current| *current.borrow_mut() = previous);
+    }
+}
+
+/// Go `TraceExec`'s `opentracing.ContextWithSpan` plus
+/// `util.ContextWithTraceExecDetails`, for the statement this thread runs:
+/// every coprocessor request it sends records its region sends into
+/// `recorder` until the guard drops. The request captures the recorder when
+/// it is sent, as Go's copr workers inherit the sender's ctx.
+pub fn context_with_trace_exec_details(recorder: Arc<CopTraceRecorder>) -> TraceExecDetailsGuard {
+    let previous = TRACE_EXEC_DETAILS.with(|current| current.borrow_mut().replace(recorder));
+    TraceExecDetailsGuard { previous }
 }
 
 /// Go `copNextMaxBackoff`: a task's backoff budget, shared by its sends,
@@ -293,10 +394,18 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             query_deadline,
             cancellation.unary_cancellation(),
         );
+        let trace_select = TRACE_EXEC_DETAILS.with(|current| {
+            current
+                .borrow()
+                .as_ref()
+                .map(|recorder| recorder.begin_select())
+        });
         let source = NativeCopResponse {
             store: Arc::clone(&self.store),
             cluster_id: self.store.cluster_id(),
             trace: self.config.trace.clone(),
+            trace_select,
+            trace_parents: Vec::new(),
             event_callback: self.event_callback.clone(),
             cancellation,
             call,
@@ -354,6 +463,11 @@ pub struct NativeCopResponse<S: ?Sized> {
     store: Arc<S>,
     cluster_id: u64,
     trace: Option<tidb_txnkv::TraceInfo>,
+    /// The traced statement's record of this request's region sends.
+    trace_select: Option<DistSqlSelectTrace>,
+    /// The last traced send of each backoffer, by its index in
+    /// `trace_select`: the span a later send on that backoffer nests under.
+    trace_parents: Vec<(CopBackoffer, usize)>,
     event_callback: Option<tidb_txnkv::EventCallback>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
@@ -383,6 +497,24 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
     fn fail(&mut self, message: String) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.closed = true;
         Err(QueryResponseError::Source(message))
+    }
+
+    /// Go `copIterator.Next`: every response is handed back only after
+    /// `it.store.CheckVisibility(it.req.StartTs)` proves GC has not passed the
+    /// read's timestamp; checking after the read is what makes it sound.
+    fn check_visibility(&mut self) -> Result<(), QueryResponseError> {
+        match self.store.check_visibility(self.metadata.start_ts) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.closed = true;
+                Err(
+                    NativeCopError::Visibility(tidb_txnkv::VisibilityError::from_client_error(
+                        error,
+                    ))
+                    .into(),
+                )
+            }
+        }
     }
 
     fn check_active(&self) -> Result<(), NativeCopError> {
@@ -455,13 +587,47 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             .map_err(|error| error.to_string())?;
         wire.context = Some(request.context.clone());
         let backoffer = self.backoffer(logical_task_id);
+        let traced = self
+            .trace_select
+            .as_ref()
+            .map(|_| (Instant::now(), CopRpcTraces::default()));
         let sent = self.store.send(
             &backoffer,
             &wire.encode_to_vec(),
             region,
             self.timeout.min(self.call.timeout()),
             self.ru_details.as_ref(),
-        )?;
+            traced.as_ref().map(|(_, rpcs)| rpcs),
+        );
+        if let (Some(select), Some((start, rpcs))) = (&self.trace_select, traced) {
+            let rpcs = std::mem::take(
+                &mut *rpcs
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            let last = self
+                .trace_parents
+                .iter_mut()
+                .find(|(traced, _)| Arc::ptr_eq(traced, &backoffer));
+            let parent = last.as_ref().map(|(_, index)| *index);
+            let mut sends = select
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = sends.len();
+            sends.push(SendReqCtxTrace {
+                region_id: region.0,
+                start,
+                end: Instant::now(),
+                rpcs,
+                parent,
+            });
+            drop(sends);
+            match last {
+                Some((_, last)) => *last = index,
+                None => self.trace_parents.push((Arc::clone(&backoffer), index)),
+            }
+        }
+        let sent = sent?;
         let (encoded, address) = match sent {
             NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
             NativeCopSend::RegionError(error) => {
@@ -828,6 +994,7 @@ impl<S: NativeCopStore + ?Sized> QueryResponse for NativeCopResponse<S> {
             };
             match self.runtime.next_response(logical_task_id) {
                 Some(ResponseChannelEvent::Result(data)) => {
+                    self.check_visibility()?;
                     return Ok(Some(QueryResultSubset {
                         data,
                         runtime: None,
@@ -837,6 +1004,7 @@ impl<S: NativeCopStore + ?Sized> QueryResponse for NativeCopResponse<S> {
                     result,
                     runtime_stats,
                 }) => {
+                    self.check_visibility()?;
                     return Ok(Some(QueryResultSubset {
                         data: result,
                         runtime: Some(runtime_stats),
@@ -930,6 +1098,8 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                 store: Arc::clone(&self.store),
                 cluster_id: self.cluster_id,
                 trace: self.trace.clone(),
+                trace_select: self.trace_select.clone(),
+                trace_parents: Vec::new(),
                 event_callback: self.event_callback.clone(),
                 cancellation: Arc::clone(&self.cancellation),
                 call: self.call.clone(),
@@ -985,6 +1155,33 @@ mod tests {
         assert!(
             matches!(max_keys_read, QueryResponseError::Sql { code: 8274, .. }),
             "{max_keys_read:?}"
+        );
+    }
+
+    /// Go `copIterator.Next`'s `CheckVisibility` goes through `ToTiDBErr`:
+    /// a read GC has overtaken is `ErrTxnAbortedByGC` (9006) with client-go's
+    /// text, a stale safe-point cache `ErrPDServerTimeout` (9001).
+    #[test]
+    fn visibility_failures_keep_gos_codes() {
+        let aborted = tidb_txnkv::VisibilityError::TxnAbortedByGc {
+            txn_start_ts: 449,
+            txn_safe_point: 450,
+        };
+        let expected = aborted.to_string();
+        let converted = QueryResponseError::from(NativeCopError::Visibility(aborted));
+        assert!(
+            matches!(
+                &converted,
+                QueryResponseError::Sql { code: 9006, message } if *message == expected
+            ),
+            "{converted:?}"
+        );
+        let stale = QueryResponseError::from(NativeCopError::Visibility(
+            tidb_txnkv::VisibilityError::StaleGcStateCache,
+        ));
+        assert!(
+            matches!(stale, QueryResponseError::Sql { code: 9001, .. }),
+            "{stale:?}"
         );
     }
 }

@@ -1500,7 +1500,7 @@ impl DriverError {
         ),
         DriverError::SnapshotTooOld(safe_point_time) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrSnapshotTooOld,
-            format!("Snapshot is older than GC safe point {safe_point_time}"),
+            format!("snapshot is older than GC safe point {safe_point_time}"),
         ),
         DriverError::SubqueryReturnsMoreThanOneRow => MysqlError::new(
             ER_SUBQUERY_NO_1_ROW,

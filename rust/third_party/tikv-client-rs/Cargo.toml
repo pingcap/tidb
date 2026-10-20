@@ -40,6 +40,8 @@ arc-swap = "1.9.2"
 async-recursion = "0.3"
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
 derive-new = "0.5"
 either = "1.6"
 fail = "0.4"

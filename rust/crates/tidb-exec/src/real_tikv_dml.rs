@@ -328,6 +328,7 @@ impl From<OptimisticCoordinatorError> for ConfiguredWriteError {
             error,
             OptimisticCoordinatorError::SnapshotBackoff { .. }
                 | OptimisticCoordinatorError::Storage(_)
+                | OptimisticCoordinatorError::Visibility(_)
         ) {
             Self::Commit(crate::cluster_table_storage::coordinator_sql_error(error))
         } else {

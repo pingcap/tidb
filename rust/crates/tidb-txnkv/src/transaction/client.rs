@@ -17,6 +17,7 @@ use super::call_interceptor::CallSlot;
 use super::state::*;
 use super::{CommitProtocol, OptimisticCoordinatorError, SchemaLease};
 use crate::driver::tikv_store::TikvStore;
+use crate::gc_state::VisibilityError;
 use crate::rpc::UnaryCallContext;
 use crate::{MemBufferBackend, TikvTransactionDriver};
 use std::sync::Arc;
@@ -306,10 +307,20 @@ impl<S: PdClient> ClientTransaction<S> {
             crate::TikvTransactionError::Buffer(crate::TikvMemBufferError::Kv(error)) => {
                 OptimisticCoordinatorError::Storage(error)
             }
+            crate::TikvTransactionError::Client(
+                error @ tikv_client::Error::TransactionAbortedByGc(_),
+            ) => Self::client_read_error(error),
             error => Self::read_error(error),
         }
     }
     fn client_read_error(error: tikv_client::Error) -> OptimisticCoordinatorError {
+        // client-go `KVSnapshot`'s `CheckVisibility` failure keeps its own
+        // identity, so Go's `ToTiDBErr` gives it `ErrTxnAbortedByGC`.
+        if let tikv_client::Error::TransactionAbortedByGc(_) = &error {
+            return OptimisticCoordinatorError::Visibility(VisibilityError::from_client_error(
+                error,
+            ));
+        }
         match crate::driver::tikv_transaction::classify_client_cause(&error) {
             TransactionCause::BackoffExhausted { kind, detail } => {
                 OptimisticCoordinatorError::SnapshotBackoff { kind, detail }
@@ -1064,5 +1075,29 @@ mod tests {
             };
             assert_eq!(sql.code().value(), expected_code);
         }
+    }
+
+    /// client-go `KVSnapshot`'s `CheckVisibility` failure (`ErrTxnAbortedByGC`)
+    /// keeps its identity through a snapshot read, as Go's `ToTiDBErr`
+    /// requires, instead of becoming a generic read diagnostic.
+    #[test]
+    fn a_gc_aborted_snapshot_read_keeps_its_identity() {
+        let cache = tikv_client::tikv::TxnSafePointCache::new(450, std::time::SystemTime::now());
+        let aborted = cache.check_visibility(449).unwrap_err();
+        let expected = OptimisticCoordinatorError::Visibility(VisibilityError::TxnAbortedByGc {
+            txn_start_ts: 449,
+            txn_safe_point: 450,
+        });
+        assert_eq!(
+            ClientTransaction::<tikv_client::PdRpcClient>::client_read_error(aborted),
+            expected
+        );
+        let aborted = cache.check_visibility(449).unwrap_err();
+        assert_eq!(
+            ClientTransaction::<tikv_client::PdRpcClient>::transaction_error(
+                crate::TikvTransactionError::Client(aborted)
+            ),
+            expected
+        );
     }
 }

@@ -728,30 +728,45 @@ fn protobuf_bytes(value: &[u8]) -> String {
     result
 }
 
+/// client-go prints these times with `%v`: `time.Time.String()` of
+/// `oracle.GetTimeFromTS(ts)`, in Go's `time.Local`
+/// (`2000-01-01 00:00:00 -0800 PST`, the fraction without trailing zeros).
 fn format_system_time(time: SystemTime) -> String {
-    let nanoseconds = match time.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(duration) => {
-            i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos())
-        }
-        Err(error) => {
-            let duration = error.duration();
-            -(i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos()))
-        }
-    };
-    let seconds = nanoseconds.div_euclid(1_000_000_000);
-    let subsecond = nanoseconds.rem_euclid(1_000_000_000) as u32;
-    let days = seconds.div_euclid(86_400) as i64;
-    let seconds_of_day = seconds.rem_euclid(86_400) as u32;
-    let (year, month, day) = civil_date_from_days(days);
-    let hour = seconds_of_day / 3_600;
-    let minute = seconds_of_day % 3_600 / 60;
-    let second = seconds_of_day % 60;
-    let fraction = if subsecond == 0 {
+    format_system_time_in(time, &go_time_local())
+}
+
+fn format_system_time_in(time: SystemTime, zone: &chrono_tz::Tz) -> String {
+    let utc: chrono::DateTime<chrono::Utc> = time.into();
+    let local = utc.with_timezone(zone);
+    let nanos = local.timestamp_subsec_nanos();
+    let fraction = if nanos == 0 {
         String::new()
     } else {
-        format!(".{subsecond:09}").trim_end_matches('0').to_owned()
+        format!(".{nanos:09}").trim_end_matches('0').to_owned()
     };
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}{fraction} +0000 UTC")
+    format!(
+        "{}{fraction} {}",
+        local.format("%Y-%m-%d %H:%M:%S"),
+        local.format("%z %Z")
+    )
+}
+
+/// Go's `time.Local`, loaded once per process: `$TZ` when set (empty is
+/// UTC, an unloadable name falls back to UTC), otherwise the system zone
+/// (`/etc/localtime`), otherwise UTC.
+fn go_time_local() -> chrono_tz::Tz {
+    static LOCAL: std::sync::OnceLock<chrono_tz::Tz> = std::sync::OnceLock::new();
+    *LOCAL.get_or_init(|| match std::env::var("TZ") {
+        Ok(name) if name.is_empty() => chrono_tz::UTC,
+        Ok(name) => name
+            .trim_start_matches(':')
+            .parse()
+            .unwrap_or(chrono_tz::UTC),
+        Err(_) => iana_time_zone::get_timezone()
+            .ok()
+            .and_then(|name| name.parse().ok())
+            .unwrap_or(chrono_tz::UTC),
+    })
 }
 
 fn civil_date_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
@@ -1112,10 +1127,39 @@ mod tests {
         };
         assert_eq!(
             gc_error.to_string(),
-            "GC life time is shorter than transaction duration, transaction starts at 1970-01-01 00:00:00 +0000 UTC, GC safe point is 1970-01-01 00:00:00.12 +0000 UTC"
+            format!(
+                "GC life time is shorter than transaction duration, transaction starts at {}, GC safe point is {}",
+                format_system_time(SystemTime::UNIX_EPOCH),
+                format_system_time(SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(120_000_000)),
+            )
+        );
+        // client-go's `%v` of a `time.Time`: Go's `time.Time.String()`.
+        assert_eq!(
+            format_system_time_in(
+                SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(120_000_000),
+                &chrono_tz::UTC
+            ),
+            "1970-01-01 00:00:00.12 +0000 UTC"
         );
         assert_eq!(
-            format_system_time(SystemTime::UNIX_EPOCH - std::time::Duration::from_nanos(1)),
+            format_system_time_in(
+                SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(946_713_600),
+                &chrono_tz::America::Los_Angeles
+            ),
+            "2000-01-01 00:00:00 -0800 PST"
+        );
+        assert_eq!(
+            format_system_time_in(
+                SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(1_792_512_651_715),
+                &chrono_tz::America::Los_Angeles
+            ),
+            "2026-10-20 09:10:51.715 -0700 PDT"
+        );
+        assert_eq!(
+            format_system_time_in(
+                SystemTime::UNIX_EPOCH - std::time::Duration::from_nanos(1),
+                &chrono_tz::UTC
+            ),
             "1969-12-31 23:59:59.999999999 +0000 UTC"
         );
         assert_eq!(
@@ -1127,7 +1171,11 @@ mod tests {
                     + std::time::Duration::from_nanos(120_000_000),
             }
             .to_string(),
-            "GC life time is shorter than transaction duration, transaction start ts is 1 (1970-01-01 00:00:00 +0000 UTC), txn safe point is 2 (1970-01-01 00:00:00.12 +0000 UTC)"
+            format!(
+                "GC life time is shorter than transaction duration, transaction start ts is 1 ({}), txn safe point is 2 ({})",
+                format_system_time(SystemTime::UNIX_EPOCH),
+                format_system_time(SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(120_000_000)),
+            )
         );
         assert_eq!(
             LockOnlyIfExistsNoReturnValueError {

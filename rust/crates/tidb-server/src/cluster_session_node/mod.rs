@@ -3646,9 +3646,7 @@ impl ClusterSessionFactory {
                         .unwrap_or(16);
                     let loaded = historical_catalog
                         .historical_at(&mut metadata, capacity)
-                        .map_err(|error| {
-                            tidb_executor::DriverError::unsupported(error.to_string())
-                        })?;
+                        .map_err(historical_catalog_error)?;
                     let built = cluster_session_catalog_with_templates(
                         &loaded,
                         &historical_storage,
@@ -3715,7 +3713,7 @@ impl ClusterSessionFactory {
                     .unwrap_or(16);
                 let loaded = catalogs
                     .historical_at(&mut metadata, capacity)
-                    .map_err(|error| tidb_executor::DriverError::unsupported(error.to_string()))?;
+                    .map_err(historical_catalog_error)?;
                 let built = cluster_session_catalog_with_templates(
                     &loaded,
                     &connection_storage,
@@ -3856,6 +3854,20 @@ impl ClusterSessionFactory {
 
 fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecError {
     Box::new(std::io::Error::other(message.into()))
+}
+
+/// Go `GetSnapshotInfoSchema`'s failure as the statement sees it: a meta
+/// read's storage error with a SQL identity (`ErrTxnAbortedByGC` for a
+/// timestamp behind the txn safe point) is returned unwrapped.
+fn historical_catalog_error(
+    error: tidb_exec::cluster_catalog::ClusterCatalogError,
+) -> tidb_executor::DriverError {
+    match error {
+        tidb_exec::cluster_catalog::ClusterCatalogError::Sql(error) => {
+            tidb_executor::DriverError::Mysql(error)
+        }
+        other => tidb_executor::DriverError::unsupported(other.to_string()),
+    }
 }
 
 struct ClusterStatsSessionState {
@@ -5314,6 +5326,11 @@ impl ClusterServerSession {
         let mut rows = 0_u64;
         let mut affected = 0_u64;
         let mut error = None;
+        // Go `TraceExec.Next`: `util.ContextWithTraceExecDetails(ctx)` and the
+        // trace span reach every coprocessor request the statement sends.
+        let cop_trace = Arc::new(tidb_distsql::cop_paging::CopTraceRecorder::default());
+        let cop_trace_guard =
+            tidb_distsql::cop_paging::context_with_trace_exec_details(Arc::clone(&cop_trace));
         match QuerySession::execute_write_parsed(self, &inner_sql, &inner) {
             Ok(Some(outcome)) => affected = outcome.affected_rows,
             Ok(None) => match self.execute_parsed(&inner_sql, &inner) {
@@ -5332,6 +5349,34 @@ impl ClusterServerSession {
             Err(failure) => error = Some((failure.code, failure.message)),
         }
         let elapsed = clock.elapsed();
+        drop(cop_trace_guard);
+        let offset = |at: std::time::Instant| {
+            i64::try_from(at.saturating_duration_since(clock).as_nanos()).unwrap_or(i64::MAX)
+        };
+        let cop_selects = cop_trace
+            .selects()
+            .into_iter()
+            .map(|sends| {
+                sends
+                    .into_iter()
+                    .map(|send| tidb_session::trace::SendReqCtxSpan {
+                        region_id: send.region_id,
+                        start: offset(send.start),
+                        end: offset(send.end),
+                        rpcs: send
+                            .rpcs
+                            .into_iter()
+                            .map(|rpc| tidb_session::trace::RpcSpan {
+                                start: offset(rpc.start),
+                                end: offset(rpc.end),
+                                details: rpc.details,
+                            })
+                            .collect(),
+                        parent: send.parent,
+                    })
+                    .collect()
+            })
+            .collect();
         let kind = tidb_session::trace::kind_of(
             &inner,
             self.session.published_plan(),
@@ -5346,6 +5391,7 @@ impl ClusterServerSession {
             affected_rows: affected,
             error,
             chunk_sizes: self.session.chunk_sizes(),
+            cop_selects,
         });
         let (columns, result_rows) = tidb_session::trace::render(&trace.format, &spans, started)
             .map_err(SqlQueryError::unknown)?;

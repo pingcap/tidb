@@ -22,6 +22,9 @@
 //! `04` (zero-padded minute), `05` (zero-padded second) and `-0700`
 //! (numeric zone) -- plus literal text, with Go's `getnum`, `skip`, range
 //! and extra-text rules. Any other layout element is refused.
+//!
+//! It also renders `time.Time.String()`, the layout `%v` prints a time with
+//! (Go errors such as `ErrTxnAbortedByGC` and `ErrSnapshotTooOld` embed it).
 
 /// A clock Go parsed from a layout.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -252,9 +255,98 @@ pub fn parse_clock(layout: &str, value: &str) -> Result<ParsedClock, String> {
     Ok(clock)
 }
 
+/// Go `time.Time.String()` of a time in `location` without a monotonic
+/// reading: the layout `2006-01-02 15:04:05.999999999 -0700 MST`, the
+/// fraction without trailing zeros and the zone named by its abbreviation
+/// (`PST`, or a numeric `-03` for a zone the database names that way).
+#[must_use]
+pub fn go_time_string_in(time: chrono::DateTime<chrono_tz::Tz>) -> String {
+    format!(
+        "{}{} {}",
+        time.format("%Y-%m-%d %H:%M:%S"),
+        go_time_fraction(time.timestamp_subsec_nanos()),
+        time.format("%z %Z")
+    )
+}
+
+/// [`go_time_string_in`] in the process's local zone, which is what Go's
+/// `%v` of a `time.Local` value prints (`oracle.GetTimeFromTS`,
+/// `time.Now()`).
+#[must_use]
+pub fn go_time_string(time: chrono::DateTime<chrono::Local>) -> String {
+    match crate::timeutil::infer_system_tz().parse::<chrono_tz::Tz>() {
+        Ok(zone) => go_time_string_in(time.with_timezone(&zone)),
+        // A zone the database cannot name keeps its numeric offset in the
+        // name position, as Go does for an unnamed zone.
+        Err(_) => format!(
+            "{}{} {} {}",
+            time.format("%Y-%m-%d %H:%M:%S"),
+            go_time_fraction(time.timestamp_subsec_nanos()),
+            time.format("%z"),
+            time.format("%z")
+        ),
+    }
+}
+
+/// Go `time.UnixMilli(millis).String()`: a Unix millisecond instant as a
+/// `time.Local` value (`oracle.GetTimeFromTS`, `model.TSConvert2Time`).
+#[must_use]
+pub fn go_unix_milli_string(millis: i64) -> String {
+    use chrono::TimeZone as _;
+    let time = chrono::Local
+        .timestamp_millis_opt(millis)
+        .single()
+        .expect("Unix milliseconds fit Chrono");
+    go_time_string(time)
+}
+
+/// Go's `.999999999` layout element: the nanoseconds with trailing zeros
+/// removed, nothing for a whole second.
+fn go_time_fraction(nanos: u32) -> String {
+    let fraction = format!("{nanos:09}");
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        String::new()
+    } else {
+        format!(".{fraction}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `time.Time.String()`: the same instants Go's 9006 error printed on
+    /// a `America/Los_Angeles` host, in standard and in daylight time.
+    #[test]
+    fn time_string_matches_go_in_a_named_zone() {
+        use chrono::TimeZone as _;
+        let zone = chrono_tz::America::Los_Angeles;
+        assert_eq!(
+            go_time_string_in(zone.timestamp_millis_opt(946_713_600_000).unwrap()),
+            "2000-01-01 00:00:00 -0800 PST"
+        );
+        assert_eq!(
+            go_time_string_in(zone.timestamp_millis_opt(1_792_512_051_740).unwrap()),
+            "2026-10-20 09:00:51.74 -0700 PDT"
+        );
+        assert_eq!(
+            go_time_string_in(
+                chrono_tz::UTC
+                    .timestamp_millis_opt(946_684_800_001)
+                    .unwrap()
+            ),
+            "2000-01-01 00:00:00.001 +0000 UTC"
+        );
+        assert_eq!(
+            go_time_string_in(
+                chrono_tz::America::Sao_Paulo
+                    .timestamp_millis_opt(946_684_800_000)
+                    .unwrap()
+            ),
+            "1999-12-31 22:00:00 -0200 -02"
+        );
+    }
 
     /// Errors captured from Go on this branch through
     /// `SET GLOBAL tidb_auto_analyze_start_time = ...`, plus Go's own rules.

@@ -63,11 +63,13 @@ impl fmt::Display for VisibilityError {
                 txn_safe_point,
             } => write!(
                 formatter,
-                // Kept verbatim from client-go's `ErrTxnAbortedByGC`: the
-                // wording is inaccurate (the usual cause is a long-running
-                // transaction, not a short GC life time) but it is what
-                // operators and diagnostic tooling already match on.
-                "GC life time is shorter than transaction duration, transaction start ts is {txn_start_ts}, txn safe point is {txn_safe_point}"
+                // Kept verbatim from client-go's `ErrTxnAbortedByGC.Error()`:
+                // the wording is inaccurate (the usual cause is a
+                // long-running transaction, not a short GC life time) but it
+                // is what operators and diagnostic tooling already match on.
+                "GC life time is shorter than transaction duration, transaction start ts is {txn_start_ts} ({}), txn safe point is {txn_safe_point} ({})",
+                get_time_from_ts_string(*txn_start_ts),
+                get_time_from_ts_string(*txn_safe_point),
             ),
         }
     }
@@ -75,14 +77,20 @@ impl fmt::Display for VisibilityError {
 
 impl std::error::Error for VisibilityError {}
 
+/// client-go's `TxnStartTSTime` / `TxnSafePointTime` as `%v` prints them:
+/// `oracle.GetTimeFromTS(ts)` is a `time.Local` value, so `time.Time.String()`
+/// renders it in the process's zone with the zone's abbreviation.
+fn get_time_from_ts_string(ts: u64) -> String {
+    tidb_util::go_time_layout::go_unix_milli_string((ts >> 18) as i64)
+}
+
 impl VisibilityError {
     /// Classifies this failure into the storage-driver tier that carries it to
     /// SQL, mirroring `pkg/store/driver/error/error.go`.
     ///
-    /// The times client-go renders with `oracle.GetTimeFromTS` are derived from
-    /// the timestamps themselves; they are rendered by
-    /// [`Self::into_storage_driver_error_with_times`] when a caller has a
-    /// timestamp formatter, and elided to the numeric form otherwise.
+    /// The times client-go stores in `ErrTxnAbortedByGC` are
+    /// `oracle.GetTimeFromTS` of the two timestamps, so they are derived from
+    /// the timestamps here, in the process's local zone as Go renders them.
     #[must_use]
     pub fn into_storage_driver_error(self) -> StorageDriverError {
         match self {
@@ -94,9 +102,9 @@ impl VisibilityError {
                 txn_safe_point,
             } => StorageDriverError::TxnAbortedByGc {
                 txn_start_ts,
-                txn_start_ts_time: txn_start_ts.to_string(),
+                txn_start_ts_time: get_time_from_ts_string(txn_start_ts),
                 txn_safe_point,
-                txn_safe_point_time: txn_safe_point.to_string(),
+                txn_safe_point_time: get_time_from_ts_string(txn_safe_point),
             },
         }
     }
@@ -208,5 +216,33 @@ mod tests {
             rendered.starts_with("GC life time is shorter than transaction duration,"),
             "{rendered}"
         );
+    }
+
+    /// Go `ToTiDBErr` -> `ErrTxnAbortedByGC` (9006) with client-go's
+    /// `TxnStartTSTime` / `TxnSafePointTime`: `oracle.GetTimeFromTS` of each
+    /// timestamp, printed by `time.Time.String()` in the local zone. The SQL
+    /// message and client-go's own `Error()` text agree.
+    #[test]
+    fn the_sql_error_carries_gos_local_times() {
+        // `AS OF TIMESTAMP '2000-01-01 00:00:00'` under a Pacific-time Go
+        // server, and that cluster's txn safe point.
+        let (start_ts, safe_point) = (248_175_289_958_400_000, 469_896_279_291_330_560);
+        let start_time = tidb_util::go_time_layout::go_unix_milli_string(946_713_600_000);
+        let safe_point_time = tidb_util::go_time_layout::go_unix_milli_string(1_792_512_051_740);
+        let expected = format!(
+            "GC life time is shorter than transaction duration, transaction start ts is {start_ts} ({start_time}), txn safe point is {safe_point} ({safe_point_time})"
+        );
+        let error = VisibilityError::TxnAbortedByGc {
+            txn_start_ts: start_ts,
+            txn_safe_point: safe_point,
+        };
+        assert_eq!(error.to_string(), expected);
+        let crate::ConvertedDriverError::Terror(converted) =
+            crate::to_tidb_driver_error(&error.into_storage_driver_error())
+        else {
+            panic!("a GC-aborted read must use the TiKV error catalog")
+        };
+        assert_eq!(converted.code().value(), 9006);
+        assert_eq!(converted.message(), expected);
     }
 }

@@ -23,6 +23,12 @@
 //! shape (names, nesting, the data call and the end-of-data call of a root
 //! executor) is Go's; the timestamps are this run's own measurements divided
 //! over the phases.
+//!
+//! The coprocessor client's spans are the exception: when the caller recorded
+//! them ([`TraceInput::cop_selects`]), each `distsql.Select` holds Go's
+//! `regionRequest.SendReqCtx` per region send, its `rpcClient.SendRequest`
+//! per physical RPC and the `tikv.*` tree client-go builds from TiKV's
+//! execution details, all at their measured times.
 
 use tidb_datatype::{core_time_from_datetime, Datum, FieldType, FieldTypeCode, Time, TimeType};
 use tidb_planner::physical::PhysicalPlan;
@@ -105,6 +111,114 @@ pub struct TraceInput {
     /// `tidb_init_chunk_size` and `tidb_max_chunk_size`: the chunks a result
     /// is delivered in (Go's chunk size doubles from the first to the second).
     pub chunk_sizes: (u64, u64),
+    /// The region sends each coprocessor request (`distsql.Select`) made, in
+    /// send order, when the caller recorded them; empty when it did not.
+    pub cop_selects: Vec<Vec<SendReqCtxSpan>>,
+}
+
+/// One recorded `regionRequest.SendReqCtx`.
+#[derive(Clone, Debug)]
+pub struct SendReqCtxSpan {
+    /// `req.RegionId`.
+    pub region_id: u64,
+    /// Offset from the trace start, in nanoseconds.
+    pub start: i64,
+    /// End offset, in nanoseconds.
+    pub end: i64,
+    /// The physical RPCs of the send.
+    pub rpcs: Vec<RpcSpan>,
+    /// The index of the earlier send of the same request this one is nested
+    /// under (client-go reuses the backoffer whose ctx holds its span).
+    pub parent: Option<usize>,
+}
+
+/// One recorded `rpcClient.SendRequest` and TiKV's execution details.
+#[derive(Clone, Debug)]
+pub struct RpcSpan {
+    /// Offset from the trace start, in nanoseconds.
+    pub start: i64,
+    /// End offset, in nanoseconds.
+    pub end: i64,
+    /// client-go's `buildSpanInfoFromResp` tree.
+    pub details: tikv_client::trace::ExecutionDetailSpan,
+}
+
+/// client-go `spanInfo.calcDur`: a node without a reported duration lasts as
+/// long as its synchronous children.
+fn exec_detail_duration(span: &tikv_client::trace::ExecutionDetailSpan) -> i64 {
+    if !span.duration.is_zero() {
+        return i64::try_from(span.duration.as_nanos()).unwrap_or(i64::MAX);
+    }
+    span.children
+        .iter()
+        .filter(|child| !child.asynchronous)
+        .map(exec_detail_duration)
+        .sum()
+}
+
+/// client-go `spanInfo.addTo`: `span` under `parent` from `start`, children
+/// laid end to end, a zero-length node left out; returns where the next
+/// sibling starts (an asynchronous node does not advance it).
+fn add_exec_detail_span(
+    span: &tikv_client::trace::ExecutionDetailSpan,
+    parent: &mut Span,
+    start: i64,
+) -> i64 {
+    let duration = exec_detail_duration(span);
+    if duration == 0 {
+        return start;
+    }
+    let end = start + duration;
+    let mut node = Span::new(span.name, start, end);
+    let mut cursor = start;
+    for child in &span.children {
+        cursor = add_exec_detail_span(child, &mut node, cursor);
+    }
+    parent.children.push(node);
+    if span.asynchronous {
+        start
+    } else {
+        end
+    }
+}
+
+/// One request's `regionRequest.SendReqCtx` spans as Go nests them: a send
+/// opened on a backoffer that already carried a send's span is its child.
+fn send_req_ctx_spans(sends: &[SendReqCtxSpan]) -> Vec<Span> {
+    let mut spans: Vec<Option<Span>> = sends
+        .iter()
+        .map(|send| Some(send_req_ctx_span(send)))
+        .collect();
+    // A parent always precedes its child, so attaching from the last send
+    // backwards moves every subtree after it is complete.
+    for index in (0..sends.len()).rev() {
+        if let Some(parent) = sends[index].parent.filter(|parent| *parent < index) {
+            let child = spans[index].take();
+            if let Some(parent) = spans[parent].as_mut() {
+                parent.children.extend(child);
+            }
+        }
+    }
+    spans.into_iter().flatten().collect()
+}
+
+/// Go's `regionRequest.SendReqCtx` (client-go `region_request.go`) with one
+/// `rpcClient.SendRequest, region ID: %d, type: Cop` (`client.go`) per RPC.
+fn send_req_ctx_span(send: &SendReqCtxSpan) -> Span {
+    let mut span = Span::new("regionRequest.SendReqCtx", send.start, send.end);
+    for rpc in &send.rpcs {
+        let mut rpc_span = Span::new(
+            &format!(
+                "rpcClient.SendRequest, region ID: {}, type: Cop",
+                send.region_id
+            ),
+            rpc.start,
+            rpc.end,
+        );
+        add_exec_detail_span(&rpc.details, &mut rpc_span, rpc.start);
+        span.children.push(rpc_span);
+    }
+    span
 }
 
 /// Go's name for the executor a physical operator becomes.
@@ -234,13 +348,36 @@ fn next_call(plan: &PhysicalPlan, data: bool, start: i64, end: i64) -> Span {
 }
 
 /// The `Open` spans of the readers under `plan`, as Go opens them inside
-/// `session.runStmt`.
-fn open_spans(plan: &PhysicalPlan, cursor: &mut i64, slice: i64, out: &mut Vec<Span>) {
-    let select = |start: i64| {
-        Span::new("distsql.Select", start, start + slice).with(vec![
-            Span::new("copr.buildCopTasks", start + slice / 8, start + slice / 4),
-            Span::new("regionRequest.SendReqCtx", start + slice / 2, start + slice),
-        ])
+/// `session.runStmt`. `recorded` holds the recorded region sends of each
+/// coprocessor request in send order, `None` when none were recorded.
+fn open_spans(
+    plan: &PhysicalPlan,
+    cursor: &mut i64,
+    slice: i64,
+    recorded: &mut Option<std::slice::Iter<'_, Vec<SendReqCtxSpan>>>,
+    out: &mut Vec<Span>,
+) {
+    let mut select = |start: i64| {
+        let mut children = vec![Span::new(
+            "copr.buildCopTasks",
+            start + slice / 8,
+            start + slice / 4,
+        )];
+        match recorded {
+            Some(sends) => {
+                children.extend(
+                    sends
+                        .next()
+                        .map_or_else(Vec::new, |sends| send_req_ctx_spans(sends)),
+                );
+            }
+            None => children.push(Span::new(
+                "regionRequest.SendReqCtx",
+                start + slice / 2,
+                start + slice,
+            )),
+        }
+        Span::new("distsql.Select", start, start + slice).with(children)
     };
     match plan {
         PhysicalPlan::TableReader(_) => {
@@ -257,7 +394,7 @@ fn open_spans(plan: &PhysicalPlan, cursor: &mut i64, slice: i64, out: &mut Vec<S
         _ => {}
     }
     for child in plan.children() {
-        open_spans(child, cursor, slice, out);
+        open_spans(child, cursor, slice, recorded, out);
     }
 }
 
@@ -325,7 +462,9 @@ pub fn build_spans(input: &TraceInput) -> Span {
                 Some(plan) => {
                     let mut opens = Vec::new();
                     let mut cursor = at(280);
-                    open_spans(plan, &mut cursor, at(40), &mut opens);
+                    let mut recorded =
+                        (!input.cop_selects.is_empty()).then(|| input.cop_selects.iter());
+                    open_spans(plan, &mut cursor, at(40), &mut recorded, &mut opens);
                     run_stmt.children = opens;
                     let calls = data_calls(*rows, input.chunk_sizes.0, input.chunk_sizes.1);
                     let slot = (at(980) - at(520)) / (calls as i64 + 1);
@@ -788,5 +927,110 @@ pub fn statement_text(stmt: &tidb_ast::Stmt) -> String {
         stmt.restore()
     } else {
         written
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tikv_client::proto::kvrpcpb;
+
+    /// The span tree as `name{ child child }`, children in start order.
+    fn shape(span: &Span) -> String {
+        let mut children = span.children.iter().collect::<Vec<_>>();
+        children.sort_by_key(|child| child.start);
+        if children.is_empty() {
+            return span.name.clone();
+        }
+        let inner = children
+            .into_iter()
+            .map(shape)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{}{{ {inner} }}", span.name)
+    }
+
+    fn cop_details(wait: u64, process: u64) -> tikv_client::trace::ExecutionDetailSpan {
+        tikv_client::trace::build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
+            time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                total_rpc_wall_time_ns: wait + process + 100,
+                wait_wall_time_ns: wait,
+                process_wall_time_ns: process,
+                ..Default::default()
+            }),
+            scan_detail_v2: Some(kvrpcpb::ScanDetailV2 {
+                get_snapshot_nanos: wait / 2,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    fn send(start: i64, parent: Option<usize>) -> SendReqCtxSpan {
+        SendReqCtxSpan {
+            region_id: 136,
+            start,
+            end: start + 10_000,
+            rpcs: vec![RpcSpan {
+                start: start + 100,
+                end: start + 9_000,
+                details: cop_details(1_000, 6_000),
+            }],
+            parent,
+        }
+    }
+
+    /// Go's coprocessor RPC spans (`TRACE SELECT COUNT(*) FROM acc.t` on a
+    /// Go server): `regionRequest.SendReqCtx` > `rpcClient.SendRequest,
+    /// region ID: N, type: Cop` > client-go's `tikv.*` tree, zero-length
+    /// nodes (`tikv.RocksDBBlockRead`, `tikv.Suspend`) left out.
+    #[test]
+    fn a_cop_send_renders_client_gos_spans() {
+        let spans = send_req_ctx_spans(&[send(1_000, None)]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(
+            shape(&spans[0]),
+            "regionRequest.SendReqCtx{ rpcClient.SendRequest, region ID: 136, type: Cop{ \
+             tikv.RPC{ tikv.Wait{ tikv.GetSnapshot } tikv.Process } } }"
+        );
+        let rpc = &spans[0].children[0];
+        let tikv = &rpc.children[0];
+        // client-go `addTo`: the tree starts at the RPC's start, the children
+        // laid end to end.
+        assert_eq!((tikv.start, tikv.end), (1_100, 1_100 + 7_100));
+        let (wait, process) = (&tikv.children[0], &tikv.children[1]);
+        assert_eq!((wait.start, wait.end), (1_100, 2_100));
+        assert_eq!((process.start, process.end), (2_100, 8_100));
+    }
+
+    /// client-go's `SendReqCtx` stores its span in the backoffer's ctx, so
+    /// the later pages a backoffer sends nest under its earlier send, as the
+    /// Go server traces a paged `TableReader`.
+    #[test]
+    fn sends_on_one_backoffer_nest() {
+        let spans = send_req_ctx_spans(&[
+            send(1_000, None),
+            send(20_000, None),
+            send(40_000, Some(1)),
+            send(60_000, Some(2)),
+        ]);
+        let depths = spans
+            .iter()
+            .map(|span| {
+                let mut nested = 0;
+                let mut cursor = span;
+                while let Some(child) = cursor
+                    .children
+                    .iter()
+                    .find(|child| child.name == "regionRequest.SendReqCtx")
+                {
+                    nested += 1;
+                    cursor = child;
+                }
+                (span.start, nested)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(depths, [(1_000, 0), (20_000, 2)]);
     }
 }

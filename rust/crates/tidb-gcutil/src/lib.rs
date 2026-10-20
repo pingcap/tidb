@@ -16,8 +16,6 @@
 
 use std::{convert::Infallible, fmt};
 
-use chrono::TimeZone as _;
-
 const SELECT_VARIABLE_VALUE_SQL: &str =
     "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?";
 const GC_SAFE_POINT_VARIABLE: &str = "tikv_gc_safe_point";
@@ -73,7 +71,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Self::SnapshotTooOld { safe_point_time } => {
                 write!(
                     formatter,
-                    "Snapshot is older than GC safe point {safe_point_time}"
+                    "snapshot is older than GC safe point {safe_point_time}"
                 )
             }
         }
@@ -160,22 +158,10 @@ fn go_time_to_ts(value: chrono::DateTime<chrono::FixedOffset>) -> u64 {
     (value.timestamp_millis() as u64) << 18
 }
 
+/// Go `model.TSConvert2Time(tso).String()`: the TSO's physical milliseconds
+/// as a `time.Local` value, printed by `time.Time.String()`.
 fn format_tso_in_process_location(tso: u64) -> String {
-    let millis = (tso >> 18) as i64;
-    let value = chrono::Local
-        .timestamp_millis_opt(millis)
-        .single()
-        .expect("TSO physical milliseconds fit Chrono");
-    let mut output = value.format("%Y-%m-%d %H:%M:%S").to_string();
-    let fractional = millis.rem_euclid(1_000);
-    if fractional != 0 {
-        let fraction = format!("{fractional:03}");
-        output.push('.');
-        output.push_str(fraction.trim_end_matches('0'));
-    }
-    output.push(' ');
-    output.push_str(&value.format("%z %Z").to_string());
-    output
+    tidb_util::go_time_layout::go_unix_milli_string((tso >> 18) as i64)
 }
 
 #[cfg(test)]
@@ -257,6 +243,27 @@ mod snapshot_validation_tests {
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string();
                 assert!(safe_point_time.starts_with(&local), "{safe_point_time}");
+                // `time.Time.String()` names the zone (`PST`, `UTC`, `-03`);
+                // it never prints chrono's `%Z` offset form `-08:00`.
+                let zone_name = safe_point_time.rsplit(' ').next().unwrap();
+                assert!(!zone_name.contains(':'), "{safe_point_time}");
+                // Go `errno.ErrSnapshotTooOld`'s message text.
+                assert_eq!(
+                    Error::<std::convert::Infallible>::SnapshotTooOld {
+                        safe_point_time: safe_point_time.clone(),
+                    }
+                    .to_string(),
+                    format!("snapshot is older than GC safe point {safe_point_time}")
+                );
+                assert_eq!(
+                    safe_point_time,
+                    tidb_util::go_time_layout::go_time_string(
+                        chrono::Local
+                            .timestamp_millis_opt(1_704_067_200_000)
+                            .single()
+                            .unwrap()
+                    )
+                );
             }
             other => panic!("expected SnapshotTooOld, got {other:?}"),
         }

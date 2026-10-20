@@ -45,6 +45,10 @@ use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 pub enum ClusterCatalogError {
     /// The snapshot read itself failed.
     Snapshot(String),
+    /// The snapshot read failed with a storage error Go's `ToTiDBErr` gives a
+    /// SQL identity (`ErrTxnAbortedByGC`, an exhausted backoff, ...). Go's
+    /// meta reader returns it unwrapped, so it reaches the statement as is.
+    Sql(tidb_executor::MysqlError),
     /// A stored key or value did not decode.
     Decode(String),
 }
@@ -53,6 +57,7 @@ impl fmt::Display for ClusterCatalogError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Snapshot(detail) => write!(formatter, "catalog snapshot read failed: {detail}"),
+            Self::Sql(error) => formatter.write_str(&error.message),
             Self::Decode(detail) => write!(formatter, "catalog decode failed: {detail}"),
         }
     }

@@ -1814,7 +1814,9 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
 fn classify(error: OptimisticCoordinatorError) -> StorageError {
     if matches!(
         error,
-        OptimisticCoordinatorError::SnapshotBackoff { .. } | OptimisticCoordinatorError::Storage(_)
+        OptimisticCoordinatorError::SnapshotBackoff { .. }
+            | OptimisticCoordinatorError::Storage(_)
+            | OptimisticCoordinatorError::Visibility(_)
     ) {
         let sql = coordinator_sql_error(error);
         return StorageError::Sql(tidb_executor::MysqlError::new(sql.code, sql.message));
@@ -1977,6 +1979,20 @@ pub(crate) fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSq
         },
         OptimisticCoordinatorError::SnapshotBackoff { kind, detail } => {
             transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted { kind, detail })
+        }
+        // Go `ToTiDBErr`: client-go's `ErrTxnAbortedByGC` becomes TiDB's
+        // `ErrTxnAbortedByGC` (9006) and `ErrPDServerTimeout` keeps its own.
+        OptimisticCoordinatorError::Visibility(error) => {
+            match tidb_txnkv::to_tidb_driver_error(&error.into_storage_driver_error()) {
+                tidb_txnkv::ConvertedDriverError::Terror(converted) => LockSqlError {
+                    code: u16::try_from(converted.code().value())
+                        .expect("registered TiDB error code fits the MySQL protocol"),
+                    state: *b"HY000",
+                    message: converted.message().to_owned(),
+                    write_conflict: None,
+                },
+                other => engine_sql_error(other.to_string()),
+            }
         }
         other => engine_sql_error(other.to_string()),
     }

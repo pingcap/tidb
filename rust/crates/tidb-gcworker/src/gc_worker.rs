@@ -186,27 +186,8 @@ fn go_time_now_string() -> String {
     go_time_string(Local::now()) + &tidb_util::monotime::monotonic_suffix()
 }
 
-/// Go `time.Time.String()` of a local wall-clock time without a monotonic
-/// reading: `2006-01-02 15:04:05.999999999 -0700 MST`, the fraction without
-/// trailing zeros and the zone named as the OS names it.
-pub(crate) fn go_time_string(time: DateTime<Local>) -> String {
-    let fraction = format!("{:09}", time.timestamp_subsec_nanos());
-    let fraction = fraction.trim_end_matches('0');
-    let fraction = if fraction.is_empty() {
-        String::new()
-    } else {
-        format!(".{fraction}")
-    };
-    let abbreviation = tidb_util::timeutil::infer_system_tz()
-        .parse::<chrono_tz::Tz>()
-        .map(|zone| time.with_timezone(&zone).format("%Z").to_string())
-        .unwrap_or_else(|_| time.format("%z").to_string());
-    format!(
-        "{}{fraction} {} {abbreviation}",
-        time.format("%Y-%m-%d %H:%M:%S"),
-        time.format("%z")
-    )
-}
+/// Go `time.Time.String()` of a local wall-clock time.
+pub(crate) use tidb_util::go_time_layout::go_time_string;
 
 fn now() -> DateTime<FixedOffset> {
     Local::now().fixed_offset()

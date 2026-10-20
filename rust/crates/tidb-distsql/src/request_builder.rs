@@ -640,81 +640,74 @@ pub fn common_handle_ranges_to_kv_ranges(
         .collect()
 }
 
-/// Builds full record and public-index ranges for a table/partition layout.
+/// Go `ranger.FullRange()`: `[NULL, +inf]`, so an index's NULL entries are
+/// part of a full index scan.
+fn full_range() -> DatumRange {
+    DatumRange::inclusive(vec![Datum::Null], vec![Datum::MaxValue])
+}
+
+/// Go `BuildTableRanges`: full record and public-index ranges for a
+/// table/partition layout. Global indexes exist only on a partitioned table,
+/// under the logical table ID, ahead of every partition's own ranges.
 pub fn build_table_ranges(
     table: &TableRangeSpec,
 ) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
-    let physical_ids = if table.partition_ids.is_empty() {
-        vec![table.table_id]
-    } else {
-        table.partition_ids.clone()
-    };
-    let record_range = if table.common_handle {
-        DatumRange::inclusive(vec![Datum::MinNotNull], vec![Datum::MaxValue])
-    } else {
-        DatumRange::inclusive(vec![Datum::Int(i64::MIN)], vec![Datum::Int(i64::MAX)])
-    };
+    if table.partition_ids.is_empty() {
+        // Short path, no partition.
+        return append_ranges(table, table.table_id);
+    }
     let mut output = Vec::new();
-
     for index in table
         .indexes
         .iter()
         .filter(|index| index.public && index.global)
     {
         output.extend(
-            index_ranges_to_kv_ranges(
-                &[table.table_id],
-                index.id,
-                &[DatumRange::inclusive(
-                    vec![Datum::MinNotNull],
-                    vec![Datum::MaxValue],
-                )],
-            )?
-            .into_iter()
-            .flatten(),
-        );
-    }
-
-    for table_id in physical_ids {
-        if table.common_handle {
-            let mut low =
-                encode_key(&record_range.low).map_err(|_| KvRequestBuildError::RangeEncoding)?;
-            let mut high =
-                encode_key(&record_range.high).map_err(|_| KvRequestBuildError::RangeEncoding)?;
-            if !record_range.high_exclude {
-                high = Key::from_bytes(high).prefix_next().into_bytes();
-            }
-            if record_range.low_exclude {
-                low = Key::from_bytes(low).prefix_next().into_bytes();
-            }
-            output.push(RequestKeyRange {
-                start_key: encode_row_key(table_id, &low).into(),
-                end_key: encode_row_key(table_id, &high).into(),
-            });
-        } else {
-            output.extend(table_ranges_to_kv_ranges(
-                table_id,
-                std::slice::from_ref(&record_range),
-            )?);
-        }
-        for index in table
-            .indexes
-            .iter()
-            .filter(|index| index.public && !index.global)
-        {
-            output.extend(
-                index_ranges_to_kv_ranges(
-                    &[table_id],
-                    index.id,
-                    &[DatumRange::inclusive(
-                        vec![Datum::MinNotNull],
-                        vec![Datum::MaxValue],
-                    )],
-                )?
+            index_ranges_to_kv_ranges(&[table.table_id], index.id, &[full_range()])?
                 .into_iter()
                 .flatten(),
-            );
-        }
+        );
+    }
+    for table_id in &table.partition_ids {
+        output.extend(append_ranges(table, *table_id)?);
+    }
+    Ok(output)
+}
+
+/// Go `appendRanges`: one physical table's full record range
+/// (`FullNotNullRange` for a common handle, `FullIntRange(false)` otherwise)
+/// followed by `FullRange` over each public local index.
+fn append_ranges(
+    table: &TableRangeSpec,
+    table_id: i64,
+) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
+    let mut output = if table.common_handle {
+        common_handle_ranges_to_kv_ranges(
+            table_id,
+            &[DatumRange::inclusive(
+                vec![Datum::MinNotNull],
+                vec![Datum::MaxValue],
+            )],
+        )?
+    } else {
+        table_ranges_to_kv_ranges(
+            table_id,
+            &[DatumRange::inclusive(
+                vec![Datum::Int(i64::MIN)],
+                vec![Datum::Int(i64::MAX)],
+            )],
+        )?
+    };
+    for index in table
+        .indexes
+        .iter()
+        .filter(|index| index.public && !index.global)
+    {
+        output.extend(
+            index_ranges_to_kv_ranges(&[table_id], index.id, &[full_range()])?
+                .into_iter()
+                .flatten(),
+        );
     }
     Ok(output)
 }

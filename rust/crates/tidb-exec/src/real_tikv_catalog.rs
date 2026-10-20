@@ -18,8 +18,9 @@
 use std::time::Duration;
 
 use tidb_executor::cluster_storage::ClusterSnapshot;
+use tidb_executor::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::StoreClient;
+use tidb_txnkv::transaction::{OptimisticCoordinatorError, StoreClient};
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 use tidb_txnkv::Key;
 
@@ -28,6 +29,30 @@ use crate::cluster_catalog::{
     load_cluster_catalog, prefix_scan_end, ClusterCatalog, ClusterCatalogError, MetaPairs,
     MetaSnapshot, PagedMetaSnapshot,
 };
+
+/// A transaction's read failure as a catalog load reports it: a storage
+/// error Go's `ToTiDBErr` gives a SQL identity (`ErrTxnAbortedByGC`, an
+/// exhausted backoff) keeps it, the rest stay diagnostics.
+fn coordinator_catalog_error(error: OptimisticCoordinatorError) -> ClusterCatalogError {
+    match error {
+        OptimisticCoordinatorError::SnapshotBackoff { .. }
+        | OptimisticCoordinatorError::Storage(_)
+        | OptimisticCoordinatorError::Visibility(_) => {
+            let sql = crate::cluster_table_storage::coordinator_sql_error(error);
+            ClusterCatalogError::Sql(tidb_executor::MysqlError::new(sql.code, sql.message))
+        }
+        other => ClusterCatalogError::Snapshot(other.to_string()),
+    }
+}
+
+/// [`coordinator_catalog_error`] for a read through the executor's
+/// [`ClusterSnapshot`] seam, whose typed failures are already SQL errors.
+fn storage_catalog_error(error: StorageError) -> ClusterCatalogError {
+    match error {
+        StorageError::Sql(error) => ClusterCatalogError::Sql(error),
+        other => ClusterCatalogError::Snapshot(other.to_string()),
+    }
+}
 
 /// One live transaction seen as a meta-key snapshot.
 ///
@@ -93,7 +118,7 @@ where
         self.transaction
             .snapshot_get(key, &call)
             .map(|result| result.value)
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(coordinator_catalog_error)
     }
 
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
@@ -105,14 +130,14 @@ where
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
             .snapshot_scan(prefix, &end, None, &call)
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(coordinator_catalog_error)
     }
 
     fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
             .snapshot_scan(start, end, None, &call)
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(coordinator_catalog_error)
     }
 
     fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
@@ -133,7 +158,7 @@ where
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
             .snapshot_scan(start, end, Some(limit), &call)
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(coordinator_catalog_error)
     }
 }
 
@@ -149,7 +174,7 @@ where
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
             .snapshot_scan_regions(start, end, &call)
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(coordinator_catalog_error)
     }
 }
 
@@ -224,7 +249,7 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
         self.snapshot
             .get(&Key::from_bytes(key.to_vec()))
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(storage_catalog_error)
     }
 
     fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
@@ -239,7 +264,7 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
                 &Key::from_bytes(end),
                 None,
             )
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(storage_catalog_error)
     }
 
     fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
@@ -249,7 +274,7 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
                 &Key::from_bytes(end.to_vec()),
                 None,
             )
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(storage_catalog_error)
     }
 
     fn row_ids(&self) -> Option<&dyn crate::table_from_meta::TableAutoIds> {
@@ -274,7 +299,7 @@ impl PagedMetaSnapshot for SnapshotMetaSnapshot {
                 &Key::from_bytes(end.to_vec()),
                 Some(limit),
             )
-            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+            .map_err(storage_catalog_error)
     }
 }
 
@@ -300,7 +325,7 @@ pub fn load_catalog_from_cluster_at<S: StoreClient>(
 ) -> Result<(ClusterCatalog, u64), ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
-        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+        .map_err(coordinator_catalog_error)?;
     let lease_grant_ts = transaction.start_ts();
     let catalog = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
@@ -308,7 +333,7 @@ pub fn load_catalog_from_cluster_at<S: StoreClient>(
     };
     transaction
         .finish_without_writes()
-        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+        .map_err(coordinator_catalog_error)?;
     Ok((catalog, lease_grant_ts))
 }
 
@@ -325,7 +350,7 @@ pub fn reload_catalog_from_cluster<S: StoreClient>(
 ) -> Result<ReloadedCatalogAt, ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
-        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+        .map_err(coordinator_catalog_error)?;
     let lease_grant_ts = transaction.start_ts();
     let reloaded = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
@@ -333,7 +358,7 @@ pub fn reload_catalog_from_cluster<S: StoreClient>(
     };
     transaction
         .finish_without_writes()
-        .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+        .map_err(coordinator_catalog_error)?;
     Ok(ReloadedCatalogAt {
         lease_grant_ts,
         reloaded,
@@ -350,4 +375,42 @@ pub struct ReloadedCatalogAt {
     pub lease_grant_ts: u64,
     /// What the pass did.
     pub reloaded: ReloadedCatalog,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `GetSnapshotInfoSchema` reads the meta at the snapshot through the
+    /// store driver, whose `ToTiDBErr` turns client-go's `ErrTxnAbortedByGC`
+    /// into `ErrTxnAbortedByGC` (9006); the catalog load must hand that error
+    /// on unwrapped rather than as a 1105 diagnostic.
+    #[test]
+    fn a_gc_aborted_meta_read_keeps_its_sql_identity() {
+        let aborted = tidb_txnkv::VisibilityError::TxnAbortedByGc {
+            txn_start_ts: 449,
+            txn_safe_point: 450,
+        };
+        let expected = aborted.to_string();
+        let ClusterCatalogError::Sql(error) =
+            coordinator_catalog_error(OptimisticCoordinatorError::Visibility(aborted))
+        else {
+            panic!("a GC-aborted meta read lost its SQL identity")
+        };
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (9006, expected.as_str())
+        );
+        assert_eq!(error.state, *b"HY000");
+
+        let statement_error = tidb_executor::MysqlError::new(9006, expected);
+        assert_eq!(
+            storage_catalog_error(StorageError::Sql(statement_error.clone())),
+            ClusterCatalogError::Sql(statement_error)
+        );
+        assert_eq!(
+            storage_catalog_error(StorageError::Backend("boom".to_owned())),
+            ClusterCatalogError::Snapshot("storage error: boom".to_owned())
+        );
+    }
 }

@@ -562,6 +562,77 @@ fn test_build_table_range_common_handle() {
     assert_full_table_ranges(true, &low, &high);
 }
 
+// Go `BuildTableRanges` / `appendRanges`: every public index is read over
+// `ranger.FullRange()`, which starts at the NULL datum, so a full index range
+// covers the index's NULL entries; a global index belongs to the logical
+// table and is only read for a partitioned table.
+#[test]
+fn build_table_ranges_reads_indexes_over_gos_full_range() {
+    use tidb_codec::table_key::encode_index_seek_key;
+    use tidb_distsql::TableIndexRangeSpec;
+
+    let null_low = encode_key(&[Datum::Null]).expect("NULL datum");
+    let max_high = Key::from_bytes(encode_key(&[Datum::MaxValue]).expect("max datum"))
+        .prefix_next()
+        .into_bytes();
+    let index_range = |table_id: i64, index_id: i64| RequestKeyRange {
+        start_key: encode_index_seek_key(table_id, index_id, &null_low).into(),
+        end_key: encode_index_seek_key(table_id, index_id, &max_high).into(),
+    };
+    let record_low = encoded_int(i64::MIN);
+    let record_high = Key::from_bytes(encoded_int(i64::MAX))
+        .prefix_next()
+        .into_bytes();
+    let record_range = |table_id: i64| RequestKeyRange {
+        start_key: encode_row_key(table_id, &record_low).into(),
+        end_key: encode_row_key(table_id, &record_high).into(),
+    };
+    let indexes = vec![
+        TableIndexRangeSpec {
+            id: 1,
+            public: true,
+            global: false,
+        },
+        TableIndexRangeSpec {
+            id: 2,
+            public: false,
+            global: false,
+        },
+        TableIndexRangeSpec {
+            id: 3,
+            public: true,
+            global: true,
+        },
+    ];
+
+    let ranges = build_table_ranges(&TableRangeSpec {
+        table_id: 7,
+        partition_ids: Vec::new(),
+        common_handle: false,
+        indexes: indexes.clone(),
+    })
+    .expect("nonpartitioned ranges");
+    assert_eq!(ranges, [record_range(7), index_range(7, 1)]);
+
+    let ranges = build_table_ranges(&TableRangeSpec {
+        table_id: 7,
+        partition_ids: vec![8, 9],
+        common_handle: false,
+        indexes,
+    })
+    .expect("partitioned ranges");
+    assert_eq!(
+        ranges,
+        [
+            index_range(7, 3),
+            record_range(8),
+            index_range(8, 1),
+            record_range(9),
+            index_range(9, 1),
+        ]
+    );
+}
+
 // Go pkg/distsql/request_builder_test.go::TestRequestBuilderHandle.
 #[test]
 fn test_request_builder_handle() {

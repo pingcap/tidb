@@ -17,8 +17,8 @@
 //! the node's client-rust store. The coprocessor holds it as a trait object,
 //! so a transaction opener can hand its node's store to the reads it serves.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use prost::Message as _;
 
@@ -39,6 +39,22 @@ pub enum NativeCopSend {
     RegionError(String),
 }
 
+/// One physical RPC of a traced send: client-go's `rpcClient.SendRequest`
+/// span and the `tikv.*` tree `buildSpanInfoFromResp` hangs under it from the
+/// response's `ExecDetailsV2` when `util.TraceExecDetailsEnabled(ctx)`.
+#[derive(Clone, Debug)]
+pub struct CopRpcTrace {
+    /// client-go's `start` in `RPCClient.sendRequest`: the physical send.
+    pub start: Instant,
+    /// When the response arrived.
+    pub end: Instant,
+    /// TiKV's reported execution details as client-go's span tree.
+    pub details: tikv_client::trace::ExecutionDetailSpan,
+}
+
+/// The RPCs of one traced send, in arrival order.
+pub type CopRpcTraces = Arc<Mutex<Vec<CopRpcTrace>>>;
+
 /// The client-go store surface Go's coprocessor uses: the region cache, the
 /// region sender, the lock resolver and the backoffer.
 pub trait NativeCopStore: Send + Sync + 'static {
@@ -54,7 +70,9 @@ pub trait NativeCopStore: Send + Sync + 'static {
 
     /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
     /// `ru_details` is Go's `bo.GetCtx().Value(util.RUDetailsCtxKey)`, which
-    /// the resource-control interceptor charges for each RPC.
+    /// the resource-control interceptor charges for each RPC. `rpc_traces`
+    /// is Go's `util.ContextWithTraceExecDetails(ctx)` under a traced
+    /// statement: every physical RPC of the send is appended to it.
     fn send(
         &self,
         backoffer: &CopBackoffer,
@@ -62,6 +80,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
         region: (u64, u64, u64),
         timeout: Duration,
         ru_details: Option<&Arc<tikv_client::RuDetails>>,
+        rpc_traces: Option<&CopRpcTraces>,
     ) -> Result<NativeCopSend, tikv_client::Error>;
 
     /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`, under the
@@ -100,6 +119,10 @@ pub trait NativeCopStore: Send + Sync + 'static {
 
     /// Go `RegionCache.InvalidateCachedRegion(region)`.
     fn invalidate_region(&self, region: (u64, u64, u64));
+
+    /// Go `KVStore.CheckVisibility(startTS)`: whether data read at
+    /// `start_ts` may be handed back, against the store's txn safe point.
+    fn check_visibility(&self, start_ts: u64) -> Result<(), tikv_client::Error>;
 }
 
 /// Runs `future` under Go's `context.WithValue(ctx, util.RUDetailsCtxKey,
@@ -161,6 +184,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         region: (u64, u64, u64),
         timeout: Duration,
         ru_details: Option<&Arc<tikv_client::RuDetails>>,
+        rpc_traces: Option<&CopRpcTraces>,
     ) -> Result<NativeCopSend, tikv_client::Error> {
         let request = tikv_client::proto::coprocessor::Request::decode(request)
             .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
@@ -169,11 +193,30 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
             conf_ver: region.1,
             ver: region.2,
         };
-        let sent = self.block_on(with_ru_details(
-            ru_details,
-            self.store()
-                .send_req_ctx(Arc::clone(backoffer), request, &region, timeout),
-        ));
+        let send = self
+            .store()
+            .send_req_ctx(Arc::clone(backoffer), request, &region, timeout);
+        let sent = match rpc_traces {
+            Some(rpc_traces) => {
+                let rpc_traces = Arc::clone(rpc_traces);
+                let handler: tikv_client::trace::ExecutionDetailsTraceHandler =
+                    Arc::new(move |start, details| {
+                        rpc_traces
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(CopRpcTrace {
+                                start,
+                                end: Instant::now(),
+                                details: details.clone(),
+                            });
+                    });
+                self.block_on(with_ru_details(
+                    ru_details,
+                    tikv_client::trace::with_trace_exec_details(handler, send),
+                ))
+            }
+            None => self.block_on(with_ru_details(ru_details, send)),
+        };
         match sent {
             Ok((response, address)) => {
                 Ok(NativeCopSend::Response(response.encode_to_vec(), address))
@@ -234,6 +277,10 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
                 .await
                 .map_err(tikv_client::Error::from)
         })
+    }
+
+    fn check_visibility(&self, start_ts: u64) -> Result<(), tikv_client::Error> {
+        self.store().check_visibility(start_ts)
     }
 
     fn invalidate_region(&self, region: (u64, u64, u64)) {

@@ -3700,6 +3700,7 @@ name = "tidb-gcutil"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "tidb-util",
  "tidb-vardef",
 ]
 
@@ -3709,7 +3710,6 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "chrono",
- "chrono-tz",
  "fail",
  "serde_json",
  "tidb-codec",
@@ -4619,12 +4619,14 @@ dependencies = [
  "async-recursion",
  "async-trait",
  "chrono",
+ "chrono-tz",
  "crc32fast",
  "derive-new",
  "either",
  "fail",
  "farmhash",
  "futures",
+ "iana-time-zone",
  "lazy_static",
  "log",
  "openssl",
