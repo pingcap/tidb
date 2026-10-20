@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -780,9 +779,6 @@ type MViewCompleteDeltaApplyExec struct {
 	TargetTable      table.Table
 	TargetHandleCols plannerutil.HandleCols
 	OpColID          int
-	// RefreshMLogTargets contains operation-specific wrappers for refresh writes. It is nil for
-	// callers that do not need MLog capture.
-	RefreshMLogTargets *tables.MViewRefreshMLogTargets
 
 	CurrentWritableInputColIDs    []int
 	RecomputedWritableInputColIDs []int
@@ -806,22 +802,6 @@ type MViewCompleteDeltaApplyExec struct {
 	updateTouchedStride int
 	executed            bool
 	runtimeStats        *mviewCompleteDeltaApplyRuntimeStats
-}
-
-func (e *MViewCompleteDeltaApplyExec) targetForDiffOp(op int64) table.Table {
-	if e.RefreshMLogTargets == nil {
-		return e.TargetTable
-	}
-	switch op {
-	case mviewCompleteDeltaDiffOpInsert:
-		return e.RefreshMLogTargets.Insert
-	case mviewCompleteDeltaDiffOpUpdate:
-		return e.RefreshMLogTargets.Update
-	case mviewCompleteDeltaDiffOpDelete:
-		return e.RefreshMLogTargets.Delete
-	default:
-		return nil
-	}
 }
 
 type mviewCompleteDeltaCompareColumn struct {
@@ -1147,10 +1127,6 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 		op := ops[rowIdx]
 		switch op {
 		case mviewCompleteDeltaDiffOpInsert:
-			target := e.targetForDiffOp(op)
-			if target == nil {
-				return errors.New("MViewCompleteDeltaApply insert target table is nil")
-			}
 			writerStatsDelta.insertRows++
 			e.buildInsertRow(row)
 
@@ -1161,7 +1137,7 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 			insertOrdinal++
 			insertRemain--
 			if sizeHint > 0 {
-				_, err = target.AddRecord(
+				_, err = e.TargetTable.AddRecord(
 					tableCtx,
 					txn,
 					e.newRow,
@@ -1169,39 +1145,31 @@ func (e *MViewCompleteDeltaApplyExec) applyChunk(
 					table.DupKeyCheckLazy,
 				)
 			} else {
-				_, err = target.AddRecord(tableCtx, txn, e.newRow, table.DupKeyCheckLazy)
+				_, err = e.TargetTable.AddRecord(tableCtx, txn, e.newRow, table.DupKeyCheckLazy)
 			}
 			if err != nil {
 				return err
 			}
 		case mviewCompleteDeltaDiffOpDelete:
-			target := e.targetForDiffOp(op)
-			if target == nil {
-				return errors.New("MViewCompleteDeltaApply delete target table is nil")
-			}
 			writerStatsDelta.deleteRows++
 			e.buildDeleteRow(row)
 			handle, err := e.TargetHandleCols.BuildHandle(stmtCtx, row)
 			if err != nil {
 				return err
 			}
-			if err := target.RemoveRecord(tableCtx, txn, handle, e.oldRow); err != nil {
+			if err := e.TargetTable.RemoveRecord(tableCtx, txn, handle, e.oldRow); err != nil {
 				return err
 			}
 		case mviewCompleteDeltaDiffOpUpdate:
 			changed := e.buildTouchedFromBitmap(updateOrdinal)
 			if changed {
-				target := e.targetForDiffOp(op)
-				if target == nil {
-					return errors.New("MViewCompleteDeltaApply update target table is nil")
-				}
 				writerStatsDelta.updateRows++
 				e.buildUpdateRows(row)
 				handle, err := e.TargetHandleCols.BuildHandle(stmtCtx, row)
 				if err != nil {
 					return err
 				}
-				if err := target.UpdateRecord(tableCtx, txn, handle, e.oldRow, e.newRow, e.touched); err != nil {
+				if err := e.TargetTable.UpdateRecord(tableCtx, txn, handle, e.oldRow, e.newRow, e.touched); err != nil {
 					return err
 				}
 			}

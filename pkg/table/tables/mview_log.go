@@ -27,8 +27,7 @@ import (
 
 // MLogSourceStmt indicates which statement kind writes the mlog.
 //
-// It intentionally keeps the source statement type (INSERT/UPDATE/DELETE/REPLACE/LOAD DATA)
-// separate from the `_MLOG$_DML_TYPE` column value (I/U/D).
+// It keeps the source statement type separate from the `_MLOG$_DML_TYPE` column value (I/U/D).
 type MLogSourceStmt int
 
 const (
@@ -42,6 +41,9 @@ const (
 	MLogSourceReplace
 	// MLogSourceLoadData marks rows produced by LOAD DATA statements.
 	MLogSourceLoadData
+	// MLogSourceRefresh marks MV refreshes, whose AddRecord, UpdateRecord, and RemoveRecord
+	// calls each represent a logical insert, update, or delete.
+	MLogSourceRefresh
 )
 
 // MLogDMLType indicates the logical row change kind written to `_MLOG$_DML_TYPE`.
@@ -55,40 +57,6 @@ const (
 	// MLogDMLTypeDelete represents a logical DELETE DML operation.
 	MLogDMLTypeDelete MLogDMLType = "D"
 )
-
-// MViewRefreshMLogTargets contains operation-specific table wrappers used by an MV refresh.
-// Refresh writers can emit inserts, updates, and deletes in one statement, so one statement-level
-// MLogSourceStmt cannot describe all rows in the statement.
-type MViewRefreshMLogTargets struct {
-	Insert table.Table
-	Update table.Table
-	Delete table.Table
-}
-
-// WrapTableWithMaterializedViewLogForRefresh builds the three operation-specific wrappers needed
-// by an MV refresh. The wrappers must only be used for the lifetime of the refresh statement.
-func WrapTableWithMaterializedViewLogForRefresh(
-	base table.Table,
-	mlog table.Table,
-) (*MViewRefreshMLogTargets, error) {
-	insertTarget, err := WrapTableWithMaterializedViewLog(base, mlog, MLogSourceInsert)
-	if err != nil {
-		return nil, err
-	}
-	updateTarget, err := WrapTableWithMaterializedViewLog(base, mlog, MLogSourceUpdate)
-	if err != nil {
-		return nil, err
-	}
-	deleteTarget, err := WrapTableWithMaterializedViewLog(base, mlog, MLogSourceDelete)
-	if err != nil {
-		return nil, err
-	}
-	return &MViewRefreshMLogTargets{
-		Insert: insertTarget,
-		Update: updateTarget,
-		Delete: deleteTarget,
-	}, nil
-}
 
 const (
 	mlogOldRowMarker int64 = -1
@@ -335,6 +303,8 @@ func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 
 func (t *mlogTable) addRecordDMLType(opt *table.AddRecordOpt, hadRemovedConflict bool) MLogDMLType {
 	switch t.sourceStmt {
+	case MLogSourceRefresh:
+		return MLogDMLTypeInsert
 	case MLogSourceUpdate:
 		return MLogDMLTypeUpdate
 	case MLogSourceInsert, MLogSourceReplace, MLogSourceLoadData:
@@ -359,7 +329,7 @@ func (t *mlogTable) updateRecordDMLType() MLogDMLType {
 
 func (t *mlogTable) removeRecordDMLType() MLogDMLType {
 	switch t.sourceStmt {
-	case MLogSourceDelete:
+	case MLogSourceDelete, MLogSourceRefresh:
 		return MLogDMLTypeDelete
 	case MLogSourceInsert, MLogSourceUpdate, MLogSourceReplace, MLogSourceLoadData:
 		// For non-DELETE source statements, RemoveRecord is the old-row side of a logical update,
