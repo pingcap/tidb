@@ -297,8 +297,12 @@ where
 /// A failed pass is not fatal and does not stop the thread: the previously
 /// published catalog stays in force and the next tick tries again, which is
 /// what Go's reload loop does with a failed `Reload`.
+///
+/// `startup_lease_grant_ts` is the timestamp `startup` was read at
+/// ([`tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at`]).
 pub(crate) fn spawn_catalog_reloader<S>(
     startup: ClusterCatalog,
+    startup_lease_grant_ts: u64,
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
 ) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
@@ -308,10 +312,19 @@ where
     if schema_lease.is_zero() {
         return Err(CatalogReloadError::ZeroInterval);
     }
-    let catalog = Arc::new(SharedCatalog::new(startup));
     // Go `isvalidator.New(do.schemaLease)` (`domain.go:612`): one validator
     // per node, its lease the schema lease.
     let validator = Arc::new(SchemaValidator::new(schema_lease));
+    // Go `Domain.Init` runs `isSyncer.Reload()` (`domain.go:779`) before the
+    // reload loop starts and before any session exists. That startup load is
+    // a full one, so `Reload` resets the validator and renews its lease at
+    // the load's own timestamp (`issyncer/syncer.go:455-458`, `:494`). Left
+    // unrenewed until the loop's first tick, `schemaLease / 2` later, every
+    // commit in that window was `ResultUnknown` until its retries ran out:
+    // 8027 on the first COMMIT after boot.
+    validator.reset();
+    validator.update(startup_lease_grant_ts, 0, startup.schema_version, None);
+    let catalog = Arc::new(SharedCatalog::new(startup));
     let pass_validator = Arc::clone(&validator);
     let reloader = CatalogReloader::spawn(
         Arc::clone(&catalog),

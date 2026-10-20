@@ -131,28 +131,38 @@ pub enum StatementReadShape {
 /// Borrow the candidate predicate for Go's single-table point-write fold
 /// (`tryUpdatePointPlan`/`tryDeletePointPlan`). Key binding separately proves
 /// that the predicate pins the complete clustered handle.
+///
+/// The `bool` says whether the batch arm may be tried too: Go's
+/// `tryWhereIn2BatchPointGet` (`point_get_plan.go:410`) refuses a statement
+/// with `ORDER BY` or `LIMIT`, which may leave a named row unread and so
+/// unlocked. A hinted statement is refused as the locking-read arm refuses
+/// one.
 fn pessimistic_write_predicate(
     stmt: &tidb_ast::Stmt,
-) -> Option<(&tidb_ast::TableRef, &tidb_ast::Expr)> {
+) -> Option<(&tidb_ast::TableRef, &tidb_ast::Expr, bool)> {
     let tidb_ast::Stmt::Dml(dml) = stmt else {
         return None;
     };
-    let (table_ref, where_clause) = match dml.as_ref() {
+    let (table_ref, where_clause, batch_lookup) = match dml.as_ref() {
         tidb_ast::DmlStmt::Update(update) => match (&update.kind, update.where_clause.as_ref()) {
-            (tidb_ast::UpdateKind::Single(table_ref), Some(where_clause)) => {
-                (table_ref, where_clause)
-            }
+            (tidb_ast::UpdateKind::Single(table_ref), Some(where_clause)) => (
+                table_ref,
+                where_clause,
+                update.order_by.is_empty() && update.limit.is_none() && update.hints.is_empty(),
+            ),
             _ => return None,
         },
         tidb_ast::DmlStmt::Delete(delete) => match (&delete.kind, delete.where_clause.as_ref()) {
-            (tidb_ast::DeleteKind::Single(table_ref), Some(where_clause)) => {
-                (table_ref, where_clause)
-            }
+            (tidb_ast::DeleteKind::Single(table_ref), Some(where_clause)) => (
+                table_ref,
+                where_clause,
+                delete.order_by.is_empty() && delete.limit.is_none() && delete.hints.is_empty(),
+            ),
             _ => return None,
         },
         _ => return None,
     };
-    Some((table_ref, where_clause))
+    Some((table_ref, where_clause, batch_lookup))
 }
 
 /// Borrow a single-table FOR UPDATE predicate eligible for point/batch locks.
@@ -213,6 +223,11 @@ pub struct PessimisticPrelock<'a> {
     table: &'a tidb_ast::TableRef,
     predicate: &'a tidb_ast::Expr,
     locking_read: bool,
+    /// Whether a clustered-handle `IN` list may bind its batch keys: Go's
+    /// `BatchPointGetPlan.Lock`, set for a locking read by `getLockWaitTime`
+    /// and for a pessimistic write by `tryUpdatePointPlan`/`tryDeletePointPlan`
+    /// (`point_get_plan.go:1196-1198`, `:1342-1344`).
+    batch_lookup: bool,
 }
 
 impl<'a> PessimisticPrelock<'a> {
@@ -220,8 +235,9 @@ impl<'a> PessimisticPrelock<'a> {
     #[must_use]
     pub fn from_statement(stmt: &'a tidb_ast::Stmt) -> Option<Self> {
         let locking_read = matches!(stmt, tidb_ast::Stmt::Query(_));
-        let (table, predicate) = if locking_read {
-            pessimistic_read_predicate(stmt)?
+        let (table, predicate, batch_lookup) = if locking_read {
+            let (table, predicate) = pessimistic_read_predicate(stmt)?;
+            (table, predicate, true)
         } else {
             pessimistic_write_predicate(stmt)?
         };
@@ -229,6 +245,7 @@ impl<'a> PessimisticPrelock<'a> {
             table,
             predicate,
             locking_read,
+            batch_lookup,
         })
     }
 
@@ -236,6 +253,18 @@ impl<'a> PessimisticPrelock<'a> {
     /// Whether repeatable-read admission is required before speculative locks.
     pub fn is_locking_read(&self) -> bool {
         self.locking_read
+    }
+
+    /// Drops the batch arm, keeping only the single-row point key.
+    ///
+    /// Go's read-committed `BatchPointGetExec` (`batch_point_get.go:434-492`)
+    /// reads first and then locks only the rows it found, so under RC an `IN`
+    /// list keeps the read-then-lock order instead of locking every named
+    /// key up front.
+    #[must_use]
+    pub fn without_batch_lookup(mut self) -> Self {
+        self.batch_lookup = false;
+        self
     }
 
     /// Resolve only the key predicate after the session refreshed its catalog
@@ -251,9 +280,9 @@ impl<'a> PessimisticPrelock<'a> {
         let Some(table) = single_table_entry(self.table, catalog, current_db) else {
             return Vec::new();
         };
-        if self.locking_read {
+        if self.batch_lookup {
             // The batch lookup reads literals only, so a parameterized
-            // predicate is bound for it; the write arm below resolves `?`
+            // predicate is bound for it; the point arm below resolves `?`
             // markers straight from `params` and needs no bound copy.
             let bound;
             let predicate = if params.is_empty() {
@@ -629,6 +658,51 @@ mod common_handle_shape_tests {
 
         assert!(!marker_keys.is_empty());
         assert_eq!(marker_keys, literal_keys);
+    }
+
+    /// Go's pessimistic `UPDATE`/`DELETE ... WHERE pk IN (...)` is a locking
+    /// `Batch_Point_Get` (`tryUpdatePointPlan`/`tryDeletePointPlan`), so every
+    /// named key is a pre-lock key -- unless `ORDER BY`/`LIMIT` makes Go's
+    /// `tryWhereIn2BatchPointGet` refuse the plan, or read committed defers
+    /// the batch lock until after the read.
+    #[test]
+    fn a_batch_point_write_binds_every_named_key() {
+        let mut catalog = crate::driver::Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        let zone = tidb_datatype::SessionTimeZone::utc();
+        let keys = |sql: &str, params: &[Datum], batch: bool| {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            let prelock = PessimisticPrelock::from_statement(&stmt).unwrap();
+            let prelock = if batch {
+                prelock
+            } else {
+                prelock.without_batch_lookup()
+            };
+            prelock.bind_keys(params, &catalog, crate::driver::DEFAULT_DATABASE, &zone)
+        };
+
+        assert_eq!(
+            keys("UPDATE t SET v = 1 WHERE id IN (1, 2, 3)", &[], true).len(),
+            3
+        );
+        assert_eq!(keys("DELETE FROM t WHERE id IN (1, 2)", &[], true).len(), 2);
+        assert_eq!(
+            keys(
+                "UPDATE t SET v = ? WHERE id IN (?, ?)",
+                &[Datum::Int(9), Datum::Int(1), Datum::Int(2)],
+                true,
+            ),
+            keys("UPDATE t SET v = 9 WHERE id IN (1, 2)", &[], true)
+        );
+        assert!(keys("UPDATE t SET v = 1 WHERE id IN (1, 2) LIMIT 1", &[], true).is_empty());
+        assert!(keys("DELETE FROM t WHERE id IN (1, 2) ORDER BY id", &[], true).is_empty());
+        assert!(keys("UPDATE t SET v = 1 WHERE id IN (1, 2)", &[], false).is_empty());
+        // The single-row point arm does not depend on the batch arm.
+        assert_eq!(keys("UPDATE t SET v = 1 WHERE id = 1", &[], false).len(), 1);
     }
 
     #[test]

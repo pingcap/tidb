@@ -470,10 +470,16 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
                 ru_details: self.ru_details.clone(),
                 resolve_locks_context: {
                     resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
-                    resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+                    resolve_locks_context.trace_context = crate::trace::current_trace_context();
+                    // client-go's resolver requests take their group from
+                    // the ctx (`ResourceGroupNameFromCtx(bo.GetCtx())`), not
+                    // from the request that met the lock.
+                    resolve_locks_context.resource_group_name =
+                        crate::util::resolver_resource_group_name(
+                            &resolve_locks_context.trace_context,
+                        );
                     resolve_locks_context.resource_control = self.resource_control.clone();
                     resolve_locks_context.ru_details = self.ru_details.clone();
-                    resolve_locks_context.trace_context = crate::trace::current_trace_context();
                     resolve_locks_context
                 },
                 read_lock_context: None,
@@ -596,7 +602,8 @@ impl<PdC: PdClient, P: Plan, Ph: PlanBuilderPhase> PlanBuilder<PdC, P, Ph> {
         resolve_locks_context.request_source = self.plan.request_source().to_owned();
         resolve_locks_context.trace_context = crate::trace::current_trace_context();
         resolve_locks_context.rpc_interceptor = self.rpc_interceptor.clone();
-        resolve_locks_context.resource_group_name = self.resource_group_name.clone();
+        resolve_locks_context.resource_group_name =
+            crate::util::resolver_resource_group_name(&resolve_locks_context.trace_context);
         resolve_locks_context.resource_control = self.resource_control.clone();
         resolve_locks_context.ru_details = self.ru_details.clone();
         PlanBuilder {

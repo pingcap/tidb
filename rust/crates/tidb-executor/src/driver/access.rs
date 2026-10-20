@@ -2818,7 +2818,8 @@ impl BatchPointLookup {
     }
 }
 
-/// Resolve only clustered-handle batches for the locking-read prelock path.
+/// Resolve only clustered-handle batches for the batch prelock arm (a locking
+/// read, or a pessimistic point UPDATE/DELETE).
 pub(crate) fn primary_batch_point_lookup(
     predicate: &tidb_ast::Expr,
     table_ref: &tidb_ast::TableRef,

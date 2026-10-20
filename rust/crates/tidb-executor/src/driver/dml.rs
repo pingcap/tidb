@@ -352,9 +352,14 @@ fn physical_dml_plan_with_cache_mode(
                 .transpose()?
                 .flatten();
             if let Some(mut fast) = fast {
-                // Go's point plans carry `Lock` for UPDATE and DELETE.
-                if let PhysicalPlan::PointGet(point) = &mut fast {
-                    point.lock = ctx.pessimistic_transaction();
+                // Go's point plans carry `Lock` for UPDATE and DELETE, the
+                // batch one as well (`tryUpdatePointPlan`/`tryDeletePointPlan`).
+                match &mut fast {
+                    PhysicalPlan::PointGet(point) => point.lock = ctx.pessimistic_transaction(),
+                    PhysicalPlan::BatchPointGet(batch) => {
+                        batch.lock = ctx.pessimistic_transaction();
+                    }
+                    _ => {}
                 }
                 // Go's point-UPDATE builder allocates one extra plan between
                 // the PointGet and the Update root; the DELETE builder does

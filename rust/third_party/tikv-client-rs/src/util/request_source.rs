@@ -151,6 +151,15 @@ pub fn resource_group_name_from_context(context: &TraceContext) -> &str {
         .unwrap_or_default()
 }
 
+/// client-go `ResourceGroupNameFromCtx(bo.GetCtx())` as a lock resolver
+/// request's resource group: none (so no resource control) unless the
+/// caller put one in the ctx with [`with_resource_group_name`].
+pub(crate) fn resolver_resource_group_name(context: &TraceContext) -> Option<String> {
+    Some(resource_group_name_from_context(context))
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(non_snake_case)]
@@ -208,5 +217,22 @@ mod tests {
         );
         assert_eq!(resource_group_name_from_context(&context), "rg1");
         assert_eq!(request_source_from_context(&base), SOURCE_UNKNOWN);
+    }
+
+    // client-go's lock resolver requests carry ResourceGroupNameFromCtx:
+    // nothing unless the ctx has a group.
+    #[test]
+    fn resolver_requests_take_the_ctx_resource_group() {
+        let base = TraceContext::new();
+        assert_eq!(resolver_resource_group_name(&base), None);
+        let context = with_resource_group_name(&base, "rg1");
+        assert_eq!(
+            resolver_resource_group_name(&context),
+            Some("rg1".to_owned())
+        );
+        assert_eq!(
+            resolver_resource_group_name(&with_resource_group_name(&base, "")),
+            None
+        );
     }
 }

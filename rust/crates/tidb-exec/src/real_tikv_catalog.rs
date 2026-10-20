@@ -286,9 +286,22 @@ pub fn load_catalog_from_cluster<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
+    load_catalog_from_cluster_at(opener, timeout).map(|(catalog, _)| catalog)
+}
+
+/// [`load_catalog_from_cluster`] together with the PD timestamp the load read
+/// at: Go's `version` in the domain's startup `Syncer.Reload`
+/// (`issyncer/syncer.go:420-427`), which grants the schema validator its
+/// first lease (`schemaValidator.Update(version, ...)`, `:494`) before the
+/// node serves any statement.
+pub fn load_catalog_from_cluster_at<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+) -> Result<(ClusterCatalog, u64), ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
+    let lease_grant_ts = transaction.start_ts();
     let catalog = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         load_cluster_catalog(&mut snapshot)?
@@ -296,7 +309,7 @@ pub fn load_catalog_from_cluster<S: StoreClient>(
     transaction
         .finish_without_writes()
         .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))?;
-    Ok(catalog)
+    Ok((catalog, lease_grant_ts))
 }
 
 /// Brings one loaded catalog up to date through one fresh transaction.

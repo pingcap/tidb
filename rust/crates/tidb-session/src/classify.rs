@@ -417,15 +417,20 @@ impl Session {
     /// an already-bound or text tree passes an empty slice.
     #[must_use]
     pub fn statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
-        let Some(prelock) = tidb_executor::access_path::PessimisticPrelock::from_statement(stmt)
+        let Some(mut prelock) =
+            tidb_executor::access_path::PessimisticPrelock::from_statement(stmt)
         else {
             return Vec::new();
         };
         // Go BatchPointGet locks all named keys before reading under RR,
         // but only existing rows after reading under RC. The latter uses
-        // the executor's selected-row collector, not a speculative key set.
-        if prelock.is_locking_read() && self.read_committed_locking() {
-            return Vec::new();
+        // the executor's selected-row collector (a write: its staged keys),
+        // not a speculative key set.
+        if self.read_committed_locking() {
+            if prelock.is_locking_read() {
+                return Vec::new();
+            }
+            prelock = prelock.without_batch_lookup();
         }
         let catalog = self
             .catalog

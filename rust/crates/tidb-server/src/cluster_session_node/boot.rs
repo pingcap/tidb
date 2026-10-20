@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::ddl_systable::MinJobIdRefresher;
-use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
+use tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
@@ -142,7 +142,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 }
             }
             loaded = Some(
-                load_catalog_from_cluster(opener, COPROCESSOR_QUERY_TIMEOUT)
+                load_catalog_from_cluster_at(opener, COPROCESSOR_QUERY_TIMEOUT)
                     .map_err(|error| error.to_string())?,
             );
             // The authority insists on naming one bounded-read table because
@@ -160,7 +160,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         },
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let startup = loaded.expect("the catalog closure ran exactly once");
+    let (startup, startup_lease_grant_ts) = loaded.expect("the catalog closure ran exactly once");
     let schema_version = startup.schema_version;
 
     // `node_accounts` also hands back the privilege reloader (landed in
@@ -179,11 +179,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Its persisted boot image was installed synchronously above, before this
     // reloader and, crucially, before bind. This is independent of
     // privilege-cache policy.
-    let (catalog, reloader, schema_validator) =
-        spawn_catalog_reloader(startup, authority.transaction_opener(), config.schema_lease)
-            .map_err(|error| {
-                RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
-            })?;
+    let (catalog, reloader, schema_validator) = spawn_catalog_reloader(
+        startup,
+        startup_lease_grant_ts,
+        authority.transaction_opener(),
+        config.schema_lease,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     // Statistics always resolve targets from this published catalog, so the
     // reload loop follows DDL-added tables and changed column types instead of
     // freezing the boot image.

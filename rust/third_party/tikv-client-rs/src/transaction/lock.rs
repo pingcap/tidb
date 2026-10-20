@@ -2362,10 +2362,10 @@ impl LockResolver {
     /// Attach operation metadata without creating another resolver owner.
     pub fn with_request_context(mut self, context: &kvrpcpb::Context) -> Self {
         self.ctx.request_source.clone_from(&context.request_source);
-        self.ctx.resource_group_name = context
-            .resource_control_context
-            .as_ref()
-            .map(|resource| resource.resource_group_name.clone());
+        // client-go's resolver requests carry the ctx's resource group
+        // (`ResourceGroupNameFromCtx`), not the triggering request's.
+        self.ctx.resource_group_name =
+            crate::util::resolver_resource_group_name(&crate::trace::current_trace_context());
         self
     }
 
@@ -3214,6 +3214,25 @@ mod tests {
                 wait_duration: Duration::from_millis(3),
             })
         }
+    }
+
+    // client-go's resolver requests carry ResourceGroupNameFromCtx, never
+    // the group of the request that met the lock (TiDB sets none in the
+    // ctx, so the resolver charges no RU).
+    #[test]
+    fn a_resolver_does_not_take_the_triggering_requests_resource_group() {
+        let context = kvrpcpb::Context {
+            request_source: "internal_others".to_owned(),
+            resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                resource_group_name: "rg1".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let resolver =
+            LockResolver::new(ResolveLocksContext::default()).with_request_context(&context);
+        assert_eq!(resolver.ctx.request_source, "internal_others");
+        assert_eq!(resolver.ctx.resource_group_name, None);
     }
 
     #[tokio::test]

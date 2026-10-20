@@ -10187,6 +10187,99 @@ fn a_text_select_for_update_folds_its_read_into_its_lock() {
     );
 }
 
+/// Go's pessimistic `UPDATE`/`DELETE ... WHERE pk IN (...)` is a locking
+/// `Batch_Point_Get` (`tryUpdatePointPlan`/`tryDeletePointPlan` set
+/// `BatchPointGetPlan.Lock`), and `BatchPointGetExec` under repeatable read
+/// locks every named key WITH its value before reading
+/// (`batch_point_get.go:434-444`: `LockKeys` -> `InitReturnValues`), then
+/// reads through the pessimistic-lock cache. One PessimisticLock RPC and no
+/// BatchGet: counted at the store's RPC client, Go's
+/// `UnistoreRPCClientSendHook`.
+#[test]
+fn a_pessimistic_batch_point_write_folds_its_read_into_one_lock() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut session = factory
+        .open_session(session_context(102))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.foldbatch (id int primary key, v int)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.foldbatch VALUES (1, 10), (2, 20), (3, 30), (4, 40)",
+    );
+    let table_id: i64 = displayed(rows(
+        &mut session,
+        "SELECT TIDB_TABLE_ID FROM information_schema.tables \
+         WHERE table_schema = 'test' AND table_name = 'foldbatch'",
+    ))[0][0]
+        .parse()
+        .expect("table id");
+    // Only this table's row reads and locks count: the session's own system
+    // reads (statistics, catalog) share the store.
+    fn is_row_of(table_id: i64, key: &[u8]) -> bool {
+        tidb_tablecodec::table_key::decode_record_key(key).is_ok_and(|(table, _)| table == table_id)
+    }
+    let sent: Arc<std::sync::Mutex<Vec<&'static str>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    for (statement, after) in [
+        (
+            "UPDATE test.foldbatch SET v = v + 1 WHERE id IN (1, 2, 3)",
+            [["1", "11"], ["2", "21"], ["3", "31"], ["4", "40"]].as_slice(),
+        ),
+        (
+            "DELETE FROM test.foldbatch WHERE id IN (2, 3, 9)",
+            [["1", "11"], ["4", "40"]].as_slice(),
+        ),
+    ] {
+        session
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin");
+        let recorded = Arc::clone(&recorded);
+        stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+            use tikv_client::proto::kvrpcpb;
+            let any = request.as_any();
+            let touched = if let Some(lock) = any.downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+            {
+                lock.mutations.iter().any(|m| is_row_of(table_id, &m.key))
+            } else if let Some(get) = any.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+                get.keys.iter().any(|key| is_row_of(table_id, key))
+            } else if let Some(get) = any.downcast_ref::<kvrpcpb::GetRequest>() {
+                is_row_of(table_id, &get.key)
+            } else {
+                false
+            };
+            if touched {
+                recorded.lock().unwrap().push(request.label());
+            }
+        })));
+        rows(&mut session, statement);
+        stack.rpc.set_send_hook(None);
+        let labels = std::mem::take(&mut *sent.lock().unwrap());
+        let count = |label: &str| labels.iter().filter(|sent| **sent == label).count();
+        assert_eq!(
+            (
+                count("kv_pessimistic_lock"),
+                count("kv_batch_get"),
+                count("kv_get")
+            ),
+            (1, 0, 0),
+            "{statement}: {labels:?}"
+        );
+        session.control_transaction("COMMIT").expect("commit");
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                "SELECT id, v FROM test.foldbatch ORDER BY id"
+            )),
+            after,
+            "{statement}"
+        );
+    }
+}
+
 /// Go SelectLockExec locks the rows the range produces, including a LIMIT
 /// winner. A contender must replay the range after that winner is deleted.
 #[test]

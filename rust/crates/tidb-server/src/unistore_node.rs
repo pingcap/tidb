@@ -109,7 +109,7 @@ mod transaction_buffer_tests {
             MvccStore::with_pd(pd.oracle()),
             Arc::clone(&regions),
         )));
-        let store =
+        let (store, _rpc) =
             embedded_tikv_store(handler, regions, &pd, &ClusterSecurity::plaintext()).unwrap();
         let visibility = store.visibility();
         assert_eq!(visibility(1), Ok(()));
@@ -320,6 +320,9 @@ pub(crate) struct InProcessStack {
     pub(crate) opener: InProcessOpener,
     pub(crate) regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
     pub(crate) tikv_store: Arc<TikvStore<tidb_unistore::mock::StorePdClient>>,
+    /// The store's RPC client, whose send hook is Go's
+    /// `UnistoreRPCClientSendHook`: a test's look at every request.
+    pub(crate) rpc: tidb_unistore::rpc::RpcClient,
 }
 
 /// Builds [`InProcessStack`]; TiDB requests to peers use `security`, as Go's
@@ -337,7 +340,7 @@ pub(crate) fn in_process_stack(
         MvccStore::with_pd(pd.oracle()),
         Arc::clone(&regions),
     )));
-    let tikv_store = embedded_tikv_store(handler, Arc::clone(&regions), &pd, security)?;
+    let (tikv_store, rpc) = embedded_tikv_store(handler, Arc::clone(&regions), &pd, security)?;
     // The bootstrapped cluster protocol -- async commit and 1PC are both ON
     // on TiKV (`session_commit_protocol`) -- and the shared-oracle store can
     // answer both, exactly as Go's unistore does under its mock PD.
@@ -350,6 +353,7 @@ pub(crate) fn in_process_stack(
         opener: transaction_opener,
         regions,
         tikv_store: Arc::new(tikv_store),
+        rpc,
     })
 }
 
@@ -363,16 +367,23 @@ fn embedded_tikv_store(
     regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
     pd: &InProcessPd,
     security: &ClusterSecurity,
-) -> Result<TikvStore<tidb_unistore::mock::StorePdClient>, SqlQueryError> {
+) -> Result<
+    (
+        TikvStore<tidb_unistore::mock::StorePdClient>,
+        tidb_unistore::rpc::RpcClient,
+    ),
+    SqlQueryError,
+> {
     let (rpc, pd_client, _cluster) =
         tidb_unistore::mock::over(handler, regions, pd.oracle(), Vec::new())
             .map_err(SqlQueryError::unknown)?;
-    tidb_unistore::mock::new_test_tikv_store(
+    let store = tidb_unistore::mock::new_test_tikv_store(
         &rpc,
         pd_client,
         tidb_txnkv::driver::tikv_store::cluster_security_config(security),
     )
-    .map_err(SqlQueryError::unknown)
+    .map_err(SqlQueryError::unknown)?;
+    Ok((store, rpc))
 }
 
 /// Runs the wide cluster-session surface over the embedded store.
@@ -409,6 +420,7 @@ pub(crate) fn run_unistore_cluster_session(
         _binding_reloader: binding_reloader,
         _async_stats_loader,
         _stats_maintenance: stats_maintenance,
+        rpc: _rpc,
     } = stack;
     if tidb_config::config_tree::config::get_global_config()
         .instance
@@ -505,6 +517,8 @@ pub(crate) struct UnistoreClusterStack {
     pub(crate) _stats_reloader: tidb_exec::stats_watch::StatsReloader,
     pub(crate) _binding_reloader: crate::cluster_binding_seam::BindingReloader,
     pub(crate) _async_stats_loader: tidb_exec::stats_watch::AsyncStatsLoader,
+    /// See [`InProcessStack::rpc`].
+    pub(crate) rpc: tidb_unistore::rpc::RpcClient,
 }
 
 /// Builds the wide cluster-session factory over the embedded store:
@@ -527,6 +541,7 @@ pub(crate) fn unistore_cluster_session_stack(
         opener,
         regions: _regions,
         tikv_store,
+        rpc,
     } = in_process_stack(&config.cluster_security).map_err(engine)?;
     // The store's regions as `SPLIT`, `SHOW TABLE ... REGIONS` and
     // `TABLESAMPLE REGIONS()` reach them: client-go's `SplitRegions` and
@@ -574,8 +589,8 @@ pub(crate) fn unistore_cluster_session_stack(
         );
     }
 
-    let startup =
-        tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, IN_PROCESS_TIMEOUT)
+    let (startup, startup_lease_grant_ts) =
+        tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
     // The bootstrap persisted the system time zone and the global-variable
@@ -583,9 +598,13 @@ pub(crate) fn unistore_cluster_session_stack(
     // production boot's own order.
     crate::real_tikv_node::load_cluster_startup_variables(&users, &opener)?;
 
-    let (catalog, reloader, schema_validator) =
-        crate::real_tikv_node::spawn_catalog_reloader(startup, opener.clone(), config.schema_lease)
-            .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+    let (catalog, reloader, schema_validator) = crate::real_tikv_node::spawn_catalog_reloader(
+        startup,
+        startup_lease_grant_ts,
+        opener.clone(),
+        config.schema_lease,
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     let (stats, stats_reloader, async_stats_loader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
         opener.clone(),
@@ -760,6 +779,7 @@ pub(crate) fn unistore_cluster_session_stack(
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
         _async_stats_loader: async_stats_loader,
+        rpc,
     })
 }
 
@@ -920,5 +940,45 @@ mod meta_txn_tests {
             "the retry re-read the peer's value before writing"
         );
         NewTxnTransaction::rollback(&mut read).unwrap();
+    }
+}
+
+/// The schema validator's state between boot and the reload loop's first
+/// tick, over real (embedded) storage.
+#[cfg(test)]
+mod startup_schema_lease_tests {
+    use super::*;
+    use tidb_exec::schema_validator::{Result as ValidatorResult, Validator as _};
+
+    /// Go `Domain.Init` runs `isSyncer.Reload()` before the reload loop and
+    /// before any session, so the startup load's timestamp is the validator's
+    /// first lease (`schemaValidator.Update`, `issyncer/syncer.go:494`). A
+    /// commit right after boot is `ResultSucc`; without that lease it was
+    /// `ResultUnknown` until the loop's first tick `schemaLease / 2` later,
+    /// and the retries ran out as 8027 on the first COMMIT after boot.
+    #[test]
+    fn the_startup_load_grants_the_schema_validator_its_first_lease() {
+        let (_pd, opener) = in_process_write_stack().expect("embedded write stack");
+        crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+            .expect("bootstrap publish");
+        let (startup, lease_grant_ts) =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
+                .expect("startup catalog");
+        let version = startup.schema_version;
+        assert!(lease_grant_ts > 0, "the load read at a real timestamp");
+        // A lease long enough that the reload thread never ticks during the
+        // test: only the startup grant can make the check succeed.
+        let (_catalog, _reloader, validator) = crate::real_tikv_node::spawn_catalog_reloader(
+            startup,
+            lease_grant_ts,
+            opener.clone(),
+            std::time::Duration::from_secs(45),
+        )
+        .expect("catalog reloader");
+        let transaction = opener.begin_read_only().expect("commit-time timestamp");
+        let commit_ts = transaction.start_ts();
+        transaction.finish_without_writes().expect("finish");
+        let (_, result) = validator.check(commit_ts, version, Some(&[]), false);
+        assert_eq!(result, ValidatorResult::Succ);
     }
 }
