@@ -331,61 +331,64 @@ pub(crate) const SHOW_TABLE_STATUS_COLUMNS: &[(&str, bool)] = &[
     ("Comment", false),
 ];
 
-/// The in-memory slow-query memory `ADMIN SHOW SLOW` reads — go
-/// `Domain.ShowSlowQuery` over `topn_slow_query.go`'s lists. Go records every
-/// statement whose cost reaches `instance.ddl_slow_threshold`'s sibling, the
-/// session's `tidb_slow_log_threshold` (300ms by default), through
-/// `LogSlowQuery` (`adapter.go:2007`); the recorder below hooks the same
-/// threshold check at the wire tier.
-#[derive(Clone)]
-pub struct SlowQueryRecord {
-    /// The statement text as received.
-    pub sql: String,
-    /// Wall-clock start, rendered as the session's DATETIME.
-    pub start: std::time::SystemTime,
-    /// Total statement cost.
-    pub duration: std::time::Duration,
-    /// The connection that ran the statement.
-    pub conn_id: u64,
-    /// `user@host` as the account was authenticated (`root@%`).
-    pub user: String,
-    /// The statement's default database (`""` when none was selected).
-    pub db: String,
-    /// go `StmtCtx.Digest()`'s normalized-statement digest hex.
-    pub digest: String,
+/// The domain's slow-query memory `ADMIN SHOW SLOW` reads -- Go
+/// `Domain.slowQuery` (`topn_slow_query.go`), sized by
+/// `in-mem-slow-query-topn-num` / `in-mem-slow-query-recent-num` with a
+/// seven-day period. `ExecStmt.LogSlowQuery` lands every statement its rules
+/// select here (`domain.LogSlowQuery`).
+struct DomainSlowQueries {
+    queries: tidb_domain::topn_slow_query::TopNSlowQueries,
+    /// When `topNSlowQueryLoop`'s ten-minute ticker last removed expired
+    /// entries.
+    last_expired: std::time::Instant,
 }
 
-static SLOW_QUERIES: std::sync::Mutex<Vec<SlowQueryRecord>> =
-    std::sync::Mutex::new(Vec::new());
+static SLOW_QUERIES: std::sync::LazyLock<std::sync::Mutex<DomainSlowQueries>> =
+    std::sync::LazyLock::new(|| {
+        let config = tidb_config::config_tree::config::get_global_config();
+        std::sync::Mutex::new(DomainSlowQueries {
+            queries: tidb_domain::topn_slow_query::TopNSlowQueries::new(
+                usize::try_from(config.in_mem_slow_query_topn_num).unwrap_or(0),
+                std::time::Duration::from_secs(60 * 60 * 24 * 7),
+                usize::try_from(config.in_mem_slow_query_recent_num).unwrap_or(0),
+            ),
+            last_expired: std::time::Instant::now(),
+        })
+    });
 
-/// go `domain.LogSlowQuery`: append to the recent list. The cap mirrors go's
-/// `in-mem-slow-query-recent-num` default (500); anything past it evicts the
-/// oldest entry, exactly as go's ring does.
-pub fn record_slow_query(record: SlowQueryRecord) {
-    const RECENT_NUM: usize = 500;
-    let mut list = SLOW_QUERIES.lock().unwrap_or_else(|poison| poison.into_inner());
-    if list.len() == RECENT_NUM {
-        list.remove(0);
+/// Go `topNSlowQueryLoop`'s ticker: every ten minutes the user and internal
+/// heaps drop entries older than the period.
+fn remove_expired_slow_queries(store: &mut DomainSlowQueries) {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(600);
+    if store.last_expired.elapsed() >= TICK {
+        store.last_expired = std::time::Instant::now();
+        store.queries.remove_expired(std::time::SystemTime::now());
     }
-    list.push(record);
 }
 
-/// go `topNSlowQuery.All`'s answer: the recorded statements by cost, longest
-/// first. `internal` selects nothing here — this node records only general
-/// (user) statements, and go's internal list stays empty alongside.
-fn slow_query_rows(mode: &tidb_ast::AdminShowSlowMode, count: u64) -> Vec<SlowQueryRecord> {
-    let list = SLOW_QUERIES.lock().unwrap_or_else(|poison| poison.into_inner());
+/// Go `domain.LogSlowQuery`: hands the statement to the slow-query memory.
+pub fn record_slow_query(info: tidb_domain::topn_slow_query::SlowQueryInfo) {
+    let mut store = SLOW_QUERIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    remove_expired_slow_queries(&mut store);
+    store.queries.append(info);
+}
+
+/// Go `Domain.ShowSlowQuery`: `QueryTop` for `ADMIN SHOW SLOW TOP`,
+/// `QueryRecent` for `ADMIN SHOW SLOW RECENT`.
+fn slow_query_rows(
+    mode: &tidb_ast::AdminShowSlowMode,
+    count: u64,
+) -> Vec<tidb_domain::topn_slow_query::SlowQueryInfo> {
+    let mut store = SLOW_QUERIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    remove_expired_slow_queries(&mut store);
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
     match mode {
-        tidb_ast::AdminShowSlowMode::Recent => {
-            let start = list.len().saturating_sub(count as usize);
-            list[start..].to_vec()
-        }
-        tidb_ast::AdminShowSlowMode::Top(_) => {
-            let mut sorted = list.clone();
-            sorted.sort_by(|left, right| right.duration.cmp(&left.duration));
-            sorted.truncate(count as usize);
-            sorted
-        }
+        tidb_ast::AdminShowSlowMode::Recent => store.queries.query_recent(count),
+        tidb_ast::AdminShowSlowMode::Top(kind) => store.queries.query_top(count, *kind),
     }
 }
 
@@ -586,7 +589,10 @@ impl crate::Session {
         let rows = records
             .into_iter()
             .map(|record| {
-                let start: chrono::DateTime<chrono::Local> = record.start.into();
+                let start: chrono::DateTime<chrono::Local> = record
+                    .start
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                    .into();
                 let nanos = record.duration.subsec_nanos() as i64
                     + i64::try_from(record.duration.as_secs()).unwrap_or(0) * 1_000_000_000;
                 vec![
@@ -613,17 +619,17 @@ impl crate::Session {
                                     .expect("fsp 0 is valid")
                             }),
                     ),
-                    Datum::Bytes(Vec::new()),
-                    Datum::Int(1),
+                    Datum::Bytes(record.detail.into_bytes()),
+                    Datum::Int(i64::from(record.succ)),
                     Datum::UInt(record.conn_id),
-                    Datum::Int(0),
+                    Datum::UInt(record.txn_ts),
                     Datum::Bytes(record.user.into_bytes()),
                     Datum::Bytes(record.db.into_bytes()),
-                    Datum::Bytes(Vec::new()),
-                    Datum::Bytes(Vec::new()),
-                    Datum::Int(0),
+                    Datum::Bytes(record.table_ids.into_bytes()),
+                    Datum::Bytes(record.index_names.into_bytes()),
+                    Datum::Int(i64::from(record.internal)),
                     Datum::Bytes(record.digest.into_bytes()),
-                    Datum::Bytes(Vec::new()),
+                    Datum::Bytes(record.sess_alias.into_bytes()),
                 ]
             })
             .collect();

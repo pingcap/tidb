@@ -948,6 +948,36 @@ impl ExecDetails {
 }
 
 impl TaskTimeStats {
+    /// Go `TaskTimeStats.String`: the slow log's cop-task time line, whose
+    /// seconds are Go's `%v` of `Duration.Seconds()`.
+    #[must_use]
+    pub fn string(
+        &self,
+        num_cop_tasks: i64,
+        space_mark_str: &str,
+        avg_str: &str,
+        p90_str: &str,
+        max_str: &str,
+        addr_str: &str,
+    ) -> String {
+        let seconds =
+            |d: Duration| tidb_datatype::go_strconv::format_float(d.as_secs_f64(), b'g', -1, 64);
+        if num_cop_tasks == 1 {
+            return format!(
+                "{avg_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
+                seconds(self.avg_time),
+                self.max_address
+            );
+        }
+        format!(
+            "{avg_str}{space_mark_str}{} {p90_str}{space_mark_str}{} {max_str}{space_mark_str}{} {addr_str}{space_mark_str}{}",
+            seconds(self.avg_time),
+            seconds(self.p90_time),
+            seconds(self.max_time),
+            self.max_address
+        )
+    }
+
     /// Go `TaskTimeStats.FormatFloatFields`.
     #[must_use]
     pub fn format_float_fields(&self) -> (String, String, String) {

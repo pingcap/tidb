@@ -462,6 +462,13 @@ pub trait OpenClusterTransaction: Send {
         false
     }
 
+    /// Go `TransactionContext.forUpdateTS`: the pessimistic transaction's
+    /// current for-update timestamp. Zero (the optimistic answer) defers to
+    /// the start timestamp in `GetForUpdateTS`.
+    fn for_update_ts(&self) -> u64 {
+        0
+    }
+
     /// Starts a current-read statement without changing the transaction's
     /// repeatable-read snapshot.
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
@@ -817,6 +824,9 @@ impl DeferredSnapshot {
                         }
                         LockKeysOutcome::StatementError(error)
                         | LockKeysOutcome::TransactionError(error) => {
+                            // The lock ran in this transaction: the failed
+                            // statement's `TxnCtx.StartTS` is its start.
+                            self.read_ts.record(transaction.start_ts());
                             return Err(StorageError::Backend(error.message));
                         }
                     }
@@ -1520,6 +1530,10 @@ where
 
     fn is_pessimistic(&self) -> bool {
         SessionTransaction::is_pessimistic(self)
+    }
+
+    fn for_update_ts(&self) -> u64 {
+        SessionTransaction::for_update_ts(self)
     }
 
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {

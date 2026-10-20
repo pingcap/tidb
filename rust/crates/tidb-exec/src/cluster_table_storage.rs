@@ -918,6 +918,21 @@ impl<S: StoreClient> SessionTransaction<S> {
         self.pessimistic
     }
 
+    /// Go `TransactionContext.forUpdateTS` as client-go keeps it: the
+    /// pessimistic transaction's current for-update timestamp, zero for an
+    /// optimistic or finished transaction.
+    #[must_use]
+    pub fn for_update_ts(&self) -> u64 {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &*state {
+            SessionTransactionState::Pessimistic { transaction, .. } => transaction.for_update_ts(),
+            _ => 0,
+        }
+    }
+
     /// `@@tidb_pessimistic_txn_fair_locking` reaching this transaction. Only a
     /// pessimistic transaction locks, so only it can lock fairly; the flag
     /// reaches the transaction as each locking statement starts.

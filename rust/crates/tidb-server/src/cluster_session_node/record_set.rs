@@ -56,7 +56,7 @@ impl ClusterServerSession {
         }
         if let Some(transaction) = &self.explicit {
             let locking = shape == StatementReadShape::LockingRead || !prelock_keys.is_empty();
-            return match retry_read_ts {
+            let snapshot = match retry_read_ts {
                 Some(ts) => transaction.snapshot_at_for(ts, locking),
                 // Go's pessimistic READ-COMMITTED provider reads every
                 // statement at its own fresh timestamp (`getStmtTS`), so a
@@ -82,6 +82,12 @@ impl ClusterServerSession {
                 None => transaction.snapshot_for(locking),
             }
             .map_err(SqlQueryError::unknown);
+            // Go `TxnCtx.SetForUpdateTS`: the statement's for-update
+            // timestamp, which `tidb_last_query_info` reports.
+            self.session
+                .current_for_update_ts()
+                .publish(transaction.for_update_ts());
+            return snapshot;
         }
         if shape == StatementReadShape::AutocommitPointGet {
             return self

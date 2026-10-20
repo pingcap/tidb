@@ -1657,6 +1657,20 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             exit: ConnectionExit::SessionRejected,
         });
     }
+    // Go `clientConn.connectInfo`: the handshake's attributes ride the
+    // session's `ConnectionInfo`.
+    engine.set_connection_attributes(
+        response
+            .attrs
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect(),
+    );
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
     // exist ends the connection with its own errno rather than the OK packet.
@@ -2048,14 +2062,6 @@ fn run_connection_commands<S: QuerySession>(
                 )?,
                 Command::Query(bytes) => {
                     let query_started = std::time::Instant::now();
-                    // Statements that crossed the session's slow threshold, in
-                    // order; recorded into the domain's memory once the last
-                    // result's engine borrow ends.
-                    let mut slow_statements: Vec<(
-                        String,
-                        std::time::SystemTime,
-                        std::time::Duration,
-                    )> = Vec::new();
                     commands.text_query_commands += 1;
                     // `decode_command` has already trimmed exactly one terminal
                     // NUL for issue 1989. Embedded and repeated NUL bytes remain
@@ -2313,8 +2319,6 @@ fn run_connection_commands<S: QuerySession>(
                                 break;
                             }
                         }
-                        let statement_started = std::time::Instant::now();
-                        let slow_threshold = engine.slow_log_threshold();
                         // go's server retires a running statement when the client
                         // disappears: the driver's read timeout closes the socket,
                         // go tears the connection down, and the in-flight query's
@@ -2447,22 +2451,6 @@ fn run_connection_commands<S: QuerySession>(
                                 ));
                             }
                         }
-                        let elapsed = statement_started.elapsed();
-                        if slow_threshold.is_some_and(|threshold| elapsed >= threshold) {
-                            // go `session.LogSlowQuery` lands the statement in
-                            // the domain's slow-query memory at the same
-                            // threshold (`ADMIN SHOW SLOW` reads it back). The
-                            // row records here, past the result's borrow of the
-                            // engine; the engine itself is touched at the
-                            // command boundary below.
-                            slow_statements.push((
-                                sql.to_owned(),
-                                std::time::SystemTime::now()
-                                    .checked_sub(elapsed)
-                                    .unwrap_or_else(std::time::SystemTime::now),
-                                elapsed,
-                            ));
-                        }
                         record_client_warnings(&*output, &*engine);
                     }
                     if !aborted {
@@ -2481,9 +2469,6 @@ fn run_connection_commands<S: QuerySession>(
                     // the whole command.
                     {
                         let elapsed = query_started.elapsed();
-                        for (statement_sql, start, statement_duration) in &slow_statements {
-                            engine.record_slow_query(statement_sql, *start, *statement_duration);
-                        }
                         if engine
                             .slow_log_threshold()
                             .is_some_and(|threshold| elapsed >= threshold)

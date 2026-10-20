@@ -51,6 +51,12 @@ pub(crate) struct StatementObservation {
     /// created with its ctx (`execdetails.ContextWithInitializedExecDetails`)
     /// and charged by every TiKV/TiFlash RPC it issues.
     ru_details: Arc<tikv_client::RuDetails>,
+    /// Go `recordLastQueryInfo`'s statement test: a `SHOW` other than
+    /// `SHOW SESSION_STATES`, an `EXECUTE`, or a DML node.
+    record_last_query: bool,
+    /// Go `logStmt`'s crucial statements (account, privilege and schema
+    /// changes), which go to the background log instead of the general log.
+    crucial: bool,
 }
 
 #[derive(Default)]
@@ -283,6 +289,7 @@ impl Session {
             .take()
             .filter(|(parsed_sql, _)| parsed_sql == sql)
             .map_or(Duration::ZERO, |(_, duration)| duration);
+        self.statement_txn_start_ts = 0;
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
             secure_text: None,
@@ -303,6 +310,8 @@ impl Session {
                 )),
             ),
             ru_details,
+            record_last_query: false,
+            crucial: false,
             phases: Arc::new(Mutex::new(StatementPhases {
                 parse,
                 parse_before_start: parse,
@@ -498,6 +507,9 @@ impl Session {
                     crate::binding::normalize_with_db(stmt, &self.current_db);
             }
             observation.prepared |= prepared;
+            // Go's ExecuteStmt node records whatever it executes.
+            observation.record_last_query = observation.prepared || records_last_query_info(stmt);
+            observation.crucial = is_crucial_stmt(stmt);
             observation.routed = !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_));
             // Go `getSQLForProcessInfo`: the process list shows a sensitive
             // statement's secure text once its node is known.
@@ -523,7 +535,11 @@ impl Session {
             Ok(StatementCompletion::Rows(Some(rows))) => i64::try_from(*rows).unwrap_or(i64::MAX),
             _ => 0,
         };
-        self.publish_statement_observation(result.is_ok(), affected_rows, result_rows);
+        let error = result
+            .as_ref()
+            .err()
+            .map(|error| error.clone().to_mysql_error().message);
+        self.publish_statement_observation(result.is_ok(), affected_rows, result_rows, error);
     }
 
     /// Starts observation when durable completion belongs outside Session.
@@ -562,13 +578,24 @@ impl Session {
 
     /// Publishes one routed completion through the same summary/counter owner.
     pub fn finish_routed_statement_observation(&mut self, succeeded: bool, affected_rows: u64) {
+        self.finish_routed_statement_observation_with_error(succeeded, affected_rows, None);
+    }
+
+    /// [`Self::finish_routed_statement_observation`] with the failed
+    /// statement's error text, which Go `recordLastQueryInfo` records.
+    pub fn finish_routed_statement_observation_with_error(
+        &mut self,
+        succeeded: bool,
+        affected_rows: u64,
+        error: Option<String>,
+    ) {
         if self.routed_statement_observation_depth == 0 {
             return;
         }
         self.routed_statement_observation_depth -= 1;
         if self.routed_statement_observation_depth == 0 {
             self.finish_routed_statement_warnings(succeeded);
-            self.publish_statement_observation(succeeded, affected_rows, 0);
+            self.publish_statement_observation(succeeded, affected_rows, 0, error);
             self.refresh_process_status();
         }
     }
@@ -578,6 +605,7 @@ impl Session {
         succeeded: bool,
         affected_rows: u64,
         result_rows: i64,
+        error: Option<String>,
     ) {
         let Some(observation) = self.statement_observation.take() else {
             return;
@@ -613,6 +641,26 @@ impl Session {
             );
         } else {
             self.statement_stats.clear_ru_exec_context();
+        }
+        // Go runs these from `FinishExecuteStmt` (and `logStmt` from
+        // `runStmt`), which only a compiled statement reaches.
+        if phases.compile_finished || phases.execution_started {
+            let plan_info = Arc::clone(&self.process_plan_info);
+            let plan = plan_info
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.log_slow_query(
+                &observation,
+                elapsed,
+                succeeded,
+                result_rows,
+                &plan,
+                &phases,
+            );
+            drop(plan);
+            self.update_prev_stmt(&observation);
+            self.record_last_query_info(&observation, error);
+            self.log_stmt(&observation);
         }
         use tidb_exec::adapter::{
             decide_summary_stmt, SummaryAction, SummaryGate, SummaryStmtKind,
@@ -785,6 +833,633 @@ impl Session {
                 },
             }),
         });
+    }
+}
+
+/// The slow-log, general-log and last-query-info halves of Go
+/// `ExecStmt.FinishExecuteStmt` (`pkg/executor/adapter.go`) and of
+/// `session.logStmt` (`pkg/session/session.go`).
+impl Session {
+    /// Go `vardef.ProcessGeneralLog` / `cfg.Instance.*`: an instance-scoped
+    /// switch read through the session's variable table.
+    fn instance_switch_on(&self, name: &str) -> bool {
+        self.vars
+            .get_system(name)
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
+    }
+
+    /// Go `SessionVars.EnableRedactLog`, one of `OFF`, `ON` and `MARKER`.
+    fn redact_log_mode(&self) -> String {
+        let mode = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        match mode.as_str() {
+            "ON" | "MARKER" => mode,
+            _ => "OFF".to_owned(),
+        }
+    }
+
+    /// Go `PlanCacheParamList.String`: the prepared execution's arguments,
+    /// empty without any.
+    fn plan_cache_params_string(&self) -> String {
+        match &self.prepared_params {
+            Some(params) if !params.is_empty() => format!(
+                " [arguments: {}]",
+                tidb_datatype::datums_to_string_no_error_smart(params)
+            ),
+            _ => String::new(),
+        }
+    }
+
+    /// Go `ExecStmt.GetTextToLog(keepHint)`: the statement text a log may
+    /// carry under `tidb_redact_log`.
+    fn text_to_log(&self, observation: &StatementObservation, keep_hint: bool) -> String {
+        let mode = self.redact_log_mode();
+        if mode == "ON" {
+            if keep_hint {
+                tidb_parser::normalize_keep_hint(&observation.sql)
+            } else {
+                observation.normalized.clone()
+            }
+        } else if let Some(secure_text) = &observation.secure_text {
+            secure_text.clone()
+        } else {
+            tidb_util::redact::string(
+                &mode,
+                &format!("{}{}", observation.sql, self.plan_cache_params_string()),
+            )
+        }
+    }
+
+    /// Go `vardef.QueryLogMaxLen`, the GLOBAL `tidb_query_log_max_len`.
+    fn query_log_max_len(&self) -> i32 {
+        self.vars
+            .get_global(tidb_vardef::tidb_vars::TIDB_QUERY_LOG_MAX_LEN)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .map_or(4096, |value| i32::try_from(value).unwrap_or(i32::MAX))
+    }
+
+    /// Go `TxnCtx.StartTS` and `TxnCtx.GetForUpdateTS()`: the for-update
+    /// timestamp when it is newer than the start, else the start.
+    fn txn_start_and_for_update_ts(&self) -> (u64, u64) {
+        let start_ts = match u64::try_from(self.current_tso.value()).unwrap_or(0) {
+            0 => self.statement_txn_start_ts,
+            start_ts => start_ts,
+        };
+        let for_update_ts = u64::try_from(self.current_for_update_ts.value()).unwrap_or(0);
+        (start_ts, for_update_ts.max(start_ts))
+    }
+
+    /// Go `ExecStmt.LogSlowQuery`: writes the statement's entry through the
+    /// slow-query logger when the slow-log rules (or, without rules, the
+    /// `tidb_slow_log_threshold`) select it, and lands a selected statement in
+    /// the domain's `ADMIN SHOW SLOW` memory.
+    fn log_slow_query(
+        &mut self,
+        observation: &StatementObservation,
+        elapsed: Duration,
+        succeeded: bool,
+        result_rows: i64,
+        plan: &tidb_executor::ProcessPlanInfo,
+        phases: &StatementPhases,
+    ) {
+        let conn_id = self.connection_id();
+        // Go's triggers, decided before any entry field is gathered: the
+        // `write_slow_log` hint writes the entry without selecting it.
+        let mut match_rules = false;
+        let mut force = false;
+        let mut rules = None;
+        if !self.stmt_hints.write_slow_log {
+            // Go also forces the entry while runtime tracing is on; this node
+            // has no runtime tracer.
+            force = tidb_util::logutil::get_level() <= tidb_log::Level::Debug;
+            if !self.instance_switch_on(tidb_vardef::tidb_vars::TIDB_ENABLE_SLOW_LOG) && !force {
+                return;
+            }
+            let effective = crate::slow_log_rules::EffectiveSlowLogRules::new(
+                &self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_RULES)
+                    .unwrap_or_default(),
+                &self
+                    .vars
+                    .get_global(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_RULES)
+                    .unwrap_or_default(),
+                conn_id,
+            );
+            if effective.is_empty() {
+                // Go stores the threshold as `uint64(TidbOptInt64(..))`, so a
+                // negative one never selects a statement.
+                let threshold = self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_THRESHOLD)
+                    .ok()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(tidb_util::logutil::DEFAULT_SLOW_THRESHOLD as i64);
+                match_rules = elapsed >= Duration::from_millis(threshold as u64);
+                if !match_rules && !force {
+                    return;
+                }
+            } else {
+                rules = Some(effective);
+            }
+        }
+        let session_alias = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
+            .unwrap_or_default();
+        let exec_detail = observation.cop_stats.exec_details();
+        let cop_tasks = observation.cop_stats.cop_tasks_details();
+        let plan_digest = if observation.routed {
+            String::new()
+        } else {
+            plan.plan_digest.clone()
+        };
+        let mem_max = self.session_memory.session_tracker().max_consumed();
+        let disk_max = self.session_memory.session_disk_tracker().max_consumed();
+        if let Some(rules) = rules {
+            match_rules = rules.should_write_slow_log(&crate::slow_log_rules::SlowLogRuleValues {
+                conn_id,
+                session_alias: session_alias.clone(),
+                db: self.current_db.clone(),
+                exec_retry_count: 0,
+                query_time: elapsed,
+                parse_time: phases.parse,
+                compile_time: phases.compile,
+                rewrite_time: Duration::ZERO,
+                optimize_time: Duration::ZERO,
+                wait_ts: Duration::ZERO,
+                is_internal: self.restricted_sql,
+                digest: observation.digest.to_string(),
+                num_cop_tasks: cop_tasks.as_ref().map(|details| details.num_cop_tasks),
+                mem_max,
+                disk_max,
+                write_sql_response_total: Duration::ZERO,
+                succ: succeeded,
+                resource_group: self.active_resource_group.clone(),
+                kv_exec_detail: None,
+                exec_detail: exec_detail.clone(),
+                plan_digest: plan_digest.clone(),
+            });
+            if !match_rules && !force {
+                return;
+            }
+        }
+
+        let max_per_sec = self
+            .vars
+            .get_global(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_MAX_PER_SEC)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        if !crate::slow_log::slow_log_rate_limiter_allow(max_per_sec) {
+            crate::slow_log::slow_log_sample_logger().info(
+                "slow log skipped due to rate limiting",
+                &[tidb_log::Field::new(
+                    "tidb_slow_log_max_per_sec",
+                    tidb_log::Value::I64(max_per_sec),
+                )],
+            );
+            return;
+        }
+
+        let index_names = {
+            // Go's `SetSlowLogItems`: the statement's index names,
+            // deduplicated in first-use order.
+            let mut seen = std::collections::HashSet::new();
+            let names: Vec<&str> = if observation.routed {
+                Vec::new()
+            } else {
+                plan.index_names
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|name| seen.insert(*name))
+                    .collect()
+            };
+            if names.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", names.join(","))
+            }
+        };
+        let (txn_ts, _) = self.txn_start_and_for_update_ts();
+        let (storage_kv, storage_mpp) = match &plan.plan {
+            Some(stored) if !observation.routed => plan_storage_flags(&stored.0),
+            _ => (false, false),
+        };
+        let login = self
+            .login_user
+            .as_deref()
+            .and_then(|identity| identity.split_once('@'))
+            .map(|(user, host)| (user.to_owned(), host.to_owned()));
+        let keyspace_name = tidb_util::keyspace::get_keyspace_name_by_settings();
+        let items = crate::slow_log::SlowQueryLogItems {
+            txn_ts,
+            keyspace_name: if tidb_util::keyspace::is_keyspace_name_empty(&keyspace_name) {
+                String::new()
+            } else {
+                keyspace_name
+            },
+            keyspace_id: 0,
+            sql: crate::slow_log::format_sql(
+                &self.text_to_log(observation, true),
+                self.query_log_max_len(),
+            ),
+            digest: observation.digest.to_string(),
+            time_total: elapsed,
+            index_names,
+            succ: succeeded,
+            is_explicit_txn: self.in_transaction(),
+            is_write_cache_table: false,
+            is_sync_stats_failed: false,
+            prepared: observation.prepared,
+            plan_from_cache: !observation.routed && self.found_in_plan_cache,
+            plan_from_binding: !observation.routed && self.found_in_binding,
+            has_more_results: false,
+            prev_stmt: if observation.label == "Commit" {
+                self.prev_stmt_text
+                    .as_deref()
+                    .map(|text| crate::slow_log::format_sql(text, self.query_log_max_len()))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            },
+            plan: if !observation.routed
+                && !plan.encoded_plan.is_empty()
+                && self.instance_switch_on(tidb_vardef::tidb_vars::TIDB_RECORD_PLAN_IN_SLOW_LOG)
+            {
+                format!(
+                    "{}{}{}",
+                    crate::slow_log::SLOW_LOG_PLAN_PREFIX,
+                    plan.encoded_plan,
+                    crate::slow_log::SLOW_LOG_PLAN_SUFFIX
+                )
+            } else {
+                String::new()
+            },
+            plan_digest,
+            binary_plan: if !observation.routed
+                && !plan.summary_binary_plan.is_empty()
+                && self
+                    .vars
+                    .get_global(tidb_vardef::tidb_vars::TIDB_GENERATE_BINARY_PLAN)
+                    .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
+            {
+                format!(
+                    "{}{}{}",
+                    crate::slow_log::SLOW_LOG_BINARY_PLAN_PREFIX,
+                    plan.summary_binary_plan,
+                    crate::slow_log::SLOW_LOG_PLAN_SUFFIX
+                )
+            } else {
+                String::new()
+            },
+            cop_tasks,
+            // Go `SQLCPUUsages.MergeTikvCPUTime`: every coprocessor
+            // response's process time.
+            cpu_usages: crate::slow_log::CpuUsages {
+                tikv_cpu_time: exec_detail.cop_exec_details.time_detail.process_time,
+                ..crate::slow_log::CpuUsages::default()
+            },
+            storage_kv,
+            storage_mpp,
+            exec_detail,
+            result_rows,
+            warnings: self
+                .warnings
+                .iter()
+                .map(|warning| crate::slow_log::JsonSqlWarnForSlowLog {
+                    level: match warning.level {
+                        WarningLevel::Warning => "Warning",
+                        WarningLevel::Error => "Error",
+                        WarningLevel::Note => "Note",
+                    }
+                    .to_owned(),
+                    message: warning.message.clone(),
+                    is_extra: false,
+                })
+                .collect(),
+            resource_group_name: self.active_resource_group.clone(),
+            ru_details: Some(Arc::clone(&observation.ru_details)),
+            mem_max,
+            disk_max,
+            session_connect_attrs: self.connection_attributes.clone(),
+            ..crate::slow_log::SlowQueryLogItems::default()
+        };
+        let vars = crate::slow_log::SlowLogSessionVars {
+            client_ip: login.as_ref().map(|(_, host)| host.clone()),
+            user: login,
+            connection_id: conn_id,
+            session_alias: session_alias.clone(),
+            duration_parse: phases.parse,
+            duration_compile: phases.compile,
+            current_db: self.current_db.clone(),
+            in_restricted_sql: self.restricted_sql,
+            current_db_changed: self.current_db_changed,
+            ..crate::slow_log::SlowLogSessionVars::default()
+        };
+        let entry = crate::slow_log::slow_log_format(&vars, &items);
+        // Go `SlowLogFormat` clears `CurrentDBChanged` once it printed `use`.
+        self.current_db_changed = false;
+        tidb_util::logutil::slow_query_logger().warn(&entry, &[]);
+
+        if !match_rules {
+            return;
+        }
+        let table_ids = if plan.table_ids.is_empty() {
+            String::new()
+        } else {
+            // Go `strings.ReplaceAll(fmt.Sprintf("%v", TableIDs), " ", ",")`.
+            format!(
+                "[{}]",
+                plan.table_ids
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        crate::show_admin::record_slow_query(tidb_domain::topn_slow_query::SlowQueryInfo {
+            sql: items.sql,
+            start: Some(observation.start_time.into()),
+            duration: elapsed,
+            detail: items.exec_detail.to_string(),
+            succ: succeeded,
+            conn_id,
+            sess_alias: session_alias,
+            txn_ts,
+            user: self.current_user.clone().unwrap_or_default(),
+            db: self.current_db.clone(),
+            table_ids,
+            index_names: items.index_names,
+            digest: items.digest,
+            internal: self.restricted_sql,
+        });
+    }
+
+    /// Go `ExecStmt.updatePrevStmt`: the statement text a later slow
+    /// `COMMIT` prints as `Prev_stmt` (`FormatSQL(GetTextToLog(false))`).
+    fn update_prev_stmt(&mut self, observation: &StatementObservation) {
+        self.prev_stmt_text = Some(self.text_to_log(observation, false));
+    }
+
+    /// Go `ExecStmt.recordLastQueryInfo`: after a `SHOW` (but not `SHOW
+    /// SESSION_STATES`), an `EXECUTE` or a DML statement, the transaction
+    /// timestamps, the statement's read and write RU and its error.
+    fn record_last_query_info(
+        &mut self,
+        observation: &StatementObservation,
+        error: Option<String>,
+    ) {
+        if !observation.record_last_query {
+            return;
+        }
+        let (start_ts, for_update_ts) = self.txn_start_and_for_update_ts();
+        let ru_consumption = observation.ru_details.read_ru() + observation.ru_details.write_ru();
+        // Go `json.Marshal(sessionstates.QueryInfo)`: `error` is
+        // `omitempty`, and a float64 marshals in its shortest form.
+        let mut info = format!(
+            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"for_update_ts\":{for_update_ts},\"ru_consumption\":{}",
+            go_json_float(ru_consumption)
+        );
+        if let Some(error) = error.filter(|error| !error.is_empty()) {
+            info.push_str(",\"error\":");
+            let mut quoted = String::new();
+            crate::slow_log::go_json_string(&mut quoted, &error);
+            info.push_str(&quoted);
+        }
+        info.push('}');
+        *self.last_query_info.borrow_mut() = info;
+    }
+
+    /// Go `session.logStmt`: a crucial statement goes to the background log
+    /// as `CRUCIAL OPERATION`; any other goes to the general log
+    /// (`logGeneralQuery`) while `tidb_general_log` is on.
+    fn log_stmt(&self, observation: &StatementObservation) {
+        let user = self.current_user.clone().unwrap_or_default();
+        let schema_version = self.cluster_schema_version_now();
+        if observation.crucial {
+            let mut fields = vec![
+                tidb_log::Field::new("conn", tidb_log::Value::U64(self.connection_id())),
+                tidb_log::Field::new("schemaVersion", tidb_log::Value::I64(schema_version)),
+            ];
+            if let Some(secure_text) = &observation.secure_text {
+                fields.push(tidb_log::Field::new(
+                    "secure text",
+                    tidb_log::Value::Str(secure_text.clone()),
+                ));
+            } else {
+                fields.push(tidb_log::Field::new(
+                    "cur_db",
+                    tidb_log::Value::Str(self.current_db.clone()),
+                ));
+                fields.push(tidb_log::Field::new(
+                    "sql",
+                    tidb_log::Value::Str(observation.sql.clone()),
+                ));
+            }
+            fields.push(tidb_log::Field::new("user", tidb_log::Value::Str(user)));
+            tidb_util::logutil::bg_logger().info("CRUCIAL OPERATION", &fields);
+            return;
+        }
+        self.log_general_query(observation, schema_version);
+    }
+
+    /// Go `logGeneralQuery`: one `GENERAL_LOG` entry per user statement.
+    fn log_general_query(&self, observation: &StatementObservation, schema_version: i64) {
+        if !self.instance_switch_on(tidb_vardef::tidb_vars::TIDB_GENERAL_LOG) || self.restricted_sql
+        {
+            return;
+        }
+        let mut query = crate::slow_log::query_replacer(&self.text_to_log(observation, false));
+        let mode = self.redact_log_mode();
+        if mode != "ON" {
+            query.push_str(&tidb_util::redact::string(
+                &mode,
+                &self.plan_cache_params_string(),
+            ));
+        }
+        let (start_ts, for_update_ts) = self.txn_start_and_for_update_ts();
+        let txn_mode = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_TXN_MODE)
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        let fields = [
+            tidb_log::Field::new("conn", tidb_log::Value::U64(self.connection_id())),
+            tidb_log::Field::new(
+                "session_alias",
+                tidb_log::Value::Str(
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
+                        .unwrap_or_default(),
+                ),
+            ),
+            tidb_log::Field::new(
+                "user",
+                tidb_log::Value::Str(self.login_user.clone().unwrap_or_default()),
+            ),
+            tidb_log::Field::new("schemaVersion", tidb_log::Value::I64(schema_version)),
+            tidb_log::Field::new("txnStartTS", tidb_log::Value::U64(start_ts)),
+            tidb_log::Field::new("forUpdateTS", tidb_log::Value::U64(for_update_ts)),
+            tidb_log::Field::new(
+                "isReadConsistency",
+                tidb_log::Value::Bool(self.is_read_committed()),
+            ),
+            tidb_log::Field::new("currentDB", tidb_log::Value::Str(self.current_db.clone())),
+            tidb_log::Field::new(
+                "isPessimistic",
+                tidb_log::Value::Bool(self.txn_mode() == Some(SessionTxnMode::Pessimistic)),
+            ),
+            tidb_log::Field::new(
+                "sessionTxnMode",
+                tidb_log::Value::Str(if txn_mode.is_empty() {
+                    "OPTIMISTIC".to_owned()
+                } else {
+                    txn_mode
+                }),
+            ),
+            tidb_log::Field::new("sql", tidb_log::Value::Str(query)),
+        ];
+        tidb_util::logutil::general_logger().info("GENERAL_LOG", &fields);
+    }
+}
+
+/// Go `StmtCtx.IsTiKV` / `IsTiFlash` as the executor builder marks them: a
+/// TiKV table reader, an index reader, index lookup or index merge reader, a
+/// point or batch point get, or a table sample reads TiKV; a TiFlash table
+/// reader reads TiFlash.
+fn plan_storage_flags(plan: &tidb_planner::physical::PhysicalPlan) -> (bool, bool) {
+    use tidb_planner::physical::PhysicalPlan;
+    use tidb_planner::physical_table_reader::StoreType;
+    let (mut tikv, mut tiflash) = (false, false);
+    let mut stack = vec![plan];
+    while let Some(node) = stack.pop() {
+        match node {
+            PhysicalPlan::TableReader(reader) => match reader.store_type {
+                StoreType::TiKv => tikv = true,
+                StoreType::TiFlash => tiflash = true,
+                _ => {}
+            },
+            PhysicalPlan::IndexReader(_)
+            | PhysicalPlan::IndexLookUpReader(_)
+            | PhysicalPlan::IndexMergeReader(_)
+            | PhysicalPlan::PointGet(_)
+            | PhysicalPlan::BatchPointGet(_)
+            | PhysicalPlan::TableSample(_) => tikv = true,
+            _ => {}
+        }
+        stack.extend(node.children());
+    }
+    (tikv, tiflash)
+}
+
+/// Go `encoding/json`'s float64 spelling: the shortest round-trip digits,
+/// in exponent form below 1e-6 or from 1e21 up.
+fn go_json_float(value: f64) -> String {
+    let abs = value.abs();
+    if abs != 0.0 && (abs < 1e-6 || abs >= 1e21) {
+        let formatted = tidb_datatype::go_strconv::format_float(value, b'e', -1, 64);
+        // Go cleans `e-07` to `e-7`.
+        if let Some(index) = formatted.find("e-0") {
+            let mut cleaned = formatted.clone();
+            cleaned.replace_range(index..index + 3, "e-");
+            return cleaned;
+        }
+        return formatted;
+    }
+    tidb_datatype::go_strconv::format_float(value, b'f', -1, 64)
+}
+
+/// Go `recordLastQueryInfo`'s node test: `*ast.ShowStmt` other than `SHOW
+/// SESSION_STATES`, `*ast.ExecuteStmt`, or an `ast.DMLNode` (SELECT, set
+/// operations, INSERT/REPLACE, UPDATE, DELETE, LOAD DATA, IMPORT INTO, CALL,
+/// non-transactional DML, DISTRIBUTE TABLE and SPLIT REGION).
+fn records_last_query_info(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Query(_) | Stmt::Dml(_) => true,
+        Stmt::Session(session) => matches!(&**session, tidb_ast::SessionStmt::Execute { .. }),
+        Stmt::Admin(admin) => match &**admin {
+            tidb_ast::AdminStmt::SplitRegion(_) => true,
+            tidb_ast::AdminStmt::ShowInspection(show) => {
+                show.kind != tidb_ast::ShowInspectionKind::SessionStates
+            }
+            // The `ADMIN SHOW ...` forms are Go `AdminStmt`s, not `ShowStmt`s.
+            tidb_ast::AdminStmt::ShowGrants(_)
+            | tidb_ast::AdminStmt::ShowMasterStatus
+            | tidb_ast::AdminStmt::ShowPrivileges
+            | tidb_ast::AdminStmt::ShowBuiltins
+            | tidb_ast::AdminStmt::ShowImportJobs(_)
+            | tidb_ast::AdminStmt::ShowImportGroups(_)
+            | tidb_ast::AdminStmt::ShowCreate { .. }
+            | tidb_ast::AdminStmt::ShowCreateUser(_)
+            | tidb_ast::AdminStmt::ShowVariables(_)
+            | tidb_ast::AdminStmt::ShowStatus(_)
+            | tidb_ast::AdminStmt::ShowWarnings(_)
+            | tidb_ast::AdminStmt::ShowErrors(_)
+            | tidb_ast::AdminStmt::ShowCollation(_)
+            | tidb_ast::AdminStmt::ShowEngines(_)
+            | tidb_ast::AdminStmt::ShowCharset(_)
+            | tidb_ast::AdminStmt::ShowStatsHistograms(_)
+            | tidb_ast::AdminStmt::ShowStatsBuckets(_)
+            | tidb_ast::AdminStmt::ShowStatsLocked(_)
+            | tidb_ast::AdminStmt::ShowStatsTopN(_)
+            | tidb_ast::AdminStmt::ShowDatabases(_)
+            | tidb_ast::AdminStmt::ShowTables(_)
+            | tidb_ast::AdminStmt::ShowOpenTables(_)
+            | tidb_ast::AdminStmt::ShowTableStatus(_)
+            | tidb_ast::AdminStmt::ShowTableNextRowId(_)
+            | tidb_ast::AdminStmt::ShowColumns(_)
+            | tidb_ast::AdminStmt::ShowIndex(_)
+            | tidb_ast::AdminStmt::ShowDistributionJobs(_)
+            | tidb_ast::AdminStmt::ShowTablePlacement(_)
+            | tidb_ast::AdminStmt::ShowPlacement(_)
+            | tidb_ast::AdminStmt::ShowProfile(_)
+            | tidb_ast::AdminStmt::ShowMaskingPolicies(_)
+            | tidb_ast::AdminStmt::ShowBindings(_) => true,
+            _ => false,
+        },
+        Stmt::Ddl(_) => false,
+    }
+}
+
+/// Go `logStmt`'s crucial statements: index changes other than hypothetical
+/// ones, and the account, privilege, binding, BRIE and schema statements.
+fn is_crucial_stmt(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Ddl(ddl) => match &**ddl {
+            tidb_ast::DdlStmt::DropIndex(drop) => !drop.is_hypo,
+            tidb_ast::DdlStmt::CreateIndex(create) => {
+                create.options.index_type != Some(tidb_ast::IndexType::HYPO)
+            }
+            tidb_ast::DdlStmt::CreateUser { .. }
+            | tidb_ast::DdlStmt::DropUser { .. }
+            | tidb_ast::DdlStmt::AlterUser(_)
+            | tidb_ast::DdlStmt::AlterTable(_)
+            | tidb_ast::DdlStmt::CreateDatabase { .. }
+            | tidb_ast::DdlStmt::CreateTable(_)
+            | tidb_ast::DdlStmt::DropDatabase { .. }
+            | tidb_ast::DdlStmt::DropTable(_)
+            | tidb_ast::DdlStmt::DropView { .. }
+            | tidb_ast::DdlStmt::RenameTable(_)
+            | tidb_ast::DdlStmt::TruncateTable(_)
+            | tidb_ast::DdlStmt::RenameUser { .. } => true,
+            _ => false,
+        },
+        Stmt::Session(session) => matches!(&**session, tidb_ast::SessionStmt::SetPassword(_)),
+        Stmt::Admin(admin) => matches!(
+            &**admin,
+            tidb_ast::AdminStmt::Grant(_)
+                | tidb_ast::AdminStmt::Revoke(_)
+                | tidb_ast::AdminStmt::CreateBinding(_)
+                | tidb_ast::AdminStmt::DropBinding(_)
+                | tidb_ast::AdminStmt::SetBinding(_)
+                | tidb_ast::AdminStmt::Brie(_)
+        ),
+        Stmt::Query(_) | Stmt::Dml(_) => false,
     }
 }
 

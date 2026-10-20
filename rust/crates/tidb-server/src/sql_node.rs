@@ -1176,15 +1176,12 @@ pub trait QuerySession {
     /// called after the SQL command has written its response.
     fn finish_execute_stmt(&mut self, _cost: Duration) {}
 
-    /// go `session.LogSlowQuery` (`adapter.go:2007`): a statement whose cost
-    /// reached the session's slow threshold lands in the domain's in-memory
-    /// slow-query memory, which `ADMIN SHOW SLOW` reads. The default keeps
-    /// sessions without the memory silent.
-    fn record_slow_query(
+    /// Go `ConnectionInfo.Attributes`: the connection attributes of the
+    /// handshake response, which the slow log prints. The default keeps
+    /// sessions without a slow log silent.
+    fn set_connection_attributes(
         &mut self,
-        _sql: &str,
-        _start: std::time::SystemTime,
-        _duration: std::time::Duration,
+        _attributes: std::collections::BTreeMap<String, String>,
     ) {
     }
 

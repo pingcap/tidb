@@ -1113,6 +1113,14 @@ impl Session {
                 )?
             } else if table_name.eq_ignore_ascii_case("CLUSTER_LOG") {
                 self.cluster_log_table_rows(cluster_log_extractors)?
+            } else if table_name.eq_ignore_ascii_case("SLOW_QUERY") {
+                let extractors: Vec<_> = scans_of("SLOW_QUERY")
+                    .filter_map(|scan| match &scan.extractor {
+                        Some(MemTablePredicateExtractor::SlowQuery(extractor)) => Some(extractor),
+                        _ => None,
+                    })
+                    .collect();
+                self.slow_query_table_rows(&extractors)?
             } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
                 self.user_privileges_table_rows()
             } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
@@ -1576,6 +1584,57 @@ impl Session {
         Ok(rows)
     }
 
+    /// Go `slowQueryRetriever.retrieve`: SLOW_QUERY's rows from this
+    /// instance's slow-log file (`SessionVars.SlowQueryFile`). The viewer sees
+    /// every user's entries with `PROCESS`, else only its own; the scans'
+    /// extractors bound the entries' time (a statement scanning the table more
+    /// than once reads the union of their ranges).
+    fn slow_query_table_rows(
+        &mut self,
+        extractors: &[&tidb_planner::memtable_predicate_extractor::SlowQueryExtractor],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        if !extractors.is_empty() && extractors.iter().all(|extractor| extractor.skip_request) {
+            return Ok(Vec::new());
+        }
+        let mut checker = tidb_executor::slow_query::SlowLogChecker {
+            has_process_priv: self.has_process_privilege(),
+            user: self
+                .login_user
+                .as_deref()
+                .map(|identity| identity.split_once('@').map_or(identity, |(user, _)| user))
+                .map(str::to_owned),
+            ..Default::default()
+        };
+        let live: Vec<_> = extractors
+            .iter()
+            .filter(|extractor| !extractor.skip_request)
+            .collect();
+        if !live.is_empty() && live.iter().all(|extractor| extractor.enable) {
+            checker.enable_time_check = true;
+            checker.time_ranges = live
+                .iter()
+                .flat_map(|extractor| extractor.time_ranges.iter())
+                .map(|range| (range.start_time, range.end_time))
+                .collect();
+        }
+        let columns = infoschema::table_schema("SLOW_QUERY").expect("SLOW_QUERY is registered");
+        let file = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE)
+            .unwrap_or_default();
+        let read = tidb_executor::slow_query::retrieve_slow_query_rows(
+            &columns,
+            &checker,
+            &self.session_time_zone(),
+            &file,
+        )
+        .map_err(|error| DriverError::Mysql(tidb_executor::MysqlError::unknown(error)))?;
+        for warning in read.warnings {
+            self.append_warning(WarningLevel::Warning, 1105, warning);
+        }
+        Ok(read.rows)
+    }
+
     /// Local and received diagnostics borrow the same data and admission owners.
     fn diagnostic_table_rows(
         &mut self,
@@ -1610,11 +1669,9 @@ impl Session {
                     ))
                 })?
             }
-            // NOT MODELLED (documented): Go's `slowQueryRetriever` parses the
-            // instance's slow-log file, which this tier never writes (its slow
-            // statements go to the domain's in-memory record ADMIN SHOW SLOW
-            // reads), so there is nothing to read.
-            "SLOW_QUERY" => Vec::new(),
+            // A cluster scan carries no slow-query extractor here: Go's
+            // receiving reader then reads every file with no time filter.
+            "SLOW_QUERY" => self.slow_query_table_rows(&[])?,
             // Go `setDataFromPlanCache` lists the instance plan cache, which
             // is off by default (`tidb_enable_instance_plan_cache`) and not
             // modelled here.

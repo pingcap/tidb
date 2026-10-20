@@ -24,14 +24,15 @@
 //! Boundaries, named: the `ch`/`msgCh` channel pair belongs to
 //! `Domain.topNSlowQueryLoop` (the serving goroutine), which arrives with
 //! the domain run loop; [`TopNSlowQueries::close`] keeps the observable
-//! `closed` latch. `SlowQueryInfo.Detail` (`execdetails.ExecDetails`) rides
-//! with the unported execdetails surface.
+//! `closed` latch. `SlowQueryInfo.Detail` (`execdetails.ExecDetails`, which
+//! lives above this crate) is kept as the one thing its only reader, `ADMIN
+//! SHOW SLOW`, takes from it: its `String()`.
 
 use std::time::{Duration, SystemTime};
 
 use tidb_ast::AdminShowSlowTopScope;
 
-/// Go `SlowQueryInfo` (without `Detail`, module header).
+/// Go `SlowQueryInfo`.
 #[derive(Clone, Debug, Default)]
 pub struct SlowQueryInfo {
     /// Go `SQL`.
@@ -40,6 +41,8 @@ pub struct SlowQueryInfo {
     pub start: Option<SystemTime>,
     /// Go `Duration`.
     pub duration: Duration,
+    /// Go `Detail.String()`.
+    pub detail: String,
     /// Go `ConnID`.
     pub conn_id: u64,
     /// Go `SessAlias`.

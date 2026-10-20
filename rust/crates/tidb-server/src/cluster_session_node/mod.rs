@@ -5298,9 +5298,10 @@ impl ClusterServerSession {
     ) -> Result<WriteOutcome, SqlQueryError> {
         self.session.begin_routed_statement_observation(sql, stmt);
         let result = execute(self);
-        self.session.finish_routed_statement_observation(
+        self.session.finish_routed_statement_observation_with_error(
             result.is_ok(),
             result.as_ref().map_or(0, |outcome| outcome.affected_rows),
+            result.as_ref().err().map(|error| error.message.clone()),
         );
         result
     }
@@ -5683,6 +5684,11 @@ impl ClusterServerSession {
         if autocommit {
             if let Some(observer) = self.session.transaction_observer() {
                 observer.finished();
+            }
+            // Go's `FinishExecuteStmt` still reads this statement's
+            // `TxnCtx.StartTS` (its slow log and `tidb_last_query_info`).
+            if let Some(ts) = read_ts.get() {
+                self.session.record_statement_txn_start_ts(ts);
             }
             self.session.current_tso().clear();
         }
@@ -7985,35 +7991,11 @@ impl QuerySession for ClusterServerSession {
         Some(std::time::Duration::from_millis(millis))
     }
 
-    /// go `session.LogSlowQuery` (`adapter.go:2007`): the statement lands in
-    /// the domain's in-memory slow-query memory at the same threshold the
-    /// dashboard histograms charge at. `ADMIN SHOW SLOW` reads the memory
-    /// back (`crate::show_admin`'s registry stands in for go's
-    /// `Domain.ShowSlowQuery` lists).
-    fn record_slow_query(
+    fn set_connection_attributes(
         &mut self,
-        sql: &str,
-        start: std::time::SystemTime,
-        duration: std::time::Duration,
+        attributes: std::collections::BTreeMap<String, String>,
     ) {
-        let Some(threshold) = self.slow_log_threshold() else {
-            return;
-        };
-        if duration < threshold {
-            return;
-        }
-        let (user, host) = self.session.current_identity().unwrap_or(("", ""));
-        let db = self.session.current_database().to_owned();
-        let digest = tidb_parser::normalize_digest(sql).1.to_string();
-        tidb_session::show_admin::record_slow_query(tidb_session::show_admin::SlowQueryRecord {
-            sql: sql.to_owned(),
-            start,
-            duration,
-            conn_id: self.connection_id(),
-            user: format!("{user}@{host}"),
-            db,
-            digest,
-        });
+        self.session.set_connection_attributes(attributes);
     }
 
     fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
@@ -8114,8 +8096,11 @@ impl QuerySession for ClusterServerSession {
             .control_transaction_parsed_inner(sql, stmt)
             .map_err(|error| self.record_statement_failure(error));
         if observed {
-            self.session
-                .finish_routed_statement_observation(result.is_ok(), 0);
+            self.session.finish_routed_statement_observation_with_error(
+                result.is_ok(),
+                0,
+                result.as_ref().err().map(|error| error.message.clone()),
+            );
         }
         result
     }
@@ -8630,8 +8615,11 @@ impl QuerySession for ClusterServerSession {
                 Ok(StmtOutput::Affected(count)) => *count,
                 _ => 0,
             };
-            self.session
-                .finish_routed_statement_observation(attempt.is_ok(), affected_rows);
+            self.session.finish_routed_statement_observation_with_error(
+                attempt.is_ok(),
+                affected_rows,
+                attempt.as_ref().err().map(|error| error.message.clone()),
+            );
         }
         let output = match attempt {
             Ok(output) => output,

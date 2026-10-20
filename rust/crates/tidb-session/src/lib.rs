@@ -708,6 +708,22 @@ pub struct Session {
     /// lazily opened cluster snapshot becomes visible inside the statement
     /// that opened it.
     current_tso: tidb_executor::CurrentTso,
+    /// Go `SessionVars.TxnCtx.forUpdateTS` as the cluster tier last published
+    /// it for a pessimistic statement. A value older than the open
+    /// transaction's start is stale and `GetForUpdateTS` answers the start.
+    current_for_update_ts: tidb_executor::CurrentTso,
+    /// The running statement's own `TxnCtx.StartTS` when its tier tore the
+    /// autocommit transaction down (clearing [`Self::current_tso`]) before
+    /// the statement finished; zero otherwise.
+    statement_txn_start_ts: u64,
+    /// Go `SessionVars.CurrentDBChanged`: a `USE` switched databases since
+    /// the last slow-log entry, which then prints `use <db>;`.
+    current_db_changed: bool,
+    /// Go `SessionVars.PrevStmt`: the previous statement's loggable text
+    /// (`GetTextToLog(false)`), which a slow `COMMIT` prints as `Prev_stmt`.
+    prev_stmt_text: Option<String>,
+    /// Go `ConnectionInfo.Attributes`: the handshake's connection attributes.
+    connection_attributes: std::collections::BTreeMap<String, String>,
     /// Go `txn.GetMemBuffer()`: the current transaction's (or, in autocommit,
     /// the current statement's) staged-write tracker. See
     /// [`tidb_executor::kv_table::StagedWrites`].
@@ -1057,6 +1073,11 @@ impl Session {
             statement_keys_read: Arc::default(),
             keys_examined: 0,
             current_tso: tidb_executor::CurrentTso::default(),
+            current_for_update_ts: tidb_executor::CurrentTso::default(),
+            statement_txn_start_ts: 0,
+            current_db_changed: false,
+            prev_stmt_text: None,
+            connection_attributes: std::collections::BTreeMap::new(),
             staged_writes: std::sync::Arc::default(),
             server_info_syncer: None,
             cluster_topology: None,
@@ -1275,6 +1296,7 @@ fn new_time_seeded_rand() -> Arc<MysqlRng> {
 pub use tidb_executor::TxnErrorKind;
 
 mod account;
+pub mod slow_log;
 pub mod slow_log_rules;
 pub mod trace;
 mod show_placement;
@@ -1375,6 +1397,29 @@ impl Session {
     #[must_use]
     pub fn current_tso(&self) -> tidb_executor::CurrentTso {
         self.current_tso.clone()
+    }
+
+    /// Where the cluster tier publishes the open pessimistic transaction's
+    /// for-update timestamp (Go `TxnCtx.SetForUpdateTS`).
+    pub fn current_for_update_ts(&self) -> tidb_executor::CurrentTso {
+        self.current_for_update_ts.clone()
+    }
+
+    /// Records the running autocommit statement's transaction start
+    /// timestamp before its tier clears [`Self::current_tso`], for the
+    /// statement's completion (Go `FinishExecuteStmt` reads `TxnCtx.StartTS`
+    /// before the next statement replaces the transaction context).
+    pub fn record_statement_txn_start_ts(&mut self, start_ts: u64) {
+        self.statement_txn_start_ts = start_ts;
+    }
+
+    /// Go `ConnectionInfo.Attributes`: the connection attributes the client
+    /// sent in its handshake response.
+    pub fn set_connection_attributes(
+        &mut self,
+        attributes: std::collections::BTreeMap<String, String>,
+    ) {
+        self.connection_attributes = attributes;
     }
 
     /// Retains transaction observation at the physical storage boundary.
@@ -2128,6 +2173,7 @@ impl Session {
                 name.to_owned(),
             )));
         };
+        self.current_db_changed = name != self.current_db;
         self.current_db = name.to_owned();
         // The schema's collation, substituted when new collations do not
         // support it, becomes `collation_database`; that variable's hook
@@ -3351,6 +3397,8 @@ mod tests_show;
 mod tests_show_admin;
 #[cfg(test)]
 mod tests_skew_distinct_agg;
+#[cfg(test)]
+mod tests_slow_log;
 #[cfg(test)]
 mod tests_sql_mode_scanner;
 #[cfg(test)]

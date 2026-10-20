@@ -5678,7 +5678,7 @@ fn build_cluster_table_scan(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let rows = table
+    let mut rows = table
         .rows
         .iter()
         .map(|row| {
@@ -5694,6 +5694,29 @@ fn build_cluster_table_scan(
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // `pushLimitDownToTiDBCop` keeps the scan in handle order for its pushed
+    // Limit: Go's slow-query retriever then reads its files forwards, or
+    // backwards for a descending scan (`SlowQueryExtractor.Desc`).
+    if scan.keep_order {
+        let handle = scan.handle_col_unique_id.and_then(|unique_id| {
+            schema
+                .columns
+                .iter()
+                .position(|column| column.unique_id == unique_id)
+        });
+        if let Some(position) = handle {
+            rows.sort_by(|left, right| {
+                let order = left[position]
+                    .compare(&right[position], tidb_datatype::Collation::Binary)
+                    .unwrap_or(std::cmp::Ordering::Equal);
+                if scan.desc {
+                    order.reverse()
+                } else {
+                    order
+                }
+            });
+        }
+    }
     Ok(Box::new(MemTableSourceExec::new(meta(ctx, plan, schema), rows)))
 }
 

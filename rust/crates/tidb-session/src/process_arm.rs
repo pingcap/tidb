@@ -171,10 +171,17 @@ impl Session {
             required,
             None,
         )?;
+        // The statement's requirements are upper-cased column names; a
+        // mixed-case table (CLUSTER_SLOW_QUERY's `Query`) matches them
+        // case-insensitively, as Go's column names do.
         let mut offsets: Vec<_> = columns
             .iter()
             .enumerate()
-            .filter(|(_, (name, _))| required.is_none_or(|set| set.contains(name)))
+            .filter(|(_, (name, _))| {
+                required.is_none_or(|set| {
+                    set.contains(name) || set.contains(&name.to_ascii_uppercase())
+                })
+            })
             .map(|(index, _)| index)
             .collect();
         // A transport column preserves row cardinality for COUNT(*) scans.

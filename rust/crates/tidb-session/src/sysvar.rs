@@ -825,6 +825,17 @@ pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
     if definition.name == "system_time_zone" {
         return Cow::Owned(system_time_zone_name().to_owned());
     }
+    // go's `setGlobalVars` runs `variable.SetSysVar(vardef.TiDBSlowQueryFile,
+    // cfg.Log.SlowQueryFile)`, and `NewSessionVars` seeds `SlowQueryFile`
+    // from the same config: the file SLOW_QUERY reads is the configured one.
+    if definition.name == tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE {
+        return Cow::Owned(
+            tidb_config::config_tree::config::get_global_config()
+                .log
+                .slow_query_file
+                .clone(),
+        );
+    }
     if let Some(value) = sem_v2_defaults()
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

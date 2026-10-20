@@ -16,8 +16,10 @@
 //! `tidb_slow_log_rules`: `field:value[,field:value...][;rule...]`, at most ten
 //! rules, each field one of [`FIELDS`] with a value of that field's type.
 //!
-//! This is the parse and encode half (`parseSlowLogRuleSet`, `encodeRules`):
-//! what a `SET` accepts and what a session reads back.
+//! The parse and encode half (`parseSlowLogRuleSet`, `encodeRules`) is what a
+//! `SET` accepts and what a session reads back; the match half (the
+//! accessors' `Match`, `ShouldWriteSlowLog` in `adapter_slow_log.go`) is what
+//! decides whether a finished statement is written to the slow log.
 
 /// The type a field's threshold parses as (Go's `parseUint64`, `parseInt64`,
 /// `parseFloat64`, `parseBool` and `ParseString`).
@@ -70,6 +72,8 @@ const FIELDS: &[(&str, Kind)] = &[
     ("write_keys", Kind::Uint),
     ("write_size", Kind::Uint),
     ("prewrite_region", Kind::Uint),
+    // Registered by the executor package's `init` (`adapter_slow_log.go`).
+    ("plan_digest", Kind::Text),
 ];
 
 /// One parsed threshold, printed by `encodeRules` as Go's `%v`.
@@ -349,6 +353,276 @@ pub fn global_rules(raw: &str) -> Result<String, String> {
         .join(";"))
 }
 
+/// The values Go's `SlowLogRuleFieldAccessors[...].Match` functions compare
+/// a threshold against, read from the session and the statement's
+/// `SlowQueryLogItems` once the statement finished.
+#[derive(Clone, Debug, Default)]
+pub struct SlowLogRuleValues {
+    /// Go `SessionVars.ConnectionID`.
+    pub conn_id: u64,
+    /// Go `SessionVars.SessionAlias`.
+    pub session_alias: String,
+    /// Go `SessionVars.CurrentDB`.
+    pub db: String,
+    /// Go `StmtCtx.ExecRetryCount`.
+    pub exec_retry_count: u64,
+    /// Go `GetTotalCostDuration`.
+    pub query_time: std::time::Duration,
+    /// Go `DurationParse`.
+    pub parse_time: std::time::Duration,
+    /// Go `DurationCompile`.
+    pub compile_time: std::time::Duration,
+    /// Go `RewritePhaseInfo.DurationRewrite`.
+    pub rewrite_time: std::time::Duration,
+    /// Go `DurationOptimizer.Total`.
+    pub optimize_time: std::time::Duration,
+    /// Go `DurationWaitTS`.
+    pub wait_ts: std::time::Duration,
+    /// Go `InRestrictedSQL`.
+    pub is_internal: bool,
+    /// Go `StmtCtx.SQLDigest()`.
+    pub digest: String,
+    /// Go `CopTasksDetails().NumCopTasks`, `None` for no cop task.
+    pub num_cop_tasks: Option<i64>,
+    /// Go `MemTracker.MaxConsumed()`.
+    pub mem_max: i64,
+    /// Go `DiskTracker.MaxConsumed()`.
+    pub disk_max: i64,
+    /// Go `StmtExecDetails.WriteSQLRespDuration`.
+    pub write_sql_response_total: std::time::Duration,
+    /// Go `StmtCtx.ExecSuccess`.
+    pub succ: bool,
+    /// Go `StmtCtx.ResourceGroupName`.
+    pub resource_group: String,
+    /// Go `ctx.Value(util.ExecDetailsKey)`'s snapshot, `None` without one.
+    pub kv_exec_detail: Option<crate::slow_log::KvExecDetails>,
+    /// Go `StmtCtx.GetExecDetails()`.
+    pub exec_detail: tidb_exec::exec_details::ExecDetails,
+    /// Go `GetPlanDigest`'s digest.
+    pub plan_digest: String,
+}
+
+/// Go `matchZero`: a missing detail matches only a zero threshold.
+fn match_zero(threshold: &Threshold) -> bool {
+    match threshold {
+        Threshold::Uint(value) => *value == 0,
+        Threshold::Int(value) => *value == 0,
+        Threshold::Float(value) => *value == 0.0,
+        Threshold::Bool(_) | Threshold::Text(_) => false,
+    }
+}
+
+/// Go `matchGE` over a float64 value: only a float64 threshold matches.
+fn match_ge_float(threshold: &Threshold, value: f64) -> bool {
+    matches!(threshold, Threshold::Float(threshold) if value >= *threshold)
+}
+
+/// Go `matchGE` over an int64 value.
+fn match_ge_int(threshold: &Threshold, value: i64) -> bool {
+    matches!(threshold, Threshold::Int(threshold) if value >= *threshold)
+}
+
+/// Go `matchGE` over a uint64 value.
+fn match_ge_uint(threshold: &Threshold, value: u64) -> bool {
+    matches!(threshold, Threshold::Uint(threshold) if value >= *threshold)
+}
+
+/// Go `MatchEqual` over a string value.
+fn match_equal_text(threshold: &Threshold, value: &str) -> bool {
+    matches!(threshold, Threshold::Text(threshold) if threshold == value)
+}
+
+/// Go `MatchEqual` over a bool value.
+fn match_equal_bool(threshold: &Threshold, value: bool) -> bool {
+    matches!(threshold, Threshold::Bool(threshold) if *threshold == value)
+}
+
+/// Go `uint64FromNonNegative` followed by `matchGE`.
+fn match_ge_non_negative(threshold: &Threshold, value: i64) -> bool {
+    u64::try_from(value).is_ok_and(|value| match_ge_uint(threshold, value))
+}
+
+/// Go `SlowLogRuleFieldAccessors[field].Match`.
+fn match_condition(field: &str, threshold: &Threshold, values: &SlowLogRuleValues) -> bool {
+    let seconds = |d: std::time::Duration| d.as_secs_f64();
+    let kv = values.kv_exec_detail.as_ref();
+    let kv_match = |value: Option<f64>| match value {
+        Some(value) => match_ge_float(threshold, value),
+        None => match_zero(threshold),
+    };
+    let kv_int_match = |value: Option<i64>| match value {
+        Some(value) => match_ge_int(threshold, value),
+        None => match_zero(threshold),
+    };
+    let detail = &values.exec_detail;
+    let scan = detail.cop_exec_details.scan_detail.as_ref();
+    let commit = detail.commit_detail.as_ref();
+    match field {
+        "conn_id" => match_ge_uint(threshold, values.conn_id),
+        "session_alias" => match_equal_text(threshold, &values.session_alias),
+        "db" => match threshold {
+            Threshold::Text(text) => text.to_lowercase() == values.db.to_lowercase(),
+            _ => false,
+        },
+        "exec_retry_count" => match_ge_uint(threshold, values.exec_retry_count),
+        "query_time" => match_ge_float(threshold, seconds(values.query_time)),
+        "parse_time" => match_ge_float(threshold, seconds(values.parse_time)),
+        "compile_time" => match_ge_float(threshold, seconds(values.compile_time)),
+        "rewrite_time" => match_ge_float(threshold, seconds(values.rewrite_time)),
+        "optimize_time" => match_ge_float(threshold, seconds(values.optimize_time)),
+        "wait_ts" => match_ge_float(threshold, seconds(values.wait_ts)),
+        "is_internal" => match_equal_bool(threshold, values.is_internal),
+        "digest" => match_equal_text(threshold, &values.digest),
+        "num_cop_tasks" => match values.num_cop_tasks {
+            Some(count) => match_ge_int(threshold, count),
+            None => match_zero(threshold),
+        },
+        "mem_max" => match_ge_int(threshold, values.mem_max),
+        "disk_max" => match_ge_int(threshold, values.disk_max),
+        "write_sql_response_total" => {
+            match_ge_float(threshold, seconds(values.write_sql_response_total))
+        }
+        "succ" => match_equal_bool(threshold, values.succ),
+        "resource_group" => match threshold {
+            Threshold::Text(text) => text.to_lowercase() == values.resource_group.to_lowercase(),
+            _ => false,
+        },
+        "kv_total" => kv_match(kv.map(|d| seconds(d.wait_kv_resp_duration))),
+        "pd_total" => kv_match(kv.map(|d| seconds(d.wait_pd_resp_duration))),
+        "unpacked_bytes_sent_tikv_total" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_sent_kv_total))
+        }
+        "unpacked_bytes_received_tikv_total" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_received_kv_total))
+        }
+        "unpacked_bytes_sent_tikv_cross_zone" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_sent_kv_cross_zone))
+        }
+        "unpacked_bytes_received_tikv_cross_zone" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_received_kv_cross_zone))
+        }
+        "unpacked_bytes_sent_tiflash_total" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_sent_mpp_total))
+        }
+        "unpacked_bytes_received_tiflash_total" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_received_mpp_total))
+        }
+        "unpacked_bytes_sent_tiflash_cross_zone" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_sent_mpp_cross_zone))
+        }
+        "unpacked_bytes_received_tiflash_cross_zone" => {
+            kv_int_match(kv.map(|d| d.unpacked_bytes_received_mpp_cross_zone))
+        }
+        "process_time" => match_ge_float(
+            threshold,
+            seconds(detail.cop_exec_details.time_detail.process_time),
+        ),
+        "backoff_time" => match_ge_float(threshold, seconds(detail.cop_exec_details.backoff_time)),
+        "total_keys" => match scan {
+            Some(scan) => match_ge_non_negative(threshold, scan.total_keys),
+            None => match_zero(threshold),
+        },
+        "process_keys" => match scan {
+            Some(scan) => match_ge_non_negative(threshold, scan.processed_keys),
+            None => match_zero(threshold),
+        },
+        "cop_mvcc_read_amplification" => match scan {
+            Some(scan) if scan.processed_keys > 0 => match_ge_float(
+                threshold,
+                scan.total_keys as f64 / scan.processed_keys as f64,
+            ),
+            _ => match_zero(threshold),
+        },
+        "prewrite_time" => match commit {
+            Some(commit) => match_ge_float(threshold, seconds(commit.prewrite_time)),
+            None => match_zero(threshold),
+        },
+        "commit_time" => match commit {
+            Some(commit) => match_ge_float(threshold, seconds(commit.commit_time)),
+            None => match_zero(threshold),
+        },
+        "write_keys" => match commit {
+            Some(commit) => match_ge_non_negative(threshold, commit.write_keys as i64),
+            None => match_zero(threshold),
+        },
+        "write_size" => match commit {
+            Some(commit) => match_ge_non_negative(threshold, commit.write_size as i64),
+            None => match_zero(threshold),
+        },
+        "prewrite_region" => match commit {
+            Some(commit) => match_ge_non_negative(threshold, i64::from(commit.prewrite_region_num)),
+            None => match_zero(threshold),
+        },
+        // Go `MatchEqual(threshold, strings.ToLower(items.PlanDigest))`.
+        "plan_digest" => match_equal_text(threshold, &values.plan_digest.to_lowercase()),
+        _ => false,
+    }
+}
+
+/// The rules visible to one session: its own (`SessionVars.SlowLogRules`)
+/// and, from Go's `GlobalSlowLogRules`, the ones bound to its connection and
+/// the unbound ones.
+#[derive(Default)]
+pub struct EffectiveSlowLogRules {
+    session: Vec<Rule>,
+    connection: Vec<Rule>,
+    cluster: Vec<Rule>,
+}
+
+impl EffectiveSlowLogRules {
+    /// Go `updateAllRuleFields`'s inputs: the session's encoded rules
+    /// (`@@session.tidb_slow_log_rules`) and the global ones
+    /// (`GlobalSlowLogRules.RawRules`), for connection `conn_id`. A value
+    /// that does not parse contributes no rules, as Go keeps none for it.
+    #[must_use]
+    pub fn new(session_raw: &str, global_raw: &str, conn_id: u64) -> Self {
+        let session = parse_rule_set(session_raw, false)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|(id, _)| id.is_none())
+            .map(|(_, rules)| rules)
+            .unwrap_or_default();
+        let mut connection = Vec::new();
+        let mut cluster = Vec::new();
+        for (id, rules) in parse_rule_set(global_raw, true).unwrap_or_default() {
+            match id {
+                None => cluster = rules,
+                Some(id) if id == conn_id => connection = rules,
+                Some(_) => {}
+            }
+        }
+        Self {
+            session,
+            connection,
+            cluster,
+        }
+    }
+
+    /// Go `len(SlowLogRules.EffectiveFields) != 0`: every rule carries at
+    /// least one condition, so the field set is empty exactly when no rule
+    /// applies to the session.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.session.is_empty() && self.connection.is_empty() && self.cluster.is_empty()
+    }
+
+    /// Go `ShouldWriteSlowLog`: the session's rules, then the connection's,
+    /// then the unbound global ones; rules are ORed, a rule's conditions
+    /// ANDed.
+    #[must_use]
+    pub fn should_write_slow_log(&self, values: &SlowLogRuleValues) -> bool {
+        [&self.session, &self.connection, &self.cluster]
+            .into_iter()
+            .any(|rules| {
+                rules.iter().any(|rule| {
+                    rule.conditions
+                        .iter()
+                        .all(|(field, threshold)| match_condition(field, threshold, values))
+                })
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +670,45 @@ mod tests {
         assert!(session_rules(&"a:1;".repeat(11))
             .unwrap_err()
             .contains("limit is 10"));
+    }
+    /// Go `ShouldWriteSlowLog` / `Match`: rules OR, conditions AND; the
+    /// session's rules, then the ones bound to this connection, then the
+    /// unbound global ones; a missing detail matches only a zero threshold.
+    #[test]
+    fn rules_match_like_go() {
+        let values = SlowLogRuleValues {
+            conn_id: 7,
+            db: "Test".to_owned(),
+            query_time: std::time::Duration::from_millis(1500),
+            succ: true,
+            resource_group: "RG1".to_owned(),
+            plan_digest: "ABC".to_owned(),
+            ..SlowLogRuleValues::default()
+        };
+        let rules = |session: &str, global: &str| EffectiveSlowLogRules::new(session, global, 7);
+        assert!(rules("", "").is_empty());
+        assert!(rules("query_time:1", "").should_write_slow_log(&values));
+        assert!(!rules("query_time:2", "").should_write_slow_log(&values));
+        assert!(!rules("query_time:1,succ:false", "").should_write_slow_log(&values));
+        assert!(rules("query_time:2;db:TEST", "").should_write_slow_log(&values));
+        assert!(rules("resource_group:rg1", "").should_write_slow_log(&values));
+        // Go lowers the plan digest, not the threshold.
+        assert!(rules("plan_digest:abc", "").should_write_slow_log(&values));
+        assert!(!rules("plan_digest:ABC", "").should_write_slow_log(&values));
+        // No cop task or commit: only a zero threshold matches.
+        assert!(rules("num_cop_tasks:0", "").should_write_slow_log(&values));
+        assert!(!rules("num_cop_tasks:1", "").should_write_slow_log(&values));
+        assert!(rules("write_keys:0", "").should_write_slow_log(&values));
+        assert!(rules("kv_total:0", "").should_write_slow_log(&values));
+        assert!(!rules("kv_total:0.1", "").should_write_slow_log(&values));
+        // Global rules: bound to this connection, to another, or unbound.
+        let bound = rules("", "conn_id:7,query_time:1");
+        assert!(!bound.is_empty());
+        assert!(bound.should_write_slow_log(&values));
+        let other = rules("", "conn_id:8,query_time:1");
+        assert!(other.is_empty());
+        assert!(rules("", "succ:true").should_write_slow_log(&values));
+        // A session value that does not parse contributes no rules.
+        assert!(rules("conn_id:7", "").is_empty());
     }
 }

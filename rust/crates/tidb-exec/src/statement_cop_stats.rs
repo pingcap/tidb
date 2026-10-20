@@ -23,7 +23,9 @@ use std::time::Duration;
 use tidb_distsql::{CopResponseSink, ResponseRuntimeStats, SelectResultMetadata};
 use tidb_proto::ExecutorExecutionSummary;
 
-use crate::exec_details::{CopExecDetails, CopTasksSummary, ExecDetails, SyncExecDetails};
+use crate::exec_details::{
+    CopExecDetails, CopTasksDetails, CopTasksSummary, ExecDetails, SyncExecDetails,
+};
 
 /// Go `StmtCtx.mu.execDetails` as a [`CopResponseSink`].
 #[derive(Debug, Default)]
@@ -48,6 +50,12 @@ impl StatementCopStats {
     #[must_use]
     pub fn exec_details(&self) -> ExecDetails {
         self.exec_details.exec_details()
+    }
+
+    /// Go `StmtCtx.CopTasksDetails`: `None` when no cop task reported.
+    #[must_use]
+    pub fn cop_tasks_details(&self) -> Option<CopTasksDetails> {
+        self.exec_details.cop_tasks_details()
     }
 
     /// Go `StmtCtx.CopTasksSummary`: `None` when no cop task reported.
