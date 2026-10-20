@@ -344,10 +344,15 @@ impl PipelineServerSession {
 
 impl QuerySession for PipelineServerSession {
     fn parse_statement(&mut self, sql: &str) -> Result<Option<tidb_ast::Stmt>, SqlQueryError> {
-        self.session.parse_statement(sql).map(Some).map_err(map_error)
+        self.session
+            .parse_statement(sql)
+            .map(Some)
+            .map_err(map_error)
     }
 
-    fn migration_session(&mut self) -> Option<&mut tidb_session::Session> { Some(&mut self.session) }
+    fn migration_session(&mut self) -> Option<&mut tidb_session::Session> {
+        Some(&mut self.session)
+    }
 
     fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
         self.session.finish_txn_write_throughput(cost);
@@ -559,7 +564,11 @@ impl QuerySession for PipelineServerSession {
         let state = match opened {
             OpenedStatement::Rows(state) => state,
             OpenedStatement::Complete(output) => {
-                return self.materialized_general_result(process_statement, output, result_authority);
+                return self.materialized_general_result(
+                    process_statement,
+                    output,
+                    result_authority,
+                );
             }
         };
         let (warnings, status, last_insert_id, info) = (
@@ -573,7 +582,8 @@ impl QuerySession for PipelineServerSession {
             .iter()
             .map(|(_, field)| field.clone())
             .collect();
-        let StatementExecution::Rows(state) = OpenedStatement::Rows(state).attach(&mut self.session)
+        let StatementExecution::Rows(state) =
+            OpenedStatement::Rows(state).attach(&mut self.session)
         else {
             unreachable!();
         };
@@ -822,15 +832,11 @@ impl ResultSetSource for PreparedRecordSet<'_> {
     }
 
     fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
-        self.state
-            .finish()
-            .map_err(|error| error.to_mysql_error())
+        self.state.finish().map_err(|error| error.to_mysql_error())
     }
 
     fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
-        self.state
-            .close()
-            .map_err(|error| error.to_mysql_error())
+        self.state.close().map_err(|error| error.to_mysql_error())
     }
 }
 
@@ -959,24 +965,40 @@ mod tests {
         );
     }
 
+    /// A cancel that reaches a running `SLEEP` ends it at once with Go's
+    /// interrupted answer, 1. One that lands before the statement reaches
+    /// `SLEEP` -- a loaded machine can take longer than the delay to set the
+    /// statement up -- kills the statement instead (1317, as Go answers), so
+    /// that attempt is repeated with a longer delay.
     #[test]
     fn command_cancellation_reaches_blocking_expression_evaluation() {
-        let mut session = open_session();
-        let cancellation = QuerySession::query_cancellation(&session)
-            .expect("pipeline sessions expose command cancellation");
-        let interrupter = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            cancellation.cancel();
-        });
+        for delay_ms in [20, 100, 300] {
+            let mut session = open_session();
+            let cancellation = QuerySession::query_cancellation(&session)
+                .expect("pipeline sessions expose command cancellation");
+            let delay = std::time::Duration::from_millis(delay_ms);
+            let interrupter = std::thread::spawn(move || {
+                std::thread::sleep(delay);
+                cancellation.cancel();
+            });
 
-        let started = std::time::Instant::now();
-        assert_eq!(
-            session.session.run("SELECT SLEEP(1)").unwrap(),
-            StmtResult::Rows(vec![vec![Datum::Int(1)]])
-        );
-        interrupter.join().unwrap();
-        assert!(started.elapsed() >= std::time::Duration::from_millis(15));
-        assert!(started.elapsed() < std::time::Duration::from_millis(200));
+            let started = std::time::Instant::now();
+            let result = session.session.run("SELECT SLEEP(1)");
+            interrupter.join().unwrap();
+            match result {
+                Ok(rows) => {
+                    assert_eq!(rows, StmtResult::Rows(vec![vec![Datum::Int(1)]]));
+                    assert!(started.elapsed() >= delay - std::time::Duration::from_millis(5));
+                    assert!(started.elapsed() < delay + std::time::Duration::from_millis(500));
+                    return;
+                }
+                Err(error) => assert!(
+                    format!("{error:?}").contains("Query execution was interrupted"),
+                    "{error:?}"
+                ),
+            }
+        }
+        panic!("no cancel reached the running SLEEP");
     }
 
     fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {
