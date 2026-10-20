@@ -1298,6 +1298,33 @@ impl<PdC: PdClient> KvStore<PdC> {
         self.inner.pd_client()
     }
 
+    /// client-go `KVStore.GetLockResolver()`: the store's lock resolver, over
+    /// the resolve context its transactions share.
+    pub fn get_lock_resolver(&self) -> crate::transaction::LockResolver {
+        crate::transaction::LockResolver::new(self.inner.lock_resolver_context())
+    }
+
+    /// client-go `KVStore.GetLockResolver().ResolveLocksWithOpts(bo, opts)`,
+    /// as the coprocessor resolves the locks a read meets (`handleLockErr`):
+    /// over the store's PD client and keyspace, charging `retry_owner`.
+    pub async fn resolve_locks_with_opts(
+        &self,
+        request_context: &kvrpcpb::Context,
+        retry_owner: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+        opts: crate::txnkv::txnlock::ResolveLocksOptions,
+    ) -> Result<crate::txnkv::txnlock::ResolveLockResult> {
+        self.get_lock_resolver()
+            .with_request_context(request_context)
+            .resolve_locks_with_opts(
+                self.pd_client(),
+                self.inner.keyspace(),
+                self.inner.keyspace_name(),
+                retry_owner,
+                opts,
+            )
+            .await
+    }
+
     /// client-go `KVStore.SendReq(bo, req, regionID, timeout)`: `request` to
     /// the region `region`, through the region sender (replica selection,
     /// send failures and the sender's own region errors retried within
@@ -1307,7 +1334,7 @@ impl<PdC: PdClient> KvStore<PdC> {
     /// locate again; client-go returns it in the response.
     pub async fn send_req<Req>(
         &self,
-        backoffer: crate::retry::RetryBackoffer,
+        backoffer: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
         mut request: Req,
         region: &crate::region::RegionVerId,
         timeout: Duration,
@@ -2963,6 +2990,86 @@ mod tests {
         );
     }
 
+    /// client-go's coprocessor resolves a lock it meets with
+    /// `store.GetLockResolver().ResolveLocksWithOpts`: an abandoned lock past
+    /// its TTL is rolled back, and the read then sees no value.
+    #[tokio::test]
+    async fn the_stores_lock_resolver_rolls_back_an_expired_lock() {
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        let (store_id, _, _) = crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let store = KvStore::new_with_pd_client(
+            Arc::new(pd),
+            Arc::new(MockSafePointKv::new()),
+            Config::default(),
+        )
+        .await
+        .unwrap();
+        let region = store
+            .pd_client()
+            .region_for_key(&Key::from(b"k".to_vec()))
+            .await
+            .unwrap();
+        let context = kvrpcpb::Context {
+            region_id: region.region.id,
+            region_epoch: region.region.region_epoch.clone(),
+            peer: region.leader.clone(),
+            ..Default::default()
+        };
+        let start_ts = store.current_timestamp().await.unwrap().version();
+        let prewrite = kvrpcpb::PrewriteRequest {
+            context: Some(context.clone()),
+            mutations: vec![kvrpcpb::Mutation {
+                op: kvrpcpb::Op::Put as i32,
+                key: b"k".to_vec(),
+                value: b"v".to_vec(),
+                ..Default::default()
+            }],
+            primary_lock: b"k".to_vec(),
+            start_version: start_ts,
+            lock_ttl: 1,
+            ..Default::default()
+        };
+        store
+            .send_request(
+                &format!("store{store_id}"),
+                &prewrite,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let caller_start_ts = store.current_timestamp().await.unwrap().version();
+        let owner = Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+            crate::async_util::Cancellation::default(),
+            5_000,
+        )));
+        let result = store
+            .resolve_locks_with_opts(
+                &context,
+                owner,
+                crate::txnkv::txnlock::ResolveLocksOptions {
+                    caller_start_ts,
+                    locks: vec![kvrpcpb::LockInfo {
+                        key: b"k".to_vec(),
+                        primary_lock: b"k".to_vec(),
+                        lock_version: start_ts,
+                        lock_ttl: 1,
+                        ..Default::default()
+                    }],
+                    for_read: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.ttl, 0);
+        let mut reader = store.begin_optimistic().await.unwrap();
+        assert_eq!(reader.get(b"k".to_vec()).await.unwrap(), None);
+        reader.rollback().await.unwrap();
+    }
+
     /// client-go `KVStore.SendReq`: a request addressed to a region by its
     /// version reaches that region; once the region splits, the old version
     /// is no longer the cache's, and the caller gets the pseudo epoch mismatch
@@ -2979,8 +3086,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let backoffer =
-            || crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000);
+        let backoffer = || {
+            Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                crate::async_util::Cancellation::default(),
+                1_000,
+            )))
+        };
         let gc = || kvrpcpb::GcRequest {
             safe_point: 1,
             ..Default::default()

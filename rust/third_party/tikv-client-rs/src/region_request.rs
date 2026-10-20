@@ -1117,7 +1117,8 @@ mod tests {
 }
 
 /// client-go `RegionRequestSender.SendReq`: sends `request` to the region its
-/// context names within `timeout` per RPC (also TiKV's maximum execution
+/// context names, charging the caller's `backoffer` (client-go's `bo`),
+/// within `timeout` per RPC (also TiKV's maximum execution
 /// duration when the request sets none, as client-go does), choosing the replica, retrying send failures and the
 /// region errors the sender handles itself (a new leader, a busy server, a
 /// stale command), and applying the rest to the region cache before
@@ -1128,7 +1129,7 @@ pub async fn send_req<PdC, Req>(
     pd_client: std::sync::Arc<PdC>,
     keyspace: crate::request::Keyspace,
     mut request: Req,
-    backoffer: crate::retry::RetryBackoffer,
+    backoffer: std::sync::Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
     timeout: Duration,
 ) -> crate::Result<Req::Response>
 where
@@ -1142,6 +1143,7 @@ where
     if let Some(injected) = failpoint_send_req_result(crate::store::Request::label(&request)) {
         return injected;
     }
+    let cancellation = backoffer.lock().await.cancellation().clone();
     if crate::store::Request::max_execution_duration_ms(&request) == 0 {
         crate::store::Request::set_max_execution_duration_ms(
             &mut request,
@@ -1150,7 +1152,10 @@ where
     }
     let mut responses = crate::request::PlanBuilder::new(pd_client, keyspace, request)
         .request_timeout(timeout)
-        .retry_region_request(backoffer)
+        .retry_region_request(crate::request::plan::SenderBackoffer::new(
+            backoffer,
+            cancellation,
+        ))
         .plan()
         .execute()
         .await?;
@@ -1252,17 +1257,23 @@ mod send_req_tests {
                 }
             }
         });
+        let backoffer = Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+            crate::async_util::Cancellation::default(),
+            1_000,
+        )));
         let response = send_req(
             pd,
             Keyspace::Disable,
             request_to_region1(0),
-            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+            Arc::clone(&backoffer),
             std::time::Duration::from_secs(1),
         )
         .await
         .unwrap();
         assert_eq!(&response.data[..], b"rows");
         assert_eq!(sent.load(AtomicOrdering::SeqCst), 2);
+        // client-go passes `bo` by pointer: the sender's sleep is the caller's.
+        assert!(backoffer.lock().await.total_sleep_ms() > 0);
     }
 
     /// client-go `getRPCContext` finds no cached region at the request's
@@ -1274,7 +1285,10 @@ mod send_req_tests {
             pd,
             Keyspace::Disable,
             request_to_region1(5),
-            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+            std::sync::Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                crate::async_util::Cancellation::default(),
+                1_000,
+            ))),
             std::time::Duration::from_secs(1),
         )
         .await
@@ -1304,8 +1318,12 @@ mod send_req_tests {
                 Ok(Box::<kvrpcpb::GcResponse>::default() as Box<dyn Any>)
             },
         )));
-        let backoffer =
-            || crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000);
+        let backoffer = || {
+            std::sync::Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                crate::async_util::Cancellation::default(),
+                1_000,
+            )))
+        };
 
         fail::cfg("tikvStoreSendReqResult", "return(GCNotLeader)").unwrap();
         let error = send_req(
@@ -1388,7 +1406,10 @@ mod send_req_tests {
             pd,
             Keyspace::Disable,
             request_to_region1(0),
-            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+            std::sync::Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                crate::async_util::Cancellation::default(),
+                1_000,
+            ))),
             std::time::Duration::from_secs(1),
         )
         .await

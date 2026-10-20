@@ -1026,34 +1026,56 @@ impl RegionRetryState for RetryBackoffer {
     }
 }
 
-/// client-go's `Backoffer` as `RegionRequestSender.SendReq` uses it: a
-/// region error the sender does not handle itself goes back to the caller
-/// instead of re-planning the request, as `onRegionError` answers
-/// `retry = false`.
+/// client-go's `Backoffer` as `RegionRequestSender.SendReq` uses it: the
+/// caller's own, shared (client-go passes `bo` by pointer, so the sender's
+/// sleeps count against the caller's budget), and a region error the sender
+/// does not handle itself goes back to the caller instead of re-planning the
+/// request, as `onRegionError` answers `retry = false`.
 #[derive(Clone)]
-pub(crate) struct SenderBackoffer(pub(crate) RetryBackoffer);
+pub(crate) struct SenderBackoffer {
+    owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+    cancellation: Cancellation,
+}
+
+impl SenderBackoffer {
+    pub(crate) fn new(
+        owner: Arc<tokio::sync::Mutex<RetryBackoffer>>,
+        cancellation: Cancellation,
+    ) -> Self {
+        Self {
+            owner,
+            cancellation,
+        }
+    }
+}
 
 #[async_trait]
 impl RegionRetryState for SenderBackoffer {
     async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
-        RegionRetryState::backoff(&mut self.0, config, reason).await
+        let mut owner = self.owner.lock().await;
+        RegionRetryState::backoff(&mut *owner, config, reason).await
     }
 
+    // A one-region send never fans out; a fork shares the same owner.
     fn fork(&self) -> (Self, Cancellation) {
-        let (forked, cancellation) = RetryBackoffer::fork(&self.0);
-        (Self(forked), cancellation)
+        let cancellation = self.cancellation.child();
+        (
+            Self {
+                owner: Arc::clone(&self.owner),
+                cancellation: cancellation.clone(),
+            },
+            cancellation,
+        )
     }
 
-    fn update_using_forked(&mut self, forked: &Self) {
-        RetryBackoffer::update_using_forked(&mut self.0, &forked.0);
-    }
+    fn update_using_forked(&mut self, _forked: &Self) {}
 
     fn retries_terminal_region_errors(&self) -> bool {
         false
     }
 
     fn is_cancelled(&self) -> bool {
-        RetryBackoffer::is_cancelled(&self.0)
+        self.cancellation.is_cancelled()
     }
 }
 

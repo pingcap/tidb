@@ -290,10 +290,10 @@ impl<PdC: PdClient> GcKvClient for TikvStoreClient<PdC> {
             safe_point,
             ..kvrpcpb::GcRequest::default()
         };
-        let backoffer = tikv_client::tikv::Backoffer::new(
+        let backoffer = Arc::new(tokio::sync::Mutex::new(tikv_client::tikv::Backoffer::new(
             Cancellation::default(),
             GC_ONE_REGION_MAX_BACKOFF_MS,
-        );
+        )));
         let sent = self
             .runtime
             .block_on(self.store.send_req(backoffer, request, region, GC_TIMEOUT));

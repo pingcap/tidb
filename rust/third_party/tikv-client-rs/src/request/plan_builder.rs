@@ -872,13 +872,13 @@ where
     /// region errors are retried, the rest return to the caller.
     pub(crate) fn retry_region_request(
         self,
-        backoff: RetryBackoffer,
+        backoff: crate::request::plan::SenderBackoffer,
     ) -> PlanBuilder<
         PdC,
         RetryableMultiRegion<P, PdC, crate::request::plan::SenderBackoffer>,
         Targetted,
     > {
-        self.make_retry_multi_region(crate::request::plan::SenderBackoffer(backoff), false)
+        self.make_retry_multi_region(backoff, false)
     }
 
     /// Share one client-go cumulative Backoffer across mutation region retries
