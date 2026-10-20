@@ -366,6 +366,8 @@ pub enum PlanErrorKind {
     WindowFrame { code: u16, window: String },
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
     UnknownDatabase(String),
+    /// Go `plannererrors.ErrNoDB` (1046).
+    NoDB,
     /// Go `infoschema.ErrTableNotExists`.
     UnknownTable(String),
     /// Go `plannererrors.ErrNoSuchTable` raised by `checkRecursiveView` for the
@@ -628,6 +630,15 @@ impl PlanError {
         Self {
             message: format!("Unknown database '{database}'"),
             kind: PlanErrorKind::UnknownDatabase(database),
+        }
+    }
+
+    /// Go `plannererrors.ErrNoDB`.
+    #[must_use]
+    pub fn no_db() -> Self {
+        Self {
+            message: "No database selected".to_owned(),
+            kind: PlanErrorKind::NoDB,
         }
     }
 

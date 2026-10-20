@@ -1485,9 +1485,7 @@ impl InitStats<'_> {
             // Go `GetStatsTable` keeps the cached `RealtimeCount` of a table
             // that has a `stats_meta` row but no analyzed histogram: its
             // `TableStatsFromStorage` returns that metadata-only table, and
-            // rule 3 (`!IsInitialized`) only marks the copy pseudo. The
-            // 10000-row `PseudoTable` is rule 2's answer to a zero count,
-            // which `realtime_row_count` applies below.
+            // rule 3 (`!IsInitialized`) only marks the copy pseudo.
             let ignore_realtime_stats = !allow_use_modify_count
                 && (statistics.row_count != analyze_count || statistics.modify_count != 0);
             let outdated = self.enable_pseudo_for_outdated_stats && statistics.is_outdated();
@@ -1496,12 +1494,6 @@ impl InitStats<'_> {
                 if ignore_realtime_stats {
                     copied.row_count = analyze_count;
                     copied.modify_count = 0;
-                    // Go replaces a zero-count stats table with PseudoTable;
-                    // keep an unanalyzed/missing histogram from becoming a
-                    // zero-row estimate in determinate mode.
-                    if analyze_count == 0 {
-                        copied.pseudo = true;
-                    }
                 }
                 copied.pseudo |= outdated;
                 Cow::Owned(copied)
@@ -1509,6 +1501,17 @@ impl InitStats<'_> {
                 Cow::Borrowed(statistics)
             }
         });
+        // Go `GetStatsTable` rule 2: a zero `RealtimeCount` (after the
+        // determinate-objective copy above) returns a fresh
+        // `statistics.PseudoTable` -- `RealtimeCount` 10000, `ModifyCount` 0
+        // and pseudo column/index histograms -- in place of the cached
+        // table. None of the cached table's objects survive: an analyzed
+        // empty table's zero-NDV histograms and its `stats_meta`
+        // `modify_count` must not reach `EstimateColumnNDV` or the index
+        // row counts. A missing statistics table is this bridge's
+        // `PseudoTable`, exactly as for a table `GetPhysicalTableStats`
+        // has no stats for.
+        let statistics = statistics.filter(|statistics| statistics.row_count != 0);
         let statistics = statistics.as_deref();
         source.analyzed_index_ids = statistics
             .map(|stats| {

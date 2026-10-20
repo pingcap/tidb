@@ -795,3 +795,105 @@ fn numeric_datetime_refinement_obeys_statement_date_modes() {
         }
     }
 }
+
+/// Go's fast plan converts each `column = constant` pair under the
+/// statement's type context before it decides anything
+/// (`getNameValuePairs`: `d.ConvertTo`, then the round-trip `dVal.Compare`),
+/// and each step reads a string constant as a number once: two warnings per
+/// pair, whether the point plan is then used (`id = 'abc'` pins handle 0) or
+/// declined (`v = 'x'` has no unique index, and the refinement above warns
+/// twice more). An `IN` list converts element by element
+/// (`getPointGetValue`). Where truncation is an error -- a strict UPDATE --
+/// the round trip fails, no point plan is built, and the scan's comparison
+/// raises it. Captured from Go's mock-store oracle.
+#[test]
+fn point_plan_constants_warn_through_the_statement() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (id int not null primary key, v int, k int, key ik(k))",
+        "insert into t values (0, 0, 0), (1, 101, 1), (2, 2, 2), (12, 12, 2)",
+        "create table u (id int not null primary key, v int, unique key uv(v))",
+        "insert into u values (1, 0), (2, 5)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let double = |text: &str| format!("1292 Truncated incorrect DOUBLE value: '{text}'");
+
+    assert_eq!(
+        row_text(session.run("select * from t where id = 'abc'")),
+        [["0", "0", "0"]]
+    );
+    assert_eq!(warning_texts(&session), [double("abc"), double("abc")]);
+    assert_eq!(session.wire_warning_count(), 2);
+    assert_eq!(
+        row_text(session.run("select * from t where id = '12abc'")),
+        [["12", "12", "2"]]
+    );
+    assert_eq!(warning_texts(&session), [double("12abc"), double("12abc")]);
+    assert_eq!(
+        row_text(session.run("select * from t where id in ('a', 'b')")),
+        [["0", "0", "0"]]
+    );
+    assert_eq!(
+        warning_texts(&session),
+        [double("a"), double("a"), double("b"), double("b")]
+    );
+    assert_eq!(
+        row_text(session.run("select * from t where v = 'x'")),
+        [["0", "0", "0"]]
+    );
+    assert_eq!(warning_texts(&session), vec![double("x"); 4]);
+    assert_eq!(
+        row_text(session.run("select * from u where v = 'x'")),
+        [["1", "0"]]
+    );
+    assert_eq!(warning_texts(&session), vec![double("x"); 2]);
+    assert_eq!(
+        row_text(session.run("select * from t where id = 'abc' and v > 1")),
+        Vec::<Vec<String>>::new()
+    );
+    assert_eq!(warning_texts(&session), vec![double("abc"); 4]);
+    // The overflowing handle ends the walk with `isTableDual`, but through an
+    // `AND` with no unique index to carry it Go declines the dual; the
+    // ordinary planner then refines `v = 'x'` again.
+    assert_eq!(
+        row_text(session.run("select * from t where v = 'x' and id = 99999999999")),
+        Vec::<Vec<String>>::new()
+    );
+    assert_eq!(warning_texts(&session), vec![double("x"); 4]);
+    assert_eq!(
+        row_text(session.run("explain format='brief' select * from t where id = 'abc'")),
+        [["Point_Get", "1.00", "root", "table:t", "handle:0"]]
+    );
+    assert_eq!(warning_texts(&session), vec![double("abc"); 2]);
+
+    for (sql, text) in [
+        ("update t set v = v where id = 'abc'", "abc"),
+        ("update t set v = v where id in ('a', 'b')", "a"),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message),
+            (1292, format!("Truncated incorrect DOUBLE value: '{text}'")),
+            "{sql}"
+        );
+    }
+
+    session.run("set sql_mode = ''").unwrap();
+    session
+        .run("update t set v = v + 1 where id = 'abc'")
+        .unwrap();
+    assert_eq!(warning_texts(&session), vec![double("abc"); 2]);
+    assert_eq!(
+        row_text(session.run("select v from t where id = 0")),
+        [["1"]]
+    );
+    session
+        .run("update t set v = v where k = 'x' and id < -3")
+        .unwrap();
+    assert_eq!(warning_texts(&session), vec![double("x"); 4]);
+    session
+        .run("delete from t where id = 'abc' and v = -1")
+        .unwrap();
+    assert_eq!(warning_texts(&session), vec![double("abc"); 4]);
+}

@@ -2795,6 +2795,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
         let (db_name, table_name) = match table_ref.name.as_slice() {
+            // Go `preprocessor.handleTableName`: an unqualified name that is
+            // not a usable CTE takes the current database, and with none
+            // selected the statement fails with `ErrNoDB` before it is
+            // planned -- never as an unknown database named ''.
+            [_] if self.source.current_database().is_empty() => {
+                return Err(PlanError::no_db());
+            }
             [table] => (self.source.current_database().to_owned(), table.clone()),
             [db, table] => (db.clone(), table.clone()),
             _ => {

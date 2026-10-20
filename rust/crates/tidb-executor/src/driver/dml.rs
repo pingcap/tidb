@@ -3564,15 +3564,21 @@ fn run_update_with_physical(
         let tidb_ast::QueryStmt::Select(select) = source else {
             return None;
         };
-        super::access::try_fast_dml_point_physical_plan_with_allocator(
+        // The statement was planned already, and that planning reported the
+        // fast plan's conversion warnings (Go `getNameValuePairs`) once. This
+        // rebuild repeats the decision under the same type context -- so a
+        // pair the planning refused is refused again -- but must not report
+        // it a second time.
+        let warning_bookmark = ctx.warning_count();
+        let fast = super::access::try_fast_dml_point_physical_plan_with_allocator(
             select,
             catalog,
             current_db,
             ctx,
             &tidb_planner::plan_base::PlanIdAllocator::new(),
-        )
-        .ok()
-        .flatten()
+        );
+        ctx.truncate_warnings(warning_bookmark);
+        fast.ok().flatten()
     });
     let mut physical_source = fast_point_source.as_mut().or(physical_source);
     let partition_ids = match catalog.get_in(&database, &name) {

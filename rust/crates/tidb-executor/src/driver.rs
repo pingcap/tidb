@@ -364,6 +364,9 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::UnknownDatabase(database) => {
             DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
         }
+        tidb_planner::plan_base::PlanErrorKind::NoDB => {
+            DriverError::Schema(SchemaErrorKind::NoDatabaseSelected)
+        }
         tidb_planner::plan_base::PlanErrorKind::UnknownTable(table) => {
             DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
         }

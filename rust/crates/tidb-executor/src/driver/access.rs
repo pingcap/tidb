@@ -2254,6 +2254,14 @@ fn build_fast_point_physical_plan(
     if table_ref.as_of.is_some() || table_ref.sample.is_some() {
         return Ok(None);
     }
+    // Go `handleTableName` leaves an unqualified name that is a usable CTE
+    // unresolved -- no current database is demanded and no table of that
+    // name is looked up -- so `tryPointGetPlan` finds no `TableNameW` for
+    // it (`resolveCtx.GetTableName(tblName) == nil`) and declines; the
+    // ordinary planner then reads the CTE.
+    if super::planner_bridge::is_cte(select.with.as_ref(), table_ref) {
+        return Ok(None);
+    }
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let Some(entry @ TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Ok(None);
@@ -2282,7 +2290,7 @@ fn build_fast_point_physical_plan(
     };
     let schema = fast_point_schema(table, &output);
 
-    let mut batch = try_batch_point_get(select, table, &columns, &scope.zone)?;
+    let mut batch = try_batch_point_get(select, table, &columns, &scope.zone, Some(ctx))?;
     if batch.as_ref().is_some_and(|batch| !batch.ignores_hints()) {
         batch = batch.filter(|batch| {
             let index_name = match batch.index.as_ref() {
@@ -2434,14 +2442,28 @@ fn build_fast_point_physical_plan(
         )));
     }
 
+    let mut table_dual = false;
     let Some(point) = try_point_get(
         &PointPlanStmt::of_select(select),
         table,
         &columns,
         &scope.zone,
+        Some(ctx),
+        &mut table_dual,
     )?
     else {
-        if point_get_predicate_overflows(&PointPlanStmt::of_select(select), &columns, &scope.zone) {
+        if table_dual
+            && overflow_plans_table_dual(
+                select,
+                table,
+                &columns,
+                &scope.zone,
+                current_db,
+                database,
+                visible,
+                table_ref,
+            )
+        {
             // Go `tryPointGetPlan`'s `isTableDual` arm: the predicate can
             // equal no stored row, so the answer is empty and no read runs.
             let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
@@ -2534,6 +2556,59 @@ fn build_fast_point_physical_plan(
             select_lock,
         },
     )))
+}
+
+/// Whether Go's `tryPointGetPlan` turns a `getNameValuePairs` walk that ended
+/// on `isTableDual` (a constant overflowing its column) into a `TableDual`.
+///
+/// The walk keeps its pairs only when the `WHERE` is that one equality;
+/// through an `AND` it returns no pairs at all. Go then plans the dual when
+/// the single pair is the integer handle (`findPKHandle`, with
+/// `len(pairs) == 1` and the hints admitting the handle), refuses outright
+/// when the handle is pinned otherwise, and else hands the dual to the first
+/// unique index `checkTblIndexForPointPlan` may use -- whatever its columns
+/// -- declining when there is none. A declined statement is planned by the
+/// ordinary planner.
+#[allow(clippy::too_many_arguments)]
+fn overflow_plans_table_dual(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+    current_db: &str,
+    database: &str,
+    visible: &str,
+    table_ref: &tidb_ast::TableRef,
+) -> bool {
+    let index_available = |index_name: Option<&str>| {
+        tidb_planner::access_path::fast_index_is_available_by_hints(
+            current_db,
+            database,
+            visible,
+            index_name,
+            &select.hints,
+            &table_ref.hints,
+        )
+    };
+    let mut where_clause = select.where_clause.as_ref();
+    while let Some(tidb_ast::Expr::Paren(inner)) = where_clause {
+        where_clause = Some(inner);
+    }
+    let mut pairs = Vec::new();
+    let single_pair = where_clause.is_some_and(|expr| {
+        matches!(expr, tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, _, _))
+            && name_value_pairs(expr, &mut pairs, zone)
+    });
+    if let Some(handle_offset) = table.pk_handle_offset() {
+        let handle_column = &columns[handle_offset].0;
+        if single_pair && pairs[0].column.eq_ignore_ascii_case(handle_column) {
+            return index_available(None);
+        }
+    }
+    (!table.common_handle_offsets().is_empty() && index_available(None))
+        || table
+            .point_get_indexes()
+            .any(|index| index.unique && index_available(Some(&index.name)))
 }
 
 fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
@@ -2877,7 +2952,7 @@ pub(crate) fn primary_batch_point_lookup(
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect::<Vec<_>>();
-    let Some(batch) = try_batch_point_get_stmt(&statement, table, &columns, zone)? else {
+    let Some(batch) = try_batch_point_get_stmt(&statement, table, &columns, zone, None)? else {
         return Ok(None);
     };
     if batch.index.is_some() {
@@ -2902,14 +2977,34 @@ pub(crate) fn primary_batch_point_lookup(
         .collect())
 }
 
+/// Go `tryWhereIn2BatchPointGet`. `statement` is the statement whose type
+/// context converts the list (see [`batch_key_value`]); `None` applies the
+/// detached rule.
 pub(crate) fn try_batch_point_get(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
+    statement: Option<&dyn tidb_expr::Columns>,
 ) -> Result<Option<BatchPointLookup>, DriverError> {
     let stmt = PointPlanStmt::of_select(select);
-    try_batch_point_get_stmt(&stmt, table, columns, zone)
+    try_batch_point_get_stmt(&stmt, table, columns, zone, statement)
+}
+
+/// Go `newBatchPointGetPlan`'s `getPointGetValue` for one `IN` list element:
+/// under the statement's type context while the fast plan is built, which
+/// reports each element's conversion through the statement in list order
+/// (`id IN ('a', 'b')` warns for `'a'` twice, then for `'b'` twice), or
+/// silently by the detached rule for a caller outside planning.
+fn batch_key_value(
+    statement: Option<&dyn tidb_expr::Columns>,
+    column: &FieldType,
+    value: &Datum,
+) -> Option<Datum> {
+    match statement {
+        Some(ctx) => tidb_planner::point_get_value::statement_point_get_value(ctx, column, value),
+        None => point_get_value(column, value),
+    }
 }
 
 pub(crate) fn try_batch_point_get_stmt(
@@ -2917,6 +3012,7 @@ pub(crate) fn try_batch_point_get_stmt(
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
+    statement: Option<&dyn tidb_expr::Columns>,
 ) -> Result<Option<BatchPointLookup>, DriverError> {
     if select.having.is_some()
         || !select.order_by.is_empty()
@@ -2990,7 +3086,8 @@ pub(crate) fn try_batch_point_get_stmt(
                         else {
                             return Ok(None);
                         };
-                        let Some(value) = point_get_value(&columns[*offset].1, &value) else {
+                        let Some(value) = batch_key_value(statement, &columns[*offset].1, &value)
+                        else {
                             return Ok(None);
                         };
                         constant_row.push(tidb_planner::physical_plan_cache::PointKeyConstant {
@@ -3064,7 +3161,8 @@ pub(crate) fn try_batch_point_get_stmt(
                     else {
                         return Ok(None);
                     };
-                    let Some(value) = point_get_value(&columns[*offset].1, &value) else {
+                    let Some(value) = batch_key_value(statement, &columns[*offset].1, &value)
+                    else {
                         return Ok(None);
                     };
                     constant_row.push(tidb_planner::physical_plan_cache::PointKeyConstant {
@@ -3117,7 +3215,7 @@ pub(crate) fn try_batch_point_get_stmt(
             let mut handles = Vec::with_capacity(values.len());
             let mut constant_rows = Vec::with_capacity(values.len());
             for (value, marker) in values.iter().zip(&markers) {
-                let handle = match point_get_value(&columns[offset].1, value) {
+                let handle = match batch_key_value(statement, &columns[offset].1, value) {
                     Some(Datum::Int(v)) => v,
                     Some(Datum::UInt(v)) => v as i64,
                     _ => return Ok(None),
@@ -3166,7 +3264,7 @@ pub(crate) fn try_batch_point_get_stmt(
         }
         let mut converted = Vec::with_capacity(values.len());
         for value in &values {
-            let Some(value) = point_get_value(field_type, value) else {
+            let Some(value) = batch_key_value(statement, field_type, value) else {
                 return Ok(None);
             };
             converted.push(value);
@@ -3289,6 +3387,21 @@ pub(crate) fn point_equal_pairs(
     zone: &tidb_datatype::SessionTimeZone,
     params: &[Datum],
 ) -> bool {
+    point_equal_pairs_visiting(expr, pairs, zone, params, &mut |_| true)
+}
+
+/// [`point_equal_pairs`] that hands each pair to `visit` as the walk reaches
+/// it, before the next conjunct is looked at, and stops the walk when `visit`
+/// refuses. This is the order Go's `getNameValuePairs` checks and converts a
+/// pair in, which is observable: the conversion of an earlier pair reports
+/// its warnings even when a later conjunct declines the point plan.
+fn point_equal_pairs_visiting(
+    expr: &tidb_ast::Expr,
+    pairs: &mut Vec<NameValuePair>,
+    zone: &tidb_datatype::SessionTimeZone,
+    params: &[Datum],
+    visit: &mut dyn FnMut(&mut NameValuePair) -> bool,
+) -> bool {
     use tidb_ast::{BinaryOp, Expr};
     fn unparenthesized(expr: &Expr) -> &Expr {
         match expr {
@@ -3297,10 +3410,10 @@ pub(crate) fn point_equal_pairs(
         }
     }
     match expr {
-        Expr::Paren(inner) => point_equal_pairs(inner, pairs, zone, params),
+        Expr::Paren(inner) => point_equal_pairs_visiting(inner, pairs, zone, params, visit),
         Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
-            point_equal_pairs(lhs, pairs, zone, params)
-                && point_equal_pairs(rhs, pairs, zone, params)
+            point_equal_pairs_visiting(lhs, pairs, zone, params, visit)
+                && point_equal_pairs_visiting(rhs, pairs, zone, params, visit)
         }
         Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
             // Stripped on both sides for the reason the arm above recurses
@@ -3354,7 +3467,7 @@ pub(crate) fn point_equal_pairs(
                 };
                 (value, None)
             };
-            pairs.push(NameValuePair {
+            let mut pair = NameValuePair {
                 column: name.clone(),
                 table: column
                     .len()
@@ -3362,7 +3475,11 @@ pub(crate) fn point_equal_pairs(
                     .map(|position| column[position].clone()),
                 value,
                 marker,
-            });
+            };
+            if !visit(&mut pair) {
+                return false;
+            }
+            pairs.push(pair);
             true
         }
         _ => false,
@@ -3493,55 +3610,6 @@ impl<'a> PointPlanStmt<'a> {
     }
 }
 
-/// Go `getNameValuePairs`'s `ErrOverflow` arm at the fast-plan boundary: a
-/// `WHERE` conjunct whose constant cannot be represented in its column's
-/// domain can equal no stored row, so the whole conjunction is unsatisfiable
-/// and Go plans a `TableDual` instead of reading. `name_value_pairs` only
-/// returns true for a pure conjunction of equalities, so every pair it yields
-/// is ANDed into the predicate.
-///
-/// The shape guards repeat `try_point_get`'s first three checks so this only
-/// fires where Go's `tryPointGetPlan` reaches `getNameValuePairs` at all: a
-/// statement with `HAVING`, `ORDER BY`, `GROUP BY`, or a removing `LIMIT` is
-/// left to the ordinary planner, exactly as Go leaves it.
-fn point_get_predicate_overflows(
-    select: &PointPlanStmt<'_>,
-    columns: &[(String, FieldType)],
-    zone: &tidb_datatype::SessionTimeZone,
-) -> bool {
-    if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
-        return false;
-    }
-    if let Some(limit) = select.limit {
-        let Ok(count) = eval_limit_bound(&limit.count) else {
-            return false;
-        };
-        let offset = match &limit.offset {
-            Some(expr) => match eval_limit_bound(expr) {
-                Ok(offset) => offset,
-                Err(_) => return false,
-            },
-            None => 0,
-        };
-        if count == 0 || offset > 0 {
-            return false;
-        }
-    }
-    let Some(where_clause) = select.where_clause else {
-        return false;
-    };
-    let mut pairs = Vec::new();
-    if !name_value_pairs(where_clause, &mut pairs, zone) {
-        return false;
-    }
-    pairs.iter().any(|pair| {
-        columns
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
-            .is_some_and(|(_, field_type)| point_get_value_overflowed(field_type, &pair.value))
-    })
-}
-
 /// The row a point get reads, when the statement qualifies for one.
 ///
 /// Go `TryFastPlan`/`tryPointGetPlan`: a single-table statement with no
@@ -3570,11 +3638,22 @@ pub(crate) struct PointGetPin {
     pub(crate) key_types: Vec<FieldType>,
 }
 
+/// Go `tryPointGetPlan`'s pin (see the doc above [`PointGetPin`]).
+///
+/// With `statement`, the constants are converted the way Go's fast plan
+/// converts them: under the statement's type context, pair by pair as
+/// `getNameValuePairs` walks the `WHERE`, reporting through the statement
+/// (see [`tidb_planner::point_get_value::name_value_pair_value`]), and
+/// `table_dual` is set when that walk ended on Go's `isTableDual`
+/// (`ErrOverflow`). Without it the detached rule converts every pair
+/// silently.
 pub(crate) fn try_point_get(
     select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
+    statement: Option<&dyn tidb_expr::Columns>,
+    table_dual: &mut bool,
 ) -> Result<Option<PointGetPin>, DriverError> {
     if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
         return Ok(None);
@@ -3593,7 +3672,52 @@ pub(crate) fn try_point_get(
         return Ok(None);
     };
     let mut pairs = Vec::new();
-    if !name_value_pairs(where_clause, &mut pairs, zone) || pairs.is_empty() {
+    let walked = match statement {
+        Some(ctx) => {
+            let visible = select.table_ref.map(|table_ref| {
+                table_ref
+                    .alias
+                    .as_deref()
+                    .or_else(|| table_ref.name.last().map(String::as_str))
+                    .unwrap_or_default()
+            });
+            point_equal_pairs_visiting(where_clause, &mut pairs, zone, &[], &mut |pair| {
+                // Go declines a foreign qualifier before converting the pair.
+                if let (Some(visible), Some(qualifier)) = (visible, pair.table.as_deref()) {
+                    if !qualifier.eq_ignore_ascii_case(visible) {
+                        return false;
+                    }
+                }
+                // A pair whose column Go does not find stays unconverted
+                // (`types.NewFieldType(mysql.TypeLonglong)`); the handle arm
+                // below reads `_tidb_rowid` from it, and any other unknown
+                // column declines after the walk.
+                let Some((_, field_type)) = columns
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+                else {
+                    return true;
+                };
+                match tidb_planner::point_get_value::name_value_pair_value(
+                    ctx,
+                    field_type,
+                    &pair.value,
+                ) {
+                    tidb_planner::point_get_value::NameValuePairValue::Key(value) => {
+                        pair.value = value;
+                        true
+                    }
+                    tidb_planner::point_get_value::NameValuePairValue::TableDual => {
+                        *table_dual = true;
+                        false
+                    }
+                    tidb_planner::point_get_value::NameValuePairValue::Decline => false,
+                }
+            })
+        }
+        None => name_value_pairs(where_clause, &mut pairs, zone),
+    };
+    if !walked || pairs.is_empty() {
         return Ok(None);
     }
     // Go `findPKHandle`'s `!tblInfo.PKIsHandle` branch: when the table has no
@@ -3661,10 +3785,19 @@ pub(crate) fn try_point_get(
 
     // Go `getNameValuePairs` moves every constant into its column's domain
     // before the pair is usable as a key, and abandons the whole point plan
-    // when one of them will not survive the round trip. Doing it here, once
-    // for every pair, is what keeps the handle arm below dealing only in
-    // integers and the unique-index arm dealing only in column-typed values.
-    if !convert_pairs_to_column_domain(&mut pairs, columns) {
+    // when one of them will not survive the round trip. Doing it once for
+    // every pair is what keeps the handle arm below dealing only in integers
+    // and the unique-index arm dealing only in column-typed values; the
+    // statement walk above already did it.
+    if statement.is_some() {
+        if pairs.iter().any(|pair| {
+            !columns
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+        }) {
+            return Ok(None);
+        }
+    } else if !convert_pairs_to_column_domain(&mut pairs, columns) {
         return Ok(None);
     }
 

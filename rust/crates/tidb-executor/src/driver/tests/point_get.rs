@@ -921,6 +921,8 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
             table,
             &columns,
             &tidb_datatype::SessionTimeZone::utc(),
+            None,
+            &mut false,
         )
         .unwrap()
         .map(|pin| (pin.index_id, pin.key_values.len()))
@@ -1463,7 +1465,8 @@ fn batch_point_get_accepts_row_in_on_a_composite_key() {
             select,
             table,
             &columns,
-            &tidb_datatype::SessionTimeZone::utc()
+            &tidb_datatype::SessionTimeZone::utc(),
+            None
         )
         .unwrap()
         .is_some(),

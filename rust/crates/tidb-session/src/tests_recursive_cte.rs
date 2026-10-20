@@ -642,3 +642,63 @@ fn recursive_parts_follow_gos_lateral_inline_and_alias_rules() {
     rows.sort();
     assert_eq!(rows, [["1"], ["2"], ["5"]]);
 }
+
+/// Go `preprocessor.handleTableName` leaves an unqualified name that names a
+/// usable CTE unresolved: it needs no current database, and it shadows a
+/// stored table of the same name -- in the single-table shapes Go's fast
+/// point plan inspects too (`tryPointGetPlan` finds no `TableNameW` for a CTE
+/// and declines). Any other unqualified name is `ErrNoDB` wherever it sits,
+/// never an unknown database ''. Captured from Go's mock-store oracle.
+#[test]
+fn cte_names_resolve_without_a_current_database() {
+    let mut session = Session::new();
+    session
+        .run("create table t (id int not null primary key, v int, k int, key ik(k))")
+        .unwrap();
+    session
+        .run("insert into t values (0, 0, 0), (1, 101, 1), (2, 2, 2), (12, 12, 2)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("WITH t AS (SELECT 5 id, 66 v, 77 k) SELECT * FROM t WHERE id = 5")),
+        [["5", "66", "77"]]
+    );
+    assert_eq!(
+        row_text(
+            session.run("WITH t AS (SELECT 5 id, 66 v, 77 k) SELECT * FROM t WHERE id IN (5, 6)")
+        ),
+        [["5", "66", "77"]]
+    );
+
+    session.deselect_database();
+    assert_eq!(
+        column(session.run(
+            "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n < 5) \
+             SELECT SUM(n) FROM c"
+        )),
+        vec!["15"]
+    );
+    assert_eq!(
+        column(session.run("WITH c AS (SELECT 1 a) SELECT * FROM c WHERE a = 1")),
+        vec!["1"]
+    );
+    assert_eq!(
+        column(session.run("WITH c AS (SELECT 1 a), d AS (SELECT a + 1 b FROM c) SELECT * FROM d")),
+        vec!["2"]
+    );
+    assert_eq!(
+        column(session.run("WITH c AS (SELECT 1 a) SELECT * FROM c WHERE a IN (1, 2)")),
+        vec!["1"]
+    );
+    for sql in [
+        "SELECT * FROM (SELECT * FROM nosuch) d",
+        "SELECT * FROM nosuch x JOIN nosuch y",
+        "WITH c AS (SELECT * FROM nosuch) SELECT * FROM c",
+        "SELECT * FROM nosuch",
+    ] {
+        assert_eq!(
+            wire_error(&mut session, sql),
+            (1046, "No database selected".to_owned()),
+            "{sql}"
+        );
+    }
+}

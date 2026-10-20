@@ -757,6 +757,127 @@ fn analyzing_an_empty_table_leaves_it_pseudo() {
     assert_eq!(est_rows, "3333.33");
 }
 
+/// A zero-count table plans from a FRESH `PseudoTable`, not from the cached
+/// table with its row count patched.
+///
+/// Captured from a Go tidb-server over a table analyzed while empty and then
+/// written to, whose `mysql.stats_meta` row reads `count 0, modify_count 75`:
+///
+/// ```text
+/// explain format='brief' select * from t where k > 5
+///   TableReader      3333.33   data:Selection
+///   └─Selection      3333.33   gt(acc2.t.k, 5)
+///     └─TableFullScan 10000.00 keep order:false, stats:pseudo
+/// explain format='brief' select k, count(*) from t group by k
+///   Projection 8000.00 / HashAgg 8000.00 / IndexReader 8000.00 / HashAgg 8000.00
+///   └─IndexFullScan 10000.00
+/// explain format='brief' select * from t where k = 1 limit 5
+///   IndexLookUp 5.00 limit embedded(offset:0, count:5)
+///   ├─Limit(Build) 5.00 / IndexRangeScan 5.00
+///   └─TableRowIDScan(Probe) 5.00
+/// ```
+///
+/// `pkg/planner/core/stats.GetStatsTable` rule 2 returns
+/// `statistics.PseudoTable` -- `RealtimeCount` 10000, `ModifyCount` 0 and
+/// uninitialized pseudo histograms -- so `EstimateColumnNDV` answers
+/// `10000 * 0.8` and the pseudo index estimate reads 10000 rows. Keeping the
+/// cached zero-NDV histograms and the zero count with `modify_count` made the
+/// NDV 1 and every index-derived estimate 1.00.
+#[test]
+fn a_zero_count_table_plans_from_a_fresh_pseudo_table() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE z (id INT PRIMARY KEY, v INT, k INT, KEY ik(k))")
+        .unwrap();
+    session.run("ANALYZE TABLE z").unwrap();
+    session
+        .run("INSERT INTO z VALUES (1,1,1),(2,2,2),(3,3,3)")
+        .unwrap();
+    session.run("DELETE FROM z").unwrap();
+    session.run("FLUSH STATS_DELTA test.z").unwrap();
+    let meta = row_text(session.run("SHOW STATS_META WHERE table_name = 'z'"));
+    assert_eq!(meta.len(), 1, "{meta:?}");
+    assert_eq!(meta[0][5], "0", "the row count stays zero: {meta:?}");
+    assert_ne!(meta[0][4], "0", "the modifications are recorded: {meta:?}");
+
+    let plan = |session: &mut Session, sql: &str| {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| format!("{} {}", row[0], row[1]))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        plan(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM z WHERE k > 5"
+        ),
+        [
+            "TableReader 3333.33",
+            "└─Selection 3333.33",
+            "  └─TableFullScan 10000.00",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT k, COUNT(*) FROM z GROUP BY k"
+        ),
+        [
+            "Projection 8000.00",
+            "└─HashAgg 8000.00",
+            "  └─IndexReader 8000.00",
+            "    └─HashAgg 8000.00",
+            "      └─IndexFullScan 10000.00",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM z WHERE k = 1 LIMIT 5"
+        ),
+        [
+            "IndexLookUp 5.00",
+            "├─Limit(Build) 5.00",
+            "│ └─IndexRangeScan 5.00",
+            "└─TableRowIDScan(Probe) 5.00",
+        ]
+    );
+    // The same capture's joins: the limit's expected count reaches the
+    // build side through 10000-row pseudo estimates on both sides.
+    assert_eq!(
+        plan(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM z a JOIN z b ON a.id = b.k LIMIT 5"
+        ),
+        [
+            "Limit 5.00",
+            "└─Projection 5.00",
+            "  └─IndexJoin 5.00",
+            "    ├─IndexLookUp(Build) 4.00",
+            "    │ ├─IndexFullScan(Build) 4.00",
+            "    │ └─TableRowIDScan(Probe) 4.00",
+            "    └─TableReader(Probe) 4.00",
+            "      └─TableRangeScan 4.00",
+        ]
+    );
+    assert_eq!(
+        plan(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM z a JOIN z b ON a.id = b.k WHERE a.k = 2"
+        ),
+        [
+            "IndexHashJoin 12.50",
+            "├─IndexLookUp(Build) 10.00",
+            "│ ├─IndexRangeScan(Build) 10.00",
+            "│ └─TableRowIDScan(Probe) 10.00",
+            "└─IndexLookUp(Probe) 12.50",
+            "  ├─Selection(Build) 12.50",
+            "  │ └─IndexRangeScan 12.51",
+            "  └─TableRowIDScan(Probe) 12.50",
+        ]
+    );
+}
+
 /// A single-column UNIQUE index suppresses the TopN on itself AND on the
 /// column it covers, which is Go's own rule -- captured:
 ///

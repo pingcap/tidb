@@ -162,6 +162,23 @@ fn pessimistic_write_predicate(
         },
         _ => return None,
     };
+    // An unqualified target that names one of the statement's CTEs is that
+    // CTE (Go `buildDataSource` tries CTEs first), not a stored table whose
+    // keys could be locked; Go refuses the write as non-updatable.
+    let with = match dml.as_ref() {
+        tidb_ast::DmlStmt::Update(update) => update.with.as_ref(),
+        tidb_ast::DmlStmt::Delete(delete) => delete.with.as_ref(),
+        _ => None,
+    };
+    if let ([name], Some(with)) = (table_ref.name.as_slice(), with) {
+        if with
+            .ctes
+            .iter()
+            .any(|cte| cte.name.to_lowercase() == name.to_lowercase())
+        {
+            return None;
+        }
+    }
     Some((table_ref, where_clause, batch_lookup))
 }
 
