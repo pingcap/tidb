@@ -930,3 +930,77 @@ func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
 		})
 	}
 }
+
+type taskKeeperRecorder struct {
+	runtimes     []sqlsvrapi.Runtime
+	taskIDs      []int64
+	failTaskID   int64
+	skipTaskID   int64
+	noKeepTaskID int64
+}
+
+func (r *taskKeeperRecorder) NeedKeep(task *proto.TaskBase) bool {
+	return task.ID != r.noKeepTaskID
+}
+
+func (r *taskKeeperRecorder) KeepTask(
+	_ context.Context, task *proto.Task, acquireRuntime func() (sqlsvrapi.Runtime, func(), error),
+) error {
+	r.taskIDs = append(r.taskIDs, task.ID)
+	if task.ID == r.skipTaskID {
+		return nil
+	}
+	taskRuntime, release, err := acquireRuntime()
+	if err != nil {
+		return err
+	}
+	defer release()
+	r.runtimes = append(r.runtimes, taskRuntime)
+	if task.ID == r.failTaskID {
+		return errors.New("keep task failed")
+	}
+	return nil
+}
+
+func TestRunTaskKeepers(t *testing.T) {
+	t.Run("no keeper skips listing tasks", func(t *testing.T) {
+		ClearTaskKeepers()
+		t.Cleanup(ClearTaskKeepers)
+		ctrl := gomock.NewController(t)
+		mgr := NewManager(context.Background(), nil, mock.NewMockTaskManager(ctrl), "1", proto.NodeResourceForTest)
+		mgr.runTaskKeepers()
+	})
+
+	t.Run("keeps unfinished tasks of registered types", func(t *testing.T) {
+		ClearTaskKeepers()
+		t.Cleanup(ClearTaskKeepers)
+		ctrl := gomock.NewController(t)
+		taskMgr := mock.NewMockTaskManager(ctrl)
+		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
+		store := &storeWithKS{ks: "user_ks"}
+		runtime := newMockRuntime(ctrl, store, nil)
+		expectRuntimeFromNewSession(ctrl, taskMgr, runtime)
+		keeper := &taskKeeperRecorder{failTaskID: 1, skipTaskID: 2, noKeepTaskID: 6}
+		RegisterTaskKeeper(proto.TaskTypeExample, keeper)
+
+		taskMgr.EXPECT().GetAllTasks(gomock.Any()).Return([]*proto.TaskBase{
+			{ID: 1, Type: proto.TaskTypeExample, State: proto.TaskStatePending},
+			{ID: 2, Type: proto.TaskTypeExample, State: proto.TaskStatePaused},
+			{ID: 3, Type: proto.TaskTypeExample, State: proto.TaskStateRunning},
+			{ID: 4, Type: proto.TaskTypeExample, State: proto.TaskStateSucceed},
+			{ID: 5, Type: proto.ImportInto, State: proto.TaskStateRunning},
+			{ID: 6, Type: proto.TaskTypeExample, State: proto.TaskStateRunning},
+		}, nil)
+		for _, id := range []int64{1, 2} {
+			taskMgr.EXPECT().GetTaskByID(gomock.Any(), id).Return(
+				&proto.Task{TaskBase: proto.TaskBase{ID: id, Type: proto.TaskTypeExample, Keyspace: "user_ks"}}, nil)
+		}
+		taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(3)).Return(nil, storage.ErrTaskNotFound)
+
+		mgr.runTaskKeepers()
+
+		require.Equal(t, []int64{1, 2}, keeper.taskIDs)
+		require.Len(t, keeper.runtimes, 1)
+		require.Same(t, runtime, keeper.runtimes[0])
+	})
+}
