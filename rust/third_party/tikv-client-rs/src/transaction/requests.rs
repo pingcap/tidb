@@ -1747,6 +1747,9 @@ impl StoreRequest for kvrpcpb::GcRequest {
     fn apply_store(&mut self, _store: &Store) {}
 }
 
+// The GC worker's `doGCForRegion` sends `CmdGC` with `SendReq` to one region.
+region_pinned!(kvrpcpb::GcRequest);
+
 error_locks!(kvrpcpb::GcResponse);
 
 impl Merge<kvrpcpb::GcResponse> for Collect {

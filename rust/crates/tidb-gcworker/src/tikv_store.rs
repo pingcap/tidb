@@ -39,6 +39,8 @@ use crate::seams::{
 
 /// Go `gcTimeout`.
 const GC_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Go `gcOneRegionMaxBackoff`.
+const GC_ONE_REGION_MAX_BACKOFF_MS: u64 = 20_000;
 
 /// Go `GCWorker`'s `tikvStore` and `pdClient` over client-rust: the calls
 /// block on `runtime`, the worker running on its own thread.
@@ -277,40 +279,31 @@ impl<PdC: PdClient> GcKvClient for TikvStoreClient<PdC> {
         })
     }
 
-    /// Go `doGCForRegion`: `CmdGC` to the region holding `region_key`, with
-    /// Go's `gcTimeout`; the region error, or an error, never both.
-    fn gc_region(&self, region_key: &[u8], safe_point: u64) -> GcResult<Option<String>> {
-        self.runtime.block_on(async {
-            let store = self
-                .store
-                .pd_client()
-                .store_for_key(&region_key.to_vec().into())
-                .await
-                .map_err(gc_error)?;
-            let region = &store.region_with_leader.region;
-            let request = kvrpcpb::GcRequest {
-                context: Some(kvrpcpb::Context {
-                    region_id: region.id,
-                    region_epoch: region.region_epoch,
-                    peer: store.target_peer,
-                    ..kvrpcpb::Context::default()
-                }),
-                safe_point,
-            };
-            let response = store
-                .client
-                .dispatch_with_timeout(&request, Some(GC_TIMEOUT))
-                .await
-                .map_err(gc_error)?
-                .downcast::<kvrpcpb::GcResponse>()
-                .map_err(|_| GcError::new("[tikv:9005]response body is missing"))?;
-            if let Some(region_error) = &response.region_error {
-                return Ok(Some(format!("{region_error:?}")));
-            }
-            if let Some(error) = &response.error {
-                return Err(GcError::new(format!("unexpected gc error: {error:?}")));
-            }
-            Ok(None)
-        })
+    /// Go `doGCForRegion`: `CmdGC` to `region` through the store's region
+    /// sender, with Go's `gcTimeout` per RPC.
+    fn gc_region(
+        &self,
+        region: &tikv_client::RegionVerId,
+        safe_point: u64,
+    ) -> GcResult<Option<tikv_client::proto::errorpb::Error>> {
+        let request = kvrpcpb::GcRequest {
+            safe_point,
+            ..kvrpcpb::GcRequest::default()
+        };
+        let backoffer = tikv_client::tikv::Backoffer::new(
+            Cancellation::default(),
+            GC_ONE_REGION_MAX_BACKOFF_MS,
+        );
+        let sent = self
+            .runtime
+            .block_on(self.store.send_req(backoffer, request, region, GC_TIMEOUT));
+        match sent {
+            Ok(response) => match response.error {
+                Some(error) => Err(GcError::new(format!("{error:?}"))),
+                None => Ok(None),
+            },
+            Err(tikv_client::Error::RegionError(region_error)) => Ok(Some(*region_error)),
+            Err(error) => Err(gc_error(error)),
+        }
     }
 }

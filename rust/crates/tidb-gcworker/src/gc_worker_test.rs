@@ -114,8 +114,12 @@ impl GcKvClient for FakeKv {
             .resolve_locks_runner(name, concurrency, max_version, scan_limit)
     }
 
-    fn gc_region(&self, region_key: &[u8], safe_point: u64) -> GcResult<Option<String>> {
-        self.inner.gc_region(region_key, safe_point)
+    fn gc_region(
+        &self,
+        region: &tikv_client::RegionVerId,
+        safe_point: u64,
+    ) -> GcResult<Option<tikv_client::proto::errorpb::Error>> {
+        self.inner.gc_region(region, safe_point)
     }
 }
 
@@ -2062,10 +2066,49 @@ fn test_run_gc_job() {
 #[test]
 fn test_do_gc_for_one_region() {
     let s = create_gc_worker_suite();
+    let region = s
+        .tikv
+        .runtime()
+        .block_on(tikv_client::PdClient::region_for_key(
+            s.tikv.store().pd_client().as_ref(),
+            &tikv_client::Key::from(Vec::new()),
+        ))
+        .unwrap()
+        .ver_id();
+
     let p = s.create_gc_probe(b"k1");
-    let region_error = s.job().do_gc_for_region(b"", s.must_alloc_ts()).unwrap();
+    let region_error = s
+        .job()
+        .do_gc_for_region(s.must_alloc_ts(), &region)
+        .unwrap();
     assert_eq!(None, region_error);
     s.check_collected(&p);
+
+    // Go `failpoint.Enable("tikvclient/tikvStoreSendReqResult", ...)`.
+    let scenario = fail::FailScenario::setup();
+    fail::cfg("tikvStoreSendReqResult", "return(timeout)").unwrap();
+    assert!(s
+        .job()
+        .do_gc_for_region(s.must_alloc_ts(), &region)
+        .is_err());
+    fail::remove("tikvStoreSendReqResult");
+
+    fail::cfg("tikvStoreSendReqResult", "return(GCNotLeader)").unwrap();
+    let region_error = s
+        .job()
+        .do_gc_for_region(s.must_alloc_ts(), &region)
+        .unwrap();
+    assert!(region_error.unwrap().not_leader.is_some());
+    fail::remove("tikvStoreSendReqResult");
+
+    fail::cfg("tikvStoreSendReqResult", "return(GCServerIsBusy)").unwrap();
+    let region_error = s
+        .job()
+        .do_gc_for_region(s.must_alloc_ts(), &region)
+        .unwrap();
+    assert!(region_error.unwrap().server_is_busy.is_some());
+    fail::remove("tikvStoreSendReqResult");
+    scenario.teardown();
 }
 
 /// Go `TestRunGCJobAPI`: the store has no locks, so the store's own lock

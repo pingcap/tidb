@@ -21,6 +21,8 @@ internal-tests = []
 race-tests = []
 # Match client-go's `nextgen` build tag.
 nextgen = []
+# Evaluate client-go's failpoints (`tikvclient/...`) in production code paths.
+failpoints = ["fail/failpoints"]
 
 [lib]
 name = "tikv_client"

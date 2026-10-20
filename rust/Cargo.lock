@@ -3705,6 +3705,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "chrono-tz",
+ "fail",
  "serde_json",
  "tidb-codec",
  "tidb-config",

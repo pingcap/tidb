@@ -1010,10 +1010,28 @@ macro_rules! shardable_range {
 /// never re-splits it. When the cache no longer holds that region at that
 /// epoch, the shard answers client-go's pseudo `EpochNotMatch` (`getRPCContext`
 /// found no region), and the caller rebuilds its work over the new regions.
+/// A request client-go sends with `SendReq` to one region: the sender
+/// addresses it by setting its context's region id and epoch.
+#[doc(hidden)]
+pub trait RegionPinned: Shardable<Shard = ()> {
+    fn pin_region(&mut self, region: &crate::region::RegionVerId);
+}
+
 #[doc(hidden)]
 #[macro_export]
 macro_rules! region_pinned {
     ($type_: ty) => {
+        impl $crate::request::RegionPinned for $type_ {
+            fn pin_region(&mut self, region: &$crate::region::RegionVerId) {
+                let context = self.context.get_or_insert_with(Default::default);
+                context.region_id = region.id;
+                context.region_epoch = Some($crate::proto::metapb::RegionEpoch {
+                    conf_ver: region.conf_ver,
+                    version: region.ver,
+                });
+            }
+        }
+
         impl Shardable for $type_ {
             type Shard = ();
 

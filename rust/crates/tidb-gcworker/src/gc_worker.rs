@@ -1740,10 +1740,10 @@ impl GcJobContext {
     /// Go `doGCForRegion`: `Ok(Some(region error))`, or an error, never both.
     pub(crate) fn do_gc_for_region(
         &self,
-        region_key: &[u8],
         safe_point: u64,
-    ) -> GcResult<Option<String>> {
-        self.deps.kv.gc_region(region_key, safe_point)
+        region: &tikv_client::RegionVerId,
+    ) -> GcResult<Option<tikv_client::proto::errorpb::Error>> {
+        self.deps.kv.gc_region(region, safe_point)
     }
 
     /// Go `checkLeader`: renews this worker's lease, or takes over an expired

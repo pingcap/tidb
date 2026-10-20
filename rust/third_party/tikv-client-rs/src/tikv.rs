@@ -1298,6 +1298,35 @@ impl<PdC: PdClient> KvStore<PdC> {
         self.inner.pd_client()
     }
 
+    /// client-go `KVStore.SendReq(bo, req, regionID, timeout)`: `request` to
+    /// the region `region`, through the region sender (replica selection,
+    /// send failures and the sender's own region errors retried within
+    /// `backoffer`). A region error the caller must handle -- the region split
+    /// or moved, or the cache no longer holds it -- comes back as
+    /// [`Error::RegionError`], applied to the region cache, for the caller to
+    /// locate again; client-go returns it in the response.
+    pub async fn send_req<Req>(
+        &self,
+        backoffer: crate::retry::RetryBackoffer,
+        mut request: Req,
+        region: &crate::region::RegionVerId,
+        timeout: Duration,
+    ) -> Result<Req::Response>
+    where
+        Req: crate::request::KvRequest + crate::request::RegionPinned,
+        Req::Response: crate::store::HasRegionError,
+    {
+        request.pin_region(region);
+        crate::region_request::send_req(
+            self.pd_client(),
+            self.inner.keyspace(),
+            request,
+            backoffer,
+            timeout,
+        )
+        .await
+    }
+
     /// client-go `KVStore.GetTiKVClient().SendRequest(ctx, addr, req,
     /// timeout)`: one request to the TiKV store at `address`, outside any
     /// region routing (store-level commands such as `UnsafeDestroyRange`).
@@ -2931,6 +2960,55 @@ mod tests {
                 resolve_lock_concurrency: 5,
                 write_throttle_ratio: 0.25,
             }
+        );
+    }
+
+    /// client-go `KVStore.SendReq`: a request addressed to a region by its
+    /// version reaches that region; once the region splits, the old version
+    /// is no longer the cache's, and the caller gets the pseudo epoch mismatch
+    /// to locate again (`doGCForRegion` over a split region).
+    #[tokio::test]
+    async fn send_req_addresses_a_region_by_its_version() {
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let store = KvStore::new_with_pd_client(
+            Arc::new(pd),
+            Arc::new(MockSafePointKv::new()),
+            Config::default(),
+        )
+        .await
+        .unwrap();
+        let backoffer =
+            || crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000);
+        let gc = || kvrpcpb::GcRequest {
+            safe_point: 1,
+            ..Default::default()
+        };
+
+        let region = store
+            .pd_client()
+            .region_for_key(&Key::from(b"k".to_vec()))
+            .await
+            .unwrap()
+            .ver_id();
+        let response = store
+            .send_req(backoffer(), gc(), &region, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert!(response.region_error.is_none() && response.error.is_none());
+
+        let stale = crate::region::RegionVerId {
+            ver: region.ver + 1,
+            ..region
+        };
+        let error = store
+            .send_req(backoffer(), gc(), &stale, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::RegionError(e) if e.epoch_not_match.is_some()),
+            "{error:?}"
         );
     }
 

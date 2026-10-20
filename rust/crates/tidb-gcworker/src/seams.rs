@@ -149,8 +149,13 @@ pub trait GcKvClient: Send + Sync {
         scan_limit: u32,
     ) -> Box<dyn ResolveLocksRunner + '_>;
     /// Go `doGCForRegion`'s `SendReq(bo, CmdGC, region, gcTimeout)`: the
-    /// region error's text, or `Ok(None)` on success.
-    fn gc_region(&self, region_key: &[u8], safe_point: u64) -> GcResult<Option<String>>;
+    /// region error the caller must handle, or `Ok(None)` on success, or an
+    /// error, never both.
+    fn gc_region(
+        &self,
+        region: &tikv_client::RegionVerId,
+        safe_point: u64,
+    ) -> GcResult<Option<tikv_client::proto::errorpb::Error>>;
 }
 
 /// The internal session Go's `createSession` returns (`sessionapi.Session`
