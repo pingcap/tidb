@@ -255,12 +255,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			if tblInfo.MaterializedViewLog != nil {
 				mlogIDs = append(mlogIDs, tblInfo.ID)
 			}
-			allDroppedTableIDs = append(allDroppedTableIDs, tblInfo.ID)
-			if partitionInfo := tblInfo.GetPartitionInfo(); partitionInfo != nil {
-				for _, part := range partitionInfo.Definitions {
-					allDroppedTableIDs = append(allDroppedTableIDs, part.ID)
-				}
-			}
+			allDroppedTableIDs = appendPhysicalTableIDs(allDroppedTableIDs, tblInfo)
 			return nil
 		})
 		if err != nil {
@@ -491,11 +486,18 @@ func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*mod
 func getIDs(tables []*model.TableInfo) []int64 {
 	ids := make([]int64, 0, len(tables))
 	for _, t := range tables {
-		ids = append(ids, t.ID)
-		if t.GetPartitionInfo() != nil {
-			ids = append(ids, getPartitionIDs(t)...)
-		}
+		ids = appendPhysicalTableIDs(ids, t)
 	}
 
 	return ids
+}
+
+func appendPhysicalTableIDs(dst []int64, tblInfo *model.TableInfo) []int64 {
+	dst = append(dst, tblInfo.ID)
+	if partitionInfo := tblInfo.GetPartitionInfo(); partitionInfo != nil {
+		for _, part := range partitionInfo.Definitions {
+			dst = append(dst, part.ID)
+		}
+	}
+	return dst
 }
