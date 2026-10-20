@@ -1115,3 +1115,168 @@ mod tests {
         );
     }
 }
+
+/// client-go `RegionRequestSender.SendReq`: sends `request` to the region its
+/// context names, choosing the replica, retrying send failures and the
+/// region errors the sender handles itself (a new leader, a busy server, a
+/// stale command), and applying the rest to the region cache before
+/// returning them as [`Error::RegionError`] -- an epoch mismatch, a missing
+/// region, a key outside it -- so the caller rebuilds its work, as client-go's
+/// callers do with the response's region error.
+pub async fn send_req<PdC, Req>(
+    pd_client: std::sync::Arc<PdC>,
+    keyspace: crate::request::Keyspace,
+    request: Req,
+    backoffer: crate::retry::RetryBackoffer,
+) -> crate::Result<Req::Response>
+where
+    PdC: crate::pd::PdClient,
+    Req: crate::request::KvRequest + crate::request::Shardable<Shard = ()>,
+    Req::Response: crate::store::HasRegionError,
+{
+    use crate::request::Plan;
+
+    let mut responses = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+        .retry_region_request(backoffer)
+        .plan()
+        .execute()
+        .await?;
+    match (responses.pop(), responses.is_empty()) {
+        (Some(response), true) => response,
+        _ => Err(Error::StringError(
+            "a region request answered other than once".to_owned(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod send_req_tests {
+    use std::any::Any;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::Arc;
+
+    use super::send_req;
+    use crate::mock::{MockKvClient, MockPdClient};
+    use crate::proto::{coprocessor, errorpb, kvrpcpb, metapb};
+    use crate::request::Keyspace;
+    use crate::Error;
+
+    fn request_to_region1(version: u64) -> coprocessor::Request {
+        coprocessor::Request {
+            context: Some(kvrpcpb::Context {
+                region_id: 1,
+                region_epoch: Some(metapb::RegionEpoch {
+                    conf_ver: 0,
+                    version,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn client(
+        answer: impl Fn(usize) -> coprocessor::Response + Send + Sync + 'static,
+    ) -> (Arc<MockPdClient>, Arc<AtomicUsize>) {
+        let sent = Arc::new(AtomicUsize::new(0));
+        let counter = sent.clone();
+        let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                assert!(request.downcast_ref::<coprocessor::Request>().is_some());
+                let attempt = counter.fetch_add(1, AtomicOrdering::SeqCst);
+                Ok(Box::new(answer(attempt)) as Box<dyn Any>)
+            },
+        )));
+        (pd, sent)
+    }
+
+    fn region_error(error: errorpb::Error) -> coprocessor::Response {
+        coprocessor::Response {
+            region_error: Some(error),
+            ..Default::default()
+        }
+    }
+
+    /// client-go's sender retries a busy server itself; the caller sees the
+    /// answer.
+    #[tokio::test]
+    async fn the_sender_retries_the_region_errors_it_owns() {
+        let (pd, sent) = client(|attempt| {
+            if attempt == 0 {
+                region_error(errorpb::Error {
+                    server_is_busy: Some(errorpb::ServerIsBusy::default()),
+                    ..Default::default()
+                })
+            } else {
+                coprocessor::Response {
+                    data: b"rows".to_vec().into(),
+                    ..Default::default()
+                }
+            }
+        });
+        let response = send_req(
+            pd,
+            Keyspace::Disable,
+            request_to_region1(0),
+            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(&response.data[..], b"rows");
+        assert_eq!(sent.load(AtomicOrdering::SeqCst), 2);
+    }
+
+    /// client-go `getRPCContext` finds no cached region at the request's
+    /// epoch: the sender answers a pseudo `EpochNotMatch` without sending.
+    #[tokio::test]
+    async fn a_region_the_cache_no_longer_holds_is_an_epoch_mismatch() {
+        let (pd, sent) = client(|_| coprocessor::Response::default());
+        let error = send_req(
+            pd,
+            Keyspace::Disable,
+            request_to_region1(5),
+            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&error, Error::RegionError(e) if e.epoch_not_match.is_some()),
+            "{error:?}"
+        );
+        assert_eq!(sent.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    /// An epoch mismatch from the store is the caller's to handle: it comes
+    /// back after one send, for the caller to rebuild its tasks.
+    #[tokio::test]
+    async fn a_stores_epoch_mismatch_returns_to_the_caller() {
+        let (pd, sent) = client(|_| {
+            region_error(errorpb::Error {
+                epoch_not_match: Some(errorpb::EpochNotMatch {
+                    current_regions: vec![metapb::Region {
+                        id: 1,
+                        region_epoch: Some(metapb::RegionEpoch {
+                            conf_ver: 0,
+                            version: 1,
+                        }),
+                        ..Default::default()
+                    }],
+                }),
+                ..Default::default()
+            })
+        });
+        let error = send_req(
+            pd,
+            Keyspace::Disable,
+            request_to_region1(0),
+            crate::retry::RetryBackoffer::new(crate::async_util::Cancellation::default(), 1_000),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&error, Error::RegionError(e) if e.epoch_not_match.is_some()),
+            "{error:?}"
+        );
+        assert_eq!(sent.load(AtomicOrdering::SeqCst), 1);
+    }
+}

@@ -1026,6 +1026,37 @@ impl RegionRetryState for RetryBackoffer {
     }
 }
 
+/// client-go's `Backoffer` as `RegionRequestSender.SendReq` uses it: a
+/// region error the sender does not handle itself goes back to the caller
+/// instead of re-planning the request, as `onRegionError` answers
+/// `retry = false`.
+#[derive(Clone)]
+pub(crate) struct SenderBackoffer(pub(crate) RetryBackoffer);
+
+#[async_trait]
+impl RegionRetryState for SenderBackoffer {
+    async fn backoff(&mut self, config: RetryConfig, reason: String) -> Result<bool> {
+        RegionRetryState::backoff(&mut self.0, config, reason).await
+    }
+
+    fn fork(&self) -> (Self, Cancellation) {
+        let (forked, cancellation) = RetryBackoffer::fork(&self.0);
+        (Self(forked), cancellation)
+    }
+
+    fn update_using_forked(&mut self, forked: &Self) {
+        RetryBackoffer::update_using_forked(&mut self.0, &forked.0);
+    }
+
+    fn retries_terminal_region_errors(&self) -> bool {
+        false
+    }
+
+    fn is_cancelled(&self) -> bool {
+        RetryBackoffer::is_cancelled(&self.0)
+    }
+}
+
 #[allow(private_bounds)]
 pub struct RetryableMultiRegion<P: Plan, PdC: PdClient, R: RegionRetryState = Backoff> {
     pub(super) inner: P,

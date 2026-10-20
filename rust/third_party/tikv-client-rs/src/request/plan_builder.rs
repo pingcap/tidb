@@ -868,6 +868,19 @@ where
         self.make_retry_multi_region(backoff, false)
     }
 
+    /// client-go `RegionRequestSender.SendReq`'s retry: the sender's own
+    /// region errors are retried, the rest return to the caller.
+    pub(crate) fn retry_region_request(
+        self,
+        backoff: RetryBackoffer,
+    ) -> PlanBuilder<
+        PdC,
+        RetryableMultiRegion<P, PdC, crate::request::plan::SenderBackoffer>,
+        Targetted,
+    > {
+        self.make_retry_multi_region(crate::request::plan::SenderBackoffer(backoff), false)
+    }
+
     /// Share one client-go cumulative Backoffer across mutation region retries
     /// and the nested lock-resolution plan.
     pub(crate) fn retry_multi_region_with_source_retry_owner(

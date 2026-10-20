@@ -1004,6 +1004,57 @@ macro_rules! shardable_range {
     };
 }
 
+/// The shard of a request addressed to one region, as client-go's
+/// `RegionRequestSender.SendReq(bo, req, regionID, timeout)` addresses it:
+/// the region its context names (`region_id` and `region_epoch`). The sender
+/// never re-splits it. When the cache no longer holds that region at that
+/// epoch, the shard answers client-go's pseudo `EpochNotMatch` (`getRPCContext`
+/// found no region), and the caller rebuilds its work over the new regions.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! region_pinned {
+    ($type_: ty) => {
+        impl Shardable for $type_ {
+            type Shard = ();
+
+            fn shards(
+                &self,
+                pd_client: &Arc<impl $crate::pd::PdClient>,
+            ) -> BoxStream<'static, $crate::Result<(Self::Shard, $crate::region::RegionWithLeader)>>
+            {
+                let context = self.context.clone().unwrap_or_default();
+                let pd_client = pd_client.clone();
+                futures::stream::once(async move {
+                    let region = pd_client.region_for_id(context.region_id).await?;
+                    if region.region.region_epoch != context.region_epoch {
+                        return Err($crate::Error::RegionError(Box::new(
+                            $crate::proto::errorpb::Error {
+                                message: "region missing in cache".to_owned(),
+                                epoch_not_match: Some(
+                                    $crate::proto::errorpb::EpochNotMatch::default(),
+                                ),
+                                ..Default::default()
+                            },
+                        )));
+                    }
+                    Ok(((), region))
+                })
+                .boxed()
+            }
+
+            fn apply_shard(&mut self, _shard: Self::Shard) {}
+
+            fn apply_store(&mut self, store: &$crate::store::RegionStore) -> $crate::Result<()> {
+                self.set_leader(&store.request_region())?;
+                self.set_replica_read(store.is_replica_read());
+                self.set_stale_read(store.stale_read);
+                self.set_busy_threshold_ms(store.busy_threshold_ms);
+                Ok(())
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod test {
     use rand::thread_rng;

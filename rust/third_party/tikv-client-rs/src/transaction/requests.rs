@@ -22,6 +22,7 @@ use crate::proto::kvrpcpb::{self};
 use crate::proto::pdpb::Timestamp;
 use crate::range_request;
 use crate::region::RegionWithLeader;
+use crate::region_pinned;
 use crate::request::Collect;
 use crate::request::CollectSingle;
 use crate::request::CollectWithShard;
@@ -2278,6 +2279,10 @@ impl KvRequest for crate::proto::coprocessor::Request {
         Ok(())
     }
 }
+
+// client-go's coprocessor builds its own region tasks and sends each with
+// `SendReq` to the task's region.
+region_pinned!(crate::proto::coprocessor::Request);
 
 impl HasLocks for crate::proto::coprocessor::Response {
     fn take_locks(&mut self) -> Vec<kvrpcpb::LockInfo> {
