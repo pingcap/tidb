@@ -76,6 +76,21 @@ func TestCreateRestoreMVSession(t *testing.T) {
 	for _, name := range names {
 		require.Equal(t, before[name], sessionVar(name))
 	}
+
+	// The variables are restored even if the session has not read them before.
+	sessCtx = mock.NewContext()
+	sessVars = sessCtx.GetSessionVars()
+	restore, err = initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
+	require.NoError(t, err)
+	restore()
+	defaultVars := mock.NewContext().GetSessionVars()
+	for _, name := range names {
+		value, err := defaultVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		require.NoError(t, err)
+		require.Equal(t, value, sessionVar(name))
+	}
+	require.Equal(t, defaultVars.SQLMode, sessVars.SQLMode)
+	require.Equal(t, defaultVars.DivPrecisionIncrement, sessVars.DivPrecisionIncrement)
 }
 
 func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {

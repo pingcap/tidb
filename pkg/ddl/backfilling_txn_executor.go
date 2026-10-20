@@ -237,9 +237,12 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	divPrecisionIncrement := sv.DivPrecisionIncrement
 	vars := make(map[string]string, 3)
 	for _, name := range []string{vardef.SQLModeVar, vardef.TimeZone, vardef.DivPrecisionIncrement} {
-		if val, ok := sv.GetSystemVar(name); ok {
-			vars[name] = val
+		val, err := sv.GetSessionOrGlobalSystemVar(context.Background(), name)
+		if err != nil {
+			logutil.DDLLogger().Warn("get session variable failed", zap.String("name", name), zap.Error(err))
+			continue
 		}
+		vars[name] = val
 	}
 	var timezone *time.Location
 	if sv.TimeZone != nil {
@@ -258,6 +261,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 			}
 		}
 		uv.RowEncoder.Enable = rowEncoder
+		// The fields of an internal session may differ from its variables.
 		uv.SQLMode = sqlMode
 		uv.DivPrecisionIncrement = divPrecisionIncrement
 		uv.TimeZone = timezone
