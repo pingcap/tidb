@@ -39,6 +39,10 @@ pub trait AnalyzeService {
         statement: &AnalyzeStatement,
         historical_stats_enabled: bool,
     ) -> Result<ClusterAnalyzeReport, DriverError>;
+    /// Go `AnalyzeExec.Next`'s closing `statsHandle.Update(ctx, infoSchema,
+    /// tableAndPartitionIDs...)` over every analyzed table's physical ids;
+    /// its failure is the statement's error.
+    fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), DriverError>;
     /// Publishes a temporary table's statistics, which the session analyzed
     /// itself (its rows live in the session's overlay).
     fn publish_temporary_table_stats(&self, table_id: i64, statistics: Arc<tidb_stats::Table>);
@@ -71,6 +75,7 @@ impl Session {
         let memory_quota = self.analyze_memory_quota();
         self.begin_routed_statement_warnings();
         let mut successful_table_ids = BTreeSet::new();
+        let mut cache_update_physical_ids: Option<Vec<i64>> = None;
         for statement in tables {
             let mut statement = self.analyze_statement_with_session_options(statement);
             statement.options.memory_quota = memory_quota;
@@ -87,6 +92,9 @@ impl Session {
             let report = analyzed?;
             self.append_analyze_report_warnings(statement, &report);
             successful_table_ids.extend(report.historical_stats_table_ids());
+            cache_update_physical_ids
+                .get_or_insert_with(Vec::new)
+                .extend_from_slice(report.cache_update_physical_ids());
         }
         // Go collects `results.TableID.GetStatisticsID()` only from successful
         // results and enqueues that set after every save worker has finished.
@@ -94,6 +102,12 @@ impl Session {
             for table_id in successful_table_ids {
                 service.dump_historical_stats(table_id);
             }
+        }
+        // Go ends `AnalyzeExec.Next` with `return statsHandle.Update(...)`, so
+        // a failed cache update fails the statement although every table's
+        // statistics are already stored. Temporary tables never reach it.
+        if let Some(physical_ids) = cache_update_physical_ids {
+            service.update_stats_cache(&physical_ids)?;
         }
         Ok(())
     }

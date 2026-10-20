@@ -120,6 +120,18 @@ pub fn pretty_write_key(key: &[u8]) -> (String, String) {
     (String::new(), format!("[]byte{{{values}}}"))
 }
 
+/// Go `prettyWriteKey` over a `kvrpcpb.WriteConflict` key field. An empty
+/// field is Go's nil slice -- proto3 never encodes an empty `bytes` field, and
+/// client-go's early prewrite conflict (`NewErrWriteConflictWithArgs`) leaves
+/// `Primary` unset -- so its `%#v` fallback prints `[]byte(nil)`, not the
+/// `[]byte{}` of a decoded empty slice.
+fn pretty_write_conflict_key(key: &[u8]) -> (String, String) {
+    if key.is_empty() {
+        return (String::new(), "[]byte(nil)".to_owned());
+    }
+    pretty_write_key(key)
+}
+
 /// Extracts and formats the byte-array key embedded in `TxnLockNotFound` text.
 ///
 /// Nonmatching or malformed retry messages return an empty diagnostic.
@@ -245,8 +257,8 @@ impl WriteConflictArgs {
     /// Go `newWriteConflictError(conflict)` under `redaction`.
     #[must_use]
     pub fn new(conflict: &WriteConflict, redaction: Redaction) -> Self {
-        let (key_table_id, key_rest) = pretty_write_key(&conflict.key);
-        let (primary_table_id, primary_rest) = pretty_write_key(&conflict.primary);
+        let (key_table_id, key_rest) = pretty_write_conflict_key(&conflict.key);
+        let (primary_table_id, primary_rest) = pretty_write_conflict_key(&conflict.primary);
         let key_rest = format!("{key_rest}, originalKey={}, primary=", hex(&conflict.key));
         let primary_rest = format!(
             "{primary_rest}, originalPrimaryKey={}",

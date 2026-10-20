@@ -87,6 +87,14 @@ pub trait ClusterAnalyze: Send + Sync {
         jobs: &dyn AnalyzeJobLifecycle,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError>;
 
+    /// Go `AnalyzeExec.Next`'s closing `statsHandle.Update(ctx, infoSchema,
+    /// tableAndPartitionIDs...)`: once per statement, after every table's
+    /// results are saved, over the physical ids of all of them. Its failure
+    /// is the statement's error.
+    fn update_stats_cache(&self, _physical_ids: Vec<i64>) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
+
     /// Loads one client-transferred JSON statistics dump into cluster storage.
     fn load_stats(
         &self,
@@ -259,10 +267,12 @@ where
         ) {
             report.option_save_warning = Some(error.to_string());
         }
-        if let Err(error) = self.refresh_stats(report.cache_update_physical_ids().to_vec()) {
-            warn_reload_failed(&error);
-        }
         Ok(report)
+    }
+
+    fn update_stats_cache(&self, physical_ids: Vec<i64>) -> Result<(), SqlQueryError> {
+        self.refresh_stats(physical_ids)
+            .map_err(SqlQueryError::unknown)
     }
 
     fn load_stats(
@@ -286,8 +296,9 @@ where
             self.row_ids.as_ref(),
         )
         .map_err(cluster_load_stats_error)?;
-        // Unlike ANALYZE, pinned Go returns `StatsHandle.Update` failure from
-        // `LoadStatsFromJSON`; durable writes do not turn this into a warning.
+        // As after ANALYZE, pinned Go returns `StatsHandle.Update` failure
+        // from `LoadStatsFromJSON`; durable writes do not turn this into a
+        // warning.
         self.refresh_stats(report.physical_ids().to_vec())
             .map_err(SqlQueryError::unknown)?;
         Ok(report)
@@ -313,11 +324,4 @@ fn cluster_load_stats_error(error: ClusterLoadStatsCommitError) -> SqlQueryError
         ClusterLoadStatsCommitError::Commit(error) => crate::sql_node::lock_sql_error(&error),
         ClusterLoadStatsCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
-}
-
-fn warn_reload_failed(error: &str) {
-    eprintln!(
-        "{{\"event\":\"stats_reload_after_analyze_failed\",\"level\":\"warning\",\"error\":{}}}",
-        serde_json::to_string(error).unwrap_or_else(|_| "\"unprintable\"".to_owned())
-    );
 }

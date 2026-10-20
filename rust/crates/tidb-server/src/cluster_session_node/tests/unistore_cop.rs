@@ -2525,6 +2525,13 @@ impl crate::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
             jobs,
         )
     }
+
+    fn update_stats_cache(
+        &self,
+        physical_ids: Vec<i64>,
+    ) -> Result<(), crate::sql_node::SqlQueryError> {
+        self.inner.update_stats_cache(physical_ids)
+    }
 }
 
 /// Kills the running auto-analyze through SQL `KILL QUERY`, by the process ID
@@ -2570,6 +2577,13 @@ impl crate::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
             historical_stats_enabled,
             jobs,
         )
+    }
+
+    fn update_stats_cache(
+        &self,
+        physical_ids: Vec<i64>,
+    ) -> Result<(), crate::sql_node::SqlQueryError> {
+        self.inner.update_stats_cache(physical_ids)
     }
 }
 
@@ -15727,6 +15741,138 @@ fn prepared_execute_is_summarized_under_the_prepared_text() {
     session
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
         .unwrap();
+}
+
+/// Go `handlePessimisticSelectForUpdate` drains the rows and takes the locks
+/// inside `ExecStmt.Exec`, so a lock that fails after the drain is an `Exec`
+/// error: `runStmt` finishes the statement with it (`FinishExecuteStmt`), and
+/// the summary counts one execution with one error. The port dropped the
+/// drained record set without closing it, so the statement never finished.
+#[test]
+fn failed_select_for_update_lock_finishes_the_statement() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1131)).unwrap();
+    session.execute_write("USE test").unwrap();
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
+        .unwrap();
+    rows(&mut session, "CREATE TABLE lock_summary (id int, v int)");
+    rows(&mut session, "INSERT INTO lock_summary VALUES (1, 10)");
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT v FROM lock_summary WHERE v > 0 FOR UPDATE"
+        )),
+        [["10"]]
+    );
+    let mut contender = stack.factory.open_session(session_context(1132)).unwrap();
+    contender.execute_write("USE test").unwrap();
+    contender.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert!(matches!(
+        contender.execute("SELECT v FROM lock_summary WHERE v > 0 FOR UPDATE NOWAIT"),
+        Err(error) if error.code == 3572
+    ));
+    contender.control_transaction("ROLLBACK").unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT exec_count, sum_errors FROM information_schema.statements_summary \
+             WHERE digest_text LIKE '%lock_summary%for update nowait'",
+        )),
+        [["1", "1"]]
+    );
+    session
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
+        .unwrap();
+}
+
+/// Delegates the analysis and fails the statement's closing cache update.
+struct FailingStatsCacheUpdate {
+    inner: Arc<dyn crate::cluster_analyze_seam::ClusterAnalyze>,
+    updated: Arc<std::sync::Mutex<Vec<i64>>>,
+}
+
+impl crate::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
+    fn execute(
+        &self,
+        statement: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        resource_group: &str,
+        approximate_counts: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        killer: &tidb_util::sqlkiller::SqlKiller,
+        historical_stats_enabled: &dyn Fn() -> bool,
+        jobs: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
+    {
+        self.inner.execute(
+            statement,
+            resource_group,
+            approximate_counts,
+            killer,
+            historical_stats_enabled,
+            jobs,
+        )
+    }
+
+    fn update_stats_cache(
+        &self,
+        physical_ids: Vec<i64>,
+    ) -> Result<(), crate::sql_node::SqlQueryError> {
+        self.updated.lock().unwrap().extend(physical_ids);
+        Err(crate::sql_node::SqlQueryError::unknown(
+            "statistics cache update failed",
+        ))
+    }
+}
+
+/// Go `AnalyzeExec.Next` ends in `return statsHandle.Update(ctx, infoSchema,
+/// tableAndPartitionIDs...)`: one update after every table is saved, whose
+/// failure is the statement's error although the statistics are stored. The
+/// port refreshed per table and only logged the failure.
+#[test]
+fn failed_stats_cache_update_fails_the_analyze_statement() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1133)).unwrap();
+    session.execute_write("USE test").unwrap();
+    rows(&mut session, "CREATE TABLE analyze_update_a (a INT)");
+    rows(&mut session, "CREATE TABLE analyze_update_b (a INT)");
+    rows(&mut session, "INSERT INTO analyze_update_a VALUES (1), (2)");
+    rows(&mut session, "INSERT INTO analyze_update_b VALUES (3)");
+    let updated = Arc::new(std::sync::Mutex::new(Vec::new()));
+    session.analyze = Arc::new(FailingStatsCacheUpdate {
+        inner: Arc::clone(&session.analyze),
+        updated: Arc::clone(&updated),
+    });
+    let error = session
+        .execute("ANALYZE TABLE analyze_update_a, analyze_update_b")
+        .err()
+        .expect("the cache update failure is the statement's error");
+    assert_eq!(error.message, "statistics cache update failed");
+    let ids = displayed(rows(
+        &mut session,
+        "SELECT tidb_table_id FROM information_schema.tables \
+         WHERE table_name IN ('analyze_update_a', 'analyze_update_b') ORDER BY table_name",
+    ));
+    assert_eq!(
+        *updated.lock().unwrap(),
+        ids.iter()
+            .map(|row| row[0].parse::<i64>().unwrap())
+            .collect::<Vec<_>>(),
+        "one update over both tables, after both are analyzed"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(DISTINCT table_id) FROM mysql.stats_histograms \
+                 WHERE table_id IN ({}, {})",
+                ids[0][0], ids[1][0]
+            ),
+        )),
+        [["2"]],
+        "both tables' statistics are stored"
+    );
 }
 
 /// Go's statement warnings are one buffer in order of occurrence: the casts

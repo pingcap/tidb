@@ -1738,6 +1738,10 @@ mod tests {
         sink.write(&vec![b'c'; max - 4]).unwrap();
         assert_eq!(backups(), 1);
         assert_eq!(std::fs::metadata(&filename).unwrap().len(), max as u64);
+        // Backup names carry milliseconds (lumberjack's backupTimeFormat): a
+        // second rotation in the same millisecond reuses the first backup's
+        // name, as lumberjack's own does, so let the clock move on.
+        std::thread::sleep(std::time::Duration::from_millis(2));
         sink.write(b"d").unwrap();
         assert_eq!(backups(), 2, "size + len > max rotates");
 

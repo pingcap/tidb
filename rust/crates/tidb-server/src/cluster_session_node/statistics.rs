@@ -430,6 +430,12 @@ impl tidb_session::analyze_service::AnalyzeService for ClusterAnalyzeService {
         Ok(report)
     }
 
+    fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
+        self.analyze
+            .update_stats_cache(physical_ids.to_vec())
+            .map_err(into_driver_error)
+    }
+
     fn publish_temporary_table_stats(&self, table_id: i64, statistics: Arc<tidb_stats::Table>) {
         self.stats.publish_analyzed_table(table_id, statistics);
     }

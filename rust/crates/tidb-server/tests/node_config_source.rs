@@ -596,6 +596,59 @@ fn static_table_options_cannot_select_an_alternate_sql_engine() {
     }
 }
 
+/// Go `Server.Run` returns the status listener's bind error
+/// (`startStatusHTTP`) and `main` exits through `terror.MustNil`; the
+/// embedded-store node must not keep serving SQL without its status port.
+#[test]
+fn unistore_node_exits_when_the_status_port_cannot_bind() {
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let status_port = occupied.local_addr().unwrap().port().to_string();
+    let base = std::env::temp_dir().join(format!("tidb-server-status-bind-{}", std::process::id()));
+    let file = ConfigFile::write("status_bind", &format!("tmp-storage-path = {base:?}\n"));
+    let users = ConfigFile::write("status_bind_users", "root\t%\tmysql_native_password\t\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&users.0, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let stderr_path = base.with_extension("stderr");
+    let stderr = std::fs::File::create(&stderr_path).unwrap();
+    // With no log file configured, Go's logger writes to stdout.
+    let stdout_path = base.with_extension("stdout");
+    let stdout = std::fs::File::create(&stdout_path).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+        .args(["--store", "unistore", "--host", "127.0.0.1", "-P", "0"])
+        .args(["--status-host", "127.0.0.1", "--status", &status_port])
+        .args(["--auth-file", users.0.to_str().unwrap()])
+        .args(["--config", file.0.to_str().unwrap()])
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn()
+        .expect("start tidb-server");
+    let deadline = std::time::Instant::now() + Duration::from_secs(180);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let log = std::fs::read_to_string(&stderr_path).unwrap_or_default()
+        + &std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&stderr_path);
+    let _ = std::fs::remove_file(&stdout_path);
+    let _ = std::fs::remove_dir_all(&base);
+    drop(occupied);
+    let status = status.unwrap_or_else(|| panic!("the node kept running:\n{log}"));
+    assert!(!status.success(), "{status:?}\n{log}");
+    // Go `startStatusHTTP`'s "listen failed" line.
+    assert!(log.contains("[\"listen failed\"]"), "{log}");
+}
+
 #[test]
 fn legacy_cluster_session_flag_does_not_change_the_session_owner() {
     let ordinary = NodeConfig::parse(required()).unwrap();

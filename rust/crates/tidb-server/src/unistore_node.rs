@@ -444,8 +444,9 @@ pub(crate) fn run_unistore_cluster_session(
         .map_err(RunConfiguredNodeError::Node)?;
     // Go starts the status HTTP server beside the SQL listener
     // (`cfg.Status.ReportStatus`, default true); `/status` is the first
-    // thing `main_test.go` and every health probe reads. A failed bind
-    // logs and continues, as Go's does.
+    // thing `main_test.go` and every health probe reads. A failed bind ends
+    // the boot: Go `Server.Run` returns the `startStatusHTTP` error and
+    // `main` exits through `terror.MustNil`.
     let _status_server = if config.report_status {
         let schema_factory = Arc::clone(&factory);
         crate::log_status_listen(&config.status_host, config.status_port);
@@ -465,7 +466,9 @@ pub(crate) fn run_unistore_cluster_session(
             Ok(server) => Some(server),
             Err(error) => {
                 crate::log_status_listen_failed(&error);
-                None
+                return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+                    error.to_string(),
+                )));
             }
         }
     } else {

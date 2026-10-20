@@ -183,6 +183,13 @@ mod analyze {
             )))
         }
 
+        fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), DriverError> {
+            self.0
+                .borrow_mut()
+                .push(format!("update {}", physical_ids.len()));
+            Ok(())
+        }
+
         fn publish_temporary_table_stats(
             &self,
             _table_id: i64,

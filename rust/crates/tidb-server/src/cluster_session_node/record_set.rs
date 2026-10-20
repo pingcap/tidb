@@ -205,6 +205,11 @@ impl ClusterServerSession {
                 .is_some_and(|transaction| transaction.is_pessimistic());
         let (opened, snapshot) = if buffers_rows || shape == StatementReadShape::AutocommitWrite {
             let prelock_keys = self.bind_statement_prelocks(shape, bind_prelock_keys);
+            // The drained record set of the latest attempt stays here, outside
+            // the attempt loop, until the statement's outcome is known: a step
+            // after the drain (the pessimistic lock) can still fail the
+            // statement, and only this owner can close it with that error.
+            let mut drained: Option<StatementRecordSet> = None;
             let opened = self.with_bound_statement(
                 shape,
                 &prelock_keys,
@@ -212,22 +217,48 @@ impl ClusterServerSession {
                 true,
                 false,
                 |session| {
-                    let mut opened = run(session)?;
-                    if let OpenedStatement::Rows(state) = &mut opened {
-                        if let Err(error) = state.retain_chunks(session) {
-                            let _ = state.close(session);
-                            return Err(map_error(error));
+                    // A lock-conflict retry re-executes: Go closes the losing
+                    // attempt's executor and finishes the statement once.
+                    drained = None;
+                    match run(session)? {
+                        OpenedStatement::Rows(mut state) => {
+                            if let Err(error) = state.retain_chunks(session) {
+                                let _ = state.close(session);
+                                return Err(map_error(error));
+                            }
+                            drained = Some(state);
+                            Ok(None)
                         }
+                        opened => Ok(Some(opened)),
                     }
-                    Ok(opened)
                 },
             );
-            // Go `handlePessimisticSelectForUpdate` drains and locks inside
-            // `ExecStmt.Exec`, so a lock failure (3572 NOWAIT, 1205 timeout,
-            // 1213 deadlock) is an `ExecuteStmt` error Go appends.
             let opened = match opened {
-                Ok(opened) => opened,
-                Err(error) if buffers_rows => return Err(self.record_statement_failure(error)),
+                Ok(Some(opened)) => opened,
+                Ok(None) => OpenedStatement::Rows(
+                    drained
+                        .take()
+                        .expect("a drained attempt left its record set"),
+                ),
+                // Go `handlePessimisticSelectForUpdate` drains and locks
+                // inside `ExecStmt.Exec`, so a lock failure (3572 NOWAIT, 1205
+                // timeout, 1213 deadlock) is an `ExecuteStmt` error: `runStmt`
+                // sees no record set and finishes the statement with it
+                // (`FinishExecuteStmt(txnStartTS, err, false)`), and Go's
+                // `TiDBContext.ExecuteStmt` appends it.
+                Err(error) if buffers_rows => {
+                    if let Some(mut state) = drained.take() {
+                        state.record_error(tidb_executor::DriverError::Mysql(
+                            tidb_executor::MysqlError::from_parts(
+                                error.code,
+                                error.state,
+                                error.message.clone(),
+                            ),
+                        ));
+                        let _ = state.close(&mut self.session);
+                    }
+                    return Err(self.record_statement_failure(error));
+                }
                 Err(error) => return Err(error),
             };
             (opened, None)

@@ -84,3 +84,26 @@ fn empty_json_lock_key_is_valid_and_uses_the_go_byte_fallback() {
         "[]byte{}"
     );
 }
+
+/// client-go's prewrite meets a newer transaction's lock and fails early with
+/// `NewErrWriteConflictWithArgs`, which leaves `Primary` nil; Go's
+/// `prettyWriteKey` prints that nil slice as `[]byte(nil)`. Captured from a Go
+/// tidb-server on TiKV, 2026-10-20.
+#[test]
+fn early_prewrite_conflict_prints_the_nil_primary() {
+    let conflict = WriteConflict {
+        start_ts: 469895874272821254,
+        conflict_ts: 469895874404155395,
+        conflict_commit_ts: 0,
+        key: vec![
+            0x74, 0x80, 0, 0, 0, 0, 0, 0, 0x1c, 0x5f, 0x72, 0x80, 0, 0, 0, 0, 0, 0, 0x14,
+        ],
+        primary: Vec::new(),
+        reason: "Optimistic".into(),
+    };
+    let error = to_tidb_driver_error(&StorageDriverError::WriteConflict {
+        conflict: Some(conflict),
+        redaction: Redaction::Disabled,
+    });
+    assert_eq!(error.to_string(), "[kv:9007]Write conflict, txnStartTS=469895874272821254, conflictStartTS=469895874404155395, conflictCommitTS=0, key={tableID=28, handle=20}, originalKey=74800000000000001c5f728000000000000014, primary=[]byte(nil), originalPrimaryKey=, reason=Optimistic [try again later]");
+}
