@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -27,10 +28,26 @@ import (
 
 type lockCtxTxnManager struct {
 	sessiontxn.TxnManager
-	forUpdateTS uint64
+	readTS            uint64
+	forUpdateTS       uint64
+	readSnapshot      kv.Snapshot
+	forUpdateSnapshot kv.Snapshot
 }
 
+func (m lockCtxTxnManager) GetStmtReadTS() (uint64, error)      { return m.readTS, nil }
 func (m lockCtxTxnManager) GetStmtForUpdateTS() (uint64, error) { return m.forUpdateTS, nil }
+
+func (m lockCtxTxnManager) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	return m.readSnapshot, nil
+}
+
+func (m lockCtxTxnManager) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	return m.forUpdateSnapshot, nil
+}
+
+type mviewSnapshotProbe struct{ kv.Snapshot }
+
+func (*mviewSnapshotProbe) SetOption(int, any) {}
 
 func TestNewLockCtxPropagatesSharedLockUpgrade(t *testing.T) {
 	originalGetTxnManager := sessiontxn.GetTxnManager
@@ -59,4 +76,53 @@ func TestNewLockCtxPropagatesSharedLockUpgrade(t *testing.T) {
 	require.Equal(t, uint64(9527), lockCtx.ForUpdateTS)
 	// DML's effective budget applies even when the SELECT timeout is disabled.
 	require.Equal(t, start.Add(1500*time.Millisecond), lockCtx.MaxExecutionDeadline)
+}
+
+func TestMViewDeltaMergeSnapshotSelection(t *testing.T) {
+	readSnapshot := &mviewSnapshotProbe{}
+	forUpdateSnapshot := &mviewSnapshotProbe{}
+	originalGetTxnManager := sessiontxn.GetTxnManager
+	sessiontxn.GetTxnManager = func(sessionctx.Context) sessiontxn.TxnManager {
+		return lockCtxTxnManager{
+			readTS: 101, forUpdateTS: 202,
+			readSnapshot: readSnapshot, forUpdateSnapshot: forUpdateSnapshot,
+		}
+	}
+	t.Cleanup(func() { sessiontxn.GetTxnManager = originalGetTxnManager })
+
+	for _, tc := range []struct {
+		name     string
+		builder  executorBuilder
+		ts       uint64
+		snapshot kv.Snapshot
+	}{
+		{name: "read", ts: 101, snapshot: readSnapshot},
+		{name: "update", builder: executorBuilder{inUpdateStmt: true}, ts: 202, snapshot: forUpdateSnapshot},
+		{name: "fast_refresh", builder: executorBuilder{inMViewDeltaMergeStmt: true}, ts: 202, snapshot: forUpdateSnapshot},
+	} {
+		b := tc.builder
+		b.sctx = mock.NewContext()
+		t.Run(tc.name+"/timestamp", func(t *testing.T) {
+			ts, err := b.getSnapshotTS()
+			require.NoError(t, err)
+			require.Equal(t, tc.ts, ts)
+		})
+		t.Run(tc.name+"/snapshot", func(t *testing.T) {
+			snapshot, err := b.getSnapshot()
+			require.NoError(t, err)
+			require.Same(t, tc.snapshot, snapshot)
+		})
+	}
+
+	t.Run("explicit_snapshot", func(t *testing.T) {
+		b := executorBuilder{
+			sctx:                  mock.NewContext(),
+			inMViewDeltaMergeStmt: true,
+			forDataReaderBuilder:  true,
+			dataReaderTS:          303,
+		}
+		ts, err := b.getSnapshotTS()
+		require.NoError(t, err)
+		require.Equal(t, uint64(303), ts)
+	})
 }
