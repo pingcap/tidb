@@ -119,6 +119,29 @@ impl<PdC: PdClient> TikvStore<PdC> {
         &self.store
     }
 
+    /// Runs `operation` on the store's runtime from synchronous code -- the
+    /// coprocessor's worker threads, the session's statement thread. A
+    /// caller already on a multi-thread runtime hands its worker back while it
+    /// waits; one on a current-thread runtime waits on a scoped thread.
+    pub fn block_on<F>(&self, operation: F) -> F::Output
+    where
+        F: std::future::Future + Send,
+        F::Output: Send,
+    {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| self.runtime.block_on(operation))
+            }
+            Ok(_) => std::thread::scope(|scope| {
+                scope
+                    .spawn(|| self.runtime.block_on(operation))
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            }),
+            Err(_) => self.runtime.block_on(operation),
+        }
+    }
+
     /// client-go `KVStore.CheckVisibility`.
     pub fn check_visibility(&self, start_ts: u64) -> Result<(), VisibilityError> {
         self.store

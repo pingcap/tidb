@@ -19,6 +19,7 @@ mod cop_read_task_runtime;
 mod direct_unary_query_transport;
 mod forwarding;
 mod lock_recovery;
+mod native_transport;
 mod tikv_rpc_contract;
 mod transport_failure;
 
@@ -33,6 +34,9 @@ pub use direct_unary_query_transport::{
     LockedResponseAction, LockedResponseDelegate, LockedResponseObservation, RegionRetryWaiter,
 };
 pub use lock_recovery::OptimisticLockRecovery;
+pub use native_transport::{
+    CopBackoffer, NativeCopResponse, NativeCopSend, NativeCopStore, NativeCopTransport,
+};
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, build_tikv_unary_request_for_dispatch, decode_tikv_unary_response,
     TikvUnaryRequest,

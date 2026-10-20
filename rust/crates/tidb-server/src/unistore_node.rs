@@ -27,13 +27,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_distsql::cop_paging::DirectUnaryRuntimeConfig;
-use tidb_distsql::DirectUnaryQueryTransport;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_txnkv::driver::tikv_store::{store_runtime, TikvStore};
-use tidb_txnkv::pd_capability::CapabilityTimestampSource;
 use tidb_txnkv::region::RegionCache;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-use tidb_txnkv::{SharedReadAuthority, SharedReadOpener};
+use tidb_txnkv::SharedReadAuthority;
 use tidb_unistore::client::InProcessClient;
 use tidb_unistore::kv_handler::KvHandler;
 use tidb_unistore::mvcc_store::MvccStore;
@@ -63,51 +61,30 @@ fn finish_with_signal_code(
 /// network, so this bounds only local lock waits.
 const IN_PROCESS_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// The transport an in-process session reads through: the SAME
-/// `DirectUnaryQueryTransport` machinery as production, with the embedded
-/// client and the whole-keyspace region plane underneath.
-pub type InProcessReadTransport = DirectUnaryQueryTransport<InProcessClient, InProcessRegionLoader>;
+/// The transport an in-process session reads through: Go's coprocessor over
+/// the node's client-rust store, whose region cache and sender reach the
+/// embedded store through unistore's PD and RPC clients.
+pub type InProcessReadTransport =
+    tidb_distsql::cop_paging::NativeCopTransport<TikvStore<tidb_unistore::mock::StorePdClient>>;
 
 /// The read-session factory over the embedded store, mirror of
 /// `ProductionReadSessionFactory`: cloneable handles only, no lifecycle
 /// ownership, no second worker per session.
 pub struct InProcessReadSessionFactory {
-    read_opener: SharedReadOpener<InProcessClient, InProcessRegionLoader>,
-    lock_timestamp_source: CapabilityTimestampSource<InProcessPd>,
+    tikv_store: Arc<TikvStore<tidb_unistore::mock::StorePdClient>>,
 }
 
 impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
     type Transport = InProcessReadTransport;
 
     fn open_session_transport(&self) -> Result<Self::Transport, String> {
-        // `from_read_authority` builds the BATCH-FIRST transport, which takes
-        // "one BatchCommands attempt before the response-owned synchronous
-        // retry loop". In process there is no BatchCommands transport to
-        // attempt: `InProcessClient::begin` runs the coprocessor inline and
-        // hands back an `ImmediatePending` already holding the answer, and
-        // nothing drives `pending_batches` to collect it. Measured on this
-        // tip -- the handler returns 8 bytes with no error, `try_complete` is
-        // never called, and the attempt burns the whole `IN_PROCESS_TIMEOUT`
-        // before reporting `query deadline exceeded`. Every query carrying an
-        // expression or an aggregate died that way, `select count(*)`
-        // included.
-        //
-        // So this node opens the session itself and takes the SYNCHRONOUS
-        // transport, which is what `async_begin: None` selects. The batch
-        // attempt is not merely unhelpful here; it is unanswerable.
-        let runtime = self
-            .read_opener
-            .open_session()
-            .map_err(|_| "region cache lifecycle".to_owned())?;
-        DirectUnaryQueryTransport::with_shared_runtime(
-            runtime,
+        Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
+            Arc::clone(&self.tikv_store),
             DirectUnaryRuntimeConfig {
                 default_timeout: IN_PROCESS_TIMEOUT,
                 ..DirectUnaryRuntimeConfig::default()
             },
-            self.lock_timestamp_source.clone(),
-        )
-        .map_err(|error| error.to_string())
+        ))
     }
 }
 
@@ -331,6 +308,9 @@ mod transaction_buffer_tests {
     }
 }
 
+/// The transaction half of [`InProcessStack`], for tests that open
+/// transactions over the embedded store.
+#[cfg(test)]
 pub(crate) fn in_process_write_stack() -> Result<
     (
         SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
@@ -339,20 +319,22 @@ pub(crate) fn in_process_write_stack() -> Result<
     ),
     SqlQueryError,
 > {
-    in_process_write_stack_with_regions().map(|(authority, pd, opener, _)| (authority, pd, opener))
+    in_process_stack().map(|stack| (stack.read_authority, stack.pd, stack.opener))
 }
 
-/// [`in_process_write_stack`] with the store's region manager, which the
-/// region cache loads from and `SPLIT` cuts.
-pub(crate) fn in_process_write_stack_with_regions() -> Result<
-    (
-        SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
-        InProcessPd,
-        InProcessOpener,
-        Arc<tidb_unistore::region_manager::InProcessRegionManager>,
-    ),
-    SqlQueryError,
-> {
+/// The embedded node's stores: the transaction stack, the region manager,
+/// and the node's client-rust store (Go `tikvStore`'s `*tikv.KVStore`), which
+/// the coprocessor reads through.
+pub(crate) struct InProcessStack {
+    pub(crate) read_authority: SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
+    pub(crate) pd: InProcessPd,
+    pub(crate) opener: InProcessOpener,
+    pub(crate) regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
+    pub(crate) tikv_store: Arc<TikvStore<tidb_unistore::mock::StorePdClient>>,
+}
+
+/// Builds [`InProcessStack`].
+pub(crate) fn in_process_stack() -> Result<InProcessStack, SqlQueryError> {
     let pd = InProcessPd::new();
     let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
     // Go's unistore store holds THE cluster's mock PD client
@@ -379,7 +361,13 @@ pub(crate) fn in_process_write_stack_with_regions() -> Result<
     )
     .map_err(|error| SqlQueryError::unknown(error.to_string()))?
     .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
-    Ok((read_authority, pd, transaction_opener, regions))
+    Ok(InProcessStack {
+        read_authority,
+        pd,
+        opener: transaction_opener,
+        regions,
+        tikv_store: Arc::new(tikv_store),
+    })
 }
 
 /// Go `mockstore.NewMockStore`'s `tikv.NewTestTiKVStore` over unistore: the
@@ -563,8 +551,13 @@ pub(crate) fn unistore_cluster_session_stack(
     use crate::real_tikv_node::RunConfiguredNodeError;
 
     let engine = RunConfiguredNodeError::Engine;
-    let (read_authority, _pd, opener, regions) =
-        in_process_write_stack_with_regions().map_err(engine)?;
+    let InProcessStack {
+        read_authority,
+        pd: _pd,
+        opener,
+        regions,
+        tikv_store,
+    } = in_process_stack().map_err(engine)?;
     // The store's regions as `SPLIT`, `SHOW TABLE ... REGIONS` and
     // `TABLESAMPLE REGIONS()` reach them.
     let region_cache = read_authority
@@ -647,10 +640,7 @@ pub(crate) fn unistore_cluster_session_stack(
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
-    let transport_factory = Arc::new(InProcessReadSessionFactory {
-        read_opener: read_authority.opener(),
-        lock_timestamp_source: CapabilityTimestampSource(_pd.clone()),
-    });
+    let transport_factory = Arc::new(InProcessReadSessionFactory { tikv_store });
     // This node's own server-info record: the id Go mints with `uuid.New()`
     // for its DDL owner, and the address/ports/labels a peer would read.
     // With no etcd client the syncer publishes nothing and answers reads
