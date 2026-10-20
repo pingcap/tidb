@@ -1150,3 +1150,37 @@ fn statement_context_carries_statement_kv_context() {
         .unwrap();
     assert!(!Arc::ptr_eq(&next, &ru_details));
 }
+
+/// Go records the summary inside `session.ExecuteStmt`
+/// (`ExecStmt.FinishExecuteStmt` -> `SummaryStmt`), before
+/// `TiDBContext.ExecuteStmt` files the failure with `StmtCtx.AppendError`:
+/// a failed statement counts one error and not its own error row as a
+/// warning (infoschema/tables records `2 1 0` for a duplicate-key INSERT),
+/// while SHOW WARNINGS still answers that row.
+#[test]
+fn failed_statement_summary_counts_no_warning_for_its_error_row() {
+    let mut session = Session::new();
+    session.set_user("root@%".into(), "root@localhost".into());
+    session.run("use test").unwrap();
+    session
+        .run("create table stmt_summary_err_row(id int primary key)")
+        .unwrap();
+    session
+        .run("insert into stmt_summary_err_row values(1)")
+        .unwrap();
+    assert!(session
+        .run("insert into stmt_summary_err_row values(1)")
+        .is_err());
+    let (_, warnings) = tests_support::query_text(&mut session, "show warnings");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0][..2], ["Error".to_owned(), "1062".to_owned()]);
+    let (_, rows) = tests_support::query_text(
+        &mut session,
+        "select exec_count, sum_errors, sum_warnings from information_schema.statements_summary \
+         where digest_text like 'insert into `stmt_summary_err_row`%'",
+    );
+    assert_eq!(
+        rows,
+        vec![vec!["2".to_owned(), "1".to_owned(), "0".to_owned()]]
+    );
+}

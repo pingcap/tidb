@@ -3700,8 +3700,9 @@ mod tests {
     }
 
     /// Pinned Go `TestTimeZone` plus the boundary cases in
-    /// `varsutil_test.go`: names are case-sensitive, offsets are bounded, and
-    /// only `SYSTEM` is case-folded before storage.
+    /// `varsutil_test.go`: names are as case-sensitive as the zoneinfo file
+    /// system, offsets are bounded, and only `SYSTEM` is case-folded before
+    /// storage.
     #[test]
     fn time_zone_uses_go_parser_and_error() {
         let sv = get_sys_var("time_zone").unwrap();
@@ -3719,7 +3720,20 @@ mod tests {
             assert_eq!(sv.validate(value).unwrap().value, value);
         }
         assert_eq!(sv.validate("system").unwrap().value, "SYSTEM");
-        for invalid in ["America/EDMONTON", "+14:01", "-13:00", "6:00"] {
+        // Go's `time.LoadLocation` opens `/usr/share/zoneinfo/<name>`, so a
+        // name's case matters exactly when the file system's does: the Go
+        // test leaves this case commented out (issue #8087), and Go on a
+        // case-insensitive macOS volume accepts it (gorun).
+        let edmonton = sv.validate("America/EDMONTON");
+        if std::path::Path::new("/usr/share/zoneinfo/America/EDMONTON").is_file() {
+            assert_eq!(edmonton.unwrap().value, "America/EDMONTON");
+        } else {
+            assert!(matches!(
+                edmonton,
+                Err(ValidationError::SqlError(error)) if error.code == 1298
+            ));
+        }
+        for invalid in ["+14:01", "-13:00", "6:00"] {
             let Err(ValidationError::SqlError(error)) = sv.validate(invalid) else {
                 panic!("{invalid} must be ErrUnknownTimeZone");
             };

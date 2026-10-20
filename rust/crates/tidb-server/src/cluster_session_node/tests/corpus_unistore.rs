@@ -537,6 +537,11 @@ fn replay_corpus_topics_on_unistore() {
                         .unwrap_or("--- <no headline>");
                     eprintln!("REPLAY-DIVERGENCE\t{topic}\t{headline}");
                 }
+                // Debug-quoted, so a statement or error spanning lines stays
+                // one field.
+                for (sql, error) in &report.out_of_domain {
+                    eprintln!("REPLAY-OUT-OF-DOMAIN\t{topic}\t{sql:?}\t{error:?}");
+                }
             }
             Err(reason) => eprintln!("UNALIGNED {topic}: {reason}"),
         }
@@ -589,6 +594,7 @@ fn production_replay_stays_within_budget() {
 
     let mut reported = BTreeMap::new();
     let mut divergences = Vec::new();
+    let mut refused = Vec::new();
     let mut failures = Vec::new();
     for (index, child) in children.into_iter().enumerate() {
         let output = child.wait_with_output().expect("replay shard output");
@@ -611,6 +617,9 @@ fn production_replay_stays_within_budget() {
                 }
                 ["REPLAY-DIVERGENCE", topic, headline] => {
                     divergences.push(format!("[{topic}] {headline}"));
+                }
+                ["REPLAY-OUT-OF-DOMAIN", topic, sql, error] => {
+                    refused.push(format!("[{topic}] {sql}\n    {error}"));
                 }
                 _ if line.starts_with("UNALIGNED ") => failures.push(line.to_owned()),
                 // A stored table the session could not build: Go has no such
@@ -639,9 +648,10 @@ fn production_replay_stays_within_budget() {
         .map(|(topic, (_, skipped))| format!("{topic} ({skipped})"))
         .collect();
     eprintln!(
-        "production replay: {} topics, {diverged} diverged, {out_of_domain} out of domain {refusing:?}\n  {}",
+        "production replay: {} topics, {diverged} diverged, {out_of_domain} out of domain {refusing:?}\n  {}\n  {}",
         reported.len(),
-        divergences.join("\n  ")
+        divergences.join("\n  "),
+        refused.join("\n  ")
     );
     assert!(
         diverged <= DIVERGENCE_BUDGET,
@@ -650,7 +660,7 @@ fn production_replay_stays_within_budget() {
     );
     assert!(
         out_of_domain <= OUT_OF_DOMAIN_BUDGET,
-        "{out_of_domain} statements Go answered were refused (budget {OUT_OF_DOMAIN_BUDGET}); \
-         rerun the topics with INTEGRATION_SHOW_OUT_OF_DOMAIN"
+        "{out_of_domain} statements Go answered were refused (budget {OUT_OF_DOMAIN_BUDGET}):\n  {}",
+        refused.join("\n  ")
     );
 }

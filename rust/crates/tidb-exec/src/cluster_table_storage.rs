@@ -63,7 +63,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::multi_statement_transaction::TRANSACTION_END_TIMEOUT;
+use crate::multi_statement_transaction::transaction_end_call;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
@@ -1205,7 +1205,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             std::mem::replace(&mut *state, SessionTransactionState::Finished)
         };
-        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+        let call = transaction_end_call();
         let outcome = match state {
             SessionTransactionState::Optimistic(mut transaction) => {
                 if let Some(lease) = schema_lease {
@@ -1565,7 +1565,7 @@ fn finish_session_transaction<S: StoreClient>(
             .map(|_| ())
             .map_err(|error| StorageError::Backend(error.to_string())),
         SessionTransactionState::Pessimistic { transaction, .. } => {
-            let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+            let call = transaction_end_call();
             transaction
                 .rollback(&call)
                 .map(|_| ())
@@ -1892,7 +1892,6 @@ pub fn commit_staged_buffer<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     buffer: &MutationBuffer,
     read_ts: Option<u64>,
-    timeout: Duration,
     options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
     on_activated: impl FnOnce(u64),
@@ -1918,7 +1917,7 @@ pub fn commit_staged_buffer<S: StoreClient>(
     if let Some(lease) = lease {
         transaction.set_schema_lease(lease);
     }
-    let call = UnaryCallContext::with_timeout(timeout.max(TRANSACTION_END_TIMEOUT));
+    let call = transaction_end_call();
     let outcome = transaction
         .commit(Vec::new(), &call)
         .map_err(coordinator_sql_error)?;

@@ -60,7 +60,7 @@ use tidb_planner::signed_bigint_ranger::{
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_tablecodec::decode_table_row_to_map;
-use tidb_txnkv::rpc::UnaryCallContext;
+use tidb_txnkv::rpc::{UnaryCallContext, UnaryCancellation};
 use tidb_txnkv::transaction::{
     LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError, PessimisticLockFailure,
     RealOptimisticTransactionOpener, RealTransaction, StoreClient,
@@ -168,12 +168,43 @@ pub enum TransactionEnd {
     RolledBack,
 }
 
-/// Budget for the RPCs that end a transaction, matching client-go's
-/// `cleanupMaxBackoff = 20000` — see [`MultiStatementTransaction::transaction_end_call`].
+/// The call for the commit, rollback and cleanup that end a transaction:
+/// cancellation only, with no wall-clock deadline, unrelated to any
+/// statement's remaining time.
+///
+/// This is client-go's rule. The 2PC runs on the committing `ctx`, and
+/// `twoPhaseCommitter.cleanup` builds its context from the store, not from the
+/// `ctx` the failing statement handed it:
+///
+/// ```text
+/// cleanupKeysCtx := context.WithValue(c.store.Ctx(), retry.TxnStartKey, ctx.Value(retry.TxnStartKey))
+/// ...
+/// err = c.cleanupMutations(retry.NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+/// ```
+///
+/// and `doActionOnGroupMutations` takes the same decision for the secondary
+/// commits:
+///
+/// ```text
+/// secondaryBo := retry.NewBackofferWithVars(c.store.Ctx(), CommitSecondaryMaxBackoff, c.txn.vars)
+/// ```
+///
+/// Neither context carries a deadline. What bounds them is each backoffer's
+/// budget of SLEEP time (`PrewriteMaxBackoff`, `CommitMaxBackoff`,
+/// `cleanupMaxBackoff = 20000`, ported in client-rust's 2PC) and each RPC's
+/// own timeout -- not the wall-clock time the RPCs take. A 20-second deadline
+/// on the whole commit failed a 100,000-row INSERT's prewrite with `context
+/// deadline exceeded` whenever the machine was loaded (production replay,
+/// `executor/admin`). Ending a transaction is the store's work, not the last
+/// statement's, so a transaction a client held open for minutes must still be
+/// able to publish or roll back.
 ///
 /// Every path that ends a transaction shares it, including the served
 /// `--cluster-session` one in [`crate::cluster_table_storage`].
-pub const TRANSACTION_END_TIMEOUT: Duration = Duration::from_secs(20);
+#[must_use]
+pub fn transaction_end_call() -> UnaryCallContext {
+    UnaryCallContext::with_optional_deadline(None, UnaryCancellation::new())
+}
 
 /// One open explicit transaction, owned by exactly one connection.
 pub struct MultiStatementTransaction<S = tikv_client::PdRpcClient>
@@ -298,34 +329,6 @@ where
     /// A fresh RPC budget for one statement, starting now.
     fn statement_call(&self) -> UnaryCallContext {
         UnaryCallContext::with_timeout(self.timeout)
-    }
-
-    /// A fresh RPC budget for the commit, rollback and cleanup that end the
-    /// transaction, deliberately unrelated to any statement's remaining time.
-    ///
-    /// This is client-go's rule. `twoPhaseCommitter.cleanup` builds its context
-    /// from the store, not from the `ctx` the failing statement handed it:
-    ///
-    /// ```text
-    /// cleanupKeysCtx := context.WithValue(c.store.Ctx(), retry.TxnStartKey, ctx.Value(retry.TxnStartKey))
-    /// ...
-    /// err = c.cleanupMutations(retry.NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
-    /// ```
-    ///
-    /// with `cleanupMaxBackoff = 20000`, and `doActionOnGroupMutations` takes
-    /// the same decision for the secondary commits:
-    ///
-    /// ```text
-    /// secondaryBo := retry.NewBackofferWithVars(c.store.Ctx(), CommitSecondaryMaxBackoff, c.txn.vars)
-    /// ```
-    ///
-    /// The statement's `ctx` survives only as the log/trace value carried onto
-    /// the new context; the deadline comes from the store's lifetime. Ending a
-    /// transaction is the store's work, not the last statement's, so a
-    /// transaction a client held open for minutes must still be able to publish
-    /// or roll back.
-    fn transaction_end_call() -> UnaryCallContext {
-        UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT)
     }
 
     /// The snapshot every read in this transaction runs at.
@@ -801,7 +804,7 @@ where
     }
 
     fn finish(self, publish: bool) -> Result<TransactionEnd, TransactionStatementError> {
-        let call = Self::transaction_end_call();
+        let call = transaction_end_call();
         let has_writes = publish && self.has_staged_writes();
         let end = if publish {
             TransactionEnd::Committed
@@ -1068,9 +1071,8 @@ mod tests {
 
     use super::{
         classify_commit_outcome, planned_mutation_keys, record_lock_failure,
-        selection_matches_staged_row, written_handles, ConfiguredWritePlan, Duration,
-        MultiStatementTransaction, TransactionStatementError, UnaryCallContext,
-        TRANSACTION_END_TIMEOUT,
+        selection_matches_staged_row, transaction_end_call, written_handles, ConfiguredWritePlan,
+        Duration, TransactionStatementError, UnaryCallContext,
     };
     use crate::configure_deadlock_history;
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
@@ -1344,8 +1346,9 @@ mod tests {
         // mint one `UnaryCallContext` and every later RPC inherited its absolute
         // deadline, so a transaction held for longer than one statement's budget
         // reached Prewrite with `timed out after 0ms`. Both budgets must be
-        // minted where they are spent, and the transaction-end budget comes from
-        // the store's lifetime rather than any statement's.
+        // minted where they are spent, and the transaction end takes the
+        // store's lifetime rather than any statement's: Go's commit and
+        // cleanup contexts carry no deadline, only backoff budgets.
         let statement = Duration::from_millis(50);
         let opened = UnaryCallContext::with_timeout(statement);
         std::thread::sleep(Duration::from_millis(120));
@@ -1357,10 +1360,11 @@ mod tests {
             UnaryCallContext::with_timeout(statement).timeout() > Duration::ZERO,
             "a statement must start its own budget"
         );
-        assert_eq!(TRANSACTION_END_TIMEOUT, Duration::from_secs(20));
-        assert!(
-            <MultiStatementTransaction>::transaction_end_call().timeout() > Duration::from_secs(19),
-            "commit, rollback and cleanup take the store's budget, not the statement's"
+        let end = transaction_end_call();
+        assert_eq!(
+            (end.deadline(), end.timeout()),
+            (None, Duration::MAX),
+            "commit, rollback and cleanup have no wall-clock deadline"
         );
     }
 

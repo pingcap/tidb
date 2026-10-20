@@ -158,8 +158,77 @@ pub fn load_location(name: &str) -> Result<TimeZone, TimeZoneError> {
         _ => {}
     }
     Tz::from_str(name)
+        .ok()
+        .or_else(|| zoneinfo_file_zone(name))
         .map(TimeZone::Named)
-        .map_err(|_| TimeZoneError(format!("invalid name for timezone {name}")))
+        .ok_or_else(|| TimeZoneError(format!("invalid name for timezone {name}")))
+}
+
+/// Go `zoneinfo_unix.go`'s `platformZoneSources`.
+const PLATFORM_ZONE_SOURCES: &[&str] = &[
+    "/usr/share/zoneinfo/",
+    "/usr/share/lib/zoneinfo/",
+    "/usr/lib/locale/TZ/",
+    "/etc/zoneinfo",
+];
+
+/// Go `LoadLocation` reads the zone from the file `$ZONEINFO/<name>`, then
+/// from each of [`PLATFORM_ZONE_SOURCES`], so a name resolves wherever the
+/// file system opens a file by it -- `utc` on a case-insensitive macOS
+/// volume, never on a case-sensitive one. The rules here come from
+/// `chrono-tz`, so this answers the zone of the file the file system opened,
+/// by its on-disk name.
+fn zoneinfo_file_zone(name: &str) -> Option<Tz> {
+    // Go: "No valid IANA Time Zone name contains a single dot, much less dot
+    // dot. Likewise, none begin with a slash."
+    if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+        return None;
+    }
+    let zoneinfo = std::env::var("ZONEINFO").unwrap_or_default();
+    // A `.zip` $ZONEINFO (Go `loadTzinfoFromZip`) is not read here.
+    let env_source =
+        (!zoneinfo.is_empty() && !zoneinfo.ends_with(".zip")).then_some(zoneinfo.as_str());
+    env_source
+        .into_iter()
+        .chain(PLATFORM_ZONE_SOURCES.iter().copied())
+        .find_map(|source| {
+            let dir = std::path::Path::new(source);
+            if !dir.join(name).is_file() {
+                return None;
+            }
+            on_disk_zone_name(dir, name).and_then(|actual| Tz::from_str(&actual).ok())
+        })
+}
+
+/// The on-disk spelling of `dir/name`, component by component: the entry
+/// spelled exactly so, or else the differently-cased entry that is the same
+/// file the file system opened.
+fn on_disk_zone_name(dir: &std::path::Path, name: &str) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut current = dir.to_path_buf();
+    let mut parts = Vec::new();
+    for component in name.split('/') {
+        let opened = std::fs::metadata(current.join(component)).ok()?;
+        let entries: Vec<String> = std::fs::read_dir(&current)
+            .ok()?
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect();
+        let actual = entries
+            .iter()
+            .find(|entry| entry.as_str() == component)
+            .or_else(|| {
+                entries.iter().find(|entry| {
+                    entry.eq_ignore_ascii_case(component)
+                        && std::fs::metadata(current.join(entry.as_str())).is_ok_and(|meta| {
+                            meta.dev() == opened.dev() && meta.ino() == opened.ino()
+                        })
+                })
+            })?
+            .clone();
+        current.push(&actual);
+        parts.push(actual);
+    }
+    Some(parts.join("/"))
 }
 
 /// Returns TiDB's global timezone location (Go `SystemLocation`), the local
@@ -383,6 +452,40 @@ mod tests {
 
         let err = parse_time_zone("aa").unwrap_err();
         assert_eq!(err.code(), ERR_UNKNOWN_TIME_ZONE.code());
+    }
+
+    /// Go `LoadLocation` opens `/usr/share/zoneinfo/<name>`, so a name loads
+    /// exactly when that file opens: `utc` and `asia/shanghai` load on a
+    /// case-insensitive volume (macOS, where corpus `table/time_zone_labels`
+    /// was recorded) and are unknown on a case-sensitive one; a name that
+    /// climbs out of the directory never loads.
+    #[test]
+    fn test_load_location_opens_the_zoneinfo_file() {
+        let opens = |name: &str| {
+            std::path::Path::new("/usr/share/zoneinfo")
+                .join(name)
+                .is_file()
+        };
+        assert_eq!(
+            load_location("utc").ok(),
+            opens("utc").then_some(TimeZone::Named(Tz::UTC))
+        );
+        assert_eq!(
+            load_location("asia/shanghai").ok(),
+            opens("asia/shanghai").then_some(TimeZone::Named(Tz::Asia__Shanghai))
+        );
+        assert!(load_location("../zoneinfo/UTC").is_err());
+        assert!(load_location("no_such/zone").is_err());
+        let _guard = ENV_LOCK.lock().unwrap();
+        store_system_tz("Asia/Tokyo");
+        if opens("utc") {
+            assert_eq!(zone(&parse_time_zone("utc").unwrap()).1, 0);
+        } else {
+            assert_eq!(
+                parse_time_zone("utc").unwrap_err().code(),
+                ERR_UNKNOWN_TIME_ZONE.code()
+            );
+        }
     }
 
     /// Source: `pkg/util/timeutil/time_zone_test.go::TestZoneName`.

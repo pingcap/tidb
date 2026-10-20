@@ -108,9 +108,9 @@ fn topics_are_listed_once_each() {
 ///
 /// That is not a hypothesis. This test parses the onboarded scripts with the
 /// replay's own reader and prints the current reach. The latest measured line
-/// is `warning gate reaches 62 of 11465 statements across 110 topics`; it is
-/// the reason a fix that adds a real warning outside those 62 can move neither
-/// ratchet.
+/// is `warning gate reaches 704 of 21636 statements across 153 topics`; it is
+/// the reason a fix that adds a real warning outside those 704 can move
+/// neither ratchet.
 ///
 /// The blind spot is in the RECORDING, not in this reader, and that is the
 /// part worth knowing before anyone tries to close it. mysqltest writes a
@@ -179,9 +179,21 @@ fn warning_comparison_covers_only_enable_warnings_statements() {
     // `planner/core/integration_partition`, whose output line is `5 of 493`.
     // The resulting current oracle line is `warning gate reaches 62 of 11465
     // statements across 110 topics`.
+    //
+    // Re-read after TOPICS grew from 110 to 153 (10,171 more statements,
+    // 11,465 + 10,171 = 21,636). The WARNING half of that move is SEVEN of
+    // the 43 new topics, each running real `--enable_warnings` blocks whose
+    // appended `SHOW WARNINGS` the replay compares: `planner/core/casetest/
+    // rule/rule_join_reorder` 404 of 504 and `planner/core/casetest/hint/
+    // hint` 119 of 182 -- topics about which hints a plan honors, where the
+    // warning IS the answer for a hint that cannot be applied -- then
+    // `executor/insert` 89, `executor/write` 14, `expression/time` 12,
+    // `planner/core/indexmerge_path` 3 and `session/clustered_index` 1.
+    // 62 + 404 + 119 + 89 + 14 + 12 + 3 + 1 = 704. The other 36 new topics
+    // add NOT ONE warning-gated statement.
     assert_eq!(
         (covered, total),
-        (62, 11465),
+        (704, 21636),
         "the warning gate's reach changed; re-read what it now covers rather \
          than updating this number to match"
     );

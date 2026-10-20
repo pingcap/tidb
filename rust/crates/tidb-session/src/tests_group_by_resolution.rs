@@ -126,3 +126,24 @@ fn a_projected_outer_column_is_determined_by_the_group_key() {
         [["10"], ["20"]]
     );
 }
+
+/// Go `parseByItems` makes a position of every by-item whose value is an
+/// int64, and TRUE/FALSE are int64 1/0: `ORDER BY true desc` sorts by the
+/// first field, and `ORDER BY false` names position 0 (gorun, corpus
+/// `table/group_by_position`).
+#[test]
+fn an_order_by_boolean_literal_is_a_position() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b int)").unwrap();
+    session
+        .run("insert into t values (1,10),(2,20),(1,30)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("select a from t order by true desc")),
+        [["2"], ["1"], ["1"]]
+    );
+    assert_eq!(
+        error_of(&mut session, "select a from t order by false"),
+        (1054, "Unknown column '0' in 'order clause'".to_owned())
+    );
+}

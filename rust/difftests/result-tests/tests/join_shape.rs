@@ -588,9 +588,12 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
 
     // Recorded snapshot, not complete join parity. Every count moved the
     // right way when it was last re-recorded (more plans compared, all merge
-    // pairs reproduced, none extra); the one disagreement left is
+    // pairs reproduced, none extra); the last disagreement,
     // rule_constant_propagation's `update t1 set value = (select count(*)
-    // ...)`, whose subquery Go decorrelates into a HashJoin. The four TIDB_SMJ
+    // ...)`, agrees now: TiDB records the decorrelated subquery as a `left
+    // outer join` HashJoin with no keep order under the UPDATE's Projection
+    // (rule_constant_propagation.result:185), and the port plans the same
+    // join, so all 794 agree. The four TIDB_SMJ
     // hints over a cross or other-condition join agree since the enforced
     // merge join may be keyless (`getEnforcedMergeJoin`). The
     // other decorrelated subquery that disagreed now agrees. The 757th plan is push_down's
@@ -613,7 +616,7 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // NO_MERGE_JOIN (:658), which the port reproduces. Inspect recorded
     // witnesses before updating these counts.
     const COMPARED: usize = 794;
-    const BOTH_AGREE: usize = 793;
+    const BOTH_AGREE: usize = 794;
     const RECORDED_MERGE_PAIRS: usize = 121;
     const AGREED_MERGE_PAIRS: usize = 121;
     const EXTRA_MERGE_PAIRS: usize = 0;

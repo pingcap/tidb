@@ -451,7 +451,20 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// 28 -> 27 at the merge with the `SHARD_ROW_ID_BITS` line of work: the
 /// `SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3` read agrees now. Compare count
 /// unchanged at 307; the floor rose with it.
-const KNOWN_CATALOG_DIVERGENCES: usize = 11;
+///
+/// 11 -> 0. Ten of the eleven had already left the set through later fixes
+/// that never moved this baseline (the test was not in the regular gate):
+/// each now prints TiDB's recorded text, so it is a match against the
+/// recording rather than a set member. The eleventh was a new one --
+/// `infoschema/tables`' `select exec_count, sum_errors, sum_warnings from
+/// information_schema.statements_summary` after a duplicate-key INSERT, where
+/// TiDB records `2 1 0` and this tier summarized `2 1 1`: the summary counted
+/// the statement's own error row, which Go files with
+/// `TiDBContext.ExecuteStmt`'s `AppendError` only after `SummaryStmt` ran.
+/// The summary is now recorded before the error row (see `tidb-session`'s
+/// `failed_statement_summary_counts_no_warning_for_its_error_row`), and the
+/// dump with CATALOG_SHOW_DIVERGENCES=1 is empty.
+const KNOWN_CATALOG_DIVERGENCES: usize = 0;
 
 /// Exact lower bound for definitions already matching TiDB.
 // 257 -> 259: the partition clause of `SHOW CREATE TABLE` now matches Go's
@@ -470,7 +483,9 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 11;
 // 280 -> 333: 48 more reads are compared while the divergence set has a net
 // reduction of five. Raising both guards prevents the larger supported
 // surface from being mistaken for a pure five-item repair.
-const MATCHED_FLOOR: usize = 333;
+//
+// 333 -> 401: every one of the 401 compared reads matches TiDB's recording.
+const MATCHED_FLOOR: usize = 401;
 
 /// Stable identity of the known mismatch set, independent of topic order.
 // Moved with the count above: two recorded catalog reads that used to
@@ -540,7 +555,9 @@ const MATCHED_FLOOR: usize = 333;
 // SHOW CREATE TABLE renders ` WHERE <restored condition>` from the same
 // index-condition flags Go's `CheckAndBuildIndexConditionString` restores
 // with (`_utf8mb4'100'` for the varchar case included).
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 10_012_683_786_986_185_662;
+//
+// 11 -> 0: the empty set's fingerprint is FNV-1a's offset basis.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 14_695_981_039_346_656_037;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.

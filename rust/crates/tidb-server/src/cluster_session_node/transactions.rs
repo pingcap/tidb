@@ -1371,7 +1371,6 @@ where
             &opener,
             buffer,
             read_ts,
-            self.timeout,
             options,
             schema_lease_checker,
             |ts| {

@@ -2925,6 +2925,7 @@ impl Session {
                 );
             }
         }
+        let mut error_row = None;
         if let Err(error) = &result {
             // The statement's fold-time diagnostics precede the error row in
             // go's buffer (FORMAT('x', 'y') keeps both coercion warnings
@@ -2981,11 +2982,18 @@ impl Session {
                     w.code == reported.code && w.message == reported.message
                 });
                 if !duplicated {
-                    self.append_warning(WarningLevel::Error, reported.code, reported.message);
+                    error_row = Some((reported.code, reported.message));
                 }
             }
         }
+        // Go records the summary inside `session.ExecuteStmt`
+        // (`ExecStmt.FinishExecuteStmt` -> `SummaryStmt`), before
+        // `TiDBContext.ExecuteStmt` files the error with
+        // `StmtCtx.AppendError`: its warning count excludes the error row.
         self.finish_statement_observation(result);
+        if let Some((code, message)) = error_row {
+            self.append_warning(WarningLevel::Error, code, message);
+        }
     }
 }
 

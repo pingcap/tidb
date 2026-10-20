@@ -188,6 +188,9 @@ pub struct TopicReport {
     pub skipped: BTreeMap<String, usize>,
     /// One rendered report per divergent statement.
     pub divergences: Vec<String>,
+    /// One `statement`, `error` pair per statement TiDB answered and this
+    /// engine refused (counted as [`SkipClass::OutOfDomain`]).
+    pub out_of_domain: Vec<(String, String)>,
 }
 
 impl TopicReport {
@@ -358,7 +361,7 @@ fn compare(
 
 /// Records that a statement OUTSIDE the warning gate raised a warning here.
 ///
-/// The gate reaches 62 of 11,465 statements
+/// The gate reaches 704 of 21,636 statements
 /// ([`warning_comparison_covers_only_enable_warnings_statements`]); for the
 /// rest the replay compares rows only, so a warning is invisible either way.
 /// This measures one half of that blind spot -- what THIS engine raises where
@@ -742,6 +745,9 @@ fn compare_output(
             if show_out_of_domain() {
                 eprintln!("OUT OF DOMAIN: {}\n  {error:?}", stmt.sql);
             }
+            report
+                .out_of_domain
+                .push((stmt.sql.clone(), format!("{error:?}")));
             Err(None)
         }
         (Ok(StmtOutput::Rows { columns, rows }), false) => {

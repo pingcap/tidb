@@ -4661,11 +4661,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `itemTransformer.Leave` (`logical_plan_builder.go:2380`): a bare
-    /// integer literal in ORDER BY is a 1-based select-list position.
+    /// integer literal in ORDER BY is a 1-based select-list position. The
+    /// parser's `parseByItems` makes a position of every `ValueExpr` whose
+    /// value is an int64, which `TRUE`/`FALSE` are (1/0).
     #[must_use]
     pub fn order_by_position(expr: &Expr) -> Option<usize> {
         match expr {
             Expr::Int(digits) => digits.parse().ok(),
+            Expr::Bool(value) => Some(usize::from(*value)),
             _ => None,
         }
     }
