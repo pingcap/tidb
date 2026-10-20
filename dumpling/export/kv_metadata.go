@@ -259,11 +259,11 @@ func (a *kvMetadataAllocator) NextGlobalAutoID() (int64, error) {
 
 var errKVMetadataAllocatorReadOnly = errors.New("dump service metadata allocator is read-only")
 
-func (*kvMetadataAllocator) Alloc(context.Context, uint64, int64, int64) (int64, int64, error) {
+func (*kvMetadataAllocator) Alloc(context.Context, uint64, int64, int64) (minv, maxv int64, err error) {
 	return 0, 0, errKVMetadataAllocatorReadOnly
 }
 
-func (*kvMetadataAllocator) AllocSeqCache() (int64, int64, int64, error) {
+func (*kvMetadataAllocator) AllocSeqCache() (minv, maxv, round int64, err error) {
 	return 0, 0, 0, errKVMetadataAllocatorReadOnly
 }
 

@@ -229,6 +229,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		writerErr := wg.Wait()
 		// Workers can exit with queued tasks after cancellation or an error.
 		// Drain the forwarding channel so its goroutine can release the queue.
+		//revive:disable-next-line:empty-block
 		for range taskOut {
 		}
 		for _, writer := range writers {
