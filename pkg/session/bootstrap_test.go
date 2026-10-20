@@ -2968,12 +2968,12 @@ func TestTiDBUpgradeToVer232(t *testing.T) {
 	}
 }
 
-func TestUpgradeToVer239AddsRestoreRouteIdentity(t *testing.T) {
+func TestUpgradeToVer233AddsRestoreRouteIdentity(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	// Simulate a cluster bootstrapped before version 239: the restore registry
+	// Simulate a cluster bootstrapped before version 233: the restore registry
 	// still has the legacy unique index and no route identity columns.
 	sePre := CreateSessionAndSetID(t, store)
 	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params_v2")

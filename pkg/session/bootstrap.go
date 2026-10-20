@@ -1315,24 +1315,25 @@ const (
 	// no-op (e.g. `i_user` on release-8.5-20260527-v8.5.5).
 	version232 = 232
 
-	// ...
-	// [version231, version238] is the version range reserved for patches of 8.5.x
-	// ...
-	// next version should start with 239
-
-	// version 239
+	// version 233
 	// Add restore name routing identity to mysql.tidb_restore_registry:
 	// `source_filter_strings`, `route_strings`, `route_hash` and the
 	// `unique_registration_params_v2` unique index that replaces
 	// `unique_registration_params` (whose key does not include `route_hash`, so
 	// two independent restores sharing a source filter but routing to different
 	// targets would collide).
-	version239 = 239
+	version233 = 233
+
+	// ...
+	// [version231, version238] is the version range reserved for patches of 8.5.x
+	// ...
+	// Versions starting at 239 belong to master; 8.5.x patches use the reserved range.
+
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version239
+var currentBootstrapVersion int64 = version233
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1520,7 +1521,7 @@ var (
 		upgradeToVer230,
 		upgradeToVer231,
 		upgradeToVer232,
-		upgradeToVer239,
+		upgradeToVer233,
 	}
 )
 
@@ -3551,13 +3552,13 @@ func upgradeToVer232(s sessiontypes.Session, ver int64) {
 	addIUserIndexes(s)
 }
 
-// upgradeToVer239 adds the restore name routing identity to
+// upgradeToVer233 adds the restore name routing identity to
 // mysql.tidb_restore_registry. The DDLs are reentrant so a cluster that already
 // ran a partially completed migration converges on the same schema, and a fresh
 // cluster created from CreateRestoreRegistryTable skips them via
 // ErrColumnExists / ErrDupKeyName / ErrCantDropFieldOrKey.
-func upgradeToVer239(s sessiontypes.Session, ver int64) {
-	if ver >= version239 {
+func upgradeToVer233(s sessiontypes.Session, ver int64) {
+	if ver >= version233 {
 		return
 	}
 
