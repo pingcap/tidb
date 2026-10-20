@@ -278,8 +278,8 @@ func TestDeliminators(t *testing.T) {
 	tk.MustExec("create table tb (s char(10), b bit(48), bb blob(6))")
 	tk.MustExec("insert into tb values ('\\0\\b\\n\\r\\t\\Z', _binary '\\0\\b\\n\\r\\t\\Z', unhex('00080A0D091A'))")
 	tk.MustExec(fmt.Sprintf("select * from tb into outfile %q", outfile))
-	// bit type won't be escaped (verified on MySQL)
-	cmpAndRm("\\0\b\\\n\r\\\t\032\t"+"\000\b\n\r\t\032\t"+"\\0\b\\\n\r\\\t\032\n", outfile, t)
+	// BIT values use the same escaping as other byte fields.
+	cmpAndRm("\\0\b\\\n\r\\\t\032\t"+"\\0\b\\\n\r\\\t\032\t"+"\\0\b\\\n\r\\\t\032\n", outfile, t)
 
 	tk.MustExec("create table zero (a varchar(10), b varchar(10), c varchar(10))")
 	tk.MustExec("insert into zero values (unhex('00'), _binary '\\0', '\\0')")
