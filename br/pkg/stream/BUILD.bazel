@@ -84,8 +84,8 @@ go_test(
     deps = [
         "//br/pkg/metautil",
         "//br/pkg/operation",
-        "//br/pkg/storage",
         "//br/pkg/restore/utils",
+        "//br/pkg/storage",
         "//br/pkg/stream/backupmetas",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",

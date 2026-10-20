@@ -9,7 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/restore/nameroute",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
     ],
 )
@@ -22,7 +22,7 @@ go_test(
     shard_count = 8,
     deps = [
         ":nameroute",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],
 )
