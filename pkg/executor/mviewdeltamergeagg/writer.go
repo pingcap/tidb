@@ -177,6 +177,10 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 	for _, op := range result.RowOps {
 		switch op.Tp {
 		case RowOpInsert:
+			target := w.exec.targetForRowOp(op.Tp)
+			if target == nil {
+				return errors.New("MViewDeltaMergeAgg insert target table is nil")
+			}
 			stats.insertRows++
 			w.buildInsertRow(result, op.RowIdx)
 
@@ -187,7 +191,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 			insertOrdinal++
 			insertRemain--
 			if sizeHint > 0 {
-				_, err = w.exec.TargetTable.AddRecord(
+				_, err = target.AddRecord(
 					tableCtx,
 					txn,
 					w.newRow,
@@ -195,12 +199,16 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 					table.DupKeyCheckLazy,
 				)
 			} else {
-				_, err = w.exec.TargetTable.AddRecord(tableCtx, txn, w.newRow, table.DupKeyCheckLazy)
+				_, err = target.AddRecord(tableCtx, txn, w.newRow, table.DupKeyCheckLazy)
 			}
 			if err != nil {
 				return err
 			}
 		case RowOpUpdate:
+			target := w.exec.targetForRowOp(op.Tp)
+			if target == nil {
+				return errors.New("MViewDeltaMergeAgg update target table is nil")
+			}
 			updateOrdinal := int(op.updateOrdinal)
 			changed := w.buildTouchedFromBitmap(result.UpdateTouchedBitmap, result.UpdateTouchedStride, updateOrdinal)
 			if !changed {
@@ -215,10 +223,14 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 				return err
 			}
 
-			if err := w.exec.TargetTable.UpdateRecord(tableCtx, txn, handle, w.oldRow, w.newRow, w.touched); err != nil {
+			if err := target.UpdateRecord(tableCtx, txn, handle, w.oldRow, w.newRow, w.touched); err != nil {
 				return err
 			}
 		case RowOpDelete:
+			target := w.exec.targetForRowOp(op.Tp)
+			if target == nil {
+				return errors.New("MViewDeltaMergeAgg delete target table is nil")
+			}
 			stats.deleteRows++
 			w.buildDeleteRow(result, op.RowIdx)
 
@@ -227,7 +239,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 				return err
 			}
 
-			if err := w.exec.TargetTable.RemoveRecord(tableCtx, txn, handle, w.oldRow); err != nil {
+			if err := target.RemoveRecord(tableCtx, txn, handle, w.oldRow); err != nil {
 				return err
 			}
 		default:

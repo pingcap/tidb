@@ -1482,10 +1482,15 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		b.err = err
 		return nil
 	}
+	refreshMLogTargets := b.buildMViewRefreshMLogTargets(mviewTable)
+	if b.err != nil {
+		return nil
+	}
 
 	return &MViewCompleteDeltaApplyExec{
 		BaseExecutor:                  exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
 		TargetTable:                   mviewTable,
+		RefreshMLogTargets:            refreshMLogTargets,
 		TargetHandleCols:              v.CurrentHandleCols,
 		OpColID:                       v.OpColID,
 		CurrentWritableInputColIDs:    append([]int(nil), currentWritableInputColIDs...),
@@ -3322,6 +3327,39 @@ func (b *executorBuilder) wrapTableWithMLogIfExists(tbl table.Table, sourceStmt 
 		return nil
 	}
 	return wrapped
+}
+
+func (b *executorBuilder) buildMViewRefreshMLogTargets(tbl table.Table) *tables.MViewRefreshMLogTargets {
+	if tbl == nil {
+		return nil
+	}
+	meta := tbl.Meta()
+	if meta == nil || meta.MaterializedViewBase == nil || meta.MaterializedViewBase.MLogID == 0 {
+		return nil
+	}
+	if meta.GetPartitionInfo() != nil {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"materialized view log on partitioned tables",
+		)
+		return nil
+	}
+	mlogID := meta.MaterializedViewBase.MLogID
+	mlogTbl, ok := b.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		b.err = errors.Errorf(
+			"cannot get materialized view log table id=%d (base=%s id=%d)",
+			mlogID,
+			meta.Name.O,
+			meta.ID,
+		)
+		return nil
+	}
+	targets, err := tables.WrapTableWithMaterializedViewLogForRefresh(tbl, mlogTbl)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return targets
 }
 
 func (b *executorBuilder) updateForUpdateTS() error {

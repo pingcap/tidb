@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -193,6 +194,9 @@ type Exec struct {
 
 	TargetTable table.Table
 	TargetInfo  *model.TableInfo
+	// RefreshMLogTargets contains operation-specific wrappers for refresh writes. It is nil for
+	// callers that do not need MLog capture.
+	RefreshMLogTargets *tables.MViewRefreshMLogTargets
 	// TargetHandleCols builds row handles for update/delete from child input rows.
 	TargetHandleCols plannerutil.HandleCols
 
@@ -203,6 +207,22 @@ type Exec struct {
 	prepared             bool
 	executed             bool
 	runtimeStats         *mergeRuntimeStats
+}
+
+func (e *Exec) targetForRowOp(op RowOpType) table.Table {
+	if e.RefreshMLogTargets == nil {
+		return e.TargetTable
+	}
+	switch op {
+	case RowOpInsert:
+		return e.RefreshMLogTargets.Insert
+	case RowOpUpdate:
+		return e.RefreshMLogTargets.Update
+	case RowOpDelete:
+		return e.RefreshMLogTargets.Delete
+	default:
+		return nil
+	}
 }
 
 type mergeWorkerData struct {

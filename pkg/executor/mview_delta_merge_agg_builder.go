@@ -132,15 +132,20 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 		b.err = err
 		return nil
 	}
+	refreshMLogTargets := b.buildMViewRefreshMLogTargets(mviewTable)
+	if b.err != nil {
+		return nil
+	}
 
 	return &MViewDeltaMergeAggExec{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
-		AggMappings:      aggMappings,
-		DeltaAggColCount: deltaAggColCount,
-		TargetTable:      mviewTable,
-		TargetInfo:       mviewTable.Meta(),
-		TargetHandleCols: v.MVTablePKCols,
-		MinMaxRecompute:  minMaxRecompute,
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
+		AggMappings:        aggMappings,
+		DeltaAggColCount:   deltaAggColCount,
+		TargetTable:        mviewTable,
+		TargetInfo:         mviewTable.Meta(),
+		RefreshMLogTargets: refreshMLogTargets,
+		TargetHandleCols:   v.MVTablePKCols,
+		MinMaxRecompute:    minMaxRecompute,
 	}
 }
 

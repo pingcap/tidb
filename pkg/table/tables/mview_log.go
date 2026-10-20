@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -54,6 +55,40 @@ const (
 	// MLogDMLTypeDelete represents a logical DELETE DML operation.
 	MLogDMLTypeDelete MLogDMLType = "D"
 )
+
+// MViewRefreshMLogTargets contains operation-specific table wrappers used by an MV refresh.
+// Refresh writers can emit inserts, updates, and deletes in one statement, so one statement-level
+// MLogSourceStmt cannot describe all rows in the statement.
+type MViewRefreshMLogTargets struct {
+	Insert table.Table
+	Update table.Table
+	Delete table.Table
+}
+
+// WrapTableWithMaterializedViewLogForRefresh builds the three operation-specific wrappers needed
+// by an MV refresh. The wrappers must only be used for the lifetime of the refresh statement.
+func WrapTableWithMaterializedViewLogForRefresh(
+	base table.Table,
+	mlog table.Table,
+) (*MViewRefreshMLogTargets, error) {
+	insertTarget, err := WrapTableWithMaterializedViewLog(base, mlog, MLogSourceInsert)
+	if err != nil {
+		return nil, err
+	}
+	updateTarget, err := WrapTableWithMaterializedViewLog(base, mlog, MLogSourceUpdate)
+	if err != nil {
+		return nil, err
+	}
+	deleteTarget, err := WrapTableWithMaterializedViewLog(base, mlog, MLogSourceDelete)
+	if err != nil {
+		return nil, err
+	}
+	return &MViewRefreshMLogTargets{
+		Insert: insertTarget,
+		Update: updateTarget,
+		Delete: deleteTarget,
+	}, nil
+}
 
 const (
 	mlogOldRowMarker int64 = -1
@@ -347,6 +382,13 @@ func (t *mlogTable) writeMLogRow(
 	oldNew int64,
 	opts ...table.AddRecordOption,
 ) error {
+	failpoint.Inject("mockMLogWriteError", func(val failpoint.Value) {
+		if msg, ok := val.(string); ok {
+			failpoint.Return(errors.New(msg))
+		}
+		failpoint.Return(errors.New("mock materialized view log write error"))
+	})
+
 	mlogRow := make([]types.Datum, 0, len(t.trackedBaseOffsets)+2)
 	for _, offset := range t.trackedBaseOffsets {
 		if offset < 0 || offset >= len(baseRow) {
