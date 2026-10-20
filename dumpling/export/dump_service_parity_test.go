@@ -39,23 +39,27 @@ import (
 
 const parityTablePrefix = "parity.t."
 
-// TestDumpServiceMatchesSQLDump verifies that the KV dump path exports the same
-// data as the regular SQL dump path against the same real TiDB server, for every
-// export format. The SQL path gets its column types from go-sql-driver, so the
-// comparison checks the KV path's driver-name mapping against the real server's
-// output instead of a hand-written expectation.
+// TestDumpServiceMatchesSQLDump shares one TiDB server across independent parity cases.
 func TestDumpServiceMatchesSQLDump(t *testing.T) {
 	// The server binds a random TCP port only when it knows it runs under go test.
 	originalRunInGoTest := srv.RunInGoTest
 	srv.RunInGoTest = true
 	t.Cleanup(func() { srv.RunInGoTest = originalRunInGoTest })
 
-	ts := servertestkit.CreateTidbTestSuite(t)
-	db, err := sql.Open("mysql", ts.GetDSN())
+	server := servertestkit.CreateTidbTestSuite(t)
+	t.Run("types", func(t *testing.T) { testDumpServiceColumnTypes(t, server) })
+	t.Run("generated", func(t *testing.T) { testDumpServiceGeneratedColumns(t, server) })
+}
+
+// Compare driver-derived types and serialized values, including numeric limits,
+// temporal values, and text/binary distinctions, across every output format.
+func testDumpServiceColumnTypes(t *testing.T, server *servertestkit.TidbTestSuite) {
+	db, err := sql.Open("mysql", server.GetDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	dbt := testkit.NewDBTestKit(t, db)
-	dbt.MustExec("create database if not exists parity")
+	dbt.MustExec("create database parity")
+	t.Cleanup(func() { dbt.MustExec("drop database parity") })
 	dbt.MustExec(`create table parity.t (
 		c_tinyint tinyint,
 		c_smallint smallint,
@@ -87,91 +91,113 @@ func TestDumpServiceMatchesSQLDump(t *testing.T) {
 	dbt.MustExec(`insert into parity.t values
 		(1, 2, 3, 4, 5, 6, 1.5, 2.5, 12.30, b'1010', 'ch', 'vc', x'00ff', x'0102', 'hello', x'0304',
 		 '2020-01-02', '2020-01-02 03:04:05', '2020-01-02 03:04:05', '03:04:05', 2020, 'a', 'a,b', '{"k": 1}', 'a', 'a,b'),
-		(2, 3, 4, 5, 6, 7, 3.5, 4.5, -1.25, b'0101', 'ch2', 'vc2', x'aa', x'bb', '', x'', 
+		(2, 3, 4, 5, 6, 7, 3.5, 4.5, -1.25, b'0101', 'ch2', 'vc2', x'aa', x'bb', '', x'',
 		 '2021-03-04', '2021-03-04 05:06:07', '2021-03-04 05:06:07', '05:06:07', 2021, 'b', '', 'null', 'b', ''),
 		(-128, -32768, -8388608, -2147483648, -9223372036854775808, 18446744073709551615,
 		 3.4028234e38, 1.7976931348623157e308, -99999999.99, b'11111111',
 		 'a"b\\c', '0123456789', x'00010203040506070809', x'ffeeddccbbaa99887766',
 		 '中文😀', x'00ff', '1000-01-01', '9999-12-31 23:59:59', '2038-01-19 03:14:07',
 		 '-838:59:59', 2155, 'b', 'a,b', '{"nested": [1, 2, 3]}', 'b', 'a,b')`)
+	for _, format := range dumpServiceParityFormats {
+		t.Run(format.name, func(t *testing.T) {
+			sqlOutput, kvOutput := dumpParityOutputs(t, server, format, func(conf *Config) {
+				// Match the KV decoder's fixed UTC session for temporal comparisons.
+				conf.SessionParams = map[string]any{"time_zone": "+00:00"}
+			}, nil)
+			require.NotEmpty(t, sqlOutput)
+			require.Equal(t, sqlOutput, kvOutput)
+		})
+	}
+}
 
-	newConf := func(configure func(*Config)) *Config {
+// Compare none/stored projection with SQL for physical generated values while
+// excluding virtual columns, including NULL values and both row encodings.
+func testDumpServiceGeneratedColumns(t *testing.T, server *servertestkit.TidbTestSuite) {
+	db, err := sql.Open("mysql", server.GetDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("create database parity")
+	t.Cleanup(func() { dbt.MustExec("drop database parity") })
+	dbt.MustExec(`create table parity.t (
+		id bigint primary key clustered,
+		virtual_value int as (source_value + 1),
+		source_value int,
+		stored_value int as (source_value * 3) stored
+	)`)
+	// Both row encodings must preserve stored values and their NULLs. The
+	// virtual column sits between output columns to exercise projection order.
+	dbt.MustExec("set @@tidb_row_format_version=1")
+	dbt.MustExec("insert into parity.t(id, source_value) values (1,2)")
+	dbt.MustExec("set @@tidb_row_format_version=2")
+	dbt.MustExec("insert into parity.t(id, source_value) values (2,4),(3,null)")
+	for _, format := range dumpServiceParityFormats {
+		for _, mode := range []GeneratedColumnsMode{GeneratedColumnsNone, GeneratedColumnsStored} {
+			if format.fileType == FileFormatSQLTextString && mode == GeneratedColumnsStored {
+				continue
+			}
+			t.Run(format.name+"/"+string(mode), func(t *testing.T) {
+				editConfig := func(conf *Config) {
+					conf.IncludeGeneratedColumns = mode
+				}
+				sqlOutput, kvOutput := dumpParityOutputs(t, server, format, editConfig, editConfig)
+				require.NotEmpty(t, sqlOutput)
+				require.Equal(t, sqlOutput, kvOutput)
+			})
+		}
+	}
+}
+
+type dumpServiceParityFormat struct {
+	name       string
+	fileType   string
+	csvDialect CSVDialect
+	read       func(*testing.T, string) []string
+}
+
+var dumpServiceParityFormats = []dumpServiceParityFormat{
+	{name: "sql", fileType: FileFormatSQLTextString, read: readSQLDataRows},
+	{name: "csv", fileType: FileFormatCSVString, read: readCSVDataRows},
+	// Snowflake hex-encodes binary columns, exposing text/binary misclassification.
+	{name: "csv_snowflake", fileType: FileFormatCSVString, csvDialect: CSVDialectSnowflake, read: readCSVDataRows},
+	{name: "parquet", fileType: FileFormatParquetString, read: readParquetData},
+}
+
+func dumpParityOutputs(
+	t *testing.T,
+	server *servertestkit.TidbTestSuite,
+	format dumpServiceParityFormat,
+	editSQLConfig, editServiceConfig func(*Config),
+) ([]string, []string) {
+	t.Helper()
+	dump := func(service string, editConfig func(*Config)) []string {
 		conf := DefaultConfig()
 		conf.Host = "127.0.0.1"
-		conf.Port = int(ts.Port)
+		conf.Port = int(server.Port)
 		conf.User = "root"
 		conf.StatusAddr = ""
 		conf.OutputDirPath = t.TempDir()
 		conf.NoHeader = true
 		conf.TableFilter = tf.NewSchemasFilter("parity")
-		// Match the KV decoder's fixed UTC session so temporal values compare equal.
-		conf.SessionParams = map[string]any{"time_zone": "+00:00"}
-		configure(conf)
-		return conf
+		conf.FileType = format.fileType
+		conf.CsvOutputDialect = format.csvDialect
+		conf.DumpService = service
+		if editConfig != nil {
+			editConfig(conf)
+		}
+		dumper, err := NewDumper(context.Background(), conf)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, dumper.Close()) }()
+		require.NoError(t, dumper.Dump())
+		return format.read(t, conf.OutputDirPath)
 	}
 
-	formats := []struct {
-		name      string
-		configure func(*Config)
-		read      func(*testing.T, string) []string
-	}{
-		{
-			name: "sql",
-			configure: func(conf *Config) {
-				conf.FileType = FileFormatSQLTextString
-			},
-			read: readSQLDataRows,
-		},
-		{
-			name: "csv",
-			configure: func(conf *Config) {
-				conf.FileType = FileFormatCSVString
-				conf.CsvOutputDialect = CSVDialectDefault
-			},
-			read: readCSVDataRows,
-		},
-		{
-			name: "csv_snowflake",
-			configure: func(conf *Config) {
-				conf.FileType = FileFormatCSVString
-				// Snowflake dialect hex-encodes binary columns, so a wrong
-				// string/binary classification (for example exporting TEXT as
-				// BLOB) shows up in the CSV.
-				conf.CsvOutputDialect = CSVDialectSnowflake
-			},
-			read: readCSVDataRows,
-		},
-		{
-			name: "parquet",
-			configure: func(conf *Config) {
-				conf.FileType = FileFormatParquetString
-			},
-			read: readParquetData,
-		},
-	}
-
-	for _, format := range formats {
-		t.Run(format.name, func(t *testing.T) {
-			sqlConf := newConf(format.configure)
-			sqlDumper, err := NewDumper(context.Background(), sqlConf)
-			require.NoError(t, err)
-			require.NoError(t, sqlDumper.Dump())
-			require.NoError(t, sqlDumper.Close())
-
-			kvConf := newConf(format.configure)
-			kvConf.DumpService = (&url.URL{Scheme: "unix", Path: startTestDumpService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				serveKVTestRequest(ts.Store, w, r)
-			}))}).String()
-			kvDumper, err := NewDumper(context.Background(), kvConf)
-			require.NoError(t, err)
-			require.NoError(t, kvDumper.Dump())
-			require.NoError(t, kvDumper.Close())
-
-			sqlOutput := format.read(t, sqlConf.OutputDirPath)
-			require.NotEmpty(t, sqlOutput)
-			require.Equal(t, sqlOutput, format.read(t, kvConf.OutputDirPath))
-		})
-	}
+	sqlOutput := dump("", editSQLConfig)
+	socket := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		serveKVTestRequest(server.Store, writer, request)
+	}))
+	service := (&url.URL{Scheme: "unix", Path: socket}).String()
+	return sqlOutput, dump(service, editServiceConfig)
 }
 
 func parityDataFiles(t *testing.T, dir, extension string) []string {

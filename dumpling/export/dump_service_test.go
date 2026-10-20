@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	tf "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/net/http2"
 )
 
@@ -118,6 +120,7 @@ func TestDumpServiceFromTiDBStorage(t *testing.T) {
 		actualFiles = append(actualFiles, entry.Name())
 	}
 	expectedNames := append(schemaFiles,
+		"metadata",
 		"test.kv_int.0000000000000.csv",
 		"test.kv_int.0000000010000.csv",
 	)
@@ -127,6 +130,86 @@ func TestDumpServiceFromTiDBStorage(t *testing.T) {
 		"test.kv_partition.0000000010000.csv",
 	)
 	require.ElementsMatch(t, expectedNames, actualFiles)
+}
+
+func TestDumpServiceLifecycle(t *testing.T) {
+	cases := []struct {
+		name            string
+		failingEndpoint string
+		cancel          bool
+	}{
+		{name: "success"},
+		{name: "data failure", failingEndpoint: "/data"},
+		{name: "shard discovery failure", failingEndpoint: "/shards"},
+		{name: "cancellation", cancel: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("create database lifecycle")
+			tk.MustExec("create table lifecycle.t (id int primary key)")
+			tk.MustExec("insert into lifecycle.t values (1), (2)")
+			socket := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				startKey, _, err := decodeKVTestRange(request)
+				if err != nil {
+					http.Error(writer, err.Error(), http.StatusBadRequest)
+					return
+				}
+				// Fail table data requests after metadata has loaded successfully.
+				if len(startKey) > 0 && startKey[0] == 't' && request.URL.Path == testCase.failingEndpoint {
+					http.Error(writer, "source unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				serveKVTestRequest(store, writer, request)
+			}))
+			conf := DefaultConfig()
+			conf.DumpService = (&url.URL{Scheme: "unix", Path: socket}).String()
+			conf.StatusAddr = ""
+			conf.OutputDirPath = t.TempDir()
+			conf.TableFilter = tf.NewSchemasFilter("lifecycle")
+			conf.FileType = FileFormatCSVString
+			core, logs := observer.New(zap.InfoLevel)
+			conf.Logger = zap.New(core)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			dumper, err := NewDumper(ctx, conf)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, dumper.Close()) })
+			if testCase.cancel {
+				cancel()
+			}
+			err = dumper.Dump()
+			if testCase.failingEndpoint != "" || testCase.cancel {
+				if testCase.cancel {
+					require.ErrorIs(t, err, context.Canceled)
+				} else {
+					require.ErrorContains(t, err, "source unavailable")
+				}
+				require.Len(t, logs.FilterMessage("backup failed summary").All(), 1)
+				_, err := os.Stat(filepath.Join(conf.OutputDirPath, "metadata"))
+				require.ErrorIs(t, err, os.ErrNotExist)
+				return
+			}
+			require.NoError(t, err)
+			status := dumper.GetStatus()
+			require.EqualValues(t, 1, status.TotalTables)
+			require.EqualValues(t, 1, status.CompletedTables)
+			require.EqualValues(t, 2, status.FinishedRows)
+			require.Positive(t, status.FinishedBytes)
+			require.NotNil(t, status.ProgressPercent)
+			require.EqualValues(t, 100, *status.ProgressPercent)
+			require.Equal(t, "100 %", status.Progress)
+			require.EqualValues(t, 2, dumper.metrics.totalChunks.Load())
+			require.EqualValues(t, 2, dumper.metrics.completedChunks.Load())
+			require.Len(t, logs.FilterMessage("backup success summary").All(), 1)
+			metadata, err := os.ReadFile(filepath.Join(conf.OutputDirPath, "metadata"))
+			require.NoError(t, err)
+			require.Contains(t, string(metadata), "Started dump at: ")
+			require.Contains(t, string(metadata), "Finished dump at: ")
+			require.NotContains(t, string(metadata), "SHOW MASTER STATUS")
+		})
+	}
 }
 
 func startTestDumpService(t *testing.T, handler http.Handler) string {

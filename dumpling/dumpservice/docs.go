@@ -79,6 +79,13 @@
 // stored calendar fields. The output does not set the importing session's time
 // zone; configure the importing tool to interpret TIMESTAMP values as UTC.
 //
+// # Export lifecycle
+//
+// Service exports use Dumpling's ordinary task writers, progress reporting, and
+// summary. A successful export writes a metadata file with start and finish
+// times. The service owns the snapshot and the protocol supplies no source
+// position, so that file contains no SQL binlog position or snapshot TSO.
+//
 // # Range requests
 //
 // GET /shards and GET /data take the half-open range as hexadecimal query
@@ -111,7 +118,7 @@
 //
 // A range's position in the table's combined range list becomes the output chunk
 // index, and a task may produce several files when output-size limits apply. See
-// shardKVTableRanges and dumpFromScanner in dumpling/export/kv.go, and
+// shardKVTableRanges and dumpKVTasks in dumpling/export/kv.go, and
 // tryToWriteTableData in dumpling/export/writer.go. Metadata shard discovery and
 // caching are implemented separately in dumpling/export/kv_metadata.go.
 //

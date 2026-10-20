@@ -39,8 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 type kvTableMeta struct {
@@ -53,15 +51,13 @@ type kvTableMeta struct {
 	create   string
 }
 
-func newKVTableMeta(database string, table *model.TableInfo, createSQL string) *kvTableMeta {
-	columns := kvVisibleColumns(table)
+func newKVTableMeta(database string, table *model.TableInfo, createSQL string, includeStoredGenerated bool) *kvTableMeta {
+	columns := kvVisibleColumns(table, includeStoredGenerated)
 	types := make([]string, 0, len(columns))
 	names := make([]string, 0, len(columns))
-	selected := make([]string, 0, len(columns))
 	for _, column := range columns {
 		types = append(types, kvColumnType(column))
 		names = append(names, column.Name.O)
-		selected = append(selected, wrapBackTicks(column.Name.O))
 	}
 	return &kvTableMeta{
 		database: database,
@@ -69,7 +65,7 @@ func newKVTableMeta(database string, table *model.TableInfo, createSQL string) *
 		columns:  columns,
 		types:    types,
 		names:    names,
-		selected: strings.Join(selected, ","),
+		selected: strings.Join(columnNamesToSelectFields(names), ","),
 		create:   createSQL,
 	}
 }
@@ -107,6 +103,7 @@ func (m *kvTableMeta) ColumnInfos() []*ColumnInfo {
 type kvTableData struct {
 	scanner kvScanner
 	table   *model.TableInfo
+	columns []*model.ColumnInfo
 	ranges  []dumpservice.Range
 	metrics *metrics
 	iter    *kvRowIter
@@ -120,19 +117,21 @@ type kvScanner interface {
 func newKVTableData(
 	scanner kvScanner,
 	table *model.TableInfo,
+	columns []*model.ColumnInfo,
 	ranges []dumpservice.Range,
 	metrics *metrics,
 ) *kvTableData {
 	return &kvTableData{
 		scanner: scanner,
 		table:   table,
+		columns: columns,
 		ranges:  ranges,
 		metrics: metrics,
 	}
 }
 
 func (d *kvTableData) Start(tctx *tcontext.Context, _ *sql.Conn) error {
-	decoder := newKVRowDecoder(d.table)
+	decoder := newKVRowDecoder(d.table, d.columns)
 	iter := &kvRowIter{
 		ctx:     tctx,
 		scanner: d.scanner,
@@ -181,9 +180,6 @@ func (i *kvRowIter) HasNext() bool { return i.err == nil && i.hasRow }
 func (i *kvRowIter) Decode(receiver RowReceiver) error {
 	if !i.HasNext() {
 		return errors.New("KV row iterator has no current row")
-	}
-	if i.decoder == nil {
-		i.decoder = newKVRowDecoder(i.table)
 	}
 	values, err := i.decoder.decode(i.table, i.key, i.value)
 	if err != nil {
@@ -288,8 +284,7 @@ type kvRowDecoder struct {
 	chunk   *chunk.Chunk
 }
 
-func newKVRowDecoder(table *model.TableInfo) *kvRowDecoder {
-	columns := kvVisibleColumns(table)
+func newKVRowDecoder(table *model.TableInfo, columns []*model.ColumnInfo) *kvRowDecoder {
 	schema := expression.NewSchema()
 	fieldTypes := make([]*types.FieldType, 0, len(columns))
 	for _, column := range columns {
@@ -319,12 +314,16 @@ func (d *kvRowDecoder) decode(table *model.TableInfo, key, value []byte) (chunk.
 	return d.chunk.GetRow(0), nil
 }
 
-func kvVisibleColumns(table *model.TableInfo) []*model.ColumnInfo {
+func kvVisibleColumns(table *model.TableInfo, includeStoredGenerated bool) []*model.ColumnInfo {
 	columns := make([]*model.ColumnInfo, 0, len(table.Columns))
 	for _, column := range table.Cols() {
-		if column != nil && !column.Hidden && !column.IsGenerated() {
-			columns = append(columns, column)
+		if column == nil || column.Hidden || column.IsVirtualGenerated() {
+			continue
 		}
+		if column.IsGenerated() && !includeStoredGenerated {
+			continue
+		}
+		columns = append(columns, column)
 	}
 	return columns
 }
@@ -422,54 +421,64 @@ func kvCreateTableSQL(reader tidbmeta.Reader, databaseID int64, table *model.Tab
 	return output.String(), nil
 }
 
-func (d *Dumper) dumpFromService() error {
+func (d *Dumper) prepareKVDump() (_ *dumpSource, prepareErr error) {
 	client, err := dumpservice.NewClient(d.conf.DumpService)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer client.Close()
-	return d.dumpFromScanner(client)
-}
-
-func (d *Dumper) dumpFromScanner(scanner kvScanner) error {
-	snapshot, err := newKVMetadataSnapshot(d.tctx, scanner)
+	defer func() {
+		if prepareErr != nil {
+			client.Close()
+		}
+	}()
+	snapshot, err := newKVMetadataSnapshot(d.tctx, client)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	reader := tidbmeta.NewReader(snapshot)
 	databases, err := d.loadKVTables(reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	tableCount := 0
+	for _, database := range databases {
+		tableCount += len(database.tables)
+	}
+	atomic.StoreInt64(&d.totalTables, int64(tableCount))
 	policies, err := reader.ListPolicies()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return &dumpSource{
+		newWriter: func(tctx *tcontext.Context, id int64) (*Writer, error) {
+			writer := NewWriter(tctx, id, d.conf, nil, d.extStore, d.metrics)
+			writer.rebuildConnFn = func(conn *sql.Conn, _ bool) (*sql.Conn, error) { return conn, nil }
+			return writer, nil
+		},
+		produceTasks: func(tctx *tcontext.Context, taskChan chan<- Task) error {
+			return d.dumpKVTasks(tctx, client, reader, databases, policies, taskChan)
+		},
+		close: client.Close,
+	}, nil
+}
 
-	taskIn, taskOut := infiniteChan[Task]()
-	wg, writingCtx := errgroup.WithContext(d.tctx)
-	writerCtx := d.tctx.WithContext(writingCtx)
-	writers := make([]*Writer, d.conf.Threads)
-	for index := range d.conf.Threads {
-		writer := NewWriter(writerCtx, int64(index), d.conf, nil, d.extStore, d.metrics)
-		writer.rebuildConnFn = func(conn *sql.Conn, _ bool) (*sql.Conn, error) { return conn, nil }
-		wg.Go(func() error { return writer.run(taskOut) })
-		writers[index] = writer
-	}
-
-	start := time.Now()
-	tableCount := 0
+func (d *Dumper) dumpKVTasks(
+	tctx *tcontext.Context,
+	scanner kvScanner,
+	reader tidbmeta.Reader,
+	databases []kvDatabaseTables,
+	policies []*model.PolicyInfo,
+	taskChan chan<- Task,
+) error {
 	send := func(task Task) error {
-		if d.sendTaskToChan(writerCtx, task, taskIn) {
-			return writerCtx.Err()
+		if d.sendTaskToChan(tctx, task, taskChan) {
+			return tctx.Err()
 		}
 		return nil
 	}
 	for _, policy := range policies {
 		createSQL := executor.ConstructResultOfShowCreatePlacementPolicy(policy)
 		if err := send(NewTaskPolicyMeta(policy.Name.O, fmt.Sprintf("/*T![placement] %s */", createSQL))); err != nil {
-			close(taskIn)
-			_ = wg.Wait()
 			return err
 		}
 	}
@@ -478,66 +487,41 @@ func (d *Dumper) dumpFromScanner(scanner kvScanner) error {
 		if !d.conf.NoSchemas {
 			createSQL, err := kvCreateDatabaseSQL(database)
 			if err != nil {
-				close(taskIn)
-				_ = wg.Wait()
 				return err
 			}
 			if err := send(NewTaskDatabaseMeta(database.Name.O, createSQL)); err != nil {
-				close(taskIn)
-				_ = wg.Wait()
 				return err
 			}
 		}
 		for _, table := range entry.tables {
-			tableCount++
 			var createSQL string
 			if !d.conf.NoSchemas {
+				var err error
 				createSQL, err = kvCreateTableSQL(reader, database.ID, table)
 				if err != nil {
-					close(taskIn)
-					_ = wg.Wait()
 					return err
 				}
 				if err := send(NewTaskTableMeta(database.Name.O, table.Name.O, createSQL)); err != nil {
-					close(taskIn)
-					_ = wg.Wait()
 					return err
 				}
 			}
-			meta := newKVTableMeta(database.Name.O, table, createSQL)
-			if !d.conf.NoData {
-				ranges, err := shardKVTableRanges(d.tctx, scanner, table)
-				if err != nil {
-					close(taskIn)
-					_ = wg.Wait()
+			if d.conf.NoData {
+				continue
+			}
+			meta := newKVTableMeta(database.Name.O, table, createSQL, d.conf.includeStoredGeneratedColumns())
+			ranges, err := shardKVTableRanges(tctx, scanner, table)
+			if err != nil {
+				return err
+			}
+			for chunkIndex, rangeToScan := range ranges {
+				data := newKVTableData(scanner, table, meta.columns, []dumpservice.Range{rangeToScan}, d.metrics)
+				if err := send(d.newTaskTableData(meta, data, chunkIndex, len(ranges))); err != nil {
 					return err
-				}
-				for chunkIndex, rangeToScan := range ranges {
-					data := newKVTableData(
-						scanner,
-						table,
-						[]dumpservice.Range{rangeToScan},
-						d.metrics,
-					)
-					if err := send(NewTaskTableData(meta, data, chunkIndex, len(ranges))); err != nil {
-						close(taskIn)
-						_ = wg.Wait()
-						return err
-					}
 				}
 			}
 		}
 	}
-	atomic.StoreInt64(&d.totalTables, int64(tableCount))
-	close(taskIn)
-	if err := wg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
-	d.tctx.L().Info("finished dumping KV",
-		zap.Int("tables", tableCount),
-		zap.Int("tasks", countTotalTask(writers)),
-		zap.Duration("duration", time.Since(start)))
-	return nil
+	return tctx.Err()
 }
 
 func (m *kvTableMeta) String() string {
