@@ -233,6 +233,68 @@ fn index_lookup_limit_and_topn_preserve_table_rows() {
     }
 }
 
+/// Go `CollectPlanStatsVersion` publishes each scan's
+/// `StatsInfo().StatsVersion`, which `initStats` takes from the table
+/// `GetStatsTable` planned from: `statistics.PseudoVersion` (zero) once a
+/// zero `stats_meta` count makes rule 2 answer with a `PseudoTable`, never the
+/// cached table's `stats_meta` version.
+#[test]
+fn process_stats_info_reports_the_get_stats_table_version() {
+    let registry = process::ProcessRegistry::default();
+    let mut session = Session::new();
+    let guard = registry.register(
+        42,
+        "root".to_owned(),
+        "127.0.0.1:4000".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    session.attach_process(42, guard);
+    session
+        .run("CREATE TABLE stats_info_src (a BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO stats_info_src VALUES (1),(2),(3)")
+        .unwrap();
+    session.run("ANALYZE TABLE stats_info_src").unwrap();
+    let table_id = {
+        let shared = session.shared_catalog();
+        let mut catalog = shared.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) =
+            catalog.table_in("test", "stats_info_src").unwrap()
+        else {
+            panic!("stats_info_src is not a stored table");
+        };
+        let table_id = table.table_id;
+        let statistics = (*catalog.table_statistics(table_id).unwrap())
+            .clone()
+            .with_stat_versions(77, 77);
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+        table_id
+    };
+    let stats_info = |session: &mut Session| {
+        session.run("SELECT * FROM stats_info_src").unwrap();
+        tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 42)
+            .expect("registered process")
+            .stats_info
+            .get("stats_info_src")
+            .copied()
+    };
+    assert_eq!(stats_info(&mut session), Some(77));
+
+    // An emptied table: the cached object keeps its version, but the plan
+    // comes from a fresh `PseudoTable`.
+    {
+        let shared = session.shared_catalog();
+        let mut catalog = shared.lock().unwrap();
+        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
+        statistics.row_count = 0;
+        statistics.modify_count = 3;
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    }
+    assert_eq!(stats_info(&mut session), Some(0));
+}
+
 #[test]
 fn ordinary_execution_publishes_the_brief_binary_plan() {
     let registry = process::ProcessRegistry::default();
@@ -1868,6 +1930,74 @@ fn explain_marks_missing_stats_for_selected_index() {
     assert!(
         !scan[4].contains("stats:partial"),
         "fully loaded statistics in a later statement inherited old statuses: {rows:?}"
+    );
+}
+
+/// A scan's used-statistics suffix reports the table `GetStatsTable` planned
+/// from. In determinate mode a table without a fully loaded histogram has an
+/// ANALYZE-time count of zero, so rule 2 answers with a fresh `PseudoTable`
+/// and `initStats` records `statistics.PseudoVersion`: Go prints
+/// `stats:pseudo`, not the cached table's evicted statuses.
+///
+/// Captured live from a Go tidb-server over a hash-partitioned table analyzed
+/// while empty and then written to (`stats_meta` count 4), with
+/// `tidb_opt_objective = 'determinate'`:
+/// `IndexFullScan ... keep order:false, stats:pseudo`, where moderate mode
+/// prints the index's `stats:partial[...]` status.
+#[test]
+fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE explain_determinate_pseudo (a INT, b INT, payload INT, KEY idx_ab(a,b))")
+        .unwrap();
+    session
+        .run("INSERT INTO explain_determinate_pseudo VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4)")
+        .unwrap();
+    session
+        .run("ANALYZE TABLE explain_determinate_pseudo")
+        .unwrap();
+    let shared = session.shared_catalog();
+    {
+        let mut catalog = shared.lock().unwrap();
+        let table_id = match catalog
+            .table_in("test", "explain_determinate_pseudo")
+            .unwrap()
+        {
+            tidb_executor::TableEntry::Kv(table) => table.table_id,
+            _ => panic!("explain_determinate_pseudo is not a KV table"),
+        };
+        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
+        for status in statistics
+            .column_load_status
+            .values_mut()
+            .chain(statistics.index_load_status.values_mut())
+        {
+            *status = tidb_stats::StatsLoadedStatus::all_evicted();
+        }
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    }
+    let scan_info = |session: &mut Session| {
+        let rows = row_text(session.run(
+            "EXPLAIN SELECT payload FROM explain_determinate_pseudo USE INDEX (idx_ab) \
+             WHERE a = 2 AND b = 2",
+        ));
+        rows.iter()
+            .find(|row| row[0].contains("IndexRangeScan"))
+            .unwrap_or_else(|| panic!("missing index range scan: {rows:?}"))[4]
+            .clone()
+    };
+    let moderate = scan_info(&mut session);
+    assert!(
+        moderate.contains("stats:partial[idx_ab:allEvicted"),
+        "moderate mode reports the cached table's evicted index: {moderate}"
+    );
+    session
+        .run("SET tidb_opt_objective = 'determinate'")
+        .unwrap();
+    let determinate = scan_info(&mut session);
+    assert!(
+        determinate.ends_with("stats:pseudo"),
+        "determinate mode plans from a PseudoTable: {determinate}"
     );
 }
 

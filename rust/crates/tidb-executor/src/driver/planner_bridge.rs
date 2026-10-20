@@ -20,7 +20,6 @@
 //! and translates the aggregation property back to stable relation-qualified
 //! column identities understood by the executor's physical source builder.
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
@@ -1301,7 +1300,6 @@ struct InitStats<'a> {
     error: Option<tidb_planner::plan_base::PlanError>,
     catalog: &'a Catalog,
     select: Option<&'a tidb_ast::SelectStmt>,
-    enable_pseudo_for_outdated_stats: bool,
     context: &'a crate::StmtContext,
     /// Whether this walk records the statement's used statistics (Go
     /// `initStats`' `RecordUsedInfo` and `recordUsedItemStatsStatus`). Go
@@ -1311,11 +1309,20 @@ struct InitStats<'a> {
     record_used_stats: bool,
 }
 
-fn record_used_item_stats_status(
+/// Go `recordUsedItemStatsStatus` (`cardinality/trace.go`) over the table
+/// `GetStatsTable` answered with. `statistics` is `None` for a fresh
+/// `PseudoTable`, whose pseudo column and index objects carry a zero
+/// `StatsLoadedStatus` -- `unInitialized` -- for every public, non-hidden
+/// column and public index (`in_pseudo_table`), while anything else is a nil
+/// object its all-false existence map reports `missing`. The table's ledger
+/// entry carries what Go's `initStats` records for it: the pseudo version
+/// (zero) and the `PseudoTable` counts.
+pub(crate) fn record_used_item_stats_status(
     context: &crate::StmtContext,
     table_name: &str,
     physical_table_id: i64,
     statistics: Option<&crate::access_cost::TableStatistics>,
+    in_pseudo_table: bool,
     item_id: i64,
     is_index: bool,
 ) {
@@ -1325,6 +1332,20 @@ fn record_used_item_stats_status(
         return;
     }
     let Some(statistics) = statistics else {
+        context.record_used_stats_status(
+            physical_table_id,
+            table_name,
+            tidb_stats::PSEUDO_VERSION,
+            crate::plan_trace::PSEUDO_ROW_COUNT as i64,
+            0,
+            item_id,
+            is_index,
+            if in_pseudo_table {
+                tidb_stats::StatsLoadedStatus::default().status_to_string()
+            } else {
+                "missing"
+            },
+        );
         return;
     };
     let (loaded_status, analyzed) = if is_index {
@@ -1476,48 +1497,13 @@ impl InitStats<'_> {
         // Go `initStats` calls `GetStatsTable(..., ds.PhysicalTableID)`: a
         // static-pruning child owns one physical partition's statistics,
         // while an ordinary/dynamic source keeps the logical table ID here.
-        let stored_statistics = self.catalog.table_statistics(source.physical_table_id);
-        // Go `GetStatsTable` copies the cached table for session-local
-        // objective and outdated-statistics decisions. Neither switch may
-        // mutate the shared cache used by other sessions.
-        let allow_use_modify_count = self
-            .context
-            .optimizer_cost_env()
-            .session
-            .estimator_options
-            .allow_use_modify_count;
-        let statistics = stored_statistics.as_deref().map(|statistics| {
-            let analyze_count = statistics.analyze_row_count().max(0.0) as i64;
-            // Go `GetStatsTable` keeps the cached `RealtimeCount` of a table
-            // that has a `stats_meta` row but no analyzed histogram: its
-            // `TableStatsFromStorage` returns that metadata-only table, and
-            // rule 3 (`!IsInitialized`) only marks the copy pseudo.
-            let ignore_realtime_stats = !allow_use_modify_count
-                && (statistics.row_count != analyze_count || statistics.modify_count != 0);
-            let outdated = self.enable_pseudo_for_outdated_stats && statistics.is_outdated();
-            if ignore_realtime_stats || outdated {
-                let mut copied = statistics.clone();
-                if ignore_realtime_stats {
-                    copied.row_count = analyze_count;
-                    copied.modify_count = 0;
-                }
-                copied.pseudo |= outdated;
-                Cow::Owned(copied)
-            } else {
-                Cow::Borrowed(statistics)
-            }
-        });
-        // Go `GetStatsTable` rule 2: a zero `RealtimeCount` (after the
-        // determinate-objective copy above) returns a fresh
-        // `statistics.PseudoTable` -- `RealtimeCount` 10000, `ModifyCount` 0
-        // and pseudo column/index histograms -- in place of the cached
-        // table. None of the cached table's objects survive: an analyzed
-        // empty table's zero-NDV histograms and its `stats_meta`
-        // `modify_count` must not reach `EstimateColumnNDV` or the index
-        // row counts. A missing statistics table is this bridge's
-        // `PseudoTable`, exactly as for a table `GetPhysicalTableStats`
-        // has no stats for.
-        let statistics = statistics.filter(|statistics| statistics.row_count != 0);
+        // `None` is the fresh `PseudoTable` -- a table without statistics,
+        // and rule 2's answer to a zero `RealtimeCount`.
+        let statistics = crate::access_cost::get_stats_table(
+            self.context,
+            self.catalog,
+            source.physical_table_id,
+        );
         let statistics = statistics.as_deref();
         source.analyzed_index_ids = statistics
             .map(|stats| {
@@ -2001,11 +1987,25 @@ impl InitStats<'_> {
                 if !self.record_used_stats {
                     return;
                 }
+                // Go `PseudoTable`'s objects: public, non-hidden columns and
+                // public indexes.
+                let in_pseudo_table = if is_index {
+                    source
+                        .indexes
+                        .iter()
+                        .any(|index| index.id == item_id && index.is_public)
+                } else {
+                    source
+                        .table_columns
+                        .iter()
+                        .any(|column| column.id == item_id && !column.is_hidden)
+                };
                 record_used_item_stats_status(
                     self.context,
                     &source.table_name,
                     source.physical_table_id,
                     statistics,
+                    in_pseudo_table,
                     item_id,
                     is_index,
                 );
@@ -2062,6 +2062,7 @@ impl InitStats<'_> {
                             &source.table_name,
                             source.physical_table_id,
                             statistics,
+                            index.is_public,
                             index.id,
                             true,
                         );
@@ -2563,7 +2564,6 @@ impl DriverCteOptimizer<'_> {
             error: None,
             catalog: self.catalog,
             select: None,
-            enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             context: ctx,
             record_used_stats: true,
         };
@@ -3479,7 +3479,6 @@ fn optimize_built_logical(
                 error: None,
                 catalog: self.catalog,
                 select: self.select,
-                enable_pseudo_for_outdated_stats: self.context.enable_pseudo_for_outdated_stats(),
                 context: self.context,
                 record_used_stats: self.record_used_stats.get(),
             };
@@ -4132,7 +4131,6 @@ mod statistics_initialization_tests {
             error: None,
             catalog: &catalog,
             select: None,
-            enable_pseudo_for_outdated_stats: false,
             context: &context,
             record_used_stats: true,
         };
@@ -4283,7 +4281,6 @@ mod statistics_initialization_tests {
                 error: None,
                 catalog: &catalog,
                 select: None,
-                enable_pseudo_for_outdated_stats: false,
                 context: &context,
                 record_used_stats: true,
             };
@@ -4462,7 +4459,6 @@ mod statistics_initialization_tests {
                     error: None,
                     catalog: &catalog,
                     select: None,
-                    enable_pseudo_for_outdated_stats: false,
                     context: &context,
                     record_used_stats: true,
                 };

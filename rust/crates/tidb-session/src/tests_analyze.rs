@@ -878,6 +878,181 @@ fn a_zero_count_table_plans_from_a_fresh_pseudo_table() {
     );
 }
 
+/// `GetStatsTable` judges `IsOutdated` on the table it plans from: the
+/// determinate-objective copy has `ModifyCount` 0, so it is never outdated.
+///
+/// Captured from Go's `testkit` over the same rows (10 rows, `ANALYZE`, 20
+/// more rows, stats delta flushed: `stats_meta` count 30, modify_count 20):
+///
+/// ```text
+/// set tidb_enable_pseudo_for_outdated_stats = 1;
+/// explain format='brief' select * from o where b > 5
+///   TableReader 10.00 / Selection 10.00 / TableFullScan 30.00 stats:pseudo
+/// set tidb_opt_objective = 'determinate';
+/// explain format='brief' select * from o where b > 5
+///   TableReader 5.00 / Selection 5.00 / TableFullScan 10.00 (no pseudo)
+/// ```
+///
+/// Deciding outdatedness on the cached table (modify_count 20 over an
+/// analyzed count of 10) marked the determinate plan pseudo as well.
+#[test]
+fn outdated_statistics_are_judged_on_the_determinate_copy() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE o (a INT, b INT, KEY ia(a))")
+        .unwrap();
+    let rows = |range: std::ops::RangeInclusive<i32>| {
+        range
+            .map(|value| format!("({value},{value})"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    session
+        .run(&format!("INSERT INTO o VALUES {}", rows(1..=10)))
+        .unwrap();
+    session.run("ANALYZE TABLE o ALL COLUMNS").unwrap();
+    session
+        .run(&format!("INSERT INTO o VALUES {}", rows(11..=30)))
+        .unwrap();
+    session.run("FLUSH STATS_DELTA test.o").unwrap();
+    let meta = row_text(session.run("SHOW STATS_META WHERE table_name = 'o'"));
+    assert_eq!(
+        (meta[0][4].as_str(), meta[0][5].as_str()),
+        ("20", "30"),
+        "{meta:?}"
+    );
+
+    let plan = |session: &mut Session| {
+        row_text(session.run("EXPLAIN FORMAT='brief' SELECT * FROM o WHERE b > 5"))
+            .into_iter()
+            .map(|row| format!("{} {} {}", row[0], row[1], row[4]))
+            .collect::<Vec<_>>()
+    };
+    session
+        .run("SET tidb_enable_pseudo_for_outdated_stats = 1")
+        .unwrap();
+    assert_eq!(
+        plan(&mut session),
+        [
+            "TableReader 10.00 data:Selection",
+            "└─Selection 10.00 gt(test.o.b, 5)",
+            "  └─TableFullScan 30.00 keep order:false, stats:pseudo",
+        ]
+    );
+    session
+        .run("SET tidb_opt_objective = 'determinate'")
+        .unwrap();
+    assert_eq!(
+        plan(&mut session),
+        [
+            "TableReader 5.00 data:Selection",
+            "└─Selection 5.00 gt(test.o.b, 5)",
+            "  └─TableFullScan 10.00 keep order:false",
+        ]
+    );
+}
+
+/// Determinate mode plans an emptied table from its ANALYZE-time count: the
+/// copy's `RealtimeCount` is the analyzed 10, so rule 2 does not apply and
+/// rule 3 finds initialized statistics.
+///
+/// Captured from Go's `testkit` (10 rows, `ANALYZE`, `DELETE`, flush:
+/// `stats_meta` count 0, modify_count 10):
+///
+/// ```text
+/// explain format='brief' select * from d where b > 5
+///   TableReader 3333.33 / Selection 3333.33 / TableFullScan 10000.00 stats:pseudo
+/// set tidb_opt_objective = 'determinate';
+/// explain format='brief' select * from d where b > 5
+///   TableReader 5.00 / Selection 5.00 / TableFullScan 10.00 (no pseudo)
+/// explain format='brief' select a, count(*) from d group by a
+///   Projection 10.00 / StreamAgg 10.00 / IndexReader 10.00
+///   └─IndexFullScan 10.00 keep order:true (no pseudo)
+/// ```
+///
+/// The cached object folds rule 2 into its `pseudo` bit for the cached zero
+/// count; carrying that bit onto the copy marked the determinate plan pseudo.
+#[test]
+fn determinate_mode_plans_an_emptied_table_from_its_analyze_count() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE d (a INT, b INT, KEY ia(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO d VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
+        .unwrap();
+    session.run("ANALYZE TABLE d ALL COLUMNS").unwrap();
+    session.run("DELETE FROM d").unwrap();
+    session.run("FLUSH STATS_DELTA test.d").unwrap();
+    let meta = row_text(session.run("SHOW STATS_META WHERE table_name = 'd'"));
+    assert_eq!(
+        (meta[0][4].as_str(), meta[0][5].as_str()),
+        ("10", "0"),
+        "{meta:?}"
+    );
+    // The cluster loader (`table_statistics_from_table_schema`) bakes rule 2
+    // into the cached `pseudo` bit for a zero count; give the embedded
+    // catalog's object the same shape.
+    {
+        let shared = session.shared_catalog();
+        let mut catalog = shared.lock().unwrap();
+        let TableEntry::Kv(table) = catalog.table_in("test", "d").unwrap() else {
+            panic!("d is not a stored table");
+        };
+        let table_id = table.table_id;
+        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
+        statistics.pseudo = true;
+        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    }
+
+    let plan = |session: &mut Session, sql: &str| {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| format!("{} {} {}", row[0], row[1], row[4]))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        plan(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM d WHERE b > 5"
+        ),
+        [
+            "TableReader 3333.33 data:Selection",
+            "└─Selection 3333.33 gt(test.d.b, 5)",
+            "  └─TableFullScan 10000.00 keep order:false, stats:pseudo",
+        ]
+    );
+    session
+        .run("SET tidb_opt_objective = 'determinate'")
+        .unwrap();
+    assert_eq!(
+        plan(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM d WHERE b > 5"
+        ),
+        [
+            "TableReader 5.00 data:Selection",
+            "└─Selection 5.00 gt(test.d.b, 5)",
+            "  └─TableFullScan 10.00 keep order:false",
+        ]
+    );
+    let grouped = plan(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT a, COUNT(*) FROM d GROUP BY a",
+    );
+    assert_eq!(grouped.len(), 4, "{grouped:?}");
+    assert!(grouped[0].starts_with("Projection 10.00"), "{grouped:?}");
+    assert!(grouped[1].starts_with("└─StreamAgg 10.00"), "{grouped:?}");
+    assert!(
+        grouped[2].starts_with("  └─IndexReader 10.00"),
+        "{grouped:?}"
+    );
+    assert_eq!(
+        grouped[3], "    └─IndexFullScan 10.00 keep order:true",
+        "{grouped:?}"
+    );
+}
+
 /// A single-column UNIQUE index suppresses the TopN on itself AND on the
 /// column it covers, which is Go's own rule -- captured:
 ///

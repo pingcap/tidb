@@ -3077,18 +3077,7 @@ impl PreparedDmlPlan {
         catalog: &Catalog,
         environment: &PreparedPlanCacheEnvironment,
     ) -> u64 {
-        if !environment.hashes_fresh_statistics() {
-            return 0;
-        }
-        self.stats_table_keys.iter().fold(0, |hash, key| {
-            let version = match catalog.get_by_key(key) {
-                Some(TableEntry::Kv(table)) => catalog
-                    .table_statistics(table.stats_physical_id())
-                    .map_or(0, |statistics| statistics.version),
-                _ => 0,
-            };
-            hash.wrapping_add(version)
-        })
+        environment.stats_version_hash(catalog, &self.stats_table_keys)
     }
 }
 

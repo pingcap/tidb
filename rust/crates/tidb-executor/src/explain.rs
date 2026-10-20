@@ -184,37 +184,22 @@ fn used_stats_suffix_for_scan(
     // estimator runs; if this planning path did not estimate the selected
     // lookup index, retain its status here so the physical scan still reports
     // the statistic it actually uses.
-    if let (Some(index_id), Some(table), Some(statistics)) = (
+    if let (Some(index_id), Some(table)) = (
         selected_index_id,
         catalog.physical_kv_table_by_id(physical_table_id),
-        catalog.table_statistics(physical_table_id),
     ) {
-        let status = statistics.index_load_status.get(&index_id).copied();
-        if !status.is_some_and(tidb_stats::StatsLoadedStatus::is_full_load) {
-            let analyzed = statistics
-                .index_stats_existence
-                .get(&index_id)
-                .copied()
-                .unwrap_or(false);
-            let status = status.map_or_else(
-                || if analyzed { "unInitialized" } else { "missing" },
-                tidb_stats::StatsLoadedStatus::status_to_string,
-            );
-            context.record_used_stats_status(
-                physical_table_id,
-                &table.name,
-                if statistics.pseudo {
-                    0
-                } else {
-                    statistics.version
-                },
-                statistics.row_count,
-                statistics.modify_count,
-                index_id,
-                true,
-                status,
-            );
-        }
+        // Go's estimator reads the table `GetStatsTable` planned from, so a
+        // pseudo or determinate copy reports what the planner saw.
+        let statistics = crate::access_cost::get_stats_table(context, catalog, physical_table_id);
+        crate::driver::planner_bridge::record_used_item_stats_status(
+            context,
+            &table.name,
+            physical_table_id,
+            statistics.as_deref(),
+            table.indexes().iter().any(|index| index.id == index_id),
+            index_id,
+            true,
+        );
     }
     if let Some(used_stats) = context.used_stats_info(physical_table_id) {
         let (column_names, index_names) = catalog
@@ -2691,50 +2676,53 @@ fn collect_executor_process_fields(
     }
 }
 
+/// Go `CollectPlanStatsVersion`: each scan's `StatsInfo().StatsVersion`, which
+/// `initStats` takes from the table `GetStatsTable` planned it from --
+/// `statistics.PseudoVersion` (zero) for a pseudo table.
 fn collect_stats_info(
     plan: &PhysicalPlan,
+    ctx: &crate::StmtContext,
     catalog: &Catalog,
     stats_info: &mut std::collections::HashMap<String, u64>,
 ) {
+    let stats_version = |physical_table_id| {
+        crate::access_cost::get_stats_table(ctx, catalog, physical_table_id)
+            .filter(|statistics| !statistics.pseudo)
+            .map_or(tidb_stats::PSEUDO_VERSION, |statistics| statistics.version)
+    };
     for child in plan.children() {
-        collect_stats_info(child, catalog, stats_info);
+        collect_stats_info(child, ctx, catalog, stats_info);
     }
     match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => {
-            collect_stats_info(&receiver.data_source, catalog, stats_info);
+            collect_stats_info(&receiver.data_source, ctx, catalog, stats_info);
         }
         PhysicalPlan::TableReader(reader) => {
             if let Some(inner) = reader.table_plan.as_deref() {
-                collect_stats_info(inner, catalog, stats_info);
+                collect_stats_info(inner, ctx, catalog, stats_info);
             }
         }
         PhysicalPlan::IndexReader(reader) => {
             if let Some(inner) = reader.index_plan.as_deref() {
-                collect_stats_info(inner, catalog, stats_info);
+                collect_stats_info(inner, ctx, catalog, stats_info);
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(inner) = reader.index_plan.as_deref() {
-                collect_stats_info(inner, catalog, stats_info);
+                collect_stats_info(inner, ctx, catalog, stats_info);
             }
         }
         PhysicalPlan::IndexScan(scan) => {
             let name = table_name(catalog, scan.table_id, None);
-            let version = catalog
-                .table_statistics(logical_table_id(catalog, scan.table_id))
-                .map_or(0, |statistics| statistics.version);
-            stats_info.insert(name, version);
+            stats_info.insert(name, stats_version(scan.table_id));
         }
         PhysicalPlan::TableScan(scan) => {
             let name = table_name(catalog, scan.table_id, None);
-            let version = catalog
-                .table_statistics(logical_table_id(catalog, scan.table_id))
-                .map_or(0, |statistics| statistics.version);
-            stats_info.insert(name, version);
+            stats_info.insert(name, stats_version(scan.table_id));
         }
         PhysicalPlan::Dml(root) => {
             if let Some(select) = root.select_plan.as_deref() {
-                collect_stats_info(select, catalog, stats_info);
+                collect_stats_info(select, ctx, catalog, stats_info);
             }
         }
         _ => {}
@@ -3407,7 +3395,7 @@ pub fn process_plan_info_with_brief(
         &mut info.table_ids,
         &mut info.index_names,
     );
-    collect_stats_info(physical, catalog, &mut info.stats_info);
+    collect_stats_info(physical, statement_context, catalog, &mut info.stats_info);
     info
 }
 

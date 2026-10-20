@@ -621,6 +621,163 @@ fn tidb_index_usage_records_a_clustered_point_read() {
     assert_eq!(usage.percentage_access, [0, 1, 0, 0, 0, 0, 0]);
 }
 
+/// Go's cop index-usage reporter reads the statement's `UsedStatsInfo`, which
+/// `initStats` fills from `GetStatsTable`: in determinate mode the table's
+/// size is its ANALYZE-time count.
+///
+/// Captured from Go's `testkit` (100 rows, `ANALYZE`, 100 more rows, flush):
+/// `tidb_index_usage` for `ia` after one 50-row read in each mode reads
+/// `QUERY_TOTAL 2, ROWS_ACCESS_TOTAL 100` with one sample in `20_50` (50 of
+/// the realtime 200 rows) and one in `50_100` (50 of the analyzed 100).
+#[test]
+fn tidb_index_usage_sizes_a_determinate_read_by_the_analyze_count() {
+    use std::sync::Arc;
+
+    let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+    collector.start_worker();
+    let mut session = Session::new();
+    session.set_index_usage_collector(Arc::clone(&collector));
+    session.set_session_index_usage_collector(collector.spawn_session_collector());
+    session
+        .run("CREATE TABLE usage_determinate (id INT PRIMARY KEY, a INT, KEY ia(a))")
+        .unwrap();
+    let rows = |range: std::ops::RangeInclusive<i32>| {
+        range
+            .map(|value| format!("({value},{value})"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    session
+        .run(&format!(
+            "INSERT INTO usage_determinate VALUES {}",
+            rows(1..=100)
+        ))
+        .unwrap();
+    session
+        .run("ANALYZE TABLE usage_determinate ALL COLUMNS")
+        .unwrap();
+    session
+        .run(&format!(
+            "INSERT INTO usage_determinate VALUES {}",
+            rows(101..=200)
+        ))
+        .unwrap();
+    session
+        .run("FLUSH STATS_DELTA test.usage_determinate")
+        .unwrap();
+    let (table_id, index_id) = {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) =
+            catalog.table_in("test", "usage_determinate").unwrap()
+        else {
+            panic!("usage_determinate must be a stored table");
+        };
+        let index_id = table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case("ia"))
+            .expect("ia")
+            .id;
+        (table.table_id, index_id)
+    };
+    assert_eq!(
+        row_text(
+            session.run("SELECT COUNT(*) FROM usage_determinate USE INDEX (ia) WHERE a <= 50")
+        ),
+        [["50"]]
+    );
+    session
+        .run("SET tidb_opt_objective = 'determinate'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(*) FROM usage_determinate USE INDEX (ia) WHERE a > 50 AND a <= 100"
+        )),
+        [["50"]]
+    );
+
+    drop(session);
+    collector.close();
+
+    let usage = collector.get_index_usage(table_id, index_id);
+    assert_eq!(usage.query_total, 2);
+    assert_eq!(usage.row_access_total, 100);
+    assert_eq!(usage.percentage_access, [0, 0, 0, 0, 1, 1, 0]);
+}
+
+/// Go's fast point plan never runs `initStats`, and a PointGet builds its
+/// usage reporter without `LoadTableStats`, so a prepared point read counts
+/// against `math.MaxInt32` rows; a BatchPointGet loads `GetStatsTable` first.
+///
+/// Captured from Go's `testkit` over an analyzed 10-row table: two EXECUTEs
+/// of `SELECT a FROM w WHERE id = ?` and one `WHERE id IN (1, 2)` give the
+/// primary key `QUERY_TOTAL 3, ROWS_ACCESS_TOTAL 4` with two samples in
+/// `0_1` (1 of 2147483647 rows, not 1 of 10) and one in `20_50` (2 of 10).
+#[test]
+fn tidb_index_usage_sizes_a_prepared_point_read_without_statistics() {
+    use std::sync::Arc;
+
+    let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
+    collector.start_worker();
+    let mut session = Session::new();
+    session.set_index_usage_collector(Arc::clone(&collector));
+    session.set_session_index_usage_collector(collector.spawn_session_collector());
+    session
+        .run("CREATE TABLE usage_prepared_point (id INT PRIMARY KEY, a INT)")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO usage_prepared_point VALUES \
+             (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)",
+        )
+        .unwrap();
+    session
+        .run("ANALYZE TABLE usage_prepared_point ALL COLUMNS")
+        .unwrap();
+    let table_id = {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) =
+            catalog.table_in("test", "usage_prepared_point").unwrap()
+        else {
+            panic!("usage_prepared_point must be a stored table");
+        };
+        table.table_id
+    };
+    let sql = "SELECT a FROM usage_prepared_point WHERE id = ?";
+    let prepared = session.prepare_ast(sql).unwrap();
+    let plan = prepared
+        .point_get_plan()
+        .expect("an integer-handle equality is a prepared point plan");
+    for _ in 0..2 {
+        let execution = session
+            .bind_cached_prepared_point_get(&plan, &[tidb_datatype::Datum::Int(5)])
+            .expect("the point plan binds its handle");
+        let opened = session
+            .open_prepared_point_get(execution, prepared.statement(), sql)
+            .unwrap()
+            .unwrap();
+        let output = crate::tests_support::collect_record_set(opened.attach(&mut session));
+        let crate::StmtOutput::Rows { rows, .. } = output else {
+            panic!("expected rows")
+        };
+        assert_eq!(rows.len(), 1);
+    }
+    assert_eq!(
+        row_text(session.run("SELECT * FROM usage_prepared_point WHERE id IN (1, 2)")),
+        [["1", "1"], ["2", "2"]]
+    );
+
+    drop(session);
+    collector.close();
+
+    let usage = collector.get_index_usage(table_id, 0);
+    assert_eq!(usage.query_total, 3);
+    assert_eq!(usage.row_access_total, 4);
+    assert_eq!(usage.percentage_access, [0, 2, 0, 0, 1, 0, 0]);
+}
+
 /// Go `TestIndexUsageReporterWithClusterIndex` exercises clustered integer
 /// and common handles, plus a nonclustered string primary index. A hinted OR
 /// IndexMerge combines integer-handle ranges with a secondary-index range.

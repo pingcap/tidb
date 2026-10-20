@@ -232,6 +232,15 @@ impl Session {
                         tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
                         tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
                     ),
+                )
+                .with_opt_objective_determinate(
+                    self.vars
+                        .get_system(tidb_vardef::tidb_vars::TIDB_OPT_OBJECTIVE)
+                        .is_ok_and(|value| {
+                            value.eq_ignore_ascii_case(
+                                tidb_vardef::tidb_vars::OPT_OBJECTIVE_DETERMINATE,
+                            )
+                        }),
                 ),
             )
         });

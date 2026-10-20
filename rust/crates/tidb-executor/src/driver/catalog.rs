@@ -3306,7 +3306,10 @@ impl Catalog {
                 }) {
                     continue;
                 }
-                if statistics.pseudo
+                // Go reads the cached `tblStats.Pseudo` straight off the
+                // handle, not `GetStatsTable`'s planner copy: an analyzed
+                // table whose count is zero still asks for a load.
+                if statistics.is_synthetic_pseudo()
                     || statistics
                         .column_load_status
                         .values()
@@ -3395,7 +3398,8 @@ impl Catalog {
             let Some(statistics) = self.table_statistics(column.table_id) else {
                 continue;
             };
-            if statistics.pseudo {
+            // Go `collectSyncIndices`: the handle's cached `tblStats.Pseudo`.
+            if statistics.is_synthetic_pseudo() {
                 continue;
             }
             for index in table.indexes() {
@@ -5264,6 +5268,149 @@ mod statistics_request_tests {
             .all_items()
             .iter()
             .any(|item| item.table_item_id == dropped));
+    }
+
+    /// Go `collectSyncIndices` and `markAtLeastOneFullStatsLoadForEachTable`
+    /// read `tblStats.Pseudo` off the handle's cached table, not
+    /// `GetStatsTable`'s copy: an analyzed table whose `stats_meta` count is
+    /// zero is pseudo only for planning and still asks for its loads.
+    #[test]
+    fn a_zero_count_analyzed_table_still_requests_statistics_loads() {
+        let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
+        let (mut catalog, table_id, column_id) = analyzed_lite_catalog();
+        let index_id = catalog
+            .kv_table_by_id(table_id)
+            .and_then(|table| table.indexes().first())
+            .expect("fixture index")
+            .id;
+        let statistics = crate::access_cost::TableStatistics {
+            // `GetStatsTable` rule 2 makes this table's planner copy pseudo,
+            // while the cached `HistColl.Pseudo` stays false.
+            pseudo: true,
+            cache_pseudo: false,
+            row_count: 0,
+            modify_count: 3,
+            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
+                .into_iter()
+                .collect(),
+            index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
+                .into_iter()
+                .collect(),
+            column_stats_existence: [(column_id, true)].into_iter().collect(),
+            index_stats_existence: [(index_id, true)].into_iter().collect(),
+            ..crate::access_cost::TableStatistics::default()
+        };
+        catalog.set_table_statistics(table_id, Arc::new(statistics));
+        let column = tidb_model::TableItemID {
+            table_id,
+            id: column_id,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let index = tidb_model::TableItemID {
+            table_id,
+            id: index_id,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+
+        let predicate = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+            predicate_columns: [(column, true)].into_iter().collect(),
+            ..Default::default()
+        };
+        let items = catalog.statistics_load_items(&predicate, true);
+        assert!(
+            items
+                .iter()
+                .any(|item| item.table_item_id == index && item.full_load),
+            "the predicate column's index is requested: {items:?}"
+        );
+
+        let visited = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+            visited_logical_table_ids: [table_id].into_iter().collect(),
+            ..Default::default()
+        };
+        let items = catalog.statistics_load_items(&visited, true);
+        assert!(
+            items
+                .iter()
+                .any(|item| item.table_item_id == column && item.full_load),
+            "a visited table without full statistics loads one column: {items:?}"
+        );
+    }
+
+    /// Go `NewPlanCacheKey`'s `statsVerHash` sums
+    /// `getLatestVersionFromStatsTable`: the largest column/index
+    /// `LastUpdateVersion`, or zero for a table `GetStatsTable` rule 2 makes
+    /// pseudo. A stats-delta flush moves only the `stats_meta` version, and Go
+    /// keeps the cached plan across it (captured live: a Go tidb-server keeps
+    /// `@@last_plan_from_cache = 1` for a prepared SELECT after a flush that a
+    /// Rust server re-planned).
+    #[test]
+    fn plan_cache_stats_hash_follows_histogram_versions_not_stats_meta() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t(a INT, KEY ia(a))", &mut catalog)
+            .expect("fixture DDL");
+        let TableEntry::Kv(table) = catalog.get_in("test", "t").expect("fixture table") else {
+            panic!("fixture is not a KV table")
+        };
+        let (table_id, column_id, index_id) =
+            (table.table_id, table.columns[0].id, table.indexes()[0].id);
+        let statistics = |meta_version: u64, row_count: i64, column_version: u64| {
+            let histogram = |id, last_update_version| tidb_stats::Histogram {
+                id,
+                last_update_version,
+                ..tidb_stats::Histogram::default()
+            };
+            let columns = [(
+                column_id,
+                tidb_planner::cardinality::row_count_estimator::ColumnStats {
+                    histogram: histogram(column_id, column_version),
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                },
+            )]
+            .into_iter()
+            .collect();
+            let indexes = [(
+                index_id,
+                tidb_planner::cardinality::row_count_estimator::IndexStats {
+                    histogram: histogram(index_id, 7),
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    num_columns: 1,
+                    unique: false,
+                },
+            )]
+            .into_iter()
+            .collect();
+            Arc::new(
+                crate::access_cost::TableStatistics::new(row_count, 0, columns, indexes)
+                    .with_stat_versions(meta_version, 7),
+            )
+        };
+        let environment = crate::PreparedPlanCacheEnvironment::default();
+        let keys = [CatalogTableKey::new("test", "t")];
+
+        catalog.set_table_statistics(table_id, statistics(100, 10, 9));
+        assert_eq!(environment.stats_version_hash(&catalog, &keys), 9);
+        catalog.set_table_statistics(table_id, statistics(200, 11, 9));
+        assert_eq!(
+            environment.stats_version_hash(&catalog, &keys),
+            9,
+            "a stats-delta flush keeps the key"
+        );
+        catalog.set_table_statistics(table_id, statistics(300, 11, 12));
+        assert_eq!(environment.stats_version_hash(&catalog, &keys), 12);
+        catalog.set_table_statistics(table_id, statistics(400, 0, 12));
+        assert_eq!(
+            environment.stats_version_hash(&catalog, &keys),
+            0,
+            "a zero-count table hashes as a pseudo table"
+        );
     }
 
     #[test]

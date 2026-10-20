@@ -497,6 +497,29 @@ pub struct PreparedPlanCacheEnvironment {
     enable_param_limit: bool,
     /// Go `EnablePlanCacheForSubquery` (`tidb_enable_plan_cache_for_subquery`).
     enable_subquery: bool,
+    /// `tidb_opt_objective = 'determinate'`, read only by the statistics
+    /// version hash.
+    stats_hash_objective: StatsHashObjective,
+}
+
+/// Go's `NewPlanCacheKey` reads `tidb_opt_objective` only inside
+/// `getLatestVersionFromStatsTable`; the variable never keys an entry by
+/// itself, so two environments that differ only here are the same key.
+#[derive(Clone, Copy, Debug, Default)]
+struct StatsHashObjective {
+    determinate: bool,
+}
+
+impl PartialEq for StatsHashObjective {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for StatsHashObjective {}
+
+impl std::hash::Hash for StatsHashObjective {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
 }
 
 impl Default for PreparedPlanCacheEnvironment {
@@ -554,6 +577,7 @@ impl PreparedPlanCacheEnvironment {
             enable_generated_columns: true,
             enable_param_limit: true,
             enable_subquery: true,
+            stats_hash_objective: StatsHashObjective::default(),
         }
     }
 
@@ -629,6 +653,14 @@ impl PreparedPlanCacheEnvironment {
         self
     }
 
+    /// Adds `tidb_opt_objective`, which Go's statistics version hash
+    /// (`getLatestVersionFromStatsTable`) reads.
+    #[must_use]
+    pub const fn with_opt_objective_determinate(mut self, determinate: bool) -> Self {
+        self.stats_hash_objective = StatsHashObjective { determinate };
+        self
+    }
+
     /// Adds the two switches Go's `NewPlanCacheKey` reads at every EXECUTE.
     #[must_use]
     pub const fn with_cache_switches(mut self, param_limit: bool, subquery: bool) -> Self {
@@ -664,6 +696,28 @@ impl PreparedPlanCacheEnvironment {
 
     pub(crate) const fn hashes_fresh_statistics(&self) -> bool {
         self.invalidate_on_fresh_stats && !self.skip_stats_on_binding
+    }
+
+    /// Go `NewPlanCacheKey`'s `statsVerHash`: the sum of every table's
+    /// `getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID)`, zero
+    /// when the key omits statistics.
+    pub(crate) fn stats_version_hash(&self, catalog: &Catalog, keys: &[CatalogTableKey]) -> u64 {
+        if !self.hashes_fresh_statistics() {
+            return 0;
+        }
+        keys.iter().fold(0, |hash, key| {
+            let version = match catalog.get_by_key(key) {
+                Some(TableEntry::Kv(table)) => {
+                    crate::access_cost::get_latest_version_from_stats_table(
+                        catalog,
+                        table.table_id,
+                        self.stats_hash_objective.determinate,
+                    )
+                }
+                _ => 0,
+            };
+            hash.wrapping_add(version)
+        })
     }
 }
 
@@ -1021,18 +1075,7 @@ impl PreparedSelectPlan {
         catalog: &Catalog,
         environment: &PreparedPlanCacheEnvironment,
     ) -> u64 {
-        if !environment.invalidate_on_fresh_stats || environment.skip_stats_on_binding {
-            return 0;
-        }
-        self.stats_table_keys.iter().fold(0, |hash, key| {
-            let version = match catalog.get_by_key(key) {
-                Some(TableEntry::Kv(table)) => catalog
-                    .table_statistics(table.stats_physical_id())
-                    .map_or(0, |statistics| statistics.version),
-                _ => 0,
-            };
-            hash.wrapping_add(version)
-        })
+        environment.stats_version_hash(catalog, &self.stats_table_keys)
     }
 }
 
@@ -1857,7 +1900,6 @@ pub fn open_prepared_point_get(
     };
     kv.configure_snapshot_read(stmt_ctx, 0.0);
     let schema = fast_point_schema(kv, &plan.output);
-    let statistics = catalog.table_statistics(kv.stats_physical_id());
     let columns = plan.output.columns.clone();
     // The point plan's output names: each column is a column of the one
     // table (Go buildSchemaFromFields).
@@ -1885,7 +1927,6 @@ pub fn open_prepared_point_get(
         execution: execution.clone(),
         decode: ctx.clone(),
         context: stmt_ctx.clone(),
-        statistics,
         done: false,
     };
     let current_db = stmt_ctx.current_database_name().unwrap_or_default();
@@ -1899,7 +1940,6 @@ struct PreparedPointGetExecutor {
     execution: PreparedPointGetExecution,
     decode: crate::kv_table::PreparedPointGetDecodeContext,
     context: crate::StmtContext,
-    statistics: Option<Arc<crate::access_cost::TableStatistics>>,
     done: bool,
 }
 
@@ -1961,9 +2001,12 @@ impl Executor for PreparedPointGetExecutor {
             super::index_usage_reporter::IndexUsageReporter::new(
                 self.context.index_usage_collector(),
             )
+            // Go's fast point plan never runs `initStats`, and a PointGet
+            // builds its reporter without `LoadTableStats`: no `UsedStatsInfo`
+            // entry, so the read counts against `math.MaxInt32` rows.
             .report_point(
                 table.table_id,
-                self.statistics.as_deref(),
+                None,
                 index_id,
                 after.0.wrapping_sub(before.0),
                 req.num_rows() as u64,

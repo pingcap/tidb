@@ -955,7 +955,9 @@ fn build_table_scan(
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
     let logical_table_id = table.table_id;
     let index_id = super::index_usage_reporter::cluster_index_id(&table);
-    let stats = catalog.table_statistics(table.stats_physical_id());
+    // Go's index-usage reporter reads the statement's `UsedStatsInfo` entry,
+    // which `initStats` fills from `GetStatsTable`.
+    let stats = crate::access_cost::get_stats_table(ctx, catalog, table.stats_physical_id());
     let column_count = table.logical_data_source_column_count();
     let partition_ids = scan
         .dynamic_partition_access
@@ -2199,7 +2201,7 @@ fn build_index_reader(
         })
         .transpose()?;
     let logical_table_id = table.table_id;
-    let stats = catalog.table_statistics(table.stats_physical_id());
+    let stats = crate::access_cost::get_stats_table(ctx, catalog, table.stats_physical_id());
     let mut source = IndexRangeSourceExec::new_with_statement(
         meta(ctx, plan, source_schema),
         std::sync::Arc::unwrap_or_clone(table),
@@ -4739,7 +4741,7 @@ fn wrap_point_index_usage(
     // including when static pruning narrows the keys to one partition.
     let stats = match command {
         PointCommand::Get => None,
-        PointCommand::BatchGet => batch_point_usage_stats(catalog, &table),
+        PointCommand::BatchGet => batch_point_usage_stats(catalog, ctx, &table),
     };
     Box::new(PointIndexUsageExec::new(
         child,
@@ -4754,10 +4756,12 @@ fn wrap_point_index_usage(
 
 fn batch_point_usage_stats(
     catalog: &Catalog,
+    ctx: &crate::StmtContext,
     table: &crate::kv_table::KvTable,
 ) -> Option<std::sync::Arc<crate::access_cost::TableStatistics>> {
-    if let Some(stats) = catalog.table_statistics(table.table_id) {
-        return Some(stats);
+    // Go `BatchPointGetPlan.LoadTableStats`: `GetStatsTable(TblInfo.ID)`.
+    if catalog.table_statistics(table.table_id).is_some() {
+        return crate::access_cost::get_stats_table(ctx, catalog, table.table_id);
     }
     let partition = table.partition()?;
     let mut row_count = 0_i64;
@@ -5018,7 +5022,11 @@ fn build_index_merge_reader(
                     Box::new(IndexPartialHandleSource {
                         source,
                         partition_indexes: selected,
-                        stats: catalog.table_statistics(partial_table.stats_physical_id()),
+                        stats: crate::access_cost::get_stats_table(
+                            ctx,
+                            catalog,
+                            partial_table.stats_physical_id(),
+                        ),
                         table: partial_table,
                         ctx: ctx.clone(),
                         index_id: scan.index_id,

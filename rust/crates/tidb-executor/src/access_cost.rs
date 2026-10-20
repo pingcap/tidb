@@ -283,6 +283,21 @@ impl TableStatistics {
         self
     }
 
+    /// Go `statistics.Table.IsInitialized`: some column or index object has
+    /// initialized statistics.
+    #[must_use]
+    pub fn is_initialized(&self) -> bool {
+        self.columns
+            .keys()
+            .filter_map(|id| self.column_load_status.get(id))
+            .chain(
+                self.indexes
+                    .keys()
+                    .filter_map(|id| self.index_load_status.get(id)),
+            )
+            .any(|status| status.stats_initialized())
+    }
+
     /// Go `Table.ColumnIsLoadNeeded`.
     #[must_use]
     pub fn column_is_load_needed(&self, id: i64, full_load: bool) -> bool {
@@ -355,6 +370,16 @@ impl TableStatistics {
         full_loaded_indexes: &BTreeSet<i64>,
     ) -> Option<f64> {
         let column = self.columns.get(&column_id)?;
+        // Go reads the histogram's NDV only when `IsStatsInitialized()`; an
+        // `EmptyColumn` placeholder -- a never-analyzed column a load request
+        // published -- takes the `RealtimeCount * distinctFactor` branch.
+        if !self
+            .column_load_status
+            .get(&column_id)
+            .is_some_and(|status| status.stats_initialized())
+        {
+            return None;
+        }
         let version = column.histogram.last_update_version;
         let analyzed_count = if full_loaded_columns.contains(&column_id) {
             column.total_row_count() as i64
@@ -405,6 +430,112 @@ impl TableStatistics {
         }
         Some(ndv)
     }
+}
+
+/// Go `pkg/planner/core/stats.GetStatsTable`: the statistics one statement
+/// plans `physical_table_id` from. `None` is a fresh `statistics.PseudoTable`
+/// (`RealtimeCount` 10000, `ModifyCount` 0, uninitialized pseudo items).
+///
+/// The caller passes the id Go's `pid == tblInfo.ID ||
+/// UseDynamicPartitionPrune()` choice resolves to: the logical id for an
+/// ordinary or dynamic-pruning source, one partition's id for a
+/// static-pruning child. Rule 1 (no statistics handle yet) has no
+/// counterpart, since the catalog always answers; a table the cache does not
+/// hold is the same `PseudoTable`.
+///
+/// The cached object is never mutated: the determinate-objective and pseudo
+/// decisions are session-local, so they land on a copy as Go's `CopyAs` and
+/// `tbl := *statsTbl` do.
+#[must_use]
+pub fn get_stats_table(
+    ctx: &crate::StmtContext,
+    catalog: &crate::driver::Catalog,
+    physical_table_id: i64,
+) -> Option<std::sync::Arc<TableStatistics>> {
+    let opt_objective_determinate = !ctx
+        .optimizer_cost_env()
+        .session
+        .estimator_options
+        .allow_use_modify_count;
+    stats_table_for_session(
+        catalog.table_statistics(physical_table_id)?,
+        opt_objective_determinate,
+        ctx.enable_pseudo_for_outdated_stats(),
+    )
+}
+
+/// The session rules of [`get_stats_table`] over one cached table.
+fn stats_table_for_session(
+    mut statistics: std::sync::Arc<TableStatistics>,
+    opt_objective_determinate: bool,
+    enable_pseudo_for_outdated_stats: bool,
+) -> Option<std::sync::Arc<TableStatistics>> {
+    // `OptObjectiveDeterminate` ignores the real-time statistics: the copy's
+    // `RealtimeCount` is the row count the loaded histograms observed at
+    // ANALYZE time, and its `ModifyCount` is zero.
+    if opt_objective_determinate {
+        let analyze_count = statistics.analyze_row_count().max(0.0) as i64;
+        if statistics.row_count != analyze_count || statistics.modify_count != 0 {
+            let copied = std::sync::Arc::make_mut(&mut statistics);
+            copied.row_count = analyze_count;
+            copied.modify_count = 0;
+            // The cached `pseudo` folds rule 2 in for the cached count; the
+            // copy's count is a different one, so only the cached
+            // `HistColl.Pseudo` and rule 3's `!IsInitialized()` carry over.
+            copied.pseudo = copied.cache_pseudo || !copied.is_initialized();
+        }
+    }
+    // Rule 2: a zero `RealtimeCount` plans from a fresh `PseudoTable`; none of
+    // the cached objects survive.
+    if statistics.row_count == 0 {
+        return None;
+    }
+    // Rule 3: an uninitialized table is already `pseudo` in the cache
+    // (`TableStatistics::new` and the loaders decide it). Outdatedness is
+    // judged on the table this statement plans from, so the determinate
+    // copy's zero `ModifyCount` is never outdated.
+    if enable_pseudo_for_outdated_stats && !statistics.pseudo && statistics.is_outdated() {
+        std::sync::Arc::make_mut(&mut statistics).pseudo = true;
+    }
+    Some(statistics)
+}
+
+/// Go `getLatestVersionFromStatsTable` (`logical_plan_builder.go`), the
+/// plan-cache key's statistics version for one table: zero for any table
+/// `GetStatsTable` answers with a pseudo table by rule 2, otherwise the
+/// largest `LastUpdateVersion` among the cached column and index objects.
+///
+/// It is NOT the `stats_meta` version: a stats-delta flush moves that, and Go
+/// keeps the cached plan across it.
+#[must_use]
+pub fn get_latest_version_from_stats_table(
+    catalog: &crate::driver::Catalog,
+    table_id: i64,
+    opt_objective_determinate: bool,
+) -> u64 {
+    let Some(statistics) = catalog.table_statistics(table_id) else {
+        return 0;
+    };
+    let realtime_row_count = if opt_objective_determinate {
+        statistics.analyze_row_count().max(0.0) as i64
+    } else {
+        statistics.row_count
+    };
+    if realtime_row_count == 0 {
+        return 0;
+    }
+    statistics
+        .columns
+        .values()
+        .map(|column| column.histogram.last_update_version)
+        .chain(
+            statistics
+                .indexes
+                .values()
+                .map(|index| index.histogram.last_update_version),
+        )
+        .max()
+        .unwrap_or(0)
 }
 
 /// The estimate one committed access path carries into `EXPLAIN`.
@@ -1024,6 +1155,43 @@ mod tests {
         assert_eq!(analyzed_empty.stats_healthy(), (0, true));
         analyzed_empty.last_analyze_version = 42;
         assert_eq!(analyzed_empty.stats_healthy(), (100, true));
+    }
+
+    /// Go `EstimateColumnNDV` reads the histogram NDV only when the column
+    /// `IsStatsInitialized()`. A never-analyzed column a load request
+    /// published is Go's `EmptyColumn` (zero NDV, zero load status), and the
+    /// estimate falls back to `RealtimeCount * distinctFactor`.
+    ///
+    /// Captured live: on a never-analyzed table with `stats_meta` count 8,
+    /// Go's `GROUP BY k` estimates 6.40 groups where the NDV of the
+    /// placeholder made this engine estimate 1.00.
+    #[test]
+    fn estimate_column_ndv_skips_an_uninitialized_column() {
+        let column = ColumnStats {
+            histogram: tidb_stats::Histogram {
+                id: 3,
+                ..tidb_stats::Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 0,
+            unsigned: false,
+        };
+        let mut stats = TableStatistics::new(8, 8, BTreeMap::from([(3, column)]), BTreeMap::new());
+        stats
+            .column_load_status
+            .insert(3, tidb_stats::StatsLoadedStatus::default());
+        assert_eq!(
+            stats.estimate_column_ndv(3, &BTreeSet::new(), &BTreeSet::new()),
+            None
+        );
+        stats
+            .column_load_status
+            .insert(3, tidb_stats::StatsLoadedStatus::full_load());
+        assert_eq!(
+            stats.estimate_column_ndv(3, &BTreeSet::new(), &BTreeSet::new()),
+            Some(0.0)
+        );
     }
 
     #[test]
