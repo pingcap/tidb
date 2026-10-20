@@ -95,7 +95,6 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/metrics",
         "//pkg/param",
         "//pkg/parser",
         "//pkg/parser/ast",

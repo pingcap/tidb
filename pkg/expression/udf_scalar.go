@@ -22,14 +22,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -41,10 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 // ErrCantUpdateUsedTableInSfOrTrg is returned when a stored function tries to update a table
@@ -318,8 +314,7 @@ func (b *udfFuncSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecim
 }
 
 // executeUDF executes the UDF.
-// For JavaScript UDFs, it uses the GraalVM runtime.
-// For SQL UDFs, it interprets the SQL function body directly.
+// It interprets the SQL function body directly.
 //
 // SQL SECURITY behavior:
 // - INVOKER (default): Executes with the privileges of the calling user
@@ -329,24 +324,13 @@ func (b *udfFuncSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecim
 // Currently all UDFs execute with INVOKER semantics for safety.
 // The Definer and SQLSecurity fields are stored for future implementation.
 func (b *udfFuncSig) executeUDF(ctx EvalContext, row chunk.Row) (types.Datum, bool, error) {
-	// Record metrics
-	startTime := time.Now()
 	language := strings.ToLower(b.def.Language)
-	schema := b.def.SchemaName
-	name := b.def.Name
 
-	// Increment active executions gauge
-	if metrics.UDFActiveGauge != nil {
-		metrics.UDFActiveGauge.WithLabelValues(language).Inc()
-		defer metrics.UDFActiveGauge.WithLabelValues(language).Dec()
-	}
-
-	// Evaluate arguments first (needed for both SQL and JavaScript UDFs)
+	// Evaluate arguments before executing the SQL body.
 	args := make([]types.Datum, len(b.args))
 	for i, arg := range b.args {
 		val, err := arg.Eval(ctx, row)
 		if err != nil {
-			recordUDFError(name, language, schema, "eval_args")
 			return types.Datum{}, true, errors.Trace(err)
 		}
 		args[i] = val
@@ -354,73 +338,10 @@ func (b *udfFuncSig) executeUDF(ctx EvalContext, row chunk.Row) (types.Datum, bo
 
 	// MySQL UDF only supports SQL language
 	if language != "sql" {
-		recordUDFError(name, language, schema, "unsupported_language")
 		return types.Datum{}, true, errors.Errorf("unsupported UDF language: %s; only SQL is supported", b.def.Language)
 	}
 
-	result, isNull, err := b.executeSQLFunction(ctx, row, args)
-
-	// Record execution duration and result
-	duration := time.Since(startTime).Seconds()
-	recordUDFExecution(name, language, schema, duration, err)
-
-	return result, isNull, err
-}
-
-// SlowUDFThreshold is the threshold in seconds for logging slow UDF executions.
-// UDFs taking longer than this threshold will be logged.
-// Default is 1 second. Set to 0 to disable slow UDF logging.
-var SlowUDFThreshold float64 = 1.0
-
-// recordUDFExecution records UDF execution metrics and logs slow UDFs.
-func recordUDFExecution(name, language, schema string, duration float64, err error) {
-	if metrics.UDFExecutionDuration != nil {
-		metrics.UDFExecutionDuration.WithLabelValues(name, language, schema).Observe(duration)
-	}
-	if metrics.UDFExecutionCounter != nil {
-		result := "ok"
-		if err != nil {
-			result = "err"
-		}
-		metrics.UDFExecutionCounter.WithLabelValues(name, language, schema, result).Inc()
-	}
-
-	// Log slow UDF executions
-	if SlowUDFThreshold > 0 && duration >= SlowUDFThreshold {
-		logSlowUDF(name, language, schema, duration, err)
-	}
-}
-
-// logSlowUDF logs a slow UDF execution using TiDB's logging infrastructure.
-func logSlowUDF(name, language, schema string, duration float64, err error) {
-	fields := []zap.Field{
-		zap.String("schema", schema),
-		zap.String("name", name),
-		zap.String("language", language),
-		zap.Float64("duration_seconds", duration),
-	}
-	if err != nil {
-		fields = append(fields, zap.Error(err))
-	}
-	logutil.BgLogger().Warn("[SLOW_UDF]", fields...)
-}
-
-// recordUDFError records a UDF error by type.
-func recordUDFError(name, language, schema, errorType string) {
-	if metrics.UDFErrorCounter != nil {
-		metrics.UDFErrorCounter.WithLabelValues(name, language, schema, errorType).Inc()
-	}
-}
-
-// recordUDFCacheHit records UDF cache hit or miss.
-func recordUDFCacheHit(hit bool) {
-	if metrics.UDFCacheHitCounter != nil {
-		result := "miss"
-		if hit {
-			result = "hit"
-		}
-		metrics.UDFCacheHitCounter.WithLabelValues(result).Inc()
-	}
+	return b.executeSQLFunction(ctx, row, args)
 }
 
 // executeSQLFunction interprets and executes a MySQL SQL function body.
@@ -441,14 +362,8 @@ func (b *udfFuncSig) executeSQLFunction(ctx EvalContext, row chunk.Row, args []t
 		if !containsDML {
 			// Safe to reuse cached AST - no DML means no AST modification during execution
 			stmtNode = cachedBody.body
-			recordUDFCacheHit(true)
-		} else {
-			// DML functions need re-parsing, count as miss
-			recordUDFCacheHit(false)
 		}
 		// If containsDML, we must re-parse because executeInternalSQL modifies the AST
-	} else {
-		recordUDFCacheHit(false)
 	}
 
 	if stmtNode == nil {
@@ -4889,13 +4804,10 @@ func ClearProcedureCacheEntry(schemaName, procName string) {
 // Currently all procedures execute with INVOKER semantics for safety.
 // The Definer and SQLSecurity fields are stored for future implementation.
 func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []types.Datum) (map[string]types.Datum, error) {
-	// Record metrics
-	startTime := time.Now()
 	schema := def.SchemaName
 	name := def.Name
 
 	if def.SourceCode == "" {
-		recordProcedureError(name, schema, "no_source")
 		return nil, errors.New("procedure has no source code")
 	}
 
@@ -4921,7 +4833,6 @@ func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []type
 		stmtNode, err = parseProcedureBody(p, def.SourceCode)
 		utilparser.DestroyParser(p)
 		if err != nil {
-			recordProcedureError(name, schema, "parse_error")
 			return nil, errors.Errorf("failed to parse procedure body: %v", err)
 		}
 
@@ -4981,10 +4892,6 @@ func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []type
 		_, _, err = executeSQLFunctionBody(ctx, stmtNode, paramMap)
 	}
 
-	// Record execution duration and result
-	duration := time.Since(startTime).Seconds()
-	recordProcedureExecution(name, schema, duration, err)
-
 	if err != nil {
 		return nil, err
 	}
@@ -5000,50 +4907,6 @@ func ExecuteProcedure(ctx EvalContext, def *udf.ProcedureDefinition, args []type
 	}
 
 	return outParams, nil
-}
-
-// SlowProcedureThreshold is the threshold in seconds for logging slow procedure executions.
-// Procedures taking longer than this threshold will be logged.
-// Default is 1 second. Set to 0 to disable slow procedure logging.
-var SlowProcedureThreshold float64 = 1.0
-
-// recordProcedureExecution records stored procedure execution metrics and logs slow procedures.
-func recordProcedureExecution(name, schema string, duration float64, err error) {
-	if metrics.ProcedureExecutionDuration != nil {
-		metrics.ProcedureExecutionDuration.WithLabelValues(name, schema).Observe(duration)
-	}
-	if metrics.ProcedureExecutionCounter != nil {
-		result := "ok"
-		if err != nil {
-			result = "err"
-		}
-		metrics.ProcedureExecutionCounter.WithLabelValues(name, schema, result).Inc()
-	}
-
-	// Log slow procedure executions
-	if SlowProcedureThreshold > 0 && duration >= SlowProcedureThreshold {
-		logSlowProcedure(name, schema, duration, err)
-	}
-}
-
-// logSlowProcedure logs a slow procedure execution using TiDB's logging infrastructure.
-func logSlowProcedure(name, schema string, duration float64, err error) {
-	fields := []zap.Field{
-		zap.String("schema", schema),
-		zap.String("name", name),
-		zap.Float64("duration_seconds", duration),
-	}
-	if err != nil {
-		fields = append(fields, zap.Error(err))
-	}
-	logutil.BgLogger().Warn("[SLOW_PROCEDURE]", fields...)
-}
-
-// recordProcedureError records a procedure error by type.
-func recordProcedureError(name, schema, errorType string) {
-	if metrics.ProcedureErrorCounter != nil {
-		metrics.ProcedureErrorCounter.WithLabelValues(name, schema, errorType).Inc()
-	}
 }
 
 // parseProcedureBody parses a procedure body (BEGIN...END block).
