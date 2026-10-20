@@ -1025,6 +1025,9 @@ const (
 	// TiDBFastCheckTable enables fast check table.
 	TiDBFastCheckTable = "tidb_enable_fast_table_check"
 
+	// TiDBFastCheckTableCollectInconsistent enables collecting all inconsistencies in fast check table/index.
+	TiDBFastCheckTableCollectInconsistent = "tidb_fast_check_table_collect_inconsistent"
+
 	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
 
@@ -1692,6 +1695,7 @@ const (
 	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
 	DefTiFlashReplicaRead                             = AllReplicaStr
 	DefTiDBEnableFastCheckTable                       = true
+	DefTiDBFastCheckTableCollectInconsistent          = false
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
 	DefTiDBLockUnchangedKeys                          = true
