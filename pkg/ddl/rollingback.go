@@ -427,9 +427,6 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	// Non-unique global indexes are duplicated as well, so every changed index must be handled.
-	// New indexes stop taking writes here; rollbackLikeDropPartition removes them and
-	// queues their data for deletion once all sessions have seen this state.
 	for _, indexInfo := range tblInfo.Indices {
 		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
 		if !ok {
