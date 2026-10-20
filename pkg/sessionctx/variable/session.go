@@ -1223,6 +1223,9 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+	// DMLMaxExecutionTime is the timeout for transactional DML statements and COMMIT, in milliseconds.
+	// If the value is 0, timeouts are not enabled.
+	DMLMaxExecutionTime uint64
 
 	// LoadBindingTimeout is the timeout for loading the bind info.
 	LoadBindingTimeout uint64
@@ -1489,6 +1492,8 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
+	// InNonTransactionalDML marks non-transactional DML execution and its internal statements.
+	InNonTransactionalDML bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
