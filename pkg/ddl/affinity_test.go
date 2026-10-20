@@ -17,7 +17,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -39,6 +42,89 @@ import (
 
 type mockCodec struct {
 	tikv.Codec
+}
+
+type truncateAffinityPDClient struct {
+	pdhttp.Client
+	manager        affinity.Manager
+	failCreate     atomic.Bool
+	failOnce       atomic.Bool
+	createCalls    atomic.Int64
+	createFailures atomic.Int64
+}
+
+func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, _ ...pdhttp.CreateAffinityGroupsOption) (map[string]*pdhttp.AffinityGroupState, error) {
+	c.createCalls.Add(1)
+	if c.failCreate.Load() || c.failOnce.Swap(false) {
+		c.createFailures.Add(1)
+		return nil, fmt.Errorf("injected affinity creation failure")
+	}
+	return nil, c.manager.CreateAffinityGroupsIfNotExists(ctx, groups)
+}
+
+func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
+	return c.manager.DeleteAffinityGroups(ctx, ids)
+}
+
+func (c *truncateAffinityPDClient) GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
+	return c.manager.GetAffinityGroups(ctx, ids)
+}
+
+func TestAffinityTruncatePartitionFailure(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table p(a int, b int, unique key idx(b) global) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into p values (1,1),(2,2),(11,11),(12,12)")
+	before, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("p"))
+	require.NoError(t, err)
+	beforeMeta := before.Meta().Clone()
+	cli.failCreate.Store(true)
+	require.ErrorContains(t, tk.ExecToErr("alter table p truncate partition p0"), "injected affinity creation failure")
+	cli.failCreate.Store(false)
+	after, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("p"))
+	require.NoError(t, err)
+	require.Equal(t, beforeMeta, after.Meta().Clone(), "failed affinity creation must not publish new partition IDs or DDL state")
+	tk.MustQuery("select * from p order by a").Check(testkit.Rows("1 1", "2 2", "11 11", "12 12"))
+	tk.MustQuery("select * from p use index(idx) order by a").Check(testkit.Rows("1 1", "2 2", "11 11", "12 12"))
+	tk.MustExec("admin check table p")
+	checkAffinityGroupsInPD(t, dom, "test", "p", true)
+
+	// A failure after replacement is visible must retry, never cancel the job.
+	// This also protects jobs that were started by an older TiDB version.
+	var injected atomic.Bool
+	const beforeStep = "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"
+	testfailpoint.EnableCall(t, beforeStep, func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateDeleteReorganization && injected.CompareAndSwap(false, true) {
+			cli.failOnce.Store(true)
+		}
+	})
+	tk.MustExec("alter table p truncate partition p0")
+	testfailpoint.Disable(t, beforeStep)
+	require.True(t, injected.Load())
+	require.Equal(t, int64(2), cli.createFailures.Load(), "one failure before replacement and one during finalization")
+	after, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("p"))
+	require.NoError(t, err)
+	require.NotEqual(t, beforeMeta.Partition.Definitions[0].ID, after.Meta().Partition.Definitions[0].ID)
+	require.Equal(t, beforeMeta.Partition.Definitions[1].ID, after.Meta().Partition.Definitions[1].ID)
+	require.Equal(t, model.StateNone, after.Meta().Partition.DDLState)
+	require.Empty(t, after.Meta().Partition.DroppingDefinitions)
+	tk.MustQuery("select * from p order by a").Check(testkit.Rows("11 11", "12 12"))
+	tk.MustExec("admin check table p")
+	checkAffinityGroupsInPD(t, dom, "test", "p", true)
+	oldID := ddl.GetPartitionAffinityGroupID(store.GetCodec(), beforeMeta.ID, beforeMeta.Partition.Definitions[0].ID)
+	groups, err := affinity.GetGroups(context.Background(), []string{oldID})
+	require.NoError(t, err)
+	require.Empty(t, groups)
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(fmt.Sprintf("select count(*) from (select end_key from mysql.gc_delete_range union all select end_key from mysql.gc_delete_range_done) ranges_to_delete where end_key='%x'", []byte(tablecodec.EncodeTablePrefix(beforeMeta.Partition.Definitions[0].ID+1)))).Rows()
+		return rows[0][0] == "1"
+	}, 5*time.Second, 10*time.Millisecond)
+	// Both the failed attempt and the successful retry should reach PD.
+	require.Greater(t, cli.createCalls.Load(), int64(2))
 }
 
 func (mockCodec) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta {
