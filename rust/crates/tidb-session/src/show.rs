@@ -1546,9 +1546,16 @@ impl Session {
             // LABELS forms (`executor/show_placement.go`).
             tidb_ast::AdminStmt::ShowPlacement(show) => {
                 let columns = if show.target == tidb_ast::ShowPlacementTarget::Labels {
-                    return Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
-                        "pd http client unavailable",
-                    )));
+                    vec![
+                        (
+                            "Key".to_owned(),
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                        ),
+                        (
+                            "Values".to_owned(),
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Json),
+                        ),
+                    ]
                 } else {
                     ["Target", "Placement", "Scheduling_State"]
                         .iter()

@@ -39,7 +39,7 @@ impl<S: tikv_client::PdClient> PeerSender for TikvStore<S> {
     fn send(
         &self,
         address: &str,
-        request: coprocessor::Request,
+        mut request: coprocessor::Request,
         timeout: Duration,
         cancel: &UnaryCancellation,
     ) -> Result<coprocessor::Response, tikv_client::Error> {
@@ -48,7 +48,7 @@ impl<S: tikv_client::PdClient> PeerSender for TikvStore<S> {
             // TiDB, which never batches and which the mock store redirects.
             let send = self.store().send_request_with_store_type(
                 address,
-                &request,
+                &mut request,
                 tikv_client::tikv::EndpointType::TiDb,
                 timeout,
             );

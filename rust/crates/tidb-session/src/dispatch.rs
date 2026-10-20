@@ -1151,14 +1151,10 @@ impl Session {
             {
                 self.client_errors_summary_table_rows(&table_name)?
             } else if table_name.eq_ignore_ascii_case("TIKV_STORE_STATUS") {
-                // go's `TiKVStoreStatusRetriever` fails its PD fetch without
-                // a PD endpoint: the statement errors 1105 'pd http client
-                // unavailable' (oracle-captured). The Eval wrap marks the
-                // error evaluation-origin, which the statement completion
-                // door treats as buffer-invisible.
-                return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-                    tidb_executor::EvalError::Unsupported("pd http client unavailable"),
-                )));
+                crate::memtable_retrievers::tikv_store_status_rows(
+                    scratch.region_store().as_ref(),
+                    self.sem_hides_cluster_metadata(),
+                )?
             } else if table_name.eq_ignore_ascii_case("CLUSTER_LOG") {
                 self.cluster_log_table_rows(cluster_log_extractors)?
             } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
@@ -1218,6 +1214,9 @@ impl Session {
                     {
                         rows.extend(crate::memtable_retrievers::table_storage_stats_rows(
                             extractor,
+                            &scratch,
+                            scratch.region_store().as_ref(),
+                            &self.schema_visibility(),
                         )?);
                     }
                 }
@@ -1230,6 +1229,7 @@ impl Session {
                     {
                         rows.extend(crate::memtable_retrievers::tikv_region_peers_rows(
                             extractor,
+                            scratch.region_store().as_ref(),
                         )?);
                     }
                 }
@@ -1244,12 +1244,18 @@ impl Session {
                         _ => None,
                     };
                     rows.extend(crate::memtable_retrievers::tikv_region_status_rows(
-                        extractor, &scratch,
+                        extractor,
+                        &scratch,
+                        scratch.region_store().as_ref(),
+                        &self.schema_visibility(),
                     )?);
                 }
                 rows
             } else if table_name.eq_ignore_ascii_case("TIDB_HOT_REGIONS") {
-                crate::memtable_retrievers::tidb_hot_regions_rows()?
+                crate::memtable_retrievers::tidb_hot_regions_rows(
+                    &scratch,
+                    scratch.region_store().as_ref(),
+                )?
             } else if table_name.eq_ignore_ascii_case("TIDB_HOT_REGIONS_HISTORY") {
                 let mut rows = Vec::new();
                 for scan in scans_of("TIDB_HOT_REGIONS_HISTORY") {
@@ -1264,8 +1270,30 @@ impl Session {
                     if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
                         return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
                     }
+                    // Go `infoschema.GetPDServerInfo`, whose per-member
+                    // failures are warnings.
+                    let mut warnings = Vec::new();
+                    let pd_servers = match &self.cluster_topology {
+                        Some(topology) => topology.pd_servers(&mut warnings),
+                        None => Ok(Vec::new()),
+                    };
+                    for warning in &warnings {
+                        ctx.append_warning_parts(1105, warning);
+                    }
+                    let pd_servers = pd_servers
+                        .map_err(|message| DriverError::DdlCoded {
+                            errno: 1105,
+                            message,
+                        })?
+                        .into_iter()
+                        .map(|server| server.status_address)
+                        .collect::<Vec<_>>();
                     rows.extend(crate::memtable_retrievers::tidb_hot_regions_history_rows(
                         extractor,
+                        &pd_servers,
+                        &scratch,
+                        scratch.region_store().as_ref(),
+                        |warning| ctx.append_warning_parts(1105, warning),
                     )?);
                 }
                 rows

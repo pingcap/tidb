@@ -157,23 +157,44 @@ struct JsonTarget<T> {
 
 impl<T: DeserializeOwned> ResponseTarget for JsonTarget<T> {
     fn unmarshal(&mut self, body: &[u8]) -> Result<()> {
-        let value: Option<T> =
+        let value: Option<serde_json::Value> =
             serde_json::from_slice(body).map_err(|error| Error::StringError(error.to_string()))?;
-        if value.is_some() {
-            self.value = value;
+        if let Some(value) = value {
+            self.value = Some(from_go_json_value(value)?);
         }
         Ok(())
     }
 }
 
+/// Decodes a JSON value as Go's `encoding/json` decodes it into a struct:
+/// a `null` member leaves the field's zero value. Every response type
+/// defaults its missing fields, so dropping `null` members first gives the
+/// same result for slices, maps and strings that serde would otherwise
+/// reject as `null` (PD sends `{"history_hot_region": null}`).
+fn from_go_json_value<T: DeserializeOwned>(mut value: serde_json::Value) -> Result<T> {
+    fn strip_null_members(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(members) => {
+                members.retain(|_, member| !member.is_null());
+                members.values_mut().for_each(strip_null_members);
+            }
+            serde_json::Value::Array(elements) => elements.iter_mut().for_each(strip_null_members),
+            _ => {}
+        }
+    }
+    strip_null_members(&mut value);
+    serde_json::from_value(value).map_err(|error| Error::StringError(error.to_string()))
+}
+
 /// Go `json.NewDecoder(body).Decode(&res)`: the first JSON value, where
 /// `null` leaves the zero value and an empty body is `EOF`.
 fn decode_first_json_value<T: DeserializeOwned>(body: &[u8]) -> Result<Option<T>> {
-    let mut stream = serde_json::Deserializer::from_slice(body).into_iter::<Option<T>>();
+    let mut stream =
+        serde_json::Deserializer::from_slice(body).into_iter::<Option<serde_json::Value>>();
     match stream.next() {
         None => Err(Error::StringError("EOF".to_owned())),
         Some(Err(error)) => Err(Error::StringError(error.to_string())),
-        Some(Ok(value)) => Ok(value),
+        Some(Ok(value)) => value.map(from_go_json_value).transpose(),
     }
 }
 

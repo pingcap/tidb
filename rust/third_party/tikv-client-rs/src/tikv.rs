@@ -1386,7 +1386,7 @@ impl<PdC: PdClient> KvStore<PdC> {
     pub async fn send_request(
         &self,
         address: &str,
-        request: &dyn Request,
+        request: &mut dyn Request,
         timeout: Duration,
     ) -> Result<Box<dyn std::any::Any>> {
         self.send_request_with_store_type(address, request, EndpointType::TiKv, timeout)
@@ -1396,10 +1396,18 @@ impl<PdC: PdClient> KvStore<PdC> {
     /// [`Self::send_request`] for a request whose client-go `StoreTp` is
     /// `store_type`, such as copr's TiDB memory-table requests to a peer's
     /// status address.
+    ///
+    /// The send goes through resource control as client-go's
+    /// `interceptedClient.SendRequest` sends it: `OnRequestWait` sets the
+    /// request's penalty and (unless set) priority, the response is settled,
+    /// and both charge the `RuDetails` of the current trace context
+    /// (client-go's `util.RUDetailsCtxKey` value). The settlement is the
+    /// non-waiting `OnResponse`, as for dispatched plans: the boxed response
+    /// cannot be held across an await of a `Send` future.
     pub async fn send_request_with_store_type(
         &self,
         address: &str,
-        request: &dyn Request,
+        request: &mut dyn Request,
         store_type: EndpointType,
         timeout: Duration,
     ) -> Result<Box<dyn std::any::Any>> {
@@ -1407,7 +1415,42 @@ impl<PdC: PdClient> KvStore<PdC> {
         let client =
             PdClient::kv_client_with_store_type(self.pd_client().as_ref(), address, store_type)
                 .await?;
-        client.dispatch_with_timeout(request, Some(timeout)).await
+        let trace_context = crate::trace::current_trace_context();
+        let ru_details = crate::util::ru_details_from_context(&trace_context).cloned();
+        let selected = crate::resource_control::global_controller().and_then(|controller| {
+            crate::resource_control::select(
+                &controller,
+                &*request,
+                0,
+                crate::kv::AccessLocationType::Unknown,
+                0,
+            )
+        });
+        if let Some(selected) = &selected {
+            let admitted = selected
+                .controller
+                .on_request_wait(&selected.resource_group_name, selected.request)
+                .await?;
+            request.set_resource_control_penalty(admitted.penalty);
+            request.set_resource_control_priority_if_unset(admitted.priority);
+            if let Some(ru_details) = &ru_details {
+                ru_details.update(&admitted.consumption, admitted.wait_duration);
+            }
+        }
+        let response = client
+            .dispatch_with_timeout(&*request, Some(timeout))
+            .await?;
+        if let Some(selected) = selected {
+            let settled = selected.controller.on_response_wait(
+                &selected.resource_group_name,
+                selected.request,
+                crate::resource_control::ResponseInfo::from_dispatch_response(response.as_ref()),
+            )?;
+            if let Some(ru_details) = &ru_details {
+                ru_details.update(&settled.consumption, settled.wait_duration);
+            }
+        }
+        Ok(response)
     }
 
     pub fn is_closed(&self) -> bool {
@@ -3058,7 +3101,7 @@ mod tests {
             ..Default::default()
         };
         let start_ts = store.current_timestamp().await.unwrap().version();
-        let prewrite = kvrpcpb::PrewriteRequest {
+        let mut prewrite = kvrpcpb::PrewriteRequest {
             context: Some(context.clone()),
             mutations: vec![kvrpcpb::Mutation {
                 op: kvrpcpb::Op::Put as i32,
@@ -3074,7 +3117,7 @@ mod tests {
         store
             .send_request(
                 &format!("store{store_id}"),
-                &prewrite,
+                &mut prewrite,
                 Duration::from_secs(5),
             )
             .await
@@ -3226,7 +3269,7 @@ mod tests {
             .region_for_key(&Key::from(b"k".to_vec()))
             .await
             .unwrap();
-        let request = kvrpcpb::GetRequest {
+        let mut request = kvrpcpb::GetRequest {
             context: Some(kvrpcpb::Context {
                 region_id: region.region.id,
                 region_epoch: region.region.region_epoch.clone(),
@@ -3240,7 +3283,7 @@ mod tests {
         let response = store
             .send_request(
                 &format!("store{store_id}"),
-                &request,
+                &mut request,
                 Duration::from_secs(5),
             )
             .await
@@ -3248,5 +3291,117 @@ mod tests {
         let response = response.downcast::<kvrpcpb::GetResponse>().unwrap();
         assert_eq!(response.value, b"v".to_vec());
         assert!(!response.not_found);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_store_request_goes_through_resource_control_and_charges_the_context_ru() {
+        // client-go `interceptedClient.SendRequest`: a request sent outside
+        // region routing still waits on the resource group, carries the
+        // penalty and priority, and charges the ctx's RUDetails.
+        struct RecordingController {
+            groups: Arc<StdMutex<Vec<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl crate::resource_control::ResourceGroupController for RecordingController {
+            async fn on_request_wait(
+                &self,
+                resource_group_name: &str,
+                _request: crate::resource_control::RequestInfo,
+            ) -> Result<crate::resource_control::RequestWaitResult> {
+                self.groups
+                    .lock()
+                    .unwrap()
+                    .push(resource_group_name.to_owned());
+                Ok(crate::resource_control::RequestWaitResult {
+                    consumption: crate::proto::resource_manager::Consumption {
+                        r_r_u: 2.0,
+                        ..Default::default()
+                    },
+                    wait_duration: Duration::from_millis(7),
+                    priority: 9,
+                    ..Default::default()
+                })
+            }
+
+            fn on_response_wait(
+                &self,
+                _resource_group_name: &str,
+                _request: crate::resource_control::RequestInfo,
+                _response: crate::resource_control::ResponseInfo,
+            ) -> Result<crate::resource_control::ResponseWaitResult> {
+                Ok(crate::resource_control::ResponseWaitResult {
+                    consumption: crate::proto::resource_manager::Consumption {
+                        r_r_u: 3.0,
+                        ..Default::default()
+                    },
+                    wait_duration: Duration::ZERO,
+                })
+            }
+        }
+
+        let (_client, cluster, pd) =
+            crate::mock::mocktikv::new_tikv_and_pd_client("", None).unwrap();
+        let (store_id, _, _) = crate::mock::mocktikv::bootstrap_with_single_store(&cluster);
+        let store = KvStore::new_with_pd_client(
+            Arc::new(pd),
+            Arc::new(MockSafePointKv::new()),
+            Config::default(),
+        )
+        .await
+        .unwrap();
+        let region = store
+            .pd_client()
+            .region_for_key(&Key::from(b"k".to_vec()))
+            .await
+            .unwrap();
+        let mut request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                region_id: region.region.id,
+                region_epoch: region.region.region_epoch.clone(),
+                peer: region.leader.clone(),
+                resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                    resource_group_name: "rg1".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            key: b"k".to_vec(),
+            version: store.current_timestamp().await.unwrap().version(),
+            ..Default::default()
+        };
+
+        let groups = Arc::new(StdMutex::new(Vec::new()));
+        crate::set_resource_control_interceptor(Arc::new(RecordingController {
+            groups: Arc::clone(&groups),
+        }));
+        crate::enable_resource_control();
+        let ru_details = Arc::new(crate::RuDetails::new());
+        let context = crate::util::context_with_ru_details(
+            &crate::trace::current_trace_context(),
+            Arc::clone(&ru_details),
+        );
+        let result = crate::trace::with_trace_context(
+            context,
+            store.send_request(
+                &format!("store{store_id}"),
+                &mut request,
+                Duration::from_secs(5),
+            ),
+        )
+        .await;
+        crate::disable_resource_control();
+        crate::unset_resource_control_interceptor();
+
+        result.unwrap();
+        assert_eq!(*groups.lock().unwrap(), vec!["rg1".to_owned()]);
+        let control = request
+            .context
+            .as_ref()
+            .and_then(|context| context.resource_control_context.as_ref())
+            .unwrap();
+        assert_eq!(control.override_priority, 9);
+        assert_eq!(ru_details.read_ru(), 5.0);
+        assert_eq!(ru_details.ru_wait_duration(), Duration::from_millis(7));
     }
 }

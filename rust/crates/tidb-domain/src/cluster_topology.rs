@@ -148,6 +148,16 @@ impl ClusterTopology {
         Ok(())
     }
 
+    /// Go `infoschema.GetPDServerInfo`: the PD servers whose status answers.
+    /// A node without PD discovery (Go's `GetPDAddrs` lists no member)
+    /// answers none.
+    pub fn pd_servers(&self, warnings: &mut Vec<String>) -> Result<Vec<ClusterServer>, String> {
+        match &self.discovery {
+            Some(discovery) => discovery.pd_servers(warnings),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Go GetClusterServerInfo retriever ordering and fail-on-retriever-error contract.
     /// Warnings remain available to the statement even when a later retriever fails.
     pub fn servers(&self, warnings: &mut Vec<String>) -> Result<Vec<ClusterServer>, String> {

@@ -85,6 +85,23 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
         start: &[u8],
         end: &[u8],
     ) -> Result<Vec<RegionMeta>, String>;
+
+    /// Go `helper.Storage.GetPDHTTPClient()`: the store's PD HTTP client,
+    /// `None` for a store without PD (the in-process store), on which Go's
+    /// `helper.TryGetPDHTTPClient` fails `pd http client unavailable`.
+    fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
+        None
+    }
+
+    /// client-go `RegionCache.LocateRegionByID`: the region's decoded
+    /// `[start, end)` key bounds. Only Go's PD-backed retrievers ask, after
+    /// [`Self::pd_http_client`] answered a client, so a store without PD has
+    /// no region cache to ask.
+    fn locate_region_by_id(&self, region_id: u64) -> Result<(Vec<u8>, Vec<u8>), String> {
+        Err(format!(
+            "region cache unavailable: cannot locate region {region_id}"
+        ))
+    }
 }
 
 /// The regions overlapping `[start, end)`, clipped to it, as Go

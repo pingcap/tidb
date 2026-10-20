@@ -230,7 +230,7 @@ impl<PdC: PdClient> GcKvClient for TikvStoreClient<PdC> {
         end: &[u8],
         timeout: Duration,
     ) -> GcResult<Option<String>> {
-        let request = kvrpcpb::UnsafeDestroyRangeRequest {
+        let mut request = kvrpcpb::UnsafeDestroyRangeRequest {
             context: Some(kvrpcpb::Context {
                 disk_full_opt: kvrpcpb::DiskFullOpt::AllowedOnAlmostFull as i32,
                 ..kvrpcpb::Context::default()
@@ -240,7 +240,7 @@ impl<PdC: PdClient> GcKvClient for TikvStoreClient<PdC> {
         };
         let response = self
             .runtime
-            .block_on(self.store.send_request(address, &request, timeout))
+            .block_on(self.store.send_request(address, &mut request, timeout))
             .map_err(gc_error)?;
         Ok(response
             .downcast::<kvrpcpb::UnsafeDestroyRangeResponse>()

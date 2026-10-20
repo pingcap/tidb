@@ -148,8 +148,13 @@ impl Session {
                         .collect())
                 })
             }
+            // Go `fetchShowPlacementLabels`, whose restricted SQL fails with
+            // the store-status retriever's plain error.
             tidb_ast::ShowPlacementTarget::Labels => {
-                unreachable!("SHOW PLACEMENT LABELS is answered before rows are built")
+                let store = self.with_catalog_mut(|catalog| Ok(catalog.region_store()))?;
+                crate::memtable_retrievers::show_placement_labels_rows(store.as_ref()).map_err(
+                    |message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)),
+                )
             }
         }
     }

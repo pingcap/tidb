@@ -113,7 +113,7 @@ impl SchemaVisibility {
 
     /// Go `RequestVerification(activeRoles, database, table, "", mask)`.
     #[must_use]
-    fn allows(&self, database: &str, table: &str, mask: PrivMask) -> bool {
+    pub(crate) fn allows(&self, database: &str, table: &str, mask: PrivMask) -> bool {
         self.allows_bits(
             database,
             table,

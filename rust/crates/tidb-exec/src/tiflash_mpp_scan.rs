@@ -99,7 +99,7 @@ async fn send_mpp<S, Req, Resp>(
     store: &TikvStore<S>,
     address: &str,
     store_type: tikv_client::tikv::EndpointType,
-    request: Req,
+    mut request: Req,
     timeout: std::time::Duration,
 ) -> Result<Resp, tikv_client::Error>
 where
@@ -109,7 +109,7 @@ where
 {
     store
         .store()
-        .send_request_with_store_type(address, &request, store_type, timeout)
+        .send_request_with_store_type(address, &mut request, store_type, timeout)
         .await?
         .downcast::<Resp>()
         .map(|response| *response)

@@ -487,6 +487,30 @@ pub(crate) fn classify_cause(error: &TikvTransactionError) -> crate::transaction
     classify_client_cause(client_error)
 }
 
+/// Go `newWriteConflictError`'s message detail for TiKV's `WriteConflict`.
+fn write_conflict_detail(conflict: &tikv_client::proto::kvrpcpb::WriteConflict) -> String {
+    use crate::driver::transaction_error::{Redaction, WriteConflict};
+    use tidb_error::mysql::{redaction_mode, RedactionMode};
+    let reason = tikv_client::proto::kvrpcpb::write_conflict::Reason::try_from(conflict.reason)
+        .map_or_else(|_| conflict.reason.to_string(), |reason| reason.as_str_name().to_owned());
+    let redaction = match redaction_mode() {
+        RedactionMode::Disabled => Redaction::Disabled,
+        RedactionMode::Enabled => Redaction::Enabled,
+        RedactionMode::Marker => Redaction::Marker,
+    };
+    crate::driver::transaction_error::write_conflict_detail(
+        &WriteConflict {
+            start_ts: conflict.start_ts,
+            conflict_ts: conflict.conflict_ts,
+            conflict_commit_ts: conflict.conflict_commit_ts,
+            key: conflict.key.clone(),
+            primary: conflict.primary.clone(),
+            reason,
+        },
+        redaction,
+    )
+}
+
 pub(crate) fn classify_client_cause(
     client_error: &tikv_client::Error,
 ) -> crate::transaction::TransactionCause {
@@ -521,11 +545,15 @@ pub(crate) fn classify_client_cause(
             existing_commit_ts: failed.assertion_failed.existing_commit_ts,
             detail: client_error.to_string(),
         },
-        ClientError::WriteConflict(_) | ClientError::WriteConflictInLatch(_) => {
-            TransactionCause::WriteConflict {
-                detail: client_error.to_string(),
-            }
-        }
+        // Go `extractKeyErr` -> `newWriteConflictError`: TiKV's conflict
+        // fields rendered into `ErrWriteConflict`, keys redacted under the
+        // process redaction mode as terror's `RedactArgPos` redacts them.
+        ClientError::WriteConflict(conflict) => TransactionCause::WriteConflict {
+            detail: write_conflict_detail(&conflict.conflict),
+        },
+        ClientError::WriteConflictInLatch(_) => TransactionCause::WriteConflict {
+            detail: client_error.to_string(),
+        },
         ClientError::ResolveLockError(locks) => TransactionCause::Lock {
             key: locks
                 .first()
@@ -879,6 +907,42 @@ mod tests {
             unreachable!()
         };
         assert_eq!(key, tikv_client::redact::key(b"primary"));
+    }
+
+    // Go: `extractKeyErr` -> `newWriteConflictError` renders TiKV's
+    // conflict fields, with `prettyWriteKey` of both keys, into
+    // `ErrWriteConflict`; the protobuf text of the client error never
+    // reaches the message.
+    #[test]
+    fn a_write_conflict_classifies_with_go_s_write_conflict_detail() {
+        use tikv_client::proto::kvrpcpb::{write_conflict::Reason, WriteConflict};
+
+        // Table 28, handle 20.
+        let key = b"t\x80\x00\x00\x00\x00\x00\x00\x1c_r\x80\x00\x00\x00\x00\x00\x00\x14".to_vec();
+        let error = TikvTransactionError::Client(tikv_client::Error::WriteConflict(
+            tikv_client::error::WriteConflictError {
+                conflict: WriteConflict {
+                    start_ts: 10,
+                    conflict_ts: 11,
+                    conflict_commit_ts: 12,
+                    key: key.clone(),
+                    primary: key,
+                    reason: Reason::Optimistic as i32,
+                    ..WriteConflict::default()
+                },
+            },
+        ));
+
+        let TransactionCause::WriteConflict { detail } = classify_cause(&error) else {
+            panic!("write conflict identity lost");
+        };
+        assert_eq!(
+            detail,
+            "txnStartTS=10, conflictStartTS=11, conflictCommitTS=12, \
+             key={tableID=28, handle=20}, originalKey=74800000000000001c5f728000000000000014, \
+             primary={tableID=28, handle=20}, originalPrimaryKey=74800000000000001c5f728000000000000014, \
+             reason=Optimistic"
+        );
     }
 
     #[test]

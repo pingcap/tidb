@@ -198,3 +198,22 @@ async fn test_request_with_retry_member_order() {
     ));
     assert!(!no_need_retry_for_request_name("GetRegions", 409));
 }
+
+// Go `json.Unmarshal` leaves a field's zero value for a `null` member; PD
+// answers `{"history_hot_region": null}` when it has no history.
+#[test]
+fn a_null_member_decodes_to_the_zero_value() {
+    use super::super::types::HistoryHotRegions;
+
+    let body = br#"{"history_hot_region": null}"#;
+    let decoded: HistoryHotRegions = decode_first_json_value(body).unwrap().unwrap();
+    assert!(decoded.history_hot_region.is_empty());
+
+    let mut target = JsonTarget::<HistoryHotRegions> { value: None };
+    target.unmarshal(body).unwrap();
+    assert_eq!(target.value, Some(HistoryHotRegions::default()));
+
+    let mut target = JsonTarget::<HistoryHotRegions> { value: None };
+    target.unmarshal(b"null").unwrap();
+    assert_eq!(target.value, None);
+}

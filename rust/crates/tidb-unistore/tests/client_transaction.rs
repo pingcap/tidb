@@ -103,7 +103,7 @@ impl Store {
             .next()
             .unwrap()
             .target;
-        let request = build(kvrpcpb::Context {
+        let mut request = build(kvrpcpb::Context {
             region_id: region.region.id,
             region_epoch: region.region.region_epoch.clone(),
             peer: region.leader.clone(),
@@ -111,7 +111,7 @@ impl Store {
         });
         *self
             .runtime
-            .block_on(store.send_request(&address, &request, Duration::from_secs(2)))
+            .block_on(store.send_request(&address, &mut request, Duration::from_secs(2)))
             .unwrap()
             .downcast::<Resp>()
             .unwrap()

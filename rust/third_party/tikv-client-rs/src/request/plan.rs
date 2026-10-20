@@ -237,6 +237,15 @@ pub(crate) struct ReadTimestampValidation {
 }
 
 impl<Req: KvRequest> Dispatch<Req> {
+    /// The `RuDetails` this send charges: the plan's own, else the one in its
+    /// trace context, as client-go's resource-control interceptor charges the
+    /// `util.RUDetailsCtxKey` value of the request's ctx.
+    fn ru_details(&self) -> Option<&Arc<crate::RuDetails>> {
+        self.ru_details
+            .as_ref()
+            .or_else(|| crate::util::ru_details_from_context(&self.trace_context))
+    }
+
     pub(crate) fn refresh_snapshot_replica_read_adjustment(&mut self) {
         let (Some(base), Some(adjuster)) = (
             self.snapshot_replica_read_base_config.as_ref(),
@@ -341,7 +350,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 .on_request_wait(&selected.resource_group_name, selected.request)
                 .await
                 .map(|result| {
-                    if let Some(ru_details) = &self.ru_details {
+                    if let Some(ru_details) = self.ru_details() {
                         ru_details.update(&result.consumption, result.wait_duration);
                     }
                     request.set_resource_control_penalty(result.penalty);
@@ -430,7 +439,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                     );
                     match settlement {
                         Ok(settlement) => {
-                            if let Some(ru_details) = &self.ru_details {
+                            if let Some(ru_details) = self.ru_details() {
                                 ru_details
                                     .update(&settlement.consumption, settlement.wait_duration);
                             }
@@ -528,7 +537,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                     crate::store::exec_details_v2_mut(&mut response),
                     read_rpc_count,
                     write_rpc_count,
-                    self.ru_details.as_deref(),
+                    self.ru_details().map(Arc::as_ref),
                 );
             }
             self.request
@@ -4355,6 +4364,48 @@ mod test {
         assert_eq!(snapshot.sent_kv_cross_zone, snapshot.sent_kv_total);
         assert_eq!(snapshot.received_kv_total, 7);
         assert_eq!(snapshot.received_kv_cross_zone, 7);
+    }
+
+    #[tokio::test]
+    async fn a_plan_without_its_own_ru_details_charges_the_trace_context_ones() {
+        // client-go's interceptor charges the ctx's util.RUDetailsCtxKey
+        // value; copr sends carry the statement's RUDetails that way.
+        let client = MockKvClient::with_dispatch_hook(|_| {
+            Ok(Box::new(kvrpcpb::GetResponse {
+                exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                    ru_v2: Some(kvrpcpb::Ruv2 {
+                        storage_processed_keys_get: 4,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }))
+        });
+        let details = Arc::new(crate::RuDetails::new());
+        let context = crate::util::context_with_ru_details(
+            &crate::trace::current_trace_context(),
+            details.clone(),
+        );
+        crate::trace::with_trace_context(context, async {
+            PlanBuilder::new(
+                Arc::new(MockPdClient::default()),
+                Keyspace::Disable,
+                kvrpcpb::GetRequest::default(),
+            )
+            .single_region_with_store(RegionStore::new(MockPdClient::region1(), Arc::new(client)))
+            .await
+            .unwrap()
+            .plan()
+            .execute()
+            .await
+            .unwrap();
+        })
+        .await;
+
+        let accumulated = details.drain_ru_v2().unwrap();
+        assert_eq!(accumulated.read_rpc_count, 1);
+        assert_eq!(accumulated.storage_processed_keys_get, 4);
     }
 
     #[tokio::test]

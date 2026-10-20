@@ -35,7 +35,10 @@ use tidb_domain::ru_stats::{
 use tidb_exec::meta_txn::{MetaTxnError, MetaTxnStorage};
 use tidb_meta::transaction::Mutator;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
-use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
+use tidb_txnkv::{
+    run_in_new_txn, NewTxnStorage, NewTxnTransaction, RequestSource, RunInNewTxnContext,
+    INTERNAL_TXN_OTHERS,
+};
 
 use super::{ClusterSessionFactory, ClusterStatsSessionContext, UsageWorkerStop};
 
@@ -168,12 +171,20 @@ where
         Ok(stored.map(meta_to_domain))
     }
 
-    /// Go `kv.RunInNewTxn(..., true, meta.NewMutator(txn).SetRUStats)`.
+    /// Go `kv.RunInNewTxn(..., true, meta.NewMutator(txn).SetRUStats)`
+    /// under `kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)`.
     fn persist_ru_stats(&self, stats: &RuStats) -> Result<(), RuStatsError> {
         let stored = domain_to_meta(stats);
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
+        let context = RunInNewTxnContext {
+            request_source: Some(RequestSource {
+                internal: true,
+                source_type: INTERNAL_TXN_OTHERS.to_owned(),
+                explicit_source_type: String::new(),
+            }),
+        };
         run_in_new_txn(
-            &RunInNewTxnContext::default(),
+            &context,
             &mut storage,
             true,
             |transaction| {

@@ -48,6 +48,9 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 tidb-log = { path = "../tidb-log" }
 tidb-codec = { path = "../tidb-codec" }
+# The PD-backed memory tables ask PD through the store's PD HTTP client
+# (Go `helper.Storage.GetPDHTTPClient()`).
+tikv-client.workspace = true
 toml.workspace = true
 serde_json.workspace = true
 serde.workspace = true

@@ -282,10 +282,10 @@ impl<PdC: PdClient> TikvStore<PdC> {
                 if store.endpoint_type != tikv_client::tikv::EndpointType::TiKv {
                     continue;
                 }
-                let request = tikv_client::proto::kvrpcpb::GetLockWaitInfoRequest::default();
+                let mut request = tikv_client::proto::kvrpcpb::GetLockWaitInfoRequest::default();
                 let response = match self
                     .store
-                    .send_request(&store.target, &request, LOCK_WAIT_INFO_TIMEOUT)
+                    .send_request(&store.target, &mut request, LOCK_WAIT_INFO_TIMEOUT)
                     .await
                 {
                     Ok(response) => response,

@@ -156,15 +156,24 @@ fn diagnostic_bytes(bytes: &[u8]) -> String {
 }
 
 fn format_write_conflict(conflict: &WriteConflict, redaction: Redaction) -> String {
+    format!(
+        "[kv:9007]Write conflict, {} {TXN_RETRYABLE_MARK}",
+        write_conflict_detail(conflict, redaction)
+    )
+}
+
+/// Go `newWriteConflictError`'s `ErrWriteConflict` arguments rendered into
+/// its message, between `Write conflict, ` and the retryable mark: the
+/// timestamps, `prettyWriteKey` of the conflicting and primary keys with
+/// their hex forms (the redacted argument positions), and the reason.
+#[must_use]
+pub fn write_conflict_detail(conflict: &WriteConflict, redaction: Redaction) -> String {
     let prefix = format!(
-        "[kv:9007]Write conflict, txnStartTS={}, conflictStartTS={}, conflictCommitTS={}, key=",
+        "txnStartTS={}, conflictStartTS={}, conflictCommitTS={}, key=",
         conflict.start_ts, conflict.conflict_ts, conflict.conflict_commit_ts
     );
     if redaction == Redaction::Enabled {
-        return format!(
-            "{prefix}????, reason={} {TXN_RETRYABLE_MARK}",
-            conflict.reason
-        );
+        return format!("{prefix}????, reason={}", conflict.reason);
     }
     let (key_table, key_rest) = pretty_write_key(&conflict.key);
     let (primary_table, primary_rest) = pretty_write_key(&conflict.primary);
@@ -182,8 +191,5 @@ fn format_write_conflict(conflict: &WriteConflict, redaction: Redaction) -> Stri
     } else {
         key_parts
     };
-    format!(
-        "{prefix}{key_parts}, reason={} {TXN_RETRYABLE_MARK}",
-        conflict.reason
-    )
+    format!("{prefix}{key_parts}, reason={}", conflict.reason)
 }

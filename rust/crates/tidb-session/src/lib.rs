@@ -1313,6 +1313,7 @@ pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, Stat
 mod resource_group;
 pub mod session_vars;
 mod stats_storage;
+mod store_helper;
 mod stmt_ctx;
 mod table_lock;
 pub use table_lock::ClusterDdlLockEffect;

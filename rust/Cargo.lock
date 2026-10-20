@@ -4131,6 +4131,7 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tidb-workloadrepo",
+ "tikv-client",
  "toml",
 ]
 

@@ -59,7 +59,7 @@ pub(crate) fn route(store: &TikvStore, key: &[u8]) -> (String, kvrpcpb::Context)
 pub(crate) fn send<Req, Resp>(
     store: &TikvStore,
     address: &str,
-    request: Req,
+    mut request: Req,
     timeout: Duration,
 ) -> Resp
 where
@@ -70,7 +70,7 @@ where
         .block_on(async {
             store
                 .store()
-                .send_request(address, &request, timeout)
+                .send_request(address, &mut request, timeout)
                 .await
                 .map(|response| response.downcast::<Resp>().ok().map(|response| *response))
         })

@@ -146,4 +146,21 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         }
         Ok(metas)
     }
+
+    /// Go `store.GetPDHTTPClient()`: the store's PD HTTP client when the
+    /// store has PD addresses (the embedded store has none).
+    fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {
+        if self.pd_endpoints.is_empty() {
+            return None;
+        }
+        self.store.pd_http_client()
+    }
+
+    fn locate_region_by_id(&self, region_id: u64) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let pd = self.store.store().pd_client();
+        let region = self
+            .block_on(async move { pd.region_for_id(region_id).await })
+            .map_err(|error| error.to_string())?;
+        Ok((region.region.start_key, region.region.end_key))
+    }
 }
