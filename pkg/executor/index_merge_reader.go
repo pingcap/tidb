@@ -1142,7 +1142,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 		// Save the index order.
 		indexOrder := kv.NewHandleMap()
 		for i, h := range fhs[:l] {
-			indexOrder.Set(h, i)
+			indexOrder.Set(h, []int{i})
 		}
 		tasks = append(tasks, &indexMergeTableTask{
 			lookupTableTask: lookupTableTask{
@@ -1994,7 +1994,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 				handle = kv.NewPartitionHandle(row.GetInt64(physicalTableIDIdx), handle)
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
-			task.rowIdx = append(task.rowIdx, rowIdx.(int))
+			task.rowIdx = append(task.rowIdx, rowIdx.([]int)[0])
 		}
 		sort.Sort(task)
 	}
