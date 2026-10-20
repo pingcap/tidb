@@ -4,7 +4,7 @@ This contributor guide follows a vector nearest-neighbor query from SQL planning
 
 ## Parse and bind the query
 
-The SQL parser turns the example `SELECT` into an AST; the parser entry point and AST node definitions are in [`parser.go`](../pkg/parser/parser.go) and [`ddl.go`](../pkg/parser/ast/ddl.go), and vector-index syntax is covered by [`TestVectorIndexSyntax`](../pkg/expression/integration_test/integration_test.go). During logical-plan construction, TiDB resolves table and column references and builds the order-by distance expression in [`logical_plan_builder.go`](../pkg/planner/core/logical_plan_builder.go). The planner's vector-index eligibility and ANN request construction happen after this binding stage.
+The SQL parser turns the example `SELECT` into an AST; the parser entry point and SELECT statement node are in [`parser.go`](../pkg/parser/parser.go) and [`dml.go`](../pkg/parser/ast/dml.go). During logical-plan construction, TiDB resolves table and column references and builds the order-by distance expression in [`logical_plan_builder.go`](../pkg/planner/core/logical_plan_builder.go). Vector-index DDL syntax coverage is in [`TestVectorIndexSyntax`](../pkg/expression/integration_test/integration_test.go). The planner's vector-index eligibility and ANN request construction happen after query binding.
 
 ## Index DDL and metadata
 
