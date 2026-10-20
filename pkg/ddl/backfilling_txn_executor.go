@@ -227,6 +227,10 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	typeFlags := reorgTypeFlagsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = reorgMeta.ResourceGroupName
+	// A statement in the session takes its resource group from the session.
+	if reorgMeta.ResourceGroupName != "" {
+		sessCtx.GetSessionVars().ResourceGroupName = reorgMeta.ResourceGroupName
+	}
 	return nil
 }
 
@@ -234,9 +238,8 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	sv := sessCtx.GetSessionVars() //nolint:forbidigo
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
-	divPrecisionIncrement := sv.DivPrecisionIncrement
-	vars := make(map[string]string, 3)
-	for _, name := range []string{vardef.SQLModeVar, vardef.TimeZone, vardef.DivPrecisionIncrement} {
+	vars := make(map[string]string, 2)
+	for _, name := range []string{vardef.SQLModeVar, vardef.TimeZone} {
 		val, err := sv.GetSessionOrGlobalSystemVar(context.Background(), name)
 		if err != nil {
 			logutil.DDLLogger().Warn("get session variable failed", zap.String("name", name), zap.Error(err))
@@ -253,6 +256,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	typeFlags := sv.StmtCtx.TypeFlags()
 	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
+	sessResGroupName := sv.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
 		uv := usedSessCtx.GetSessionVars() //nolint:forbidigo
 		for name, val := range vars {
@@ -263,11 +267,11 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.RowEncoder.Enable = rowEncoder
 		// The fields of an internal session may differ from its variables.
 		uv.SQLMode = sqlMode
-		uv.DivPrecisionIncrement = divPrecisionIncrement
 		uv.TimeZone = timezone
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.StmtCtx.SetErrLevels(errLevels)
 		uv.StmtCtx.ResourceGroupName = resGroupName
+		uv.ResourceGroupName = sessResGroupName
 	}
 }
 

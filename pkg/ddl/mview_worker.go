@@ -598,21 +598,26 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	restoreDivPrecision := func() {}
 	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
+		originalField := sessVars.DivPrecisionIncrement
 		divPrecision := strconv.Itoa(mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement)
-		if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, divPrecision); err != nil {
+		original, err := sessVars.SetSystemVarWithOldStateAsRet(vardef.DivPrecisionIncrement, divPrecision)
+		if err != nil {
 			restoreExecution()
 			restore(sessCtx)
 			return nil, errors.Trace(err)
 		}
+		restoreDivPrecision = func() {
+			if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, original); err != nil {
+				logutil.DDLLogger().Warn("create materialized view: restore div_precision_increment", zap.Error(err))
+			}
+			// The field of an internal session may differ from its variable.
+			sessVars.DivPrecisionIncrement = originalField
+		}
 	}
 	sessVars.CurrentDB = currentDB
 	sessVars.InMViewMaintenance = true
-	// The build statement resets its resource group from the session variable.
-	originalResourceGroup := sessVars.ResourceGroupName
-	if job.ReorgMeta.ResourceGroupName != "" {
-		sessVars.SetResourceGroupName(job.ReorgMeta.ResourceGroupName)
-	}
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
@@ -634,11 +639,11 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		sessVars.MViewMaintainImportDiskQuota,
 	)
 	return func() {
+		restoreDivPrecision()
 		restoreExecution()
 		restore(sessCtx)
 		sessVars.InMViewMaintenance = originalMaintenance
 		sessVars.CurrentDB = originalDB
-		sessVars.SetResourceGroupName(originalResourceGroup)
 	}, nil
 }
 
