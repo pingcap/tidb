@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,11 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
->>>>>>> 434d3b25a84 (executor: fix MVI ADMIN CHECK routing and index validation (#71890))
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -288,13 +285,7 @@ func TestAdminCleanupMVIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-<<<<<<< HEAD
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
-
-=======
-	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
-	require.NoError(t, err)
->>>>>>> 434d3b25a84 (executor: fix MVI ADMIN CHECK routing and index validation (#71890))
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(9), kv.IntHandle(9), nil)
@@ -915,11 +906,7 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
-<<<<<<< HEAD
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
-=======
-	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
-	require.NoError(t, err)
 
 	// Check corrupt entries both between valid entries and after the last one
 	// for the same handle. Keep all entries in one lookup batch.
@@ -943,7 +930,6 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	tk.Session().GetSessionVars().IndexLookupSize = 3
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
->>>>>>> 434d3b25a84 (executor: fix MVI ADMIN CHECK routing and index validation (#71890))
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(0), kv.IntHandle(0))
