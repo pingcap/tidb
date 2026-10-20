@@ -42,6 +42,7 @@ use tidb_datatype::{Datum, FieldType};
 
 use crate::partition_routing::{RangeBound, RangeColumnBound};
 use crate::DriverError;
+use tidb_hack::GoCaseCompare;
 
 /// The DDL-owned metadata that becomes one routed `RANGE COLUMNS` spec.
 pub(super) type RangeColumnsMetadata = (Vec<String>, Vec<FieldType>, Vec<Vec<RangeColumnBound>>);
@@ -186,7 +187,7 @@ pub(super) fn build_range_columns_bounds(
             .ok_or(DriverError::PartitionColumnValueWrongType)?;
         if dependency_names
             .iter()
-            .any(|candidate: &String| candidate.eq_ignore_ascii_case(name))
+            .any(|candidate: &String| candidate.go_lower_eq(name))
         {
             // Go `checkPartitionColumnsUnique` is CREATE-only
             // (`ddl/partition.go:4664`).
@@ -196,7 +197,7 @@ pub(super) fn build_range_columns_bounds(
         }
         let offset = names
             .iter()
-            .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            .position(|candidate| candidate.go_lower_eq(name))
             // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // not the 1054 the expression path raises.

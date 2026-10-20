@@ -20,6 +20,7 @@
 //! truth that the protocol, `SHOW WARNINGS` and the log all read.
 
 use crate::executor::ExecError;
+use tidb_hack::GoToLower;
 
 mod driver_error;
 mod exec;
@@ -859,7 +860,7 @@ impl DriverError {
         // Go: "Unknown column '%-.192s' in '%-.192s'".
         DriverError::UnknownColumnInTable { column, table } => MysqlError::new(
             1054,
-            format!("Unknown column '{}' in '{table}'", column.to_lowercase()),
+            format!("Unknown column '{}' in '{table}'", column.go_to_lower()),
         ),
         // Go `ErrNoReferencedTable`.
         DriverError::ForeignKeyReferencedTableMissing(table) => MysqlError::new(
@@ -1527,7 +1528,7 @@ impl DriverError {
         // Go: "Unknown column '%-.192s' in '%-.192s'".
         DriverError::UnknownColumnInClause { column, clause } => MysqlError::new(
             1054,
-            format!("Unknown column '{}' in '{clause}'", column.to_lowercase()),
+            format!("Unknown column '{}' in '{clause}'", column.go_to_lower()),
         ),
         // Go: "The value specified for generated column '%s' in table '%s' is
         // not allowed."

@@ -100,6 +100,7 @@ pub use tidb_distsql::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
 pub mod generated_column;
 pub(crate) mod handle_range;
+pub use handle_range::split_ranges_across_int64_boundary;
 pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;

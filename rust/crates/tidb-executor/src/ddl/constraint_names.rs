@@ -39,6 +39,8 @@ use tidb_ast::{
     ColumnOption, CreateTableStmt, IndexConstraintDefinition, IndexPart, IndexType, InlineKeyKind,
     TableConstraint,
 };
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// The names `checkConstraintNames` settles for a CREATE TABLE's key
 /// constraints.
@@ -183,7 +185,7 @@ pub fn check_constraint_names(
         if constraint.name.is_empty() {
             continue;
         }
-        let lower = constraint.name.to_lowercase();
+        let lower = constraint.name.go_to_lower();
         let duplicate = match constraint.kind {
             Kind::ForeignKey => !foreign_key_names.insert(lower),
             Kind::Key | Kind::Check => !names.insert(lower),
@@ -221,7 +223,7 @@ pub fn check_constraint_names(
         };
         let mut name = prefix.to_owned();
         let mut suffix = 2;
-        if name.eq_ignore_ascii_case("PRIMARY") {
+        if name.go_equal_fold("PRIMARY") {
             name = format!("{prefix}_2");
             suffix = 3;
         }

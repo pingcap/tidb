@@ -96,6 +96,8 @@ use std::collections::BTreeMap;
 use super::dml::update_record::UpdateRecords;
 use super::*;
 use crate::kv_table::TableHandle;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Where a `FROM` source's rows live, and therefore whether a write may name
 /// it. This is Go's `updatableTableListResolver`/`collectTableName` decision,
@@ -383,7 +385,7 @@ fn build_multi_layout(
             .columns
             .iter()
             .zip(names)
-            .filter(|(_, name)| name.names.table.original.eq_ignore_ascii_case(alias))
+            .filter(|(_, name)| name.names.table.original.go_lower_eq(alias))
             .map(|(column, name)| {
                 Ok((
                     name.names.column.original.clone(),
@@ -608,7 +610,7 @@ pub(crate) fn run_multi_update(
             }
             match &table.origin {
                 SourceOrigin::Base { database, name } => {
-                    Some((database.to_lowercase(), name.to_lowercase()))
+                    Some((database.go_to_lower(), name.go_to_lower()))
                 }
                 SourceOrigin::Derived => None,
             }
@@ -809,7 +811,7 @@ fn check_update_list(
             pk_updated |= field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY);
             partition_col_updated |= partition_columns
                 .iter()
-                .any(|partition_column| partition_column.eq_ignore_ascii_case(column));
+                .any(|partition_column| partition_column.go_lower_eq(column));
         }
         let key = (
             tidb_hack::go_to_lower(database),
@@ -1062,12 +1064,12 @@ fn resolve_delete_targets(
         };
         let mut found = false;
         for (slot, table) in source.tables.iter().enumerate() {
-            if !table.visible.eq_ignore_ascii_case(name) {
+            if !table.visible.go_lower_eq(name) {
                 continue;
             }
             if let Some(schema) = schema {
                 match &table.qualifiable_db {
-                    Some(db) if db.eq_ignore_ascii_case(schema) => {}
+                    Some(db) if db.go_lower_eq(schema) => {}
                     _ => continue,
                 }
             }
@@ -1151,7 +1153,7 @@ pub(crate) fn multi_dml_physical_plan(
     let mut add_target = |database: String, table: String, column: Option<String>| {
         let identity = match catalog.get_in(&database, &table) {
             Some(TableEntry::Kv(table)) => (table.table_id, String::new(), String::new()),
-            _ => (0, database.to_ascii_lowercase(), table.to_ascii_lowercase()),
+            _ => (0, database.go_to_lower(), table.go_to_lower()),
         };
         let spec = specs.entry(identity).or_insert_with(|| FkPlanSpec {
             database,
@@ -1162,7 +1164,7 @@ pub(crate) fn multi_dml_physical_plan(
             if !spec
                 .updated_cols
                 .iter()
-                .any(|existing| existing.eq_ignore_ascii_case(&column))
+                .any(|existing| existing.go_lower_eq(&column))
             {
                 spec.updated_cols.push(column);
             }
@@ -1304,12 +1306,12 @@ fn build_prune(
     let mut present = Vec::with_capacity(names.len());
     let mut pairs = std::collections::BTreeSet::new();
     for (slot, columns) in names.iter().enumerate() {
-        let visible = source.tables[slot].visible.to_ascii_lowercase();
+        let visible = source.tables[slot].visible.go_to_lower();
         let mut flags = Vec::with_capacity(columns.len());
         for (position, name) in columns.iter().enumerate() {
             let kept = keep(slot, position, name);
             if kept {
-                pairs.insert((visible.clone(), name.to_ascii_lowercase()));
+                pairs.insert((visible.clone(), name.go_to_lower()));
             }
             flags.push(kept);
         }
@@ -1340,16 +1342,13 @@ fn prune_for_update(
             };
             if let Some(slot) = source.table_of_column(index) {
                 let table = &source.tables[slot];
-                referenced.insert((
-                    slot,
-                    table.columns[index - table.offset].0.to_ascii_lowercase(),
-                ));
+                referenced.insert((slot, table.columns[index - table.offset].0.go_to_lower()));
             }
         }
     }
     build_prune(source, catalog, |slot, _, name| {
         assignments.iter().any(|assignment| assignment.slot == slot)
-            || referenced.contains(&(slot, name.to_ascii_lowercase()))
+            || referenced.contains(&(slot, name.go_to_lower()))
     })
 }
 

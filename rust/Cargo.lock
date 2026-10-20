@@ -3750,6 +3750,7 @@ dependencies = [
  "tidb-ast",
  "tidb-datatype",
  "tidb-model",
+ "tidb-mysql",
  "tidb-parser",
 ]
 

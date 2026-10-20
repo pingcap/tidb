@@ -49,6 +49,8 @@
 //! `.../ddl/column_modify.result` -- the suite's recording of real TiDB.
 
 use super::{Catalog, DriverError, KvColumn};
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Resolves the storage-backed table an action names, or reports 1146.
 fn table_of<'a>(
@@ -86,10 +88,14 @@ pub(super) fn prepare_rename_column(
     to: &str,
 ) -> Result<Option<super::column_changes::PreparedColumnChange>, DriverError> {
     let table = super::column_changes::table_of(catalog, database, table_name)?;
+    // Go checks the old column with `table.FindCol` (`strings.EqualFold`),
+    // but the job it submits carries only `OldColumnName`, which the worker
+    // resolves by `.L` (`getModifyColumnInfo`); the column renamed is that
+    // one.
     let Some(offset) = table
         .columns
         .iter()
-        .position(|column| column.name.eq_ignore_ascii_case(from))
+        .position(|column| column.name.go_lower_eq(from))
     else {
         return Err(DriverError::UnknownColumnInTable {
             column: from.to_owned(),
@@ -112,16 +118,16 @@ pub(super) fn prepare_rename_column(
     // Go returns nil BEFORE the duplicate check when the two names are the
     // same column, so `rename column c1 to c1` succeeds while
     // `rename column c2 to id` is 1060.
-    if from.eq_ignore_ascii_case(to) {
+    if from.go_lower_eq(to) {
         return Ok(None);
     }
-    if to.eq_ignore_ascii_case("_tidb_rowid") {
+    if to.go_lower_eq("_tidb_rowid") {
         return Err(DriverError::WrongColumnName(to.to_owned()));
     }
     if table
         .columns
         .iter()
-        .any(|column| column.name.eq_ignore_ascii_case(to))
+        .any(|column| column.name.go_equal_fold(&to.go_to_lower()))
     {
         return Err(DriverError::DuplicateColumnName(to.to_owned()));
     }
@@ -173,7 +179,7 @@ pub(crate) fn alter_index_visibility_action(
             .iter()
             .map(|index| {
                 let mut index = index.clone();
-                if index.name.eq_ignore_ascii_case(index_name) {
+                if index.name.go_lower_eq(index_name) {
                     index.visible = false;
                 }
                 index
@@ -212,7 +218,7 @@ pub(super) fn prepare_column_default_change(
     let Some(offset) = table
         .columns
         .iter()
-        .position(|column| column.name.eq_ignore_ascii_case(column_name))
+        .position(|column| column.name.go_equal_fold(&column_name.go_to_lower()))
     else {
         return Err(DriverError::UnknownColumnInTable {
             column: column_name.to_owned(),

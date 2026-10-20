@@ -21,6 +21,7 @@
 use super::{Catalog, DriverError};
 use crate::{KvTable, TableEntry};
 use tidb_datatype::FieldTypeFlags;
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 fn coded(errno: u16, message: impl Into<String>) -> DriverError {
@@ -257,12 +258,12 @@ fn check_table_def_compatible(source: &KvTable, target: &KvTable) -> Result<(), 
                 source_index.name
             )));
         }
-        let Some(target_index) = target
-            .indexes()
-            .iter()
-            .rev()
-            .find(|index| index.name.eq_ignore_ascii_case(&source_index.name))
-        else {
+        let Some(target_index) = target.indexes().iter().rev().find(|index| {
+            index
+                .name
+                .go_to_lower()
+                .go_equal_fold(&source_index.name.go_to_lower())
+        }) else {
             return Err(different_metadata());
         };
         let primary = |name: &str| name.eq_ignore_ascii_case("PRIMARY");

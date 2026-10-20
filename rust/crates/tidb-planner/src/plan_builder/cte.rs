@@ -250,7 +250,7 @@ impl CteConsumerCounter<'_> {
         };
         for scope in self.scopes.iter().rev() {
             for (index, visible) in scope.visible_names().iter().enumerate().rev() {
-                if !visible.eq_ignore_ascii_case(name) {
+                if !tidb_mysql::lowercase_equal(visible, name) {
                     continue;
                 }
                 if scope.target_layer {

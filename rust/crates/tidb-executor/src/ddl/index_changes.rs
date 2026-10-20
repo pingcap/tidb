@@ -18,6 +18,7 @@
 
 use super::{indexes, Catalog, DriverError};
 use tidb_ast::{AlterTableAction, IndexConstraintDefinition};
+use tidb_hack::GoCaseCompare;
 
 pub(super) enum PreparedIndexChange<'a> {
     Add {
@@ -96,7 +97,7 @@ pub(super) fn prepare<'a>(
         table
             .indexes()
             .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(name))
+            .find(|index| index.name.go_lower_eq(name))
     };
     let missing = |name: &str| DriverError::KeyNotExists {
         key: name.to_owned(),
@@ -201,7 +202,7 @@ pub(super) fn prepare<'a>(
             if rename.from == rename.to {
                 return Ok(None);
             }
-            if !rename.from.eq_ignore_ascii_case(&rename.to) {
+            if !rename.from.go_lower_eq(&rename.to) {
                 if let Some(existing) = find(&rename.to) {
                     return Err(DriverError::DuplicateKeyName(existing.name.clone()));
                 }

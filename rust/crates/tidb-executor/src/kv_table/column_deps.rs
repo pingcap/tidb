@@ -30,6 +30,7 @@
 //! column is dropped or renamed.
 
 use super::{KvForeignKey, KvTable};
+use tidb_hack::GoCaseCompare;
 
 /// The piece of name-keyed metadata that stops a column being dropped or
 /// renamed, as [`KvTable::column_dependent`] reports it.
@@ -76,7 +77,7 @@ impl KvTable {
         let names_it = |dependencies: &[String]| {
             dependencies
                 .iter()
-                .any(|dependency| dependency.eq_ignore_ascii_case(name))
+                .any(|dependency| dependency.go_lower_eq(name))
         };
         for (other, column) in self.columns.iter().enumerate() {
             let Some(generated) = column.generated.as_ref() else {

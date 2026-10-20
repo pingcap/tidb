@@ -70,6 +70,8 @@ use crate::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
 };
 use crate::DriverError;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Go `checkAddPartitionTooManyPartitions`: the hard cap on partitions.
 pub(super) const MAX_PARTITIONS: u64 = 8192;
@@ -223,7 +225,7 @@ fn build_table_partitioning_inner(
                 .ok_or(DriverError::PartitionColumnValueWrongType)?;
             let offset = names
                 .iter()
-                .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                .position(|candidate| candidate.go_lower_eq(name))
                 .ok_or(DriverError::PartitionFieldNotFound)?;
             if !super::table_partition_list::list_columns_type_allowed(&types[offset]) {
                 return Err(DriverError::PartitionFieldTypeNotAllowed(name.clone()));
@@ -276,7 +278,7 @@ fn build_table_partitioning_inner(
             .map(|name| {
                 names
                     .iter()
-                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                    .position(|candidate| candidate.go_lower_eq(name))
                     .expect("KEY names resolved above")
             })
             .collect::<Vec<_>>();
@@ -323,7 +325,7 @@ fn build_table_partitioning_inner(
             .map(|name| {
                 names
                     .iter()
-                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                    .position(|candidate| candidate.go_lower_eq(name))
                     .expect("LIST COLUMNS names resolved above")
             })
             .collect::<Vec<_>>();
@@ -379,7 +381,7 @@ fn build_table_partitioning_inner(
             .map(|name| {
                 names
                     .iter()
-                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                    .position(|candidate| candidate.go_lower_eq(name))
                     .expect("RANGE COLUMNS names resolved above")
             })
             .collect::<Vec<_>>();
@@ -519,9 +521,9 @@ pub(super) fn apply_update_indexes(
     for update in &partitioning.update_indexes {
         let Some(index) = updated
             .iter_mut()
-            .find(|index| index.name.eq_ignore_ascii_case(&update.name))
+            .find(|index| index.name.go_to_lower().go_equal_fold(&update.name))
         else {
-            if update.name.eq_ignore_ascii_case("primary") && !handle_offsets.is_empty() {
+            if update.name.go_equal_fold("primary") && !handle_offsets.is_empty() {
                 return Err(DriverError::PartitionUniqueKeyNeedAllFields(
                     "CLUSTERED INDEX".to_owned(),
                 ));
@@ -602,7 +604,7 @@ fn build_key_partition_columns(
     for name in selected {
         let offset = names
             .iter()
-            .position(|candidate| candidate.eq_ignore_ascii_case(&name))
+            .position(|candidate| candidate.go_lower_eq(&name))
             // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // a DIFFERENT error from the 1054 the expression path raises.
@@ -1222,7 +1224,7 @@ fn collect_args_type(
         let Some(column) = path.last() else { continue };
         let Some(offset) = names
             .iter()
-            .position(|candidate| candidate.eq_ignore_ascii_case(column))
+            .position(|candidate| candidate.go_lower_eq(column))
         else {
             // Go `findColumnByName` returning nil is 1054 naming the clause.
             // Go quotes `col.Name.Name.L`, the name the parser already folded,
@@ -1996,10 +1998,7 @@ pub fn partition_spec_from_metadata(
         // rebuild only has to resolve those names back to the table.
         PartitionType::KEY => {
             for column in columns {
-                if !names
-                    .iter()
-                    .any(|candidate| candidate.eq_ignore_ascii_case(column))
-                {
+                if !names.iter().any(|candidate| candidate.go_lower_eq(column)) {
                     return Err(DriverError::PartitionFieldNotFound);
                 }
             }

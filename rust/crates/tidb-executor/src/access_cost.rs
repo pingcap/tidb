@@ -96,6 +96,9 @@ pub struct TableStatistics {
     /// Go `ColAndIdxExistenceMap`'s index entries. The value says whether the
     /// persisted histogram row is analyzed.
     pub index_stats_existence: BTreeMap<i64, bool>,
+    /// The indexes whose Go `Index.Info.MVIndex` is set: a multi-valued
+    /// index's histogram counts array elements, not rows.
+    pub mv_index_ids: BTreeSet<i64>,
 }
 
 impl TableStatistics {
@@ -137,6 +140,9 @@ impl TableStatistics {
             }
         }
         for (id, index) in &self.indexes {
+            if self.mv_index_ids.contains(id) {
+                continue;
+            }
             if self
                 .index_load_status
                 .get(id)
@@ -243,6 +249,7 @@ impl TableStatistics {
             index_load_status,
             column_stats_existence,
             index_stats_existence,
+            mv_index_ids: BTreeSet::new(),
         }
     }
 
@@ -1192,6 +1199,29 @@ mod tests {
             stats.estimate_column_ndv(3, &BTreeSet::new(), &BTreeSet::new()),
             Some(0.0)
         );
+    }
+
+    /// Go `HistColl.GetAnalyzeRowCount` skips a multi-valued index, whose
+    /// histogram counts array elements rather than rows.
+    #[test]
+    fn analyze_row_count_skips_multi_valued_indexes() {
+        let index = |id, count| IndexStats {
+            histogram: histogram_with_count(id, 1, count, 42),
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            num_columns: 1,
+            unique: false,
+        };
+        let mut statistics = TableStatistics::new(
+            4,
+            0,
+            BTreeMap::new(),
+            [(1, index(1, 10)), (2, index(2, 4))].into_iter().collect(),
+        );
+        assert_eq!(statistics.analyze_row_count(), 10.0);
+        statistics.mv_index_ids.insert(1);
+        assert_eq!(statistics.analyze_row_count(), 4.0);
     }
 
     #[test]

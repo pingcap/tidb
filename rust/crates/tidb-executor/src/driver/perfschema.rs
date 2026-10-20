@@ -25,6 +25,7 @@
 
 use super::catalog::Catalog;
 use super::DriverError;
+use tidb_hack::GoCaseCompare;
 
 /// The database name Go registers these tables under.
 pub const PERFORMANCE_SCHEMA: &str = "performance_schema";
@@ -218,7 +219,7 @@ pub const TABLES: &[(&str, i64, &str)] = &[
 pub fn table_id(name: &str) -> Option<i64> {
     TABLES
         .iter()
-        .find(|(table, _, _)| table.eq_ignore_ascii_case(name))
+        .find(|(table, _, _)| table.go_lower_eq(name))
         .map(|(_, offset, _)| PERFORMANCE_SCHEMA_DB_ID + offset)
 }
 

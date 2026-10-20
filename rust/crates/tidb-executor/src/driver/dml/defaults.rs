@@ -15,6 +15,8 @@
 //! Shared DML metadata and expression lowering for declared column defaults.
 
 use super::*;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Stable identity of a column in a DML statement's source scope.
 ///
@@ -334,7 +336,7 @@ fn default_paths_equal(left: &[String], right: &[String]) -> bool {
         && left
             .iter()
             .zip(right)
-            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+            .all(|(left, right)| left.go_lower_eq(right))
 }
 
 struct PreparedDefaultResolver<'a, R> {
@@ -496,7 +498,7 @@ pub(crate) fn rewrite_with_prepared_defaults(
         // names ErrBadField's clause `field list` — not the generic
         // `expression` an unevaluated residual would report.
         tidb_expr::EvalError::UnknownColumn(column) => DriverError::UnknownColumnInClause {
-            column: column.to_lowercase(),
+            column: column.go_to_lower(),
             clause: "field list".to_owned(),
         },
         other => DriverError::Exec(ExecError::Eval(other)),

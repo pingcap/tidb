@@ -31,6 +31,7 @@ use super::Catalog;
 use crate::column_default::ColumnDefault;
 use crate::{KvColumn, KvTable};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, GoString, UNSPECIFIED_LENGTH};
+use tidb_hack::GoCaseCompare;
 
 /// Go's schema name for the virtual database.
 pub const INFORMATION_SCHEMA: &str = "INFORMATION_SCHEMA";
@@ -1134,7 +1135,7 @@ const COLUMNS_COLUMNS: &[InfoColumn] = &[
 /// as every schema name is.
 #[must_use]
 pub fn is_information_schema(name: &str) -> bool {
-    name.eq_ignore_ascii_case(INFORMATION_SCHEMA)
+    name.go_lower_eq(INFORMATION_SCHEMA)
 }
 
 /// Go `infoschema.tableKeyColumnUsageCols`, captured from a running TiDB:
@@ -8575,14 +8576,14 @@ pub const CLUSTER_TABLES: &[(&str, &str)] = &[
 /// Go `infoschema.IsClusterTableByName`: the CLUSTER_* tables plus
 /// `TIFLASH_REPLICA`, whose cop request goes to the DDL owner.
 pub fn is_cluster_table_name(name: &str) -> bool {
-    cluster_table_source(name).is_some() || name.eq_ignore_ascii_case("TIFLASH_REPLICA")
+    cluster_table_source(name).is_some() || name.go_lower_eq("TIFLASH_REPLICA")
 }
 
 /// The local source of a composed cluster memory table.
 pub fn cluster_table_source(name: &str) -> Option<&'static str> {
     CLUSTER_TABLES
         .iter()
-        .find(|(cluster, _)| cluster.eq_ignore_ascii_case(name))
+        .find(|(cluster, _)| cluster.go_lower_eq(name))
         .map(|(_, local)| *local)
 }
 
@@ -8736,7 +8737,7 @@ fn table_columns(name: &str) -> Option<Vec<&'static InfoColumn>> {
     let name = local.unwrap_or(name);
     let columns = SERVED_TABLES
         .iter()
-        .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+        .find(|(candidate, _)| candidate.go_lower_eq(name))
         .map(|(_, columns)| *columns)?;
     Some(
         local
@@ -8808,7 +8809,7 @@ pub fn canonical_table_name(name: &str) -> Option<&'static str> {
         .iter()
         .map(|(candidate, _)| *candidate)
         .chain(CLUSTER_TABLES.iter().map(|(candidate, _)| *candidate))
-        .find(|candidate| candidate.eq_ignore_ascii_case(name))
+        .find(|candidate| candidate.go_lower_eq(name))
 }
 
 /// The names of every served table, in `SHOW TABLES` order.

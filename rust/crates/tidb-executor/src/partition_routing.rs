@@ -42,6 +42,7 @@ use std::collections::HashMap;
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
+use tidb_hack::GoCaseCompare;
 
 /// One partition's exclusive upper bound under RANGE: Go
 /// `model.PartitionDefinition.LessThan[0]`, already constant-folded to the
@@ -310,7 +311,7 @@ impl PartitionSpec {
         let Some(index) = self
             .dependencies
             .iter()
-            .position(|dependency| dependency.eq_ignore_ascii_case(name))
+            .position(|dependency| dependency.go_lower_eq(name))
         else {
             return;
         };
@@ -334,7 +335,7 @@ impl PartitionSpec {
     pub fn definition_named(&self, name: &str) -> Option<&PartitionDef> {
         self.definitions
             .iter()
-            .find(|def| def.name.eq_ignore_ascii_case(name))
+            .find(|def| def.name.go_lower_eq(name))
     }
 
     /// Go `locatePartition`: the physical table id `row` belongs in.

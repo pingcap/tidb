@@ -686,7 +686,7 @@ impl PlanError {
     /// Go `table.ErrUnknownPartition.GenWithStackByArgs(partition, table)`.
     #[must_use]
     pub fn unknown_partition(partition: impl Into<String>, table: impl Into<String>) -> Self {
-        let partition = partition.into().to_ascii_lowercase();
+        let partition = tidb_mysql::to_lowercase(&partition.into());
         let table = table.into();
         Self {
             message: format!("Unknown partition '{partition}' in table '{table}'"),

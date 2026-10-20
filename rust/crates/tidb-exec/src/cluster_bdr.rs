@@ -27,6 +27,7 @@ use tidb_ast::BdrRole;
 
 use crate::cluster_ddl::DdlPlanError;
 use crate::ddl_job_submit::{submit_error, JobSubmitError};
+use tidb_hack::GoToLower;
 
 fn role_of(stored: &[u8]) -> Option<BdrRole> {
     match stored {
@@ -43,7 +44,7 @@ fn restricted(stored: &[u8]) -> DdlPlanError {
 }
 
 fn is_system_schema(schema: &str) -> bool {
-    tidb_util::filter::is_system_schema(&schema.to_lowercase())
+    tidb_util::filter::is_system_schema(&schema.go_to_lower())
 }
 
 /// Go `AddColumn`'s `IsAddColumnDenied` check over the built column.

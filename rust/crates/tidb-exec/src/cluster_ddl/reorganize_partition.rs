@@ -27,6 +27,8 @@ use super::add_index::{
     ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY,
 };
 use super::*;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// The planner's ids at admission: placeholders the job submitter replaces
 /// (Go draws them in `assignGIDsForJobs`, not in the executor).
@@ -445,11 +447,7 @@ fn get_new_global(part_info: &tidb_model::partition::PartitionInfo, index: &Inde
         .ddl_update_indexes
         .snapshot()
         .into_iter()
-        .find(|update| {
-            update
-                .index_name
-                .eq_ignore_ascii_case(index.name.lowercase())
-        })
+        .find(|update| update.index_name.go_equal_fold(index.name.lowercase()))
         .map_or(index.global, |update| update.global)
 }
 

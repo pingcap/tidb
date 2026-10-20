@@ -20,6 +20,7 @@
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_hack::GoToLower;
 use tidb_planner::access::{AccessObject, IndexAccess, OtherAccessObject, ScanAccessObject};
 use tidb_planner::explain::{
     Explain as PlannerExplain, ExplainContext as PlannerExplainContext,
@@ -1229,13 +1230,13 @@ fn physical_access(
             if cte.cte_name.eq_ignore_ascii_case(&cte.cte_as_name) {
                 Some(AccessObject::Other(OtherAccessObject(format!(
                     "CTE:{}",
-                    cte.cte_name.to_ascii_lowercase()
+                    cte.cte_name.go_to_lower()
                 ))))
             } else {
                 Some(AccessObject::Other(OtherAccessObject(format!(
                     "CTE:{} AS {}",
-                    cte.cte_name.to_ascii_lowercase(),
-                    cte.cte_as_name.to_ascii_lowercase()
+                    cte.cte_name.go_to_lower(),
+                    cte.cte_as_name.go_to_lower()
                 ))))
             }
         }

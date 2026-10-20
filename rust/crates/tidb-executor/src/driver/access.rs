@@ -35,6 +35,7 @@ use super::point_get_key::{names_no_rows, point_get_value, point_get_value_overf
 use super::*;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
+use tidb_hack::GoCaseCompare;
 
 #[derive(Clone, Debug)]
 struct FastPointOutput {
@@ -1863,7 +1864,7 @@ fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
                 tidb_ast::IndexHintKind::Force | tidb_ast::IndexHintKind::Use,
                 tidb_ast::IndexHintScope::All,
                 [name]
-            ) if name.eq_ignore_ascii_case("PRIMARY")
+            ) if name.go_lower_eq("PRIMARY")
         )
     })
 }
@@ -2211,19 +2212,19 @@ fn fast_point_lock_of_warnings(
             [target_database, table] => (Some(target_database), table),
             _ => return None,
         };
-        if target_database.is_some_and(|target| !target.eq_ignore_ascii_case(database)) {
+        if target_database.is_some_and(|target| !target.go_lower_eq(database)) {
             return None;
         }
         match table_ref.alias.as_deref() {
-            Some(alias) if alias.eq_ignore_ascii_case(target_table) => {}
-            Some(alias) if name.eq_ignore_ascii_case(target_table) => {
+            Some(alias) if alias.go_lower_eq(target_table) => {}
+            Some(alias) if name.go_lower_eq(target_table) => {
                 if warned.insert(target.clone()) {
                     warnings.push(format!(
                         "FOR UPDATE OF references the base table name while the table is aliased. Use the alias '{alias}' in OF to make the lock target explicit."
                     ));
                 }
             }
-            None if name.eq_ignore_ascii_case(target_table) => {}
+            None if name.go_lower_eq(target_table) => {}
             _ => return None,
         }
     }
@@ -2644,7 +2645,7 @@ fn overflow_plans_table_dual(
     });
     if let Some(handle_offset) = table.pk_handle_offset() {
         let handle_column = &columns[handle_offset].0;
-        if single_pair && pairs[0].column.eq_ignore_ascii_case(handle_column) {
+        if single_pair && pairs[0].column.go_lower_eq(handle_column) {
             return index_available(None);
         }
     }
@@ -2725,7 +2726,7 @@ fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option
                 for table in scope
                     .tables
                     .iter()
-                    .filter(|table| table.name.eq_ignore_ascii_case(table_name))
+                    .filter(|table| table.name.go_lower_eq(table_name))
                 {
                     matched = true;
                     for (local_offset, (name, field_type)) in table.columns.iter().enumerate() {
@@ -2778,11 +2779,9 @@ pub(crate) fn point_get_predicate_is_consumed(
     let key_matches = |offsets: &[usize]| {
         offsets.len() == pairs.len()
             && offsets.iter().all(|offset| {
-                columns.get(*offset).is_some_and(|(name, _)| {
-                    pairs
-                        .iter()
-                        .any(|pair| pair.column.eq_ignore_ascii_case(name))
-                })
+                columns
+                    .get(*offset)
+                    .is_some_and(|(name, _)| pairs.iter().any(|pair| pair.column.go_lower_eq(name)))
             })
     };
     if table
@@ -2802,7 +2801,7 @@ pub(crate) fn point_get_predicate_is_consumed(
         && pairs.len() == 1
         && pairs[0]
             .column
-            .eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
+            .go_lower_eq(tidb_model::column::EXTRA_HANDLE_NAME)
     {
         return true;
     }
@@ -3102,9 +3101,7 @@ pub(crate) fn try_batch_point_get_stmt(
                     positions.clear();
                     break;
                 };
-                let Some(position) = names
-                    .iter()
-                    .position(|name| column_name.eq_ignore_ascii_case(name))
+                let Some(position) = names.iter().position(|name| column_name.go_lower_eq(name))
                 else {
                     positions.clear();
                     break;
@@ -3176,9 +3173,7 @@ pub(crate) fn try_batch_point_get_stmt(
                     positions.clear();
                     break;
                 };
-                let Some(position) = names
-                    .iter()
-                    .position(|name| column_name.eq_ignore_ascii_case(name))
+                let Some(position) = names.iter().position(|name| column_name.go_lower_eq(name))
                 else {
                     positions.clear();
                     break;
@@ -3249,7 +3244,7 @@ pub(crate) fn try_batch_point_get_stmt(
 
     // The handle path.
     if let Some(offset) = table.pk_handle_offset() {
-        if columns[offset].0.eq_ignore_ascii_case(name) {
+        if columns[offset].0.go_lower_eq(name) {
             // Go `newBatchPointGetPlan` runs every list element through
             // `getPointGetValue` and returns `nil` -- no batch plan at all --
             // as soon as one of them is not exactly representable, so a list
@@ -3302,7 +3297,7 @@ pub(crate) fn try_batch_point_get_stmt(
         let Some((index_column, field_type)) = columns.get(index.column_offsets[0]) else {
             continue;
         };
-        if !index_column.eq_ignore_ascii_case(name) {
+        if !index_column.go_lower_eq(name) {
             continue;
         }
         let mut converted = Vec::with_capacity(values.len());
@@ -3347,7 +3342,7 @@ pub(crate) fn convert_pairs_to_column_domain(
     convert_pairs_to_column_domain_by(pairs, |wanted| {
         columns
             .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(wanted))
+            .find(|(name, _)| name.go_lower_eq(wanted))
             .map(|(_, field_type)| field_type)
     })
 }
@@ -3727,7 +3722,7 @@ pub(crate) fn try_point_get(
             point_equal_pairs_visiting(where_clause, &mut pairs, zone, &[], &mut |pair| {
                 // Go declines a foreign qualifier before converting the pair.
                 if let (Some(visible), Some(qualifier)) = (visible, pair.table.as_deref()) {
-                    if !qualifier.eq_ignore_ascii_case(visible) {
+                    if !qualifier.go_lower_eq(visible) {
                         return false;
                     }
                 }
@@ -3737,7 +3732,7 @@ pub(crate) fn try_point_get(
                 // column declines after the walk.
                 let Some((_, field_type)) = columns
                     .iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+                    .find(|(name, _)| name.go_lower_eq(&pair.column))
                 else {
                     return true;
                 };
@@ -3800,7 +3795,7 @@ pub(crate) fn try_point_get(
         if pairs.iter().any(|pair| {
             pair.table
                 .as_deref()
-                .is_some_and(|qualifier| !qualifier.eq_ignore_ascii_case(visible))
+                .is_some_and(|qualifier| !qualifier.go_lower_eq(visible))
         }) {
             return Ok(None);
         }
@@ -3812,7 +3807,7 @@ pub(crate) fn try_point_get(
         && pairs.len() == 1
         && pairs[0]
             .column
-            .eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
+            .go_lower_eq(tidb_model::column::EXTRA_HANDLE_NAME)
     {
         let handle_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         let Some(value) = point_get_value(&handle_type, &pairs[0].value) else {
@@ -3836,7 +3831,7 @@ pub(crate) fn try_point_get(
         if pairs.iter().any(|pair| {
             !columns
                 .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+                .any(|(name, _)| name.go_lower_eq(&pair.column))
         }) {
             return Ok(None);
         }
@@ -3848,7 +3843,7 @@ pub(crate) fn try_point_get(
     // is Go's `len(pairs) == 1` condition on the handle pair.
     if let Some(handle_offset) = table.pk_handle_offset() {
         let handle_column = &columns[handle_offset].0;
-        if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
+        if pairs.len() == 1 && pairs[0].column.go_lower_eq(handle_column) {
             return Ok(Some(PointGetPin {
                 key_values: vec![pairs[0].value.clone()],
                 index_id: None,
@@ -3865,7 +3860,7 @@ pub(crate) fn try_point_get(
         // `index:i(i, j)` where TiDB's recorded plan names no index.
         if pairs
             .iter()
-            .any(|pair| pair.column.eq_ignore_ascii_case(handle_column))
+            .any(|pair| pair.column.go_lower_eq(handle_column))
         {
             return Ok(None);
         }
@@ -3891,10 +3886,7 @@ pub(crate) fn try_point_get(
                 values.clear();
                 break;
             };
-            let Some(pair) = pairs
-                .iter()
-                .find(|pair| pair.column.eq_ignore_ascii_case(name))
-            else {
+            let Some(pair) = pairs.iter().find(|pair| pair.column.go_lower_eq(name)) else {
                 values.clear();
                 break;
             };
@@ -3945,7 +3937,7 @@ pub(crate) fn try_point_get(
             let Some((pair, field_type)) = columns.get(*offset).and_then(|(name, field_type)| {
                 pairs
                     .iter()
-                    .find(|pair| pair.column.eq_ignore_ascii_case(name))
+                    .find(|pair| pair.column.go_lower_eq(name))
                     .map(|pair| (pair, field_type))
             }) else {
                 values.clear();
@@ -4008,14 +4000,14 @@ pub(crate) fn point_write_prelock_keys(
     if !convert_pairs_to_column_domain_by(&mut pairs, |name| {
         columns
             .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(name))
+            .find(|column| column.name.go_lower_eq(name))
             .map(|column| &column.field_type)
     }) {
         return Vec::new();
     }
     let handle = if let Some(handle_offset) = table.pk_handle_offset() {
         let handle_column = &columns[handle_offset].name;
-        if pairs.len() == 1 && pairs[0].column.eq_ignore_ascii_case(handle_column) {
+        if pairs.len() == 1 && pairs[0].column.go_lower_eq(handle_column) {
             match pairs[0].value {
                 Datum::Int(value) => Some(TableHandle::Int(value)),
                 Datum::UInt(value) => Some(TableHandle::Int(value as i64)),
@@ -4043,7 +4035,7 @@ pub(crate) fn point_write_prelock_keys(
             };
             let Some(pair) = pairs
                 .iter()
-                .find(|pair| pair.column.eq_ignore_ascii_case(&column.name))
+                .find(|pair| pair.column.go_lower_eq(&column.name))
             else {
                 return Vec::new();
             };

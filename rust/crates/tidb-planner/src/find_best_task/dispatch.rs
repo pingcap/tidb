@@ -2085,7 +2085,7 @@ pub(super) fn global_index_partition_filter(
         .filter_map(|name| {
             ds.partition_definition_names
                 .iter()
-                .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                .position(|candidate| tidb_mysql::lowercase_equal(candidate, name))
                 .and_then(|position| ds.partition_definition_ids.get(position).copied())
         })
         .collect::<Vec<_>>();
@@ -3441,7 +3441,7 @@ fn find_best_task_4_logical_data_source_paths(
                     [name] => ds
                         .partition_definition_names
                         .iter()
-                        .position(|definition| definition.eq_ignore_ascii_case(name))
+                        .position(|definition| tidb_mysql::lowercase_equal(definition, name))
                         .and_then(|index| ds.partition_definition_ids.get(index).copied()),
                     _ => None,
                 };

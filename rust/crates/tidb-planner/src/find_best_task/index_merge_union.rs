@@ -1117,6 +1117,29 @@ mod tests {
         assert!(!index_merge_hint_specifies(&ds, "idx_b"));
     }
 
+    /// Go `isInIndexMergeHints`/`isSpecifiedInIndexMergeHints` compare the
+    /// index's `Name.L` with each hint name by `strings.EqualFold`: `SIDX`
+    /// names `ſidx` (the long s folds with `s`), `ÉX` names `éx`, and `İDX`
+    /// names nothing, since `İ` folds only with itself and `Name.L` of `İdx`
+    /// is `idx`.
+    #[test]
+    fn index_merge_hint_names_compare_by_equal_fold() {
+        use crate::logical::data_source::DataSourceIndexMergeHint;
+
+        let hinted = |name: &str| DataSource {
+            index_merge_hints: vec![DataSourceIndexMergeHint {
+                index_names: vec![name.into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(index_merge_hint_allows(&hinted("SIDX"), "ſidx"));
+        assert!(index_merge_hint_specifies(&hinted("SIDX"), "ſidx"));
+        assert!(index_merge_hint_specifies(&hinted("ÉX"), "éx"));
+        assert!(!index_merge_hint_allows(&hinted("İDX"), "İdx"));
+        assert!(!index_merge_hint_specifies(&hinted("İDX"), "İdx"));
+    }
+
     /// Go PhysicalIndexScan.InitSchema, reached by the union candidates in
     /// TestIndexMergePathGeneration: pruning cannot change physical key layout.
     #[test]

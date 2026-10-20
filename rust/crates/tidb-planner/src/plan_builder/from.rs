@@ -283,7 +283,7 @@ impl JoinHints {
         drop(plan);
         hints.canonical = Some(canonical);
         hints.select_offset = select_offset;
-        hints.current_db = current_db.to_ascii_lowercase();
+        hints.current_db = tidb_mysql::to_lowercase(current_db);
         hints.advanced_join_hint = advanced_join_hint;
         hints.block_as_names = block_as_names;
         hints
@@ -1736,12 +1736,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         // "If the view is being renamed, we return the mysql compatible error
         // message."
-        if self.source.renaming_view().is_some_and(|(renaming_db, renaming)| {
-            (
-                tidb_mysql::to_lowercase(renaming_db),
-                tidb_mysql::to_lowercase(renaming),
-            ) == key
-        }) {
+        if self
+            .source
+            .renaming_view()
+            .is_some_and(|(renaming_db, renaming)| {
+                (
+                    tidb_mysql::to_lowercase(renaming_db),
+                    tidb_mysql::to_lowercase(renaming),
+                ) == key
+            })
+        {
             return Err(PlanError::renaming_view_missing(format!(
                 "{db_name}.{table_name}"
             )));

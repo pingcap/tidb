@@ -18,6 +18,8 @@
 use super::alter_table::{self, ModifyColumnRequest, PreparedAllocatorChanges};
 use super::{Catalog, DriverError, KvColumn};
 use tidb_ast::{AlterTableAction, ColumnPosition};
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 pub(super) enum PreparedColumnChange {
     Add {
@@ -100,7 +102,7 @@ fn check_column_qualifier_part(
         ([table], 1) | ([_, table], 1) => table.as_str(),
         _ => return Ok(()),
     };
-    if written.is_empty() || written.to_lowercase() == expected.to_lowercase() {
+    if written.is_empty() || written.go_to_lower() == expected.go_to_lower() {
         return Ok(());
     }
     Err(if schema {
@@ -238,7 +240,7 @@ pub(super) fn position(
             let offset = table
                 .columns()
                 .iter()
-                .position(|column| column.name.eq_ignore_ascii_case(name))
+                .position(|column| column.name.go_lower_eq(name))
                 .ok_or_else(|| DriverError::UnknownColumnInTable {
                     column: name.clone(),
                     table: table_name.to_owned(),
@@ -293,9 +295,9 @@ impl PreparedColumnChange {
             Self::Rename { from, to, .. } => Some((from.as_str(), to.as_str())),
             _ => None,
         };
-        if let Some((old, new)) = renamed.filter(|(old, new)| !old.eq_ignore_ascii_case(new)) {
+        if let Some((old, new)) = renamed.filter(|(old, new)| !old.go_lower_eq(new)) {
             if let Some(mut info) = table.ttl_info().cloned() {
-                if info.column_name.original().eq_ignore_ascii_case(old) {
+                if info.column_name.original().go_lower_eq(old) {
                     info.column_name = tidb_ast::CiString::new(new.to_owned());
                     table.set_ttl_info(Some(info));
                 }
@@ -316,6 +318,7 @@ impl PreparedColumnChange {
                 mut column,
                 position: requested,
             } => {
+                column.reload_from_meta_json();
                 let at = position(table, &requested, None, table_name)?
                     .unwrap_or(table.visible_column_count());
                 column.id = table.next_column_id();
@@ -357,17 +360,18 @@ impl PreparedColumnChange {
             }
             Self::Modify {
                 old_name,
-                column,
+                mut column,
                 position: requested,
                 mut new_auto_random,
                 drop_auto_increment,
             } => {
+                column.reload_from_meta_json();
                 let at = offset_of(table, column.id, &old_name)?;
                 // Go `validatePosition` runs in the job, after the
                 // multi-schema conflict check: "For cases like `modify column
                 // b after b`, it should report this error."
                 if matches!(&requested, ColumnPosition::After(relative)
-                    if relative.eq_ignore_ascii_case(&old_name))
+                    if relative.go_lower_eq(&old_name))
                 {
                     return Err(DriverError::UnknownColumnInTable {
                         column: table.columns()[at].name.clone(),
@@ -395,7 +399,8 @@ impl PreparedColumnChange {
                 let at = offset_of(table, id, &from)?;
                 table.columns_mut()[at].name = to;
             }
-            Self::Default { column } => {
+            Self::Default { mut column } => {
+                column.reload_from_meta_json();
                 let at = offset_of(table, column.id, &column.name)?;
                 super::alter_metadata::validate_default_execution(&column)?;
                 let flag = tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE;

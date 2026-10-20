@@ -604,6 +604,65 @@ fn latin1_client_enum_members_keep_their_bytes() {
     assert_eq!(row_text(session.run("SELECT c + 0 FROM l2")), [["1"]]);
 }
 
+/// Go reloads a created table from its stored meta JSON, and `json.Marshal`
+/// writes each byte that is not UTF-8 as U+FFFD, so the ENUM/SET member and
+/// default a latin1 client wrote as `'d\xE9'` are `d\u{FFFD}` once the DDL
+/// returns -- validated against the raw bytes first, stored replaced. A LOCAL
+/// temporary table never goes through meta and keeps the raw bytes. Go
+/// oracle, the same statements on one connection.
+#[test]
+fn latin1_client_enum_members_reload_from_stored_json() {
+    let mut session = Session::new();
+    session.run("SET NAMES latin1").unwrap();
+    let sql = client_sql(
+        &session,
+        b"CREATE TABLE e (c ENUM('d\xe9','x') DEFAULT 'd\xe9', s SET('d\xe9','y'))",
+    );
+    session.run(&sql).unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT HEX(column_type), HEX(column_default) FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 'e' ORDER BY ordinal_position"
+        )),
+        [
+            ["656E756D282764EFBFBD272C27782729", "64EFBFBD"],
+            ["736574282764EFBFBD272C27792729", "NULL"]
+        ]
+    );
+    session.run("INSERT INTO e VALUES ('x', 'y')").unwrap();
+    session.run("INSERT INTO e VALUES (DEFAULT, DEFAULT)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT HEX(c), HEX(s) FROM e")),
+        [["78", "79"], ["64EFBFBD", "NULL"]]
+    );
+    let sql = client_sql(&session, b"SELECT HEX(c) FROM e WHERE c = 'd\xe9'");
+    assert!(row_text(session.run(&sql)).is_empty());
+
+    // ALTER goes through a job and meta as well.
+    let sql = client_sql(
+        &session,
+        b"ALTER TABLE e ADD COLUMN c2 ENUM('d\xe9','z') DEFAULT 'd\xe9'",
+    );
+    session.run(&sql).unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT HEX(c2), c2 + 0 FROM e")),
+        [["64EFBFBD", "1"], ["64EFBFBD", "1"]]
+    );
+
+    let sql = client_sql(
+        &session,
+        b"CREATE TEMPORARY TABLE te (c ENUM('d\xe9','x') DEFAULT 'd\xe9')",
+    );
+    session.run(&sql).unwrap();
+    session.run("INSERT INTO te VALUES (DEFAULT)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT HEX(c), c + 0 FROM te")),
+        [["64E9", "1"]]
+    );
+    let sql = client_sql(&session, b"SELECT HEX(c) FROM te WHERE c = 'd\xe9'");
+    assert_eq!(row_text(session.run(&sql)), [["64E9"]]);
+}
+
 /// Go parses a statement once, with the client's encodings, and binds a
 /// prepared statement's values onto that tree; nothing re-lexes it in
 /// another encoding. A gbk client's identifier `中` (bytes D6 D0) must name

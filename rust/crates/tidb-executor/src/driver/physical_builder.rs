@@ -65,6 +65,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
+use tidb_hack::GoCaseCompare;
 use tidb_planner::find_best_task::LogicalJoinType;
 use tidb_planner::physical::{
     PhysicalBatchPointGet, PhysicalIndexScan, PhysicalMemTable, PhysicalPlan, PhysicalPointGet,
@@ -972,7 +973,7 @@ fn build_table_scan(
                         partition
                             .definitions
                             .iter()
-                            .find(|definition| definition.name.eq_ignore_ascii_case(name))
+                            .find(|definition| definition.name.go_lower_eq(name))
                             .map(|definition| definition.id)
                     })
                 })
@@ -1185,7 +1186,7 @@ fn build_mem_table(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    if scan.db_name.eq_ignore_ascii_case("metrics_schema") {
+    if scan.db_name.go_lower_eq("metrics_schema") {
         // go's metrics tables query the metric storage (Prometheus/PD),
         // which is absent -- the queries fail `query metric error: pd
         // unavailable` (oracle g-is: metrics_schema scans answer 1105).
@@ -2130,7 +2131,7 @@ fn build_index_reader(
                         access
                             .partitions
                             .iter()
-                            .any(|name| definition.name.eq_ignore_ascii_case(name))
+                            .any(|name| definition.name.go_lower_eq(name))
                     })
                     .map(|definition| definition.id)
                     .collect()
@@ -4296,11 +4297,10 @@ fn point_partition_id(
     };
     Ok(route.and_then(|(ordinal, id)| {
         (routing.names.is_empty()
-            || routing.names.iter().any(|name| {
-                partition.definitions[ordinal]
-                    .name
-                    .eq_ignore_ascii_case(name)
-            }))
+            || routing
+                .names
+                .iter()
+                .any(|name| partition.definitions[ordinal].name.go_lower_eq(name)))
         .then_some(id)
     }))
 }
@@ -4316,7 +4316,7 @@ fn partition_ids_named(table: &crate::kv_table::KvTable, names: &[String]) -> Op
         partition
             .definitions
             .iter()
-            .filter(|definition| names.iter().any(|name| definition.name.eq_ignore_ascii_case(name)))
+            .filter(|definition| names.iter().any(|name| definition.name.go_lower_eq(name)))
             .map(|definition| definition.id)
             .collect(),
     )
@@ -5259,7 +5259,7 @@ fn index_merge_partition_indexes(
                                 && access
                                     .partitions
                                     .iter()
-                                    .any(|name| name.eq_ignore_ascii_case(&definition.name))
+                                    .any(|name| name.go_lower_eq(&definition.name))
                         })
                     })
             });

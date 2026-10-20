@@ -48,6 +48,7 @@ mod nonpublic_columns;
 mod partition_reorg;
 pub use index_reorg::ReorgBatch;
 pub use partition_reorg::{PartitionDoubleWrite, PartitionIndexMode};
+use tidb_hack::GoCaseCompare;
 mod partition_maintenance;
 pub use partition_maintenance::{PartitionReorg, RecreatedIndex};
 mod row_decoder;
@@ -444,7 +445,7 @@ impl tidb_expr::Columns for IndexConditionContext<'_> {
         let offset = self
             .columns
             .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(name))?;
+            .position(|column| column.name.go_lower_eq(name))?;
         self.row.get(offset).cloned()
     }
 
@@ -2229,8 +2230,7 @@ impl KvTable {
     /// -- the index outlives the constraint and has to be dropped by name.
     pub fn drop_foreign_key(&mut self, name: &str) -> bool {
         let before = self.foreign_keys.len();
-        self.foreign_keys
-            .retain(|key| !key.name.eq_ignore_ascii_case(name));
+        self.foreign_keys.retain(|key| !key.name.go_lower_eq(name));
         self.foreign_keys.len() != before
     }
 
@@ -3220,7 +3220,7 @@ impl KvTable {
         if self
             .indexes
             .iter()
-            .any(|existing| existing.name.eq_ignore_ascii_case(&index.name))
+            .any(|existing| existing.name.go_lower_eq(&index.name))
         {
             return Err(KvTableError::DuplicateKeyName(index.name.clone()));
         }
@@ -3287,7 +3287,7 @@ impl KvTable {
         let Some(index) = self
             .indexes
             .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(index_name))
+            .find(|index| index.name.go_lower_eq(index_name))
             .cloned()
         else {
             return Ok(None);
@@ -3349,7 +3349,7 @@ impl KvTable {
         let Some(index) = self
             .indexes
             .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(index_name))
+            .find(|index| index.name.go_lower_eq(index_name))
             .cloned()
         else {
             return Ok(None);
@@ -3379,7 +3379,7 @@ impl KvTable {
         let Some(position) = self
             .indexes
             .iter()
-            .position(|index| index.name.eq_ignore_ascii_case(name))
+            .position(|index| index.name.go_lower_eq(name))
         else {
             return Ok(false);
         };
@@ -4194,7 +4194,7 @@ impl KvTable {
     pub fn index_mut_by_name(&mut self, name: &str) -> Option<&mut KvIndex> {
         self.indexes_mut()
             .iter_mut()
-            .find(|index| index.name.eq_ignore_ascii_case(name))
+            .find(|index| index.name.go_lower_eq(name))
     }
 
     /// Compiles and records a partial-index predicate beside the index
@@ -4258,7 +4258,7 @@ impl KvTable {
             condition
                 .dependencies
                 .iter()
-                .any(|dependency| dependency.eq_ignore_ascii_case(column_name))
+                .any(|dependency| dependency.go_lower_eq(column_name))
                 .then(|| index.name.clone())
         })
     }

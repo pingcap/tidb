@@ -316,7 +316,7 @@ fn resolve_window_spec(
     let Some(reference) = entry.def.base.clone() else {
         return Ok(());
     };
-    let reference_lower = reference.to_ascii_lowercase();
+    let reference_lower = tidb_mysql::to_lowercase(&reference);
     if !specs.contains_key(&reference_lower) {
         return Err(PlanError::window_definition(3579, &reference, ""));
     }
@@ -582,7 +582,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_window_specs(&mut self, specs: &[(String, WindowDef)]) -> Result<(), PlanError> {
         let mut resolved: BTreeMap<String, NamedWindowSpec> = BTreeMap::new();
         for (name, def) in specs {
-            let lower = name.to_ascii_lowercase();
+            let lower = tidb_mysql::to_lowercase(name);
             if resolved.contains_key(&lower) {
                 return Err(PlanError::internal(format!(
                     "Window '{name}' is defined twice"
@@ -740,7 +740,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             };
             if let Some(mut def) = inline {
                 if let Some(reference) = def.base.clone() {
-                    let lower = reference.to_ascii_lowercase();
+                    let lower = tidb_mysql::to_lowercase(&reference);
                     let Some(reference_spec) = self.window_specs.get(&lower) else {
                         return Err(PlanError::window_definition(
                             3579,
@@ -762,7 +762,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let WindowOver::Name(name) = &window_func.over else {
                 unreachable!("the inline arm returned above");
             };
-            let lower = name.to_ascii_lowercase();
+            let lower = tidb_mysql::to_lowercase(name);
             let Some(&spec_id) = named.get(&lower) else {
                 return Err(PlanError::window_definition(3579, name, ""));
             };
@@ -1156,7 +1156,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             let spec = match &func.over {
                 WindowOver::Name(name) => {
-                    match self.window_specs.get(&name.to_ascii_lowercase()) {
+                    match self.window_specs.get(&tidb_mysql::to_lowercase(name)) {
                         Some(spec) => spec.clone(),
                         // Go indexes `b.windowSpecs[f.Spec.Name.L]` and would
                         // dereference nil; `groupWindowFuncs` has already

@@ -27,6 +27,8 @@ use crate::{Catalog, DriverError, ExecError, MysqlError, StmtContext};
 use tidb_codec::table_key::{encode_record_key, encode_table_index_prefix, RecordHandle};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_error::tidb::errcode;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Go `config.SplitRegionMaxNum`'s default.
 const SPLIT_REGION_MAX_NUM: i64 = 1000;
@@ -173,7 +175,7 @@ fn plan_index_split<'a>(
     converter: &ValueConverter<'_>,
 ) -> Result<(&'a KvIndex, SplitValues), DriverError> {
     let clustered = table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
-    if index_name.eq_ignore_ascii_case("primary") && clustered {
+    if index_name.go_lower_eq("primary") && clustered {
         return Err(coded(
             errcode::ErrKeyDoesNotExist,
             "unable to split clustered index, please split table instead.",
@@ -182,7 +184,7 @@ fn plan_index_split<'a>(
     let index = table
         .indexes()
         .iter()
-        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        .find(|index| index.name.go_lower_eq(index_name))
         .ok_or_else(|| DriverError::KeyNotExists {
             key: index_name.to_owned(),
             table: table_name.to_owned(),
@@ -342,10 +344,15 @@ fn physical_ids(
             partition
                 .definitions
                 .iter()
-                .find(|definition| definition.name.eq_ignore_ascii_case(name))
+                .find(|definition| {
+                    definition
+                        .name
+                        .go_to_lower()
+                        .go_equal_fold(&name.go_to_lower())
+                })
                 .map(|definition| definition.id)
                 .ok_or_else(|| DriverError::UnknownPartition {
-                    partition: name.to_lowercase(),
+                    partition: name.go_to_lower(),
                     table: table_name.to_owned(),
                 })
         })

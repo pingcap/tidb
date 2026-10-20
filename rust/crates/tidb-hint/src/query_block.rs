@@ -151,7 +151,7 @@ impl QBHintHandler {
                 // An empty-name qb_name() does not occupy the slot in Go
                 // (len(qbName) stays 0), so a later named hint still wins
                 // without a warning.
-                qb_name = Some(candidate.to_ascii_lowercase());
+                qb_name = Some(tidb_mysql::to_lowercase(candidate));
             }
         }
         let Some(qb_name) = qb_name.filter(|name| !name.is_empty()) else {
@@ -179,7 +179,7 @@ impl QBHintHandler {
                 continue;
             }
             used[index] = true;
-            let qb_name = qb_name.to_ascii_lowercase();
+            let qb_name = tidb_mysql::to_lowercase(qb_name);
             if qb_name.is_empty() {
                 continue;
             }
@@ -199,21 +199,21 @@ impl QBHintHandler {
             if used[index] || matches!(hint.kind, HintKind::QbName { .. }) {
                 continue;
             }
-            let mut view_name = hint_target_qb_name(hint).map(str::to_ascii_lowercase);
+            let mut view_name = hint_target_qb_name(hint).map(tidb_mysql::to_lowercase);
             let mut valid = view_name
                 .as_ref()
                 .is_some_and(|name| self.view_qb_name_to_table.contains_key(name));
             if view_name.is_none() {
                 let tables = hint_tables(hint);
                 if let Some(first) = tables.first().and_then(|table| table.qb_name.as_deref()) {
-                    let first = first.to_ascii_lowercase();
+                    let first = tidb_mysql::to_lowercase(first);
                     valid = self.view_qb_name_to_table.contains_key(&first);
                     if valid
                         && tables.iter().any(|table| {
                             !table
                                 .qb_name
                                 .as_deref()
-                                .is_some_and(|name| name.eq_ignore_ascii_case(&first))
+                                .is_some_and(|name| tidb_mysql::lowercase_equal(name, &first))
                         })
                     {
                         self.warn("Only one query block name is allowed in a view hint, otherwise the hint will be invalid");
@@ -241,7 +241,7 @@ impl QBHintHandler {
     }
 
     fn block_offset(&self, block_name: &str) -> i32 {
-        let block_name = block_name.to_ascii_lowercase();
+        let block_name = tidb_mysql::to_lowercase(block_name);
         if let Some(offset) = self.qb_name_to_select_offset.get(&block_name) {
             return *offset;
         }
@@ -278,12 +278,12 @@ impl QBHintHandler {
         if let Some(name) = hint_target_qb_name(hint) {
             return self
                 .view_qb_name_to_table
-                .contains_key(&name.to_ascii_lowercase());
+                .contains_key(&tidb_mysql::to_lowercase(name));
         }
         hint_tables(hint).iter().all(|table| {
             table.qb_name.as_deref().is_some_and(|name| {
                 self.view_qb_name_to_table
-                    .contains_key(&name.to_ascii_lowercase())
+                    .contains_key(&tidb_mysql::to_lowercase(name))
             })
         })
     }
@@ -392,7 +392,8 @@ impl QBHintHandler {
                 .qb_name
                 .as_deref()
                 .map_or(1, |name| self.hint_offset(Some(name), current_offset));
-            if !first.name.eq_ignore_ascii_case(visible_view_name) || hint_offset != current_offset
+            if !tidb_mysql::lowercase_equal(&first.name, visible_view_name)
+                || hint_offset != current_offset
             {
                 continue;
             }

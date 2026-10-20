@@ -1,0 +1,286 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Identifier comparisons outside column resolution fold like Go's
+//! `ast.CIStr.L` (`strings.ToLower`, Unicode simple mappings), or like
+//! `strings.EqualFold` where Go uses that: hint tables, index names,
+//! partition names and window names. Every expectation below is what a Go
+//! TiDB answered for the same statements (database `ss_tt` there, `test`
+//! here).
+
+#![cfg(test)]
+
+use crate::tests_support::*;
+use crate::*;
+
+fn folding_session() -> Session {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE tσ (a INT, b INT, KEY idx_b(b), KEY ÉX(a))")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE pσ (a INT, KEY ia(a)) PARTITION BY RANGE (a) (PARTITION PÉ VALUES \
+             LESS THAN (10), PARTITION ſ VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN \
+             MAXVALUE)",
+        )
+        .unwrap();
+    session
+}
+
+/// The access object column of every `EXPLAIN` row.
+fn access_objects(session: &mut Session, sql: &str) -> Vec<String> {
+    row_text(session.run(sql))
+        .into_iter()
+        .map(|row| row[3].clone())
+        .collect()
+}
+
+/// The messages of the last statement's warnings. Go raises the two
+/// partition-hint warnings below through `SetHintWarningFromError` of a
+/// `fmt.Errorf`, so they carry 1105 there while this crate still reports
+/// 1815; only the text is pinned.
+fn warning_messages(session: &Session) -> Vec<String> {
+    warnings_of(session)
+        .into_iter()
+        .map(|(_, message)| message)
+        .collect()
+}
+
+fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
+    let error = session.run(sql).unwrap_err().to_mysql_error();
+    (error.code, error.message)
+}
+
+/// Go `HintedIndex.Match` / `getPathByIndexName`: `TΣ` names `tσ` and `éx`
+/// names `ÉX`, in a comment hint and in a table-level index hint alike.
+#[test]
+fn hint_tables_and_index_names_fold_like_cistr_l() {
+    let mut session = folding_session();
+
+    let objects = access_objects(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT /*+ use_index(TΣ, idx_b) */ * FROM tσ WHERE b = 2",
+    );
+    assert!(objects
+        .iter()
+        .any(|object| object == "table:tσ, index:idx_b(b)"));
+    assert_eq!(warnings_of(&session), vec![]);
+
+    for sql in [
+        "EXPLAIN FORMAT='brief' SELECT * FROM tσ USE INDEX(éx) WHERE a = 1",
+        "EXPLAIN FORMAT='brief' SELECT /*+ use_index(tσ, éx) */ * FROM tσ WHERE a = 1",
+    ] {
+        let objects = access_objects(&mut session, sql);
+        assert!(
+            objects
+                .iter()
+                .any(|object| object == "table:tσ, index:ÉX(a)"),
+            "{sql}"
+        );
+        assert_eq!(warnings_of(&session), vec![], "{sql}");
+    }
+
+    // The missing name keeps its written spelling in 1176; the applicable
+    // `ÉX` beside it still drives the plan.
+    let objects = access_objects(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT /*+ use_index(tσ, nopé, ÉX) */ * FROM tσ WHERE a = 1",
+    );
+    assert!(objects
+        .iter()
+        .any(|object| object == "table:tσ, index:ÉX(a)"));
+    assert_eq!(
+        warnings_of(&session),
+        vec![(1176, "Key 'nopé' doesn't exist in table 'tσ'".to_owned())]
+    );
+
+    // USE_INDEX_MERGE's own validation (`idxName.L == path.Index.Name.L`).
+    let objects = access_objects(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT /*+ use_index_merge(tσ, éx, IDX_B) */ * FROM tσ \
+         WHERE a = 1 OR b = 2",
+    );
+    assert!(objects
+        .iter()
+        .any(|object| object == "table:tσ, index:ÉX(a)"));
+    assert!(objects
+        .iter()
+        .any(|object| object == "table:tσ, index:idx_b(b)"));
+    assert_eq!(warnings_of(&session), vec![]);
+}
+
+/// Go `Restore2JoinHint` and the storage-conflict warning print the hint
+/// table's `TblName.L`, folding `TΣ` to `tσ` and `PÉ` to `pé`.
+#[test]
+fn hint_warnings_print_the_folded_names() {
+    let mut session = folding_session();
+
+    session
+        .run(
+            "EXPLAIN FORMAT='brief' SELECT /*+ hash_join(TΣ PARTITION(PÉ)) */ * FROM tσ, tσ x \
+             WHERE tσ.a = x.a",
+        )
+        .unwrap();
+    assert_eq!(
+        warning_messages(&session),
+        vec![
+            "Optimizer Hint /*+ HASH_JOIN(tσ PARTITION(pé)) */ is inapplicable on specified \
+             partitions"
+                .to_owned()
+        ]
+    );
+
+    session
+        .run("EXPLAIN FORMAT='brief' SELECT /*+ read_from_storage(tikv[TΣ], tiflash[tΣ]) */ * FROM tσ")
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1815,
+            "Storage hints are conflict, you can only specify one storage type of table test.tσ"
+                .to_owned()
+        )]
+    );
+}
+
+/// Go `tables.FindPartitionByName`: `strings.EqualFold` over both lowered
+/// names, so `pé` names `PÉ` and `S` names `ſ`; the error carries the
+/// lowered written name (`İ` lowers to `i`). The pruner then keeps a
+/// partition only when its `Name.L` equals a written `.L`, which `s` and
+/// `ſ` do not, so `PARTITION (S)` reads nothing.
+#[test]
+fn partition_names_fold_like_find_partition_by_name() {
+    let mut session = folding_session();
+
+    assert_eq!(
+        access_objects(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM pσ PARTITION (pé) WHERE a = 1"
+        )[0],
+        "partition:PÉ"
+    );
+    assert_eq!(
+        access_objects(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM pσ PARTITION (S)"
+        )[0],
+        "partition:dual"
+    );
+    assert_eq!(
+        error_of(&mut session, "SELECT * FROM pσ PARTITION (NOPÉ)"),
+        (1735, "Unknown partition 'nopé' in table 'pσ'".to_owned())
+    );
+    assert_eq!(
+        error_of(&mut session, "SELECT * FROM pσ PARTITION (İ)"),
+        (1735, "Unknown partition 'i' in table 'pσ'".to_owned())
+    );
+}
+
+/// Go `checkTableHintsApplicableForPartition` reports each unknown hint
+/// partition by its `.L`, and `Restore2IndexHint` lowers table and
+/// partitions.
+#[test]
+fn unknown_hint_partitions_are_reported_lowered() {
+    let mut session = folding_session();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+
+    let objects = access_objects(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT /*+ use_index(pσ partition(PÉ, PZZ, NÉ), ia) */ * \
+         FROM pσ WHERE a > 1",
+    );
+    assert!(objects
+        .iter()
+        .any(|object| object == "table:pσ, partition:PÉ, index:ia(a)"));
+    assert_eq!(
+        warning_messages(&session),
+        vec![
+            "unknown partitions (pzz,né) in optimizer hint /*+ USE_INDEX(pσ PARTITION(pé, pzz, \
+             né) ia) */"
+                .to_owned()
+        ]
+    );
+}
+
+/// Go keys `b.windowSpecs` by `Name.L`: `wΣ` references the `Wσ` window.
+#[test]
+fn window_names_fold_like_cistr_l() {
+    let mut session = folding_session();
+    session.run("INSERT INTO tσ VALUES (1, 1), (2, 2)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT SUM(a) OVER wΣ FROM tσ WINDOW Wσ AS ()")),
+        vec![vec!["3".to_owned()], vec!["3".to_owned()]]
+    );
+}
+
+/// ALTER TABLE's own name checks. Go's `table.FindCol` is
+/// `strings.EqualFold(col.Name.O, name)`: RENAME COLUMN `Cσ` finds `cΣ`,
+/// and ADD COLUMN `s` collides with an existing `ſ` (while CREATE TABLE,
+/// which keys its duplicate check by `.L`, admits `ſ` beside `s`). DROP
+/// COLUMN `S` checks with `FindCol` but drops the `.L` match, `s`. RENAME
+/// INDEX and ALTER COLUMN ... SET DEFAULT find `ÉX` from `éx`.
+#[test]
+fn alter_table_names_fold_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE f (cΣ INT, ſ INT)").unwrap();
+    session.run("ALTER TABLE f RENAME COLUMN Cσ TO d").unwrap();
+    assert_eq!(
+        show_create(&mut session, "f"),
+        "CREATE TABLE `f` (\n  `d` int DEFAULT NULL,\n  `ſ` int DEFAULT NULL\n) \
+         ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    assert_eq!(
+        error_of(&mut session, "ALTER TABLE f ADD COLUMN s INT"),
+        (1060, "Duplicate column name 's'".to_owned())
+    );
+    assert_eq!(
+        error_of(&mut session, "ALTER TABLE f ADD COLUMN D INT"),
+        (1060, "Duplicate column name 'D'".to_owned())
+    );
+
+    session.run("CREATE TABLE f2 (ſ INT, s INT)").unwrap();
+    session.run("ALTER TABLE f2 DROP COLUMN S").unwrap();
+    assert_eq!(
+        show_create(&mut session, "f2"),
+        "CREATE TABLE `f2` (\n  `ſ` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 \
+         COLLATE=utf8mb4_bin"
+    );
+
+    session
+        .run("CREATE TABLE f4 (a INT, b INT, KEY ÉX(a))")
+        .unwrap();
+    session
+        .run("ALTER TABLE f4 RENAME INDEX éx TO ix2")
+        .unwrap();
+    assert_eq!(
+        show_create(&mut session, "f4"),
+        "CREATE TABLE `f4` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL,\n  KEY `ix2` \
+         (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+
+    session
+        .run("CREATE TABLE f5 (a INT, ÉX INT, KEY (ÉX))")
+        .unwrap();
+    session
+        .run("ALTER TABLE f5 ALTER COLUMN éx SET DEFAULT 3")
+        .unwrap();
+    assert_eq!(
+        show_create(&mut session, "f5"),
+        "CREATE TABLE `f5` (\n  `a` int DEFAULT NULL,\n  `ÉX` int DEFAULT '3',\n  KEY `ÉX` \
+         (`ÉX`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+}

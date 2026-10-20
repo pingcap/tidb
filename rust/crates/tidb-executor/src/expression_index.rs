@@ -171,6 +171,8 @@ use crate::driver::DriverError;
 use crate::generated_column::{
     is_disallowed_generated_function, GeneratedColumn, TableColumnResolver,
 };
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Go `pkg/ddl/executor.go`'s `expressionIndexPrefix`.
 const HIDDEN_COLUMN_PREFIX: &str = "_V$";
@@ -630,7 +632,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         check_illegal_fn_4_generated(&tidb_hack::go_to_lower(index_name), GenType::Index, expr)?;
         // Go: the hidden column's name must not already be taken. Captured as
         // 1060 against a user column literally called `_V$_idxh_0`.
-        if names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+        if names.iter().any(|n| n.go_equal_fold(&name.go_to_lower())) {
             return Err(DriverError::DuplicateColumnName(name));
         }
 

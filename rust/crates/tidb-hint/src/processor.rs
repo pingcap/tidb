@@ -290,7 +290,7 @@ pub fn restore_index_hint(hint: &IndexHint) -> String {
             .join(", "),
     );
     value.push(')');
-    value.to_ascii_lowercase()
+    tidb_mysql::to_lowercase(&value)
 }
 
 /// Go `nodeType4Stmt`.
@@ -533,7 +533,7 @@ impl Visitor for BindableChecker {
 
 /// Go `RestoreTableOptimizerHint`.
 pub fn restore_table_optimizer_hint(hint: &Hint) -> String {
-    hint.restore().to_ascii_lowercase()
+    tidb_mysql::to_lowercase(&hint.restore())
 }
 
 /// The dedup keys Go's text-keyed hint paths would compare for `hint`.

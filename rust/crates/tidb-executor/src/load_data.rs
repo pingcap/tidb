@@ -31,6 +31,8 @@ use tidb_datatype::{Collation, Datum, FieldTypeCode};
 
 use crate::{Catalog, DriverError, SchemaErrorKind, TableEntry};
 use csv_parser::{CharsetConvertor, CsvConfig, CsvError, CsvParser};
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Go `maxRowsInBatch` for LOAD DATA's `InsertValues`.
 const MAX_ROWS_IN_BATCH: usize = 1000;
@@ -204,7 +206,7 @@ pub fn prepare_load_data(
     let find_visible = |wanted: &str| {
         visible
             .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(wanted))
+            .position(|column| column.name.go_equal_fold(wanted))
     };
     let mut field_mappings = Vec::new();
     let mut column_names: Vec<String> = Vec::new();
@@ -255,10 +257,7 @@ pub fn prepare_load_data(
             });
         };
         // Go `table.CheckOnce`.
-        if seen
-            .iter()
-            .any(|earlier| earlier.eq_ignore_ascii_case(&found))
-        {
+        if seen.iter().any(|earlier| earlier.go_lower_eq(&found)) {
             return Err(DriverError::DdlCoded {
                 errno: 1110,
                 message: format!("Column '{found}' specified twice"),
@@ -394,7 +393,7 @@ pub fn run_load_data(
     if prepared
         .insert_columns
         .iter()
-        .any(|column| column.eq_ignore_ascii_case("_tidb_rowid"))
+        .any(|column| column.go_lower_eq("_tidb_rowid"))
         && !env.allow_write_row_id
     {
         return Err(plain_error(
@@ -433,7 +432,7 @@ pub fn run_load_data(
         let expr = tidb_expr::rewriter::rewrite_expr_resolved(&assignment.value, &resolver)
             .map_err(|error| match error {
                 tidb_expr::EvalError::UnknownColumn(column) => DriverError::UnknownColumnInClause {
-                    column: column.to_lowercase(),
+                    column: column.go_to_lower(),
                     clause: "expression".to_owned(),
                 },
                 other => DriverError::Exec(crate::ExecError::Eval(other)),

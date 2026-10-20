@@ -477,6 +477,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
     timeout: Duration,
     resource_group: &str,
     approximate_counts: &dyn ApproximateTableCountProvider,
+    stats: &crate::stats_watch::SharedStats,
 ) -> Result<ResolvedClusterAnalyze, ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -500,30 +501,27 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
-        let mut realtime_counts = HashMap::new();
-        if let Ok(loader) = ClusterStatsLoader::locate(&catalog) {
-            for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {
-                let count = loader
-                    .load_table(
-                        &mut snapshot,
-                        physical_id,
-                        &crate::cluster_stats_load::column_types_of(table),
-                    )
-                    .ok()
-                    .flatten()
-                    // go `GetPhysicalTableStats` reads the stats CACHE, and a
-                    // table whose statistics were never collected falls back
-                    // to `PseudoTable` there — whose RealtimeCount is
-                    // PseudoRowCount=10000, NOT the DML-maintained
-                    // `stats_meta` count (oracle: ANALYZE TABLE ol with
-                    // stats_meta count=2 answers the sample-rate note with
-                    // `use min(1, 110000/10000)`).
-                    .filter(|stats| stats.last_analyze_version > 0)
-                    .map(|stats| realtime_count_of(stats.row_count))
-                    .unwrap_or(tidb_stats::PSEUDO_ROW_COUNT);
-                realtime_counts.insert(physical_id, count);
-            }
-        }
+        // go `getAdjustedSampleRate` reads `GetPhysicalTableStats`: the
+        // stats CACHE's table, whose RealtimeCount is the `stats_meta.count`
+        // its last load saw -- a never-analyzed table is there too, loaded
+        // from the histogram rows its DDL inserted -- and on a cache miss
+        // `PseudoTable`, whose RealtimeCount is PseudoRowCount=10000 (with
+        // `stats-lease = 0` nothing loads a new table before its first
+        // ANALYZE, which is why Go's integration recordings answer
+        // `use min(1, 110000/10000)` there).
+        let snapshot_stats = stats.load();
+        let realtime_counts = std::iter::once(table.id)
+            .chain(partition_ids.iter().copied())
+            .map(|physical_id| {
+                let count = snapshot_stats
+                    .get(&physical_id)
+                    .and_then(crate::stats_watch::TableStatsState::loaded)
+                    .map_or(tidb_stats::PSEUDO_ROW_COUNT, |table| {
+                        table.hist_coll.realtime_count
+                    });
+                (physical_id, count)
+            })
+            .collect::<HashMap<_, _>>();
         let mut saved = std::collections::HashMap::new();
         if statement.persist_options {
             for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {

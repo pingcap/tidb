@@ -62,6 +62,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::truthy_of;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use tidb_hack::GoCaseCompare;
 
 /// Lookups over at most this many handles are fetched inline by the calling
 /// worker instead of crossing the persistent `idx-lookup` pool channel. Go's
@@ -488,7 +489,7 @@ pub fn statement_read_shape(
             return StatementReadShape::Unknown;
         }
         let handle_column = &columns[handle_offset].0;
-        if !pairs[0].column().eq_ignore_ascii_case(handle_column) {
+        if !pairs[0].column().go_lower_eq(handle_column) {
             return StatementReadShape::Unknown;
         }
         return match pairs[0].value() {
@@ -512,7 +513,7 @@ pub fn statement_read_shape(
         columns.get(*offset).is_some_and(|(name, _)| {
             pairs
                 .iter()
-                .filter(|pair| pair.column().eq_ignore_ascii_case(name))
+                .filter(|pair| pair.column().go_lower_eq(name))
                 .count()
                 == 1
         })

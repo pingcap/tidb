@@ -16,6 +16,7 @@ use crate::table_info_build::DdlAdmissionError;
 use tidb_ast::{CiString, CreateTableStmt, IndexPart, ReferentialAction, TableConstraint};
 use tidb_datatype::FieldTypeFlags;
 use tidb_executor::DriverError;
+use tidb_hack::GoToLower;
 use tidb_model::column::find_column_info;
 use tidb_model::index::{
     find_index_by_columns_for_foreign_key, is_index_prefix_covered_for_foreign_key, IndexColumn,
@@ -115,7 +116,7 @@ pub(crate) fn build_fk_info(
         let column = column.read();
         if column.is_generated() && column.generated_stored {
             for name in column.dependences.snapshot() {
-                base_cols.insert(String::from_utf8_lossy(name.as_bytes()).to_lowercase());
+                base_cols.insert(String::from_utf8_lossy(name.as_bytes()).go_to_lower());
             }
         }
     }
@@ -208,7 +209,7 @@ pub fn build_fk_infos(create: &CreateTableStmt, schema: &str, table: &mut TableI
             Some(name) => name.to_owned(),
             None => format!("fk_{foreign_key_id}"),
         };
-        let lower = fk_name.to_lowercase();
+        let lower = fk_name.go_to_lower();
         if table
             .foreign_keys
             .iter_deref()
@@ -352,7 +353,7 @@ pub(crate) fn check_foreign_key_valid(
     if fk.version < FK_VERSION1 {
         return Ok(());
     }
-    let refer = if fk.ref_schema.lowercase() == schema.to_lowercase()
+    let refer = if fk.ref_schema.lowercase() == schema.go_to_lower()
         && fk.ref_table.lowercase() == table.name.lowercase()
     {
         if !in_owner {
@@ -412,7 +413,7 @@ fn check_valid(
     if !tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
-    let schema_l = schema.to_lowercase();
+    let schema_l = schema.go_to_lower();
     for fk in table.foreign_keys.iter_deref() {
         let fk = fk.read();
         check_foreign_key_valid(catalog, schema, table, &fk, fk_check, in_owner)?;

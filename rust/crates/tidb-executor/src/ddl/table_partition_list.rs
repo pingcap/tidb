@@ -24,6 +24,7 @@ use tidb_datatype::{Datum, DatumKind, FieldType, FieldTypeCode};
 
 use crate::partition_routing::PartitionKind;
 use crate::DriverError;
+use tidb_hack::GoCaseCompare;
 
 /// Builds `LIST COLUMNS`' typed tuple key set.
 pub(super) fn build_list_columns_values(
@@ -50,13 +51,13 @@ pub(super) fn build_list_columns_values(
         if mode.validates()
             && dependency_names
                 .iter()
-                .any(|candidate: &String| candidate.eq_ignore_ascii_case(name))
+                .any(|candidate: &String| candidate.go_lower_eq(name))
         {
             return Err(DriverError::PartitionDuplicateField(name.clone()));
         }
         let offset = names
             .iter()
-            .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            .position(|candidate| candidate.go_lower_eq(name))
             // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // not the 1054 the expression path raises.

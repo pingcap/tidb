@@ -91,6 +91,7 @@ use tidb_datatype::Datum;
 
 use crate::driver::{Catalog, DriverError, TableEntry};
 use crate::kv_table::{FkAction, KvForeignKey, RowDecodeContext, TableHandle};
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 use tidb_planner::physical::{FkTriggerKind, FkTriggerNode};
 
@@ -195,8 +196,8 @@ pub(crate) fn referring(
         };
         for foreign_key in child.foreign_keys() {
             if foreign_key.version >= tidb_model::table::FK_VERSION1
-                && foreign_key.ref_schema.eq_ignore_ascii_case(database)
-                && foreign_key.ref_table.eq_ignore_ascii_case(table)
+                && foreign_key.ref_schema.go_lower_eq(database)
+                && foreign_key.ref_table.go_lower_eq(table)
             {
                 found.push((child_db, child_table, foreign_key));
             }
@@ -223,11 +224,7 @@ fn child_offsets(names: &[String], foreign_key: &KvForeignKey) -> Option<Vec<usi
     foreign_key
         .cols
         .iter()
-        .map(|name| {
-            names
-                .iter()
-                .position(|column| column.eq_ignore_ascii_case(name))
-        })
+        .map(|name| names.iter().position(|column| column.go_lower_eq(name)))
         .collect()
 }
 
@@ -240,11 +237,7 @@ fn parent_offsets(
     let names = entry.column_names();
     let mut offsets = Vec::with_capacity(foreign_key.ref_cols.len());
     for name in &foreign_key.ref_cols {
-        offsets.push(
-            names
-                .iter()
-                .position(|column| column.eq_ignore_ascii_case(name))?,
-        );
+        offsets.push(names.iter().position(|column| column.go_lower_eq(name))?);
     }
     Some((offsets, names))
 }
@@ -260,7 +253,7 @@ fn targets(node: &FkTriggerNode, database: &str, table: &str) -> bool {
     } else {
         (&node.parent_database, &node.parent_table)
     };
-    db.eq_ignore_ascii_case(database) && name.eq_ignore_ascii_case(table)
+    db.go_lower_eq(database) && name.go_lower_eq(table)
 }
 
 fn planned_violation(node: &FkTriggerNode) -> DriverError {
@@ -357,7 +350,7 @@ pub fn check_foreign_key_constrain(
     let Some(foreign_key) = child
         .foreign_keys()
         .iter()
-        .find(|key| key.name.eq_ignore_ascii_case(name))
+        .find(|key| key.name.go_lower_eq(name))
         .cloned()
     else {
         return Ok(());
@@ -868,8 +861,8 @@ pub(crate) fn rewrite_table_references(
         };
         for foreign_key in std::sync::Arc::make_mut(table).foreign_keys_mut() {
             if foreign_key.version >= tidb_model::table::FK_VERSION1
-                && foreign_key.ref_schema.eq_ignore_ascii_case(from_database)
-                && foreign_key.ref_table.eq_ignore_ascii_case(from_table)
+                && foreign_key.ref_schema.go_lower_eq(from_database)
+                && foreign_key.ref_table.go_lower_eq(from_table)
             {
                 foreign_key.ref_schema = to_database.to_owned();
                 foreign_key.ref_table = to_table.to_owned();
@@ -924,7 +917,7 @@ fn column_type(
         TableEntry::Kv(kv) => kv
             .columns
             .iter()
-            .find(|c| c.name.eq_ignore_ascii_case(column))
+            .find(|c| c.name.go_lower_eq(column))
             .map(|c| c.field_type.clone()),
         _ => None,
     }
@@ -964,7 +957,7 @@ pub(crate) fn check_modify_column(
     let (declared_keys, _) = declared(catalog, database, table);
     for foreign_key in &declared_keys {
         for (i, col) in foreign_key.cols.iter().enumerate() {
-            if !col.eq_ignore_ascii_case(old_name) {
+            if !col.go_lower_eq(old_name) {
                 continue;
             }
             let referenced = &foreign_key.ref_cols[i];
@@ -1013,7 +1006,7 @@ pub(crate) fn check_modify_column(
     }
     for (child_db, child_table, foreign_key) in referring(catalog, database, table) {
         for (i, col) in foreign_key.ref_cols.iter().enumerate() {
-            if !col.eq_ignore_ascii_case(old_name) {
+            if !col.go_lower_eq(old_name) {
                 continue;
             }
             let child_column = &foreign_key.cols[i];
@@ -1061,13 +1054,13 @@ pub(crate) fn rewrite_column_name(
     old_name: &str,
     new_name: &str,
 ) {
-    if old_name.eq_ignore_ascii_case(new_name) {
+    if old_name.go_lower_eq(new_name) {
         return;
     }
     if let Some(TableEntry::Kv(kv)) = catalog.table_mut_in(database, table) {
         for foreign_key in std::sync::Arc::make_mut(kv).foreign_keys_mut() {
             for col in &mut foreign_key.cols {
-                if col.eq_ignore_ascii_case(old_name) {
+                if col.go_lower_eq(old_name) {
                     *col = new_name.to_owned();
                 }
             }
@@ -1085,13 +1078,13 @@ pub(crate) fn rewrite_column_name(
             continue;
         };
         for foreign_key in std::sync::Arc::make_mut(kv).foreign_keys_mut() {
-            if !foreign_key.ref_schema.eq_ignore_ascii_case(database)
-                || !foreign_key.ref_table.eq_ignore_ascii_case(table)
+            if !foreign_key.ref_schema.go_lower_eq(database)
+                || !foreign_key.ref_table.go_lower_eq(table)
             {
                 continue;
             }
             for col in &mut foreign_key.ref_cols {
-                if col.eq_ignore_ascii_case(old_name) {
+                if col.go_lower_eq(old_name) {
                     *col = new_name.to_owned();
                 }
             }
@@ -1132,7 +1125,7 @@ pub fn check_index_needed(
     let Some(dropping) = kv
         .indexes()
         .iter()
-        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        .find(|index| index.name.go_lower_eq(index_name))
     else {
         return Ok(());
     };
@@ -1202,11 +1195,7 @@ pub(crate) fn check_drop_column(
     let column = column.go_to_lower();
     let (declared_keys, _) = declared(catalog, database, table);
     for foreign_key in &declared_keys {
-        if foreign_key
-            .cols
-            .iter()
-            .any(|col| col.eq_ignore_ascii_case(&column))
-        {
+        if foreign_key.cols.iter().any(|col| col.go_lower_eq(&column)) {
             return Err(DriverError::DdlCoded {
                 errno: tidb_error::mysql::errcode::ErrFkColumnCannotDrop,
                 message: format!(
@@ -1220,7 +1209,7 @@ pub(crate) fn check_drop_column(
         if foreign_key
             .ref_cols
             .iter()
-            .any(|col| col.eq_ignore_ascii_case(&column))
+            .any(|col| col.go_lower_eq(&column))
         {
             return Err(DriverError::DdlCoded {
                 errno: tidb_error::mysql::errcode::ErrFkColumnCannotDropChild,
@@ -1243,9 +1232,10 @@ pub(crate) fn check_drop_tables(
 ) -> Result<(), DriverError> {
     for (database, table) in dropping {
         for (child_db, child_table, foreign_key) in referring(catalog, database, table) {
-            if dropping.iter().any(|(db, name)| {
-                db.eq_ignore_ascii_case(&child_db) && name.eq_ignore_ascii_case(&child_table)
-            }) {
+            if dropping
+                .iter()
+                .any(|(db, name)| db.go_lower_eq(&child_db) && name.go_lower_eq(&child_table))
+            {
                 continue;
             }
             return Err(DriverError::ForeignKeyTableCannotDrop {
@@ -1295,9 +1285,9 @@ pub fn find_table_referred(
     referring(catalog, database, table)
         .into_iter()
         .find(|(child_db, child_table, _)| {
-            !ignored.iter().any(|(db, name)| {
-                db.eq_ignore_ascii_case(child_db) && name.eq_ignore_ascii_case(child_table)
-            })
+            !ignored
+                .iter()
+                .any(|(db, name)| db.go_lower_eq(child_db) && name.go_lower_eq(child_table))
         })
         .map(|(child_db, child_table, foreign_key)| {
             table_referenced(&child_db, &child_table, &foreign_key)
@@ -1311,13 +1301,13 @@ pub fn find_database_referred(catalog: &Catalog, database: &str) -> Option<Drive
     let target_tables: Vec<String> = catalog
         .table_paths()
         .into_iter()
-        .filter(|(db, _)| db.eq_ignore_ascii_case(database))
+        .filter(|(db, _)| db.go_lower_eq(database))
         .map(|(_, table)| table)
         .collect();
     for parent_table in target_tables {
         if let Some((_, child_table, foreign_key)) = referring(catalog, database, &parent_table)
             .into_iter()
-            .find(|(child_db, _, _)| !child_db.eq_ignore_ascii_case(database))
+            .find(|(child_db, _, _)| !child_db.go_lower_eq(database))
         {
             return Some(DriverError::ForeignKeyDatabaseReferenced {
                 parent_table,

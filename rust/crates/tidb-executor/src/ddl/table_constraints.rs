@@ -35,6 +35,7 @@ use super::{
 };
 use crate::expression_index::HiddenIndexColumn;
 use tidb_datatype::FieldTypeCode;
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 /// Go `mysql.AutoIncrementFlag`.
@@ -100,7 +101,7 @@ pub(crate) fn table_indexes(
     let offset_of = |name: &str| -> Result<usize, DriverError> {
         let offset = columns
             .iter()
-            .position(|col| col.name.original().eq_ignore_ascii_case(name))
+            .position(|col| col.name.original().go_lower_eq(name))
             // Go `buildIndexColumns`: `ErrKeyColumnDoesNotExits` (1072)
             // with its own "column does not exist" text.
             .ok_or_else(|| DriverError::DdlCoded {
@@ -513,12 +514,12 @@ pub(crate) fn validate_foreign_key_parent(
     for (child_name, parent_name) in foreign_key.cols.iter().zip(&foreign_key.ref_cols) {
         let child_offset = child_columns
             .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(child_name))
+            .position(|column| column.name.go_lower_eq(child_name))
             .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(child_name.clone()))?;
         let Some(parent_offset) = parent
             .columns
             .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(parent_name))
+            .position(|column| column.name.go_lower_eq(parent_name))
         else {
             return Err(DriverError::ForeignKeyReferencedColumnMissing {
                 column: parent_name.clone(),
@@ -613,7 +614,7 @@ pub(crate) fn build_foreign_key(
         for name in super::indexes::foreign_key_part_names(&definition.parts, &fk_name)? {
             let offset = columns
                 .iter()
-                .position(|column| column.name.eq_ignore_ascii_case(&name))
+                .position(|column| column.name.go_lower_eq(&name))
                 .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(name.clone()))?;
             if cols.contains(&offset) {
                 return Err(DriverError::DuplicateColumnName(name));
@@ -672,7 +673,7 @@ pub(crate) fn build_foreign_key(
             }
         }
         let self_reference = current_table.is_some_and(|table| {
-            ref_schema.eq_ignore_ascii_case(database) && ref_table.eq_ignore_ascii_case(&table.name)
+            ref_schema.go_lower_eq(database) && ref_table.go_lower_eq(&table.name)
         });
         let same_self_columns = self_reference
             && cols.len() == ref_cols.len()
@@ -680,9 +681,7 @@ pub(crate) fn build_foreign_key(
                 .iter()
                 .zip(&ref_cols)
                 .all(|(child_offset, parent_name)| {
-                    columns[*child_offset]
-                        .name
-                        .eq_ignore_ascii_case(parent_name)
+                    columns[*child_offset].name.go_lower_eq(parent_name)
                 });
         let enabled = tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst);
         if enabled && same_self_columns {
@@ -707,7 +706,7 @@ pub(crate) fn build_foreign_key(
                 let Some(parent_offset) = parent
                     .columns
                     .iter()
-                    .position(|column| column.name.eq_ignore_ascii_case(name))
+                    .position(|column| column.name.go_lower_eq(name))
                 else {
                     return Err(DriverError::ForeignKeyReferencedColumnMissing {
                         column: name.clone(),
@@ -1011,7 +1010,7 @@ pub(crate) fn primary_key_column(
                         }
                         let field_type = columns
                             .iter()
-                            .find(|column| column.name.original().eq_ignore_ascii_case(&def.name))
+                            .find(|column| column.name.original().go_lower_eq(&def.name))
                             .map(|column| &column.field_type)
                             .ok_or_else(|| {
                                 DriverError::ForeignKeyChildColumnMissing(def.name.clone())
@@ -1080,7 +1079,7 @@ pub(crate) fn primary_key_column(
             // other index rather than a refusal of its own.
             let field_type = columns
                 .iter()
-                .find(|column| column.name.original().eq_ignore_ascii_case(name))
+                .find(|column| column.name.original().go_lower_eq(name))
                 .map(|column| &column.field_type)
                 // Go `CheckPKOnGeneratedColumn`: `ErrKeyColumnDoesNotExits`
                 // (1072), "Key column '%s' doesn't exist in table".

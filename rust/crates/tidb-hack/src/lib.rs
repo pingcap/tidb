@@ -257,6 +257,31 @@ impl<T: AsRef<str>> GoToUpper for T {
     }
 }
 
+/// Method-forms of Go's two case-insensitive identifier comparisons, for
+/// in-place migration of `.eq_ignore_ascii_case` call sites; see
+/// [`GoToLower`].
+pub trait GoCaseCompare {
+    /// `strings.ToLower(self) == strings.ToLower(other)`: the comparison of
+    /// two `ast.CIStr.L`s, which folds every letter Go's simple mapping
+    /// lowers (`İ` names `i`) and reads each byte that is not UTF-8 as
+    /// U+FFFD.
+    fn go_lower_eq(&self, other: &str) -> bool;
+
+    /// Go `strings.EqualFold`: equality under Unicode simple folding (`ſ`
+    /// names `s`, `İ` names only itself).
+    fn go_equal_fold(&self, other: &str) -> bool;
+}
+
+impl<T: AsRef<str> + ?Sized> GoCaseCompare for T {
+    fn go_lower_eq(&self, other: &str) -> bool {
+        tidb_mysql::lowercase_equal(self.as_ref(), other)
+    }
+
+    fn go_equal_fold(&self, other: &str) -> bool {
+        tidb_mysql::equal_fold(self.as_ref(), other)
+    }
+}
+
 /// Go `strings.ToUpper`: the per-rune SIMPLE uppercase mapping
 /// (`unicode.ToUpper`). Delegates to the generated
 /// `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode

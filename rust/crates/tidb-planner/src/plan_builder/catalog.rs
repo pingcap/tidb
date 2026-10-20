@@ -339,7 +339,7 @@ impl SourceTable {
     pub fn find_column(&self, name: &str) -> Option<&SourceColumn> {
         self.columns
             .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(name))
+            .find(|column| tidb_mysql::lowercase_equal(&column.name, name))
     }
 }
 

@@ -29,7 +29,7 @@ fn resolve_index_merge_hints_for_partition(source: &mut DataSource, partition_na
             || hint
                 .partitions
                 .iter()
-                .any(|partition| partition.eq_ignore_ascii_case(partition_name))
+                .any(|partition| tidb_mysql::lowercase_equal(partition, partition_name))
     });
 }
 
@@ -42,7 +42,7 @@ fn resolve_index_hints_for_partition(
             || hint
                 .partitions
                 .iter()
-                .any(|partition| partition.eq_ignore_ascii_case(partition_name))
+                .any(|partition| tidb_mysql::lowercase_equal(partition, partition_name))
     });
     let table = crate::plan_builder::catalog::SourceTable {
         table_name: source.table_name.clone(),
@@ -130,8 +130,8 @@ fn unknown_hint_partitions(
 ) -> Vec<String> {
     partitions
         .iter()
-        .filter(|partition| !used_partition_names.contains(&partition.to_ascii_lowercase()))
-        .cloned()
+        .map(|partition| tidb_mysql::to_lowercase(partition))
+        .filter(|partition| !used_partition_names.contains(partition))
         .collect()
 }
 
@@ -178,7 +178,7 @@ fn make_children(
         if let Some(partition_name) = source.partition_definition_names.get(index) {
             resolve_index_hints_for_partition(&mut child, partition_name)?;
             resolve_index_merge_hints_for_partition(&mut child, partition_name);
-            used_partition_names.insert(partition_name.to_ascii_lowercase());
+            used_partition_names.insert(tidb_mysql::to_lowercase(partition_name));
         }
         children.push(LogicalPlan::DataSource(child));
     }

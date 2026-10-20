@@ -23,6 +23,7 @@ use std::collections::HashSet;
 
 use tidb_ast::{CheckConstraintDefinition, CiString, ColumnOption, Expr, RestoreFlags};
 use tidb_datatype::FieldTypeFlags;
+use tidb_hack::GoCaseCompare;
 use tidb_model::table::ConstraintInfo;
 use tidb_model::{ColumnInfo, SchemaState};
 
@@ -72,7 +73,7 @@ impl CheckConstraintError {
 pub fn uses_column(info: &ConstraintInfo, column_name: &str) -> bool {
     info.constraint_cols
         .iter()
-        .any(|column| column.original().eq_ignore_ascii_case(column_name))
+        .any(|column| column.original().go_lower_eq(column_name))
 }
 
 /// Go `ErrCantDropColWithCheckConstraint` (3959).
@@ -243,7 +244,7 @@ pub fn build_constraint_infos(
         }
         if dependencies.iter().any(|dependency| {
             columns.iter().any(|column| {
-                column.name.original().eq_ignore_ascii_case(dependency)
+                column.name.original().go_lower_eq(dependency)
                     && column.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT)
             })
         }) {
@@ -258,7 +259,7 @@ pub fn build_constraint_infos(
                     foreign_key
                         .columns
                         .iter()
-                        .any(|column| column.eq_ignore_ascii_case(dependency))
+                        .any(|column| column.go_lower_eq(dependency))
                 }) {
                     return Err(CheckConstraintError::new(
                         tidb_error::tidb::errcode::ErrCheckConstraintClauseUsingFKReferActionColumn,

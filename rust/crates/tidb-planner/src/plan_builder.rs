@@ -1191,10 +1191,17 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
 /// as well -- a non-ASCII letter folds (`Σ` names `σ`) and each byte that is
 /// not UTF-8 reads as U+FFFD (a latin1 client's `É` names its `é`).
 pub(crate) fn lower_name_matches(lower: &str, written: &str) -> bool {
-    if lower.is_ascii() && written.is_ascii() {
-        return lower.eq_ignore_ascii_case(written);
-    }
-    tidb_mysql::to_lowercase(lower) == tidb_mysql::to_lowercase(written)
+    tidb_mysql::lowercase_equal(lower, written)
+}
+
+/// Go `tables.FindPartitionByName`'s test: `strings.EqualFold` of the
+/// definition's `Name.L` and the lowered written name, so a name matches
+/// under BOTH foldings (`S` names a `ſ` partition, `İ` names an `i` one).
+pub(crate) fn partition_name_matches(definition: &str, written: &str) -> bool {
+    tidb_mysql::equal_fold(
+        &tidb_mysql::to_lowercase(definition),
+        &tidb_mysql::to_lowercase(written),
+    )
 }
 
 /// Whether `path` matches several NON-redundant names in `names` -- go
@@ -2922,7 +2929,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if !table
                     .partition_definition_names
                     .iter()
-                    .any(|name| name.eq_ignore_ascii_case(partition))
+                    .any(|name| partition_name_matches(name, partition))
                 {
                     return Err(PlanError::unknown_partition(partition, &table.table_name));
                 }
@@ -2962,8 +2969,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .db_name
                 .as_deref()
                 .unwrap_or_else(|| self.source.current_database());
-            if hint.table_name.eq_ignore_ascii_case(&visible_table)
-                && (hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            if lower_name_matches(&hint.table_name, &visible_table)
+                && (lower_name_matches(hint_db, &db_name) || hint_db == "*")
             {
                 hint.matched = true;
                 force_no_index_lookup_push_down = true;
@@ -2976,8 +2983,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .db_name
                 .as_deref()
                 .unwrap_or_else(|| self.source.current_database());
-            if !hint.table_name.eq_ignore_ascii_case(&visible_table)
-                || !(hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            if !lower_name_matches(&hint.table_name, &visible_table)
+                || !(lower_name_matches(hint_db, &db_name) || hint_db == "*")
             {
                 continue;
             }
@@ -3001,8 +3008,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .db_name
                 .as_deref()
                 .unwrap_or_else(|| self.source.current_database());
-            if hint.table_name.eq_ignore_ascii_case(&visible_table)
-                && (hint_db.eq_ignore_ascii_case(&db_name) || hint_db == "*")
+            if lower_name_matches(&hint.table_name, &visible_table)
+                && (lower_name_matches(hint_db, &db_name) || hint_db == "*")
             {
                 hint.matched = true;
                 let mut index_string = format!("{hint_db}.{}", hint.table_name);
@@ -3012,7 +3019,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         &hint
                             .index_names
                             .iter()
-                            .map(|name| name.to_lowercase())
+                            .map(|name| tidb_mysql::to_lowercase(name))
                             .collect::<Vec<_>>()
                             .join(", "),
                     );
@@ -3200,7 +3207,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         table
                             .partition_definition_names
                             .iter()
-                            .position(|partition| partition.eq_ignore_ascii_case(name))
+                            .position(|partition| partition_name_matches(partition, name))
                             .and_then(|index| table.partition_definition_ids.get(index).copied())
                     })
                     .collect()
@@ -3309,12 +3316,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     !resolution.paths.iter().any(|path| match path {
                         crate::access_path::PossiblePath::Table { .. }
                         | crate::access_path::PossiblePath::TiFlashTable => {
-                            name.eq_ignore_ascii_case("primary")
+                            lower_name_matches(name, "primary")
                         }
                         crate::access_path::PossiblePath::Index { index } => table
                             .indexes
                             .get(*index)
-                            .is_some_and(|index| index.name.eq_ignore_ascii_case(name)),
+                            .is_some_and(|index| lower_name_matches(&index.name, name)),
                     })
                 })
                 .cloned()
@@ -3337,7 +3344,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // "Skip storage engine check for CreateView."
         if !self.can_expand_ast
             && !matches!(
-                data_source.db_name.to_ascii_lowercase().as_str(),
+                tidb_mysql::to_lowercase(&data_source.db_name).as_str(),
                 "mysql" | "sys" | "workload_schema"
             )
         {
@@ -3504,8 +3511,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     1815,
                     &format!(
                         "Storage hints are conflict, you can only specify one storage type of table {}.{}",
-                        table.database_name.to_ascii_lowercase(),
-                        table.table_name.to_ascii_lowercase()
+                        tidb_mysql::to_lowercase(&table.database_name),
+                        tidb_mysql::to_lowercase(&table.table_name)
                     ),
                 );
                 data_source.prefer_store_type = 0;
@@ -3845,22 +3852,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let (true, Some(index)) = (field.column_reference, resolved_index) {
             if let Expr::Column(path) = &field.expr {
                 let matches_path = |name: &FieldName| {
-                    let column =
-                        name.names.column.original.eq_ignore_ascii_case(
-                            path.last().map(String::as_str).unwrap_or_default(),
-                        );
+                    let column = lower_name_matches(
+                        &name.names.column.lower,
+                        path.last().map(String::as_str).unwrap_or_default(),
+                    );
                     let table = path.len() < 2
-                        || name
-                            .names
-                            .table
-                            .original
-                            .eq_ignore_ascii_case(&path[path.len() - 2]);
+                        || lower_name_matches(&name.names.table.lower, &path[path.len() - 2]);
                     let database = path.len() < 3
-                        || name
-                            .names
-                            .database
-                            .original
-                            .eq_ignore_ascii_case(&path[path.len() - 3]);
+                        || lower_name_matches(&name.names.database.lower, &path[path.len() - 3]);
                     column && table && database
                 };
                 if let Some(origin) = names.iter().find(|name| matches_path(name)) {
@@ -4212,10 +4211,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 [database, table, column] => (Some(database), Some(table), column),
                 _ => return false,
             };
-            column.eq_ignore_ascii_case(&source.names.column.lower)
-                && table.is_none_or(|table| table.eq_ignore_ascii_case(&source.names.table.lower))
+            lower_name_matches(&source.names.column.lower, column)
+                && table.is_none_or(|table| lower_name_matches(&source.names.table.lower, table))
                 && database.is_none_or(|database| {
-                    database.eq_ignore_ascii_case(&source.names.database.lower)
+                    lower_name_matches(&source.names.database.lower, database)
                 })
         })
     }
@@ -4725,13 +4724,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let is_cte = self
                 .outer_ctes
                 .iter()
-                .any(|cte| cte.name.eq_ignore_ascii_case(name));
-            is_cte
-                && table
-                    .alias
-                    .as_deref()
-                    .unwrap_or(name)
-                    .eq_ignore_ascii_case(target)
+                .any(|cte| lower_name_matches(&cte.name, name));
+            is_cte && lower_name_matches(table.alias.as_deref().unwrap_or(name), target)
         })
     }
 

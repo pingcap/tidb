@@ -17,6 +17,7 @@ use crate::driver::catalog::{Catalog, TableEntry};
 use crate::driver::DriverError;
 use crate::kv_table::{FkAction, KvForeignKey};
 use crate::StmtContext;
+use tidb_hack::GoCaseCompare;
 use tidb_planner::physical::{FkTriggerKind, FkTriggerNode};
 use tidb_planner::plan_base::PlanIdAllocator;
 
@@ -73,16 +74,10 @@ pub(crate) fn build_fk_triggers(
                     .as_ref()
                     .is_some_and(|generation| touches(&modified, &generation.dependencies))
                 {
-                    if !modified
-                        .iter()
-                        .any(|name| name.eq_ignore_ascii_case(&column.name))
-                    {
+                    if !modified.iter().any(|name| name.go_lower_eq(&column.name)) {
                         modified.push(column.name.clone());
                     }
-                    if !updated
-                        .iter()
-                        .any(|name| name.eq_ignore_ascii_case(&column.name))
-                    {
+                    if !updated.iter().any(|name| name.go_lower_eq(&column.name)) {
                         updated.push(column.name.clone());
                     }
                 }
@@ -160,7 +155,7 @@ pub(crate) fn build_fk_triggers(
 fn touches(updated: &[String], columns: &[String]) -> bool {
     columns
         .iter()
-        .any(|column| updated.iter().any(|name| name.eq_ignore_ascii_case(column)))
+        .any(|column| updated.iter().any(|name| name.go_lower_eq(column)))
 }
 
 fn compile_trigger(
@@ -188,7 +183,7 @@ fn compile_trigger(
                 table
                     .columns
                     .iter()
-                    .position(|column| column.name.eq_ignore_ascii_case(name))
+                    .position(|column| column.name.go_lower_eq(name))
                     .ok_or_else(|| {
                         DriverError::unsupported(format!("foreign key column {name} is not found"))
                     })

@@ -51,6 +51,7 @@ use tidb_codec::table_key::encode_index_seek_key;
 use tidb_datatype::Datum;
 
 use crate::kv_table::{KvIndex, KvTable, RowDecodeContext, TableHandle};
+use tidb_hack::GoCaseCompare;
 
 /// Why an `ADMIN CHECK` could not answer, or answered that the table is
 /// inconsistent.
@@ -244,7 +245,7 @@ pub fn check_table(
         Some(name) => {
             let found = indexes
                 .iter()
-                .find(|index| index.name.eq_ignore_ascii_case(name))
+                .find(|index| index.name.go_equal_fold(name))
                 .cloned()
                 .ok_or_else(|| AdminCheckError::UnknownIndex {
                     index: name.to_owned(),
@@ -532,7 +533,7 @@ pub fn check_index_ranges(
     let index = table
         .index_list_for_check()
         .into_iter()
-        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        .find(|index| index.name.go_lower_eq(index_name))
         .ok_or_else(|| AdminCheckError::UnknownIndex {
             index: index_name.to_owned(),
             table: table.name.clone(),

@@ -29,6 +29,8 @@ use crate::{Catalog, DriverError, MysqlError, SchemaErrorKind, TableEntry};
 use tidb_codec::decode_int;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_error::tidb::errcode;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 use tidb_model::PlacementSettings;
 
 /// What `fetchSchedulingInfo` reports for a table whose placement policy
@@ -150,9 +152,14 @@ fn physical_ids(
         let definition = partitioning
             .definitions
             .iter()
-            .find(|definition| definition.name.eq_ignore_ascii_case(name))
+            .find(|definition| {
+                definition
+                    .name
+                    .go_to_lower()
+                    .go_equal_fold(&name.go_to_lower())
+            })
             .ok_or_else(|| DriverError::UnknownPartition {
-                partition: name.to_lowercase(),
+                partition: name.go_to_lower(),
                 table: target.name.clone(),
             })?;
         ids.push(definition.id);
@@ -400,7 +407,7 @@ pub fn show_table_regions(
                 table
                     .indexes()
                     .iter()
-                    .find(|index| index.name.eq_ignore_ascii_case(name))
+                    .find(|index| index.name.go_lower_eq(name))
             });
             let Some(found) = found else {
                 return Err(DriverError::KeyNotExists {

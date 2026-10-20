@@ -44,6 +44,7 @@ use crate::kv_table::IndexRange;
 use crate::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
 use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::Datum;
+use tidb_hack::GoCaseCompare;
 
 /// Go `FindByName` over an explicit `PARTITION (p, ...)` list: the physical
 /// ids those partitions occupy, in the table's own definition order.
@@ -69,11 +70,7 @@ pub fn ids_for_selected_partitions(
     Ok(spec
         .definitions
         .iter()
-        .filter(|def| {
-            names
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(&def.name))
-        })
+        .filter(|def| names.iter().any(|name| name.go_lower_eq(&def.name)))
         .map(|def| def.id)
         .collect())
 }

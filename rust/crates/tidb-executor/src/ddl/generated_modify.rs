@@ -18,6 +18,7 @@ use crate::generated_column::GeneratedColumn;
 use crate::{DriverError, KvTable, StmtContext};
 use tidb_ast::{ColumnDef, ColumnOption};
 use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_hack::GoCaseCompare;
 
 // Go noReorgDataStrict, used before generated-column validation.
 fn no_reorganization(old: &FieldType, new: &FieldType, indexed: bool) -> bool {
@@ -129,7 +130,7 @@ pub(super) fn build(
             let Some((dep_at, dep)) = candidate
                 .iter()
                 .enumerate()
-                .find(|(_, c)| c.name.eq_ignore_ascii_case(dependency))
+                .find(|(_, c)| c.name.go_lower_eq(dependency))
             else {
                 return Err(super::generated_column_error(
                     crate::generated_column::GeneratedDdlError::UnknownDependency(
@@ -146,7 +147,7 @@ pub(super) fn build(
         if !ctx.auto_increment_in_generated()
             && generated.dependencies.iter().any(|name| {
                 candidate.iter().any(|c| {
-                    c.name.eq_ignore_ascii_case(name)
+                    c.name.go_lower_eq(name)
                         && c.field_type
                             .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT)
                 })

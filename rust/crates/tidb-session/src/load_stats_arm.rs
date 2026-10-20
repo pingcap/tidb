@@ -149,5 +149,6 @@ fn merge_loaded_statistics(
     merged.index_load_status.extend(loaded.index_load_status);
     merged.column_stats_existence.extend(loaded.column_stats_existence);
     merged.index_stats_existence.extend(loaded.index_stats_existence);
+    merged.mv_index_ids.extend(loaded.mv_index_ids);
     merged
 }

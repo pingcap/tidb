@@ -996,6 +996,7 @@ pub fn table_statistics_from_table_schema(
     let mut index_fm_sketches = BTreeMap::new();
     let mut column_load_status = BTreeMap::new();
     let mut index_load_status = BTreeMap::new();
+    let mut mv_index_ids = std::collections::BTreeSet::new();
     for column in stats.hist_coll.stable_columns() {
         let column = column
             .read()
@@ -1058,6 +1059,9 @@ pub fn table_statistics_from_table_schema(
             index_fm_sketches.insert(id, sketch);
         }
         index_load_status.insert(id, index.stats_loaded_status);
+        if index.info.as_ref().is_some_and(|info| info.mv_index) {
+            mv_index_ids.insert(id);
+        }
     }
     let mut statistics = TableStatistics::new(
         stats.hist_coll.realtime_count,
@@ -1085,6 +1089,7 @@ pub fn table_statistics_from_table_schema(
     statistics.pseudo =
         stats.hist_coll.pseudo || stats.hist_coll.realtime_count == 0 || !stats.is_initialized();
     statistics.cache_pseudo = stats.hist_coll.pseudo;
+    statistics.mv_index_ids = mv_index_ids;
     statistics
 }
 

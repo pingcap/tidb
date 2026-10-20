@@ -256,11 +256,11 @@ pub(crate) fn is_derived_table_in_leading_hint(
     fn contains(elements: &[tidb_ast::LeadingElement], database: &str, table_name: &str) -> bool {
         elements.iter().any(|element| match element {
             tidb_ast::LeadingElement::Table(table) => {
-                table.name.eq_ignore_ascii_case(table_name)
+                tidb_mysql::lowercase_equal(&table.name, table_name)
                     && table.db_name.as_deref().is_none_or(|hint_database| {
                         hint_database.is_empty()
                             || hint_database == "*"
-                            || hint_database.eq_ignore_ascii_case(database)
+                            || tidb_mysql::lowercase_equal(hint_database, database)
                     })
             }
             tidb_ast::LeadingElement::Group(group) => contains(group, database, table_name),
@@ -299,8 +299,8 @@ pub(crate) fn find_plan_by_ast_hint<T>(
         };
         let database_matches = hint_database.is_empty()
             || hint_database == "*"
-            || hint_database.eq_ignore_ascii_case(alias_database);
-        let table_matches = table.name.eq_ignore_ascii_case(&alias.table_name);
+            || tidb_mysql::lowercase_equal(hint_database, alias_database);
+        let table_matches = tidb_mysql::lowercase_equal(&table.name, &alias.table_name);
         let query_block_matches = table.qb_name.as_deref().is_none_or(|query_block| {
             extract_select_offset(query_block)
                 .filter(|offset| *offset > 0)
@@ -323,9 +323,9 @@ pub(crate) fn find_plan_by_ast_hint<T>(
         let Some(block_name) = block_names.get(&block_offset) else {
             continue;
         };
-        let database_matches =
-            hint_database.is_empty() || hint_database.eq_ignore_ascii_case(&hint.current_db);
-        if database_matches && table.name.eq_ignore_ascii_case(block_name) {
+        let database_matches = hint_database.is_empty()
+            || tidb_mysql::lowercase_equal(hint_database, &hint.current_db);
+        if database_matches && tidb_mysql::lowercase_equal(&table.name, block_name) {
             if matched.is_some() {
                 return None;
             }
@@ -337,8 +337,7 @@ pub(crate) fn find_plan_by_ast_hint<T>(
 
 /// Go `extractSelectOffset`: the `x` of a `sel_x` query block name.
 fn extract_select_offset(query_block: &str) -> Option<i32> {
-    query_block
-        .to_ascii_lowercase()
+    tidb_mysql::to_lowercase(query_block)
         .strip_prefix("sel_")
         .and_then(|offset| offset.parse::<i32>().ok())
 }

@@ -293,8 +293,8 @@ where
                 let database = tables[0]
                     .db_name
                     .clone()
-                    .unwrap_or_else(|| current_database.to_owned())
-                    .to_ascii_lowercase();
+                    .unwrap_or_else(|| current_database.to_owned());
+                let database = tidb_mysql::to_lowercase(&database);
                 let table = tables[0].name.clone();
                 let index = tables[1].name.clone();
                 let mut columns = Vec::with_capacity(tables.len() - 2);
@@ -319,8 +319,8 @@ where
                 if !invalid {
                     result.add_hypo_index(
                         database,
-                        table.to_ascii_lowercase(),
-                        index.to_ascii_lowercase(),
+                        tidb_mysql::to_lowercase(&table),
+                        tidb_mysql::to_lowercase(&index),
                         IndexInfo {
                             name: CiString::new(&index),
                             columns: GoSharedPointerSlice::from_handles(columns),

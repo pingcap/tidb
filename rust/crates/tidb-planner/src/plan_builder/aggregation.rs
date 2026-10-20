@@ -791,7 +791,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     Err(_) => {
                         error = Some(PlanError::ambiguous_column_in(
                             path.last()
-                                .map(|name| name.to_lowercase())
+                                .map(|name| tidb_mysql::to_lowercase(name))
                                 .unwrap_or_default(),
                             "group statement",
                         ));
@@ -917,7 +917,7 @@ pub fn resolve_from_select_fields(
             Expr::Func { .. } => field
                 .text
                 .as_deref()
-                .is_some_and(|text| text.eq_ignore_ascii_case(name)),
+                .is_some_and(|text| super::lower_name_matches(text, name)),
             _ => false,
         };
         let matches = if ignore_as_name {
@@ -948,7 +948,7 @@ pub fn resolve_from_select_fields(
                     return Err(PlanError::ambiguous_column(
                         current
                             .last()
-                            .map(|name| name.to_lowercase())
+                            .map(|name| tidb_mysql::to_lowercase(name))
                             .unwrap_or_default(),
                     ));
                 }
@@ -962,7 +962,7 @@ pub fn resolve_from_select_fields(
 /// every qualifier both of them carry agrees.
 fn column_paths_match(left: &[String], right: &[String]) -> bool {
     let mut pairs = left.iter().rev().zip(right.iter().rev());
-    pairs.all(|(l, r)| l.eq_ignore_ascii_case(r))
+    pairs.all(|(l, r)| super::lower_name_matches(l, r))
 }
 
 /// Whether `expr` contains an aggregate call anywhere.

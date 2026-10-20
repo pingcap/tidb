@@ -32,6 +32,8 @@ use tidb_ast::{
 use tidb_datatype::FieldTypeCode;
 
 use crate::DriverError;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// `mysql.MaxKeyParts`.
 const MAX_KEY_PARTS: usize = 16;
@@ -341,7 +343,7 @@ fn check_alter_table(alter: &tidb_ast::AlterTableStmt) -> Result<(), DriverError
 /// Go `checkIndexInfo`: the index name, the number of key parts, zero
 /// prefix lengths and repeated columns.
 fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), DriverError> {
-    if name.eq_ignore_ascii_case("PRIMARY") {
+    if name.go_equal_fold("PRIMARY") {
         return Err(wrong_name_for_index(name));
     }
     if parts.len() > MAX_KEY_PARTS {
@@ -364,7 +366,7 @@ fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), DriverError> 
     let mut seen: Vec<String> = Vec::with_capacity(parts.len());
     for part in parts {
         if let IndexPart::Column { name, .. } = part {
-            let folded = name.to_lowercase();
+            let folded = name.go_to_lower();
             if seen.contains(&folded) {
                 return Err(DriverError::DuplicateColumnName(name.clone()));
             }

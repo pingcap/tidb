@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::{Catalog, DriverError, TableEntry};
+use tidb_hack::GoToLower;
 
 pub(super) fn guard_alter_actions(
     catalog: &Catalog,
@@ -47,7 +48,7 @@ pub(super) fn alter_cache_action(
             if table.is_cached() {
                 return Ok(());
             }
-            if tidb_metadef::is_mem_or_sys_db(&database.to_ascii_lowercase()) {
+            if tidb_metadef::is_mem_or_sys_db(&database.go_to_lower()) {
                 return Err(DriverError::UnsupportedAlterCacheForSystemTable);
             }
             table.enable_cache().map_err(|error| match error {

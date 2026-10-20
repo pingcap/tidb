@@ -26,6 +26,7 @@ use tidb_expr::EvalError;
 
 use super::{DriverError, MysqlError};
 use crate::executor::ExecError;
+use tidb_hack::GoToLower;
 
 /// MySQL `ER_DATA_OUT_OF_RANGE`.
 const ER_DATA_OUT_OF_RANGE: u16 = 1690;
@@ -313,14 +314,14 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             // before naming it in ErrBadField.
             MysqlError::new(
                 1054,
-                format!("Unknown column '{}' in 'expression'", column.to_lowercase()),
+                format!("Unknown column '{}' in 'expression'", column.go_to_lower()),
             )
         }
         // Go `ErrBadField` with the clause the name was written in
         // (`clauseMsg`), for example `Unknown column 'j' in 'order clause'`.
         EvalError::UnknownColumnInClause(column, clause) => MysqlError::new(
             1054,
-            format!("Unknown column '{}' in '{clause}'", column.to_lowercase()),
+            format!("Unknown column '{}' in '{clause}'", column.go_to_lower()),
         ),
         EvalError::UnsupportedOperandPair(lhs, rhs) => MysqlError::unknown(format!(
             "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"

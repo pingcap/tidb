@@ -29,6 +29,7 @@
 use tidb_ast::{
     AlterPlacementPolicyStmt, CreatePlacementPolicyStmt, DropPlacementPolicyStmt, PlacementOption,
 };
+use tidb_hack::GoCaseCompare;
 use tidb_model::{PlacementSettings, PolicyInfo};
 
 use super::{Catalog, DriverError};
@@ -97,10 +98,7 @@ pub fn run_create_placement_policy(
     }
     // Go reserves the case-insensitive name `default` for placement reset
     // syntax. The refusal happens before catalog insertion.
-    if statement
-        .name
-        .eq_ignore_ascii_case(DEFAULT_PLACEMENT_POLICY_NAME)
-    {
+    if statement.name.go_lower_eq(DEFAULT_PLACEMENT_POLICY_NAME) {
         return Err(DriverError::DdlCoded {
             errno: tidb_error::mysql::errcode::ErrReservedSyntax,
             message: "The 'default' syntax is reserved for purposes internal to the MySQL server"

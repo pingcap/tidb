@@ -22,6 +22,7 @@
 
 use super::add_index::{action_step, AddIndexSubmission};
 use super::*;
+use tidb_hack::GoCaseCompare;
 
 /// Go `ErrPlacementPolicyNotExists`.
 fn policy_not_exists(name: &str) -> DdlPlanError {
@@ -80,7 +81,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
             if_not_exists,
             or_replace,
         } => {
-            if name.eq_ignore_ascii_case("default") {
+            if name.go_lower_eq("default") {
                 return Err(coded_refusal(
                     tidb_error::mysql::errcode::ErrReservedSyntax,
                     format!(

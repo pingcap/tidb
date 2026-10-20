@@ -318,7 +318,7 @@ impl DataSource {
         let position = self
             .columns
             .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(&index_column.name))?;
+            .position(|column| tidb_mysql::lowercase_equal(&column.name, &index_column.name))?;
         self.base.base.schema()?.columns.get(position)
     }
 
@@ -1243,7 +1243,7 @@ fn index_covers_column(
     // too.
     if source_index.columns.iter().any(|index_column| {
         full_length(index_column.length)
-            && (index_column.name.eq_ignore_ascii_case(&column.name)
+            && (tidb_mysql::lowercase_equal(&index_column.name, &column.name)
                 || schema_column.is_some_and(|schema_column| {
                     ds.schema_column_for_index_column(index_column)
                         .is_some_and(|indexed| schema_column.equal_by_expr_and_id_column(indexed))

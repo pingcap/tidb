@@ -41,6 +41,8 @@ use tidb_ast::{
     SetOprTermBody, Stmt,
 };
 use tidb_datatype::FieldType;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 /// Resolves and publishes a view while retaining session-local name shadows.
 pub fn run_create_view_in(
@@ -375,10 +377,12 @@ fn combine_join_output(
     } else if join.natural {
         let mut common = Vec::new();
         for column in &left {
-            if right.iter().any(|other| other.name.eq_ignore_ascii_case(&column.name))
+            if right
+                .iter()
+                .any(|other| other.name.go_lower_eq(&column.name))
                 && !common
                     .iter()
-                    .any(|seen: &String| seen.eq_ignore_ascii_case(&column.name))
+                    .any(|seen: &String| seen.go_lower_eq(&column.name))
             {
                 common.push(column.name.clone());
             }
@@ -390,12 +394,15 @@ fn combine_join_output(
     if names.is_empty() {
         return left.into_iter().chain(right).collect();
     }
-    let is_common =
-        |column: &OutColumn| names.iter().any(|name| name.eq_ignore_ascii_case(&column.name));
-    let source = if join.tp == tidb_ast::JoinType::Right { &right } else { &left };
+    let is_common = |column: &OutColumn| names.iter().any(|name| name.go_lower_eq(&column.name));
+    let source = if join.tp == tidb_ast::JoinType::Right {
+        &right
+    } else {
+        &left
+    };
     let mut output: Vec<OutColumn> = Vec::new();
     for name in &names {
-        match source.iter().find(|column| column.name.eq_ignore_ascii_case(name)) {
+        match source.iter().find(|column| column.name.go_lower_eq(name)) {
             Some(column) => output.push(column.clone()),
             // A name the planner will reject; keep the operands whole.
             None => return left.into_iter().chain(right).collect(),
@@ -737,7 +744,7 @@ fn canonical_select_in_scope(
                             .qualifier
                             .last()
                             .expect("a qualifier always has a last segment");
-                        if !visible.eq_ignore_ascii_case(qualifier) {
+                        if !visible.go_lower_eq(qualifier) {
                             continue;
                         }
                     }
@@ -818,9 +825,9 @@ fn written_name_matches(written: &[String], resolved: &[String]) -> bool {
         [d, t, c] => (d.as_str(), t.as_str(), c.as_str()),
         _ => return false,
     };
-    (wd.is_empty() || wd.eq_ignore_ascii_case(rd))
-        && (wt.is_empty() || wt.eq_ignore_ascii_case(rt))
-        && wc.eq_ignore_ascii_case(rc)
+    (wd.is_empty() || wd.go_lower_eq(rd))
+        && (wt.is_empty() || wt.go_lower_eq(rt))
+        && wc.go_lower_eq(rc)
 }
 
 /// Go `resolveFromPlan`'s name: the column as the FROM tables name it, original
@@ -834,18 +841,18 @@ fn resolve_body_column(path: &[String], tables: &[BodyTable]) -> Option<Vec<Stri
     };
     for body_table in tables {
         let visible = body_table.qualifier.last()?;
-        if table.is_some_and(|table| !visible.eq_ignore_ascii_case(table)) {
+        if table.is_some_and(|table| !visible.go_lower_eq(table)) {
             continue;
         }
         if database.is_some_and(|database| {
-            body_table.database.is_empty() || !body_table.database.eq_ignore_ascii_case(database)
+            body_table.database.is_empty() || !body_table.database.go_lower_eq(database)
         }) {
             continue;
         }
         if let Some(name) = body_table
             .columns
             .iter()
-            .find(|name| name.eq_ignore_ascii_case(column))
+            .find(|name| name.go_lower_eq(column))
         {
             let mut resolved = Vec::with_capacity(3);
             if !body_table.database.is_empty() {
@@ -870,7 +877,7 @@ fn select_field_for_name<'a>(path: &[String], fields: &'a [SelectField]) -> Opti
             continue;
         };
         let hit = match alias {
-            Some(alias) => path.len() == 1 && alias.eq_ignore_ascii_case(&path[0]),
+            Some(alias) => path.len() == 1 && alias.go_lower_eq(&path[0]),
             None => matches!(expr, Expr::Column(own) if written_name_matches(own, path)
                 || written_name_matches(path, own)),
         };
@@ -976,7 +983,7 @@ fn rename_duplicated_anonymous_fields(fields: &mut [SelectField], anonymous: &[b
     let mut dedup: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (field, anonymous) in fields.iter().zip(anonymous) {
         if !anonymous {
-            dedup.insert(name_of(field).to_lowercase(), 0);
+            dedup.insert(name_of(field).go_to_lower(), 0);
         }
     }
     for (field, anonymous) in fields.iter_mut().zip(anonymous) {
@@ -984,7 +991,7 @@ fn rename_duplicated_anonymous_fields(fields: &mut [SelectField], anonymous: &[b
             continue;
         }
         let old = name_of(field);
-        let key = old.to_lowercase();
+        let key = old.go_to_lower();
         match dedup.get(&key).copied() {
             Some(dup) => {
                 let renamed = if dup == 0 {
@@ -1073,12 +1080,12 @@ fn qualify_join_node(
             if table_ref.name.len() == 1
                 && ctes
                     .iter()
-                    .any(|cte| cte.name.to_lowercase() == table_ref.name[0].to_lowercase()) =>
+                    .any(|cte| cte.name.go_to_lower() == table_ref.name[0].go_to_lower()) =>
         {
             let cte = ctes
                 .iter()
                 .rev()
-                .find(|cte| cte.name.to_lowercase() == table_ref.name[0].to_lowercase())
+                .find(|cte| cte.name.go_to_lower() == table_ref.name[0].go_to_lower())
                 .expect("matched above");
             let qualifier = vec![table_ref
                 .alias

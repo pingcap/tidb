@@ -11,6 +11,7 @@ description = "TiDB optimizer-hint interpretation and AST hint binding."
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 
 [lints]

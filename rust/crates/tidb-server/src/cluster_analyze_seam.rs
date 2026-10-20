@@ -233,6 +233,7 @@ where
             self.timeout,
             resource_group,
             approximate_counts,
+            &self.stats,
         )
         .map_err(cluster_analyze_error)?;
         let logical_table_id = statement.logical_table_id();

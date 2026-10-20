@@ -20,16 +20,19 @@ use crate::logical::DataSource;
 use crate::plan_base::PlanError;
 use tidb_expr::expression::Expression;
 
+/// Go `isInIndexMergeHints`. Go passes the index's `Name.L` and compares
+/// with `strings.EqualFold` against each hint name as written.
 pub(crate) fn index_merge_hint_allows(ds: &DataSource, index_name: &str) -> bool {
     if ds.index_merge_hints.is_empty() {
         return true;
     }
+    let index_name = tidb_mysql::to_lowercase(index_name);
     ds.index_merge_hints.iter().any(|hint| {
         hint.index_names.is_empty()
             || hint
                 .index_names
                 .iter()
-                .any(|name| name.eq_ignore_ascii_case(index_name))
+                .any(|name| tidb_mysql::equal_fold(&index_name, name))
     })
 }
 
@@ -37,12 +40,13 @@ pub(crate) fn index_merge_hint_allows(ds: &DataSource, index_name: &str) -> bool
 /// considers indexes named by a USE_INDEX_MERGE hint, even if another merge
 /// hint has no explicit index list.
 pub(crate) fn index_merge_hint_specifies(ds: &DataSource, index_name: &str) -> bool {
+    let index_name = tidb_mysql::to_lowercase(index_name);
     ds.index_merge_hints.iter().any(|hint| {
         !hint.index_names.is_empty()
             && hint
                 .index_names
                 .iter()
-                .any(|name| name.eq_ignore_ascii_case(index_name))
+                .any(|name| tidb_mysql::equal_fold(&index_name, name))
     })
 }
 

@@ -39,10 +39,11 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
+use tidb_expr::schema::Schema;
+use tidb_hack::GoCaseCompare;
 pub use tidb_planner::plan_builder::field_name::{
     default_field_display_name, strip_spec_field_comment_markers,
 };
-use tidb_expr::schema::Schema;
 
 pub mod access;
 mod agg_build;
@@ -715,8 +716,8 @@ pub fn physical_plan_needs_table_storage_statistics(
         }
     }
     if let tidb_planner::physical::PhysicalPlan::MemTable(scan) = plan {
-        let table_uses_cache = scan.table_name.eq_ignore_ascii_case("TABLES")
-            || scan.table_name.eq_ignore_ascii_case("PARTITIONS");
+        let table_uses_cache =
+            scan.table_name.go_lower_eq("TABLES") || scan.table_name.go_lower_eq("PARTITIONS");
         if table_uses_cache
             && scan.columns.iter().any(|column| {
                 matches!(
@@ -751,8 +752,8 @@ pub fn physical_plan_needs_table_storage_column_lengths(
         }
     }
     if let tidb_planner::physical::PhysicalPlan::MemTable(scan) = plan {
-        let table_uses_stats = scan.table_name.eq_ignore_ascii_case("TABLES")
-            || scan.table_name.eq_ignore_ascii_case("PARTITIONS");
+        let table_uses_stats =
+            scan.table_name.go_lower_eq("TABLES") || scan.table_name.go_lower_eq("PARTITIONS");
         if table_uses_stats
             && scan.columns.iter().any(|column| {
                 matches!(

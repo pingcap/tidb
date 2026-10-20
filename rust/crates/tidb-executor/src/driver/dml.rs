@@ -21,6 +21,8 @@
 use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
 use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 
 mod correlated;
 mod defaults;
@@ -581,7 +583,7 @@ fn resolve_insert_target(
         && crate::driver::from::extra_handle_column(table).is_some()
         && named_columns
             .iter()
-            .any(|name| name.eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)))
+            .any(|name| name.go_lower_eq(tidb_model::column::EXTRA_HANDLE_NAME)))
     .then(|| {
         column_list.push((
             tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
@@ -598,7 +600,7 @@ fn resolve_insert_target(
             .map(|name| {
                 column_list
                     .iter()
-                    .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+                    .position(|(candidate, _)| candidate.go_lower_eq(name))
                     .ok_or_else(|| DriverError::UnknownColumnInClause {
                         column: name.clone(),
                         clause: "field list".to_owned(),
@@ -1171,7 +1173,7 @@ fn run_insert_rows(
                             .ok_or(DriverError::unsupported("DEFAULT() needs a column"))?;
                         let column = column_meta
                             .iter()
-                            .position(|meta| meta.name.eq_ignore_ascii_case(name))
+                            .position(|meta| meta.name.go_lower_eq(name))
                             .ok_or_else(|| DriverError::UnknownColumnInClause {
                                 column: name.clone(),
                                 clause: "field list".to_owned(),
@@ -2694,11 +2696,10 @@ fn update_assignment_values_for_plan(
     // Go `buildUpdate` resolves every assignment target while planning, so an
     // unknown one fails `EXPLAIN UPDATE` as it fails the statement.
     for assignment in &update.assignments {
-        let unknown = assignment.col.last().is_none_or(|target| {
-            !columns
-                .iter()
-                .any(|(column, _)| column.eq_ignore_ascii_case(target))
-        });
+        let unknown = assignment
+            .col
+            .last()
+            .is_none_or(|target| !columns.iter().any(|(column, _)| column.go_lower_eq(target)));
         if unknown {
             return Err(DriverError::UnknownColumnInClause {
                 column: assignment.col.join("."),
@@ -3991,7 +3992,7 @@ impl DeletePruning {
         if self.extra_handle {
             keep.insert((
                 self.visible.clone(),
-                tidb_model::column::EXTRA_HANDLE_NAME.to_ascii_lowercase(),
+                tidb_model::column::EXTRA_HANDLE_NAME.go_to_lower(),
             ));
         }
         keep
@@ -4073,11 +4074,11 @@ pub(crate) fn delete_pruning(
     Some(DeletePruning {
         kept,
         extra_handle,
-        visible: table_ref.alias.clone().unwrap_or(name).to_ascii_lowercase(),
+        visible: table_ref.alias.clone().unwrap_or(name).go_to_lower(),
         names: table
             .columns()
             .iter()
-            .map(|column| column.name.to_ascii_lowercase())
+            .map(|column| column.name.go_to_lower())
             .collect(),
     })
 }

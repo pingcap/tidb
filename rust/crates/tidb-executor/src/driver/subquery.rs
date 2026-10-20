@@ -33,6 +33,7 @@ use std::any::Any;
 
 use super::*;
 use tidb_ast::{Visitable, Visitor};
+use tidb_hack::GoCaseCompare;
 
 /// Every column `expr` reads outside an aggregate, window call, subquery, or
 /// `ANY_VALUE`/`GROUPING` subtree.
@@ -361,11 +362,7 @@ fn bind_correlated_columns(
 /// binding for `dept.id` would swallow `emp.id` and the selected `id`, and the
 /// subquery would return NULL for every outer row.
 fn paths_match(bound: &[String], candidate: &[String]) -> bool {
-    bound.len() == candidate.len()
-        && bound
-            .iter()
-            .zip(candidate)
-            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    bound.len() == candidate.len() && bound.iter().zip(candidate).all(|(a, b)| a.go_lower_eq(b))
 }
 
 /// Substitutes `bindings` for the correlated column references in every clause

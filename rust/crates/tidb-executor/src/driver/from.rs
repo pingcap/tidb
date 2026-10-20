@@ -17,6 +17,7 @@
 //! physical row execution belongs to `driver::physical_builder`.
 
 use super::*;
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 /// An internal qualifier that parsed SQL can never produce. Plain EXPLAIN
@@ -315,7 +316,7 @@ impl ColumnResolver for ScopeResolver<'_> {
         let mut found: Option<(usize, FieldType)> = None;
         for table in &self.scope.tables {
             if let Some(q) = qualifier {
-                if !q.eq_ignore_ascii_case(&table.name) {
+                if !q.go_lower_eq(&table.name) {
                     continue;
                 }
             }
@@ -323,12 +324,12 @@ impl ColumnResolver for ScopeResolver<'_> {
                 // An aliased or synthetic source carries no schema, so a
                 // schema-qualified reference cannot name it.
                 match &table.database {
-                    Some(db) if db.eq_ignore_ascii_case(schema) => {}
+                    Some(db) if db.go_lower_eq(schema) => {}
                     _ => continue,
                 }
             }
             for (i, (candidate, ft)) in table.columns.iter().enumerate() {
-                if candidate.eq_ignore_ascii_case(name) {
+                if candidate.go_lower_eq(name) {
                     if qualifier.is_none() && self.scope.coalesced.contains(&(table.offset + i)) {
                         continue;
                     }
@@ -434,7 +435,7 @@ pub(crate) fn coalesce_common_columns(
         tidb_ast::JoinType::Right => (right_visible, left_visible),
         _ => (left_visible, right_visible),
     };
-    let lower = |name: &str| name.to_ascii_lowercase();
+    let lower = |name: &str| name.go_to_lower();
     let filter: Vec<String> = using.iter().map(|name| lower(name)).collect();
     let named = |name: &str| filter.is_empty() || filter.iter().any(|f| f == &lower(name));
 
@@ -444,13 +445,13 @@ pub(crate) fn coalesce_common_columns(
     // with one it applies to every name the filter mentions.
     let ambiguous = |side: &[(usize, String, FieldType)], name: &str| {
         side.iter()
-            .filter(|(_, candidate, _)| candidate.eq_ignore_ascii_case(name))
+            .filter(|(_, candidate, _)| candidate.go_lower_eq(name))
             .count()
             > 1
     };
     let in_both = |name: &str| {
-        outer.iter().any(|(_, n, _)| n.eq_ignore_ascii_case(name))
-            && inner.iter().any(|(_, n, _)| n.eq_ignore_ascii_case(name))
+        outer.iter().any(|(_, n, _)| n.go_lower_eq(name))
+            && inner.iter().any(|(_, n, _)| n.go_lower_eq(name))
     };
     for (_, name, _) in outer.iter().chain(inner.iter()) {
         // `NATURAL` has only the common names to coalesce, so only those can
@@ -473,8 +474,7 @@ pub(crate) fn coalesce_common_columns(
         if !named(name) || taken.contains(&lower(name)) {
             continue;
         }
-        let Some((inner_offset, ..)) = inner.iter().find(|(_, n, _)| n.eq_ignore_ascii_case(name))
-        else {
+        let Some((inner_offset, ..)) = inner.iter().find(|(_, n, _)| n.go_lower_eq(name)) else {
             continue;
         };
         taken.push(lower(name));

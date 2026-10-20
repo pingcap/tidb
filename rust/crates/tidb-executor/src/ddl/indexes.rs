@@ -30,6 +30,7 @@
 //! comments record as captured from TiDB.
 
 use super::{Catalog, DdlStmt, DriverError, KvColumn, KvIndex, Stmt};
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 /// Go `GetName4AnonymousIndex` over an in-process table's indexes; see
@@ -63,7 +64,7 @@ pub fn get_name_for_anonymous_index(
         name = index_name.to_owned();
         id = 3;
     }
-    if name.eq_ignore_ascii_case("PRIMARY") {
+    if name.go_to_lower().go_equal_fold("PRIMARY") {
         name = format!("{column_name}_{id}");
         id = 3;
     }
@@ -476,7 +477,7 @@ pub(crate) fn validate_partial_index_condition(
     let column = |name: &str| {
         columns
             .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(name))
+            .find(|column| column.name.go_lower_eq(name))
             .map(|column| IndexConditionColumn {
                 field_type: column.field_type.clone(),
                 generated: column.generated.is_some(),
@@ -606,7 +607,7 @@ pub(super) fn build_index_definition(
     if table
         .indexes()
         .iter()
-        .any(|existing| existing.name.eq_ignore_ascii_case(index_name))
+        .any(|existing| existing.name.go_lower_eq(index_name))
     {
         // Go's `checkIndexNameAndColumns` turns a duplicate index name into
         // ErrDupKeyName (1061) and, for IF NOT EXISTS, appends that error as a
@@ -663,7 +664,7 @@ pub(super) fn build_index_definition(
                 let offset = table
                     .columns
                     .iter()
-                    .position(|candidate| candidate.name.eq_ignore_ascii_case(name))
+                    .position(|candidate| candidate.name.go_lower_eq(name))
                     .ok_or_else(|| DriverError::DdlCoded {
                         errno: 1072,
                         message: format!("column does not exist: {name}"),
@@ -919,7 +920,7 @@ pub fn check_expression_index_auto_increment(
             .generated
             .dependencies
             .iter()
-            .any(|dependency| dependency.eq_ignore_ascii_case(auto))
+            .any(|dependency| dependency.go_lower_eq(auto))
     }) {
         return Err(DriverError::ExpressionIndexCanNotRefer(
             index_name.to_owned(),
@@ -1193,7 +1194,7 @@ pub fn run_drop_index_in(
     match prepare_drop_index(catalog, &database, &table_name, &drop.name, drop.if_exists)? {
         IndexAdmission::Change(id) => {
             // Go `dropIndex` submits ActionDropPrimaryKey for PRIMARY.
-            let action = if drop.name.eq_ignore_ascii_case("primary") {
+            let action = if drop.name.go_lower_eq("primary") {
                 tidb_model::ActionType::ACTION_DROP_PRIMARY_KEY
             } else {
                 tidb_model::ActionType::ACTION_DROP_INDEX
@@ -1230,11 +1231,11 @@ pub(super) fn prepare_drop_index(
     let found = table
         .indexes()
         .iter()
-        .find(|index| index.name.eq_ignore_ascii_case(index_name));
+        .find(|index| index.name.go_lower_eq(index_name));
     // Go `CheckIsDropPrimaryKey`: dropping PRIMARY is dropping the primary
     // key -- 1091 naming PRIMARY when the table has none, and refused while
     // the table is clustered on it, whatever IF EXISTS says.
-    if index_name.eq_ignore_ascii_case("primary") {
+    if index_name.go_lower_eq("primary") {
         let clustered = table.pk_handle_offset().is_some()
             || found.is_some_and(|index| index.clustered_primary);
         if found.is_none() && !clustered {
@@ -1297,7 +1298,7 @@ pub(super) fn drop_prepared_index(
     let hidden: Vec<usize> = table
         .indexes()
         .iter()
-        .find(|index| index.name.eq_ignore_ascii_case(&index_name))
+        .find(|index| index.name.go_lower_eq(&index_name))
         .map(|index| {
             let mut offsets: Vec<usize> = index
                 .column_offsets
@@ -1312,11 +1313,11 @@ pub(super) fn drop_prepared_index(
         .unwrap_or_default();
     // Go `DropIndexColumnFlag`: the primary key's columns lose PRI (their
     // NOT NULL stays).
-    let primary_columns: Vec<usize> = if index_name.eq_ignore_ascii_case("primary") {
+    let primary_columns: Vec<usize> = if index_name.go_lower_eq("primary") {
         table
             .indexes()
             .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(&index_name))
+            .find(|index| index.name.go_lower_eq(&index_name))
             .map(|index| index.column_offsets.clone())
             .unwrap_or_default()
     } else {
@@ -1379,7 +1380,7 @@ pub(super) fn prepare_add_primary_key(
         || table
             .indexes()
             .iter()
-            .any(|existing| existing.name.eq_ignore_ascii_case("primary"))
+            .any(|existing| existing.name.go_lower_eq("primary"))
     {
         return Err(DriverError::MultiplePrimaryKey);
     }
@@ -1403,7 +1404,7 @@ pub(super) fn prepare_add_primary_key(
         let Some(offset) = table
             .columns()
             .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(name))
+            .position(|column| column.name.go_lower_eq(name))
             .filter(|offset| !table.is_hidden(*offset))
         else {
             // Go `ErrKeyColumnDoesNotExits` (1072), the variant foreign keys
@@ -1449,7 +1450,7 @@ pub(super) fn add_primary_key_to_table(
             tidb_ast::IndexPart::Column { name, .. } => table
                 .columns()
                 .iter()
-                .position(|column| column.name.eq_ignore_ascii_case(name)),
+                .position(|column| column.name.go_lower_eq(name)),
             tidb_ast::IndexPart::Expr { .. } => None,
         })
         .collect();

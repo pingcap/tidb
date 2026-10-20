@@ -217,6 +217,7 @@
 //!   there even when TiDB's own planner would have rewritten the expression.
 
 use tidb_error::terror::TerrorError;
+use tidb_hack::GoCaseCompare;
 use tidb_txnkv::{Key, KeyRange};
 use tidb_util::dbterror::{self, exeerrors};
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
@@ -911,7 +912,7 @@ fn check_constraint_name_exists_in_schema(
             crate::TableEntry::Kv(table) => table
                 .check_constraint_infos()
                 .iter()
-                .any(|info| info.name.original().eq_ignore_ascii_case(constraint_name)),
+                .any(|info| info.name.original().go_lower_eq(constraint_name)),
             _ => false,
         })
 }
@@ -1407,15 +1408,12 @@ fn create_table_in(
     // `Error|1060|Duplicate column name 'a'`.
     let mut seen_columns: Vec<&str> = Vec::with_capacity(create.columns.len());
     for def in &create.columns {
-        if let Some(previous) = seen_columns
-            .iter()
-            .find(|name| name.eq_ignore_ascii_case(&def.name))
-        {
+        if let Some(previous) = seen_columns.iter().find(|name| name.go_lower_eq(&def.name)) {
             return Err(DriverError::DuplicateColumnName((*previous).to_owned()));
         }
         // Go `buildColumnAndConstraint`: the reserved handle name.
-        if def.name.eq_ignore_ascii_case("_tidb_rowid") {
-            return Err(DriverError::WrongColumnName(def.name.to_lowercase()));
+        if def.name.go_lower_eq("_tidb_rowid") {
+            return Err(DriverError::WrongColumnName(def.name.go_to_lower()));
         }
         seen_columns.push(&def.name);
     }
@@ -1557,7 +1555,7 @@ fn create_table_in(
                 offsets.push(
                     columns
                         .iter()
-                        .position(|col| col.name.original().eq_ignore_ascii_case(name))
+                        .position(|col| col.name.original().go_lower_eq(name))
                         .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(name.clone()))?,
                 );
             }
@@ -1920,7 +1918,7 @@ fn create_table_in(
         match table
             .columns
             .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(named))
+            .find(|column| column.name.go_lower_eq(named))
         {
             None => {
                 return Err(DriverError::UnknownColumnInTtlConfig(named.to_owned()));
@@ -2005,7 +2003,7 @@ fn create_table_in(
                 .generated
                 .dependencies
                 .iter()
-                .any(|dependency| dependency.eq_ignore_ascii_case(&auto_name))
+                .any(|dependency| dependency.go_lower_eq(&auto_name))
             {
                 return Err(DriverError::ExpressionIndexCanNotRefer(
                     indexes
@@ -2172,7 +2170,7 @@ fn create_table_in(
             .filter_map(|name| {
                 columns
                     .iter()
-                    .position(|column| column.name.original().eq_ignore_ascii_case(name))
+                    .position(|column| column.name.original().go_lower_eq(name))
             })
             .collect();
         let covered = |offsets: &[usize]| offsets.starts_with(&fk_offsets[..]);
@@ -2191,7 +2189,7 @@ fn create_table_in(
             if table
                 .indexes()
                 .iter()
-                .any(|index| index.name.eq_ignore_ascii_case(&foreign_key.name))
+                .any(|index| index.name.go_lower_eq(&foreign_key.name))
             {
                 return Err(DriverError::DdlCoded {
                     errno: tidb_error::mysql::errcode::ErrDupKeyName,
@@ -2345,8 +2343,8 @@ fn create_table_in(
                 .collect();
             for foreign_key in child.foreign_keys() {
                 if foreign_key.version >= tidb_model::table::FK_VERSION1
-                    && foreign_key.ref_schema.eq_ignore_ascii_case(&database)
-                    && foreign_key.ref_table.eq_ignore_ascii_case(name)
+                    && foreign_key.ref_schema.go_lower_eq(&database)
+                    && foreign_key.ref_table.go_lower_eq(name)
                 {
                     table_constraints::validate_foreign_key_parent(
                         foreign_key,
@@ -2397,7 +2395,7 @@ fn create_table_in(
     });
     if let Some(name) = written_policy
         .as_ref()
-        .filter(|name| !name.eq_ignore_ascii_case(placement_policy::DEFAULT_PLACEMENT_POLICY_NAME))
+        .filter(|name| !name.go_lower_eq(placement_policy::DEFAULT_PLACEMENT_POLICY_NAME))
     {
         let Some(policy) = catalog.policy(name) else {
             return Err(DriverError::PlacementPolicyNotExists(name.clone()));
@@ -2423,7 +2421,7 @@ fn create_table_in(
                     reference
                         .name
                         .original()
-                        .eq_ignore_ascii_case(placement_policy::DEFAULT_PLACEMENT_POLICY_NAME)
+                        .go_lower_eq(placement_policy::DEFAULT_PLACEMENT_POLICY_NAME)
                 })
             {
                 definition.placement_policy = None;
@@ -2584,6 +2582,9 @@ fn register_created_table(
         table.use_local_temporary_auto_id();
         catalog.register_local_temporary_in(database, name, table)
     } else {
+        for column in table.columns_mut() {
+            column.reload_from_meta_json();
+        }
         // The job Go submits for the built table.
         bdr::submit(
             catalog,

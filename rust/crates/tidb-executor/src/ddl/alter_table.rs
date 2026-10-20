@@ -44,6 +44,7 @@ use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
 use tidb_datatype::{Charset, Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 /// Go's worker reaches the revertible AUTO_RANDOM checks before executing
@@ -225,7 +226,7 @@ fn run_compact_table(
             !partition
                 .definitions
                 .iter()
-                .any(|definition| definition.name.eq_ignore_ascii_case(written))
+                .any(|definition| definition.name.go_lower_eq(written))
         }) {
             return Err(DriverError::UnknownPartition {
                 partition: unknown.clone(),
@@ -1023,7 +1024,7 @@ fn submitted_jobs(
         Action::DropPrimaryKey(_) => Job::new(A::ACTION_DROP_PRIMARY_KEY),
         // Go `CheckIsDropPrimaryKey`: dropping the index named PRIMARY is
         // dropping the primary key.
-        Action::DropIndex { name, .. } if name.eq_ignore_ascii_case("primary") => {
+        Action::DropIndex { name, .. } if name.go_lower_eq("primary") => {
             Job::new(A::ACTION_DROP_PRIMARY_KEY)
         }
         Action::DropIndex { .. } => Job::new(A::ACTION_DROP_INDEX),
@@ -2115,11 +2116,10 @@ fn reject_drop_index_used_by_added_foreign_key(
     // Go `checkOperateDropIndexUseByForeignKey`: a new constraint refuses the
     // drop only when a DROPPING index covers its columns and no REMAINING one
     // does (`FindIndexByColumnsForForeignKey` over each set).
-    let (dropping, remaining): (Vec<_>, Vec<_>) = table.indexes().iter().partition(|index| {
-        drops
-            .iter()
-            .any(|name| index.name.eq_ignore_ascii_case(name))
-    });
+    let (dropping, remaining): (Vec<_>, Vec<_>) = table
+        .indexes()
+        .iter()
+        .partition(|index| drops.iter().any(|name| index.name.go_lower_eq(name)));
     // Go `IsIndexPrefixCoveredForForeignKey`: the leading key parts are the
     // constraint's columns in order, each stored whole, under a partial-index
     // predicate the checked rows all satisfy.
@@ -2144,7 +2144,7 @@ fn reject_drop_index_used_by_added_foreign_key(
                 table
                     .columns
                     .iter()
-                    .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
+                    .position(|candidate| candidate.name.go_lower_eq(column))
             })
             .collect::<Option<Vec<usize>>>()
         else {
@@ -2650,7 +2650,7 @@ fn prepare_table_options(
         });
     }
     if let Some(policy) = placement {
-        let reference = if policy.eq_ignore_ascii_case("default") {
+        let reference = if policy.go_lower_eq("default") {
             None
         } else {
             let found = catalog
@@ -2710,7 +2710,7 @@ fn prepare_partition_options(
         });
     };
     // Go `checkAndNormalizePlacementPolicy`: `DEFAULT` clears the reference.
-    let policy = if policy.eq_ignore_ascii_case("default") {
+    let policy = if policy.go_lower_eq("default") {
         None
     } else {
         let found = catalog
@@ -4051,7 +4051,7 @@ fn collect_partition_column_usage(
         tidb_ast::Expr::Column(path) => {
             if path
                 .last()
-                .is_some_and(|name| name.eq_ignore_ascii_case(target))
+                .is_some_and(|name| name.go_to_lower().go_equal_fold(&target.go_to_lower()))
                 && !usage.contains(&current)
             {
                 usage.push(current);
@@ -4334,7 +4334,9 @@ pub(super) fn prepare_modify_column(
     let Some(offset) = table
         .columns
         .iter()
-        .position(|column| column.name.eq_ignore_ascii_case(old_name))
+        // The worker resolves `OldColumnName.L` (`getModifyColumnInfo`); see
+        // `prepare_rename_column`.
+        .position(|column| column.name.go_lower_eq(old_name))
     else {
         // Go's `IF EXISTS` demotes the missing column rather than silencing
         // it. Captured: `alter table t modify column if exists no_col bigint`
@@ -4352,14 +4354,15 @@ pub(super) fn prepare_modify_column(
     };
     // Go `GetModifiableColumnJob`: the new name may not be the reserved
     // handle name.
-    if def.name.eq_ignore_ascii_case("_tidb_rowid") {
-        return Err(DriverError::WrongColumnName(def.name.to_lowercase()));
+    if def.name.go_lower_eq("_tidb_rowid") {
+        return Err(DriverError::WrongColumnName(def.name.go_to_lower()));
     }
     let partition_column = table.partition().is_some_and(|partition| {
-        partition
-            .dependencies
-            .iter()
-            .any(|dependency| dependency.eq_ignore_ascii_case(old_name))
+        partition.dependencies.iter().any(|dependency| {
+            dependency
+                .go_to_lower()
+                .go_equal_fold(&table.columns[offset].name.go_to_lower())
+        })
     });
     // Go `getModifiableColumnJob` (`pkg/ddl/modify_column.go`) computes
     // `checkModifyColumnWithGeneratedColumnsConstraint` ONCE and then raises
@@ -4377,11 +4380,11 @@ pub(super) fn prepare_modify_column(
     };
     // A rename onto another column's name is a duplicate, but renaming a
     // column to the name it already has is allowed.
-    if !def.name.eq_ignore_ascii_case(old_name) {
+    if !def.name.go_lower_eq(old_name) {
         if table
             .columns
             .iter()
-            .any(|column| column.name.eq_ignore_ascii_case(&def.name))
+            .any(|column| column.name.go_equal_fold(&def.name.go_to_lower()))
         {
             return Err(DriverError::DuplicateColumnName(def.name.clone()));
         }
@@ -4700,7 +4703,7 @@ pub(super) fn prepare_modify_column(
         if !table
             .columns()
             .iter()
-            .any(|column| column.name.eq_ignore_ascii_case(anchor))
+            .any(|column| column.name.go_lower_eq(anchor))
         {
             return Err(DriverError::Mysql(crate::MysqlError::new(
                 tidb_error::mysql::errcode::ErrBadField,
@@ -4719,8 +4722,7 @@ pub(super) fn prepare_modify_column(
     // Go `GetModifiableColumnJob`: the column a TTL config reads must stay a
     // time type.
     if table.ttl_info().is_some_and(|info| {
-        info.column_name.original().eq_ignore_ascii_case(old_name)
-            && !field_type.code().is_type_time()
+        info.column_name.original().go_lower_eq(old_name) && !field_type.code().is_type_time()
     }) {
         return Err(DriverError::UnsupportedColumnInTtlConfig(def.name.clone()));
     }
@@ -4852,7 +4854,7 @@ pub(super) fn prepare_add_column(
     if table
         .columns()
         .iter()
-        .any(|column| column.name.eq_ignore_ascii_case(&def.name))
+        .any(|column| column.name.go_equal_fold(&def.name))
     {
         // Go's checkAndCreateNewColumn reports ErrColumnExists right after
         // `checkUnsupportedColumnConstraint`, then lets an individual IF NOT
@@ -4980,8 +4982,8 @@ pub(super) fn prepare_add_column(
         ));
     };
     // Go `buildColumnAndConstraint` refuses the reserved handle name.
-    if def.name.eq_ignore_ascii_case("_tidb_rowid") {
-        return Err(DriverError::WrongColumnName(def.name.to_lowercase()));
+    if def.name.go_lower_eq("_tidb_rowid") {
+        return Err(DriverError::WrongColumnName(def.name.go_to_lower()));
     }
     let index = column_changes::position(table, position, None, table_name)?
         .unwrap_or(table.visible_column_count());
@@ -5057,7 +5059,7 @@ pub(super) fn prepare_add_column(
                     generated
                         .dependencies
                         .iter()
-                        .any(|dependency| dependency.eq_ignore_ascii_case(&auto_increment.name))
+                        .any(|dependency| dependency.go_lower_eq(&auto_increment.name))
                 }) {
                     return Err(DriverError::DdlCoded {
                         errno: 3109,
@@ -5072,7 +5074,7 @@ pub(super) fn prepare_add_column(
                 let Some(dependency_offset) = table
                     .columns
                     .iter()
-                    .position(|column| column.name.eq_ignore_ascii_case(dependency))
+                    .position(|column| column.name.go_lower_eq(dependency))
                 else {
                     // The full-table resolver above already turns this into
                     // Go's 1054, so this is defensive if the resolver ever
@@ -5146,7 +5148,9 @@ pub(super) fn prepare_drop_column(
     let Some(offset) = table
         .visible_columns()
         .iter()
-        .position(|column| column.name.eq_ignore_ascii_case(column_name))
+        // `checkIsDroppableColumn` asks `table.FindCol`, but the job drops
+        // `model.FindColumnInfo(tblInfo.Columns, colName.L)`.
+        .position(|column| column.name.go_lower_eq(column_name))
     else {
         // Captured: `alter table t drop column if exists no_col` leaves
         // `Note | 1091 | Can't DROP 'no_col'; check that column/key exists` --
@@ -5171,7 +5175,7 @@ pub(super) fn prepare_drop_column(
     // a TTL config names cannot be dropped while the config stands
     // (`ErrTTLColumnCannotDrop`, 8149); the TTL_ENABLE clause must go first.
     if let Some(info) = table.ttl_info() {
-        if info.column_name.lowercase() == column_name.to_ascii_lowercase() {
+        if info.column_name.lowercase() == column_name.go_to_lower() {
             return Err(DriverError::TtlColumnCannotDrop(column_name.to_owned()));
         }
     }
@@ -5330,7 +5334,7 @@ fn validate_ttl_column(table: &crate::KvTable, named: &str) -> Result<(), Driver
     match table
         .columns
         .iter()
-        .find(|column| column.name.eq_ignore_ascii_case(named))
+        .find(|column| column.name.go_lower_eq(named))
     {
         None => Err(DriverError::UnknownColumnInTtlConfig(named.to_owned())),
         Some(column) if !column.field_type.code().is_type_time() => {

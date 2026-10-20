@@ -133,6 +133,7 @@ fn merge_analyzed_statistics(
     merged
         .index_fm_sketches
         .append(&mut fresh.index_fm_sketches);
+    merged.mv_index_ids.append(&mut fresh.mv_index_ids);
     finish_analyze_publication(&mut merged);
     merged
 }

@@ -18,6 +18,7 @@
 
 use super::{Catalog, DriverError};
 use crate::kv_table::KvForeignKey;
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 pub(super) enum PreparedConstraintChange {
@@ -59,7 +60,7 @@ pub(super) fn prepare(
             if !table
                 .foreign_keys()
                 .iter()
-                .any(|key| key.name.eq_ignore_ascii_case(&drop.name))
+                .any(|key| key.name.go_lower_eq(&drop.name))
             {
                 return Err(DriverError::UnknownColumnInAlter(drop.name.clone()));
             }
@@ -131,7 +132,7 @@ impl PreparedConstraintChange {
                 if table
                     .foreign_keys()
                     .iter()
-                    .any(|key| key.name.eq_ignore_ascii_case(&foreign_key.name))
+                    .any(|key| key.name.go_lower_eq(&foreign_key.name))
                 {
                     return Err(DriverError::FkDupName(foreign_key.name));
                 }
@@ -332,7 +333,7 @@ fn prepare_drop_check(
     let mut infos = table.check_constraint_infos().to_vec();
     let Some(offset) = infos
         .iter()
-        .position(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
+        .position(|info| info.name.original().go_lower_eq(constraint_name))
     else {
         return Err(DriverError::CheckConstraintNotExists(
             constraint_name.to_owned(),
@@ -356,7 +357,7 @@ fn prepare_alter_check(
     let mut infos = table.check_constraint_infos().to_vec();
     let Some(info) = infos
         .iter_mut()
-        .find(|info| info.name.original().eq_ignore_ascii_case(constraint_name))
+        .find(|info| info.name.original().go_lower_eq(constraint_name))
     else {
         return Err(DriverError::CheckConstraintNotExists(
             constraint_name.to_owned(),
@@ -390,7 +391,7 @@ fn prepare_add_foreign_key(
     if table
         .foreign_keys()
         .iter()
-        .any(|key| key.name.eq_ignore_ascii_case(&fk_name))
+        .any(|key| key.name.go_lower_eq(&fk_name))
     {
         return Err(DriverError::FkDupName(fk_name));
     }
@@ -482,14 +483,14 @@ fn validate_alter_foreign_key_parent(
     if !tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
-    let self_reference = foreign_key.ref_schema.eq_ignore_ascii_case(database)
-        && foreign_key.ref_table.eq_ignore_ascii_case(child_table)
+    let self_reference = foreign_key.ref_schema.go_lower_eq(database)
+        && foreign_key.ref_table.go_lower_eq(child_table)
         && foreign_key.cols.len() == foreign_key.ref_cols.len()
         && foreign_key
             .cols
             .iter()
             .zip(&foreign_key.ref_cols)
-            .all(|(child, parent)| child.eq_ignore_ascii_case(parent));
+            .all(|(child, parent)| child.go_lower_eq(parent));
     if self_reference {
         return Err(DriverError::DdlCoded {
             errno: 1215,
@@ -512,7 +513,7 @@ fn validate_alter_foreign_key_parent(
             parent
                 .columns
                 .iter()
-                .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
+                .position(|candidate| candidate.name.go_lower_eq(column))
         })
         .collect::<Option<Vec<_>>>()
     else {

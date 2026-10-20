@@ -25,6 +25,7 @@
 use super::*;
 use crate::kv_table::TableCharset;
 use std::collections::{BTreeMap, HashSet};
+use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
 // Cache versions must distinguish independently rebuilt catalogs and schema
@@ -547,15 +548,19 @@ impl PlannerCatalog {
 /// `LogicalMemTable`; `buildDataSource` plans it as a table whose scan runs
 /// on the TiDB store. Only `CLUSTER_SLOW_QUERY` has a primary key, and
 /// because its `time` column is not an integer, Go makes it a COMMON handle.
-fn mark_cluster_table(table: &mut tidb_planner::plan_builder::catalog::SourceTable, database: &str, name: &str) {
-    if !database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+fn mark_cluster_table(
+    table: &mut tidb_planner::plan_builder::catalog::SourceTable,
+    database: &str,
+    name: &str,
+) {
+    if !database.go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
         || !crate::driver::infoschema_meta::is_cluster_table_name(name)
     {
         return;
     }
     table.is_memory_table = false;
     table.is_cluster_table = true;
-    if !table.table_name.eq_ignore_ascii_case("CLUSTER_SLOW_QUERY") {
+    if !table.table_name.go_lower_eq("CLUSTER_SLOW_QUERY") {
         return;
     }
     let Some(offset) = table.columns.iter().position(|column| {
@@ -588,9 +593,9 @@ fn mark_cluster_table(table: &mut tidb_planner::plan_builder::catalog::SourceTab
 }
 
 fn is_virtual_schema_table(database: &str, name: &str) -> bool {
-    database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
-        || database.eq_ignore_ascii_case(crate::driver::metricsschema::METRICS_SCHEMA)
-        || (database.eq_ignore_ascii_case(crate::driver::perfschema::PERFORMANCE_SCHEMA)
+    database.go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+        || database.go_lower_eq(crate::driver::metricsschema::METRICS_SCHEMA)
+        || (database.go_lower_eq(crate::driver::perfschema::PERFORMANCE_SCHEMA)
             && crate::driver::perfschema::is_predefined_table(name))
 }
 
@@ -1401,7 +1406,7 @@ impl Catalog {
         names.sort();
         if let Some(position) = names
             .iter()
-            .position(|name| name.eq_ignore_ascii_case("information_schema"))
+            .position(|name| name.go_equal_fold("information_schema"))
         {
             let front = names.remove(position);
             names.insert(0, front);
@@ -1431,7 +1436,7 @@ impl Catalog {
         let database = self.databases.get(&database.go_to_lower())?;
         let is_information_schema = database
             .name
-            .eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA);
+            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA);
         let mut names: Vec<String> = database
             .tables
             .iter()
@@ -1676,7 +1681,7 @@ impl Catalog {
     /// Go `infoschema.ResourceGroupByName`, folded.
     #[must_use]
     pub fn resource_group(&self, name: &str) -> Option<&tidb_model::ResourceGroupInfo> {
-        self.resource_groups.get(&name.to_lowercase())
+        self.resource_groups.get(&name.go_to_lower())
     }
 
     /// Every resource group, for `information_schema.RESOURCE_GROUPS`.
@@ -1701,7 +1706,7 @@ impl Catalog {
     /// Go `onDropResourceGroup`'s meta delete.
     pub fn drop_resource_group(&mut self, name: &str) -> bool {
         self.bump_metadata_version();
-        let dropped = self.resource_groups.remove(&name.to_lowercase()).is_some();
+        let dropped = self.resource_groups.remove(&name.go_to_lower()).is_some();
         if dropped {
             self.bump_version();
         }
@@ -2253,7 +2258,7 @@ impl Catalog {
             .collect();
         memory_tables.sort_unstable();
         let memory_table_id = |database: &str, name: &str| {
-            if database.eq_ignore_ascii_case(crate::driver::infoschema_meta::INFORMATION_SCHEMA) {
+            if database.go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA) {
                 if let Some(id) = crate::driver::infoschema_meta::memory_table_id(name) {
                     return id;
                 }
@@ -2292,9 +2297,10 @@ impl Catalog {
                     TableEntry::Kv(table)
                         if is_virtual_schema_table(&database.name, entry_name) =>
                     {
-                        let table_name = if database.name.eq_ignore_ascii_case(
-                            crate::driver::infoschema_meta::INFORMATION_SCHEMA,
-                        ) {
+                        let table_name = if database
+                            .name
+                            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+                        {
                             crate::driver::infoschema_meta::canonical_table_name(entry_name)
                                 .map_or_else(|| entry_name.clone(), str::to_owned)
                         } else {
@@ -2477,9 +2483,10 @@ impl Catalog {
                         // Go's memory-table `TableInfo.Name.O` is the
                         // table's own spelling, which the scan's access
                         // object and output names print.
-                        let table_name = if database.name.eq_ignore_ascii_case(
-                            crate::driver::infoschema_meta::INFORMATION_SCHEMA,
-                        ) {
+                        let table_name = if database
+                            .name
+                            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+                        {
                             crate::driver::infoschema_meta::canonical_table_name(entry_name)
                                 .map_or_else(|| entry_name.clone(), str::to_owned)
                         } else {
@@ -3375,7 +3382,7 @@ impl Catalog {
                     && generated
                         .dependencies
                         .iter()
-                        .any(|dependency| dependency.eq_ignore_ascii_case(name)))
+                        .any(|dependency| dependency.go_lower_eq(name)))
                 .then_some(tidb_model::TableItemID {
                     table_id: column.table_id,
                     id: metadata.id,
@@ -4602,7 +4609,7 @@ impl ColumnResolver for TableResolver<'_> {
             [schema, table, name] => {
                 if !self
                     .database
-                    .is_some_and(|database| database.eq_ignore_ascii_case(schema))
+                    .is_some_and(|database| database.go_lower_eq(schema))
                 {
                     return None;
                 }
@@ -4611,13 +4618,13 @@ impl ColumnResolver for TableResolver<'_> {
             _ => return None,
         };
         if let Some(q) = qualifier {
-            if !q.eq_ignore_ascii_case(self.table_name) {
+            if !q.go_lower_eq(self.table_name) {
                 return None;
             }
         }
         self.columns
             .iter()
-            .position(|(n, _)| n.eq_ignore_ascii_case(name))
+            .position(|(n, _)| n.go_lower_eq(name))
             .map(|i| (i, self.columns[i].1.clone(), (i + 1) as i64))
     }
 }

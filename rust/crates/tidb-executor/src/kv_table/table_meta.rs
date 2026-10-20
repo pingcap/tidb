@@ -870,4 +870,64 @@ impl KvColumn {
         )
         .map(|converted| converted.value)
     }
+
+    /// The column as Go's infoschema holds it once the DDL that built it
+    /// returns: the job carries the `ColumnInfo` through `encoding/json`, the
+    /// owner writes it to meta the same way, and `infoschema.Builder` reads
+    /// it back, so every Go string of the column -- the `FieldType`'s
+    /// `Elems`, `DefaultValue`, `OriginDefaultValue`, `Comment` -- has each
+    /// byte that is not UTF-8 replaced by U+FFFD (`encodeState.string`). The
+    /// DDL validates against the raw bytes first (a latin1 client's
+    /// `ENUM('d\xE9') DEFAULT 'd\xE9'` is admitted), and what it stores is
+    /// the replaced form. A BIT default is the exception: Go keeps it in the
+    /// base64 `DefaultValueBit`/`OriginDefaultValueBit`, which round-trip
+    /// exactly. A LOCAL temporary table never reaches meta and must not be
+    /// passed through here.
+    pub(crate) fn reload_from_meta_json(&mut self) {
+        self.field_type = FieldType::from_json(
+            &self
+                .field_type
+                .to_json()
+                .expect("a column FieldType always encodes as Go JSON"),
+        )
+        .expect("Go JSON a FieldType encoded decodes back");
+        let bit = self.field_type.code() == tidb_datatype::FieldTypeCode::Bit;
+        if !bit {
+            if let Some(crate::column_default::ColumnDefault::Value(value)) =
+                &mut self.default_value
+            {
+                *value = go_json_string_round_trip(std::mem::take(value));
+            }
+            if let Some(value) = &mut self.origin_default {
+                *value = go_json_string_round_trip(std::mem::take(value));
+            }
+        }
+        if tidb_hack::raw_bytes::contains_escapes(&self.comment) {
+            self.comment = tidb_datatype::decode_go_utf8_lossy(
+                tidb_hack::raw_bytes::str_to_bytes(&self.comment).as_ref(),
+            );
+        }
+    }
+}
+
+/// A stored default after `encoding/json`: Go keeps a column default as a
+/// Go string, so its bytes come back with each byte that is not UTF-8 read
+/// as U+FFFD; a value of any other kind has no string to replace.
+fn go_json_string_round_trip(value: Datum) -> Datum {
+    let replaced = |bytes: &[u8]| tidb_datatype::decode_go_utf8_lossy(bytes).into_bytes();
+    match value {
+        Datum::String(string) => {
+            Datum::new_collation_string(replaced(string.bytes()), string.collation())
+        }
+        Datum::Bytes(bytes) => Datum::Bytes(replaced(&bytes)),
+        Datum::Enum(member, collation) => Datum::Enum(
+            tidb_datatype::MysqlEnum::new(replaced(member.name_bytes()), member.value()),
+            collation,
+        ),
+        Datum::Set(members, collation) => Datum::Set(
+            tidb_datatype::MysqlSet::new(replaced(members.name_bytes()), members.value()),
+            collation,
+        ),
+        other => other,
+    }
 }

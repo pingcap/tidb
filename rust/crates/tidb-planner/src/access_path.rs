@@ -1433,18 +1433,16 @@ pub fn apply_table_index_hints(
             let mut prefix_matches = 0;
             let exact_path = public_paths.iter().find(|path| match path {
                 PossiblePath::Table { .. } => {
-                    name.eq_ignore_ascii_case("primary")
+                    tidb_mysql::lowercase_equal(name, "primary")
                         && (table.pk_is_handle || table.is_common_handle)
                 }
                 PossiblePath::Index { index } => {
                     table.indexes.get(*index).is_some_and(|metadata| {
-                        if metadata.name.eq_ignore_ascii_case(name) {
+                        if tidb_mysql::lowercase_equal(&metadata.name, name) {
                             return true;
                         }
-                        if metadata
-                            .name
-                            .to_ascii_lowercase()
-                            .starts_with(&name.to_ascii_lowercase())
+                        if tidb_mysql::to_lowercase(&metadata.name)
+                            .starts_with(&tidb_mysql::to_lowercase(name))
                         {
                             prefix_path = Some(*path);
                             prefix_matches += 1;
@@ -1479,7 +1477,7 @@ pub fn apply_table_index_hints(
             }
             let is_tikv_index = match path {
                 PossiblePath::Table { .. } => {
-                    name.eq_ignore_ascii_case("primary") && table.pk_is_handle
+                    tidb_mysql::lowercase_equal(name, "primary") && table.pk_is_handle
                         || table.is_common_handle
                 }
                 PossiblePath::Index { index } => table
@@ -1614,8 +1612,8 @@ pub fn fast_index_is_available_by_hints(
     use tidb_ast::{HintKind, IndexHintKind, IndexHintScope};
 
     let matches_target = |name: &str| match index_name {
-        Some(index) => index.eq_ignore_ascii_case(name),
-        None => name.eq_ignore_ascii_case("primary"),
+        Some(index) => tidb_mysql::lowercase_equal(index, name),
+        None => tidb_mysql::lowercase_equal(name, "primary"),
     };
     let mut is_ignore = false;
     // Go skips any hint whose scope is not `HintForScan` before it can mark
@@ -1660,8 +1658,8 @@ pub fn fast_index_is_available_by_hints(
             _ => continue,
         };
         let hint_db = table.db_name.as_deref().unwrap_or(current_db);
-        if !table.name.eq_ignore_ascii_case(table_alias)
-            || !(hint_db.eq_ignore_ascii_case(db_name) || hint_db == "*")
+        if !tidb_mysql::lowercase_equal(&table.name, table_alias)
+            || !(tidb_mysql::lowercase_equal(hint_db, db_name) || hint_db == "*")
         {
             continue;
         }

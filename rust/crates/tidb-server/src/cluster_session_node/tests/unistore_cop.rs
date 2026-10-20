@@ -4654,6 +4654,165 @@ fn add_column_ddl_initializes_statistics_like_go() {
     );
 }
 
+/// Go `analyzeColumnsPushDown` samples `FullIntRange` over an integer primary
+/// key (an unsigned one split across the int64 boundary into one list, the
+/// unsigned half first), `FullNotNullRange` over a clustered key and the
+/// signed `FullIntRange` without a handle column -- never the record prefix
+/// and its `PrefixNext`, which TiKV's table scan answers as a point get of
+/// that prefix: no rows, so `stats_meta.count` 0. Unistore scans any range,
+/// so the request is checked at the store's RPC client, as Go's
+/// `UnistoreRPCClientSendHook` does.
+#[test]
+fn analyze_samples_the_go_handle_ranges() {
+    use tikv_client::proto::coprocessor;
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    for statement in [
+        "CREATE TABLE range_int (a INT PRIMARY KEY, b INT, KEY(b))",
+        "CREATE TABLE range_unsigned (a BIGINT UNSIGNED PRIMARY KEY, b INT)",
+        "CREATE TABLE range_clustered (a VARCHAR(10), b INT, PRIMARY KEY(a) CLUSTERED)",
+        "CREATE TABLE range_rowid (a INT, b INT)",
+        "INSERT INTO range_int VALUES (1, 1), (2, 2), (3, 3)",
+        "INSERT INTO range_unsigned VALUES \
+         (1, 1), (9223372036854775808, 2), (18446744073709551615, 3)",
+        "INSERT INTO range_clustered VALUES ('a', 1), ('b', 2), ('c', 3)",
+        "INSERT INTO range_rowid VALUES (1, 1), (NULL, 2), (3, 3)",
+    ] {
+        rows(&mut session, statement);
+    }
+    let sent: Arc<std::sync::Mutex<Vec<(Vec<u8>, Vec<u8>)>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        let Some(request) = request.as_any().downcast_ref::<coprocessor::Request>() else {
+            return;
+        };
+        if request.tp == tidb_unistore::cophandler::REQ_TYPE_ANALYZE {
+            recorded.lock().unwrap().extend(
+                request
+                    .ranges
+                    .iter()
+                    .map(|range| (range.start.clone(), range.end.clone())),
+            );
+        }
+    })));
+    let min_int = vec![0; 8];
+    let max_int_next = [[0xff; 8].as_slice(), &[0]].concat();
+    let unsigned_boundary = [0x80, 0, 0, 0, 0, 0, 0, 0].to_vec();
+    for (table, expected) in [
+        ("range_int", vec![(min_int.clone(), max_int_next.clone())]),
+        (
+            "range_unsigned",
+            vec![
+                (min_int.clone(), unsigned_boundary.clone()),
+                (unsigned_boundary.clone(), max_int_next.clone()),
+            ],
+        ),
+        ("range_clustered", vec![(vec![0x01], vec![0xfb])]),
+        ("range_rowid", vec![(min_int.clone(), max_int_next.clone())]),
+    ] {
+        let table_id: i64 = displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT TIDB_TABLE_ID FROM information_schema.tables \
+                 WHERE table_schema = 'test' AND table_name = '{table}'"
+            ),
+        ))[0][0]
+            .parse()
+            .expect("table id");
+        sent.lock().unwrap().clear();
+        rows(&mut session, &format!("ANALYZE TABLE {table}"));
+        let prefix = tidb_codec::table_key::gen_table_record_prefix(table_id);
+        let expected = expected
+            .into_iter()
+            .map(|(low, high)| {
+                (
+                    [prefix.as_slice(), &low].concat(),
+                    [prefix.as_slice(), &high].concat(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let analyzed = sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(start, _)| start.starts_with(&prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(analyzed, expected, "{table}");
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count FROM mysql.stats_meta WHERE table_id = {table_id}"),
+            )),
+            [["3"]],
+            "{table}"
+        );
+    }
+    stack.rpc.set_send_hook(None);
+}
+
+/// Go `getAdjustedSampleRate` takes `RealtimeCount` from
+/// `GetPhysicalTableStats` -- the statistics cache, or `PseudoTable` on a
+/// miss -- not from the `mysql.stats_meta` row itself. With `stats-lease = 0`
+/// nothing reloads the cache between statements, so a changed stored count
+/// is not what the next ANALYZE's sample-rate note reports.
+#[test]
+fn analyze_sample_rate_reads_the_statistics_cache() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(crate::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(79))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(
+        &mut session,
+        "CREATE TABLE rate_cache (a INT PRIMARY KEY, b INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO rate_cache VALUES (1, 1), (2, 2), (3, 3)",
+    );
+    let table_id: i64 = displayed(rows(
+        &mut session,
+        "SELECT TIDB_TABLE_ID FROM information_schema.tables \
+         WHERE table_schema = 'test' AND table_name = 'rate_cache'",
+    ))[0][0]
+        .parse()
+        .expect("table id");
+    let note = |count: &str| {
+        [
+            "Note".to_owned(),
+            "1105".to_owned(),
+            format!(
+                "Analyze use auto adjusted sample rate 1.000000 for table test.rate_cache, \
+                 reason to use this rate is \"use min(1, 110000/{count}) as the sample-rate=1\""
+            ),
+        ]
+    };
+    rows(&mut session, "ANALYZE TABLE rate_cache");
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [note("10000")],
+        "a table the cache has not loaded is PseudoTable"
+    );
+    rows(
+        &mut session,
+        &format!("UPDATE mysql.stats_meta SET count = 1000 WHERE table_id = {table_id}"),
+    );
+    rows(&mut session, "ANALYZE TABLE rate_cache");
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW WARNINGS")),
+        [note("3")],
+        "the cache holds what the first ANALYZE saved"
+    );
+}
+
 /// Pinned storage `TestDeleteAnalyzeJobs` begins with the ordinary ANALYZE
 /// lifecycle: the job is inserted pending, run, and retained finished for
 /// `SHOW ANALYZE STATUS` until timestamp-based cleanup removes it.

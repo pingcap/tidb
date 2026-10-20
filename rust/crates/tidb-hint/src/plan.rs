@@ -51,10 +51,8 @@ impl HintedTable {
     /// Go `HintedTable.Match`.
     pub fn matches(&self, other: &Self) -> bool {
         self.select_offset == other.select_offset
-            && self.table_name.eq_ignore_ascii_case(&other.table_name)
-            && (self
-                .database_name
-                .eq_ignore_ascii_case(&other.database_name)
+            && tidb_mysql::lowercase_equal(&self.table_name, &other.table_name)
+            && (tidb_mysql::lowercase_equal(&self.database_name, &other.database_name)
                 || self.database_name == "*"
                 || other.database_name == "*")
     }
@@ -97,8 +95,9 @@ pub struct HintedIndex {
 impl HintedIndex {
     /// Go `HintedIndex.Match`.
     pub fn matches(&self, database_name: &str, table_name: &str) -> bool {
-        self.table_name.eq_ignore_ascii_case(table_name)
-            && (self.database_name.eq_ignore_ascii_case(database_name) || self.database_name == "*")
+        tidb_mysql::lowercase_equal(&self.table_name, table_name)
+            && (tidb_mysql::lowercase_equal(&self.database_name, database_name)
+                || self.database_name == "*")
     }
 
     /// Go `HintedIndex.ShouldPushDownIndexLookUp`.
@@ -128,7 +127,7 @@ impl HintedIndex {
             let lowered: Vec<String> = self
                 .index_names
                 .iter()
-                .map(|name| name.to_lowercase())
+                .map(|name| tidb_mysql::to_lowercase(name))
                 .collect();
             value.push_str(", ");
             value.push_str(&lowered.join(", "));
@@ -680,10 +679,10 @@ pub fn restore_join_hint(hint_type: &str, tables: &[HintedTable]) -> String {
         tables
             .iter()
             .map(|table| {
-                let mut value = table.table_name.to_ascii_lowercase();
+                let mut value = tidb_mysql::to_lowercase(&table.table_name);
                 if !table.partitions.is_empty() {
                     value.push_str(" PARTITION(");
-                    value.push_str(&table.partitions.join(", ").to_ascii_lowercase());
+                    value.push_str(&tidb_mysql::to_lowercase(&table.partitions.join(", ")));
                     value.push(')');
                 }
                 value
@@ -698,11 +697,11 @@ pub fn restore_index_hint(hint_type: &str, hint: &HintedIndex) -> String {
     let mut value = format!(
         "/*+ {}({}",
         hint_type.to_ascii_uppercase(),
-        hint.table_name.to_ascii_lowercase()
+        tidb_mysql::to_lowercase(&hint.table_name)
     );
     if !hint.partitions.is_empty() {
         value.push_str(" PARTITION(");
-        value.push_str(&hint.partitions.join(", ").to_ascii_lowercase());
+        value.push_str(&tidb_mysql::to_lowercase(&hint.partitions.join(", ")));
         value.push(')');
     }
     for (offset, index) in hint.index_names.iter().enumerate() {
@@ -710,7 +709,7 @@ pub fn restore_index_hint(hint_type: &str, hint: &HintedIndex) -> String {
             value.push(',');
         }
         value.push(' ');
-        value.push_str(&index.to_ascii_lowercase());
+        value.push_str(&tidb_mysql::to_lowercase(index));
     }
     value.push_str(") */");
     value
@@ -744,10 +743,10 @@ pub fn restore_storage_hint(tiflash: &[HintedTable], tikv: &[HintedTable]) -> St
 }
 
 fn restore_table_argument(table: &HintedTable) -> String {
-    let mut value = table.table_name.to_ascii_lowercase();
+    let mut value = tidb_mysql::to_lowercase(&table.table_name);
     if !table.partitions.is_empty() {
         value.push_str(" PARTITION(");
-        value.push_str(&table.partitions.join(", ").to_ascii_lowercase());
+        value.push_str(&tidb_mysql::to_lowercase(&table.partitions.join(", ")));
         value.push(')');
     }
     value

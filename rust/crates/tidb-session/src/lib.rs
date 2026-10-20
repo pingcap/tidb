@@ -3351,6 +3351,8 @@ mod tests_hash_join_fetcher_eof;
 #[cfg(test)]
 mod tests_in_list_full_evaluation;
 #[cfg(test)]
+mod tests_identifier_folding;
+#[cfg(test)]
 mod tests_index_hints;
 #[cfg(test)]
 mod tests_index_join_inner_pattern;

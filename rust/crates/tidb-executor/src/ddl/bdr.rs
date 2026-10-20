@@ -23,6 +23,7 @@
 //! anything changes -- the point a Go job reaches the submitter.
 
 use tidb_ast::BdrRole;
+use tidb_hack::GoToLower;
 use tidb_model::ActionType;
 
 use crate::{Catalog, DriverError};
@@ -86,7 +87,7 @@ impl Admission {
         let stored = catalog.bdr_role();
         let applies = cdc_write_source == 0
             && role_of(&stored).is_some()
-            && !tidb_util::filter::is_system_schema(&schema.to_lowercase());
+            && !tidb_util::filter::is_system_schema(&schema.go_to_lower());
         Self { stored, applies }
     }
 
@@ -225,7 +226,7 @@ pub(crate) fn admit_add_column(
 ) -> Result<(), DriverError> {
     let stored = catalog.bdr_role();
     if tidb_model::ddl_bdr::is_add_column_denied(role_of(&stored), options)
-        && !tidb_util::filter::is_system_schema(&schema.to_lowercase())
+        && !tidb_util::filter::is_system_schema(&schema.go_to_lower())
     {
         return Err(restricted(&stored));
     }
@@ -247,7 +248,7 @@ pub(crate) fn admit_modify_column(
         new_field_type,
         old_field_type,
         options,
-    ) && !tidb_util::filter::is_system_schema(&schema.to_lowercase())
+    ) && !tidb_util::filter::is_system_schema(&schema.go_to_lower())
     {
         return Err(restricted(&stored));
     }

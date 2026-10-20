@@ -19,6 +19,7 @@ use serde_json::{Map, Number, Value};
 use tidb_codec::table_key::{decode_index_key, decode_key_head, decode_record_key, KeyHead};
 use tidb_codec::ColumnInfo;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_hack::GoToLower;
 use tidb_tablecodec::{decode_column_value, decode_index_kv, HandleStatus};
 
 use crate::kv_table::KvTable;
@@ -64,7 +65,7 @@ impl TidbDecodeKeySnapshot {
                 .enumerate()
                 .map(|(offset, column)| DecodeColumn {
                     id: column.id,
-                    name: column.name.to_ascii_lowercase(),
+                    name: column.name.go_to_lower(),
                     field_type: column.field_type.clone(),
                     is_pk_handle: table.is_clustered_handle_column(offset),
                 })

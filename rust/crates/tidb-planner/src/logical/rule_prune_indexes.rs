@@ -314,7 +314,9 @@ pub fn prune_indexes_by_where_and_order(
                         .index_merge_hints
                         .iter()
                         .flat_map(|hint| &hint.index_names)
-                        .any(|name| metadata.name.eq_ignore_ascii_case(name))
+                        .any(|name| {
+                            tidb_mysql::equal_fold(&tidb_mysql::to_lowercase(&metadata.name), name)
+                        })
                 {
                     index_merge_paths.push(path.clone());
                     continue;

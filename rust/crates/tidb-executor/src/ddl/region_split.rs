@@ -20,6 +20,8 @@
 
 use crate::kv_table::KvTable;
 use crate::DriverError;
+use tidb_hack::GoCaseCompare;
+use tidb_hack::GoToLower;
 use tidb_model::RegionSplitPolicy;
 
 /// What Go's `normalizeSplitPolicy` reads off `tbInfo`, so the one port
@@ -47,7 +49,7 @@ impl SplitPolicyTable for KvTable {
     fn index_column_count(&self, name: &str) -> Option<usize> {
         self.indexes()
             .iter()
-            .find(|index| index.name.eq_ignore_ascii_case(name))
+            .find(|index| index.name.go_lower_eq(name))
             .map(|index| index.column_offsets.len())
     }
 }
@@ -100,7 +102,7 @@ pub fn normalize_split_policy(
         SplitPolicyTarget::Table => (String::new(), false),
         SplitPolicyTarget::PrimaryKey => (primary_name.to_owned(), true),
         SplitPolicyTarget::Index(name) => {
-            let name = name.to_lowercase();
+            let name = name.go_to_lower();
             let primary_key = name == primary_name;
             (name, primary_key)
         }
@@ -204,7 +206,7 @@ pub(crate) fn set_split_policy(table: &mut KvTable, index_name: &str, policy: Re
     if let Some(index_id) = table
         .indexes()
         .iter()
-        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        .find(|index| index.name.go_lower_eq(index_name))
         .map(|index| index.id)
     {
         table.set_index_split_policy(index_id, policy);

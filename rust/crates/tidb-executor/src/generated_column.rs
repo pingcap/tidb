@@ -100,6 +100,7 @@ use std::cell::{Cell, RefCell};
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ColumnResolver;
+use tidb_hack::GoCaseCompare;
 
 /// Go `expression.IllegalFunctions4GeneratedColumns`.
 const DISALLOWED_FUNCTIONS: &[&str] = &[
@@ -277,7 +278,7 @@ pub trait GeneratedColumnSlot {
 pub fn offset_of<S: GeneratedColumnSlot>(columns: &[S], name: &str) -> Option<usize> {
     columns
         .iter()
-        .position(|column| column.column_name().eq_ignore_ascii_case(name))
+        .position(|column| column.column_name().go_lower_eq(name))
 }
 
 /// The offsets `dependencies` name in `columns`, or the first name that is
@@ -954,7 +955,7 @@ impl ColumnResolver for TableColumnResolver<'_> {
         let offset = self
             .names
             .iter()
-            .position(|candidate| candidate.eq_ignore_ascii_case(name));
+            .position(|candidate| candidate.go_lower_eq(name));
         match offset {
             Some(offset) => {
                 let mut seen = self.seen.borrow_mut();

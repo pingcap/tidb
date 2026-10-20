@@ -83,6 +83,7 @@ use tidb_executor::ddl::column_field_type::{
     process_column_flags, try_auto_convert_too_big_varchar, ColumnTypeError,
 };
 use tidb_executor::kv_table::KvIndex;
+use tidb_hack::GoCaseCompare;
 use tidb_model::column::{
     ColumnDefaultValue, ColumnInfo, GoAny, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
 };
@@ -780,9 +781,10 @@ pub fn build_table_info_in_schema(
                     let column = column.read();
                     // Every index here was built from this table's own
                     // columns a few lines above, so each name resolves.
-                    if let Some(offset) = names.iter().position(|candidate| {
-                        candidate.eq_ignore_ascii_case(column.name.original())
-                    }) {
+                    if let Some(offset) = names
+                        .iter()
+                        .position(|candidate| candidate.go_lower_eq(column.name.original()))
+                    {
                         column_offsets.push(offset);
                         prefix_lengths.push(column.length);
                     }
@@ -2374,7 +2376,7 @@ fn build_column(
             if primary_key
                 .parts
                 .iter()
-                .any(|part| part.name.eq_ignore_ascii_case(name))
+                .any(|part| part.name.go_lower_eq(name))
             {
                 field_type.add_flags(FieldTypeFlags::PRI_KEY);
             }
@@ -2665,13 +2667,11 @@ fn build_table(
             Vec::with_capacity(constraint.parts.len());
         let mut mv_index = false;
         for part in &constraint.parts {
-            let Some(column) = table.columns.iter_deref().find(|column| {
-                column
-                    .read()
-                    .name
-                    .lowercase()
-                    .eq_ignore_ascii_case(&part.name)
-            }) else {
+            let Some(column) = table
+                .columns
+                .iter_deref()
+                .find(|column| column.read().name.lowercase().go_lower_eq(&part.name))
+            else {
                 // Go `buildIndexColumns`: `ErrKeyColumnDoesNotExits` (1072).
                 return Err(DdlAdmissionError::with_code(
                     tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
@@ -2752,13 +2752,7 @@ fn is_single_int_primary_key(constraint: &Constraint, table: &TableInfo) -> bool
     table
         .columns
         .iter_deref()
-        .find(|column| {
-            column
-                .read()
-                .name
-                .lowercase()
-                .eq_ignore_ascii_case(&part.name)
-        })
+        .find(|column| column.read().name.lowercase().go_lower_eq(&part.name))
         // Go `isIntCol` looks at the type alone: an UNSIGNED BIGINT primary
         // key is just as much a clustered handle as a signed one, and a YEAR
         // one is never the int handle.

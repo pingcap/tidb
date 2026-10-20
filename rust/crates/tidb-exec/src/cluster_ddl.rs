@@ -51,6 +51,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_ddl_notifier::SchemaChangeEvent;
 use tidb_error::mysql::FormatArg;
 use tidb_error::terror::TerrorError;
+use tidb_hack::GoCaseCompare;
 use tidb_meta::{key, value};
 use tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME;
 use tidb_metadef::MAX_USER_GLOBAL_ID;
@@ -1610,7 +1611,7 @@ fn check_and_normalize_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
     name: &str,
 ) -> Result<Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>, DdlPlanError> {
-    if name.eq_ignore_ascii_case("default") {
+    if name.go_lower_eq("default") {
         return Ok(None);
     }
     let Some(policy) = find_policy(snapshot, name)? else {
@@ -5599,7 +5600,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         let mut info = mdl_info_update(&catalog, active.job.table_id)?;
         info.table_ids = active.table_ids.clone();
         info.omit_owner_id =
-            tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().to_lowercase());
+            tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
         match crate::ddl_systable::SystemTableManager::new(&catalog)
             .get_mdl_version(snapshot, ddl_job_id)
         {
@@ -9364,7 +9365,7 @@ fn plan_added_index(
             for dependency in &spec.dependencies {
                 let Some(offset) = columns
                     .iter()
-                    .position(|column| column.name.original().eq_ignore_ascii_case(dependency))
+                    .position(|column| column.name.original().go_lower_eq(dependency))
                 else {
                     return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                         GENERIC_ERROR_CODE,
@@ -9478,7 +9479,7 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
     table
         .indices
         .iter_deref()
-        .find(|index| index.read().name.original().eq_ignore_ascii_case(name))
+        .find(|index| index.read().name.original().go_lower_eq(name))
 }
 
 fn append_schema_change_mutations<S: MetaSnapshot>(
