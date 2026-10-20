@@ -227,7 +227,6 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	typeFlags := reorgTypeFlagsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = reorgMeta.ResourceGroupName
-	// A statement in the session takes its resource group from the session.
 	if reorgMeta.ResourceGroupName != "" {
 		sessCtx.GetSessionVars().ResourceGroupName = reorgMeta.ResourceGroupName
 	}
@@ -265,7 +264,6 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 			}
 		}
 		uv.RowEncoder.Enable = rowEncoder
-		// The fields of an internal session may differ from its variables.
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
 		uv.StmtCtx.SetTypeFlags(typeFlags)
