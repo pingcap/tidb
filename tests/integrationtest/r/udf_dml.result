@@ -66,9 +66,16 @@ UPDATE udf_test.counters SET value = new_val WHERE name = counter_name;
 INSERT INTO udf_test.audit_log (action, old_value, new_value) VALUES (CONCAT('INCREMENT:', counter_name), current_val, new_val);
 RETURN new_val;
 END//
+EXPLAIN FORMAT = 'plan_tree' SELECT increment_counter('page_views', 5) AS new_value;
+id	task	access object	operator info
+Projection	root		increment_counter(page_views, 5)->Column
+└─TableDual	root		rows:1
 SELECT * FROM counters;
 name	value
 page_views	0
+SELECT COUNT(*) AS audit_entries FROM audit_log;
+audit_entries
+0
 SELECT increment_counter('page_views', 5) AS new_value;
 new_value
 5
@@ -83,11 +90,11 @@ new_value
 15
 SELECT * FROM counters;
 name	value
-page_views	5
+page_views	15
 SELECT id, action, old_value, new_value FROM audit_log ORDER BY id;
 id	action	old_value	new_value
 1	INCREMENT:page_views	0	5
-2	INCREMENT:page_views	0	5
+2	INCREMENT:page_views	5	15
 DROP FUNCTION IF EXISTS adjust_counter;
 CREATE FUNCTION adjust_counter(counter_name VARCHAR(50), target_value INT)
 RETURNS VARCHAR(50)

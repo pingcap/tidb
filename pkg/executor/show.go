@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -2286,9 +2285,9 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
+	storeCodec := e.Ctx().GetStore().GetCodec()
 	for idx, pid := range physicalIDs {
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+		startKey, endKey := storeCodec.EncodeRegionRange(tablecodec.GenTablePrefix(pid), tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
 		resp, err = infosync.GetRegionDistributionByKeyRange(ctx, startKey, endKey, "")
 		if err != nil {
@@ -2687,11 +2686,23 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 		}
 		jobs = append(jobs, job)
 	}
+	keyspaceID, inKeyspace := distributionKeyspaceID(e.Ctx().GetStore())
+	fillJob := func(job map[string]any) error {
+		alias := job["alias"].(string)
+		if inKeyspace {
+			var visible bool
+			// only show the jobs of the current keyspace.
+			if alias, visible = trimDistributionAliasKeyspace(alias, keyspaceID); !visible {
+				return nil
+			}
+		}
+		return fillDistributionJobToChunk(ctx, job, alias, e.result)
+	}
 	if e.DistributionJobID != nil {
 		for _, job := range jobs {
 			jobID, ok := job["job-id"].(float64)
 			if ok && *e.DistributionJobID == int64(jobID) {
-				if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+				if err := fillJob(job); err != nil {
 					return err
 				}
 				break
@@ -2699,7 +2710,7 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 		}
 	} else {
 		for _, job := range jobs {
-			if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+			if err := fillJob(job); err != nil {
 				return err
 			}
 		}
@@ -2707,10 +2718,10 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 	return nil
 }
 
-// fillDistributionJobToChunk fills the distribution job to the chunk
-func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) error {
-	// alias is {db_name}.{table_name}.{partition_name}
-	alias := strings.Split(job["alias"].(string), ".")
+// fillDistributionJobToChunk fills the distribution job to the chunk.
+// jobAlias is {db_name}.{table_name}.{partition_name} without the keyspace ID prefix.
+func fillDistributionJobToChunk(ctx context.Context, job map[string]any, jobAlias string, result *chunk.Chunk) error {
+	alias := strings.Split(jobAlias, ".")
 	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
 	if len(alias) != 3 {
 		return errs.ErrClientProtoUnmarshal.FastGenByArgs(fmt.Sprintf("alias:%s is invalid", job["alias"].(string)))

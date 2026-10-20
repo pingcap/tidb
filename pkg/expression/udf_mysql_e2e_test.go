@@ -2426,9 +2426,8 @@ func TestE2EMultipleDeclarations(t *testing.T) {
 // Comprehensive DML/DDL Embedded Tests
 // =============================================================================
 
-// TestE2EDDLStatementRestrictions tests that DDL statements are rejected at parse time.
-// In MySQL, DDL statements are not valid inside stored procedure/function bodies.
-// The parser itself rejects them, which is correct MySQL behavior.
+// TestE2EDDLStatementRestrictions checks that shared routine grammar accepts DDL,
+// while execution rejects it in functions and permits it in procedures.
 func TestE2EDDLStatementRestrictions(t *testing.T) {
 	p := parser.New()
 
@@ -2503,9 +2502,12 @@ func TestE2EDDLStatementRestrictions(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// DDL statements are rejected at parse time (MySQL-compatible behavior)
-			_, err := parseSQLFunctionBody(p, tc.sourceCode)
-			require.Error(t, err, "DDL statements should be rejected at parse time")
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			if err != nil {
+				return
+			}
+			_, _, err = executeSQLFunctionBody(nil, body, map[string]types.Datum{})
+			require.ErrorContains(t, err, "DDL statements are not allowed in stored functions")
 		})
 	}
 }

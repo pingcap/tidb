@@ -257,6 +257,11 @@ type udfFuncSig struct {
 	def *udf.Definition
 }
 
+// AllowedOptionalEvalProps declares session services used by SQL-backed functions.
+func (*udfFuncSig) AllowedOptionalEvalProps() OptionalEvalPropKeySet {
+	return exprctx.OptPropSQLExecutor.AsPropKeySet().Add(exprctx.OptPropSessionVars)
+}
+
 func (b *udfFuncSig) Clone() builtinFunc {
 	newSig := &udfFuncSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
@@ -1093,6 +1098,15 @@ func executeStatementList(ctx EvalContext, stmts []ast.StmtNode, vars map[string
 
 // executeStatement executes a single procedure statement.
 func executeStatement(ctx EvalContext, stmt ast.StmtNode, vars map[string]types.Datum) (executionResult, error) {
+	// A function shares the invoking statement's transaction; only procedures
+	// may execute explicit transaction control.
+	if !isInProcedureMode(vars) {
+		switch stmt.(type) {
+		case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt:
+			return executionResult{}, errors.Errorf("unsupported statement type in SQL function: %T", stmt)
+		}
+	}
+
 	switch s := stmt.(type) {
 	case *ast.ReturnStmt:
 		datum, isNull, err := evaluateReturnStmtValue(ctx, s, vars)

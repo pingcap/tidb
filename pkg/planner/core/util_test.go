@@ -358,27 +358,32 @@ func TestCheckMViewUpdatable(t *testing.T) {
 	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
 	err = CheckMViewUpdatable(vars, mlog, "", "INSERT")
 	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
-	err = CheckMViewUpdatable(vars, shadow, "", "INSERT")
-	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
 
 	vars.InRestrictedSQL = true
 	require.NoError(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
 	require.NoError(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
+
+	vars.InMViewMaintenance = true
+	vars.InRestrictedSQL = false
+	err = CheckMViewUpdatable(vars, shadow, "", "INSERT")
+	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
+
+	vars.InRestrictedSQL = true
 	require.NoError(t, CheckMViewUpdatable(vars, shadow, "", "INSERT"))
 }
 
-func TestCheckMViewReadable(t *testing.T) {
+func TestCheckMViewReadableShadow(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	vars.User = &auth.UserIdentity{AuthUsername: "u", AuthHostname: "%"}
 	shadow := &model.TableInfo{
 		Name:                   ast.NewCIStr("__mv_shadow_1"),
 		MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 100},
 	}
-	base := &model.TableInfo{Name: ast.NewCIStr("t")}
 	mv := &model.TableInfo{
-		Name:             ast.NewCIStr("mv"),
+		Name:             ast.NewCIStr("mv_building"),
 		MaterializedView: &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildBuilding},
 	}
+	base := &model.TableInfo{Name: ast.NewCIStr("t")}
 
 	require.NoError(t, CheckMViewReadable(vars, base, ""))
 	require.ErrorContains(t, CheckMViewReadable(vars, shadow, ""), "SELECT command denied")

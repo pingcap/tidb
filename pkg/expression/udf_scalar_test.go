@@ -46,6 +46,47 @@ func TestUDFFuncClassBasics(t *testing.T) {
 	require.Equal(t, "test_add", fc.funcName)
 	require.Equal(t, 2, fc.minArgs)
 	require.Equal(t, 2, fc.maxArgs)
+
+	t.Run("optional_session_properties", func(t *testing.T) {
+		ctx := wrapEvalAssert(createContext(t), &udfFuncSig{})
+		body, err := parseSQLFunctionBody(parser.New(), "BEGIN SELECT 1; RETURN 1; END")
+		require.NoError(t, err)
+		_, _, err = executeSQLFunctionBody(ctx, body, map[string]types.Datum{})
+		require.ErrorContains(t, err, "SELECT execution failed")
+
+		body, err = parseSQLFunctionBody(parser.New(), "BEGIN RETURN ROW_COUNT(); END")
+		require.NoError(t, err)
+		_, _, err = executeSQLFunctionBody(ctx, body, map[string]types.Datum{})
+		require.NoError(t, err)
+	})
+
+	t.Run("not_folded_during_planning", func(t *testing.T) {
+		ctx := createContext(t)
+		def := &udf.Definition{
+			ID:              742,
+			Name:            "test_unfoldable_udf",
+			ParamNames:      []string{"n"},
+			ParamTypes:      []byte{byte(udf.TypeIDInt)},
+			ReturnType:      byte(udf.TypeIDInt),
+			Language:        "sql",
+			SourceCode:      "BEGIN RETURN n + 1; END",
+			IsDeterministic: true,
+		}
+		defer parsedSQLBodies.Delete(def.ID)
+		fn, err := newUDFFuncClass(def).getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+		require.NoError(t, err)
+		expr := &ScalarFunction{
+			FuncName: ast.NewCIStr(def.Name),
+			RetType:  udf.TypeIDToFieldType(udf.TypeIDInt),
+			Function: fn,
+		}
+		require.Same(t, expr, FoldConstant(ctx, expr))
+		require.Equal(t, ConstNone, expr.ConstLevel())
+		require.False(t, IsRuntimeConstExpr(expr))
+		require.True(t, CheckNonDeterministic(expr))
+		require.True(t, IsMutableEffectsExpr(expr))
+		require.False(t, IsImmutableFunc(expr))
+	})
 }
 
 func TestUDFTypeIDToEvalType(t *testing.T) {

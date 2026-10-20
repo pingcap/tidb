@@ -726,6 +726,7 @@ var tokenMap = map[string]int{
 	"RESTORES":                       restores,
 	"RESTORED_TS":                    restoredTS,
 	"RESTRICT":                       restrict,
+	"RESULT":                         result,
 	"RETAIN":                         retain,
 	"RETURN":                         returnKwd,
 	"RETURNING":                      returning,

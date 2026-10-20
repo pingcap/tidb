@@ -330,8 +330,6 @@ var (
 		{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
-		{ID: metadef.TiDBUDFTableID, Name: "tidb_udf", SQL: metadef.CreateTiDBUDFTable},
-		{ID: metadef.TiDBStoredProcedureTableID, Name: "tidb_stored_procedure", SQL: metadef.CreateTiDBStoredProcedureTable},
 	}
 	// systemTablesOfMaskingPolicyNextGenVersion contains system tables introduced in
 	// the masking-policy bootstrap version.
@@ -350,6 +348,11 @@ var (
 	// operation table used by the NextGen storage-class transition poller.
 	systemTablesOfStorageClassTransitionNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBStorageClassTransitionHistoryTableID, Name: "tidb_storage_class_transition_history", SQL: metadef.CreateTiDBStorageClassTransitionHistoryTable},
+	}
+	// systemTablesOfSQLRoutineNextGenVersion contains SQL function and procedure metadata tables.
+	systemTablesOfSQLRoutineNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBUDFTableID, Name: "tidb_udf", SQL: metadef.CreateTiDBUDFTable},
+		{ID: metadef.TiDBStoredProcedureTableID, Name: "tidb_stored_procedure", SQL: metadef.CreateTiDBStoredProcedureTable},
 	}
 )
 
@@ -375,6 +378,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}, nextGenOnly: true},
 	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
+	}},
+	{ver: meta.SQLRoutineNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfSQLRoutineNextGenVersion},
 	}},
 }
 

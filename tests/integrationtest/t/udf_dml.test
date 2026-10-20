@@ -92,7 +92,10 @@ END//
 DELIMITER ;
 
 # Test increment_counter
+# Planning a DML function must not execute it or append audit rows.
+EXPLAIN FORMAT = 'plan_tree' SELECT increment_counter('page_views', 5) AS new_value;
 SELECT * FROM counters;
+SELECT COUNT(*) AS audit_entries FROM audit_log;
 SELECT increment_counter('page_views', 5) AS new_value;
 SELECT * FROM counters;
 SELECT id, action, old_value, new_value FROM audit_log;

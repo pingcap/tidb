@@ -78,7 +78,7 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 
 	// Materialized views in Stage-1 are non-partitioned, so their table-level
 	// affinity group ID is derived directly from the old physical table ID.
-	groupID := GetTableAffinityGroupID(args.OldMViewID)
+	groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
 	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
 		logutil.DDLLogger().Warn(
 			"failed to delete old materialized view affinity group after cutover",
@@ -199,7 +199,7 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		}
 		if tblInfo.MaterializedView != nil {
 			if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, job.TableID); err != nil {
-				return ver, newRollbackTxnError(errors.Trace(err))
+				return ver, errors.Trace(err)
 			}
 			if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, job.TableID); err != nil {
 				logutil.DDLLogger().Warn(
@@ -213,7 +213,7 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		}
 		if tblInfo.MaterializedViewLog != nil {
 			if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, job.TableID); err != nil {
-				return ver, newRollbackTxnError(errors.Trace(err))
+				return ver, errors.Trace(err)
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the

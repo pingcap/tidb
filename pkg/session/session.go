@@ -46,12 +46,14 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -173,6 +175,10 @@ type stmtRecord struct {
 	stmtCtx *stmtctx.StatementContext
 }
 
+const internalAdvisoryLockOwnerIDBase = uint64(1) << 32
+
+var internalAdvisoryLockOwnerIDAlloc atomic.Uint64
+
 // StmtHistory holds all histories of statements in a txn.
 type StmtHistory struct {
 	history []*stmtRecord
@@ -254,6 +260,8 @@ type session struct {
 
 	// Contains a list of sessions used to collect advisory locks.
 	advisoryLocks map[string]*advisoryLock
+	// advisoryLockOwnerID caches a stable non-zero owner ID for advisory locking.
+	advisoryLockOwnerID atomic.Uint64
 
 	extensions *extension.SessionExtensions
 
@@ -2081,7 +2089,7 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 	if err != nil {
 		return err
 	}
-	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.getAdvisoryLockOwner(), clean: clean}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
@@ -2102,7 +2110,7 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 	if err != nil {
 		return 0
 	}
-	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: 0, clean: clean}
 	err = lock.IsUsedLock(lockName)
 	if err != nil {
 		// TODO: Return actual owner pid
@@ -2110,6 +2118,27 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 		return 1
 	}
 	return 0
+}
+
+func (s *session) getAdvisoryLockOwner() uint64 {
+	if ownerID := s.advisoryLockOwnerID.Load(); ownerID != 0 {
+		return ownerID
+	}
+	ownerID := uint64(0)
+	if processInfo := s.ShowProcess(); processInfo != nil {
+		ownerID = processInfo.ID
+	}
+	if ownerID == 0 {
+		// Keep fallback IDs even and above uint32, outside both GCID formats.
+		// The counter is process-local, so these IDs are not globally unique.
+		// Lock exclusion, reentrancy and release do not require globally unique
+		// owner IDs. Only the holding session reports this ID; other sessions report 1.
+		ownerID = internalAdvisoryLockOwnerIDBase + (internalAdvisoryLockOwnerIDAlloc.Add(1) << 1)
+	}
+	if s.advisoryLockOwnerID.CompareAndSwap(0, ownerID) {
+		return ownerID
+	}
+	return s.advisoryLockOwnerID.Load()
 }
 
 // ReleaseAdvisoryLock releases an advisory locks held by the session.
@@ -2469,6 +2498,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 }
 
 func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (recordSet sqlexec.RecordSet, err error) {
+	// Reject user SQL before preparing a transaction or resetting statement
+	// state. Internal restricted SQL is used by diagnostic startup and metadata
+	// readers and must continue to run under the process-wide diagnostic mode.
+	if diagnosticmode.Enabled() && !s.sessionVars.InRestrictedSQL && !isDiagnosticSQLAllowed(stmtNode, s.sessionVars.CurrentDB, s.GetInfoSchema()) {
+		return nil, plannererrors.ErrSQLInReadOnlyMode
+	}
+
 	var (
 		stmt                                    *executor.ExecStmt
 		publishStatementRUOutcomeOnNormalReturn bool
@@ -3278,6 +3314,14 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 			s.sessionVars.StmtCtx.DetachMemDiskTracker()
 		}
 	}()
+	// Prepared statements are deliberately outside the diagnostic SQL
+	// allowlist. Reject them before preparing a transaction; otherwise
+	// COM_STMT_PREPARE could still allocate transaction state for a statement
+	// that will never be allowed to execute.
+	if diagnosticmode.Enabled() && !s.sessionVars.InRestrictedSQL {
+		err = plannererrors.ErrSQLInReadOnlyMode
+		return
+	}
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = s.infoCache.GetLatest()
@@ -3519,6 +3563,7 @@ func (s *session) Close() {
 		}
 	}
 	s.ReleaseAllAdvisoryLocks()
+	s.advisoryLockOwnerID.Store(0)
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -4508,6 +4553,9 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // such as system time zone
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
+	if diagnosticmode.Enabled() {
+		return bootstrapSessionImplDiagnostic(ctx, store)
+	}
 	ver := getStoreBootstrapVersionWithCache(store)
 	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
 	if kv.IsUserKS(store) {
@@ -4786,6 +4834,17 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with the given schema filter.
 func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
 	return domap.GetOrCreateWithFilter(store, filter)
+}
+
+// GetOrCreateBRDomain gets or creates the domain used by standalone BR.
+// WithDisableRPC is set before Init so the published server info is not an RPC target.
+func GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.getWithEtcdClient(store, nil, filter, domainCreateOptions{
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{
+			serverinfo.WithoutStatusEndpointClaim(),
+			serverinfo.WithDisableRPC(),
+		},
+	})
 }
 
 // getStartMode gets the start mode according to the bootstrap version.
@@ -5724,7 +5783,14 @@ func (s *session) SetMemoryFootprintChangeHook() {
 			tracker.AttachTo(s.sessionVars.MemTracker)
 			s.sessionVars.MemDBFootprint = tracker
 		}
-		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+		if s.txn.inStmtBufCleanup {
+			// ART can report previously unaccounted node allocations during cleanup.
+			// Keep the footprint accurate without interrupting this cleanup; later
+			// statements must still use the live hook and normal memory enforcement.
+			s.sessionVars.MemDBFootprint.ReplaceBytesUsedForCleanup(int64(mem))
+		} else {
+			s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+		}
 	}
 	s.txn.SetMemoryFootprintChangeHook(hook)
 }

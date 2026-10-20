@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
@@ -115,4 +116,24 @@ func TestCalculateMemoryLimit(t *testing.T) {
 	require.Equal(t, uint64(3758096384), calculateMemoryLimit(4*1024*1024*1024))
 	// f(32 GB) = 31.5 GB
 	require.Equal(t, uint64(33822867456), calculateMemoryLimit(32*1024*1024*1024))
+}
+
+func TestRawAndTxnRestoreRejectRename(t *testing.T) {
+	for _, tc := range []struct {
+		commandName string
+		taskName    string
+	}{
+		{commandName: "raw", taskName: task.RawRestoreCmd},
+		{commandName: "txn", taskName: task.TxnRestoreCmd},
+	} {
+		t.Run(tc.commandName, func(t *testing.T) {
+			root := NewRestoreCommand()
+			command, _, err := root.Find([]string{tc.commandName})
+			require.NoError(t, err)
+			require.NoError(t, command.InheritedFlags().Set(task.FlagRename, "source:target"))
+
+			err = rejectRestoreRenameFlag(command, tc.taskName)
+			require.ErrorContains(t, err, "--rename is not supported by "+tc.taskName)
+		})
+	}
 }

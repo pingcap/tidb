@@ -555,6 +555,7 @@ var Keywords = []KeywordsType{
 	{"RESTART", false, "unreserved"},
 	{"RESTORE", false, "unreserved"},
 	{"RESTORES", false, "unreserved"},
+	{"RESULT", false, "unreserved"},
 	{"RESUME", false, "unreserved"},
 	{"RETAIN", false, "unreserved"},
 	{"RETURN", false, "unreserved"},

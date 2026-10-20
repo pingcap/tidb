@@ -1387,6 +1387,25 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 		return nil
 	}
 	loadCloudStorageURI(w, job)
+	// On a NextGen cluster, global sort is the product design for add index /
+	// modify column; local sort is not supported. So, like IMPORT INTO, reject
+	// add index / modify column with local sort.
+	//
+	// ingest.LitInitialized is required to tell whether the lightning/ingest
+	// environment is available: when it is not (e.g. tests backed by a
+	// non-TiKV store), pickBackfillType falls back to txn-merge backfill, which
+	// does not sort locally and therefore must not be rejected here.
+	//
+	// job.ReorgMeta.IsFastReorg is required here even though fast reorg is
+	// always enabled on NextGen: for jobs involving system-related DBs,
+	// initJobReorgMetaFromVariables explicitly disables fast reorg and dist
+	// reorg because they cannot use the distributed task framework. Such jobs
+	// only happen during upgrade (e.g. ADD INDEX on mysql.stats_history) and
+	// fall back to txn backfill, which doesn't sort at all, so they must not be
+	// rejected here.
+	if kerneltype.IsNextGen() && ingest.LitInitialized && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("add index or modify column with local sort")
+	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
 		return err
@@ -2506,6 +2525,7 @@ type baseIndexWorker struct {
 
 type addIndexTxnWorker struct {
 	baseIndexWorker
+	physicalID int64
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -2544,6 +2564,7 @@ func newAddIndexTxnWorker(
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	return &addIndexTxnWorker{
+		physicalID: t.GetPhysicalID(),
 		baseIndexWorker: baseIndexWorker{
 			backfillCtx: bfCtx,
 			indexes:     allIndexes,
@@ -2724,6 +2745,13 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if idxInfo.Global {
+		// Equal compares partition IDs only when both handles are PartitionHandles.
+		// The same inner handle in another partition is a different row.
+		if _, ok := handle.(kv.PartitionHandle); !ok {
+			handle = kv.NewPartitionHandle(w.physicalID, handle)
+		}
 	}
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {

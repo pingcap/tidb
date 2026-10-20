@@ -1635,12 +1635,12 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 
 	table, ok := b.infoschemaV2.TableByID(context.Background(), tableID)
 	if !ok {
-		return nil
+		return affected
 	}
 	tblInfo := table.Meta()
 	item, ok := b.infoschemaV2.searchTableItemByID(tableID)
 	if !ok {
-		return nil
+		return affected
 	}
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.

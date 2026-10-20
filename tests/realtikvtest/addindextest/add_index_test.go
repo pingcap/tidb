@@ -121,6 +121,7 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists fk_index;")
 	tk.MustExec("create database fk_index;")
 	tk.MustExec("use fk_index;")
@@ -149,6 +150,7 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 func TestIssue51162(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_fast_table_check=0")
 	tk.MustExec(`CREATE TABLE tl (
@@ -172,6 +174,7 @@ func TestIssue51162(t *testing.T) {
 func TestAddUKWithSmallIntHandles(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists small;")
 	tk.MustExec("create database small;")
 	tk.MustExec("use small;")
@@ -184,6 +187,9 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test injects the local-backend-only ingest/beforeBackendIngest failpoint")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)

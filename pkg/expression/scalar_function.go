@@ -444,8 +444,9 @@ func (sf *ScalarFunction) ConstLevel() ConstLevel {
 		return ConstNone
 	}
 
-	if _, ok := sf.Function.(*extensionFuncSig); ok {
-		// we should return `ConstNone` for extension functions for safety, because it may have a side effect.
+	switch sf.Function.(type) {
+	case *extensionFuncSig, *udfFuncSig:
+		// User functions may read or modify session state.
 		return ConstNone
 	}
 
