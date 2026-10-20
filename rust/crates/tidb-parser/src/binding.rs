@@ -85,13 +85,9 @@ impl Parser {
             self.peek().offset
         };
         if end > start {
-            statement.set_text(
-                None,
-                self.source[start..end]
-                    .trim_end_matches([';', ' ', '\t', '\n'])
-                    .as_bytes()
-                    .to_vec(),
-            );
+            let (encoding, text) =
+                self.source_text(self.source[start..end].trim_end_matches([';', ' ', '\t', '\n']));
+            statement.set_text(encoding, text);
         }
         Ok(Box::new(statement))
     }

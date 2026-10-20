@@ -562,7 +562,8 @@ impl Parser {
         let end = self.peek().offset;
         let mut source = tidb_ast::NodeBox::new(source);
         if end > start {
-            source.set_text(None, self.source.as_bytes()[start..end].to_vec());
+            let (encoding, text) = self.source_text(&self.source[start..end]);
+            source.set_text(encoding, text);
         }
         self.expect_op(")")?;
         Ok(source)

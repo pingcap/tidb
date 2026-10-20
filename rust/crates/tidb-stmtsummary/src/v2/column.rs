@@ -67,6 +67,7 @@ use chrono::{DateTime, TimeZone};
 use std::time::Duration;
 use tidb_datatype::SessionTimeZone;
 use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
+use tidb_hack::raw_bytes::str_to_bytes;
 use tidb_model::ColumnInfo;
 use tidb_util::plancodec::decode_plan;
 
@@ -185,7 +186,11 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         STMT_TYPE_STR => |_, record| Datum::new_string(record.stmt_type.as_bytes()),
         SCHEMA_NAME_STR => |_, record| opt_string_datum(convert_empty_to_nil(&record.schema_name)),
         DIGEST_STR => |_, record| opt_string_datum(convert_empty_to_nil(&record.digest)),
-        DIGEST_TEXT_STR => |_, record| Datum::new_string(record.normalized_sql.as_bytes()),
+        // Statement text carries a byte that is not UTF-8 as its `raw_bytes`
+        // escape; Go's string holds the byte.
+        DIGEST_TEXT_STR => {
+            |_, record| Datum::new_string(str_to_bytes(&record.normalized_sql).into_owned())
+        }
         BINDING_DIGEST_STR => {
             |_, record| opt_string_datum(convert_empty_to_nil(&record.binding_digest))
         }
@@ -434,8 +439,12 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         PLAN_IN_CACHE_STR => |_, record| bool_datum(record.plan_in_cache),
         PLAN_CACHE_HITS_STR => |_, record| Datum::new_int(record.plan_cache_hits),
         PLAN_IN_BINDING_STR => |_, record| bool_datum(record.plan_in_binding),
-        QUERY_SAMPLE_TEXT_STR => |_, record| Datum::new_string(record.sample_sql.as_bytes()),
-        PREV_SAMPLE_TEXT_STR => |_, record| Datum::new_string(record.prev_sql.as_bytes()),
+        QUERY_SAMPLE_TEXT_STR => {
+            |_, record| Datum::new_string(str_to_bytes(&record.sample_sql).into_owned())
+        }
+        PREV_SAMPLE_TEXT_STR => {
+            |_, record| Datum::new_string(str_to_bytes(&record.prev_sql).into_owned())
+        }
         PLAN_DIGEST_STR => |_, record| Datum::new_string(record.plan_digest.as_bytes()),
         PLAN_STR => |_, record| {
             // Go logs the decode failure and falls back to the empty plan.

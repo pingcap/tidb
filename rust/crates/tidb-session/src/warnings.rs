@@ -182,7 +182,10 @@ impl Session {
                 vec![
                     Datum::Bytes(warning.level.as_str().as_bytes().to_vec()),
                     Datum::Int(i64::from(warning.code)),
-                    Datum::Bytes(warning.message.clone().into_bytes()),
+                    // A message quoting the client's SQL (a parse error's
+                    // `near` text) carries a byte that is not UTF-8 as its
+                    // `raw_bytes` escape; Go's message holds the byte.
+                    Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&warning.message).into_owned()),
                 ]
             })
             .collect();
@@ -349,16 +352,21 @@ impl Session {
     }
 
     /// Go `clientConn.handleStmt`: the parser's warnings follow the warnings
-    /// the statement itself raised, once it has succeeded. A statement that
-    /// failed, or a buffer the statement rebuilt, keeps them where they are.
+    /// the statement itself raised, once it has succeeded; a statement that
+    /// failed returns before `AppendWarnings`, so its context never holds
+    /// them (captured: an ascii client's `SELECT é`, whose identifier warns
+    /// 1300 as `?`, shows only its 1054). A buffer the statement rebuilt keeps
+    /// what it holds.
     pub(crate) fn move_parse_warnings_behind_execution(&mut self, succeeded: bool) {
         let Some((start, parsed)) = self.parse_warnings.take() else {
             return;
         };
         let end = start + parsed.len();
-        if succeeded && self.warnings.get(start..end) == Some(parsed.as_slice()) {
+        if self.warnings.get(start..end) == Some(parsed.as_slice()) {
             self.warnings.drain(start..end);
-            self.warnings.extend(parsed);
+            if succeeded {
+                self.warnings.extend(parsed);
+            }
         }
     }
 

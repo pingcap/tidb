@@ -303,6 +303,144 @@ fn client_identifier_bytes_convert_like_go() {
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }
 
+/// Runs a client's SQL bytes the way the wire carries them for the
+/// session's `@@character_set_client`.
+fn run_client_bytes(session: &mut Session, sql: &[u8]) -> Result<StmtResult, DriverError> {
+    let client = session.vars.build_parser_config().charset_client;
+    session.run(&tidb_parser::carry_client_sql(sql, client))
+}
+
+fn mysql_error(result: Result<StmtResult, DriverError>) -> (u16, String) {
+    let error = result.unwrap_err().to_mysql_error();
+    (error.code, error.message)
+}
+
+/// Go `Scanner.convert2Connection` for an ascii client, live TiDB captures
+/// in order: under the default strict `sql_mode` and `SET NAMES ascii` a
+/// non-ASCII literal is `ERROR 1300`; without strict mode it is `?` with a
+/// 1300 warning naming the first group; a utf8mb4 connection only warns; an
+/// identifier becomes `?` (`Unknown column '?'`), and the failed statement's
+/// parser warning is dropped (Go `handleStmt` appends parser warnings only
+/// after success).
+#[test]
+fn ascii_client_literals_replace_or_refuse_like_go() {
+    let mut session = Session::new();
+    session.run("SET NAMES ascii").unwrap();
+    assert_eq!(
+        mysql_error(run_client_bytes(&mut session, "SELECT HEX('é')".as_bytes())),
+        (1300, "Invalid ascii character string: 'C3A9'".to_owned())
+    );
+    session.run("SET sql_mode = ''").unwrap();
+    assert_eq!(
+        row_text(run_client_bytes(
+            &mut session,
+            "SELECT HEX('éx\u{e9}')".as_bytes()
+        )),
+        vec![vec!["3F783F"]]
+    );
+    let warning = vec![vec![
+        "Warning",
+        "1300",
+        "Invalid ascii character string: 'C3A9'",
+    ]];
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), warning);
+    session.run("SET sql_mode = DEFAULT").unwrap();
+    session
+        .run("SET character_set_connection = utf8mb4")
+        .unwrap();
+    assert_eq!(
+        row_text(run_client_bytes(&mut session, "SELECT HEX('é')".as_bytes())),
+        vec![vec!["3F"]]
+    );
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), warning);
+    assert_eq!(
+        mysql_error(run_client_bytes(&mut session, "SELECT é".as_bytes())),
+        (1054, "Unknown column '?' in 'field list'".to_owned())
+    );
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec!["Error", "1054", "Unknown column '?' in 'field list'"]]
+    );
+}
+
+/// A gbk client's bytes are scanned raw, live TiDB captures in order:
+/// `SET NAMES gbk; SELECT HEX('\xE9')` is `ERROR 1300 (HY000): Invalid gbk
+/// character string: 'E9'` (it was `1064 COM_QUERY is not valid UTF-8`
+/// here), `HEX('\xD6\xD0')` is `D6D0`, and `HEX('\x95\x5C')` -- whose trail
+/// byte is no backslash escape -- `955C`; on a utf8mb4 connection
+/// `HEX('\xE9')` is `3F` with the warning and `HEX('\x95\x5C')` `E6989E`.
+#[test]
+fn gbk_client_literals_like_go() {
+    let mut session = Session::new();
+    session.run("SET NAMES gbk").unwrap();
+    assert_eq!(
+        mysql_error(run_client_bytes(&mut session, b"SELECT HEX('\xe9')")),
+        (1300, "Invalid gbk character string: 'E9'".to_owned())
+    );
+    assert_eq!(
+        row_text(run_client_bytes(
+            &mut session,
+            b"SELECT HEX('\xd6\xd0'), HEX('\x95\x5c')"
+        )),
+        vec![vec!["D6D0", "955C"]]
+    );
+    session
+        .run("SET character_set_connection = utf8mb4")
+        .unwrap();
+    assert_eq!(
+        row_text(run_client_bytes(
+            &mut session,
+            b"SELECT HEX('\xe9'), HEX('\x95\x5c')"
+        )),
+        vec![vec!["3F", "E6989E"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning",
+            "1300",
+            "Invalid gbk character string: 'E9'"
+        ]]
+    );
+}
+
+/// Go publishes a statement's `Text()` to the process list and keeps it as
+/// `StmtCtx.OriginalSQL` (slow log, statement summary): the client's bytes
+/// decoded with `@@character_set_client`, a non-printable literal in hex.
+/// Live TiDB `information_schema.PROCESSLIST.INFO` captures: a latin1
+/// client's `SELECT SLEEP(3), '\xE9', 'a<TAB>b', '\xC3\xA9' /* x\xE9 */` is
+/// `SELECT SLEEP(3), 0xe9, 0x610962, '\xC3\xA9' /* x\xE9 */` (the comment's
+/// byte raw), a utf8mb4 client's `'a<TAB>b', "q<LF>"` is `0x610962,
+/// 0x710a`, and a gbk client's `'\xD6\xD0', '\x95\x5C'` is UTF-8
+/// `'中', '昞'`.
+#[test]
+fn statement_text_is_go_text() {
+    let mut session = Session::new();
+    let text = |session: &Session, sql: &[u8]| {
+        let client = session.vars.build_parser_config().charset_client;
+        let carried = tidb_parser::carry_client_sql(sql, client);
+        tidb_hack::raw_bytes::str_to_bytes(&session.statement_text(&carried)).into_owned()
+    };
+    assert_eq!(text(&session, b"SELECT 1"), b"SELECT 1");
+    assert_eq!(
+        text(&session, b"SELECT SLEEP(2), 'a\tb', \"q\n\" , 'ok'"),
+        b"SELECT SLEEP(2), 0x610962, 0x710a , 'ok'"
+    );
+    session.run("SET NAMES latin1").unwrap();
+    assert_eq!(
+        text(
+            &session,
+            b"SELECT SLEEP(3), '\xe9', 'a\tb', '\xc3\xa9' /* x\xe9 */"
+        ),
+        b"SELECT SLEEP(3), 0xe9, 0x610962, '\xc3\xa9' /* x\xe9 */"
+    );
+    session.run("SET NAMES gbk").unwrap();
+    assert_eq!(
+        text(&session, b"SELECT SLEEP(2), '\xd6\xd0', '\x95\x5c'"),
+        "SELECT SLEEP(2), '中', '昞'".as_bytes()
+    );
+}
+
 /// `CHARSET gbk` with no `COLLATE` resolves to `gbk_chinese_ci`, not
 /// `gbk_bin` -- TiDB leaves the Chinese charsets at their registry default.
 /// Captured: `ORDER BY` on the gbk column follows GBK weights (`列` before

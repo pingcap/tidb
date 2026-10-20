@@ -596,12 +596,33 @@ impl Session {
     }
 
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
-        tidb_parser::parse_with_sql_mode_and_config(
+        self.parse_with_config(sql, self.vars.build_parser_config())
+    }
+
+    /// Go `ParseWithParams` for internal SQL, which calls `ParseSQL` with no
+    /// parse params ("Do no respect the settings from clients, if it is for
+    /// internal usage"): text this tier wrote or restored is UTF-8, so the
+    /// scanner keeps its default client and connection encodings.
+    pub(crate) fn parse_internal(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
+        let defaults = tidb_parser::ParserConfig::default();
+        self.parse_with_config(
             sql,
-            self.scanner_sql_mode(),
-            self.vars.build_parser_config(),
+            tidb_parser::ParserConfig {
+                charset_client: defaults.charset_client,
+                charset_connection: defaults.charset_connection,
+                ..self.vars.build_parser_config()
+            },
         )
-        .map_err(|e| match e.errno {
+    }
+
+    fn parse_with_config(
+        &self,
+        sql: &str,
+        config: tidb_parser::ParserConfig,
+    ) -> Result<tidb_ast::Stmt, DriverError> {
+        let parsed =
+            tidb_parser::parse_with_sql_mode_and_config(sql, self.scanner_sql_mode(), config);
+        parsed.map_err(|e| match e.errno {
             Some(errno) => DriverError::ParseCoded {
                 errno,
                 message: e.message,
@@ -1945,6 +1966,7 @@ pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parse
         high_not_precedence: mode.has_high_not_precedence_mode(),
         ignore_space: mode.has_ignore_space_mode(),
         pipes_as_concat: mode.has_pipes_as_concat_mode(),
+        strict_mode: mode.has_strict_mode(),
     }
 }
 

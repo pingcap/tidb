@@ -216,10 +216,9 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                     maxvalue_partition,
                 });
                 if interval_end > interval_start {
-                    interval.set_text(
-                        None,
-                        parser.source.as_bytes()[interval_start..interval_end].to_vec(),
-                    );
+                    let (encoding, text) =
+                        parser.source_text(&parser.source[interval_start..interval_end]);
+                    interval.set_text(encoding, text);
                 }
                 interval.set_origin_text_position(interval_start);
                 method.interval = Some(interval);

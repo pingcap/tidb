@@ -834,13 +834,8 @@ impl Parser {
         let query_end = self.peek().offset;
         let mut query = tidb_ast::NodeBox::new(query);
         if query_end > query_start {
-            query.set_text(
-                None,
-                self.source[query_start..query_end]
-                    .trim()
-                    .as_bytes()
-                    .to_vec(),
-            );
+            let (encoding, text) = self.source_text(self.source[query_start..query_end].trim());
+            query.set_text(encoding, text);
         }
         // Go `parseCreateViewStmt`: `WITH [LOCAL] [CASCADED] CHECK OPTION`;
         // CASCADED is the default, and only LOCAL changes it.

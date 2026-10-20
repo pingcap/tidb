@@ -261,7 +261,7 @@ impl Session {
         let ctx = self
             .statement_context(true)
             .with_mem_quota(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY, oom_action);
-        let mut stmt = self.parse(sql)?;
+        let mut stmt = self.parse_internal(sql)?;
         self.bind_variables(&mut stmt)?;
         let tidb_ast::Stmt::Dml(dml) = &stmt else {
             return Err(DriverError::unsupported(

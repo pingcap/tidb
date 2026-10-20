@@ -113,7 +113,12 @@ fn charset_client_api_covers_the_complete_go_encoding_map() {
         raw_bytes::str_to_bytes(&utf8).as_ref(),
         b"SELECT _UTF8MB4'\xFF'"
     );
-    assert!(parse_bytes(b"select '\xFF'", "ascii").is_err());
+    // An ascii client's non-ASCII byte becomes `?`; with Go's default
+    // (non-strict) parser `sql_mode` that is a warning, not an error.
+    assert_eq!(
+        parse_bytes(b"select '\xFF'", "ascii").unwrap().restore(),
+        "SELECT _UTF8MB4'?'"
+    );
     assert!(parse_bytes(b"select 'ascii'", "ascii").is_ok());
 
     // latin1/binary clients under the default utf8mb4 connection: the bytes
@@ -279,4 +284,190 @@ fn select_field_text_hexes_non_printable_literals() {
             "{client}"
         );
     }
+}
+
+const STRICT: SqlMode = SqlMode {
+    real_as_float: false,
+    no_backslash_escapes: false,
+    ansi_quotes: false,
+    high_not_precedence: false,
+    ignore_space: false,
+    pipes_as_concat: false,
+    strict_mode: true,
+};
+
+/// Parses `sql` (the client's bytes) as a session of that client would.
+fn parse_client(
+    sql: &[u8],
+    sql_mode: SqlMode,
+    client: &str,
+    connection: &str,
+) -> PResult<ParseOutput> {
+    let text = carry_client_sql(sql, tidb_datatype::find_encoding(client));
+    parse_with_sql_mode_config_and_warnings(&text, sql_mode, config(client, connection))
+}
+
+fn warning_messages(output: &ParseOutput) -> Vec<&str> {
+    output
+        .warnings
+        .iter()
+        .map(|warning| warning.message.as_str())
+        .collect()
+}
+
+/// Go `Scanner.convert2Connection` for an ascii client, captured from TiDB:
+/// a non-ASCII group becomes `?` with warning 1300 naming the first one
+/// (`SET NAMES ascii; SET sql_mode=''; SELECT HEX('éx\xE9')` = `3F783F`,
+/// `Invalid ascii character string: 'C3A9'`), and under a strict `sql_mode`
+/// with an ascii connection the literal is refused (`ERROR 1300`); a utf8mb4
+/// connection only warns. `convert2System` turns an identifier's non-ASCII
+/// into `?` with the same warning (`SELECT é` is `Unknown column '?'`).
+#[test]
+fn ascii_client_replaces_or_refuses_non_ascii_like_go() {
+    let sql = "select hex('éx\u{e9}')".as_bytes();
+    let lenient = parse_client(sql, SqlMode::default(), "ascii", "ascii").unwrap();
+    assert_eq!(lenient.statement.restore(), "SELECT HEX(_UTF8MB4'?x?')");
+    assert_eq!(
+        warning_messages(&lenient),
+        ["[parser:1300]Invalid ascii character string: 'C3A9'"]
+    );
+
+    let refused = parse_client("select hex('é')".as_bytes(), STRICT, "ascii", "ascii").unwrap_err();
+    assert_eq!(refused.errno, Some(1300));
+    assert_eq!(refused.message, "Invalid ascii character string: 'C3A9'");
+
+    let warned = parse_client("select hex('é')".as_bytes(), STRICT, "ascii", "utf8mb4").unwrap();
+    assert_eq!(warned.statement.restore(), "SELECT HEX(_UTF8MB4'?')");
+    assert_eq!(
+        warning_messages(&warned),
+        ["[parser:1300]Invalid ascii character string: 'C3A9'"]
+    );
+
+    let identifier = parse_client("select é".as_bytes(), STRICT, "ascii", "ascii").unwrap();
+    assert_eq!(identifier.statement.restore(), "SELECT `?`");
+    assert_eq!(
+        warning_messages(&identifier),
+        ["[parser:1300]Invalid ascii character string: 'C3A9'"]
+    );
+}
+
+/// A gbk/gb18030 client's bytes are scanned raw, as Go does, captured from
+/// TiDB: `SET NAMES gbk; SELECT HEX('\xE9')` is `ERROR 1300 (HY000): Invalid
+/// gbk character string: 'E9'` under the default strict `sql_mode`; with a
+/// utf8mb4 connection it is `3F` with that warning; `'\x95\x5C'` is one
+/// character whose trail byte is not a backslash escape (`955C`, and
+/// `E6989E` on a utf8mb4 connection); an identifier's invalid group warns
+/// (gbk `'8120'`, gb18030 `'81'` naming the column `? `), a quoted one keeps a `0x60` trail byte (`\xAB\x60` is
+/// `玚`); and a scanner error wins over a later syntax error but not
+/// over an earlier one (`SELEC '\xE9'` and `SELECT 1 FROM WHERE x = '\xE9'`
+/// are 1064, `SELECT '\xE9' FROM` is 1300).
+#[test]
+fn gbk_client_scans_raw_bytes_like_go() {
+    for client in ["gbk", "gb18030"] {
+        let refused = parse_client(b"select hex('\xe9')", STRICT, client, client).unwrap_err();
+        assert_eq!(refused.errno, Some(1300), "{client}");
+        assert_eq!(
+            refused.message,
+            format!("Invalid {client} character string: 'E9'")
+        );
+
+        let warned = parse_client(b"select hex('\xe9')", STRICT, client, "utf8mb4").unwrap();
+        assert_eq!(
+            warned.statement.restore(),
+            "SELECT HEX(_UTF8MB4'?')",
+            "{client}"
+        );
+        assert_eq!(
+            warning_messages(&warned),
+            [format!(
+                "[parser:1300]Invalid {client} character string: 'E9'"
+            )]
+        );
+
+        for connection in [client, "utf8mb4"] {
+            let trail = parse_client(b"select hex('\x95\x5c')", STRICT, client, connection)
+                .unwrap()
+                .statement
+                .restore();
+            assert_eq!(
+                trail, "SELECT HEX(_UTF8MB4'\u{661e}')",
+                "{client} {connection}"
+            );
+        }
+
+        let quoted = parse_client(b"select 1 as `\xab\x60`", STRICT, client, client).unwrap();
+        assert_eq!(
+            quoted.statement.restore(),
+            "SELECT 1 AS `\u{739a}`",
+            "{client}"
+        );
+        assert!(quoted.warnings.is_empty());
+
+        // GBK's `Peek` takes two bytes after a lead byte, GB18030's one.
+        let (name, group) = if client == "gbk" {
+            ("?", "8120")
+        } else {
+            ("? ", "81")
+        };
+        let identifier = parse_client(b"select 1 as `\x81\x20`", STRICT, client, client).unwrap();
+        assert_eq!(
+            identifier.statement.restore(),
+            format!("SELECT 1 AS `{name}`")
+        );
+        assert_eq!(
+            warning_messages(&identifier),
+            [format!(
+                "[parser:1300]Invalid {client} character string: '{group}'"
+            )]
+        );
+
+        for (sql, errno) in [
+            (&b"selec '\xe9'"[..], None),
+            (b"select 1 from where x = '\xe9'", None),
+            (b"select '\xe9' from", Some(1300)),
+            (b"select 1, '\xe9', 2 frm t", Some(1300)),
+            (b"select 1; select '\xe9'", Some(1300)),
+        ] {
+            let error = parse_client(sql, STRICT, client, client).unwrap_err();
+            assert_eq!(error.errno, errno, "{client} {sql:?}");
+        }
+    }
+}
+
+/// Go's statement, subquery and view texts are `SetText(p.connectionEncoding,
+/// src)`: `OriginalText()` is the client's bytes and `Text()` decodes them,
+/// spelling a non-printable literal in hex. Captured through the process
+/// list (`INFO` is the statement's `Text()`): a latin1 client's
+/// `SELECT SLEEP(3), '\xE9', 'a<TAB>b', '\xC3\xA9' /* x\xE9 */` shows
+/// `SELECT SLEEP(3), 0xe9, 0x610962, '\xC3\xA9' /* x\xE9 */`, and a gbk
+/// client's `'\xD6\xD0'` shows as UTF-8 `'中'`.
+#[test]
+fn statement_text_carries_the_client_encoding() {
+    let sql = b"SELECT SLEEP(3), '\xe9', 'a\tb', '\xc3\xa9' /* x\xe9 */";
+    let statement = parse_client(sql, SqlMode::default(), "latin1", "latin1")
+        .unwrap()
+        .statement;
+    assert_eq!(statement.original_text(), sql);
+    assert_eq!(
+        statement.text(),
+        b"SELECT SLEEP(3), 0xe9, 0x610962, '\xc3\xa9' /* x\xe9 */"
+    );
+
+    let gbk = parse_client(b"SELECT '\xd6\xd0'", SqlMode::default(), "gbk", "gbk")
+        .unwrap()
+        .statement;
+    assert_eq!(gbk.original_text(), b"SELECT '\xd6\xd0'");
+    assert_eq!(gbk.text(), "SELECT '中'".as_bytes());
+
+    let statements = parse_multi_with_sql_mode_and_config(
+        &carry_client_sql(
+            b"SELECT '\xe9'; SELECT 'a\tb'",
+            tidb_datatype::Encoding::Latin1,
+        ),
+        SqlMode::default(),
+        config("latin1", "latin1"),
+    )
+    .unwrap();
+    let texts: Vec<&[u8]> = statements.iter().map(Stmt::text).collect();
+    assert_eq!(texts, [&b"SELECT 0xe9;"[..], b"SELECT 0x610962"]);
 }

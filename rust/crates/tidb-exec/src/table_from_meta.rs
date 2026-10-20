@@ -332,8 +332,15 @@ pub fn cluster_table(
     // Go TableFromMeta rebuilds generated expressions against the complete
     // stored schema. The wide loader does not use the bounded reader's
     // admission rules, so it must retain this metadata itself.
-    let generated_schema = columns
-        .iter()
+    //
+    // Go builds every generated column of `tblInfo.Columns`, public or not,
+    // so the schema is needed when ANY stored column is generated: a version
+    // an `ADD COLUMN ... AS (...)` or a generated column's `DROP COLUMN`
+    // publishes mid-job holds a non-public generated column (built by the
+    // non-public loop below) while no public column is generated.
+    let generated_schema = table
+        .columns
+        .iter_deref()
         .any(|column| column.read().is_generated())
         .then(|| {
             let names: Vec<String> = columns

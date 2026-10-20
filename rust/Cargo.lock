@@ -3761,6 +3761,8 @@ version = "0.0.0"
 name = "tidb-lexer"
 version = "0.0.0"
 dependencies = [
+ "tidb-datatype",
+ "tidb-hack",
  "tidb-mysql",
 ]
 
@@ -3819,6 +3821,7 @@ dependencies = [
  "tidb-ast",
  "tidb-datatype",
  "tidb-error",
+ "tidb-hack",
  "tidb-mysql",
  "tidb-parser",
 ]
@@ -4404,6 +4407,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-exec",
+ "tidb-hack",
  "tidb-kvcache",
  "tidb-log",
  "tidb-model",

@@ -433,10 +433,8 @@ impl Parser {
             let query_end = self.peek().offset;
             let mut subquery = tidb_ast::NodeBox::new(subquery);
             if query_end > query_start {
-                subquery.set_text(
-                    None,
-                    self.source.as_bytes()[query_start..query_end].to_vec(),
-                );
+                let (encoding, text) = self.source_text(&self.source[query_start..query_end]);
+                subquery.set_text(encoding, text);
             }
             self.expect_op(")")?;
             if self.is_kw("AS") {
@@ -495,10 +493,8 @@ impl Parser {
             let query_end = self.peek().offset;
             let mut subquery = tidb_ast::NodeBox::new(subquery);
             if query_end > query_start {
-                subquery.set_text(
-                    None,
-                    self.source.as_bytes()[query_start..query_end].to_vec(),
-                );
+                let (encoding, text) = self.source_text(&self.source[query_start..query_end]);
+                subquery.set_text(encoding, text);
             }
             self.expect_op(")")?;
             // Unlike `LATERAL`, a plain derived table's alias is
@@ -712,7 +708,8 @@ impl Parser {
         let end = self.peek().offset;
         let mut query = tidb_ast::NodeBox::new(query);
         if end > start {
-            query.set_text(None, self.source.as_bytes()[start..end].to_vec());
+            let (encoding, text) = self.source_text(&self.source[start..end]);
+            query.set_text(encoding, text);
         }
         self.expect_op(")")?;
         Ok(query)

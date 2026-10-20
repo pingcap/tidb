@@ -315,6 +315,32 @@ fn view_info_basic() {
     assert_eq!(c.cols[0].original(), "a");
 }
 
+/// Go's `encoding/json` writes each byte that is not part of valid UTF-8 as
+/// `�` (`encodeState.string`). A latin1 client's view definition holds
+/// its raw bytes, which this text carries as `raw_bytes` escapes: the
+/// persisted `view_select` replaces them the same way, per byte, and valid
+/// UTF-8 (including a real U+10FFxx character) is written unchanged.
+#[test]
+fn view_select_persists_invalid_utf8_as_go_json_does() {
+    let raw = b"SELECT _UTF8MB4'a\xe9' AS `x\xe2\x94`, '\xf4\x8f\xbf\xbf'";
+    let view = ViewInfo {
+        select_stmt: tidb_hack::raw_bytes::bytes_to_str(raw).into_owned(),
+        ..Default::default()
+    };
+    let encoded = go_json(&view);
+    assert!(
+        encoded.contains(
+            "\"view_select\":\"SELECT _UTF8MB4'a\\ufffd' AS `x\\ufffd\\ufffd`, '\u{10ffff}'\""
+        ),
+        "{encoded}"
+    );
+    let decoded: ViewInfo = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(
+        decoded.select_stmt,
+        "SELECT _UTF8MB4'a\u{fffd}' AS `x\u{fffd}\u{fffd}`, '\u{10ffff}'"
+    );
+}
+
 #[test]
 fn view_info_merges_pointer_fields_and_slices_like_go() {
     use crate::serde_helpers::GoJsonMerge;

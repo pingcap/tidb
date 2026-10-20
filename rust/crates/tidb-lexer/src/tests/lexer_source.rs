@@ -1445,3 +1445,73 @@ fn test_parser_err_msg() {
         "unclosed comment in DELETE must be invalid"
     );
 }
+
+/// Go `reader.skipRune(s.client)`: inside a quoted string or identifier the
+/// scanner steps over a GBK character whole, so its trail byte `0x5C` is no
+/// backslash escape and `0x60` no closing backtick; a lead byte with no valid
+/// trail (`0xE9` before `'`) is read as one byte. Under the default utf8mb4
+/// client the same bytes are read one by one. The text carries each source
+/// byte at or above `0x80` as one `raw_bytes` escape.
+#[test]
+fn gbk_client_skips_multibyte_characters_in_quotes() {
+    let gbk = tidb_datatype::Encoding::Gbk;
+    let carry = |bytes: &[u8]| raw_bytes::bytes_to_escaped_str(bytes).into_owned();
+    let lexed = |sql: &str, client| {
+        Lexer::new(sql)
+            .with_client(client)
+            .tokenize()
+            .into_iter()
+            .map(|token| {
+                (
+                    token.kind,
+                    raw_bytes::str_to_bytes(&token.text).into_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let trail_backslash = carry(b"'\x95\x5c'");
+    assert_eq!(
+        lexed(&trail_backslash, gbk),
+        [
+            (TokenKind::Str, b"'\x95\x5c'".to_vec()),
+            (TokenKind::Eof, Vec::new())
+        ]
+    );
+    let utf8 = tidb_datatype::find_encoding("utf8mb4");
+    assert_eq!(lexed(&trail_backslash, utf8)[0].0, TokenKind::Invalid);
+
+    let trail_backtick = carry(b"`\xab\x60`");
+    assert_eq!(
+        lexed(&trail_backtick, gbk),
+        [
+            (TokenKind::Ident, b"\xab\x60".to_vec()),
+            (TokenKind::Eof, Vec::new())
+        ]
+    );
+
+    let lone_lead = carry(b"'\xe9' x");
+    assert_eq!(
+        lexed(&lone_lead, gbk),
+        [
+            (TokenKind::Str, b"'\xe9'".to_vec()),
+            (TokenKind::Ident, b"x".to_vec()),
+            (TokenKind::Eof, Vec::new())
+        ]
+    );
+
+    // One four-byte escape and the ASCII trail byte.
+    assert_eq!(skip_rune_len(gbk, &carry(b"\x95\x5cz")), 5);
+    assert_eq!(skip_rune_len(gbk, &carry(b"\xe9'")), 0);
+    assert_eq!(skip_rune_len(gbk, "a"), 0);
+    // Go's GB18030 `MbLen` panics on this unterminated tail; here it is no
+    // character, and the string stays unterminated.
+    let gb18030 = tidb_datatype::Encoding::Gb18030;
+    assert_eq!(skip_rune_len(gb18030, &carry(b"\x81\x30")), 0);
+    assert_eq!(
+        lexed(&carry(b"'\x81\x30"), gb18030)[0].0,
+        TokenKind::Invalid
+    );
+    assert_eq!(skip_rune_len(gb18030, &carry(b"\x81\x30\x81\x30")), 10);
+    assert_eq!(skip_rune_len(utf8, "\u{e9}'"), 2);
+}

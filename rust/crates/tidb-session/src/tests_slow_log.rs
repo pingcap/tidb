@@ -262,8 +262,17 @@ fn general_log_writes_each_statement_while_on() {
     ] {
         assert!(line.contains(field), "{field} in {line}");
     }
-    // Go `QueryReplacer` folds the tab and newline into spaces.
-    assert!(line.contains("general log on"), "{line}");
+    // Go spells a literal holding a tab or newline in hex in the
+    // statement's `Text()`, and logs the original bytes, quoted, as
+    // `originText` (captured from Go's own GENERAL_LOG line).
+    assert!(
+        line.contains("[sql=\"SELECT 0x67656e6572616c096c6f670a6f6e\"]"),
+        "{line}"
+    );
+    assert!(
+        line.contains("[originText=\"\\\"SELECT 'general\\\\tlog\\\\non'\\\"\"]"),
+        "{line}"
+    );
 
     // Crucial statements go to the background log instead.
     session.run("CREATE TABLE general_t (a INT)").unwrap();

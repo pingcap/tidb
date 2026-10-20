@@ -99,6 +99,8 @@ pub fn is_builtin_function_keyword(word: &str) -> bool {
 }
 
 use reader::Reader;
+use tidb_datatype::Encoding;
+use tidb_hack::raw_bytes;
 
 /// SQL mode flags that change tokenization. Mirrors the subset of
 /// `mysql.SQLMode` the scanner consults. The all-`false` default matches
@@ -122,6 +124,11 @@ pub struct SqlMode {
     /// a token identity; this lexer has one `||` operator token and the
     /// parser reads the flag directly instead.
     pub pipes_as_concat: bool,
+    /// Go `SQLMode.HasStrictMode` (`STRICT_TRANS_TABLES` or
+    /// `STRICT_ALL_TABLES`): `Scanner.convert2Connection` refuses a string
+    /// literal the client encoding cannot decode, instead of warning, when
+    /// the client and connection encodings are the same.
+    pub strict_mode: bool,
 }
 
 /// The scanner. Construct with [`Lexer::new`], then pull tokens with
@@ -151,6 +158,49 @@ pub struct Lexer<'a> {
     /// optimizer-hint recognition.
     kw_hist: [Option<&'static str>; 3],
     warnings: Vec<String>,
+    /// Go `Scanner.client`: the encoding the SQL bytes are in, whose
+    /// multibyte characters `reader.skipRune` steps over inside quoted
+    /// strings and identifiers.
+    client: Encoding,
+}
+
+/// Go `reader.skipRune(enc)`: the length in `rest` of one multibyte
+/// character of the client encoding at its start, or 0 when there is none
+/// (`rest` starts with ASCII, or `enc.MbLen` refuses). The scanner steps over
+/// such a character inside quoted strings and identifiers, so a GBK/GB18030
+/// trail byte in the ASCII range (`0x5C` backslash, `0x60` backtick) is not
+/// read as an escape or a delimiter.
+///
+/// The client's bytes are [`raw_bytes`] escapes in `rest`, so the width is
+/// measured over the raw bytes they stand for and the result spans the
+/// characters that carry them; a character holding several raw bytes ends
+/// where its last one does.
+pub fn skip_rune_len(enc: Encoding, rest: &str) -> usize {
+    if rest.as_bytes().first().is_none_or(|byte| *byte <= 0x7F) {
+        return 0;
+    }
+    let mut raw = [0u8; 4];
+    let mut ends = [0usize; 4];
+    let mut raw_len = 0;
+    'chars: for (index, character) in rest.char_indices() {
+        let mut buffer = [0u8; 4];
+        for byte in raw_bytes::str_to_bytes(character.encode_utf8(&mut buffer)).iter() {
+            if raw_len == raw.len() {
+                break 'chars;
+            }
+            raw[raw_len] = *byte;
+            ends[raw_len] = index + character.len_utf8();
+            raw_len += 1;
+        }
+    }
+    // A tail shorter than four bytes stays padded with NUL, which no encoding
+    // takes as a trail byte: the width is Go's wherever Go's `MbLen` returns,
+    // and 0 where it panics (GB18030 reads `bs[2]` and `bs[3]` unchecked, at
+    // an unterminated `'\x81\x30`).
+    match enc.mb_len(&raw) {
+        0 => 0,
+        width => ends[width - 1],
+    }
 }
 
 /// Keywords after which a `/*+ ... */` hint comment is recognized
@@ -179,7 +229,18 @@ impl<'a> Lexer<'a> {
             in_bang_comment: false,
             kw_hist: [None, None, None],
             warnings: Vec::new(),
+            client: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
         }
+    }
+
+    /// Go `parser.CharsetClient`: the encoding the SQL bytes are in. The
+    /// text carries the client's bytes as [`raw_bytes`] escapes; for a
+    /// multibyte client every byte at or above `0x80` must be an escape (see
+    /// [`raw_bytes::bytes_to_escaped_str`]), so each source byte is one
+    /// character for `skipRune`.
+    pub fn with_client(mut self, client: Encoding) -> Self {
+        self.client = client;
+        self
     }
 
     /// Overrides the SQL mode.
@@ -302,8 +363,9 @@ impl<'a> Lexer<'a> {
             TokenKind::HexLit => LiteralValue::Bytes(decode_hex_literal(raw)),
             TokenKind::BitLit => LiteralValue::Bytes(decode_bit_literal(raw)),
             TokenKind::Str => LiteralValue::String(decode_quoted_string(
-                raw,
+                &self.r.src()[token.offset..token.end_offset],
                 self.sql_mode.no_backslash_escapes,
+                self.client,
             )),
             TokenKind::Keyword if raw == b"\\N" => LiteralValue::String(raw.to_vec()),
             TokenKind::Invalid => LiteralValue::String(Vec::new()),
@@ -377,7 +439,7 @@ impl<'a> Lexer<'a> {
         let text = match introducer {
             Some(canon) => canon.to_string(),
             None => match kind {
-                TokenKind::Ident if raw.starts_with('`') => unquote(raw, '`'),
+                TokenKind::Ident if raw.starts_with('`') => unquote_backticks(raw, self.client),
                 // ANSI_QUOTES flipped a double-quoted string into an
                 // identifier: Go flips only `tok` and keeps `v.Lit` as the
                 // scanString-DECODED buffer (`lexer.go:244-248`), so the
@@ -385,7 +447,7 @@ impl<'a> Lexer<'a> {
                 // just the raw-span doubled-delimiter collapse
                 // (divergence item 9).
                 TokenKind::Ident if raw.starts_with('"') => String::from_utf8_lossy(
-                    &decode_quoted_string(raw.as_bytes(), self.sql_mode.no_backslash_escapes),
+                    &decode_quoted_string(raw, self.sql_mode.no_backslash_escapes, self.client),
                 )
                 .into_owned(),
                 _ => raw.to_string(),
@@ -517,6 +579,9 @@ impl<'a> Lexer<'a> {
             if self.r.eof() {
                 return (TokenKind::Invalid, start, self.r.offset());
             }
+            if self.skip_rune() {
+                continue;
+            }
             let ch = self.r.read_byte();
             if ch == b'`' {
                 if self.r.peek() != b'`' {
@@ -534,6 +599,9 @@ impl<'a> Lexer<'a> {
             if self.r.eof() {
                 return (TokenKind::Invalid, start, self.r.offset());
             }
+            if self.skip_rune() {
+                continue;
+            }
             let ch0 = self.r.read_byte();
             if ch0 == ending {
                 if self.r.peek() != ending {
@@ -547,6 +615,18 @@ impl<'a> Lexer<'a> {
                 self.r.inc(); // consume the escaped char
             }
         }
+    }
+
+    /// Go `reader.skipRune(s.client)` at the reader's position.
+    fn skip_rune(&mut self) -> bool {
+        // Past a raw byte `skipRune` refused, its carrier character's later
+        // bytes are read one by one like Go's `readByte` of that one byte.
+        let Some(rest) = self.r.src().get(self.r.offset()..) else {
+            return false;
+        };
+        let width = skip_rune_len(self.client, rest);
+        self.r.inc_n(width);
+        width > 0
     }
 
     /// `@user`, `@@global.x`, `@@session.x`, `@@x`.
@@ -1112,18 +1192,35 @@ fn intern_hint_keyword(upper: &str) -> Option<&'static str> {
     }
 }
 
-/// Strips the surrounding `quote` characters from a quoted identifier and
-/// collapses doubled quotes, mirroring the Go scanner's quoted-ident handling.
-fn unquote(raw: &str, quote: char) -> String {
+/// Go `scanQuotedIdent`'s buffer: the surrounding backticks stripped, a
+/// doubled backtick collapsed, and a client multibyte character copied whole.
+fn unquote_backticks(raw: &str, client: Encoding) -> String {
     let inner = raw
-        .strip_prefix(quote)
-        .and_then(|s| s.strip_suffix(quote))
+        .strip_prefix('`')
+        .and_then(|s| s.strip_suffix('`'))
         .unwrap_or(raw);
-    let doubled: String = [quote, quote].iter().collect();
-    inner.replace(&doubled, &quote.to_string())
+    let mut out = String::with_capacity(inner.len());
+    let mut index = 0;
+    while index < inner.len() {
+        let rune_len = skip_rune_len(client, &inner[index..]);
+        if rune_len > 0 {
+            out.push_str(&inner[index..index + rune_len]);
+            index += rune_len;
+            continue;
+        }
+        let character = inner[index..].chars().next().expect("index is a char boundary");
+        out.push(character);
+        index += character.len_utf8();
+        if character == '`' && inner[index..].starts_with('`') {
+            index += 1;
+        }
+    }
+    out
 }
 
-fn decode_quoted_string(raw: &[u8], no_backslash_escapes: bool) -> Vec<u8> {
+fn decode_quoted_string(raw: &str, no_backslash_escapes: bool, client: Encoding) -> Vec<u8> {
+    let text = raw;
+    let raw = raw.as_bytes();
     if raw.len() < 2 {
         return Vec::new();
     }
@@ -1131,6 +1228,15 @@ fn decode_quoted_string(raw: &[u8], no_backslash_escapes: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len() - 2);
     let mut index = 1;
     while index + 1 < raw.len() {
+        // Go `scanString` copies a client multibyte character whole.
+        let rune_len = text
+            .get(index..raw.len() - 1)
+            .map_or(0, |rest| skip_rune_len(client, rest));
+        if rune_len > 0 {
+            out.extend_from_slice(&raw[index..index + rune_len]);
+            index += rune_len;
+            continue;
+        }
         let byte = raw[index];
         if byte == quote && raw.get(index + 1) == Some(&quote) {
             out.push(quote);

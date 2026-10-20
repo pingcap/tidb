@@ -85,6 +85,33 @@ pub fn bytes_to_str(bytes: &[u8]) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// Carries Go string bytes in a `str` with EVERY byte at or above `0x80` as
+/// its escape, valid UTF-8 or not, so each source byte is one character.
+///
+/// A multibyte client encoding (GBK, GB18030) has characters whose bytes may
+/// happen to form valid UTF-8 across a character boundary; the scanner's
+/// `skipRune` measures those characters in source bytes, which this form
+/// keeps one to one. [`str_to_bytes`] restores the bytes as for
+/// [`bytes_to_str`].
+#[must_use]
+pub fn bytes_to_escaped_str(bytes: &[u8]) -> Cow<'_, str> {
+    if bytes.is_ascii() {
+        return Cow::Borrowed(std::str::from_utf8(bytes).expect("ASCII is UTF-8"));
+    }
+    Cow::Owned(
+        bytes
+            .iter()
+            .map(|byte| {
+                if byte.is_ascii() {
+                    char::from(*byte)
+                } else {
+                    escape(*byte)
+                }
+            })
+            .collect(),
+    )
+}
+
 /// The exact Go string bytes a `str` produced by [`bytes_to_str`] carries:
 /// each escape character becomes its raw byte, everything else its UTF-8.
 #[must_use]
@@ -113,7 +140,7 @@ fn escape(byte: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes_to_str, contains_escapes, is_escape, str_to_bytes};
+    use super::{bytes_to_escaped_str, bytes_to_str, contains_escapes, is_escape, str_to_bytes};
     use std::borrow::Cow;
 
     #[test]
@@ -137,6 +164,20 @@ mod tests {
             let text = bytes_to_str(bytes);
             assert_eq!(str_to_bytes(&text).as_ref(), bytes, "{bytes:?}");
         }
+    }
+
+    #[test]
+    fn escaped_form_has_one_character_per_byte_and_round_trips() {
+        // GBK `D6D0` happens to be valid UTF-8 (U+05D0); it is escaped too.
+        let bytes = b"SELECT '\xd6\xd0\x95\x5c'";
+        let text = bytes_to_escaped_str(bytes);
+        assert_eq!(text.chars().count(), bytes.len());
+        assert!(text.chars().filter(|c| !c.is_ascii()).all(is_escape));
+        assert_eq!(str_to_bytes(&text).as_ref(), bytes);
+        assert!(matches!(
+            bytes_to_escaped_str(b"SELECT 1"),
+            Cow::Borrowed("SELECT 1")
+        ));
     }
 
     #[test]

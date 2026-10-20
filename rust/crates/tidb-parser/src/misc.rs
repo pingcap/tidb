@@ -50,13 +50,11 @@ impl Parser {
             self.peek().offset
         };
         if statement_end > statement_start {
-            statement.set_text(
-                None,
+            let (encoding, text) = self.source_text(
                 self.source[statement_start..statement_end]
-                    .trim_end_matches([';', ' ', '\t', '\n'])
-                    .as_bytes()
-                    .to_vec(),
+                    .trim_end_matches([';', ' ', '\t', '\n']),
             );
+            statement.set_text(encoding, text);
         }
         Ok(TraceStmt {
             format,

@@ -130,7 +130,10 @@ mod profile_config {
         Pointer {
             // `prof:true` bootstraps the profiling structures (so
             // `prof.dump` and runtime `prof.active` toggles exist), but
-            // `prof.active:false` keeps sampling OFF while requests run.
+            // `prof_active:false` keeps sampling OFF while requests run.
+            // (The option is `prof_active`; `prof.active` is only the
+            // mallctl name, and jemalloc rejects it in a conf string --
+            // "Malformed conf string" -- leaving sampling on.)
             // Every sampled allocation pays a libgcc DWARF unwind here,
             // where Go's `MemProfileRate` sampling walks frame pointers,
             // and that unwind tax measured up to 9% of connection-thread
@@ -153,7 +156,7 @@ mod profile_config {
             // memory on its own pace; the ordinary dirty-page decay
             // (`dirty_decay_ms`, 10 s) is jemalloc's counterpart, and this
             // setting routes huge allocations through it.
-            bytes: &b"prof:true,prof.active:false,lg_prof_sample:19,oversize_threshold:0\0"[0],
+            bytes: &b"prof:true,prof_active:false,lg_prof_sample:19,oversize_threshold:0\0"[0],
         }
         .chars
     });

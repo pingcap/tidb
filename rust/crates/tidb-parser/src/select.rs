@@ -145,10 +145,8 @@ impl Parser {
             let query_end = self.peek().offset;
             let mut query = tidb_ast::NodeBox::new(query);
             if query_end > query_start {
-                query.set_text(
-                    None,
-                    self.source.as_bytes()[query_start..query_end].to_vec(),
-                );
+                let (encoding, text) = self.source_text(&self.source[query_start..query_end]);
+                query.set_text(encoding, text);
             }
             self.expect_op(")")?;
             ctes.push(Cte {

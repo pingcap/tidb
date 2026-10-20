@@ -2645,6 +2645,7 @@ impl Session {
         if statements.is_empty() {
             return Ok(Vec::new());
         }
+        let client = self.vars.build_parser_config().charset_client;
         if statements.len() == 1 {
             return Ok(vec![sql.to_owned()]);
         }
@@ -2661,9 +2662,13 @@ impl Session {
             }
         }
         self.in_multi_stmts = true;
+        // Each statement's exact source bytes (Go `OriginalText`), carried as
+        // the whole text was for the parse each one gets again.
         Ok(statements
             .iter()
-            .map(|statement| String::from_utf8_lossy(statement.text()).into_owned())
+            .map(|statement| {
+                tidb_parser::carry_client_sql(statement.original_text(), client).into_owned()
+            })
             .collect())
     }
 
@@ -2810,9 +2815,11 @@ impl Session {
         // the text as well; pass its digest through to avoid a second hash.
         let arbitrated = self.session_memory.arbitrator_enabled();
         let observation = self.current_statement_observation_identity(sql);
+        // Go publishes `stmtNode.Text()` (`SetProcessInfo`).
+        let text = self.statement_text(sql);
         let normalized = arbitrated.then(|| {
             observation.map_or_else(
-                || normalize_statement_digest(sql),
+                || normalize_statement_digest(&text),
                 |(normalized, digest)| (normalized.to_owned(), digest.clone()),
             )
         });
@@ -2825,7 +2832,7 @@ impl Session {
             if self.routed_statement_observation_depth == 0 {
                 registry.statement_started_with_digest(
                     guard.id(),
-                    sql,
+                    &text,
                     digest.as_deref(),
                     &self.status_text(),
                 );

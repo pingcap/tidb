@@ -4109,7 +4109,7 @@ impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
         _context: &dyn tidb_sqlexec::ExecutionContext,
         statement: &tidb_ast::Stmt,
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
-        let sql = String::from_utf8(statement.text().to_vec())?;
+        let sql = String::from_utf8(statement.original_text().to_vec())?;
         self.materialized_record_set(&sql)
     }
 }
@@ -4138,7 +4138,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         ),
         tidb_sqlexec::SqlExecError,
     > {
-        let sql = String::from_utf8(statement.text().to_vec())?;
+        let sql = String::from_utf8(statement.original_text().to_vec())?;
         self.state.materialize(&sql)
     }
 

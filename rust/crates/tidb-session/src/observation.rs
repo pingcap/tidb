@@ -26,6 +26,10 @@ use tidb_util::topsql_stmtstats::{ExecFinishInfo, StatementObserver};
 
 pub(crate) struct StatementObservation {
     sql: String,
+    /// Go `stmtNode.Text()` of `sql` ([`Session::statement_text`]), which Go
+    /// keeps as `StmtCtx.OriginalSQL`: the summary's sample text, and the
+    /// source of `normalized`.
+    text: String,
     /// Go `SensitiveStmtNode.SecureText`, which every consumer of a
     /// password-bearing statement's text reads instead of the text.
     secure_text: Option<String>,
@@ -108,7 +112,52 @@ impl StmtExecLazyInfo for LazyStatement {
     }
 }
 
+/// [`Session::statement_text`] of `sql` in the client encoding `client`.
+fn statement_text_in(sql: &str, client: tidb_datatype::Encoding) -> std::borrow::Cow<'_, str> {
+    // Valid UTF-8 without control characters decodes to itself under a utf8,
+    // latin1 or binary client and holds no non-printable literal.
+    let printable =
+        !tidb_hack::raw_bytes::contains_escapes(sql) && !sql.chars().any(char::is_control);
+    if printable
+        && (sql.is_ascii()
+            || matches!(
+                client,
+                tidb_datatype::Encoding::Utf8
+                    | tidb_datatype::Encoding::Latin1
+                    | tidb_datatype::Encoding::Binary
+            ))
+    {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    let mut text = tidb_ast::NodeText::default();
+    text.set_text(
+        Some(client),
+        tidb_hack::raw_bytes::str_to_bytes(sql).into_owned(),
+    );
+    std::borrow::Cow::Owned(tidb_hack::raw_bytes::bytes_to_str(text.text()).into_owned())
+}
+
 impl Session {
+    /// Go `stmtNode.Text()` for SQL text this session runs. Go publishes it
+    /// wherever a statement's text leaves the session: the process list
+    /// (`SetProcessInfo`) and `StmtCtx.OriginalSQL`, which the slow log, the
+    /// statement summary's sample text and its digest text read. `Text()`
+    /// decodes the client's bytes with `@@character_set_client` and spells a
+    /// non-printable string literal as a hex literal
+    /// (`convertBinaryStringLiterals`): `SELECT '\xE9'` from a latin1 client
+    /// is `SELECT 0xe9`, and from any client `'a<TAB>b'` is `0x610962`. The
+    /// text carries the client's bytes as `raw_bytes` escapes, and so does
+    /// the result where the decode keeps a byte that is not UTF-8.
+    #[must_use]
+    pub fn statement_text<'a>(&self, sql: &'a str) -> std::borrow::Cow<'a, str> {
+        // ASCII without control characters is the common case: it decodes to
+        // itself under every client and holds no non-printable literal.
+        if sql.bytes().all(|byte| (0x20..0x7F).contains(&byte)) {
+            return std::borrow::Cow::Borrowed(sql);
+        }
+        statement_text_in(sql, self.vars.build_parser_config().charset_client)
+    }
+
     pub(crate) fn record_observation_parse(&mut self, sql: &str, duration: Duration) {
         if let Some(observation) = self.statement_observation.as_ref().filter(|o| o.sql == sql) {
             // run() opened the clock before parsing; do not add it twice.
@@ -271,6 +320,7 @@ impl Session {
         if self.routed_statement_observation_depth != 0 {
             return;
         }
+        let text = self.statement_text(sql).into_owned();
         // The details the server's door initialized for this statement, or
         // Go `execdetails.ContextWithInitializedExecDetails`'s fresh ones.
         let (normalized, digest, ru_details) = match self
@@ -280,7 +330,7 @@ impl Session {
         {
             Some(pending) => (pending.normalized, pending.digest, pending.ru_details),
             None => {
-                let (normalized, digest) = normalize_statement_digest(sql);
+                let (normalized, digest) = normalize_statement_digest(&text);
                 (normalized, digest, Arc::new(tikv_client::RuDetails::new()))
             }
         };
@@ -292,6 +342,7 @@ impl Session {
         self.statement_txn_start_ts = 0;
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
+            text,
             secure_text: None,
             normalized,
             digest,
@@ -401,7 +452,7 @@ impl Session {
             return;
         }
         let ru_details = Arc::new(tikv_client::RuDetails::new());
-        let (normalized, digest) = normalize_statement_digest(sql);
+        let (normalized, digest) = normalize_statement_digest(&self.statement_text(sql));
         self.publish_kv_context(&ru_details, &normalized, &digest, None);
         self.pending_statement_exec_details = Some(PendingStatementExecDetails {
             sql: sql.to_owned(),
@@ -435,12 +486,17 @@ impl Session {
         {
             return;
         }
+        // The SQL `PREPARE` parsed this text with the scanner's default client
+        // (Go `PrepareExec`, `needReset` false), whose `Text()` it is.
+        let text = statement_text_in(sql, tidb_parser::ParserConfig::default().charset_client)
+            .into_owned();
         if let Some(observation) = &mut self.statement_observation {
-            let (normalized, digest) = normalize_statement_digest(sql);
+            let (normalized, digest) = normalize_statement_digest(&text);
             if self.statement_normalized_sql.is_some() {
                 self.statement_normalized_sql = Some(normalized.clone());
             }
             observation.sql = sql.to_owned();
+            observation.text = text;
             observation.normalized = normalized;
             observation.digest = digest;
             observation.label.clear();
@@ -513,7 +569,7 @@ impl Session {
             observation.routed = !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_));
             // Go `getSQLForProcessInfo`: the process list shows a sensitive
             // statement's secure text once its node is known.
-            observation.secure_text = statement_secure_text(stmt, &observation.sql);
+            observation.secure_text = statement_secure_text(stmt, &observation.text);
             if let (Some(text), Some(process)) = (&observation.secure_text, &self.process) {
                 process.registry().redact_statement_info(process.id(), text);
             }
@@ -556,7 +612,7 @@ impl Session {
                     .map(|o| o.digest.to_string());
                 guard.registry().statement_started_with_digest(
                     guard.id(),
-                    sql,
+                    &self.statement_text(sql),
                     digest.as_deref(),
                     &self.status_text(),
                 );
@@ -711,7 +767,7 @@ impl Session {
         let summary_sql = observation
             .secure_text
             .clone()
-            .unwrap_or_else(|| observation.sql.clone());
+            .unwrap_or_else(|| observation.text.clone());
         self.previous_summary_statement =
             Some((summary_sql.clone(), observation.digest.to_string()));
         let plan = self
@@ -874,12 +930,13 @@ impl Session {
     }
 
     /// Go `ExecStmt.GetTextToLog(keepHint)`: the statement text a log may
-    /// carry under `tidb_redact_log`.
+    /// carry under `tidb_redact_log`, from `StmtCtx.OriginalSQL` (the
+    /// statement's `Text()`, client-decoded, not the raw client bytes).
     fn text_to_log(&self, observation: &StatementObservation, keep_hint: bool) -> String {
         let mode = self.redact_log_mode();
         if mode == "ON" {
             if keep_hint {
-                tidb_parser::normalize_keep_hint(&observation.sql)
+                tidb_parser::normalize_keep_hint(&observation.text)
             } else {
                 observation.normalized.clone()
             }
@@ -888,7 +945,7 @@ impl Session {
         } else {
             tidb_util::redact::string(
                 &mode,
-                &format!("{}{}", observation.sql, self.plan_cache_params_string()),
+                &format!("{}{}", observation.text, self.plan_cache_params_string()),
             )
         }
     }
@@ -1256,9 +1313,10 @@ impl Session {
                     "cur_db",
                     tidb_log::Value::Str(self.current_db.clone()),
                 ));
+                // Go `logStmt`: `zap.String("sql", stmt.Text())`.
                 fields.push(tidb_log::Field::new(
                     "sql",
-                    tidb_log::Value::Str(observation.sql.clone()),
+                    tidb_log::Value::Str(observation.text.clone()),
                 ));
             }
             fields.push(tidb_log::Field::new("user", tidb_log::Value::Str(user)));
@@ -1324,6 +1382,17 @@ impl Session {
             ),
             tidb_log::Field::new("sql", tidb_log::Value::Str(query)),
         ];
+        // Go adds the statement's original bytes, `strconv.Quote`d, when they
+        // differ from its `Text()` (a literal spelled in hex, a decoded
+        // client charset).
+        let mut fields = fields.to_vec();
+        let origin = tidb_hack::raw_bytes::str_to_bytes(&observation.sql);
+        if *origin != *observation.text.as_bytes() {
+            fields.push(tidb_log::Field::new(
+                "originText",
+                tidb_log::Value::Str(tidb_error::mysql::go_quote_bytes(&origin)),
+            ));
+        }
         tidb_util::logutil::general_logger().info("GENERAL_LOG", &fields);
     }
 }

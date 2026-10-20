@@ -1164,6 +1164,41 @@ mod tests {
         }
     }
 
+    /// Go `TableFromMeta` builds every generated column of
+    /// `tblInfo.Columns`, public or not. A schema version that
+    /// `ADD COLUMN ... AS (...)` or a generated column's `DROP COLUMN`
+    /// publishes mid-job holds a non-public generated column while no public
+    /// column is generated; any reader loading that version (the
+    /// binding-maintenance worker reloads concurrently with DDL) must build
+    /// it rather than panic.
+    #[test]
+    fn a_cluster_table_builds_a_nonpublic_generated_column() {
+        let (storage, _, _) = cluster_storage();
+        for state in [
+            SchemaState::DELETE_ONLY,
+            SchemaState::WRITE_ONLY,
+            SchemaState::WRITE_REORGANIZATION,
+            SchemaState::DELETE_REORGANIZATION,
+        ] {
+            let mut generated = column(2, 1, "b", false);
+            generated.state = state;
+            generated.generated_expr_string = "`id` + 1".to_owned();
+            let table = TableInfo {
+                id: 302,
+                name: CiString::new("t"),
+                columns: vec![column(1, 0, "id", true), generated].into(),
+                pk_is_handle: true,
+                state: SchemaState::PUBLIC,
+                ..TableInfo::default()
+            };
+            let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+            let [nonpublic] = loaded.nonpublic_columns() else {
+                panic!("the {state:?} column is carried as non-public");
+            };
+            assert!(nonpublic.column.generated.is_some());
+        }
+    }
+
     /// Go `AddRecord` truncates a prefix part of a clustered PRIMARY KEY
     /// (`TruncateIndexValues`) before it encodes the record key. The loader
     /// once carried only the key's offsets, so this node wrote `('abc', 1)`

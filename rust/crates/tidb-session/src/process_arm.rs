@@ -332,9 +332,14 @@ impl Session {
                         // Go reports an idle connection's statement as NULL,
                         // and truncates a running one to 100 runes without
                         // FULL.
+                        // The text carries a byte that is not UTF-8 as its
+                        // `raw_bytes` escape; Go's string holds the byte.
                         match row.info {
                             Some(info) => Datum::Bytes(
-                                process::truncate_process_info(&info, full).into_bytes(),
+                                tidb_hack::raw_bytes::str_to_bytes(
+                                    &process::truncate_process_info(&info, full),
+                                )
+                                .into_owned(),
                             ),
                             None => Datum::Null,
                         },
@@ -451,7 +456,9 @@ impl Session {
                         Datum::Bytes(row.state.into_bytes())
                     },
                     match row.info {
-                        Some(info) => Datum::Bytes(info.into_bytes()),
+                        Some(info) => {
+                            Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&info).into_owned())
+                        }
                         None => Datum::Null,
                     },
                     Datum::Bytes(row.digest.into_bytes()),

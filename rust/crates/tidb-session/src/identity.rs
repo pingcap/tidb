@@ -737,9 +737,10 @@ impl Session {
     /// command-loop defer, after `writeResultSet` returns.
     #[must_use]
     pub fn retain_process_statement(&self, sql: &str) -> Option<process::ProcessStatementGuard> {
-        self.process
-            .as_ref()
-            .map(|guard| guard.statement_started(sql, self.current_db.clone(), self.status_text()))
+        let text = self.statement_text(sql);
+        self.process.as_ref().map(|guard| {
+            guard.statement_started(&text, self.current_db.clone(), self.status_text())
+        })
     }
 
     /// Marks the statements that follow as a binary-protocol EXECUTE (or
@@ -758,9 +759,10 @@ impl Session {
         sql: &str,
         digest: &str,
     ) -> Option<process::ProcessStatementGuard> {
+        let text = self.statement_text(sql);
         self.process.as_ref().map(|guard| {
             guard.statement_started_with_digest(
-                sql,
+                &text,
                 Some(digest),
                 self.current_db.clone(),
                 self.status_text(),

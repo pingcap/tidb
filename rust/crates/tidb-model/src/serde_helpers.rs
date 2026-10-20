@@ -1696,6 +1696,27 @@ pub mod go_shared_bytes {
 struct GoFloatFormatter;
 
 impl serde_json::ser::Formatter for GoFloatFormatter {
+    /// Go `encodeState.string`: a byte that is not part of valid UTF-8 is
+    /// written as `\ufffd`, one per byte (`utf8.DecodeRuneInString` answers
+    /// `RuneError` with width 1). SQL-derived text (a latin1 client's view
+    /// definition or comment) carries such bytes as `raw_bytes` escapes.
+    fn write_string_fragment<W: std::io::Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        if !tidb_hack::raw_bytes::contains_escapes(fragment) {
+            return writer.write_all(fragment.as_bytes());
+        }
+        for chunk in tidb_hack::raw_bytes::str_to_bytes(fragment).utf8_chunks() {
+            writer.write_all(chunk.valid().as_bytes())?;
+            for _ in chunk.invalid() {
+                writer.write_all(b"\\ufffd")?;
+            }
+        }
+        Ok(())
+    }
+
     fn write_f32<W: std::io::Write + ?Sized>(
         &mut self,
         writer: &mut W,

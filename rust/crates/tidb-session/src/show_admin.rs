@@ -596,7 +596,9 @@ impl crate::Session {
                 let nanos = record.duration.subsec_nanos() as i64
                     + i64::try_from(record.duration.as_secs()).unwrap_or(0) * 1_000_000_000;
                 vec![
-                    Datum::Bytes(record.sql.into_bytes()),
+                    // The text carries a byte that is not UTF-8 as its
+                    // `raw_bytes` escape; Go's string holds the byte.
+                    Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&record.sql).into_owned()),
                     Datum::new_time(
                         Time::new(
                             core_time_from_datetime(start),

@@ -43,7 +43,8 @@ impl Parser {
                 let end = self.peek().offset;
                 let mut subquery = tidb_ast::NodeBox::new(subquery);
                 if end > start {
-                    subquery.set_text(None, self.source.as_bytes()[start..end].to_vec());
+                    let (encoding, text) = self.source_text(&self.source[start..end]);
+                    subquery.set_text(encoding, text);
                 }
                 self.expect_op(")")?;
                 return Ok(Expr::InSubquery {

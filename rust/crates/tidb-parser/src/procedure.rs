@@ -71,10 +71,8 @@ impl Parser {
         };
         let mut body = tidb_ast::NodeBox::new(body);
         if body_end > body_start {
-            body.set_text(
-                None,
-                self.source[body_start..body_end].trim().as_bytes().to_vec(),
-            );
+            let (encoding, text) = self.source_text(self.source[body_start..body_end].trim());
+            body.set_text(encoding, text);
         }
         Ok(CreateProcedureStmt {
             if_not_exists,

@@ -66,35 +66,20 @@ use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::transaction_control::classify_transaction_control;
 use tidb_session::privilege::plugin_needs_cleartext;
 
-/// Decodes one client SQL payload per `@@character_set_client`.
+/// Carries one client SQL payload's bytes for `@@character_set_client`.
 ///
-/// Go keeps COM_QUERY bytes raw: the scanner reads them as a `string`, and
-/// only its literal conversions (`Scanner.convert2Connection` for string
-/// literals, `convert2System` for identifiers) consult the client encoding.
-/// For utf8/utf8mb4, latin1, binary, and every name `charset.FindEncoding`
-/// maps to binary, those conversions start from the raw bytes, so the text
-/// here carries them losslessly ([`tidb_hack::raw_bytes`]: valid UTF-8 as is,
-/// any other byte as its escape character) and the parser applies Go's
-/// conversions over the exact bytes.
-///
-/// `gbk`/`gb18030` decode through the ported encoding registry with Go's
-/// strict `OpDecode` (an invalid group is refused, not replaced). `ascii`
-/// requires valid UTF-8, as before.
-fn decode_client_sql(bytes: &[u8], charset: &str) -> Result<String, ()> {
-    match charset {
-        "gbk" | "gb18030" => {
-            let result = tidb_datatype::find_encoding(charset)
-                .transform(bytes, tidb_datatype::TransformOp::DECODE);
-            if result.error().is_some() {
-                return Err(());
-            }
-            String::from_utf8(result.bytes().to_vec()).map_err(|_| ())
-        }
-        "ascii" => std::str::from_utf8(bytes)
-            .map(str::to_owned)
-            .map_err(|_| ()),
-        _ => Ok(tidb_hack::raw_bytes::bytes_to_str(bytes).into_owned()),
-    }
+/// Go keeps COM_QUERY bytes raw for every client charset: the scanner reads
+/// them as a `string`, and only its literal conversions
+/// (`Scanner.convert2Connection` for string literals, `convert2System` for
+/// identifiers) consult the client encoding, refusing or replacing what it
+/// cannot decode (`ErrInvalidCharacterString`, 1300). The text here carries
+/// the bytes losslessly ([`tidb_hack::raw_bytes`]: valid UTF-8 as is, any
+/// other byte as its escape character) and the parser applies Go's
+/// conversions over the exact bytes. A `gbk`/`gb18030` client's every
+/// non-ASCII byte is an escape, so the scanner's `skipRune` can step over
+/// its multibyte characters by their source bytes.
+fn decode_client_sql(bytes: &[u8], charset: &str) -> String {
+    tidb_parser::carry_client_sql(bytes, tidb_datatype::find_encoding(charset)).into_owned()
 }
 
 /// Extracts the signed-integer parameters a point read requires, rejecting a
@@ -244,7 +229,6 @@ const ER_USER_ACCESS_DENIED_BLOCKED_BY_PASSWORD_LOCK: u16 = 3955;
 /// Go's `mysql.ErrMustChangePasswordLogin`: the login errno an account with
 /// an EXPIRED password gets when the server refuses expired logins.
 const ER_MUST_CHANGE_PASSWORD_LOGIN: u16 = 1862;
-const ER_PARSE_ERROR: u16 = 1064;
 const ER_UNKNOWN_ERROR: u16 = 1105;
 const ER_WRONG_ARGUMENTS: u16 = 1210;
 pub(crate) const ER_UNKNOWN_STMT_HANDLER: u16 = 1243;
@@ -2067,20 +2051,7 @@ fn run_connection_commands<S: QuerySession>(
                     // NUL for issue 1989. Embedded and repeated NUL bytes remain
                     // parser-visible here.
                     let input_charset = engine.input_charset();
-                    let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
-                        Ok(sql) => sql,
-                        Err(()) => {
-                            write_error(
-                                output,
-                                1,
-                                ER_PARSE_ERROR,
-                                *b"42000",
-                                "COM_QUERY is not valid UTF-8",
-                                protocol_41,
-                            )?;
-                            return Ok(None);
-                        }
-                    };
+                    let sql = decode_client_sql(&bytes, input_charset.as_ref());
                     let sql = sql.as_str();
                     // Go `handleQuery` (`conn.go:1861`): the text parses as a
                     // whole, and each admitted statement runs in order. Every
@@ -2485,20 +2456,7 @@ fn run_connection_commands<S: QuerySession>(
                 Command::StmtPrepare(bytes) => {
                     commands.stmt_prepare_commands += 1;
                     let input_charset = engine.input_charset();
-                    let sql = match decode_client_sql(&bytes, input_charset.as_ref()) {
-                        Ok(sql) => sql,
-                        Err(()) => {
-                            write_error(
-                                output,
-                                1,
-                                ER_PARSE_ERROR,
-                                *b"42000",
-                                "COM_STMT_PREPARE is not valid UTF-8",
-                                protocol_41,
-                            )?;
-                            return Ok(None);
-                        }
-                    };
+                    let sql = decode_client_sql(&bytes, input_charset.as_ref());
                     let sql = sql.as_str();
                     // Transaction control is claimed before any planner sees the
                     // statement, because a prepared `BEGIN` is a `BEGIN`: its
@@ -3575,13 +3533,20 @@ mod decode_client_sql_tests {
         // name `FindEncoding` maps to binary: UTF-8 sent by a terminal under
         // a latin1 connection stays UTF-8 (no double encoding), and a byte
         // that is not UTF-8 survives as its escape for the parser.
-        for charset in ["latin1", "binary", "utf8mb4", "utf8", "not-a-charset"] {
+        for charset in [
+            "latin1",
+            "binary",
+            "utf8mb4",
+            "utf8",
+            "ascii",
+            "not-a-charset",
+        ] {
             assert_eq!(
-                decode_client_sql("SELECT HEX('└─é')".as_bytes(), charset).as_deref(),
-                Ok("SELECT HEX('└─é')"),
+                decode_client_sql("SELECT HEX('└─é')".as_bytes(), charset),
+                "SELECT HEX('└─é')",
                 "{charset}"
             );
-            let sql = decode_client_sql(b"SELECT 'h\xe9llo'", charset).expect("decodes");
+            let sql = decode_client_sql(b"SELECT 'h\xe9llo'", charset);
             assert_eq!(
                 tidb_hack::raw_bytes::str_to_bytes(&sql).as_ref(),
                 b"SELECT 'h\xe9llo'",
@@ -3591,21 +3556,16 @@ mod decode_client_sql_tests {
     }
 
     #[test]
-    fn ascii_clients_still_require_valid_utf8() {
-        assert!(decode_client_sql(b"SELECT '\xe9'", "ascii").is_err());
-        assert_eq!(
-            decode_client_sql(b"SELECT 1", "ascii").as_deref(),
-            Ok("SELECT 1")
-        );
-    }
-
-    #[test]
-    fn gbk_decodes_through_the_registry_strictly() {
-        // 0xC4 0xE3 is GBK for U+4F60 (ni). An invalid group refuses rather
-        // than replaces — Go's OpDecode.
-        let sql = decode_client_sql(b"SELECT '\xc4\xe3'", "gbk").expect("decodes");
-        assert_eq!(sql, "SELECT '你'");
-        assert!(decode_client_sql(b"SELECT '\x81\x20'", "gbk").is_err());
+    fn multibyte_clients_carry_every_non_ascii_byte_as_an_escape() {
+        // Go scans a gbk/gb18030 client's raw bytes too; the parser decodes
+        // literals and identifiers (and refuses an invalid group with 1300).
+        // 0xD6 0xD0 (GBK U+4E2D) happens to be valid UTF-8; it is escaped.
+        for charset in ["gbk", "gb18030"] {
+            let bytes = b"SELECT '\xd6\xd0\x81\x20'";
+            let sql = decode_client_sql(bytes, charset);
+            assert_eq!(sql.chars().count(), bytes.len(), "{charset}");
+            assert_eq!(tidb_hack::raw_bytes::str_to_bytes(&sql).as_ref(), bytes);
+        }
     }
 }
 

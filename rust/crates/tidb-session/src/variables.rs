@@ -1486,7 +1486,8 @@ impl Session {
         sql: &str,
         ctx: &tidb_executor::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        if let Stmt::Query(query) = self.parse(sql)? {
+        // The SELECT is restored or written by this tier, so it is UTF-8.
+        if let Stmt::Query(query) = self.parse_internal(sql)? {
             let current_db = self.current_db.clone();
             let mut table_names = Vec::new();
             let mut written_db = None;

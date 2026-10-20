@@ -163,10 +163,17 @@ impl Session {
             // `near "5"`, and an unset variable parses the text `NULL`.
             PrepareSource::Var(name) => self.prepare_source_text(name),
         };
+        // Go `PrepareExec` for the SQL `PREPARE` (`needReset` false) passes
+        // only `CharsetConnection`/`CollationConnection`: the text is a string
+        // value, already converted, so the client encoding is the scanner's
+        // default.
         let mut statements = tidb_parser::parse_multi_with_sql_mode_and_config(
             &text,
             self.scanner_sql_mode(),
-            self.vars.build_parser_config(),
+            tidb_parser::ParserConfig {
+                charset_client: tidb_parser::ParserConfig::default().charset_client,
+                ..self.vars.build_parser_config()
+            },
         )
         .map_err(|e| {
             let raw = e.compatibility_message(&text);

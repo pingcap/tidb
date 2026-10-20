@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeZone};
 use tidb_datatype::{core_time_from_datetime, Datum, SessionTimeZone, Time, TimeType};
+use tidb_hack::raw_bytes::str_to_bytes;
 use tidb_model::ColumnInfo;
 use tidb_parser::auth::UserIdentity;
 
@@ -810,9 +811,11 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         DIGEST_STR => {
             |_, _, ssbd, _| opt_string_datum(convert_empty_to_nil(&require_ssbd(ssbd).digest))
         }
-        DIGEST_TEXT_STR => {
-            |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).normalized_sql.as_bytes())
-        }
+        // Statement text carries a byte that is not UTF-8 as its `raw_bytes`
+        // escape; Go's string holds the byte.
+        DIGEST_TEXT_STR => |_, _, ssbd, _| {
+            Datum::new_string(str_to_bytes(&require_ssbd(ssbd).normalized_sql).into_owned())
+        },
         BINDING_DIGEST_STR => |_, _, ssbd, _| {
             opt_string_datum(convert_empty_to_nil(&require_ssbd(ssbd).binding_digest))
         },
@@ -1119,8 +1122,14 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         PLAN_IN_CACHE_STR => |_, _, _, stats| bool_datum(stats.plan_in_cache),
         PLAN_CACHE_HITS_STR => |_, _, _, stats| Datum::new_int(stats.plan_cache_hits),
         PLAN_IN_BINDING_STR => |_, _, _, stats| bool_datum(stats.plan_in_binding),
-        QUERY_SAMPLE_TEXT_STR => |_, _, _, stats| Datum::new_string(stats.sample_sql.as_bytes()),
-        PREV_SAMPLE_TEXT_STR => |_, _, _, stats| Datum::new_string(stats.prev_sql.as_bytes()),
+        // Statement text carries a byte that is not UTF-8 as its `raw_bytes`
+        // escape; Go's string holds the byte.
+        QUERY_SAMPLE_TEXT_STR => {
+            |_, _, _, stats| Datum::new_string(str_to_bytes(&stats.sample_sql).into_owned())
+        }
+        PREV_SAMPLE_TEXT_STR => {
+            |_, _, _, stats| Datum::new_string(str_to_bytes(&stats.prev_sql).into_owned())
+        }
         PLAN_DIGEST_STR => {
             |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).plan_digest.as_bytes())
         }

@@ -202,6 +202,16 @@ fn go_terror_class(errno: u16) -> Option<&'static str> {
 
 type PResult<T> = Result<T, ParseError>;
 
+/// A string literal Go's `Scanner.convert2Connection` could not decode from
+/// the client encoding.
+struct LiteralConversionError {
+    /// The decode's first invalid group (`ErrInvalidCharacterString`).
+    error: tidb_datatype::EncodingError,
+    /// Whether the scanner refuses the literal (strict `sql_mode`, client
+    /// and connection encodings the same) instead of warning.
+    refused: bool,
+}
+
 /// Parses a single SQL statement (with an optional trailing `;`).
 pub fn parse(sql: &str) -> PResult<Stmt> {
     parse_with_mariadb(sql, false)
@@ -285,6 +295,7 @@ pub fn parse_with_window_functions(sql: &str, enabled: bool) -> PResult<Stmt> {
         tidb_mysql::DefaultCharset,
         tidb_mysql::DefaultCollationName,
         enabled,
+        ParserConfig::default(),
     );
     parse_one_with_parser(sql, &mut parser)
 }
@@ -376,6 +387,11 @@ fn parse_with_full_configuration(
 }
 
 fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
+    let result = parse_one_with_parser_grammar(sql, p);
+    p.with_scanner_error(result)
+}
+
+fn parse_one_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Stmt> {
     if let Some(error) = &p.paren_depth_error {
         return Err(error.clone());
     }
@@ -391,7 +407,8 @@ fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
         p.peek().offset
     };
     if end > start {
-        stmt.set_text(None, sql.as_bytes()[start..end].to_vec());
+        let (encoding, text) = p.source_text(&sql[start..end]);
+        stmt.set_text(encoding, text);
     }
     let (checked_stmt, depth_exceeded) =
         ast_depth_exceeded(stmt, p.toks.len() > LARGE_AST_VISIT_TOKEN_THRESHOLD);
@@ -519,6 +536,11 @@ pub fn is_sole_statement(sql: &str) -> bool {
                         // dependent (`NO_BACKSLASH_ESCAPES`); decline.
                         return false;
                     }
+                    if bytes[i] == 0xF4 && bytes.get(i + 1) == Some(&0x8F) {
+                        // A `raw_bytes` escape: a GBK/GB18030 character may
+                        // end in a quote byte (`skipRune`); decline.
+                        return false;
+                    }
                     if bytes[i] == quote {
                         // A doubled quote is the literal itself.
                         if quote != b'`' && bytes.get(i + 1) == Some(&quote) {
@@ -630,33 +652,23 @@ fn decode_client_sql<'a>(
     sql: &'a [u8],
     client_charset: &str,
 ) -> PResult<std::borrow::Cow<'a, str>> {
-    match client_charset {
-        "ascii" if sql.is_ascii() => Ok(std::borrow::Cow::Borrowed(
-            std::str::from_utf8(sql).expect("ASCII is UTF-8"),
-        )),
-        "ascii" => Err(ParseError {
-            message: "invalid ASCII in client SQL".to_owned(),
-            offset: 0,
-            near_offset: 0,
-            errno: None,
-        }),
-        "gbk" | "gb18030" => {
-            let encoding = if client_charset == "gbk" {
-                encoding_rs::GBK
-            } else {
-                encoding_rs::GB18030
-            };
-            // Go's scanner uses the client encoding to find character
-            // boundaries, but it does not reject every malformed byte inside
-            // a quoted token. Replacement decoding preserves that permissive
-            // lexical contract while still preventing a GBK/GB18030 trail
-            // byte `0x5c` from becoming a SQL backslash escape.
-            Ok(encoding.decode_without_bom_handling(sql).0)
-        }
-        // utf8/utf8mb4, latin1, binary, and every name `charset.FindEncoding`
-        // maps to binary: Go scans the raw bytes, which the text carries as
-        // `raw_bytes` escapes for the literal conversions to read.
-        _ => Ok(raw_bytes::bytes_to_str(sql)),
+    Ok(carry_client_sql(
+        sql,
+        tidb_datatype::find_encoding(client_charset),
+    ))
+}
+
+/// Carries a client's SQL bytes in the text this parser scans. Go scans the
+/// raw bytes whatever the client encoding; here valid UTF-8 stays as is and
+/// any other byte is its [`raw_bytes`] escape, for the literal conversions
+/// (`convert2Connection`, `convert2System`) to read. A GBK/GB18030 client's
+/// every non-ASCII byte is an escape, because the scanner steps over such a
+/// character by its source bytes (`reader.skipRune`).
+#[must_use]
+pub fn carry_client_sql(sql: &[u8], client: Encoding) -> std::borrow::Cow<'_, str> {
+    match client {
+        Encoding::Gbk | Encoding::Gb18030 => raw_bytes::bytes_to_escaped_str(sql),
+        _ => raw_bytes::bytes_to_str(sql),
     }
 }
 
@@ -670,6 +682,11 @@ fn parse_multi_with_configuration(
 }
 
 fn parse_multi_with_parser(sql: &str, p: &mut Parser) -> PResult<Vec<Stmt>> {
+    let result = parse_multi_with_parser_grammar(sql, p);
+    p.with_scanner_error(result)
+}
+
+fn parse_multi_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Vec<Stmt>> {
     if let Some(error) = &p.paren_depth_error {
         return Err(error.clone());
     }
@@ -694,7 +711,8 @@ fn parse_multi_with_parser(sql: &str, p: &mut Parser) -> PResult<Vec<Stmt>> {
             p.peek().offset
         };
         if end > source_start {
-            statement.set_text(None, sql.as_bytes()[source_start..end].to_vec());
+            let (encoding, text) = p.source_text(&sql[source_start..end]);
+            statement.set_text(encoding, text);
         }
         let (checked_statement, depth_exceeded) =
             ast_depth_exceeded(statement, p.toks.len() > LARGE_AST_VISIT_TOKEN_THRESHOLD);
@@ -761,9 +779,15 @@ struct Parser {
     charset_client: Encoding,
     /// Go `Scanner.connection`: the encoding string literals convert to.
     charset_connection: Encoding,
+    /// Go `sqlMode.HasStrictMode()` as the scanner reads it.
+    strict_mode: bool,
     warnings: Vec<HintDiagnostic>,
     paren_depth_error: Option<ParseError>,
     recursive_ast_depth_error: Option<ParseError>,
+    /// The first error Go's scanner appends (`Scanner.AppendError`): a
+    /// string literal `convert2Connection` refuses, with that token's offset.
+    /// Go's `ParseSQL` returns it ahead of the grammar's own result.
+    scanner_error: Option<(usize, ParseError)>,
 }
 
 /// Bounds user-controlled nesting before recursive parsing can exhaust the
@@ -915,7 +939,15 @@ impl Parser {
         charset: &str,
         collation: &str,
     ) -> Self {
-        Self::new_with_all_configuration(sql, enable_mariadb, sql_mode, charset, collation, true)
+        Self::new_with_all_configuration(
+            sql,
+            enable_mariadb,
+            sql_mode,
+            charset,
+            collation,
+            true,
+            ParserConfig::default(),
+        )
     }
 
     fn new_with_parser_config(sql: &str, sql_mode: SqlMode, config: ParserConfig) -> Self {
@@ -926,14 +958,14 @@ impl Parser {
             tidb_mysql::DefaultCharset,
             tidb_mysql::DefaultCollationName,
             config.enable_window_function,
+            config,
         );
         parser.strict_double_type_check = config.enable_strict_double_type_check;
-        parser.charset_client = config.charset_client;
-        parser.charset_connection = config.charset_connection;
-        parser.convert_identifiers_to_system();
         parser
     }
 
+    /// `encodings` supplies the scanner's client and connection encodings
+    /// (Go `CharsetClient` and the scanner half of `CharsetConnection`).
     fn new_with_all_configuration(
         sql: &str,
         enable_mariadb: bool,
@@ -941,13 +973,16 @@ impl Parser {
         charset: &str,
         collation: &str,
         support_window_functions: bool,
+        encodings: ParserConfig,
     ) -> Self {
-        let mut lexer = Lexer::new(sql).with_sql_mode(sql_mode);
+        let mut lexer = Lexer::new(sql)
+            .with_sql_mode(sql_mode)
+            .with_client(encodings.charset_client);
         lexer.set_support_window_func(support_window_functions);
         let (toks, lexer_warnings) = lexer.tokenize_with_warnings();
         let paren_depth_error = parentheses_depth_error(&toks);
         let recursive_ast_depth_error = recursive_ast_depth_error(&toks);
-        Parser {
+        let mut parser = Parser {
             source: sql.to_owned(),
             toks,
             pos: 0,
@@ -962,15 +997,19 @@ impl Parser {
             ignore_space: sql_mode.ignore_space,
             pipes_as_concat: sql_mode.pipes_as_concat,
             strict_double_type_check: true,
-            charset_client: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
-            charset_connection: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
+            charset_client: encodings.charset_client,
+            charset_connection: encodings.charset_connection,
+            strict_mode: sql_mode.strict_mode,
             warnings: lexer_warnings
                 .into_iter()
                 .map(|message| HintDiagnostic { message })
                 .collect(),
             paren_depth_error,
             recursive_ast_depth_error,
-        }
+            scanner_error: None,
+        };
+        parser.convert_scanned_literals();
+        parser
     }
 
     /// Decodes a string-literal token under THIS parser's `sql_mode`, then
@@ -979,7 +1018,8 @@ impl Parser {
     /// here, so `NO_BACKSLASH_ESCAPES` cannot be honored by one production
     /// and dropped by the next.
     fn decode_string(&self, raw: &str) -> String {
-        self.convert2_connection(decode_string_with_mode(raw, self.no_backslash_escapes))
+        let lit = decode_string_with_mode(raw, self.no_backslash_escapes, self.charset_client);
+        self.convert2_connection(lit).0
     }
 
     /// Go `Scanner.convert2Connection`: a utf8 client's literal keeps its
@@ -990,71 +1030,133 @@ impl Parser {
     /// client's non-UTF-8 byte reaches a utf8mb4 connection as Go's `?` and a
     /// latin1/binary connection unchanged.
     ///
-    /// A gbk/gb18030 statement is decoded to UTF-8 before it is scanned, which
-    /// is this decode's result. An ascii client's literal is left as is: Go's
-    /// `ErrInvalidCharacterString` error/warning for its non-ASCII bytes is
-    /// not modeled.
-    fn convert2_connection(&self, lit: String) -> String {
+    /// The decode's first invalid group comes back as the error. Under a
+    /// strict `sql_mode` with the client and connection encodings the same,
+    /// Go's scanner refuses the literal with it (`invalid` token,
+    /// `AppendError`) and the literal stays as scanned; otherwise the error
+    /// becomes a warning (`lastErrorAsWarn`) and the replaced literal goes on.
+    fn convert2_connection(&self, lit: String) -> (String, Option<LiteralConversionError>) {
         let client = self.charset_client;
         // Every encoding keeps ASCII unchanged.
-        if lit.is_ascii() || tidb_mysql::is_utf8_charset(client.name()) || client == Encoding::Ascii
-        {
-            return lit;
+        if lit.is_ascii() || tidb_mysql::is_utf8_charset(client.name()) {
+            return (lit, None);
         }
         let source = raw_bytes::str_to_bytes(&lit);
-        let utf8_lit = match client {
-            Encoding::Gbk | Encoding::Gb18030 => source.into_owned(),
-            // latin1 and binary: Go's `Transform` returns its input.
-            _ => client
-                .transform(&source, TransformOp::DECODE_REPLACE)
-                .bytes()
-                .to_vec(),
-        };
-        if client.encoding_type() == self.charset_connection.encoding_type() {
-            return raw_bytes::bytes_to_str(&utf8_lit).into_owned();
+        let (utf8_lit, error) = client
+            .transform(&source, TransformOp::DECODE_REPLACE)
+            .into_parts();
+        let same_encoding = client.encoding_type() == self.charset_connection.encoding_type();
+        let error = error.map(|error| LiteralConversionError {
+            error,
+            refused: self.strict_mode && same_encoding,
+        });
+        if error.as_ref().is_some_and(|error| error.refused) {
+            return (lit, error);
+        }
+        // It is definitely valid if `client` is the same with `connection`.
+        if same_encoding {
+            return (raw_bytes::bytes_to_str(&utf8_lit).into_owned(), error);
         }
         let converted = self
             .charset_connection
             .transform(&utf8_lit, TransformOp::REPLACE_NO_ERR);
-        raw_bytes::bytes_to_str(converted.bytes()).into_owned()
+        (raw_bytes::bytes_to_str(converted.bytes()).into_owned(), error)
     }
 
-    /// Go `Scanner.convert2System` for `identifier`/`quotedIdentifier`
-    /// tokens: the client encoding decodes the name to UTF-8
-    /// (`OpDecodeReplace`), warning `ErrInvalidCharacterString` for the first
-    /// invalid group. Only a utf8 client can change an identifier here:
-    /// latin1/binary `Transform` returns its input (the raw bytes stay as
-    /// escapes), and a gbk/gb18030 statement was decoded before scanning.
-    fn convert_identifiers_to_system(&mut self) {
+    /// The conversions Go's `Scanner.Lex` applies as it scans each token, in
+    /// source order: `convert2System` for `identifier`/`quotedIdentifier`
+    /// tokens (the client encoding decodes the name to UTF-8 with
+    /// `OpDecodeReplace`, warning `ErrInvalidCharacterString` for the first
+    /// invalid group) and `convert2Connection`'s error for `stringLit` tokens
+    /// (the literal's value is converted by [`Self::decode_string`] when the
+    /// grammar reads it). Latin1/binary `Transform` returns its input and
+    /// every encoding keeps ASCII, so only non-ASCII text under a utf8,
+    /// ascii, gbk or gb18030 client can change or warn here.
+    fn convert_scanned_literals(&mut self) {
         let client = self.charset_client;
-        if client != Encoding::Utf8 || !raw_bytes::contains_escapes(&self.source) {
+        if self.source.is_ascii() || matches!(client, Encoding::Latin1 | Encoding::Binary) {
             return;
         }
-        for token in &mut self.toks {
-            if token.kind != TokenKind::Ident || !raw_bytes::contains_escapes(&token.text) {
+        for index in 0..self.toks.len() {
+            let token = &self.toks[index];
+            if token.text.is_ascii() {
                 continue;
             }
-            let converted = client.transform(
-                &raw_bytes::str_to_bytes(&token.text),
-                TransformOp::DECODE_REPLACE,
-            );
-            if let Some(error) = converted.error() {
-                self.warnings.push(HintDiagnostic {
-                    message: format!("[parser:1300]{error}"),
-                });
+            match token.kind {
+                TokenKind::Ident => {
+                    // Valid UTF-8 is unchanged by the utf8 decode.
+                    if client == Encoding::Utf8 && !raw_bytes::contains_escapes(&token.text) {
+                        continue;
+                    }
+                    let converted = client.transform(
+                        &raw_bytes::str_to_bytes(&token.text),
+                        TransformOp::DECODE_REPLACE,
+                    );
+                    if let Some(error) = converted.error() {
+                        self.warnings.push(HintDiagnostic {
+                            message: format!("[parser:1300]{error}"),
+                        });
+                    }
+                    self.toks[index].text = raw_bytes::bytes_to_str(converted.bytes()).into_owned();
+                }
+                // A utf8 client's literal is kept as written.
+                TokenKind::Str if !tidb_mysql::is_utf8_charset(client.name()) => {
+                    let offset = token.offset;
+                    let lit = decode_string_with_mode(
+                        &token.text,
+                        self.no_backslash_escapes,
+                        self.charset_client,
+                    );
+                    let Some(conversion) = self.convert2_connection(lit).1 else {
+                        continue;
+                    };
+                    if !conversion.refused {
+                        self.warnings.push(HintDiagnostic {
+                            message: format!("[parser:1300]{}", conversion.error),
+                        });
+                    } else if self.scanner_error.is_none() {
+                        let error = ParseError {
+                            message: conversion.error.to_string(),
+                            offset,
+                            near_offset: offset,
+                            errno: Some(1300),
+                        };
+                        self.scanner_error = Some((offset, error));
+                    }
+                }
+                _ => {}
             }
-            token.text = raw_bytes::bytes_to_str(converted.bytes()).into_owned();
+        }
+    }
+
+    /// Go `ParseSQL`'s merge: a scanner error wins over the grammar's
+    /// result. Go scans lazily, so a literal after the token the grammar
+    /// stopped at was never scanned and raises no error.
+    fn with_scanner_error<T>(&self, result: PResult<T>) -> PResult<T> {
+        let Some((offset, error)) = &self.scanner_error else {
+            return result;
+        };
+        match &result {
+            Err(grammar_error) if grammar_error.near_offset < *offset => result,
+            _ => Err(error.clone()),
         }
     }
 
     /// The encoding Go's `HandParser.connectionEncoding` (the scanner's
-    /// client encoding) gives a node's source text. A gbk/gb18030 statement
-    /// is already UTF-8 here.
+    /// client encoding) gives a node's source text.
     fn text_encoding(&self) -> Encoding {
-        match self.charset_client {
-            Encoding::Gbk | Encoding::Gb18030 => Encoding::Utf8,
-            client => client,
-        }
+        self.charset_client
+    }
+
+    /// The arguments of Go's `node.SetText(p.connectionEncoding, text)` for a
+    /// slice of this parser's source: the client's exact bytes, which the
+    /// node's `Text()` decodes with the client encoding (spelling a
+    /// non-printable string literal in hex) and `OriginalText()` returns.
+    fn source_text(&self, text: &str) -> (Option<Encoding>, Vec<u8>) {
+        (
+            Some(self.text_encoding()),
+            raw_bytes::str_to_bytes(text).into_owned(),
+        )
     }
 
     /// Consumes the next token and decodes it as a string literal. The
@@ -1107,7 +1209,9 @@ impl Parser {
         let rest = raw.strip_prefix('@').unwrap_or(raw);
         match rest.as_bytes().first() {
             // Go's `singleAtIdentifier` keeps its literal unconverted.
-            Some(b'\'') | Some(b'"') => decode_string_with_mode(rest, self.no_backslash_escapes),
+            Some(b'\'') | Some(b'"') => {
+                decode_string_with_mode(rest, self.no_backslash_escapes, self.charset_client)
+            }
             Some(b'`') => rest.trim_matches('`').replace("``", "`"),
             _ => rest.to_string(),
         }
@@ -1186,9 +1290,11 @@ impl Parser {
             strict_double_type_check: true,
             charset_client: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
             charset_connection: tidb_datatype::find_encoding(tidb_mysql::DefaultCharset),
+            strict_mode: false,
             warnings: Vec::new(),
             paren_depth_error,
             recursive_ast_depth_error: None,
+            scanner_error: None,
         }
     }
 
@@ -1534,13 +1640,9 @@ impl Parser {
                 self.peek().offset
             };
             if statement_end > statement_start {
-                statement.set_text(
-                    None,
-                    self.source[statement_start..statement_end]
-                        .trim()
-                        .as_bytes()
-                        .to_vec(),
-                );
+                let (encoding, text) =
+                    self.source_text(self.source[statement_start..statement_end].trim());
+                statement.set_text(encoding, text);
             }
         }
         if !(matches!(&statement, Stmt::Query(_) | Stmt::Dml(_))
@@ -1649,7 +1751,8 @@ impl Parser {
                 self.peek().offset
             };
             if end > start {
-                statement.set_text(None, self.source.as_bytes()[start..end].to_vec());
+                let (encoding, text) = self.source_text(&self.source[start..end]);
+                statement.set_text(encoding, text);
             }
             PlanReplayerTarget::Statement(Box::new(statement))
         } else {
@@ -1661,7 +1764,8 @@ impl Parser {
                 self.peek().offset
             };
             if end > start {
-                statement.set_text(None, self.source.as_bytes()[start..end].to_vec());
+                let (encoding, text) = self.source_text(&self.source[start..end]);
+                statement.set_text(encoding, text);
             }
             PlanReplayerTarget::Statement(Box::new(statement))
         };
@@ -2060,7 +2164,7 @@ fn is_ident_like_name(t: &Token) -> bool {
 /// through `Parser::decode_string`, which supplies the parser's own mode --
 /// the function is private precisely so a caller cannot decode with the wrong
 /// one.
-fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool) -> String {
+fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool, client: Encoding) -> String {
     let bytes = raw.as_bytes();
     if bytes.len() < 2 {
         return raw.to_string();
@@ -2070,6 +2174,15 @@ fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool) -> String {
     let mut out = Vec::with_capacity(inner.len());
     let mut offset = 0;
     while offset < inner.len() {
+        // Go `scanString` copies a client multibyte character whole.
+        let rune_len = raw
+            .get(1 + offset..raw.len() - 1)
+            .map_or(0, |rest| tidb_lexer::skip_rune_len(client, rest));
+        if rune_len > 0 {
+            out.extend_from_slice(&inner[offset..offset + rune_len]);
+            offset += rune_len;
+            continue;
+        }
         let byte = inner[offset];
         if byte == quote {
             // A doubled delimiter collapses to one.
