@@ -244,25 +244,32 @@ local RUPanel = graphPanel.new(
   )
 );
 
+// Each sample is the busiest second in a 60-second window ending about 30
+// seconds before it. The value is a plain gauge without a timestamp, so any
+// scrape interval up to 60 seconds and any collector can carry it. Only the
+// resource manager leader publishes samples, so the maximum across instances
+// joins leadership changes into one series.
+local RUPeakSelector = '{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}';
+local RUPeakRange = 'resource_manager_resource_unit_peak_per_second_rolling_60s' + RUPeakSelector + '[$__interval]';
 local RUMaxPanel = graphPanel.new(
-  title="RU Max(Max Cost During 20s Period)",
+  title="RU Max - 1s",
   datasource=myDS,
-  legend_rightSide=true,
-  legend_current=true,
-  legend_alignAsTable=true,
-  legend_values=true,
   format="short",
-  description="The max request unit cost for resource groups during in a period(20s).",
-  logBase1Y=10,
+  interval="1m",
+  nullPointMode="null",
+  min=0,
+  legend_values=true,
+  legend_max=true,
+  legend_current=true,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  description="Maximum combined read and write RU/s of one natural second in a 60-second rolling window ending about 30 seconds before the point, summed over clients. Under normal reporting a peak is visible for about a minute and a scrape interval of at most 60 seconds does not miss it; data that arrives late, is retried, or follows a leader change is visible only from its arrival until the window ends and can be missed. A peak may span two adjacent points at a 1-minute step; the two ends of a queried range can be off by up to about 60 seconds. Compare with RU, which shows average consumption rates. RU is attributed to the second in which the client settles it, so a long request concentrates its RU in its settlement second; covers the foreground RU that TiDB confirms by second; excludes TiFlash and background task RU, SQL CPU RU and RUv2.",
 ).addTarget(
   prometheus.target(
-    'sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
-    legendFormat="{{resource_group}}-read",
-  )
-).addTarget(
-  prometheus.target(
-    'sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}) by (resource_group)',
-    legendFormat="{{resource_group}}-write",
+    'max by (keyspace_name, resource_group) (max_over_time(' + RUPeakRange + '))',
+    legendFormat="{{resource_group}}",
+    interval="1m",
+    intervalFactor=1,
   )
 );
 
