@@ -463,11 +463,16 @@ func validateMViewCompleteDeltaWritableInputColTypes(target table.Table, childTy
 		if inputColID < 0 || inputColID >= len(childTypes) {
 			return errors.Errorf("MViewCompleteDeltaApply writable input col id %d at writable offset %d out of source range [0,%d)", inputColID, i, len(childTypes))
 		}
-		if childTypes[inputColID] == nil {
+		inputTp := childTypes[inputColID]
+		if inputTp == nil {
 			return errors.Errorf("MViewCompleteDeltaApply writable input col id %d type is unavailable", inputColID)
 		}
-		if !(&writableCols[i].FieldType).Equal(childTypes[inputColID]) {
-			return errors.Errorf("MViewCompleteDeltaApply writable input col id %d type mismatch for target column %s", inputColID, writableCols[i].Name.O)
+		targetTp := &writableCols[i].FieldType
+		if !targetTp.Equal(inputTp) {
+			return errors.Errorf(
+				"MViewCompleteDeltaApply writable input col id %d type mismatch, target col `%s` expects %s but input is %s",
+				inputColID, writableCols[i].Name.O, targetTp.String(), inputTp.String(),
+			)
 		}
 	}
 	return nil

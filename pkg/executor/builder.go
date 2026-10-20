@@ -2549,7 +2549,7 @@ func (b *executorBuilder) buildExpand(v *physicalop.PhysicalExpand) exec.Executo
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2582,7 +2582,7 @@ func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physical
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -3884,8 +3884,14 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 }
 
 func (b *executorBuilder) newDataReaderBuilderWithSnapshot(p base.PhysicalPlan, snapshot *plannercore.DataReaderSnapshot) (*dataReaderBuilder, error) {
-	if snapshot == nil || snapshot.TS == 0 || snapshot.InfoSchema == nil {
-		return nil, errors.New("snapshot is nil or invalid")
+	if snapshot == nil {
+		return nil, errors.New("snapshot is nil")
+	}
+	if snapshot.TS == 0 {
+		return nil, errors.New("snapshot ts is zero")
+	}
+	if snapshot.InfoSchema == nil {
+		return nil, errors.New("snapshot infoschema is nil")
 	}
 	builderForDataReader := *b
 	builderForDataReader.forDataReaderBuilder = true

@@ -108,17 +108,26 @@ func buildMViewCompleteDeltaWritableInputColIDs(target table.Table, rowInputColI
 		return nil, errors.New("MViewCompleteDeltaApply target table is nil")
 	}
 	writableCols := target.WritableCols()
+	if len(writableCols) == 0 {
+		return nil, errors.New("MViewCompleteDeltaApply target table has no writable columns")
+	}
 	publicCols := target.Cols()
-	if len(writableCols) == 0 || len(publicCols) != len(writableCols) {
+	if len(publicCols) != len(writableCols) {
 		return nil, errors.New("MViewCompleteDeltaApply does not support target table with non-public writable columns")
 	}
 	if len(rowInputColIDs) != len(publicCols) {
 		return nil, errors.Errorf("MViewCompleteDeltaApply row input column mapping length %d != target public column count %d", len(rowInputColIDs), len(publicCols))
 	}
 	ids := make([]int, 0, len(writableCols))
-	for _, col := range writableCols {
-		if col == nil || col.Offset < 0 || col.Offset >= len(rowInputColIDs) {
-			return nil, errors.New("MViewCompleteDeltaApply target writable column offset is invalid")
+	for i, col := range writableCols {
+		if col == nil {
+			return nil, errors.Errorf("MViewCompleteDeltaApply target writable column at offset %d is nil", i)
+		}
+		if col.Offset < 0 || col.Offset >= len(rowInputColIDs) {
+			return nil, errors.Errorf(
+				"MViewCompleteDeltaApply target writable column `%s` offset %d out of range [0,%d)",
+				col.Name.O, col.Offset, len(rowInputColIDs),
+			)
 		}
 		ids = append(ids, rowInputColIDs[col.Offset])
 	}
@@ -126,17 +135,29 @@ func buildMViewCompleteDeltaWritableInputColIDs(target table.Table, rowInputColI
 }
 
 func buildMViewCompleteDeltaCompareMappings(target table.Table, groupKeyOffsets, currentIDs, recomputedIDs []int) (compareWritableIdxes, currentCompareInputColIDs, recomputedCompareInputColIDs []int, err error) {
-	if target == nil || len(currentIDs) != len(recomputedIDs) {
-		return nil, nil, nil, errors.New("MViewCompleteDeltaApply writable input mapping length mismatch")
+	if target == nil {
+		return nil, nil, nil, errors.New("MViewCompleteDeltaApply target table is nil")
+	}
+	if len(currentIDs) != len(recomputedIDs) {
+		return nil, nil, nil, errors.Errorf(
+			"MViewCompleteDeltaApply writable input mapping length mismatch: current=%d recomputed=%d",
+			len(currentIDs), len(recomputedIDs),
+		)
 	}
 	publicCols, writableCols := target.Cols(), target.WritableCols()
-	if len(publicCols) != len(writableCols) || len(groupKeyOffsets) == 0 {
-		return nil, nil, nil, errors.New("MViewCompleteDeltaApply invalid target columns or group key offsets")
+	if len(publicCols) != len(writableCols) {
+		return nil, nil, nil, errors.New("MViewCompleteDeltaApply does not support target table with non-public writable columns")
+	}
+	if len(groupKeyOffsets) == 0 {
+		return nil, nil, nil, errors.New("MViewCompleteDeltaApply group key offsets are empty")
 	}
 	isKey := make([]bool, len(publicCols))
-	for _, off := range groupKeyOffsets {
+	for i, off := range groupKeyOffsets {
 		if off < 0 || off >= len(publicCols) {
-			return nil, nil, nil, errors.Errorf("MViewCompleteDeltaApply group key offset %d out of range", off)
+			return nil, nil, nil, errors.Errorf(
+				"MViewCompleteDeltaApply group key offset %d at index %d out of range [0,%d)",
+				off, i, len(publicCols),
+			)
 		}
 		isKey[off] = true
 	}
@@ -144,8 +165,14 @@ func buildMViewCompleteDeltaCompareMappings(target table.Table, groupKeyOffsets,
 	currentCompare := make([]int, 0, len(writableCols))
 	recomputedCompare := make([]int, 0, len(writableCols))
 	for writableIdx, col := range writableCols {
-		if col == nil || col.Offset < 0 || col.Offset >= len(publicCols) {
-			return nil, nil, nil, errors.New("MViewCompleteDeltaApply target writable column is invalid")
+		if col == nil {
+			return nil, nil, nil, errors.Errorf("MViewCompleteDeltaApply target writable column at offset %d is nil", writableIdx)
+		}
+		if col.Offset < 0 || col.Offset >= len(publicCols) {
+			return nil, nil, nil, errors.Errorf(
+				"MViewCompleteDeltaApply target writable column `%s` offset %d out of range [0,%d)",
+				col.Name.O, col.Offset, len(publicCols),
+			)
 		}
 		if !isKey[col.Offset] {
 			compareIdx = append(compareIdx, writableIdx)
