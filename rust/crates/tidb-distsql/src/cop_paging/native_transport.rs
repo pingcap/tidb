@@ -25,8 +25,9 @@
 //! # Narrowings, by name
 //!
 //! * Buckets and `StoreBatchCoprocessor` are not used yet (plan Step 6e-6).
-//! * The answering store's address is not reported to the per-store
-//!   runtime statistics or the TopSQL KV-exec counter.
+//! * TopSQL's KV-exec counter is marked once per task send, for the store
+//!   that answered; Go's `KvExecCounter.RPCInterceptor` marks every RPC,
+//!   retries included.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -115,8 +116,9 @@ pub type CopBackoffer = Arc<tokio::sync::Mutex<tikv_client::tikv::Backoffer>>;
 /// What the store's sender answered for one task.
 #[derive(Debug)]
 pub enum NativeCopSend {
-    /// The response, encoded (`coprocessor.Response`).
-    Response(Vec<u8>),
+    /// The response, encoded (`coprocessor.Response`), and the address of
+    /// the store that answered (client-go `rpcCtx.Addr`).
+    Response(Vec<u8>, Option<String>),
     /// A region error the caller handles: the task's ranges are located again.
     RegionError(String),
 }
@@ -215,13 +217,16 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for tidb_txnkv::driver::tikv_sto
             conf_ver: region.1,
             ver: region.2,
         };
-        let sent =
-            self.block_on(
-                self.store()
-                    .send_req(Arc::clone(backoffer), request, &region, timeout),
-            );
+        let sent = self.block_on(self.store().send_req_ctx(
+            Arc::clone(backoffer),
+            request,
+            &region,
+            timeout,
+        ));
         match sent {
-            Ok(response) => Ok(NativeCopSend::Response(response.encode_to_vec())),
+            Ok((response, address)) => {
+                Ok(NativeCopSend::Response(response.encode_to_vec(), address))
+            }
             Err(tikv_client::Error::RegionError(error)) => {
                 Ok(NativeCopSend::RegionError(format!("{error:?}")))
             }
@@ -441,6 +446,7 @@ impl<S: NativeCopStore> QueryTransport for NativeCopTransport<S> {
             event_callback: self.event_callback.clone(),
             cancellation,
             call,
+            kv_exec_counter: request.kv_exec_counter(),
             timeout,
             metadata: Arc::new(metadata),
             runtime,
@@ -495,6 +501,7 @@ pub struct NativeCopResponse<S> {
     event_callback: Option<tidb_txnkv::EventCallback>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
+    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
     timeout: Duration,
     metadata: Arc<crate::KvRequestMetadata>,
     runtime: CopReadTaskRuntime,
@@ -569,8 +576,8 @@ impl<S: NativeCopStore> NativeCopResponse<S> {
             region,
             self.timeout.min(self.call.timeout()),
         )?;
-        let encoded = match sent {
-            NativeCopSend::Response(encoded) => encoded,
+        let (encoded, address) = match sent {
+            NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
             NativeCopSend::RegionError(error) => {
                 return self.rebuild_after_region_error(
                     logical_task_id,
@@ -596,7 +603,10 @@ impl<S: NativeCopStore> NativeCopResponse<S> {
             );
         }
         let process_time_nanos = response.process_time_nanos();
-        let runtime_sample = response.runtime_sample("");
+        if !address.is_empty() {
+            self.kv_exec_counter.mark(&address);
+        }
+        let runtime_sample = response.runtime_sample(&address);
         let accepted = self.runtime.accept_response_with_runtime(
             attempt_id,
             response,
@@ -828,6 +838,7 @@ impl<S: NativeCopStore> super::cop_iterator::CopWorkerSource for NativeCopRespon
                 event_callback: self.event_callback.clone(),
                 cancellation: Arc::clone(&self.cancellation),
                 call: self.call.clone(),
+                kv_exec_counter: self.kv_exec_counter.clone(),
                 timeout: self.timeout,
                 metadata: Arc::clone(&self.metadata),
                 runtime,

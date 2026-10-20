@@ -1128,10 +1128,31 @@ mod tests {
 pub async fn send_req<PdC, Req>(
     pd_client: std::sync::Arc<PdC>,
     keyspace: crate::request::Keyspace,
-    mut request: Req,
+    request: Req,
     backoffer: std::sync::Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
     timeout: Duration,
 ) -> crate::Result<Req::Response>
+where
+    PdC: crate::pd::PdClient,
+    Req: crate::request::KvRequest + crate::request::Shardable<Shard = ()>,
+    Req::Response: crate::store::HasRegionError,
+{
+    send_req_ctx(pd_client, keyspace, request, backoffer, timeout)
+        .await
+        .map(|(response, _)| response)
+}
+
+/// client-go `RegionRequestSender.SendReqCtx`: [`send_req`], with the
+/// address of the store that answered (`rpcCtx.Addr`), which callers report
+/// in per-store runtime statistics and TopSQL's KV-exec counter. `None` when
+/// no request reached a store (a failpoint answered).
+pub async fn send_req_ctx<PdC, Req>(
+    pd_client: std::sync::Arc<PdC>,
+    keyspace: crate::request::Keyspace,
+    mut request: Req,
+    backoffer: std::sync::Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    timeout: Duration,
+) -> crate::Result<(Req::Response, Option<String>)>
 where
     PdC: crate::pd::PdClient,
     Req: crate::request::KvRequest + crate::request::Shardable<Shard = ()>,
@@ -1141,7 +1162,7 @@ where
 
     #[cfg(any(test, feature = "failpoints"))]
     if let Some(injected) = failpoint_send_req_result(crate::store::Request::label(&request)) {
-        return injected;
+        return injected.map(|response| (response, None));
     }
     let cancellation = backoffer.lock().await.cancellation().clone();
     if crate::store::Request::max_execution_duration_ms(&request) == 0 {
@@ -1150,7 +1171,21 @@ where
             u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
         );
     }
+    let address = std::sync::Arc::new(Mutex::new(None::<String>));
+    let mut interceptors = crate::interceptor::RpcInterceptorChain::new();
+    let recorded = std::sync::Arc::clone(&address);
+    interceptors.link(crate::interceptor::new_rpc_interceptor(
+        "send-req-ctx-address",
+        move |target, _request, next| {
+            *recorded
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(target.to_owned());
+            Box::pin(next())
+                as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
+        },
+    ));
     let mut responses = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+        .rpc_interceptor(interceptors)
         .request_timeout(timeout)
         .retry_region_request(crate::request::plan::SenderBackoffer::new(
             backoffer,
@@ -1159,12 +1194,19 @@ where
         .plan()
         .execute()
         .await?;
-    match (responses.pop(), responses.is_empty()) {
-        (Some(response), true) => response,
-        _ => Err(Error::StringError(
-            "a region request answered other than once".to_owned(),
-        )),
-    }
+    let response = match (responses.pop(), responses.is_empty()) {
+        (Some(response), true) => response?,
+        _ => {
+            return Err(Error::StringError(
+                "a region request answered other than once".to_owned(),
+            ))
+        }
+    };
+    let address = address
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    Ok((response, address))
 }
 
 /// client-go `failpointSendReqResult`, failpoint `tikvStoreSendReqResult`,

@@ -1354,6 +1354,30 @@ impl<PdC: PdClient> KvStore<PdC> {
         .await
     }
 
+    /// client-go `RegionRequestSender.SendReqCtx` from the store:
+    /// [`Self::send_req`], with the address of the store that answered.
+    pub async fn send_req_ctx<Req>(
+        &self,
+        backoffer: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+        mut request: Req,
+        region: &crate::region::RegionVerId,
+        timeout: Duration,
+    ) -> Result<(Req::Response, Option<String>)>
+    where
+        Req: crate::request::KvRequest + crate::request::RegionPinned,
+        Req::Response: crate::store::HasRegionError,
+    {
+        request.pin_region(region);
+        crate::region_request::send_req_ctx(
+            self.pd_client(),
+            self.inner.keyspace(),
+            request,
+            backoffer,
+            timeout,
+        )
+        .await
+    }
+
     /// client-go `KVStore.GetTiKVClient().SendRequest(ctx, addr, req,
     /// timeout)`: one request to the TiKV store at `address`, outside any
     /// region routing (store-level commands such as `UnsafeDestroyRange`).
@@ -3103,11 +3127,13 @@ mod tests {
             .await
             .unwrap()
             .ver_id();
-        let response = store
-            .send_req(backoffer(), gc(), &region, Duration::from_secs(5))
+        let (response, address) = store
+            .send_req_ctx(backoffer(), gc(), &region, Duration::from_secs(5))
             .await
             .unwrap();
         assert!(response.region_error.is_none() && response.error.is_none());
+        // client-go `rpcCtx.Addr`: the store that answered.
+        assert_eq!(address.as_deref(), Some("store1"));
 
         let stale = crate::region::RegionVerId {
             ver: region.ver + 1,
