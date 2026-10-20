@@ -113,6 +113,19 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, 1, len(tblInfos))
 	require.Equal(t, tables[0], tblInfos[0])
 
+	var iteratedTableIDs []int64
+	err = is.IterSchemaTableInfos(context.Background(), schemaName, func(tblInfo *model.TableInfo) error {
+		iteratedTableIDs = append(iteratedTableIDs, tblInfo.ID)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int64{tblInfo.ID}, iteratedTableIDs)
+
+	err = is.IterSchemaTableInfos(context.Background(), schemaName, func(*model.TableInfo) error {
+		return context.Canceled
+	})
+	require.ErrorIs(t, err, context.Canceled)
+
 	tables, err = is.SchemaTableInfos(context.Background(), ast.NewCIStr("notexist"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tables))
@@ -285,6 +298,9 @@ func TestMisc(t *testing.T) {
 }
 
 func TestBundles(t *testing.T) {
+	t.Run("drop schema streams table IDs", testDropSchemaStreamsTableIDs)
+	t.Run("collect physical table IDs propagates iteration errors", testCollectPhysicalTableIDsPropagatesIterationErrors)
+
 	r := internal.CreateAutoIDRequirement(t)
 	defer func() {
 		r.Store().Close()
@@ -404,6 +420,104 @@ func TestBundles(t *testing.T) {
 	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
 	require.True(t, ok)
 	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
+}
+
+func testDropSchemaStreamsTableIDs(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
+	require.NoError(t, err)
+
+	dbInfo := internal.MockDBInfo(t, r.Store(), "testDB")
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionCreateSchema,
+		Version:  1,
+		SchemaID: dbInfo.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+
+	tblInfo1 := internal.MockTableInfo(t, r.Store(), "t1")
+	tblInfo1.Partition = &model.PartitionInfo{
+		Enable: true,
+		Definitions: []model.PartitionDefinition{
+			{ID: tblInfo1.ID + 1000},
+			{ID: tblInfo1.ID + 1001},
+		},
+	}
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo1)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionCreateTable,
+		Version:  2,
+		SchemaID: dbInfo.ID,
+		TableID:  tblInfo1.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+
+	tblInfo2 := internal.MockTableInfo(t, r.Store(), "t2")
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo2)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionCreateTable,
+		Version:  3,
+		SchemaID: dbInfo.ID,
+		TableID:  tblInfo2.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+
+	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	builder.Build(ver.Ver)
+	internal.DropDB(t, r.Store(), dbInfo)
+
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	tableIDs, err := builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionDropSchema,
+		Version:  4,
+		SchemaID: dbInfo.ID,
+	})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{
+		tblInfo1.ID,
+		tblInfo1.ID + 1000,
+		tblInfo1.ID + 1001,
+		tblInfo2.ID,
+	}, tableIDs)
+	require.NoError(t, txn.Rollback())
+}
+
+func testCollectPhysicalTableIDsPropagatesIterationErrors(t *testing.T) {
+	tableIDs, err := collectPhysicalTableIDs(func(visit func(*model.TableInfo) error) error {
+		if err := visit(&model.TableInfo{ID: 1}); err != nil {
+			return err
+		}
+		if err := visit(&model.TableInfo{
+			ID: 2,
+			Partition: &model.PartitionInfo{
+				Enable:      true,
+				Definitions: []model.PartitionDefinition{{ID: 3}},
+			},
+		}); err != nil {
+			return err
+		}
+		return context.Canceled
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, tableIDs)
 }
 
 func TestReferredFKInfo(t *testing.T) {

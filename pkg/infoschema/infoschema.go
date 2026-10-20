@@ -401,6 +401,27 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]
 	return tables, nil
 }
 
+// IterSchemaTableInfos implements context.SchemaTableIterator.
+func (is *infoSchema) IterSchemaTableInfos(
+	ctx stdctx.Context,
+	schema ast.CIStr,
+	visit func(*model.TableInfo) error,
+) error {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil
+	}
+	for _, tbl := range schemaTables.tables {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := visit(tbl.Meta()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
 func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableNameInfo, error) {
 	schemaTables, ok := is.schemaMap[schema.L]
