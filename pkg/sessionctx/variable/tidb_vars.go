@@ -1399,7 +1399,7 @@ const (
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
-	DefOptAlwaysKeepJoinKey                 = false
+	DefOptAlwaysKeepJoinKey                 = true
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false

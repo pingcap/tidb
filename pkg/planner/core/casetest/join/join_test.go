@@ -146,11 +146,10 @@ func TestJoinWithNullEQ(t *testing.T) {
 func TestKeepingJoinKeys(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_opt_always_keep_join_key, @@session.tidb_opt_always_keep_join_key").Check(testkit.Rows("1 1"))
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (a int, b int, c int)`)
 	tk.MustExec(`create table t2 (a int, b int, c int)`)
-	tk.MustExec(`set @@tidb_opt_always_keep_join_key=true`)
-
 	// join keys are kept
 	tk.MustQuery(`explain format='brief' select 1 from t1 left join t2 on t1.a=t2.a where t1.a=1`).Check(testkit.Rows(
 		"Projection 12.50 root  1->Column#9",
