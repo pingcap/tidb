@@ -140,6 +140,14 @@ func TestIsPasswordStmt(t *testing.T) {
 			hasPassword: true,
 		},
 		{
+			sql:         "alter user user() identified by '123'",
+			hasPassword: true,
+		},
+		{
+			sql:         "grant select on test.* to u1 identified by '123'",
+			hasPassword: true,
+		},
+		{
 			sql:         "set password for u1 = '123'",
 			hasPassword: true,
 		},

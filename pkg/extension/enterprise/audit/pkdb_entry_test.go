@@ -298,6 +298,83 @@ func parseSQL(t *testing.T, sql string) ast.StmtNode {
 	return stmt
 }
 
+func TestGetStmtClassesDCL(t *testing.T) {
+	testcases := []struct {
+		name            string
+		sql             string
+		expectedClasses []EventClass
+	}{
+		// User management.
+		{name: "create user", sql: "CREATE USER 'u1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "alter user", sql: "ALTER USER 'u1' COMMENT 'comment'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "drop user", sql: "DROP USER 'u1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "rename user", sql: "RENAME USER 'u1' TO 'u2'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+
+		// Privilege management.
+		{name: "grant privilege", sql: "GRANT SELECT ON test.* TO 'u1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "revoke privilege", sql: "REVOKE SELECT ON test.* FROM 'u1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "grant proxy", sql: "GRANT PROXY ON 'u1' TO 'u2'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{
+			name:            "grant security label",
+			sql:             "GRANT SECURITY LABEL policy1.label1 TO USER u1 FOR READ ACCESS",
+			expectedClasses: []EventClass{ClassQuery, ClassDCL, ClassDDL},
+		},
+		{
+			name:            "revoke security label",
+			sql:             "REVOKE SECURITY LABEL policy1.label1 FROM USER u1",
+			expectedClasses: []EventClass{ClassQuery, ClassDCL, ClassDDL},
+		},
+		{
+			name:            "grant exemption",
+			sql:             "GRANT EXEMPTION ON RULE ALL FOR policy1 TO USER u1",
+			expectedClasses: []EventClass{ClassQuery, ClassDCL, ClassDDL},
+		},
+		{
+			name:            "revoke exemption",
+			sql:             "REVOKE EXEMPTION ON RULE ALL FOR policy1 FROM USER u1",
+			expectedClasses: []EventClass{ClassQuery, ClassDCL, ClassDDL},
+		},
+
+		// Role management.
+		{name: "create role", sql: "CREATE ROLE 'r1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "drop role", sql: "DROP ROLE 'r1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "grant role", sql: "GRANT 'r1' TO 'u1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "revoke role", sql: "REVOKE 'r1' FROM 'u1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "set role", sql: "SET ROLE ALL", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "set default role", sql: "SET DEFAULT ROLE ALL TO 'u1'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+
+		// Authentication information management.
+		{name: "set password", sql: "SET PASSWORD FOR 'u1' = 'password'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "change authentication plugin", sql: "ALTER USER 'u1' IDENTIFIED WITH caching_sha2_password BY 'password'", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "change authentication attribute", sql: `ALTER USER 'u1' ATTRIBUTE '{"key": "value"}'`, expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "lock user", sql: "ALTER USER 'u1' ACCOUNT LOCK", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+		{name: "unlock user and change login limits", sql: "ALTER USER 'u1' REQUIRE SSL WITH MAX_USER_CONNECTIONS 1 ACCOUNT UNLOCK", expectedClasses: []EventClass{ClassQuery, ClassDCL}},
+
+		// Non-DCL statements.
+		{name: "select", sql: "SELECT * FROM t", expectedClasses: []EventClass{ClassQuery, ClassSelect}},
+		{name: "insert", sql: "INSERT INTO t VALUES (1)", expectedClasses: []EventClass{ClassQuery, ClassDML, ClassInsert}},
+		{name: "ddl", sql: "CREATE TABLE t (a INT)", expectedClasses: []EventClass{ClassQuery, ClassDDL}},
+	}
+
+	for _, testcase := range testcases {
+		t.Run(testcase.name, func(t *testing.T) {
+			stmt := parseSQL(t, testcase.sql)
+			require.Equal(t, testcase.expectedClasses, getStmtClasses(stmt, false))
+		})
+	}
+}
+
+func TestNewStmtEventEntryUsesPreparedDCLAST(t *testing.T) {
+	preparedStmt := parseSQL(t, "GRANT SELECT ON app.* TO 'target'@'%'")
+	info := &mockStmtEventInfo{
+		isExecute: true,
+		stmtNode:  preparedStmt,
+	}
+
+	entry := newStmtEventEntry(extension.StmtSuccess, info)
+	require.Equal(t, []EventClass{ClassQuery, ClassExecute, ClassDCL}, entry.Classes)
+}
+
 func TestNewStmtEventEntry(t *testing.T) {
 	cases := []struct {
 		stmtNode        ast.StmtNode
@@ -348,35 +425,35 @@ func TestNewStmtEventEntry(t *testing.T) {
 		},
 		{
 			stmtNode:        parseSQL(t, "SET PASSWORD FOR 'bob'@'%.example.org' = 'auth_string'"),
-			expectedClasses: strClassesToEnums(t, []string{"QUERY"}),
+			expectedClasses: strClassesToEnums(t, []string{"QUERY", "QUERY_DCL"}),
 			forceRedact:     true,
 		},
 		{
 			stmtNode:        parseSQL(t, "create user 'u1'@'%'"),
-			expectedClasses: strClassesToEnums(t, []string{"QUERY"}),
+			expectedClasses: strClassesToEnums(t, []string{"QUERY", "QUERY_DCL"}),
 		},
 		{
 			stmtNode:        parseSQL(t, "create user 'u1'@'%' IDENTIFIED BY 'auth_string'"),
-			expectedClasses: strClassesToEnums(t, []string{"QUERY"}),
+			expectedClasses: strClassesToEnums(t, []string{"QUERY", "QUERY_DCL"}),
 			forceRedact:     true,
 		},
 		{
 			stmtNode:        parseSQL(t, "create user 'u1'@'%' IDENTIFIED WITH caching_sha2_password AS 'xx'"),
-			expectedClasses: strClassesToEnums(t, []string{"QUERY"}),
+			expectedClasses: strClassesToEnums(t, []string{"QUERY", "QUERY_DCL"}),
 			forceRedact:     true,
 		},
 		{
 			stmtNode:        parseSQL(t, "alter user 'u1'@'%'"),
-			expectedClasses: strClassesToEnums(t, []string{"QUERY"}),
+			expectedClasses: strClassesToEnums(t, []string{"QUERY", "QUERY_DCL"}),
 		},
 		{
 			stmtNode:        parseSQL(t, "ALTER USER 'u1'@'%' IDENTIFIED BY 'auth_string'"),
-			expectedClasses: strClassesToEnums(t, []string{"QUERY"}),
+			expectedClasses: strClassesToEnums(t, []string{"QUERY", "QUERY_DCL"}),
 			forceRedact:     true,
 		},
 		{
 			stmtNode:        parseSQL(t, "ALTER USER user IDENTIFIED WITH caching_sha2_password AS 'xx'"),
-			expectedClasses: strClassesToEnums(t, []string{"QUERY"}),
+			expectedClasses: strClassesToEnums(t, []string{"QUERY", "QUERY_DCL"}),
 			forceRedact:     true,
 		},
 	}

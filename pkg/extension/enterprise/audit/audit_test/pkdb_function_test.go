@@ -2,6 +2,7 @@ package audit_test
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/enterprise/audit"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -195,6 +197,9 @@ func TestEventClass(t *testing.T) {
 		{"use test", []audit.EventClass{audit.ClassQuery}, true},
 		{"begin", []audit.EventClass{audit.ClassQuery, audit.ClassTransaction}, true},
 		{"create table if not exists t (c int)", []audit.EventClass{audit.ClassQuery, audit.ClassDDL}, true},
+		{"create user 'event_class_user'", []audit.EventClass{audit.ClassQuery, audit.ClassDCL}, true},
+		{"create user 'event_class_user'", []audit.EventClass{audit.ClassQuery, audit.ClassDCL}, false},
+		{"drop user 'event_class_user'", []audit.EventClass{audit.ClassQuery, audit.ClassDCL}, true},
 		{"select * from t", []audit.EventClass{audit.ClassQuery, audit.ClassSelect}, true},
 		{"commit", []audit.EventClass{audit.ClassQuery, audit.ClassTransaction}, true},
 		{"prepare abs_func from 'select abs(?)'", []audit.EventClass{audit.ClassQuery}, true},
@@ -220,6 +225,58 @@ func TestEventClass(t *testing.T) {
 		require.NoError(t, err, "%s\n%s\n%s", tc.sql, eventClassesStr, log)
 		require.True(t, ok, "%s\n%s\n%s", tc.sql, eventClassesStr, log)
 		require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_rotate()"), "%s\n%s\n%s", tc.sql, eventClassesStr, log)
+	}
+}
+
+// TestDCLAuditFilter verifies that QUERY_DCL can be enabled without logging ordinary DQL or DML statements.
+func TestDCLAuditFilter(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	srv := server.CreateMockServer(t, store)
+	defer srv.Close()
+	conn := server.CreateMockConn(t, srv)
+	defer conn.Close()
+
+	tempDir := t.TempDir()
+	logPath := path.Join(tempDir, audit.DefAuditLogName)
+	require.NoError(t, conn.HandleQuery(
+		context.Background(), fmt.Sprintf("SET global tidb_audit_log='%s'", logPath),
+	))
+	require.NoError(t, conn.HandleQuery(context.Background(), "USE test"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "CREATE TABLE dcl_filter_t (c INT)"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "SET global tidb_audit_log_redacted = 0"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "SET global tidb_audit_enabled = 1"))
+	require.NoError(t, conn.HandleQuery(
+		context.Background(),
+		`SELECT audit_log_create_filter('dcl_only', '{"filter":[{"class":["QUERY_DCL"]}]}')`,
+	))
+	require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_create_rule('%@%', 'dcl_only')"))
+
+	require.NoError(t, conn.HandleQuery(context.Background(), "CREATE USER 'dcl_filter_user'"))
+	prepared, _, _, err := conn.Context().Prepare("GRANT SELECT ON test.* TO 'dcl_filter_user'")
+	require.NoError(t, err)
+	binaryExecute := binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(prepared.ID()))
+	binaryExecute = append(binaryExecute, 0, 1, 0, 0, 0)
+	require.NoError(t, conn.Dispatch(context.Background(), binaryExecute))
+	require.NoError(t, conn.HandleQuery(context.Background(), `PREPARE revoke_dcl FROM "REVOKE SELECT ON test.* FROM 'dcl_filter_user'"`))
+	require.NoError(t, conn.HandleQuery(context.Background(), "EXECUTE revoke_dcl"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "SELECT 'ordinary_select_marker'"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "INSERT INTO dcl_filter_t VALUES (8675309)"))
+	require.Error(t, conn.HandleQuery(context.Background(), "DROP USER 'missing_dcl_filter_user'"))
+
+	testcases := []struct {
+		message string
+		exists  bool
+	}{
+		{message: "GRANT SELECT ON test.* TO 'dcl_filter_user'", exists: true},
+		{message: "REVOKE SELECT ON test.* FROM 'dcl_filter_user'", exists: true},
+		{message: "ordinary_select_marker", exists: false},
+		{message: "8675309", exists: false},
+	}
+	for _, testcase := range testcases {
+		ok, log, err := containsMessage(logPath, testcase.message)
+		require.NoError(t, err, "%s\n%s", testcase.message, log)
+		require.Equal(t, testcase.exists, ok, "%s\n%s", testcase.message, log)
 	}
 }
 

@@ -49,6 +49,9 @@ const (
 	ClassSecurity
 	ClassDataOperation
 
+	// DCL audit
+	ClassDCL
+
 	// ClassCount is the count of all classes
 	// New class should be added before it
 	ClassCount
@@ -78,6 +81,7 @@ var Class2String = map[EventClass]string{
 	ClassLoadData:       "LOAD_DATA",
 	ClassSelect:         "SELECT",
 	ClassDDL:            "QUERY_DDL",
+	ClassDCL:            "QUERY_DCL",
 	ClassAudit:          "AUDIT",
 	ClassAuditSetSysVar: "AUDIT_SET_SYS_VAR",
 	ClassAuditFuncCall:  "AUDIT_FUNC_CALL",
@@ -120,6 +124,9 @@ func getStmtClasses(stmt ast.StmtNode, execute bool) []EventClass {
 	if execute {
 		classes = append(classes, ClassExecute)
 	}
+	if isDCLStmt(stmt) {
+		classes = append(classes, ClassDCL)
+	}
 	switch stmt.(type) {
 	case *ast.SelectStmt:
 		classes = append(classes, ClassSelect)
@@ -131,6 +138,23 @@ func getStmtClasses(stmt ast.StmtNode, execute bool) []EventClass {
 		classes = append(classes, ClassTransaction)
 	}
 	return classes
+}
+
+// The AST has no DCLNode, and some DCL statements also implement DDLNode, so classify them explicitly.
+func isDCLStmt(stmt ast.StmtNode) bool {
+	switch stmt.(type) {
+	case // User management
+		*ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt,
+		// Privilege management
+		*ast.GrantStmt, *ast.RevokeStmt, *ast.GrantProxyStmt, *ast.GrantSecurityLabelStmt, *ast.RevokeSecurityLabelStmt, *ast.GrantExemptionStmt, *ast.RevokeExemptionStmt,
+		// Role management
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt,
+		// Authentication information management; CreateUserStmt and AlterUserStmt above cover plugins, attributes, locks, and login limits
+		*ast.SetPwdStmt:
+		return true
+	default:
+		return false
+	}
 }
 
 func appendDMLClass(classes []EventClass, stmt ast.StmtNode) []EventClass {
@@ -374,7 +398,9 @@ func isPasswordStmt(node ast.StmtNode) bool {
 	case *ast.CreateUserStmt:
 		return findInSpecs(stmt.Specs)
 	case *ast.AlterUserStmt:
-		return findInSpecs(stmt.Specs)
+		return stmt.CurrentAuth != nil || findInSpecs(stmt.Specs)
+	case *ast.GrantStmt:
+		return findInSpecs(stmt.Users)
 	}
 	return false
 }
@@ -417,7 +443,6 @@ func newStmtEventEntry(tp extension.StmtEventTp, info extension.StmtEventInfo) *
 			zap.String(LogKeyCurrentDB, info.CurrentDB()),
 			zap.String(LogKeySQLText, sqlText),
 		)
-
 		if isExecute && !redact && !forceRedact {
 			fields = append(fields, zap.Strings(LogKeyExecuteParams, toStringArgs(info.PreparedParams())))
 		}

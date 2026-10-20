@@ -229,6 +229,21 @@ func TestFilterSpec(t *testing.T) {
 			},
 		},
 		{
+			spec:        audit.FilterSpec{Classes: []string{"QUERY_DCL"}},
+			jsonContent: `{"class": ["QUERY_DCL"]}`,
+			entries: []entryFilterTest{
+				{entry: audit.LogEntry{Classes: []audit.EventClass{audit.ClassQuery, audit.ClassDCL}}, match: true},
+				{entry: audit.LogEntry{Classes: []audit.EventClass{audit.ClassQuery, audit.ClassSelect}}, match: false},
+			},
+		},
+		{
+			spec:        audit.FilterSpec{Classes: []string{"QUERY"}},
+			jsonContent: `{"class": ["QUERY"]}`,
+			entries: []entryFilterTest{
+				{entry: audit.LogEntry{Classes: []audit.EventClass{audit.ClassQuery, audit.ClassDCL}}, match: true},
+			},
+		},
+		{
 			spec: audit.FilterSpec{
 				Tables: []string{"*.*"},
 			},

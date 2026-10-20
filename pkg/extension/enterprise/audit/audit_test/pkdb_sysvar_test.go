@@ -477,6 +477,13 @@ func TestAuditLogRedact(t *testing.T) {
 	ok, log, err = containsMessage(filepath.Join(tempDir, audit.DefAuditLogName), "create user if not exists `testuser` identified by ?")
 	require.NoError(t, err)
 	require.True(t, ok, log)
+	require.NoError(t, conn.HandleQuery(context.Background(), "alter user testuser identified by 'alter_secret_marker'"))
+	require.NoError(t, conn.HandleQuery(context.Background(), "grant select on test.* to testuser identified by 'grant_secret_marker'"))
+	for _, secret := range []string{"1234", "alter_secret_marker", "grant_secret_marker"} {
+		ok, log, err = containsMessage(filepath.Join(tempDir, audit.DefAuditLogName), secret)
+		require.NoError(t, err)
+		require.False(t, ok, log)
+	}
 
 	_, err = deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
