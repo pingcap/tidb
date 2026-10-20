@@ -44,9 +44,9 @@ use tidb_datatype::SessionTimeZone;
 use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
     signed_handle_ranges_to_kv_ranges, CancelHandle, CoprCache, CoprCacheConfig,
-    DirectUnaryQueryTransport, DirectUnaryRuntimeConfig, EncodeType, ExecutorKind, ExecutorShape,
-    InjectedQueryRuntime, QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope,
-    ResponseChannel, SelectInput, SignedHandleRange, TimestampSource, WarningCollector,
+    DirectUnaryRuntimeConfig, EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime,
+    QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope, ResponseChannel,
+    SelectInput, SignedHandleRange, TimestampSource, WarningCollector,
 };
 use tidb_pd_client::{PdClient, PdClientError};
 use tidb_planner::read_only_scan::{
@@ -58,7 +58,6 @@ use tidb_protocol::ColumnInfo;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::{
     rpc::TonicCoprocessorClient, DirectUnaryClient, PdRegionLoader, SharedReadAuthority,
-    SharedReadOpener,
 };
 
 use crate::dag_request::{
@@ -107,18 +106,18 @@ pub fn prepare_configured_point_read(
 /// reads exactly one row and then ends, which is what the guard establishes.
 pub const MAX_TS_POINT_GET_SNAPSHOT: u64 = u64::MAX;
 
-/// Concrete retained production transport used by the first SQL node.
-pub type ProductionReadTransport =
-    DirectUnaryQueryTransport<TonicCoprocessorClient, PdRegionLoader>;
+/// The production node's coprocessor transport: Go's `pkg/store/copr` over
+/// the node's client-rust store.
+pub type ProductionReadTransport = tidb_distsql::cop_paging::NativeCopTransport<TikvStore>;
 
 /// Cloneable production session opener over process-owned capabilities.
 ///
-/// This value contains no worker join authority. The unique process authority
-/// retains RegionCache, TiKV transport, and PD lifecycle owners separately.
+/// This value contains no worker join authority: the read authority owns the
+/// node's client-rust store, whose region cache, store clients and
+/// background work every session's coprocessor reads share.
 pub struct ProductionReadSessionFactory {
-    read_opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
+    tikv_store: Arc<TikvStore>,
     default_timeout: Duration,
-    lock_timestamp_source: PdTimestampSource,
     copr_cache: Option<CoprCache>,
 }
 
@@ -140,20 +139,14 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
     type Transport = ProductionReadTransport;
 
     fn open_session_transport(&self) -> Result<Self::Transport, String> {
-        DirectUnaryQueryTransport::from_read_authority(
-            &self.read_opener,
+        Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
+            Arc::clone(&self.tikv_store),
             DirectUnaryRuntimeConfig {
                 default_timeout: self.default_timeout,
                 shared_cache: self.copr_cache.clone(),
-                local_zone_label: tidb_config::config_tree::config::get_global_config()
-                    .labels
-                    .get("zone")
-                    .cloned(),
                 ..DirectUnaryRuntimeConfig::default()
             },
-            self.lock_timestamp_source.clone(),
-        )
-        .map_err(|error| error.to_string())
+        ))
     }
 }
 
@@ -688,9 +681,8 @@ impl ProductionReadProcessAuthority {
             SharedReadAuthority::start_with_store_liveness(transport_owner.clone(), cache)
                 .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
         let factory = ProductionReadSessionFactory {
-            read_opener: read_authority.opener(),
+            tikv_store: Arc::new(tikv_store.clone()),
             default_timeout: timeout,
-            lock_timestamp_source: timestamp_source.clone(),
             copr_cache: copr_cache.clone(),
         };
         // Derived from the authority that is already running: the same shared
