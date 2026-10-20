@@ -1776,14 +1776,27 @@ func buildPrunedRangeAccessPath(ds *logicalop.DataSource, originalPath *util.Acc
 	prunedPath.IndexFilters = indexFilters
 	prunedPath.TableFilters = tableFilters
 
-	// Estimate row count.
+	// Estimate row count. As in detachCondAndBuildRangeForPath, trim appended handle columns from
+	// the estimation columns and project the ranges to match, since a cutoff past the index
+	// definition yields ranges with more dimensions than the index stats cover.
 	indexCols := prunedPath.IdxCols
 	if len(indexCols) > len(prunedPath.Index.Columns) {
 		indexCols = indexCols[:len(prunedPath.Index.Columns)]
 	}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, ds.TableStats.HistColl, prunedPath.Index.ID, prunedPath.Ranges, indexCols)
+	needPruneEstimateRange := cutoff > len(indexCols)
+	estimateRanges := prunedPath.Ranges
+	if needPruneEstimateRange {
+		estimateRanges, err = pruneEstimateRange(sctx.GetRangerCtx(), prunedPath.Ranges, len(indexCols))
+		if err != nil {
+			return nil, err
+		}
+	}
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, ds.TableStats.HistColl, prunedPath.Index.ID, estimateRanges, indexCols)
 	if err != nil {
 		return nil, err
+	}
+	if needPruneEstimateRange {
+		count = cardinality.AdjustRowCountForAppendedHandleColumns(sctx, ds.TableStats.HistColl, prunedPath.Ranges, prunedPath.IdxCols, len(indexCols), count)
 	}
 	// The pruned ranges are a superset of the original ranges, so they cannot return fewer rows.
 	// Bound the estimate by the original path's CountAfterAccess, which has already been through
@@ -1806,21 +1819,21 @@ func buildPrunedRangeAccessPath(ds *logicalop.DataSource, originalPath *util.Acc
 	return prunedPath, nil
 }
 
-// eqOrInPrefixHasColumnStats reports whether every column in the EqOrIn prefix of path has
-// initialized column stats. The NDV safeguard for pruned-range alternatives compares column
-// NDVs, and a column without stats falls back to a default NDV derived from the table row
-// count, which can make an unanalyzed column look far more selective than it is.
-func eqOrInPrefixHasColumnStats(ds *logicalop.DataSource, path *util.AccessPath) bool {
+// prunedRangeMaxRowsPerSavedSeek bounds how many rows a pruned-range alternative may scan, at
+// its upper-bound row estimate, for each seek it saves compared with the original path. The cost
+// model charges a seek as roughly 30 rows (see indexScanSeekCostVer2), so this allows about three
+// times the break-even scan before the alternative is rejected regardless of its estimated cost.
+const prunedRangeMaxRowsPerSavedSeek = 100
+
+// indexHasAnalyzedStats reports whether the path's index has analyzed stats. The row estimates
+// that decide between the original and the pruned ranges come from the index histogram, and are
+// not reliable enough to trade seeks for scanned rows without it.
+func indexHasAnalyzedStats(ds *logicalop.DataSource, path *util.AccessPath) bool {
 	if ds.StatisticTable == nil || ds.StatisticTable.Pseudo {
 		return false
 	}
-	for i := range path.EqOrInCondCount {
-		col := ds.StatisticTable.GetCol(path.IdxCols[i].ID)
-		if col == nil || !col.IsStatsInitialized() {
-			return false
-		}
-	}
-	return true
+	idx := ds.StatisticTable.GetIdx(path.Index.ID)
+	return idx != nil && idx.IsAnalyzed()
 }
 
 // buildCandidateForPrunedPath creates a candidatePath from a pruned AccessPath, following
@@ -2478,30 +2491,19 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			path.EqOrInCondCount > path.EqCondCount &&
 			(path.EqCondCount > 1 || inListCount >= 2) &&
 			len(path.Ranges) > 1 &&
-			eqOrInPrefixHasColumnStats(ds, path) {
+			indexHasAnalyzedStats(ds, path) {
 			for cutoff := max(1, path.EqCondCount); cutoff < path.EqOrInCondCount; cutoff++ {
-				// Safeguard: every column from cutoff through the end of the EqOrIn prefix is
-				// dropped from range construction, so each dropped column must have a lower NDV
-				// than at least one kept column. This avoids pruning a selective column.
-				maxKeptNDV := 0.0
-				for i := range cutoff {
-					maxKeptNDV = max(maxKeptNDV, cardinality.EstimateColumnNDV(ds.StatisticTable, path.IdxCols[i].ID))
-				}
-				allDroppedLower := true
-				for i := cutoff; i < path.EqOrInCondCount; i++ {
-					if cardinality.EstimateColumnNDV(ds.StatisticTable, path.IdxCols[i].ID) >= maxKeptNDV {
-						allDroppedLower = false
-						break
-					}
-				}
-				if !allDroppedLower {
-					continue
-				}
-
 				// The pruned path is only an optional alternative: on any error, skip it and
 				// keep the plan already built from the original path.
 				prunedPath, pErr := buildPrunedRangeAccessPath(ds, path, cutoff)
 				if pErr != nil || prunedPath == nil || len(prunedPath.Ranges) >= len(path.Ranges) {
+					continue
+				}
+				// Safeguard: the dropped columns may be selective, and the cost comparison trusts
+				// the row estimate. Reject the alternative if, at its upper-bound estimate, it
+				// scans too many rows for the seeks it saves.
+				savedSeeks := float64(len(path.Ranges) - len(prunedPath.Ranges))
+				if prunedPath.MaxCountAfterAccess > savedSeeks*prunedRangeMaxRowsPerSavedSeek {
 					continue
 				}
 				prunedCandidate := buildCandidateForPrunedPath(ds, prunedPath, prop)

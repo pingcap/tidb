@@ -2718,13 +2718,16 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
-	// Column `a` has high NDV while `b` and `c` have low NDV, so the NDV safeguard allows
-	// pruning the IN-list columns `b` and `c` from range construction. Each value of `a` has
-	// only 25 rows, so most (a, b, c) point ranges are nearly empty and a seek per range costs
-	// more than scanning and filtering every row under `a`.
+	// Each value of `a` has only 25 rows, so most (a, b, c) point ranges are nearly empty and a
+	// seek per range costs more than scanning and filtering every row under `a`.
 	tk.MustExec("set @@cte_max_recursion_depth = 100000")
 	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
 		select n % 2000, n % 7 + 1, n % 11 + 1, n from cte`)
+	// Flush the insert deltas before analyze. Otherwise a late flush raises the modify count
+	// and the table falls back to pseudo stats, which disables pruning.
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustExec("set @@tidb_cost_model_version = 2")
 
@@ -2759,4 +2762,75 @@ func TestIndexScanSeekCost(t *testing.T) {
 	// Check the ordered result without sorting it, so a misordered keep-order scan is caught.
 	tk.MustQuery("select a, b, c, d from t where " + where + " order by d limit 5").Check(
 		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where + " order by d limit 5").Rows())
+
+	// Many IN-lists ahead of a selective equality: 12*4*3*9 = 1296 ranges for a lookup that
+	// returns nothing. Dropping columns also drops the equality on `e` from the ranges, but each
+	// shorter prefix scans only a few rows per seek it saves, so pruning is allowed.
+	tk.MustExec("create table t2 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t2 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 1000, n % 5, n % 4, n % 10, n, n from cte`)
+	// The leading column has only 2 values, so a shorter prefix would scan far more rows per saved
+	// seek than the guard allows, and the full ranges must be kept.
+	tk.MustExec("create table t3 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t3 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 2, n % 10, n % 1000, n, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	const where2 = "a in (1,2,3,4,5,6,7,8,9,10,11,12) and b in (1,2,3,4) and c in (1,2,3) and d in (1,2,3,4,5,6,7,8,9) and e = -1"
+	tk.MustQuery("explain format='brief' select * from t2 where " + where2).Check(testkit.Rows(
+		"IndexReader 1296.00 root  index:Selection",
+		"└─Selection 1296.00 cop[tikv]  eq(test.t2.e, -1), in(test.t2.b, 1, 2, 3, 4), in(test.t2.c, 1, 2, 3), in(test.t2.d, 1, 2, 3, 4, 5, 6, 7, 8, 9)",
+		"  └─IndexRangeScan 1296.00 cop[tikv] table:t2, index:idx(a, b, c, d, e, f) range:[1,1], [2,2], [3,3], [4,4], [5,5], [6,6], [7,7], [8,8], [9,9], [10,10], [11,11], [12,12], keep order:false"))
+	tk.MustQuery("select * from t2 where " + where2).Check(testkit.Rows())
+
+	const where3 = "a = 1 and b in (1,2,3,4,5,6,7,8,9) and c in (1,3,5,7,9,11,13,15,17,19,21)"
+	t3Ranges := make([]string, 0, 99)
+	for b := 1; b <= 9; b++ {
+		for c := 1; c <= 21; c += 2 {
+			t3Ranges = append(t3Ranges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	// Only the operators and ranges are checked: the row estimate for t3 depends on analyze
+	// sampling and varies between runs.
+	tk.MustQuery("explain format='brief' select * from t3 where "+where3).CheckAt([]int{0, 4}, [][]any{
+		{"IndexReader", "index:IndexRangeScan"},
+		{"└─IndexRangeScan", "range:" + strings.Join(t3Ranges, ", ") + ", keep order:false"},
+	})
+	tk.MustQuery("select * from t3 where " + where3).Sort().Check(
+		tk.MustQuery("select * from t3 ignore index(idx) where " + where3).Sort().Rows())
+
+	// For a non-unique index on a clustered composite handle, IdxCols has the handle columns
+	// appended, so a cutoff can extend past the index definition. Row estimation must project
+	// those ranges onto the index columns. The 1200 (a,b,c,d) ranges prune to 6 (a,b) ranges.
+	tk.MustExec("create table t4 (a int, b int, c int, d int, e int, primary key(c, d) clustered, key idx(a, b))")
+	tk.MustExec(`insert into t4 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 20000)
+		select n % 1000, n % 7, n % 13, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t4")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	const where4 = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10) and d in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
+	tk.MustQuery("explain format='brief' select * from t4 use index(idx) where "+where4).CheckAt([]int{0, 4}, [][]any{
+		{"IndexLookUp", ""},
+		{"├─Selection(Build)", "in(test.t4.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), in(test.t4.d, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)"},
+		{"│ └─IndexRangeScan", "range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"},
+		{"└─TableRowIDScan(Probe)", "keep order:false"},
+	})
+	tk.MustQuery("select * from t4 use index(idx) where " + where4).Sort().Check(
+		tk.MustQuery("select * from t4 ignore index(idx) where " + where4).Sort().Rows())
+
+	// An IndexJoin inner scan's seeks are charged once per build row by the join
+	// (indexJoinSeekingCostVer2), so the scan itself must not charge them again.
+	ijRows := tk.MustQuery("explain format='cost_trace' select /*+ inl_join(t3) */ * from t2 join t3 on t2.a = t3.a where t3.b in (1,2,3)").Rows()
+	foundInnerScan := false
+	for _, row := range ijRows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			foundInnerScan = true
+			require.NotContains(t, row[3].(string), "indexSeek")
+		}
+	}
+	require.True(t, foundInnerScan)
+	require.Contains(t, tk.MustQuery("explain format='cost_trace' select * from t3 where a = 1 and b in (1,2,3)").Rows()[1][3].(string), "indexSeek")
 }

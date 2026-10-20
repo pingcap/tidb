@@ -141,8 +141,9 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
 	// Each range is a separate seek in TiKV; charge it so that many-range scans (typically from
-	// IN-lists) are not costed as if they were one contiguous scan.
-	if len(p.Ranges) > 1 {
+	// IN-lists) are not costed as if they were one contiguous scan. An IndexJoin inner scan
+	// (RangeInfo set) is skipped: indexJoinSeekingCostVer2 already charges its seeks per build row.
+	if len(p.Ranges) > 1 && p.RangeInfo == "" {
 		seekCost := indexScanSeekCostVer2(option, float64(len(p.Ranges)), scanFactor)
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, seekCost)
 	}
