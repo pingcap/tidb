@@ -355,6 +355,7 @@ impl HistColl {
                     .count
                     .wrapping_add(previous);
             }
+            index.histogram.pre_calculate_scalar();
         }
         for column in read(&self.columns).values() {
             let mut column = write(column);
@@ -364,6 +365,7 @@ impl HistColl {
                     .count
                     .wrapping_add(previous);
             }
+            column.histogram.pre_calculate_scalar();
         }
     }
 

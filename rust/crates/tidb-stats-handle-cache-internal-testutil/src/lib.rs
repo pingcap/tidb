@@ -16,13 +16,14 @@
 
 use std::sync::Arc;
 
+use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_stats::{
     CmsSketch, Column, ColumnInfo, HistColl, Histogram, Index, IndexInfo, StatsLoadedStatus, Table,
     TopN,
 };
 
 fn histogram() -> Histogram {
-    Histogram::new(0, 10, 0, 0, 1, 0)
+    Histogram::new(0, 10, 0, 0, &FieldType::new(FieldTypeCode::Blob), 1, 0)
 }
 
 fn top_n() -> TopN {

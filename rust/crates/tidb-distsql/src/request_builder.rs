@@ -209,6 +209,31 @@ impl RequestBuilder {
         }
     }
 
+    /// Go `SetHandleRanges`: table handle ranges through
+    /// `TableHandleRangesToKVRanges` into one non-partitioned group -- signed
+    /// integer handles for an int-handle table, mem-comparable tuples for a
+    /// common-handle one (`CommonHandleRangesToKVRanges`).
+    pub fn set_handle_ranges(
+        &mut self,
+        table_id: i64,
+        is_common_handle: bool,
+        ranges: &[DatumRange],
+    ) -> &mut Self {
+        if !is_common_handle {
+            return self.set_table_ranges(table_id, ranges);
+        }
+        if self.error.is_some() {
+            return self;
+        }
+        match common_handle_ranges_to_kv_ranges(table_id, ranges) {
+            Ok(ranges) => self.set_non_partitioned_key_ranges(ranges),
+            Err(error) => {
+                self.remember_error(error);
+                self
+            }
+        }
+    }
+
     /// Converts mem-comparable index tuples into one non-partitioned group.
     pub fn set_index_ranges(
         &mut self,
@@ -566,18 +591,7 @@ pub fn index_ranges_to_kv_ranges(
 ) -> Result<Vec<Vec<RequestKeyRange>>, KvRequestBuildError> {
     let encoded = ranges
         .iter()
-        .map(|range| {
-            let mut low = encode_key(&range.low).map_err(|_| KvRequestBuildError::RangeEncoding)?;
-            let mut high =
-                encode_key(&range.high).map_err(|_| KvRequestBuildError::RangeEncoding)?;
-            if range.low_exclude {
-                low = Key::from_bytes(low).prefix_next().into_bytes();
-            }
-            if !range.high_exclude {
-                high = Key::from_bytes(high).prefix_next().into_bytes();
-            }
-            Ok((low, high))
-        })
+        .map(encode_index_key)
         .collect::<Result<Vec<_>, KvRequestBuildError>>()?;
 
     Ok(table_ids
@@ -592,6 +606,38 @@ pub fn index_ranges_to_kv_ranges(
                 .collect()
         })
         .collect())
+}
+
+/// Go `EncodeIndexKey`: the mem-comparable bounds of one range, with the
+/// exclusion adjustments applied.
+fn encode_index_key(range: &DatumRange) -> Result<(Vec<u8>, Vec<u8>), KvRequestBuildError> {
+    let mut low = encode_key(&range.low).map_err(|_| KvRequestBuildError::RangeEncoding)?;
+    if range.low_exclude {
+        low = Key::from_bytes(low).prefix_next().into_bytes();
+    }
+    let mut high = encode_key(&range.high).map_err(|_| KvRequestBuildError::RangeEncoding)?;
+    if !range.high_exclude {
+        high = Key::from_bytes(high).prefix_next().into_bytes();
+    }
+    Ok((low, high))
+}
+
+/// Go `CommonHandleRangesToKVRanges` for one physical table: each range's
+/// `EncodeIndexKey` bounds under the table's record prefix.
+pub fn common_handle_ranges_to_kv_ranges(
+    table_id: i64,
+    ranges: &[DatumRange],
+) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
+    ranges
+        .iter()
+        .map(|range| {
+            let (low, high) = encode_index_key(range)?;
+            Ok(RequestKeyRange {
+                start_key: encode_row_key(table_id, &low).into(),
+                end_key: encode_row_key(table_id, &high).into(),
+            })
+        })
+        .collect()
 }
 
 /// Builds full record and public-index ranges for a table/partition layout.

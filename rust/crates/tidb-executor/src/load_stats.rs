@@ -602,7 +602,15 @@ fn decode_base64(field: Option<&String>) -> Result<Vec<u8>, LoadStatsError> {
 /// this function".
 fn histogram_from_json(proto: &JsonHistogram) -> Result<Histogram, LoadStatsError> {
     let buckets = proto.buckets.as_deref().unwrap_or_default();
-    let mut histogram = Histogram::new(0, proto.ndv, 0, 0, buckets.len(), 0);
+    let mut histogram = Histogram::new(
+        0,
+        proto.ndv,
+        0,
+        0,
+        &FieldType::new(FieldTypeCode::Blob),
+        buckets.len(),
+        0,
+    );
     for bucket in buckets {
         let bucket = bucket.as_ref().map_or(&EMPTY_BUCKET, |bucket| bucket);
         let lower = Datum::Bytes(decode_base64(bucket.lower_bound.as_ref())?);
@@ -775,6 +783,7 @@ fn column_from_json(
                 *bound = converted.value;
             }
         }
+        histogram.record_convert_to(&column.field_type);
     }
     histogram.id = column.id;
     histogram.null_count = json.null_count;
@@ -1233,7 +1242,8 @@ mod tests {
     #[test]
     fn canonical_table_dumps_back_to_go_json_shape() {
         let mut coll = HistColl::new(41, 9, 2, 1, 1);
-        let mut column_histogram = Histogram::new(1, 1, 1, 7, 1, 0);
+        let mut column_histogram =
+            Histogram::new(1, 1, 1, 7, &FieldType::new(FieldTypeCode::LongLong), 1, 0);
         column_histogram.append_bucket(Datum::Int(10), Datum::Int(20), 8, 3);
         coll.set_column(
             1,
@@ -1249,7 +1259,8 @@ mod tests {
                 ..Column::default()
             },
         );
-        let mut index_histogram = Histogram::new(2, 1, 0, 0, 1, 0);
+        let mut index_histogram =
+            Histogram::new(2, 1, 0, 0, &FieldType::new(FieldTypeCode::Blob), 1, 0);
         index_histogram.append_bucket(Datum::Bytes(vec![1, 2]), Datum::Bytes(vec![3, 4]), 9, 1);
         coll.set_index(
             2,

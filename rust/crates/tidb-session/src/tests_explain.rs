@@ -27,7 +27,12 @@ fn install_cardinality_mock_statistics_for_table(
     assert_eq!(columns.len(), table.columns.len());
     let table_id = table.table_id;
     let histogram = |id, ndv: i64, repeat: i64, index| {
-        let mut histogram = Histogram::new(id, ndv, 0, 0, ndv as usize, 0);
+        let tp = tidb_datatype::FieldType::new(if index {
+            tidb_datatype::FieldTypeCode::Blob
+        } else {
+            tidb_datatype::FieldTypeCode::LongLong
+        });
+        let mut histogram = Histogram::new(id, ndv, 0, 0, &tp, ndv as usize, 0);
         for value in 0..ndv {
             let datum = if index {
                 Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(value)]).unwrap())

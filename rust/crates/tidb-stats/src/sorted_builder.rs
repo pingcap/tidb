@@ -14,9 +14,9 @@
 
 //! Incremental sorted histogram construction from `builder.go`.
 
-use tidb_datatype::{Collation, Datum, DatumValueError};
+use tidb_datatype::{Collation, Datum, DatumValueError, FieldType};
 
-use crate::{Bucket, Histogram};
+use crate::Histogram;
 
 #[derive(Clone, Debug)]
 pub struct SortedHistogramBuilder {
@@ -30,16 +30,14 @@ pub struct SortedHistogramBuilder {
 }
 
 impl SortedHistogramBuilder {
-    pub fn new(num_buckets: i64, id: i64, stats_version: isize) -> Self {
+    /// Go `NewSortedBuilder(sc, numBuckets, id, tp, statsVer)`.
+    pub fn new(num_buckets: i64, id: i64, tp: &FieldType, stats_version: isize) -> Self {
         assert!(
             num_buckets >= 0,
             "histogram bucket count cannot be negative"
         );
         Self {
-            histogram: Histogram {
-                id,
-                ..Histogram::default()
-            },
+            histogram: Histogram::new(id, 0, 0, 0, tp, num_buckets as usize, 0),
             num_buckets,
             values_per_bucket: 1,
             last_number: 0,
@@ -61,13 +59,7 @@ impl SortedHistogramBuilder {
     pub fn iterate(&mut self, value: Datum) -> Result<(), DatumValueError> {
         self.count = self.count.wrapping_add(1);
         if self.count == 1 {
-            self.histogram.buckets.push(Bucket {
-                count: 1,
-                repeat: 1,
-                ndv: i64::from(self.need_bucket_ndv),
-                lower_bound: value.clone(),
-                upper_bound: value,
-            });
+            self.append_bucket(value, 1);
             self.histogram.ndv = 1;
             return Ok(());
         }
@@ -89,7 +81,7 @@ impl SortedHistogramBuilder {
             self.histogram.ndv = self.histogram.ndv.wrapping_add(1);
         } else {
             if self.bucket_index.wrapping_add(1) == self.num_buckets {
-                self.merge_buckets(index);
+                self.histogram.merge_neighbor_buckets(index);
                 self.values_per_bucket = self.values_per_bucket.wrapping_mul(2);
                 self.bucket_index /= 2;
                 self.last_number = if self.bucket_index == 0 {
@@ -109,46 +101,32 @@ impl SortedHistogramBuilder {
             } else {
                 self.last_number = self.histogram.buckets[index].count;
                 self.bucket_index = self.bucket_index.wrapping_add(1);
-                self.histogram.buckets.push(Bucket {
-                    count: self.last_number.wrapping_add(1),
-                    repeat: 1,
-                    ndv: i64::from(self.need_bucket_ndv),
-                    lower_bound: value.clone(),
-                    upper_bound: value,
-                });
+                self.append_bucket(value, self.last_number.wrapping_add(1));
             }
             self.histogram.ndv = self.histogram.ndv.wrapping_add(1);
         }
         Ok(())
     }
 
-    fn update_last(&mut self, value: Datum) {
-        let bucket = &mut self.histogram.buckets[self.bucket_index as usize];
-        bucket.upper_bound = value;
-        bucket.count = bucket.count.wrapping_add(1);
-        bucket.repeat = 1;
-        if self.need_bucket_ndv && bucket.ndv > 0 {
-            bucket.ndv = bucket.ndv.wrapping_add(1);
-        }
+    /// Go `Iterate`'s `appendBucket`: `AppendBucketWithNDV(.., 1)` when
+    /// bucket NDV is kept, else `AppendBucket`.
+    fn append_bucket(&mut self, value: Datum, count: i64) {
+        self.histogram.append_bucket_with_ndv(
+            value.clone(),
+            value,
+            count,
+            1,
+            i64::from(self.need_bucket_ndv),
+        );
     }
 
-    fn merge_buckets(&mut self, bucket_index: usize) {
-        let old = self.histogram.buckets.clone();
-        let mut merged = Vec::with_capacity((bucket_index + 2) / 2);
-        let mut position = 0;
-        while position < bucket_index {
-            merged.push(Bucket {
-                count: old[position + 1].count,
-                repeat: old[position + 1].repeat,
-                ndv: old[position].ndv.wrapping_add(old[position + 1].ndv),
-                lower_bound: old[position].lower_bound.clone(),
-                upper_bound: old[position + 1].upper_bound.clone(),
-            });
-            position += 2;
-        }
-        if bucket_index.is_multiple_of(2) {
-            merged.push(old[bucket_index].clone());
-        }
-        self.histogram.buckets = merged;
+    /// Go `updateLastBucket(&data, Buckets[bucketIdx].Count+1, 1,
+    /// needBucketNDV)`.
+    fn update_last(&mut self, value: Datum) {
+        let count = self.histogram.buckets[self.bucket_index as usize]
+            .count
+            .wrapping_add(1);
+        self.histogram
+            .update_last_bucket(value, count, 1, self.need_bucket_ndv);
     }
 }

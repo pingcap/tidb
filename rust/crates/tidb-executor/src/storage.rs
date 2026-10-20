@@ -37,7 +37,7 @@ use tidb_txnkv::{
     GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
 };
 
-use crate::remote_scan::{PushdownScan, PushdownScanRequest};
+use crate::remote_scan::{PushdownScan, PushdownScanRequest, PushdownScanner};
 
 /// A failure reported by a storage backend.
 ///
@@ -335,6 +335,14 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         &mut self,
         _request: &PushdownScanRequest,
     ) -> Option<Result<PushdownScan, StorageError>> {
+        None
+    }
+
+    /// The coprocessor client this backend reads through and the timestamp
+    /// its statement reads at: what Go `ChecksumTableExec` takes from
+    /// `GetClient()` and `getSnapshotTS()`. `None` for a backend with no
+    /// coprocessor, which is the in-process engine.
+    fn coprocessor_client(&self) -> Option<(std::sync::Arc<dyn PushdownScanner>, u64)> {
         None
     }
 

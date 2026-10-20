@@ -43,6 +43,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
+use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_stats::cmsketch::TopN;
 
@@ -130,7 +131,10 @@ pub fn analyze_kv_table_columns(
         if let Some(sketch) = built.fm_sketch.clone() {
             column_fm_sketches.insert(built.id, sketch);
         }
-        columns.insert(built.id, column_statistics(built, unsigned));
+        columns.insert(
+            built.id,
+            column_statistics(built, &column.field_type, unsigned),
+        );
     }
     let mut indexes = BTreeMap::new();
     let mut index_fm_sketches = BTreeMap::new();
@@ -271,8 +275,14 @@ fn sorted_topn(topn: Option<TopN>) -> Option<TopN> {
     })
 }
 
-/// One built column histogram, as the estimator reads it.
-fn column_statistics(built: AnalyzedHistogram, unsigned: bool) -> ColumnStats {
+/// One built column histogram, as the estimator reads it -- and, like the
+/// TopN, as the storage load path would have handed it over.
+fn column_statistics(
+    mut built: AnalyzedHistogram,
+    field_type: &FieldType,
+    unsigned: bool,
+) -> ColumnStats {
+    built.histogram.round_trip_through_storage(field_type);
     ColumnStats {
         histogram: built.histogram,
         topn: sorted_topn(built.topn),
@@ -286,7 +296,10 @@ fn column_statistics(built: AnalyzedHistogram, unsigned: bool) -> ColumnStats {
 
 /// One built index histogram, with the two schema facts the estimator needs
 /// that the histogram itself does not carry.
-fn index_statistics(built: AnalyzedHistogram, num_columns: usize, unique: bool) -> IndexStats {
+fn index_statistics(mut built: AnalyzedHistogram, num_columns: usize, unique: bool) -> IndexStats {
+    built
+        .histogram
+        .round_trip_through_storage(&FieldType::new(FieldTypeCode::Blob));
     IndexStats {
         histogram: built.histogram,
         topn: sorted_topn(built.topn),

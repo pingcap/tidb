@@ -106,7 +106,10 @@ impl From<NativeCopError> for QueryResponseError {
                             tidb_txnkv::ConvertedDriverError::Terror(converted) => Self::Sql {
                                 code: u16::try_from(converted.code().value())
                                     .expect("registered storage error fits the MySQL protocol"),
-                                message: converted.to_string(),
+                                // The client reads Go's `terror.ToSQLError`
+                                // message (`GetMsg()`), not `Error()`'s
+                                // `[class:code]` form.
+                                message: converted.message().to_owned(),
                             },
                             other => Self::Source(other.to_string()),
                         }
@@ -235,7 +238,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
                 metadata.request_type == crate::RequestType::Dag
             }
             QueryOperation::Analyze => metadata.request_type == crate::RequestType::Analyze,
-            _ => false,
+            QueryOperation::Checksum => metadata.request_type == crate::RequestType::Checksum,
         };
         if !supported {
             return Err(format!(

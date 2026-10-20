@@ -1346,6 +1346,16 @@ impl TableStorage for ClusterTableStorage {
         }
     }
 
+    fn coprocessor_client(&self) -> Option<(Arc<dyn PushdownScanner>, u64)> {
+        let scanner = self.scanner.as_ref()?;
+        let start_ts = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .start_ts();
+        Some((Arc::clone(scanner), start_ts))
+    }
+
     fn key_count(&self) -> usize {
         self.buffer.len()
     }

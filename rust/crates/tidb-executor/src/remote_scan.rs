@@ -913,6 +913,27 @@ pub trait PushdownScanner: fmt::Debug + Send + Sync {
         &self,
         request: &PushdownScanRequest,
     ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError>;
+
+    /// Go `distsql.Checksum` (`pkg/distsql/distsql.go`): sends one built
+    /// `kv.ReqTypeChecksum` request through this node's coprocessor client
+    /// and returns its raw region responses, which
+    /// `ChecksumTableExec.handleChecksumRequest` reads with `NextRaw`.
+    fn checksum(
+        &self,
+        _request: &tidb_distsql::TransportRequest,
+    ) -> Result<Box<dyn RawResponseStream>, PushdownScannerError> {
+        Err(PushdownScannerError::Unsupported(
+            "this backend sends no checksum requests".to_owned(),
+        ))
+    }
+}
+
+/// Go `distsql.SelectResult` read through `NextRaw`: one encoded response
+/// per region, `None` once every region answered. Dropping it closes the
+/// result.
+pub trait RawResponseStream: Send {
+    /// Go `SelectResult.NextRaw`.
+    fn next_raw(&mut self) -> Result<Option<Vec<u8>>, StorageError>;
 }
 
 /// Why a remote scan did not open.

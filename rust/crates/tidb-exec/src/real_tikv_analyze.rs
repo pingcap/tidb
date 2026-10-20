@@ -3064,6 +3064,7 @@ mod tests {
                     lower_bound: tidb_datatype::Datum::Int(1),
                     upper_bound: tidb_datatype::Datum::Int(4),
                 }],
+                ..Default::default()
             },
             topn: None,
             cms: None,

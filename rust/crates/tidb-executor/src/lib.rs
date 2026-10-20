@@ -61,6 +61,7 @@ pub mod tagged_ptr;
 pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
+pub mod checksum;
 pub mod worker_pool;
 
 /// Submits a fire-and-forget task to the persistent exec pool.

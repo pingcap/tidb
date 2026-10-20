@@ -461,7 +461,7 @@ pub fn histogram_row_item(
         last_update_version: version,
         tot_col_size: if is_index { 0 } else { tot_col_size },
         correlation: if is_index { 0.0 } else { correlation },
-        buckets: Vec::new(),
+        ..Histogram::default()
     };
     ClusterStatsItem {
         id,
@@ -1064,10 +1064,12 @@ impl ClusterStatsLoader {
         let column_types = column_type
             .map(|field_type| BTreeMap::from([(id, field_type.clone())]))
             .unwrap_or_default();
-        item.histogram.buckets = self
+        let stored = self
             .load_buckets_prefixed(snapshot, &prefix, &column_types)?
             .remove(&(is_index, id))
             .unwrap_or_default();
+        item.histogram
+            .load_buckets_from_storage(&histogram_bound_type(is_index, column_type), stored);
         Ok(Some(item.histogram))
     }
 
@@ -1332,13 +1334,19 @@ impl ClusterStatsLoader {
                 last_update_version: row.u64("version")?.unwrap_or_default(),
                 tot_col_size: row.i64("tot_col_size")?.unwrap_or_default(),
                 correlation: row.f64("correlation")?.unwrap_or_default(),
-                buckets: buckets.get(&(is_index, id)).cloned().unwrap_or_default(),
+                ..Histogram::default()
             };
             // Go stores `tot_col_size`/`correlation` only for columns and
             // passes literal zeros for an index (`read.go::LoadHistogram`).
             if is_index {
                 histogram.tot_col_size = 0;
                 histogram.correlation = 0.0;
+            }
+            if let Some(stored) = buckets.get(&(is_index, id)) {
+                histogram.load_buckets_from_storage(
+                    &histogram_bound_type(is_index, column_types.get(&id)),
+                    stored.clone(),
+                );
             }
             let stats_ver = row.i64("stats_ver")?.unwrap_or_default();
             let (cms, top) = if decode_payload {
@@ -1458,10 +1466,12 @@ impl ClusterStatsLoader {
             item.topn =
                 decode_topn_rows(topn.get(&(false, column_id)).map_or(&[][..], Vec::as_slice));
             let column_types = BTreeMap::from([(column_id, column_type.clone())]);
-            item.histogram.buckets = self
+            let stored = self
                 .load_buckets_prefixed(snapshot, &prefix, &column_types)?
                 .remove(&(false, column_id))
                 .unwrap_or_default();
+            item.histogram
+                .load_buckets_from_storage(&histogram_bound_type(false, Some(column_type)), stored);
         }
         item.load_status = StatsLoadedStatus::full_load();
         Ok(item.to_column(table_id, table_info))
@@ -1485,10 +1495,12 @@ impl ClusterStatsLoader {
         let column_types = column_type
             .map(|field_type| BTreeMap::from([(item.id, field_type.clone())]))
             .unwrap_or_default();
-        item.histogram.buckets = self
+        let stored = self
             .load_buckets_prefixed(snapshot, &prefix, &column_types)?
             .remove(&(item.is_index, item.id))
             .unwrap_or_default();
+        item.histogram
+            .load_buckets_from_storage(&histogram_bound_type(item.is_index, column_type), stored);
         let topn = self.load_topn_prefixed(snapshot, &prefix)?;
         let cms_bytes = if item.stats_ver <= 1 {
             let row = scan_system_table_prefixed(snapshot, &self.histograms, &prefix)?
@@ -1555,7 +1567,7 @@ impl ClusterStatsLoader {
             last_update_version: row.u64("version")?.unwrap_or_default(),
             tot_col_size: row.i64("tot_col_size")?.unwrap_or_default(),
             correlation: row.f64("correlation")?.unwrap_or_default(),
-            buckets: Vec::new(),
+            ..Histogram::default()
         };
         if is_index {
             histogram.tot_col_size = 0;
@@ -1751,6 +1763,17 @@ fn stats_meta_count_as_go_int64(count: u64) -> i64 {
 /// branches its caller `HistogramFromStorageWithPriority` wraps it in.
 ///
 /// See this module's doc for why each branch exists.
+/// The `tp` Go's storage loader builds a histogram with: `TypeBlob` for an
+/// index, the column's own type for a column. A column whose type the caller
+/// could not name has its bounds kept as stored blob bytes (`decode_bound`),
+/// so `TypeBlob` describes them.
+fn histogram_bound_type(is_index: bool, column_type: Option<&FieldType>) -> FieldType {
+    match column_type.filter(|_| !is_index) {
+        Some(column_type) => column_type.clone(),
+        None => FieldType::new(FieldTypeCode::Blob),
+    }
+}
+
 fn decode_bound(
     stored: Vec<u8>,
     is_index: bool,

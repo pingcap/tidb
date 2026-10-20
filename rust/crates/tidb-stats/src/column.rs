@@ -45,7 +45,9 @@ pub struct Column {
 impl Column {
     /// Go `(*Column).Copy`; all owned payloads are independent in the result.
     pub fn copy(&self) -> Self {
-        self.clone()
+        let mut copied = self.clone();
+        copied.histogram = self.histogram.copy();
+        copied
     }
 
     /// Go `TotalRowCount`. Analyze-v2 requires a TopN, as the source does.
@@ -119,7 +121,7 @@ impl Column {
             self.cmsketch = None;
         }
         self.top_n = None;
-        self.histogram.buckets.clear();
+        self.histogram.drop_bucket_data();
         self.stats_loaded_status =
             StatsLoadedStatus::new(self.stats_loaded_status.stats_initialized(), ALL_EVICTED);
     }

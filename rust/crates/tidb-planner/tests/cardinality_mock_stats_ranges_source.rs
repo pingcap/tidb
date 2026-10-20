@@ -18,18 +18,26 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 use tidb_planner::cardinality::row_count_estimator::{
     ColumnRange, ColumnStats, EstimatorOptions, IndexColumnStats, IndexRangeDatums, IndexRowCounts,
     IndexStats, get_column_row_count, get_index_row_count_for_stats_v2,
 };
 use tidb_stats::histogram::Histogram;
 
+fn longlong() -> FieldType {
+    FieldType::new(FieldTypeCode::LongLong)
+}
+
+fn blob() -> FieldType {
+    FieldType::new(FieldTypeCode::Blob)
+}
+
 /// Go `selectivity_test.go:1380 mockStatsHistogram`: one bucket per distinct
 /// value, count `repeat * (i + 1)`, repeat `repeat`.
 fn mock_stats_histogram(id: i64, values: &[Datum], repeat: i64) -> Histogram {
     let ndv = values.len() as i64;
-    let mut histogram = Histogram::new(id, ndv, 0, 0, values.len(), 0);
+    let mut histogram = Histogram::new(id, ndv, 0, 0, &longlong(), values.len(), 0);
     for (index, value) in values.iter().enumerate() {
         histogram.append_bucket(
             value.clone(),
@@ -539,7 +547,7 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
 fn estimation_for_unknown_values_after_modify_stays_bounded() {
     // Go's default ANALYZE TopN capacity retains all ten values here, leaving
     // an empty histogram with its original NDV and 100 analyzed TopN rows.
-    let histogram = Histogram::new(1, 10, 0, 0, 0, 0);
+    let histogram = Histogram::new(1, 10, 0, 0, &longlong(), 0, 0);
     let mut topn = tidb_stats::TopN::new(10);
     for value in 1..=10 {
         let encoded = tidb_codec::encode_key(&[Datum::Int(value)]).unwrap();
@@ -589,7 +597,7 @@ fn unique_key_equal_conds_return_exact_counts() {
     let values = int_values(1, 7);
     let column = column_stats(mock_stats_histogram(1, &values, 1));
     let index = IndexStats {
-        histogram: Histogram::new(7, 7, 0, 0, 1, 0),
+        histogram: Histogram::new(7, 7, 0, 0, &blob(), 1, 0),
         topn: None,
         cms: None,
         stats_ver: 2,
@@ -730,7 +738,7 @@ fn issue_39593_composite_prefix_point_ranges_match_estimates() {
 fn risk_range_skew_ratio_widens_within_bucket_estimates() {
     let low = tidb_codec::encode_key(&[Datum::Int(1)]).unwrap();
     let high = tidb_codec::encode_key(&[Datum::Int(5)]).unwrap();
-    let mut histogram = Histogram::new(7, 5, 0, 0, 1, 0);
+    let mut histogram = Histogram::new(7, 5, 0, 0, &blob(), 1, 0);
     histogram.append_bucket(Datum::Bytes(low), Datum::Bytes(high), 10, 2);
     let index = IndexStats {
         histogram,
@@ -781,7 +789,7 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
     // Reproduce the sufficient statistics from Go's ANALYZE fixture directly:
     // 100 rows for values 1..10, one row for 11, five buckets, no TopN.
     // The final bucket's repeat is stale after 100 concentrated inserts.
-    let mut column_histogram = Histogram::new(1, 11, 0, 0, 5, 0);
+    let mut column_histogram = Histogram::new(1, 11, 0, 0, &longlong(), 5, 0);
     for (low, high, cumulative, repeat, ndv) in [
         (1, 2, 200, 100, 2),
         (3, 4, 400, 100, 2),
@@ -829,7 +837,7 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
     let encode = |value| {
         Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(value)]).expect("index key encodes"))
     };
-    let mut index_histogram = Histogram::new(1, 11, 0, 0, 5, 0);
+    let mut index_histogram = Histogram::new(1, 11, 0, 0, &blob(), 5, 0);
     for (low, high, cumulative, repeat, ndv) in [
         (1, 2, 200, 100, 2),
         (3, 4, 400, 100, 2),
@@ -886,7 +894,7 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
 /// the uniform estimate while observed repeats remain exact.
 #[test]
 fn equal_estimate_on_zero_repeat_bucket_upper_falls_back_to_uniform() {
-    let mut histogram = Histogram::new(1, 100, 0, 0, 2, 0);
+    let mut histogram = Histogram::new(1, 100, 0, 0, &longlong(), 2, 0);
     histogram.append_bucket(Datum::Int(1), Datum::Int(50), 100, 0);
     histogram.append_bucket(Datum::Int(51), Datum::Int(100), 200, 5);
     let column = column_stats(histogram);

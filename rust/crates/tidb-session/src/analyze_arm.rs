@@ -238,6 +238,7 @@ fn merge_partitioned_global_statistics(
                     row_count,
                 );
             }
+            histogram.round_trip_through_storage(&column.field_type);
             global.columns.insert(
                 column.id,
                 tidb_planner::cardinality::row_count_estimator::ColumnStats {
@@ -310,6 +311,9 @@ fn merge_partitioned_global_statistics(
                     row_count,
                 );
             }
+            histogram.round_trip_through_storage(&tidb_datatype::FieldType::new(
+                tidb_datatype::FieldTypeCode::Blob,
+            ));
             global.indexes.insert(
                 index.id,
                 tidb_planner::cardinality::row_count_estimator::IndexStats {

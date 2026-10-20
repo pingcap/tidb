@@ -2668,6 +2668,15 @@ impl KvTable {
         &self.common_handle_prefix_lengths
     }
 
+    /// The coprocessor client this table's storage reads through and its
+    /// statement's read timestamp; see [`TableStorage::coprocessor_client`].
+    #[must_use]
+    pub fn coprocessor_client(
+        &self,
+    ) -> Option<(std::sync::Arc<dyn crate::remote_scan::PushdownScanner>, u64)> {
+        self.store.coprocessor_client()
+    }
+
     /// Encodes one complete clustered composite primary-key tuple as its
     /// record handle.
     ///

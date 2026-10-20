@@ -21,7 +21,7 @@
 //! indexes: rebuilding their values from sampled table rows is not equivalent
 //! to scanning the logical global-index keyspace.
 
-use tidb_datatype::{Collation, Datum, DatumValueError};
+use tidb_datatype::{Collation, Datum, DatumValueError, FieldType, FieldTypeCode};
 
 use crate::histogram::{merge_histograms, TopNMergeEntry};
 use crate::{
@@ -91,7 +91,12 @@ impl IndependentIndexAnalyze {
             column_count,
             bucket_count,
             topn_count,
-            histogram: SortedHistogramBuilder::new(bucket_count as i64, index_id, 2),
+            histogram: SortedHistogramBuilder::new(
+                bucket_count as i64,
+                index_id,
+                &FieldType::new(FieldTypeCode::Blob),
+                2,
+            ),
             cms: CmsSketch::new(DEFAULT_INDEX_CMS_DEPTH, DEFAULT_INDEX_CMS_WIDTH),
             fm_sketch: FmSketch::new(MAX_SKETCH_SIZE),
             current_topn: None,

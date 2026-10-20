@@ -93,7 +93,8 @@ pub use region_task::{
 };
 pub use request::{ReadRequestBuilder, ReadRequestMetadata};
 pub use request_builder::{
-    build_table_ranges, index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange,
+    build_table_ranges, common_handle_ranges_to_kv_ranges, index_ranges_to_kv_ranges,
+    table_ranges_to_kv_ranges, DatumRange,
     KvRequestBuildError, KvRequestBuilder, RequestBuilder, TableIndexRangeSpec, TableRangeSpec,
 };
 pub use response_channel::{

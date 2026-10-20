@@ -646,3 +646,33 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
         )
     );
 }
+
+/// Go `ChecksumTableExec` over the in-process engine, which answers as Go's
+/// unistore `handleCopChecksumRequest`: `{1, 1, 1}` per request. A table's
+/// requests are its own ID plus every partition, times one plus its public
+/// indexes, and a table named twice answers once.
+#[test]
+fn admin_checksum_table_answers_unistores_stub_per_request() {
+    let mut session = Session::new();
+    session.run("create database ck").unwrap();
+    session.run("use ck").unwrap();
+    session
+        .run("create table t (id int primary key, c int, key (c))")
+        .unwrap();
+    session
+        .run("create table p (a int) partition by hash(a) partitions 4")
+        .unwrap();
+    session.run("insert into t values (1, 1), (2, 2)").unwrap();
+    assert_eq!(
+        row_text(session.run("admin checksum table t")),
+        [["ck", "t", "0", "2", "2"]]
+    );
+    assert_eq!(
+        row_text(session.run("admin checksum table p, ck.p")),
+        [["ck", "p", "1", "5", "5"]]
+    );
+    assert_eq!(
+        error_of(&mut session, "admin checksum table nosuch").0,
+        1146
+    );
+}

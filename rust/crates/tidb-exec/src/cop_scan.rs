@@ -72,7 +72,7 @@ use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
     PushdownAggregateKind, PushdownPartialAggregate, PushdownReadEngine, PushdownRowStream,
     PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownScannerError,
-    EXTRA_HANDLE_COLUMN_ID,
+    RawResponseStream, EXTRA_HANDLE_COLUMN_ID,
 };
 use tidb_executor::storage::StorageError;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
@@ -739,6 +739,33 @@ where
             plan_id: request.statement.plan_id,
             exhausted: false,
         }))
+    }
+
+    /// Go `distsql.Checksum`: `client.Send` of the built request, whose
+    /// region responses the caller pulls raw.
+    fn checksum(
+        &self,
+        request: &tidb_distsql::TransportRequest,
+    ) -> Result<Box<dyn RawResponseStream>, PushdownScannerError> {
+        let backend = |error: String| PushdownScannerError::Backend(StorageError::Backend(error));
+        let mut transport = self.factory.open_session_transport().map_err(backend)?;
+        let result = InjectedQueryRuntime::new(&mut transport)
+            .checksum(request)
+            .map_err(|error| backend(error.to_string()))?;
+        Ok(Box::new(ChecksumResponses(result)))
+    }
+}
+
+/// The raw region responses of one checksum request.
+struct ChecksumResponses<R: tidb_distsql::QueryResponse>(
+    tidb_distsql::query_runtime::QuerySelectResult<R>,
+);
+
+impl<R: tidb_distsql::QueryResponse + Send> RawResponseStream for ChecksumResponses<R> {
+    fn next_raw(&mut self) -> Result<Option<Vec<u8>>, StorageError> {
+        self.0
+            .next_raw()
+            .map_err(|error| StorageError::Backend(error.to_string()))
     }
 }
 

@@ -15,6 +15,7 @@ workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 serde.workspace = true
+tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-datatype = { path = "../tidb-datatype" }

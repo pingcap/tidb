@@ -45,6 +45,7 @@ mod go_pdqsort;
 pub use go_pdqsort::go_sort_func_by;
 mod go_stable_sort;
 pub mod histogram;
+pub mod histogram_allocation;
 pub mod independent_index_analyze;
 pub mod index;
 pub mod index_query;
@@ -112,7 +113,7 @@ pub use global_stats::{
     GlobalStatsItem, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem,
     MAX_PARTITION_MERGE_BATCH_SIZE,
 };
-pub use histogram::{Bucket, Histogram};
+pub use histogram::{Bucket, Histogram, HistogramAllocation};
 pub use independent_index_analyze::{
     merge_independent_index_fragments, IndependentIndexAnalyze, IndependentIndexFragment,
     IndependentIndexMergeError, IndependentIndexStatistics, DEFAULT_INDEX_CMS_DEPTH,

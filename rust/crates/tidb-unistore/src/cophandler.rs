@@ -118,14 +118,16 @@ pub fn handle_cop_request(
     match req.tp {
         REQ_TYPE_DAG => handle_cop_dag_request(store, req),
         REQ_TYPE_ANALYZE => analyze::handle(store, req),
-        // Go's stub (`cop_handler.go:750`): a marshalled
+        // Go `handleCopChecksumRequest` (`cop_handler.go:759`): a marshalled
         // `tipb.ChecksumResponse{Checksum:1, TotalKvs:1, TotalBytes:1}` --
-        // unistore never computes real checksums. The trimmed tipb build
-        // drops `ChecksumResponse`, so the message is hand-encoded: three
-        // optional uint64 fields at wire numbers 1-3, each carrying `1`
-        // (`0x08 0x01`, `0x10 0x01`, `0x18 0x01`).
+        // unistore never computes real checksums.
         REQ_TYPE_CHECKSUM => coprocessor::Response {
-            data: vec![0x08, 0x01, 0x10, 0x01, 0x18, 0x01].into(),
+            data: prost::Message::encode_to_vec(&tipb::ChecksumResponse {
+                checksum: Some(1),
+                total_kvs: Some(1),
+                total_bytes: Some(1),
+            })
+            .into(),
             ..coprocessor::Response::default()
         },
         other => other_error(&format!("unsupported request type {other}")),

@@ -45,7 +45,9 @@ pub struct Index {
 
 impl Index {
     pub fn copy(&self) -> Self {
-        self.clone()
+        let mut copied = self.clone();
+        copied.histogram = self.histogram.copy();
+        copied
     }
 
     pub fn item_id(&self) -> i64 {
@@ -65,7 +67,7 @@ impl Index {
             self.cmsketch = None;
         }
         self.top_n = None;
-        self.histogram.buckets.clear();
+        self.histogram.drop_bucket_data();
         self.stats_loaded_status =
             StatsLoadedStatus::new(self.stats_loaded_status.stats_initialized(), ALL_EVICTED);
     }
@@ -104,7 +106,7 @@ impl Index {
 
     /// Go test-only `EvictAllStats`.
     pub fn evict_all_stats(&mut self) {
-        self.histogram.buckets.clear();
+        self.histogram.drop_buckets();
         self.cmsketch = None;
         self.top_n = None;
         self.stats_loaded_status =

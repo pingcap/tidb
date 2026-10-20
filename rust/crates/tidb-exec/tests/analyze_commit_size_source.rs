@@ -373,6 +373,7 @@ fn full_histogram(id: i64, is_index: bool) -> ClusterStatsItem {
             tot_col_size: 40_000,
             correlation: 0.9,
             buckets,
+            ..Default::default()
         },
         topn: Some(topn),
         cms: None,

@@ -1386,10 +1386,12 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if metadata.store_type != StoreType::TiKv {
         return Err(CopReadTaskError::UnsupportedStore);
     }
+    // Go `BuildCopIterator` turns paging off for every non-DAG request;
+    // its callers here must already have done so.
     if !matches!(
         metadata.request_type,
-        RequestType::Dag | RequestType::Analyze
-    ) || (metadata.request_type == RequestType::Analyze && metadata.paging.enabled)
+        RequestType::Dag | RequestType::Analyze | RequestType::Checksum
+    ) || (metadata.request_type != RequestType::Dag && metadata.paging.enabled)
     {
         return Err(CopReadTaskError::UnsupportedRequestType);
     }

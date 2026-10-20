@@ -390,17 +390,6 @@ fn slow_query_rows(mode: &tidb_ast::AdminShowSlowMode, count: u64) -> Vec<SlowQu
 }
 
 impl crate::Session {
-    /// go `execAdminChecksums` (`pkg/executor/checksum.go`): one checksum
-    /// request per physical table (the main table plus every partition) and
-    /// per public index on each, with responses folded
-    /// `Checksum ^= update.Checksum; TotalKvs += update.TotalKvs;
-    /// TotalBytes += update.TotalBytes` (`updateChecksumResponse`). The
-    /// oracle's unistore coprocessor answers every request with the
-    /// hardcoded `Checksum:1, TotalKvs:1, TotalBytes:1`
-    /// (`pkg/store/mockstore/mockcopr/checksum.go`), so a table's answer is
-    /// fully determined by its task count: `checksum = tasks % 2`,
-    /// `kvs = bytes = tasks`. The row is
-    /// `(db, table, checksum, total_kvs, total_bytes)`.
     /// go `SplitTableRegionExec` / `SplitIndexRegionExec`
     /// (`pkg/executor/split.go`): one `(TOTAL_SPLIT_REGION,
     /// SCATTER_FINISH_RATIO)` row.
@@ -449,53 +438,104 @@ impl crate::Session {
         })
     }
 
+    /// go `ChecksumTableExec` (`pkg/executor/checksum.go`), built by
+    /// `buildChecksumTable`: one coprocessor checksum request per physical
+    /// table (the table's own ID plus every partition) and per public index
+    /// on each, all at the statement's snapshot, folded per table by
+    /// `updateChecksumResponse` (see [`tidb_executor::checksum`]). One
+    /// `(Db_name, Table_name, Checksum_crc64_xor, Total_kvs, Total_bytes)`
+    /// row per distinct table, the schema of `buildChecksumTableSchema`.
     pub(crate) fn admin_checksum_stmt(
         &mut self,
         tables: &[Vec<String>],
     ) -> Result<StmtOutput, DriverError> {
-        let longlong = || FieldType::new(FieldTypeCode::LongLong);
-        let mut rows = Vec::new();
+        let mut paths = Vec::with_capacity(tables.len());
         for path in tables {
-            let (database, name) = self.split_table_path(path)?;
-            let resolved = self.with_catalog_mut(|catalog| {
-                match catalog.table_in(&database, &name) {
+            paths.push(self.split_table_path(path)?);
+        }
+        let (contexts, client) = self.with_catalog_mut(|catalog| {
+            let mut contexts = Vec::with_capacity(paths.len());
+            let mut client = None;
+            for (database, name) in &paths {
+                match catalog.table_in(database, name) {
                     // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`).
                     Some(tidb_executor::TableEntry::Kv(table)) if table.is_temporary() => {
-                        Err(DriverError::OptOnTemporaryTable("admin checksum table"))
+                        return Err(DriverError::OptOnTemporaryTable("admin checksum table"));
                     }
                     Some(tidb_executor::TableEntry::Kv(table)) => {
-                        let physical =
-                            1 + table.partition().map_or(0, |p| p.definitions.len());
-                        let indexes = table.indexes().len();
-                        let tasks = (physical * (1 + indexes)) as i64;
-                        Ok((tasks & 1, tasks, tasks))
+                        // Every table of a session shares one storage, so
+                        // one coprocessor client and one snapshot.
+                        if client.is_none() {
+                            client = table.coprocessor_client();
+                        }
+                        contexts.push(tidb_executor::checksum::ChecksumContext::new(
+                            database, table,
+                        ));
                     }
-                    Some(_) => Err(DriverError::unsupported(
-                        "checksum reads stored tables only",
-                    )),
-                    None => Err(DriverError::Schema(
-                        tidb_executor::SchemaErrorKind::UnknownTable(format!(
-                            "{database}.{name}"
-                        )),
-                    )),
+                    Some(_) => {
+                        return Err(DriverError::unsupported(
+                            "checksum reads stored tables only",
+                        ))
+                    }
+                    None => {
+                        return Err(DriverError::Schema(
+                            tidb_executor::SchemaErrorKind::UnknownTable(format!(
+                                "{database}.{name}"
+                            )),
+                        ))
+                    }
                 }
-            })?;
-            let (checksum, kvs, bytes) = resolved;
-            rows.push(vec![
-                Datum::Bytes(database.as_bytes().to_vec()),
-                Datum::Bytes(name.as_bytes().to_vec()),
-                Datum::Int(checksum),
-                Datum::Int(kvs),
-                Datum::Int(bytes),
-            ]);
-        }
+            }
+            Ok((contexts, client))
+        })?;
+        // Go `getChecksumTableConcurrency`.
+        let concurrency = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_CHECKSUM_TABLE_CONCURRENCY)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(4);
+        let explicit_request_source_type = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_EXPLICIT_REQUEST_SOURCE_TYPE)
+            .unwrap_or_default();
+        let ctx = self.statement_context(false);
+        let (client, start_ts) = match client {
+            Some((client, start_ts)) => (Some(client), start_ts),
+            None => (None, 0),
+        };
+        let tables = tidb_executor::checksum::ChecksumTableExec::new(
+            contexts,
+            client,
+            start_ts,
+            explicit_request_source_type,
+            &ctx,
+        )
+        .run(usize::try_from(concurrency).unwrap_or(1))?;
+        let rows = tables
+            .into_iter()
+            .map(|table| {
+                vec![
+                    Datum::Bytes(table.db_name.into_bytes()),
+                    Datum::Bytes(table.table_name.into_bytes()),
+                    Datum::UInt(table.response.checksum()),
+                    Datum::UInt(table.response.total_kvs()),
+                    Datum::UInt(table.response.total_bytes()),
+                ]
+            })
+            .collect();
+        // Go `buildColumnWithName` flags every non-string column unsigned.
+        let ulonglong = || {
+            FieldType::new(FieldTypeCode::LongLong)
+                .with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED)
+        };
         Ok(StmtOutput::Rows {
             columns: vec![
                 ("Db_name".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
                 ("Table_name".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-                ("Checksum_crc64_xor".to_owned(), longlong()),
-                ("Total_kvs".to_owned(), longlong()),
-                ("Total_bytes".to_owned(), longlong()),
+                ("Checksum_crc64_xor".to_owned(), ulonglong()),
+                ("Total_kvs".to_owned(), ulonglong()),
+                ("Total_bytes".to_owned(), ulonglong()),
             ],
             rows,
         })

@@ -39,6 +39,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use tidb_chunk::column::VAR_ELEM_LEN;
 use tidb_datatype::{Collation, Datum, DatumValueError};
 use tidb_util::generic::BoundedMinHeap;
 use tidb_util::memory::Tracker;
@@ -46,7 +47,8 @@ use tidb_util::memory::Tracker;
 use crate::cmsketch::TopN;
 use crate::correlation::calc_correlation;
 use crate::go_stable_sort::go_stable_sort_by;
-use crate::histogram::{Bucket, Histogram};
+use crate::histogram::Histogram;
+use crate::histogram_allocation::bound_type_size;
 
 /// Go `topNPruningThreshold`: a singleton value is dropped once the heap
 /// already holds a tenth of the TopN it was asked for.
@@ -481,6 +483,7 @@ pub fn try_build_hist_and_topn_tracked<E>(
         "histogram bucket count cannot be negative"
     );
     let samples = &collector.samples;
+    histogram = new_built_histogram(&histogram, samples, is_column, options.num_buckets as usize);
 
     let sample_num = samples.len() as i64;
     let sample_factor = count as f64 / sample_num as f64;
@@ -703,6 +706,7 @@ pub fn try_build_column_histogram_in_place(
         "histogram bucket count cannot be negative"
     );
     let samples = &collector.samples;
+    histogram = new_built_histogram(&histogram, samples, true, num_buckets as usize);
     let mut checker = SequentialRangeChecker::from_ranges(&[]);
     build_hist(
         &mut histogram,
@@ -732,6 +736,36 @@ pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: i64) -> H
         collector.count,
         collector.ndv,
         collector.null_count,
+    )
+}
+
+/// Go `NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, totalSize)`,
+/// called once the samples are sorted. The builder API carries no `tp`: an
+/// index histogram's is `TypeBlob`, and a column's samples are datums of the
+/// column type, so the first sample's kind gives the bounds column's
+/// `getFixedLen(tp)`.
+fn new_built_histogram(
+    metadata: &Histogram,
+    samples: &[SampleItem],
+    is_column: bool,
+    num_buckets: usize,
+) -> Histogram {
+    let bound_type_size = if is_column {
+        samples
+            .iter()
+            .find_map(|sample| bound_type_size(&sample.value))
+            .unwrap_or(VAR_ELEM_LEN)
+    } else {
+        VAR_ELEM_LEN
+    };
+    Histogram::with_bound_type_size(
+        metadata.id,
+        metadata.ndv,
+        metadata.null_count,
+        metadata.last_update_version,
+        bound_type_size,
+        num_buckets,
+        metadata.tot_col_size,
     )
 }
 
@@ -774,16 +808,15 @@ fn build_hist(
     }
 
     let first = &samples[first_sample_idx as usize];
-    histogram.buckets.push(Bucket {
-        count: sample_factor as i64,
-        repeat: ndv_factor as i64,
-        // Go's sampling path calls `AppendBucket`, which is
-        // `AppendBucketWithNDV(.., ndv = 0)`; only the incremental
-        // `SortedBuilder` records a per-bucket NDV.
-        ndv: 0,
-        lower_bound: first.value.clone(),
-        upper_bound: first.value.clone(),
-    });
+    // Go's sampling path calls `AppendBucket`, which is
+    // `AppendBucketWithNDV(.., ndv = 0)`; only the incremental `SortedBuilder`
+    // records a per-bucket NDV.
+    histogram.append_bucket(
+        first.value.clone(),
+        first.value.clone(),
+        sample_factor as i64,
+        ndv_factor as i64,
+    );
     let mut memory = BuilderMemoryBuffer::new(tracker);
     let mut bucket_idx = 0_usize;
     let mut last_count = 0_i64;
@@ -821,20 +854,21 @@ fn build_hist(
                 histogram.buckets[bucket_idx].repeat += sample_factor as i64;
             }
         } else if total_count - last_count as f64 <= values_per_bucket {
-            let bucket = &mut histogram.buckets[bucket_idx];
-            bucket.upper_bound = sample.value.clone();
-            bucket.count = total_count as i64;
-            bucket.repeat = ndv_factor as i64;
+            histogram.update_last_bucket(
+                sample.value.clone(),
+                total_count as i64,
+                ndv_factor as i64,
+                false,
+            );
         } else {
             last_count = histogram.buckets[bucket_idx].count;
             bucket_idx += 1;
-            histogram.buckets.push(Bucket {
-                count: total_count as i64,
-                repeat: ndv_factor as i64,
-                ndv: 0,
-                lower_bound: sample.value.clone(),
-                upper_bound: sample.value.clone(),
-            });
+            histogram.append_bucket(
+                sample.value.clone(),
+                sample.value.clone(),
+                total_count as i64,
+                ndv_factor as i64,
+            );
         }
     }
     Ok(())

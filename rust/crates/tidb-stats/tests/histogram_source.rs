@@ -23,7 +23,7 @@
 //! is the literal Go-printed float64 value (or its exact bit-identical
 //! decimal literal), so equality assertions require zero drift.
 
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 use tidb_stats::histogram::{
     deep_slice, merge_histograms, merge_partition_histograms, value_to_string, Bucket, Histogram,
     HistogramMergeError, OutOfRangeContext, PartitionMergeOptions, TopNMergeEntry,
@@ -31,6 +31,14 @@ use tidb_stats::histogram::{
 use tidb_stats::row_estimate::default_row_est;
 
 const EPS: f64 = 1e-9;
+
+fn longlong() -> FieldType {
+    FieldType::new(FieldTypeCode::LongLong)
+}
+
+fn blob() -> FieldType {
+    FieldType::new(FieldTypeCode::Blob)
+}
 
 /// Pinned Go `histogram_test.go::TestValueToString4InvalidKey`.
 #[test]
@@ -75,6 +83,7 @@ fn int_histogram() -> Histogram {
             int_bucket(20, 29, 35, 1, 10),
             int_bucket(40, 49, 45, 5, 5),
         ],
+        ..Default::default()
     }
 }
 
@@ -202,7 +211,7 @@ fn source_topn_removal_matches_go_boundaries() {
         assert_eq!(actual, unchanged);
     }
 
-    let mut bulk = Histogram::new(1, 12, 0, 0, 3, 0);
+    let mut bulk = Histogram::new(1, 12, 0, 0, &blob(), 3, 0);
     for (lower, upper, count, repeat, ndv) in
         [(1_u8, 3_u8, 5, 1, 3), (4, 6, 10, 2, 3), (7, 9, 15, 3, 3)]
     {
@@ -323,6 +332,7 @@ fn string_histogram() -> Histogram {
             str_bucket("date", "kiwi", 18, 3, 7),
             str_bucket("lemon", "orange", 26, 4, 5),
         ],
+        ..Default::default()
     }
 }
 
@@ -390,6 +400,7 @@ fn decimal_histogram() -> Histogram {
             decimal_bucket("1.50", "10.25", 12, 2, 8),
             decimal_bucket("10.25", "99.99", 22, 3, 6),
         ],
+        ..Default::default()
     }
 }
 
@@ -452,6 +463,7 @@ fn time_histogram() -> Histogram {
             time_bucket("2020-01-01 00:00:00", "2020-06-01 00:00:00", 15, 2, 9),
             time_bucket("2020-06-01 00:00:00", "2021-01-01 00:00:00", 28, 3, 8),
         ],
+        ..Default::default()
     }
 }
 
@@ -501,7 +513,7 @@ fn source_time_histogram_probes() {
 type IntBucket = (i64, i64, i64, i64, i64);
 
 fn source_merge_histogram(buckets: &[IntBucket], total_column_size: i64) -> Histogram {
-    let mut histogram = Histogram::new(0, 0, 0, 0, buckets.len(), total_column_size);
+    let mut histogram = Histogram::new(0, 0, 0, 0, &longlong(), buckets.len(), total_column_size);
     for &(lower, upper, count, repeat, ndv) in buckets {
         histogram.append_bucket_with_ndv(
             Datum::new_int(lower),
@@ -523,7 +535,7 @@ fn encoded_int(value: i64) -> Datum {
 }
 
 fn source_index_merge_histogram(buckets: &[IntBucket], total_column_size: i64) -> Histogram {
-    let mut histogram = Histogram::new(0, 0, 0, 0, buckets.len(), total_column_size);
+    let mut histogram = Histogram::new(0, 0, 0, 0, &blob(), buckets.len(), total_column_size);
     for &(lower, upper, count, repeat, ndv) in buckets {
         histogram.append_bucket_with_ndv(
             encoded_int(lower),
@@ -673,7 +685,7 @@ fn source_partition_merge_empty_error_and_topn_boundaries_match_oracle() {
         None
     );
 
-    let empty = Histogram::new(7, 0, 4, 9, 0, 11);
+    let empty = Histogram::new(7, 0, 4, 9, &longlong(), 0, 11);
     let merged = merge_partition_histograms(&[empty], &[], partition_options(1), Collation::Binary)
         .unwrap()
         .unwrap();
@@ -781,7 +793,7 @@ fn source_standardize_v2_index_matches_all_go_tables() {
 }
 
 fn consecutive_histogram(lower: i64, count: i64) -> Histogram {
-    let mut histogram = Histogram::new(0, count, 0, 0, count as usize, 0);
+    let mut histogram = Histogram::new(0, count, 0, 0, &longlong(), count as usize, 0);
     for offset in 0..count {
         histogram.append_bucket(
             Datum::new_int(lower + offset),

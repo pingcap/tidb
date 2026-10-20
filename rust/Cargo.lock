@@ -4168,6 +4168,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",
@@ -4274,6 +4275,7 @@ dependencies = [
 name = "tidb-stats-handle-cache-internal-testutil"
 version = "0.0.0"
 dependencies = [
+ "tidb-datatype",
  "tidb-stats",
 ]
 

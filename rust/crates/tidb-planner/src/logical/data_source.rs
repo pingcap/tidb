@@ -1307,6 +1307,7 @@ mod tests {
                             lower_bound: Datum::Int(1),
                             upper_bound: Datum::Int(1000),
                         }],
+                        ..Default::default()
                     },
                     topn: None,
                     cms: None,

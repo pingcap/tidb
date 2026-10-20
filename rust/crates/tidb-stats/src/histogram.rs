@@ -18,22 +18,26 @@
 //! Go stores bucket bounds as two rows (lower at `2*i`, upper at `2*i+1`) in
 //! a shared `chunk.Chunk`. This port replaces that chunk machinery with a
 //! per-bucket `(lower, upper)` [`Datum`] pair held directly on [`Bucket`] --
-//! functionally equivalent for every estimation and merge method ported here,
-//! without needing the chunk/column-codec dependency. Loading histograms from
-//! KV storage, sampling, and protobuf wire conversion remain explicit future
-//! owners (see the crate module docs).
+//! functionally equivalent for every estimation and merge method ported here.
+//! What the chunk allocated, which Go's `MemoryUsage` reports, is recorded
+//! beside the buckets in [`HistogramAllocation`].
 
-use std::{cmp::Ordering, fmt};
+use std::{borrow::Cow, cmp::Ordering, fmt};
 
+use tidb_chunk::column::VAR_ELEM_LEN;
 use tidb_datatype::{
-    datums_to_string, Collation, Datum, DatumStringError, DatumValueError, FieldTypeCode,
-    SessionTimeZone,
+    datums_to_string, Collation, Datum, DatumStringError, DatumValueError, FieldType,
+    FieldTypeCode, SessionTimeZone,
 };
 
+pub use crate::histogram_allocation::HistogramAllocation;
 pub use crate::scalar_geometry::{
     calc_fraction, calc_fraction_from_datums, convert_bytes_to_scalar, convert_datum_to_scalar,
 };
 use crate::{
+    histogram_allocation::{
+        bound_type_size, histogram_bound_type_size, pre_calculates_scalars, var_len_cell_len,
+    },
     row_estimate::{default_row_est, RowEstimate},
     scalar_geometry::common_prefix_length as common_prefix_length_all,
 };
@@ -80,6 +84,9 @@ pub struct Histogram {
     pub correlation: f64,
     /// Buckets in ascending order.
     pub buckets: Vec<Bucket>,
+    /// Go's `Bounds`/`Buckets`/`Scalars` allocation, which
+    /// [`Histogram::memory_usage`] reports.
+    pub allocation: HistogramAllocation,
 }
 
 /// A TopN value reintroduced while partition histograms are merged.
@@ -193,52 +200,69 @@ pub struct BucketLocation {
 }
 
 impl Histogram {
-    /// Go `(*Histogram).MemoryUsage`: zero for an empty histogram and the
-    /// resident histogram allocation otherwise.
+    /// Go `(*Histogram).MemoryUsage`: `EmptyHistogramSize +
+    /// Bounds.MemoryUsage() + cap(Buckets)*EmptyBucketSize +
+    /// cap(Scalars)*EmptyScalarSize`, or zero when there are no buckets, no
+    /// scalars, and a zero-capacity bounds chunk.
     ///
-    /// Go keeps bounds in a `chunk.Chunk`; this representation keeps each
-    /// bound beside its bucket, so the same ownership rule is expressed as
-    /// the histogram value, reserved bucket storage, and bound payloads.
+    /// A histogram whose allocation no Go-shaped constructor recorded (a
+    /// struct literal, or buckets edited around these methods) is accounted as
+    /// Go's storage loader builds it; see [`HistogramAllocation`].
     pub fn memory_usage(&self) -> i64 {
-        if self.buckets.is_empty() {
-            return 0;
-        }
-        let datum_size = std::mem::size_of::<Datum>();
-        let bucket_storage = self
-            .buckets
-            .capacity()
-            .wrapping_mul(std::mem::size_of::<Bucket>());
-        let bound_payloads = self.buckets.iter().fold(0_usize, |total, bucket| {
-            total
-                .wrapping_add(
-                    bucket
-                        .lower_bound
-                        .estimated_mem_usage()
-                        .saturating_sub(datum_size),
-                )
-                .wrapping_add(
-                    bucket
-                        .upper_bound
-                        .estimated_mem_usage()
-                        .saturating_sub(datum_size),
-                )
-        });
-        i64::try_from(
-            std::mem::size_of::<Self>()
-                .wrapping_add(bucket_storage)
-                .wrapping_add(bound_payloads),
-        )
-        .unwrap_or(i64::MAX)
+        self.go_allocation().memory_usage()
     }
 
-    /// Creates an empty histogram with the source metadata and allocation
-    /// hint from Go `NewHistogram`.
+    /// The allocation Go's `MemoryUsage` reads: the recorded one, or, for a
+    /// histogram no Go-shaped constructor built, the one Go's storage loader
+    /// makes for these buckets.
+    fn go_allocation(&self) -> Cow<'_, HistogramAllocation> {
+        if self.allocation.is_tracking(self.buckets.len()) {
+            return Cow::Borrowed(&self.allocation);
+        }
+        let mut loaded = HistogramAllocation::new(self.bound_type_size(), self.buckets.len());
+        for bucket in &self.buckets {
+            loaded.append_bucket(&bucket.lower_bound, &bucket.upper_bound);
+        }
+        if let Some(first) = self.buckets.first() {
+            if pre_calculates_scalars(&first.lower_bound) {
+                loaded.set_scalar_len(self.buckets.len());
+            }
+        }
+        Cow::Owned(loaded)
+    }
+
+    /// Creates an empty histogram, Go `NewHistogram`: `tp` decides the
+    /// bounds column's layout, and `bucket_size` the capacity of both the
+    /// bounds chunk (`2*bucket_size` rows) and `Buckets`.
     pub fn new(
         id: i64,
         ndv: i64,
         null_count: i64,
         last_update_version: u64,
-        bucket_capacity: usize,
+        tp: &FieldType,
+        bucket_size: usize,
+        tot_col_size: i64,
+    ) -> Self {
+        Self::with_bound_type_size(
+            id,
+            ndv,
+            null_count,
+            last_update_version,
+            histogram_bound_type_size(tp),
+            bucket_size,
+            tot_col_size,
+        )
+    }
+
+    /// [`Histogram::new`] for a caller that knows the bounds column's Go
+    /// `getFixedLen` rather than its field type.
+    pub(crate) fn with_bound_type_size(
+        id: i64,
+        ndv: i64,
+        null_count: i64,
+        last_update_version: u64,
+        bound_type_size: i64,
+        bucket_size: usize,
         tot_col_size: i64,
     ) -> Self {
         Self {
@@ -248,8 +272,95 @@ impl Histogram {
             last_update_version,
             tot_col_size,
             correlation: 0.0,
-            buckets: Vec::with_capacity(bucket_capacity),
+            buckets: Vec::with_capacity(bucket_size),
+            allocation: HistogramAllocation::new(bound_type_size, bucket_size),
         }
+    }
+
+    /// Go `getFixedLen(hg.Tp)`: as the constructor recorded it, else the
+    /// column type the first non-NULL bound is stored under (an index's
+    /// `TypeBlob` when there is none).
+    pub(crate) fn bound_type_size(&self) -> i64 {
+        self.allocation.type_size().unwrap_or_else(|| {
+            self.bounds()
+                .find_map(bound_type_size)
+                .unwrap_or(VAR_ELEM_LEN)
+        })
+    }
+
+    /// Go `histogramFromStorageWithParams`'s construction around the metadata
+    /// this histogram already holds: `NewHistogram(.., tp, len(rows), ..)`,
+    /// one `AppendBucketWithNDV` per stored bucket (whose counts are already
+    /// cumulative), then `PreCalculateScalar`. An index histogram's `tp` is
+    /// `TypeBlob`.
+    pub fn load_buckets_from_storage(&mut self, tp: &FieldType, buckets: Vec<Bucket>) {
+        let mut loaded = Self::new(
+            self.id,
+            self.ndv,
+            self.null_count,
+            self.last_update_version,
+            tp,
+            buckets.len(),
+            self.tot_col_size,
+        );
+        loaded.correlation = self.correlation;
+        for bucket in buckets {
+            loaded.append_bucket_with_ndv(
+                bucket.lower_bound,
+                bucket.upper_bound,
+                bucket.count,
+                bucket.repeat,
+                bucket.ndv,
+            );
+        }
+        loaded.pre_calculate_scalar();
+        *self = loaded;
+    }
+
+    /// The histogram Go's statistics consumers read after a fresh build is
+    /// saved: Go never hands a built histogram to the stats cache, it reloads
+    /// it from `mysql.stats_buckets`, so a tier that installs built statistics
+    /// directly performs that load's construction itself
+    /// ([`Histogram::load_buckets_from_storage`] over these buckets).
+    pub fn round_trip_through_storage(&mut self, tp: &FieldType) {
+        let buckets = std::mem::take(&mut self.buckets);
+        self.load_buckets_from_storage(tp, buckets);
+    }
+
+    /// Go `ConvertTo`'s allocation, for bounds the caller already converted
+    /// in place: `NewHistogram(.., tp, Len(), ..)` receives every converted
+    /// bound, and the new histogram shares `Buckets` and drops `Scalars`.
+    pub fn record_convert_to(&mut self, tp: &FieldType) {
+        let mut allocation =
+            HistogramAllocation::new(histogram_bound_type_size(tp), self.buckets.len());
+        for bucket in &self.buckets {
+            allocation.append_bucket(&bucket.lower_bound, &bucket.upper_bound);
+        }
+        self.allocation = allocation;
+    }
+
+    /// Go `PreCalculateScalar`. Scalars are computed where they are used, so
+    /// only Go's `make([]scalar, len(Buckets))` allocation is recorded.
+    pub fn pre_calculate_scalar(&mut self) {
+        if let Some(first) = self.buckets.first() {
+            if pre_calculates_scalars(&first.lower_bound) {
+                self.allocation.set_scalar_len(self.buckets.len());
+            }
+        }
+    }
+
+    /// Go `DropUnnecessaryData`'s histogram reset: `Bounds =
+    /// NewChunkWithCapacity(TypeBlob, 0)` and empty `Buckets` and `Scalars`.
+    pub fn drop_bucket_data(&mut self) {
+        self.buckets = Vec::new();
+        self.allocation = HistogramAllocation::new(VAR_ELEM_LEN, 0);
+    }
+
+    /// Go `Index.EvictAllStats`'s `Buckets = nil`; `Bounds` and `Scalars`
+    /// stay allocated.
+    pub fn drop_buckets(&mut self) {
+        self.buckets = Vec::new();
+        self.allocation.drop_buckets();
     }
 
     /// Returns the lower bound of `bucket_index`, Go `GetLower`.
@@ -292,6 +403,9 @@ impl Histogram {
         repeat: i64,
         ndv: i64,
     ) {
+        if self.allocation.is_tracking(self.buckets.len()) {
+            self.allocation.append_bucket(&lower_bound, &upper_bound);
+        }
         self.buckets.push(Bucket {
             count,
             repeat,
@@ -301,13 +415,18 @@ impl Histogram {
         });
     }
 
-    fn update_last_bucket(
+    /// Go `updateLastBucket`.
+    pub(crate) fn update_last_bucket(
         &mut self,
         upper_bound: Datum,
         count: i64,
         repeat: i64,
         need_bucket_ndv: bool,
     ) {
+        if self.allocation.is_tracking(self.buckets.len()) {
+            let retained = self.bound_data_len(2 * self.buckets.len() - 1);
+            self.allocation.replace_last_upper(retained, &upper_bound);
+        }
         let bucket = self
             .buckets
             .last_mut()
@@ -419,6 +538,10 @@ impl Histogram {
     /// Removes empty analyze-v2 index buckets and clears bucket NDV, Go
     /// `StandardizeForV2AnalyzeIndex`.
     pub fn standardize_for_v2_analyze_index(&mut self) {
+        if self.buckets.is_empty() {
+            return;
+        }
+        let tracking = self.allocation.is_tracking(self.buckets.len());
         let mut previous_count = 0_i64;
         self.buckets.retain_mut(|bucket| {
             let count = bucket.count.wrapping_sub(previous_count);
@@ -429,22 +552,52 @@ impl Histogram {
             }
             keep
         });
+        if tracking {
+            let kept = self.buckets.len();
+            let mut allocation = std::mem::take(&mut self.allocation);
+            allocation.rebuild_bounds(kept, self.bounds(), kept);
+            self.allocation = allocation;
+        }
     }
 
     /// Returns a deep copy truncated to `bucket_count` buckets, Go
     /// `TruncateHistogram`.
     pub fn truncate(&self, bucket_count: usize) -> Self {
         let mut histogram = self.copy();
+        let tracking = histogram.allocation.is_tracking(histogram.buckets.len());
         histogram.buckets.truncate(bucket_count);
+        if tracking {
+            let retained = histogram.bound_data_len(2 * histogram.buckets.len());
+            histogram
+                .allocation
+                .truncate_buckets(histogram.buckets.len(), retained);
+        }
         histogram
     }
 
     /// Deep-copies this histogram, Go `Copy`.
     pub fn copy(&self) -> Self {
-        self.clone()
+        let mut copied = self.clone();
+        copied.allocation = self.go_allocation().copy();
+        copied
     }
 
-    fn merge_neighbor_buckets(&mut self, bucket_index: usize) {
+    /// Each bound in Go's `Bounds` row order.
+    fn bounds(&self) -> impl Iterator<Item = &Datum> {
+        self.buckets
+            .iter()
+            .flat_map(|bucket| [&bucket.lower_bound, &bucket.upper_bound])
+    }
+
+    /// The bytes the first `rows` bounds occupy in a variable-length bounds
+    /// column (Go `offsets[rows]`).
+    fn bound_data_len(&self, rows: usize) -> usize {
+        self.bounds().take(rows).map(var_len_cell_len).sum()
+    }
+
+    /// Go `mergeBuckets`.
+    pub(crate) fn merge_neighbor_buckets(&mut self, bucket_index: usize) {
+        let tracking = self.allocation.is_tracking(self.buckets.len());
         let mut merged = Vec::with_capacity(bucket_index / 2 + 1);
         let mut index = 0_usize;
         while index < bucket_index {
@@ -463,9 +616,21 @@ impl Histogram {
             merged.push(self.buckets[bucket_index].clone());
         }
         self.buckets = merged;
+        if tracking {
+            let merged_len = self.buckets.len();
+            let mut allocation = std::mem::take(&mut self.allocation);
+            allocation.rebuild_bounds(bucket_index, self.bounds(), merged_len);
+            self.allocation = allocation;
+        }
     }
 
-    fn pop_first_bucket(&mut self) {
+    /// Go `popFirstBucket`.
+    pub(crate) fn pop_first_bucket(&mut self) {
+        if self.allocation.is_tracking(self.buckets.len()) {
+            let mut allocation = std::mem::take(&mut self.allocation);
+            allocation.pop_first_bucket(self.bounds().skip(2));
+            self.allocation = allocation;
+        }
         self.buckets.remove(0);
     }
 
@@ -1218,11 +1383,12 @@ pub fn merge_partition_histograms(
         }
     }
     if bucket_number.wrapping_add(popped_topn.len()) == 0 {
-        return Ok(Some(Histogram::new(
+        return Ok(Some(Histogram::with_bound_type_size(
             first_histogram.id,
             0,
             total_null,
             first_histogram.last_update_version,
+            first_histogram.bound_type_size(),
             0,
             total_column_size,
         )));
@@ -1414,11 +1580,12 @@ pub fn merge_partition_histograms(
         }
     }
 
-    let mut global = Histogram::new(
+    let mut global = Histogram::with_bound_type_size(
         first_histogram.id,
         0,
         total_null,
         first_histogram.last_update_version,
+        first_histogram.bound_type_size(),
         global_buckets.len(),
         total_column_size,
     );
