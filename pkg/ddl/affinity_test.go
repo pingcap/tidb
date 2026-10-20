@@ -470,7 +470,12 @@ func TestAffinityInvalidCodecDDL(t *testing.T) {
 		tk.MustExec("insert into " + name + " values (1),(2),(11),(12)")
 	}
 	const codecFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockAffinityCodec"
-	testfailpoint.EnableCall(t, codecFailpoint, func(codec *tikv.Codec) { *codec = nil })
+	invalidateCodec := true
+	testfailpoint.EnableCall(t, codecFailpoint, func(codec *tikv.Codec) {
+		if invalidateCodec {
+			*codec = nil
+		}
+	})
 	for _, query := range []string{
 		"create table c(a int) affinity='table'",
 		"create table cp(a int) affinity='partition' partition by hash(a) partitions 2",
@@ -503,10 +508,10 @@ func TestAffinityInvalidCodecDDL(t *testing.T) {
 	tk.MustExec("drop table t, p")
 	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("t")))
 	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("p")))
-	testfailpoint.Disable(t, codecFailpoint)
+	invalidateCodec = false
 	tk.MustExec("create database affinity_drop")
 	tk.MustExec("create table affinity_drop.t(a int) affinity='table'")
-	testfailpoint.EnableCall(t, codecFailpoint, func(codec *tikv.Codec) { *codec = nil })
+	invalidateCodec = true
 	tk.MustExec("drop database affinity_drop")
 	require.False(t, dom.InfoSchema().SchemaExists(ast.NewCIStr("affinity_drop")))
 }
