@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1550,4 +1551,187 @@ func TestMDLUpdateEtcdFail(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/schemaver/mockUpdateMDLToETCDError", `3*return(true)`)
 
 	tk.MustExec("alter table test.t add column c int")
+}
+
+// TestMDLInternalSessionBlocksDDL verifies that a transaction on an internal session
+// blocks DDL on the user table it accesses. Internal sessions used to be skipped by
+// the MDL census, which allowed DDL to change a table while such transactions were
+// still writing it (see issue #71055).
+func TestMDLInternalSessionBlocksDDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	ddlConn := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, ddlConn.Context().Session)
+	tkDDL.MustExec("use test")
+	if kerneltype.IsClassic() {
+		tkDDL.MustExec("set global tidb_enable_metadata_lock=1")
+	}
+	tkDDL.MustExec("create table t(a int)")
+	tkDDL.MustExec("insert into t values (1)")
+
+	pool := dom.AdvancedSysSessionPool()
+	se, err := pool.Get()
+	require.NoError(t, err)
+	// Internal SQL must carry a source type; TTL is the workload this scenario mimics.
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	defer func() {
+		// Rollback is a no-op after a successful commit.
+		rs, _ := se.ExecuteInternal(internalCtx, "rollback")
+		if rs != nil {
+			_ = rs.Close()
+		}
+		pool.Put(se)
+	}()
+
+	execInternal := func(sql string) {
+		rs, err := se.ExecuteInternal(internalCtx, sql)
+		require.NoError(t, err)
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+	}
+	// Get() registers the session to the session manager, and the explicit transaction
+	// on a user table makes it hold the MDL lock.
+	execInternal("begin optimistic")
+	execInternal("insert into test.t values (2)")
+
+	mdlWaitCh := make(chan struct{})
+	var mdlWaitOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
+		if job.Type == model.ActionAddColumn && schemaVer != 0 {
+			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
+		}
+	})
+	ddlDone := make(chan error, 1)
+	go func() {
+		ddlDone <- tkDDL.ExecToErr("alter table test.t add column b int")
+	}()
+
+	select {
+	case err := <-ddlDone:
+		require.FailNowf(t, "DDL should be blocked by the internal session transaction", "ddl finished before waiting for schema sync, err=%v", err)
+	case <-mdlWaitCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for ALTER TABLE to enter schema sync")
+	}
+	select {
+	case <-ddlDone:
+		t.Fatal("DDL should not finish while the internal session transaction is running")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	execInternal("commit")
+	select {
+	case err := <-ddlDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("DDL should finish after the internal session transaction commits")
+	}
+	tkDDL.MustExec("admin check table test.t")
+}
+
+// TestMDLInternalSessionDoesNotBlockSystemTableDDL verifies that internal sessions
+// keep the former behavior on tables in the `mysql` schema: they do not take MDL
+// there, so upgrade/bootstrap related DDL is not blocked by e.g. the stats bootstrap.
+func TestMDLInternalSessionDoesNotBlockSystemTableDDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	ddlConn := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, ddlConn.Context().Session)
+	if kerneltype.IsClassic() {
+		tkDDL.MustExec("set global tidb_enable_metadata_lock=1")
+	}
+	tkDDL.MustExec("create table mysql.mdl_internal_session_t(a int)")
+
+	pool := dom.AdvancedSysSessionPool()
+	se, err := pool.Get()
+	require.NoError(t, err)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	defer func() {
+		rs, _ := se.ExecuteInternal(internalCtx, "rollback")
+		if rs != nil {
+			_ = rs.Close()
+		}
+		pool.Put(se)
+	}()
+
+	execInternal := func(sql string) {
+		rs, err := se.ExecuteInternal(internalCtx, sql)
+		require.NoError(t, err)
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+	}
+	execInternal("begin optimistic")
+	execInternal("insert into mysql.mdl_internal_session_t values (1)")
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		ddlDone <- tkDDL.ExecToErr("alter table mysql.mdl_internal_session_t add column b int")
+	}()
+	select {
+	case err := <-ddlDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("DDL on the mysql schema should not be blocked by an internal session transaction")
+	}
+	// The DDL changed the table while the internal transaction was open, so commit may fail
+	// the schema delta check; rolling back keeps this test focused on the non-blocking check.
+	execInternal("rollback")
+}
+
+// TestMDLInternalSessionSystemTableWriteValidatedAtCommit verifies that internal sessions do
+// not take MDL on the `mysql` schema, but a concurrent DDL still makes their commit fail via
+// the schema delta check instead of letting a write with stale metadata commit.
+func TestMDLInternalSessionSystemTableWriteValidatedAtCommit(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	ddlConn := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, ddlConn.Context().Session)
+	if kerneltype.IsClassic() {
+		tkDDL.MustExec("set global tidb_enable_metadata_lock=1")
+	}
+	tkDDL.MustExec("create table mysql.mdl_internal_session_commit(a int)")
+
+	pool := dom.AdvancedSysSessionPool()
+	se, err := pool.Get()
+	require.NoError(t, err)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	defer func() {
+		rs, _ := se.ExecuteInternal(internalCtx, "rollback")
+		if rs != nil {
+			_ = rs.Close()
+		}
+		pool.Put(se)
+	}()
+	execInternal := func(sql string) error {
+		rs, err := se.ExecuteInternal(internalCtx, sql)
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+		return err
+	}
+
+	require.NoError(t, execInternal("set @@tidb_retry_limit=0"))
+	require.NoError(t, execInternal("begin optimistic"))
+	require.NoError(t, execInternal("insert into mysql.mdl_internal_session_commit(a) values (1)"))
+
+	// No MDL is taken on the mysql schema, so this DDL is not blocked by the internal session.
+	tkDDL.MustExec("alter table mysql.mdl_internal_session_commit add column b int")
+
+	err = execInternal("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Information schema is changed")
 }

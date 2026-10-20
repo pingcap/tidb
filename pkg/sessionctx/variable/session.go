@@ -243,6 +243,10 @@ type TxnCtxNoNeedToRestore struct {
 	TemporaryTables map[int64]tableutil.TempTable
 	// EnableMDL indicates whether to enable the MDL lock for the transaction.
 	EnableMDL bool
+	// NeedSchemaDeltaCheck indicates that the transaction accesses tables without taking MDL,
+	// so the commit-time schema delta check must still run for it. It is set for internal
+	// sessions that access tables in the `mysql` schema, see tryLockMDLAndUpdateSchemaIfNecessary.
+	NeedSchemaDeltaCheck bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 
@@ -3963,10 +3967,10 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
+// Both user sessions and internal sessions are checked. Internal sessions only take MDL
+// for user tables (see tryLockMDLAndUpdateSchemaIfNecessary), so tables in the `mysql`
+// schema never block a DDL through them.
 func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog bool) {
-	if sv.InRestrictedSQL {
-		return
-	}
 	sv.TxnCtxMu.Lock()
 	defer sv.TxnCtxMu.Unlock()
 	if sv.TxnCtx == nil {
@@ -3978,13 +3982,19 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 				delete(jobs, jobID)
 				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
 				logFn := logutil.BgLogger().Debug
-				if elapsedTime > time.Minute && printLog {
+				// Only long-running transactions are logged at Info level, otherwise a steady
+				// stream of short transactions (for example TTL delete batches) would keep
+				// logging for as long as the DDL waits. The `internal` field below identifies
+				// internal sessions at Debug level.
+				if printLog && elapsedTime > time.Minute {
 					logFn = logutil.BgLogger().Info
 				}
 				logFn("old running transaction block DDL",
 					zap.Int64("table ID", tblID.(int64)),
 					zap.Int64("jobID", jobID),
 					zap.Uint64("connection ID", sv.ConnectionID),
+					zap.Bool("internal", sv.InRestrictedSQL),
+					zap.Uint64("startTS", sv.TxnCtx.StartTS),
 					zap.Duration("elapsed time", elapsedTime))
 			}
 		}
