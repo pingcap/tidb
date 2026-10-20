@@ -23,9 +23,13 @@ import (
 	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -1937,6 +1941,50 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) 
 	)
 	require.NoError(t, err)
 	require.Equal(t, []uint8{0}, setBitmap)
+}
+
+func TestTableResultWriterColumnOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		offsets [2]int
+		err     string
+	}{
+		{name: "dense", offsets: [2]int{0, 1}},
+		{name: "reordered", offsets: [2]int{1, 0}, err: "column `a` offset 1 != writable ordinal 0"},
+		{name: "gapped", offsets: [2]int{0, 2}, err: "column `b` offset 2 != writable ordinal 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sctx := mock.NewContext()
+			tp := types.NewFieldType(mysql.TypeLonglong)
+			target := tables.MockTableFromMeta(&model.TableInfo{
+				ID:    1,
+				Name:  pmodel.NewCIStr("mv"),
+				State: model.StatePublic,
+				Columns: []*model.ColumnInfo{
+					{ID: 1, Name: pmodel.NewCIStr("a"), Offset: tc.offsets[0], FieldType: *tp, State: model.StatePublic},
+					{ID: 2, Name: pmodel.NewCIStr("b"), Offset: tc.offsets[1], FieldType: *tp, State: model.StatePublic},
+				},
+			})
+			require.Len(t, target.Cols(), 2)
+			require.Len(t, target.WritableCols(), 2)
+			source := newMockSource(sctx, []*types.FieldType{tp, tp, tp}, nil)
+			e := &Exec{
+				BaseExecutor:     exec.NewBaseExecutor(sctx, nil, 0, source),
+				DeltaAggColCount: 1,
+				TargetTable:      target,
+				TargetHandleCols: plannerutil.NewIntHandleCols(&expression.Column{Index: 1, RetType: tp}),
+				aggOutputColIDs:  []int{2},
+			}
+			writer, err := e.buildTableResultWriter()
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				require.Nil(t, writer)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, writer)
+		})
+	}
 }
 
 func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
