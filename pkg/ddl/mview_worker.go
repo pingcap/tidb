@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -597,10 +599,20 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		return nil, errors.Trace(err)
 	}
 	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
-		sessVars.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
+		divPrecision := strconv.Itoa(mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement)
+		if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, divPrecision); err != nil {
+			restoreExecution()
+			restore(sessCtx)
+			return nil, errors.Trace(err)
+		}
 	}
 	sessVars.CurrentDB = currentDB
 	sessVars.InMViewMaintenance = true
+	// The build statement resets its resource group from the session variable.
+	originalResourceGroup := sessVars.ResourceGroupName
+	if job.ReorgMeta.ResourceGroupName != "" {
+		sessVars.SetResourceGroupName(job.ReorgMeta.ResourceGroupName)
+	}
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
@@ -626,6 +638,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restore(sessCtx)
 		sessVars.InMViewMaintenance = originalMaintenance
 		sessVars.CurrentDB = originalDB
+		sessVars.SetResourceGroupName(originalResourceGroup)
 	}, nil
 }
 
