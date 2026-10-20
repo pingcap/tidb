@@ -228,7 +228,7 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = reorgMeta.ResourceGroupName
 	if reorgMeta.ResourceGroupName != "" {
-		sessCtx.GetSessionVars().ResourceGroupName = reorgMeta.ResourceGroupName
+		sessCtx.GetSessionVars().ResourceGroupName = reorgMeta.ResourceGroupName //nolint:forbidigo
 	}
 	return nil
 }

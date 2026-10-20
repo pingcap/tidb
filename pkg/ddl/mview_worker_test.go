@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateRestoreMVSession(t *testing.T) {
+func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncrement(t *testing.T) {
 	sessCtx := mock.NewContext()
 	sessVars := sessCtx.GetSessionVars()
 	sessVars.DivPrecisionIncrement = 2

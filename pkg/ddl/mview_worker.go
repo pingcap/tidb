@@ -612,7 +612,6 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 			if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, original); err != nil {
 				logutil.DDLLogger().Warn("create materialized view: restore div_precision_increment", zap.Error(err))
 			}
-			// The field of an internal session may differ from its variable.
 			sessVars.DivPrecisionIncrement = originalField
 		}
 	}
