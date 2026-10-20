@@ -1034,6 +1034,10 @@ func TestOnCreateMaterializedViewBaseCheckNestedSource(t *testing.T) {
 				} else {
 					require.ErrorContains(t, err, tc.err)
 					require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(err))
+					if validateErr := validateMaterializedViewSourceMLog("test", source, mlog); validateErr != nil {
+						require.True(t, dbterror.ErrInvalidDDLJob.Equal(err))
+						require.ErrorContains(t, err, validateErr.Error())
+					}
 				}
 				return nil
 			})

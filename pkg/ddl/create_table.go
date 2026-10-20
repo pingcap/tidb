@@ -427,7 +427,7 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID int64, ba
 		return nil, err
 	}
 	if err := validateMaterializedViewSourceMLog(schemaName, baseTblInfo, mlogTableInfo); err != nil {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view log metadata")
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStack("create materialized view: invalid materialized view log metadata: %s", err.Error())
 	}
 	return baseTblInfo, nil
 }
