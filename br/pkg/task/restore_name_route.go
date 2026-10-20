@@ -120,6 +120,11 @@ func (cfg *RestoreConfig) validateNameRouting(cmdName string) error {
 }
 
 func validateRenameRuleSchemas(router *nameroute.Router) error {
+	// Upgrade note: release-8.5 treats workload_schema as a user schema, while
+	// master treats it as a system schema. This branch allows rename rules
+	// involving that name, but master BR rejects them during argument validation,
+	// including resume and abort. Finish or abort such tasks with this BR version
+	// before switching to master BR.
 	for _, rule := range router.Rules() {
 		for _, object := range []nameroute.ObjectName{rule.Source, rule.Target} {
 			name := object.Schema.L
