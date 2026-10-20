@@ -367,7 +367,10 @@ func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
 		return tso, nil
 	}
+	return parseTSFromTime(s, sVal)
+}
 
+func parseTSFromTime(s *SessionVars, sVal string) (uint64, error) {
 	// Session-state replay can change time_zone within the current statement.
 	// Validate and convert using the same session timezone.
 	typeCtx := s.StmtCtx.TypeCtx()
@@ -386,18 +389,11 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	// Session-state replay can change time_zone within the current statement.
-	// Validate and convert using the same session timezone.
-	typeCtx := s.StmtCtx.TypeCtx()
-	t, err := types.ParseTime(typeCtx.WithLocation(s.Location()), sVal, mysql.TypeTimestamp, types.MaxFsp)
+	ts, err := parseTSFromTime(s, sVal)
 	if err != nil {
 		return err
 	}
-	t1, err := t.GoTime(s.Location())
-	if err != nil {
-		return err
-	}
-	s.TxnReadTS = NewTxnReadTS(oracle.GoTimeToTS(t1))
+	s.TxnReadTS = NewTxnReadTS(ts)
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.SnapshotTS = 0
 	s.SnapshotInfoschema = nil
