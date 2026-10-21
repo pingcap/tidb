@@ -16,6 +16,7 @@ package bootstraptest_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -32,6 +33,7 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	for _, tbl := range []string{
 		"tidb_mview_refresh_info",
+		"tidb_mview_fast_refresh_source_info",
 		"tidb_mlog_purge_info",
 		"tidb_mview_refresh_hist",
 		"tidb_mview_refresh_alert",
@@ -42,12 +44,14 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mview_id"))
-	// The out-of-place MV refresh cutover path updates this table through the
-	// table API in migrateMViewRefreshInfoForOutOfPlaceCutover. If this schema
-	// or the MVIEW_ID handle property changes, update that function together
-	// with this test.
 	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' order by ordinal_position").
 		Check(testkit.Rows("mview_id bigint(20) NO", "last_success_read_tso bigint(20) unsigned YES", "last_success_refresh_end_unix_seconds bigint(20) YES", "next_refresh_unix_seconds bigint(20) YES"))
+	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' order by ordinal_position").
+		Check(testkit.Rows("mview_id bigint(20) NO", "mlog_id bigint(20) NO"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' and index_name='PRIMARY' order by seq_in_index").
+		Check(testkit.Rows("mview_id", "mlog_id"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' and index_name='idx_mlog' order by seq_in_index").
+		Check(testkit.Rows("mlog_id", "mview_id"))
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mlog_id"))
@@ -161,12 +165,48 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	refreshInfoTbl, err := is.TableByName(context.Background(), model.NewCIStr("mysql"), model.NewCIStr("tidb_mview_refresh_info"))
 	require.NoError(t, err)
 	refreshInfoMeta := refreshInfoTbl.Meta()
+	// Lazy source-info initialization uses this integer handle as its conflict anchor.
 	require.True(t, refreshInfoMeta.PKIsHandle)
 	require.False(t, refreshInfoMeta.IsCommonHandle)
 	require.Len(t, refreshInfoMeta.Columns, 4)
 	require.Equal(t, "MVIEW_ID", refreshInfoMeta.Columns[0].Name.O)
 	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='LAST_HEARTBEAT_TIME'").
 		Check(testkit.Rows("6"))
+}
+
+func TestUpgradeToVer223MViewRefreshSourceInfo(t *testing.T) {
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_source_upgrade (a int not null, b int not null)")
+	tk.MustExec("insert into t_source_upgrade values (1, 10)")
+	tk.MustExec("create materialized view log on t_source_upgrade (a, b)")
+	tk.MustExec("create materialized view mv_source_upgrade (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_source_upgrade group by a")
+	mv, err := dom.InfoSchema().TableByName(ctx, model.NewCIStr("test"), model.NewCIStr("mv_source_upgrade"))
+	require.NoError(t, err)
+	refreshInfoSQL := fmt.Sprintf("select * from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mv.Meta().ID)
+	refreshInfo := tk.MustQuery(refreshInfoSQL).Rows()
+	tk.MustExec("drop table mysql.tidb_mview_fast_refresh_source_info")
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(222))
+	require.NoError(t, txn.Commit(ctx))
+	revertVersionAndVariables(t, tk.Session(), 222)
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+	domUpgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
+	require.Equal(t, refreshInfo, tk.MustQuery(refreshInfoSQL).Rows(), "upgrade must not change existing refresh state")
+	tk.MustExec("refresh materialized view mv_source_upgrade fast")
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mv.Meta().ID)).Check(testkit.Rows("1"))
 }
 
 func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
@@ -183,7 +223,7 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 	require.NoError(t, txn.Commit(ctx))
 
 	revertVersionAndVariables(t, seV220, 220)
-	session.MustExec(t, seV220, "drop table if exists mysql.tidb_mview_refresh_info, mysql.tidb_mlog_purge_info, mysql.tidb_mview_refresh_hist, mysql.tidb_mview_refresh_alert, mysql.tidb_mlog_purge_hist")
+	session.MustExec(t, seV220, "drop table if exists mysql.tidb_mview_refresh_info, mysql.tidb_mview_fast_refresh_source_info, mysql.tidb_mlog_purge_info, mysql.tidb_mview_refresh_hist, mysql.tidb_mview_refresh_alert, mysql.tidb_mlog_purge_hist")
 	session.MustExec(t, seV220, "create user 'v222_super'@'%'")
 	session.MustExec(t, seV220, "create user 'v222_normal'@'%'")
 	session.MustExec(t, seV220, "update mysql.user set Super_priv='Y', Operate_view_priv='N' where User='v222_super' and Host='%'")
@@ -208,6 +248,7 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("v222_normal N", "v222_super Y"))
 	for _, tbl := range []string{
 		"tidb_mview_refresh_info",
+		"tidb_mview_fast_refresh_source_info",
 		"tidb_mlog_purge_info",
 		"tidb_mview_refresh_hist",
 		"tidb_mview_refresh_alert",

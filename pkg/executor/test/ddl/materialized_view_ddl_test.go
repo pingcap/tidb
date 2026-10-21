@@ -1781,12 +1781,14 @@ func TestCreateMaterializedViewRefreshInfoRunningAndSuccess(t *testing.T) {
 		return true
 	}, 30*time.Second, 100*time.Millisecond)
 
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mviewID)).Check(testkit.Rows("0"))
 	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
 	enabled = false
 
 	err := <-ddlDone
 	require.NoError(t, err)
 	tk.MustQuery("select a, s, cnt from mv_state order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mviewID)).Check(testkit.Rows("1"))
 
 	rows := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Rows()
 	require.Len(t, rows, 1)
@@ -1862,6 +1864,8 @@ func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testi
 	visibleTS, err := strconv.ParseUint(fmt.Sprint(rows[0][0]), 10, 64)
 	require.NoError(t, err)
 	require.Equal(t, prewriteTS, visibleTS)
+	// The input log baseline becomes visible with the successful build watermark.
+	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
 
 	release()
 
@@ -1871,6 +1875,7 @@ func TestCreateMaterializedViewSuccessRefreshInfoVisibilityBeforeCommit(t *testi
 	require.NotContains(t, err.Error(), "Duplicate entry")
 	tk.MustQuery("show tables like 'mv_upsert_visibility'").Check(testkit.Rows())
 	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -1970,6 +1975,7 @@ func TestCreateMaterializedViewBuildFailureRollback(t *testing.T) {
 
 	tk.MustQuery("show tables like 'mv_fail'").Check(testkit.Rows())
 	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
 
 	is := dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -2040,6 +2046,7 @@ func TestCreateMaterializedViewRollbackRefreshInfoFailureRollsBackMetadata(t *te
 	}
 	require.NotZero(t, mviewID)
 	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mviewID)).Check(testkit.Rows("1"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mviewID)).Check(testkit.Rows("0"))
 	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
 		metaMut := meta.NewMutator(txn)
 		persistedMView, err := metaMut.GetTable(dbInfo.ID, mviewID)
@@ -2055,6 +2062,7 @@ func TestCreateMaterializedViewRollbackRefreshInfoFailureRollsBackMetadata(t *te
 	require.NoError(t, failpoint.Disable(cleanupErrFP))
 	releaseRetry()
 	require.Error(t, <-ddlErrCh)
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mviewID)).Check(testkit.Rows("0"))
 }
 
 func TestCreateMaterializedViewRollbackUpdateSchemaVersionFailureRetries(t *testing.T) {
@@ -2803,10 +2811,12 @@ func TestDropMaterializedViewRefreshInfoFailureRollsBackMetadata(t *testing.T) {
 	}
 	tkInspect.MustQuery("show tables like 'mv_drop_atomic'").Check(testkit.Rows("mv_drop_atomic"))
 	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).Check(testkit.Rows("1"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mvID)).Check(testkit.Rows("1"))
 
 	require.NoError(t, failpoint.Disable(cleanupErrFP))
 	close(allowRetry)
 	require.NoError(t, <-dropErrCh)
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mvID)).Check(testkit.Rows("0"))
 }
 
 func TestDropMaterializedViewNotifyFailureRollsBackMetadata(t *testing.T) {
@@ -2859,9 +2869,11 @@ func TestDropMaterializedViewNotifyFailureRollsBackMetadata(t *testing.T) {
 	}
 	tkInspect.MustQuery("show tables like 'mv_drop_notify_atomic'").Check(testkit.Rows("mv_drop_notify_atomic"))
 	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).Check(testkit.Rows("1"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mvID)).Check(testkit.Rows("1"))
 
 	releaseRetry()
 	require.NoError(t, <-dropErrCh)
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mvID)).Check(testkit.Rows("0"))
 }
 
 func TestDropMaterializedViewLogPurgeInfoFailureRollsBackMetadata(t *testing.T) {
@@ -3139,6 +3151,7 @@ func TestDropDatabaseCleansMaterializedViewAndLogInfo(t *testing.T) {
 	tk.MustExec("drop database " + dbName)
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).
 		Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mvID)).Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).
 		Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", mvID)).

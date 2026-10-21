@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mviewutil",
-    srcs = ["util.go"],
+    srcs = [
+        "refresh_source.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/mviewutil",
     visibility = ["//visibility:public"],
     deps = [
@@ -10,5 +13,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/util/dbterror",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
     ],
 )

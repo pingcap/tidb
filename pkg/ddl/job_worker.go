@@ -643,7 +643,8 @@ func (w *worker) transitOneJobStep(
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
-	if job.IsCancelled() {
+	// SQL mutations must be discarded before even a terminal cancellation is finalized.
+	if job.IsCancelled() && !jobCtx.mustRollbackTxnOnError {
 		defer jobCtx.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
 		return 0, w.handleJobDone(jobCtx, job)
@@ -654,7 +655,7 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
-	if runJobErr != nil {
+	if runJobErr != nil || job.IsCancelled() {
 		if jobCtx.mustRollbackTxnOnError {
 			// Internal SQL can commit or roll back its own statement buffer.
 			// Discard all mutations from this job step, including ones made while
@@ -685,6 +686,11 @@ func (w *worker) transitOneJobStep(
 			// Result in the retry duration is up to 2 * lease.
 			schemaVer = 0
 		}
+	}
+
+	if job.IsCancelled() {
+		defer jobCtx.unlockSchemaVersion(job.ID)
+		return 0, w.handleJobDone(jobCtx, job)
 	}
 
 	err = w.registerMDLInfo(job, schemaVer)

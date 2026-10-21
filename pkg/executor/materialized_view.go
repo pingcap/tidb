@@ -4185,6 +4185,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String())
 
 	mviewID = tblInfo.ID
+	if err := e.initMVRefreshSourceInfo(kctx, refreshSctx, mviewID); err != nil {
+		return err
+	}
 	advisoryLockName, err := acquireMVRefreshAdvisoryLock(refreshSctx, schemaName, tblInfo)
 	if err != nil {
 		return err
