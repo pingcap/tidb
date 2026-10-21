@@ -1348,6 +1348,15 @@ impl tidb_executor::executor::ExecutorRuntimeStatsSource for RuntimeStatsColl {
         self.get_basic_runtime_stats(plan_id, true)
             .map(|stats| stats as Arc<dyn tidb_executor::executor::ExecutorRuntimeStats>)
     }
+
+    fn cop_runtime_info(&self, plan_id: i64) -> Option<tidb_executor::executor::CopRuntimeInfo> {
+        let stats = self.get_cop_stats(plan_id)?;
+        let stats = stats.lock().expect("CopRuntimeStats mutex poisoned");
+        Some(tidb_executor::executor::CopRuntimeInfo {
+            act_rows: stats.get_act_rows(),
+            info: stats.string(),
+        })
+    }
 }
 
 /// Go `getPlanIDFromExecutionSummary`: parses the plan id off the summary's

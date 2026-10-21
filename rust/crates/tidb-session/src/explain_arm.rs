@@ -157,6 +157,22 @@ impl Session {
             }),
             _ => ctx,
         };
+        // Go `ExplainExec.executeAnalyzeExec` gives the analyzed statement a
+        // fresh `RuntimeStatsColl` whatever `tidb_enable_collect_execution_info`
+        // says: the rows below are rendered from it.
+        let ctx = if explain.analyze && ctx.executor_runtime_stats_source().is_none() {
+            let coll = Arc::new(tidb_exec::runtime_stats::RuntimeStatsColl::new(None));
+            let sink: Arc<dyn tidb_executor::CopResponseSink> = Arc::new(
+                tidb_exec::statement_cop_stats::RuntimeStatsCollSink::new(
+                    Arc::clone(&coll),
+                    ctx.cop_response_sink(),
+                ),
+            );
+            ctx.with_executor_runtime_stats_source(Some(coll))
+                .with_cop_response_sink(Some(sink))
+        } else {
+            ctx
+        };
         if explain.analyze {
             if format == tidb_executor::ExplainFormat::PlanCache {
                 if let Some(output) =

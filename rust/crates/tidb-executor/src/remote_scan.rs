@@ -434,6 +434,36 @@ pub struct PushdownPrefixLimit {
     pub column_offset: usize,
 }
 
+/// The executor kind of a pushed plan node, which decides the DAG executor
+/// it becomes (Go lowers the pushed plan in order, so the nth plan node is
+/// the nth executor).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CopPlanKind {
+    /// `PhysicalTableScan` (also a `TableRowIDScan`).
+    TableScan,
+    /// `PhysicalIndexScan`.
+    IndexScan,
+    /// `PhysicalSelection`.
+    Selection,
+    /// `PhysicalLimit`.
+    Limit,
+    /// `PhysicalTopN`.
+    TopN,
+    /// `PhysicalHashAgg` or `PhysicalStreamAgg`.
+    Aggregation,
+    /// Any other pushed node: it matches no executor this request builds.
+    Other,
+}
+
+/// One pushed plan node of a reader: Go's `copPlanIDs` entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CopPlanId {
+    /// What the node lowers to.
+    pub kind: CopPlanKind,
+    /// `PhysicalPlan.ID()`.
+    pub id: isize,
+}
+
 /// One base-table scan a backend may serve remotely.
 #[derive(Clone, Debug)]
 pub struct PushdownScanRequest {
@@ -555,6 +585,17 @@ pub struct PushdownStatementContext {
     pub cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
     /// Physical scan plan ID used by Go `RuntimeStatsColl`.
     pub plan_id: isize,
+    /// Go `copPlanIDs`' source: the reader's pushed plan nodes, leaf first
+    /// (`getPhysicalPlanIDs`), which the request's executors are matched
+    /// against by kind when the DAG is built.
+    pub cop_plan_chain: Vec<CopPlanId>,
+    /// Go `rootPlanID` of `SelectWithRuntimeStats`: the plan whose runtime
+    /// stats the select result registers. `0` means the scan (`plan_id`).
+    pub cop_root_plan_id: isize,
+    /// The table side of an index lookup: a batch of handles is read by a
+    /// request that carries this chain and root instead of the index
+    /// side's (Go's table reader executor owns `tblPlans`).
+    pub lookup_cop_plan_chain: Option<(Vec<CopPlanId>, isize)>,
     /// Go `StatementContext.PushDownFlags()`; see
     /// [`crate::StmtContext::push_down_flags`].
     ///
@@ -635,6 +676,9 @@ impl Default for PushdownStatementContext {
             tiflash_compute_dispatch_policy: "consistent_hash".into(),
             allow_tiflash_fallback: false,
             plan_id: 0,
+            cop_plan_chain: Vec::new(),
+            cop_root_plan_id: 0,
+            lookup_cop_plan_chain: None,
             push_down_flags: 0,
             cop_lite_worker: Arc::default(),
             warnings: WarningCollector::default(),
@@ -676,6 +720,9 @@ impl PushdownStatementContext {
             tiflash_compute_dispatch_policy: ctx.tiflash_compute_dispatch_policy().into(),
             allow_tiflash_fallback: ctx.allow_tiflash_fallback(),
             plan_id: 0,
+            cop_plan_chain: Vec::new(),
+            cop_root_plan_id: 0,
+            lookup_cop_plan_chain: None,
             push_down_flags: ctx.push_down_flags(),
             cop_lite_worker: ctx.cop_lite_worker(),
             warnings: ctx.cop_warning_sink(),
@@ -725,7 +772,29 @@ impl PushdownStatementContext {
         if let Some(avg) = self.lookup_avg_row_bytes {
             statement.estimated_net_bytes = avg * count as f64;
         }
+        if let Some((chain, root)) = &self.lookup_cop_plan_chain {
+            statement.cop_plan_chain = chain.clone();
+            statement.cop_root_plan_id = *root;
+        }
         statement
+    }
+
+    /// Binds the pushed plan nodes (leaf first) and the plan whose select
+    /// result stats this read registers (Go `getPhysicalPlanIDs` and
+    /// `rootPlanID`).
+    #[must_use]
+    pub fn with_cop_plan_chain(mut self, chain: Vec<CopPlanId>, root_plan_id: i64) -> Self {
+        self.cop_plan_chain = chain;
+        self.cop_root_plan_id = root_plan_id as isize;
+        self
+    }
+
+    /// Binds the table side of an index lookup (see
+    /// [`Self::lookup_cop_plan_chain`]).
+    #[must_use]
+    pub fn with_lookup_cop_plan_chain(mut self, chain: Vec<CopPlanId>, root_plan_id: i64) -> Self {
+        self.lookup_cop_plan_chain = Some((chain, root_plan_id as isize));
+        self
     }
 
     /// Binds the physical scan whose TiKV execution summary owns this read.

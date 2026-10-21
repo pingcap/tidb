@@ -70,6 +70,7 @@ use tidb_distsql::{
 };
 use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
+    CopPlanKind,
     PushdownAggregateKind, PushdownPartialAggregate, PushdownReadEngine, PushdownRowStream,
     PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownScannerError,
     RawResponseStream, EXTRA_HANDLE_COLUMN_ID,
@@ -684,10 +685,7 @@ where
             shape
         };
         scan_receipt::record_shape(receipt_shape);
-        let mut cop_plan_ids = vec![0; dag.executors.len()];
-        if let Some(scan_id) = cop_plan_ids.first_mut() {
-            *scan_id = request.statement.plan_id;
-        }
+        let (cop_plan_ids, root_plan_id) = cop_plan_ids_for(&dag, &request.statement);
         let plan = RemoteScanPlan {
             cancellation: request.statement.memory.coprocessor_request_cancellation(),
             kv_exec_counter: request.statement.kv_exec_counter.clone(),
@@ -723,7 +721,7 @@ where
             warnings: request.statement.warnings.clone(),
             cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
             cop_plan_ids,
-            root_plan_id: request.statement.plan_id,
+            root_plan_id,
             keys_read: request.statement.keys_read.clone(),
             cop_response_sink: request.statement.cop_response_sink.clone(),
         };
@@ -982,6 +980,53 @@ where
     Ok(result
         .into_select_iter(Vec::new())
         .with_cop_response_sink(cop_response_sink))
+}
+
+/// Go `getPhysicalPlanIDs`: the plan ID of every executor of `dag`, in DAG
+/// order, and the plan whose select-result stats the read registers.
+///
+/// Go lowers the reader's pushed plan one node per executor, so the nth ID
+/// is the nth executor's. This tier builds the DAG from a scan request, which
+/// may carry fewer executors than the plan has nodes (a Selection whose
+/// conditions did not all travel is kept locally), so each executor takes the
+/// next pushed node of its own kind and an executor with none gets `0`, which
+/// records nothing.
+fn cop_plan_ids_for(
+    dag: &tidb_proto::tipb::DagRequest,
+    statement: &tidb_executor::remote_scan::PushdownStatementContext,
+) -> (Vec<isize>, isize) {
+    let mut ids = vec![0; dag.executors.len()];
+    if statement.cop_plan_chain.is_empty() {
+        if let Some(scan_id) = ids.first_mut() {
+            *scan_id = statement.plan_id;
+        }
+        return (ids, statement.plan_id);
+    }
+    let mut next = 0;
+    for (slot, executor) in ids.iter_mut().zip(&dag.executors) {
+        let kind = match executor.tp.and_then(|tp| ExecType::try_from(tp).ok()) {
+            Some(ExecType::TypeTableScan) => CopPlanKind::TableScan,
+            Some(ExecType::TypeIndexScan) => CopPlanKind::IndexScan,
+            Some(ExecType::TypeSelection) => CopPlanKind::Selection,
+            Some(ExecType::TypeLimit) => CopPlanKind::Limit,
+            Some(ExecType::TypeTopN) => CopPlanKind::TopN,
+            Some(ExecType::TypeAggregation | ExecType::TypeStreamAgg) => CopPlanKind::Aggregation,
+            _ => CopPlanKind::Other,
+        };
+        if let Some(offset) = statement.cop_plan_chain[next..]
+            .iter()
+            .position(|node| node.kind == kind)
+        {
+            *slot = statement.cop_plan_chain[next + offset].id;
+            next += offset + 1;
+        }
+    }
+    let root = if statement.cop_root_plan_id > 0 {
+        statement.cop_root_plan_id
+    } else {
+        statement.plan_id
+    };
+    (ids, root)
 }
 
 /// The caller's end of one coprocessor scan.
@@ -1437,5 +1482,80 @@ mod tests {
         assert_eq!(min.tp, Some(ExprType::MinCount as i32));
         assert_eq!(ExprType::from_i32(3023), Some(ExprType::MaxCount));
         assert_eq!(ExprType::from_i32(3022), Some(ExprType::MinCount));
+    }
+}
+
+#[cfg(test)]
+mod cop_plan_ids_tests {
+    use super::*;
+    use tidb_executor::remote_scan::{CopPlanId, PushdownStatementContext};
+    use tidb_proto::tipb::{DagRequest, Executor};
+
+    fn dag(kinds: &[ExecType]) -> DagRequest {
+        DagRequest {
+            executors: kinds
+                .iter()
+                .map(|kind| Executor {
+                    tp: Some(*kind as i32),
+                    ..Executor::default()
+                })
+                .collect(),
+            ..DagRequest::default()
+        }
+    }
+
+    fn chain(nodes: &[(CopPlanKind, isize)]) -> Vec<CopPlanId> {
+        nodes
+            .iter()
+            .map(|(kind, id)| CopPlanId {
+                kind: *kind,
+                id: *id,
+            })
+            .collect()
+    }
+
+    /// Go `getPhysicalPlanIDs`: the nth pushed node is the nth executor.
+    #[test]
+    fn executors_take_their_pushed_nodes_in_order() {
+        let statement = PushdownStatementContext::default().with_cop_plan_chain(
+            chain(&[
+                (CopPlanKind::TableScan, 5),
+                (CopPlanKind::Selection, 6),
+                (CopPlanKind::TopN, 16),
+            ]),
+            7,
+        );
+        let ids = cop_plan_ids_for(
+            &dag(&[ExecType::TypeTableScan, ExecType::TypeSelection, ExecType::TypeTopN]),
+            &statement,
+        );
+        assert_eq!(ids, (vec![5, 6, 16], 7));
+    }
+
+    /// A Selection that did not travel (kept locally) leaves its node
+    /// without an executor: the executors after it still find theirs.
+    #[test]
+    fn a_node_without_an_executor_is_skipped() {
+        let statement = PushdownStatementContext::default().with_cop_plan_chain(
+            chain(&[
+                (CopPlanKind::TableScan, 5),
+                (CopPlanKind::Selection, 6),
+                (CopPlanKind::Limit, 9),
+            ]),
+            7,
+        );
+        let ids = cop_plan_ids_for(&dag(&[ExecType::TypeTableScan, ExecType::TypeLimit]), &statement);
+        assert_eq!(ids, (vec![5, 9], 7));
+        // An executor with no node of its kind reports under no plan.
+        let ids = cop_plan_ids_for(&dag(&[ExecType::TypeTableScan, ExecType::TypeTopN]), &statement);
+        assert_eq!(ids, (vec![5, 0], 7));
+    }
+
+    /// Without a chain the scan keeps its own plan as the root, as before.
+    #[test]
+    fn a_request_without_a_chain_reports_the_scan_only() {
+        let statement = PushdownStatementContext::default().with_plan_id(5);
+        let ids = cop_plan_ids_for(&dag(&[ExecType::TypeTableScan, ExecType::TypeSelection]), &statement);
+        assert_eq!(ids, (vec![5, 0], 5));
     }
 }

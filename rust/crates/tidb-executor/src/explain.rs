@@ -2124,7 +2124,19 @@ fn physical_explain_operator(
     if let Some(rows) = runtime_rows(plan, runtime) {
         operator = operator.with_actual_rows(rows);
     }
-    // A local fallback for a cop plan is not a TiKV timing measurement.
+    // Go `getRuntimeInfoStr`: a pushed operator reports what the cop tasks
+    // returned in their execution summaries. A local fallback for a cop plan
+    // is not a TiKV timing measurement, so it reports nothing.
+    if !matches!(operator.task, ExplainTask::Root) {
+        if let Some(cop) = statement_context
+            .executor_runtime_stats_source()
+            .and_then(|source| source.cop_runtime_info(i64::from(plan.id())))
+        {
+            operator = operator
+                .with_actual_rows(u64::try_from(cop.act_rows).unwrap_or_default())
+                .with_execution_info(cop.info);
+        }
+    }
     // Only publish the runtime of the actual root executor at this seam.
     if matches!(operator.task, ExplainTask::Root) {
         if let Some(info) = runtime

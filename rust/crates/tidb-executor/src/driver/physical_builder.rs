@@ -48,6 +48,7 @@ use crate::physical_cte::{
 };
 use crate::projection::ProjectionExec;
 use crate::remote_scan::{
+    CopPlanId, CopPlanKind,
     PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate,
     PushdownStatementContext,
 };
@@ -161,6 +162,10 @@ struct BuildState {
     /// the region request; the local cursor has no request, so the scan build
     /// consumes it here. Set only while the reader's own subtree is built.
     index_scan_limit: Option<u64>,
+    /// Go `getPhysicalPlanIDs(plans)` and `rootPlanID` of the reader whose
+    /// pushed subtree is being built: the plan IDs its coprocessor
+    /// executors report their summaries under.
+    cop_chain: Option<CopChain>,
     reader_net_bytes: Option<f64>,
     /// One task-local replacement for the retained index-merge table scan.
     table_task_source: Option<(i32, Box<dyn Executor>)>,
@@ -280,6 +285,35 @@ struct PhysicalCallStats {
     next: Duration,
     close: Duration,
     loops: u64,
+}
+
+/// A reader's pushed plan nodes (leaf first) and its select-result root.
+type CopChain = (Vec<CopPlanId>, i64);
+
+/// Go `getPhysicalPlanIDs`: the plan IDs of a reader's pushed subtree, leaf
+/// first (the order its executors take in the DAG), each with the executor
+/// kind the node lowers to.
+fn cop_plan_chain(root: &PhysicalPlan) -> Vec<CopPlanId> {
+    let mut chain = Vec::new();
+    let mut node = Some(root);
+    while let Some(plan) = node {
+        let kind = match plan {
+            PhysicalPlan::TableScan(_) => CopPlanKind::TableScan,
+            PhysicalPlan::IndexScan(_) => CopPlanKind::IndexScan,
+            PhysicalPlan::Selection(_) => CopPlanKind::Selection,
+            PhysicalPlan::Limit(_) => CopPlanKind::Limit,
+            PhysicalPlan::TopN(_) => CopPlanKind::TopN,
+            PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_) => CopPlanKind::Aggregation,
+            _ => CopPlanKind::Other,
+        };
+        chain.push(CopPlanId {
+            kind,
+            id: plan.id() as isize,
+        });
+        node = plan.children().first();
+    }
+    chain.reverse();
+    chain
 }
 
 pub(crate) fn runtime_plan_key(plan: &PhysicalPlan) -> usize {
@@ -1147,6 +1181,7 @@ fn build_table_scan(
     net_bytes: Option<f64>,
     range_group: Option<&tidb_planner::ranger::types::Ranges>,
     storage: &ReaderStorage,
+    cop_chain: Option<&CopChain>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let (table, separated) = storage.table(
         catalog
@@ -1187,8 +1222,13 @@ fn build_table_scan(
         RowDecodeContext::for_query(ctx),
         ReaderStorage::statement(
             separated,
-            PushdownStatementContext::from_stmt(ctx)
-                .with_plan_id(i64::from(scan.base.base.id()))
+            with_reader_cop_chain(
+                PushdownStatementContext::from_stmt(ctx),
+                plan,
+                None,
+                cop_chain,
+            )
+            .with_plan_id(i64::from(scan.base.base.id()))
                 .with_estimated_net_bytes(net_bytes.unwrap_or_else(|| {
                     plan.cop_net_data_size(
                         false,
@@ -1936,6 +1976,7 @@ fn pushed_partial_aggregation(
 }
 
 fn build_reader(
+    reader_id: i32,
     embedded: Option<&PhysicalPlan>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
@@ -1952,9 +1993,13 @@ fn build_reader(
                 .enable_chunk_rpc,
         ),
     );
+    let old_chain = state
+        .cop_chain
+        .replace((cop_plan_chain(plan), i64::from(reader_id)));
     let result = build_with_state(plan, catalog, ctx, state);
     state.in_reader = previous;
     state.reader_net_bytes = old_bytes;
+    state.cop_chain = old_chain;
     result
 }
 
@@ -2282,24 +2327,52 @@ fn reader_output_offsets(
 
 /// Go's no-range reader builders retain one response-width policy for both
 /// ordinary reads and rebuilt index-join probes.
+/// Binds the plan IDs a reader's coprocessor requests report under. `plan`
+/// is the pushed subtree the request reads (Go `idxPlans`); with a
+/// `table_lookup_plan` the request is an index lookup's index side and the
+/// table side gets its own chain (`tblPlans`). `chain` is the reader's own
+/// chain when it is the whole read.
+fn with_reader_cop_chain(
+    statement: PushdownStatementContext,
+    plan: &PhysicalPlan,
+    table_lookup_plan: Option<&PhysicalPlan>,
+    chain: Option<&CopChain>,
+) -> PushdownStatementContext {
+    let statement = match (table_lookup_plan, chain) {
+        (None, Some((chain, root))) => statement.with_cop_plan_chain(chain.clone(), *root),
+        _ => statement.with_cop_plan_chain(cop_plan_chain(plan), i64::from(plan.id())),
+    };
+    match table_lookup_plan {
+        Some(table) => statement
+            .with_lookup_cop_plan_chain(cop_plan_chain(table), i64::from(table.id())),
+        None => statement,
+    }
+}
+
 fn cop_reader_statement(
     plan: &PhysicalPlan,
     table_lookup_plan: Option<&PhysicalPlan>,
     encoded_key: bool,
     net_bytes: Option<f64>,
     ctx: &crate::StmtContext,
+    cop_chain: Option<&CopChain>,
 ) -> PushdownStatementContext {
     let chunk_rpc = tidb_config::tikvcfg::get_global_config()
         .tikv_client
         .enable_chunk_rpc;
     let average = table_lookup_plan.map(|plan| plan.cop_avg_row_size(false, chunk_rpc));
-    let mut statement = PushdownStatementContext::from_stmt(ctx)
-        .with_plan_id(i64::from(plan.id()))
-        .with_estimated_net_bytes(
-            average
-                .or(net_bytes)
-                .unwrap_or_else(|| plan.cop_net_data_size(encoded_key, chunk_rpc)),
-        );
+    let mut statement = with_reader_cop_chain(
+        PushdownStatementContext::from_stmt(ctx),
+        plan,
+        table_lookup_plan,
+        cop_chain,
+    )
+    .with_plan_id(i64::from(plan.id()))
+    .with_estimated_net_bytes(
+        average
+            .or(net_bytes)
+            .unwrap_or_else(|| plan.cop_net_data_size(encoded_key, chunk_rpc)),
+    );
     statement.lookup_avg_row_bytes = average;
     statement
 }
@@ -2319,6 +2392,7 @@ fn build_index_reader(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     storage: &ReaderStorage,
+    cop_chain: Option<&CopChain>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let scan = embedded_index_scan(index_plan)
         .ok_or_else(|| DriverError::unsupported("a physical index reader has no index scan"))?;
@@ -2421,7 +2495,7 @@ fn build_index_reader(
         RowDecodeContext::for_query(ctx),
         ReaderStorage::statement(
             separated,
-            cop_reader_statement(index_plan, table_plan, true, net_bytes, ctx)
+            cop_reader_statement(index_plan, table_plan, true, net_bytes, ctx, cop_chain)
                 .with_plan_id(i64::from(scan.base.base.id())),
         ),
     );
@@ -3115,10 +3189,15 @@ fn build_index_inner_reader(
         ),
         _ => (embedded, None),
     };
-    let statement = ReaderStorage::statement(
-        separated,
-        cop_reader_statement(network_plan, table_lookup_plan, covering, None, ctx),
-    );
+    let mut cop_statement =
+        cop_reader_statement(network_plan, table_lookup_plan, covering, None, ctx, None);
+    // A covering reader's chain is rooted at the reader (Go
+    // `getPhysicalPlanIDs` over its pushed plan, registered under it).
+    if table_lookup_plan.is_none() {
+        cop_statement = cop_statement
+            .with_cop_plan_chain(cop_plan_chain(network_plan), i64::from(plan.id()));
+    }
+    let statement = ReaderStorage::statement(separated, cop_statement);
     let mut source = IndexJoinLookupExec::new_with_statement(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
@@ -5299,6 +5378,7 @@ fn build_index_merge_reader(
                     ReaderStorage::statement(
                         separated,
                         PushdownStatementContext::from_stmt(ctx)
+                            .with_cop_plan_chain(cop_plan_chain(partial), i64::from(partial.id()))
                             .with_plan_id(i64::from(scan.base.base.id()))
                             .with_estimated_net_bytes(
                                 partial.cop_net_data_size(
@@ -5375,7 +5455,12 @@ fn build_index_merge_reader(
             if let Some(group) = group {
                 narrow_scan_ranges(&mut partition_plan, group);
             }
-            let executor = build_with_state(&partition_plan, catalog, ctx, state)?;
+            let old_chain = state
+                .cop_chain
+                .replace((cop_plan_chain(partial), i64::from(partial.id())));
+            let executor = build_with_state(&partition_plan, catalog, ctx, state);
+            state.cop_chain = old_chain;
+            let executor = executor?;
             if executor.schema().len() != partial_schema.len() {
                 return Err(DriverError::unsupported(
                     "an index-merge partial executor changed its retained output width",
@@ -5478,7 +5563,8 @@ fn build_index_merge_reader(
     )
     .with_table_statement(ReaderStorage::statement(
         separated,
-        cop_reader_statement(table_scan, Some(table_plan), false, None, ctx),
+        cop_reader_statement(table_scan, Some(table_plan), false, None, ctx, None)
+            .with_cop_plan_chain(cop_plan_chain(table_plan), i64::from(table_plan.id())),
     ))
     .with_batch_size(ctx.index_lookup_size())
     .with_output_columns(output_columns)
@@ -5891,7 +5977,7 @@ fn build_reader_node(
 ) -> Result<Box<dyn Executor>, DriverError> {
     match plan {
         PhysicalPlan::TableReader(reader) => {
-            let executor = build_reader(reader.table_plan.as_deref(), catalog, ctx, state)?;
+            let executor = build_reader(plan.id(), reader.table_plan.as_deref(), catalog, ctx, state)?;
             ctx.mark_physical_table_reader();
             Ok(executor)
         }
@@ -5906,7 +5992,7 @@ fn build_reader_node(
                 .as_deref()
                 .and_then(embedded_index_limit)
                 .map(|(offset, count)| offset.saturating_add(count));
-            let built = build_reader(reader.index_plan.as_deref(), catalog, ctx, state);
+            let built = build_reader(plan.id(), reader.index_plan.as_deref(), catalog, ctx, state);
             state.index_scan_limit = None;
             let child = built?;
             // The physical index row is ordered by index keys and handles.
@@ -5954,6 +6040,7 @@ fn build_reader_node(
                 catalog,
                 ctx,
                 &state.reader_storage,
+                None,
             )?;
             ctx.mark_physical_table_reader();
             Ok(executor)
@@ -6215,6 +6302,7 @@ fn build_with_state(
             state.reader_net_bytes,
             state.range_group.as_ref(),
             &state.reader_storage,
+            state.cop_chain.as_ref(),
         ),
         PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
         PhysicalPlan::IndexScan(scan) => build_index_reader(
@@ -6232,6 +6320,7 @@ fn build_with_state(
             catalog,
             ctx,
             &state.reader_storage,
+            state.cop_chain.as_ref(),
         ),
         PhysicalPlan::TableReader(_)
         | PhysicalPlan::IndexReader(_)

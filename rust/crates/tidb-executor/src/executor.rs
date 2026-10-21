@@ -210,6 +210,22 @@ pub trait ExecutorRuntimeStats: Send + Sync {
 pub trait ExecutorRuntimeStatsSource: Send + Sync {
     /// Registers one executor for `plan_id` and returns its shared counters.
     fn for_executor(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>>;
+
+    /// Go `getRuntimeInfo`'s `GetCopStats(explainID)` arm: the rows and
+    /// `String()` of the coprocessor stats recorded for `plan_id`, `None`
+    /// when no cop task reported for it.
+    fn cop_runtime_info(&self, _plan_id: i64) -> Option<CopRuntimeInfo> {
+        None
+    }
+}
+
+/// Go `CopRuntimeStats.GetActRows` and `String()` of one plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CopRuntimeInfo {
+    /// Go `CopRuntimeStats.GetActRows`: the rows every task produced.
+    pub act_rows: i64,
+    /// Go `CopRuntimeStats.String`.
+    pub info: String,
 }
 
 /// A row counter owned by one executor and observed by its statement.

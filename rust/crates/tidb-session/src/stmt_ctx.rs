@@ -1440,12 +1440,25 @@ impl Session {
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_COLLECT_EXECUTION_INFO)
             .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"));
+        let runtime_stats_coll = collect_execution_info
+            .then(|| Arc::new(tidb_exec::runtime_stats::RuntimeStatsColl::new(None)));
         let runtime_stats_source: Option<
             Arc<dyn tidb_executor::executor::ExecutorRuntimeStatsSource>,
-        > = collect_execution_info.then(|| {
-            Arc::new(tidb_exec::runtime_stats::RuntimeStatsColl::new(None))
-                as Arc<dyn tidb_executor::executor::ExecutorRuntimeStatsSource>
+        > = runtime_stats_coll.clone().map(|coll| {
+            coll as Arc<dyn tidb_executor::executor::ExecutorRuntimeStatsSource>
         });
+        // Go `selectResult.updateCopRuntimeStats` feeds the statement's
+        // `RuntimeStatsColl` with every response it reads.
+        let cop_response_sink: Option<Arc<dyn tidb_executor::CopResponseSink>> =
+            match &runtime_stats_coll {
+                Some(coll) => Some(Arc::new(
+                    tidb_exec::statement_cop_stats::RuntimeStatsCollSink::new(
+                        Arc::clone(coll),
+                        self.statement_cop_response_sink(),
+                    ),
+                )),
+                None => self.statement_cop_response_sink(),
+            };
         let index_usage_collector = if collect_execution_info {
             self.session_index_usage_collector.as_ref().map(|session| {
                 Arc::new(
@@ -1566,7 +1579,7 @@ impl Session {
                     .with_sql_cpu_usages(Some(Arc::clone(&self.sql_cpu_usages)))
                     .with_kv_exec_counter(self.statement_kv_exec_counter())
                     .with_statement_kv_context(Some(self.statement_kv_context_cell()))
-                    .with_cop_response_sink(self.statement_cop_response_sink())
+                    .with_cop_response_sink(cop_response_sink.clone())
                     .with_keys_read(tidb_executor::KeysReadBudget::new(
                         Arc::clone(&self.statement_keys_read),
                         self.vars.max_keys_read(self.statement_in_select),
@@ -1706,7 +1719,7 @@ impl Session {
                 .with_sql_cpu_usages(Some(Arc::clone(&self.sql_cpu_usages)))
                 .with_kv_exec_counter(self.statement_kv_exec_counter())
                 .with_statement_kv_context(Some(self.statement_kv_context_cell()))
-                .with_cop_response_sink(self.statement_cop_response_sink())
+                .with_cop_response_sink(cop_response_sink.clone())
                 .with_keys_read(tidb_executor::KeysReadBudget::new(
                     Arc::clone(&self.statement_keys_read),
                     self.vars.max_keys_read(self.statement_in_select),
