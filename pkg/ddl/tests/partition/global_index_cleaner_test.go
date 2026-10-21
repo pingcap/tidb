@@ -70,6 +70,27 @@ func createLeftoverGlobalIndexes(t *testing.T, store kv.Storage, dom *domain.Dom
 	return dbInfo, tblInfo, leftoverIDs, addingID
 }
 
+// addIndexCopies adds a copy of the public index of test.t in each given state, like a cancelled
+// REORGANIZE PARTITION leaves behind.
+func addIndexCopies(t *testing.T, store kv.Storage, dom *domain.Domain, tk *testkit.TestKit, idxName string, states ...model.SchemaState) (
+	dbInfo *model.DBInfo, tblInfo *model.TableInfo, copyIDs []int64) {
+	tblInfo = external.GetTableByName(t, tk, "test", "t").Meta().Clone()
+	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	public := tblInfo.FindIndexByName(idxName)
+	require.Equal(t, model.StatePublic, public.State)
+	for _, state := range states {
+		idx := public.Clone()
+		tblInfo.MaxIndexID++
+		idx.ID = tblInfo.MaxIndexID
+		idx.State = state
+		tblInfo.Indices = append(tblInfo.Indices, idx)
+		copyIDs = append(copyIDs, idx.ID)
+	}
+	updateTableMeta(t, store, dom, dbInfo.ID, tblInfo)
+	return dbInfo, tblInfo, copyIDs
+}
+
 func updateTableMeta(t *testing.T, store kv.Storage, dom *domain.Domain, dbID int64, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -146,4 +167,27 @@ func TestCleanupLeftoverIndexesAfterReorganizePartition(t *testing.T) {
 	require.ElementsMatch(t, leftoverIDs, indexIDs)
 	require.NoError(t, dom.Reload())
 	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID)
+}
+
+func TestCleanupLeftoverIndexesSkipsUnique(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id bigint not null, a int, ct int not null,
+		unique key uk_g (id) global,
+		key idx_g (a) global)
+		partition by range (ct) (
+		partition p0 values less than (10),
+		partition pMax values less than (maxvalue))`)
+	tk.MustExec("insert into t values (1, 0, 5), (2, 0, 15)")
+	_, _, uniqueCopyIDs := addIndexCopies(t, store, dom, tk, "uk_g", model.StateWriteReorganization)
+	dbInfo, tblInfo, leftoverIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	after := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Nil(t, after.FindIndexByID(leftoverIDs[0]))
+	require.NotNil(t, after.FindIndexByID(uniqueCopyIDs[0]))
 }
