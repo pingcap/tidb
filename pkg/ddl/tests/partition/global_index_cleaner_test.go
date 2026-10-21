@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,13 +31,14 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
-// createLeftoverGlobalIndexes adds two copies of the public global index idx_g in different
-// non-public states, plus a non-public global index without a public twin, to table test.t.
+// createLeftoverGlobalIndexes creates table test.t and adds two copies of its public global index
+// idx_g in different non-public states.
 func createLeftoverGlobalIndexes(t *testing.T, store kv.Storage, dom *domain.Domain, tk *testkit.TestKit) (
-	dbInfo *model.DBInfo, tblInfo *model.TableInfo, leftoverIDs []int64, addingID int64) {
+	dbInfo *model.DBInfo, tblInfo *model.TableInfo, leftoverIDs []int64) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (id bigint not null, a int, s int, ct int not null,
 		unique key uk_id (id, ct),
@@ -46,65 +48,74 @@ func createLeftoverGlobalIndexes(t *testing.T, store kv.Storage, dom *domain.Dom
 		partition p1 values less than (20),
 		partition pMax values less than (maxvalue))`)
 	tk.MustExec("insert into t values (1, 0, 1, 5), (2, 0, 1, 15), (3, 0, 1, 25), (4, 0, 1, 35)")
+	return addIndexCopies(t, store, dom, tk, "idx_g", model.StateDeleteOnly, model.StateWriteReorganization)
+}
 
+// addIndexCopies adds a copy of the public index of test.t in each given state, like a cancelled
+// REORGANIZE PARTITION leaves behind.
+func addIndexCopies(t *testing.T, store kv.Storage, dom *domain.Domain, tk *testkit.TestKit, idxName string, states ...model.SchemaState) (
+	dbInfo *model.DBInfo, tblInfo *model.TableInfo, copyIDs []int64) {
 	tblInfo = external.GetTableByName(t, tk, "test", "t").Meta().Clone()
 	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
-	publicGlobal := tblInfo.FindIndexByName("idx_g")
-	addIndex := func(name string, state model.SchemaState) int64 {
-		idx := publicGlobal.Clone()
+	public := tblInfo.FindIndexByName(idxName)
+	require.Equal(t, model.StatePublic, public.State)
+	for _, state := range states {
+		idx := public.Clone()
 		tblInfo.MaxIndexID++
 		idx.ID = tblInfo.MaxIndexID
-		idx.Name = ast.NewCIStr(name)
 		idx.State = state
 		tblInfo.Indices = append(tblInfo.Indices, idx)
-		return idx.ID
+		copyIDs = append(copyIDs, idx.ID)
 	}
-	leftoverIDs = []int64{
-		addIndex("idx_g", model.StateDeleteOnly),
-		addIndex("idx_g", model.StateWriteReorganization),
-	}
-	// A non-public global index without a public twin, like one being added, must be kept.
-	addingID = addIndex("idx_adding", model.StateWriteReorganization)
+	updateTableMeta(t, store, dom, dbInfo.ID, tblInfo)
+	return dbInfo, tblInfo, copyIDs
+}
+
+func updateTableMeta(t *testing.T, store kv.Storage, dom *domain.Domain, dbID int64, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		if err := m.UpdateTable(dbInfo.ID, tblInfo); err != nil {
+		if err := m.UpdateTable(dbID, tblInfo); err != nil {
 			return err
 		}
 		ver, err := m.GenSchemaVersion()
 		if err != nil {
 			return err
 		}
-		return m.SetSchemaDiff(&model.SchemaDiff{Version: ver, Type: model.ActionAddIndex, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+		return m.SetSchemaDiff(&model.SchemaDiff{Version: ver, Type: model.ActionAddIndex, SchemaID: dbID, TableID: tblInfo.ID})
 	}))
 	require.NoError(t, dom.Reload())
-	require.Len(t, external.GetTableByName(t, tk, "test", "t").Meta().Indices, 5)
-	return dbInfo, tblInfo, leftoverIDs, addingID
 }
 
-func checkLeftoverGlobalIndexesDropped(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo, leftoverIDs []int64, addingID int64) {
+// checkLeftoverGlobalIndexesDropped checks that only public indexes are left in test.t, the table
+// data is consistent, and delete ranges are queued for the leftovers.
+func checkLeftoverGlobalIndexesDropped(t *testing.T, tk *testkit.TestKit, tableID int64, leftoverIDs []int64) {
 	after := external.GetTableByName(t, tk, "test", "t").Meta()
-	require.Len(t, after.Indices, 3)
 	for _, id := range leftoverIDs {
 		require.Nil(t, after.FindIndexByID(id))
 	}
-	require.NotNil(t, after.FindIndexByID(addingID))
-	require.Equal(t, tblInfo.FindIndexByName("idx_g").ID, after.FindIndexByName("idx_g").ID)
-	require.Equal(t, model.StatePublic, after.FindIndexByName("idx_g").State)
+	for _, idx := range after.Indices {
+		require.Equal(t, model.StatePublic, idx.State, idx.Name.O)
+	}
 	tk.MustExec("admin check table t")
-	tk.MustQuery("select count(*) from t use index(idx_g) where a >= 0").Check(testkit.Rows("4"))
 	for _, id := range leftoverIDs {
-		idxPrefix := hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(tblInfo.ID, id))
+		idxPrefix := hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(tableID, id))
 		tk.MustQuery(fmt.Sprintf(`select count(*) from (select start_key from mysql.gc_delete_range
 			union all select start_key from mysql.gc_delete_range_done) r where start_key = '%s'`, idxPrefix)).Check(testkit.Rows("1"))
 	}
 }
 
+func checkPublicGlobalIndex(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo) {
+	after := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Equal(t, tblInfo.FindIndexByName("idx_g").ID, after.FindIndexByName("idx_g").ID)
+	tk.MustQuery("select count(*) from t use index(idx_g) where a >= 0").Check(testkit.Rows("4"))
+}
+
 func TestCleanupLeftoverGlobalIndexesOnOwnerChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	_, tblInfo, leftoverIDs, addingID := createLeftoverGlobalIndexes(t, store, dom, tk)
+	_, tblInfo, leftoverIDs := createLeftoverGlobalIndexes(t, store, dom, tk)
 
 	// The new owner scans the partitioned tables once it is elected.
 	require.NoError(t, dom.DDL().OwnerManager().ResignOwner(context.Background()))
@@ -113,13 +124,14 @@ func TestCleanupLeftoverGlobalIndexesOnOwnerChange(t *testing.T) {
 		after := external.GetTableByName(t, tk, "test", "t").Meta()
 		return after.FindIndexByID(leftoverIDs[0]) == nil && after.FindIndexByID(leftoverIDs[1]) == nil
 	}, 30*time.Second, 100*time.Millisecond)
-	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID)
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo.ID, leftoverIDs)
+	checkPublicGlobalIndex(t, tk, tblInfo)
 }
 
 func TestCleanupLeftoverIndexes(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	dbInfo, tblInfo, leftoverIDs, addingID := createLeftoverGlobalIndexes(t, store, dom, tk)
+	dbInfo, tblInfo, leftoverIDs := createLeftoverGlobalIndexes(t, store, dom, tk)
 
 	ctx := context.Background()
 	indexIDs, ver, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
@@ -127,9 +139,130 @@ func TestCleanupLeftoverIndexes(t *testing.T) {
 	require.ElementsMatch(t, leftoverIDs, indexIDs)
 	require.Greater(t, ver, int64(0))
 	require.NoError(t, dom.Reload())
-	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID)
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo.ID, leftoverIDs)
+	checkPublicGlobalIndex(t, tk, tblInfo)
 
 	indexIDs, _, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 	require.Empty(t, indexIDs)
+}
+
+func TestCleanupLeftoverIndexesSkipsPendingJob(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	dbInfo, tblInfo, leftoverIDs := createLeftoverGlobalIndexes(t, store, dom, tk)
+
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	var once, releaseOnce sync.Once
+	releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
+	// Release the job even if the test fails, or closing the domain waits for it forever.
+	t.Cleanup(releaseJob)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateDeleteOnly {
+			once.Do(func() {
+				close(blocked)
+				<-release
+			})
+		}
+	})
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	alterErr := make(chan error, 1)
+	go func() {
+		alterErr <- tk2.ExecToErr("alter table t add index idx_new (a) global")
+	}()
+	<-blocked
+
+	ctx := context.Background()
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.Empty(t, indexIDs)
+	require.NoError(t, dom.Reload())
+	blockedMeta := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Equal(t, model.StateDeleteOnly, blockedMeta.FindIndexByName("idx_new").State)
+	for _, id := range leftoverIDs {
+		require.NotNil(t, blockedMeta.FindIndexByID(id))
+	}
+
+	releaseJob()
+	require.NoError(t, <-alterErr)
+	indexIDs, _, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo.ID, leftoverIDs)
+	checkPublicGlobalIndex(t, tk, tblInfo)
+	tk.MustQuery("select count(*) from t use index(idx_new) where a >= 0").Check(testkit.Rows("4"))
+}
+
+func TestCleanupLeftoverIndexesAfterReorganizePartition(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// A successful REORGANIZE PARTITION keeps DDLChangedIndex.
+	tk.MustExec("use test")
+	tk.MustExec(`create table t2 (a int, b int, unique key uk_b (b) global)
+		partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))`)
+	tk.MustExec("alter table t2 reorganize partition p0, p1 into (partition p01 values less than (20))")
+	pi := external.GetTableByName(t, tk, "test", "t2").Meta().Partition
+	require.Equal(t, model.StateNone, pi.DDLState)
+	require.Empty(t, pi.AddingDefinitions)
+	require.Empty(t, pi.DroppingDefinitions)
+	require.NotEmpty(t, pi.DDLChangedIndex)
+
+	dbInfo, tblInfo, leftoverIDs := createLeftoverGlobalIndexes(t, store, dom, tk)
+	tblInfo.Partition.DDLChangedIndex = map[int64]bool{tblInfo.FindIndexByName("idx_g").ID: true}
+	updateTableMeta(t, store, dom, dbInfo.ID, tblInfo)
+
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo.ID, leftoverIDs)
+	checkPublicGlobalIndex(t, tk, tblInfo)
+}
+
+func TestCleanupLeftoverIndexesWithoutPublicTwin(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	dbInfo, tblInfo, leftoverIDs := createLeftoverGlobalIndexes(t, store, dom, tk)
+
+	// DROP INDEX drops the first index with the name, which is the public one.
+	tk.MustExec("alter table t drop index idx_g")
+	after := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Nil(t, after.FindIndexByID(tblInfo.FindIndexByName("idx_g").ID))
+	require.NotNil(t, after.FindIndexByID(leftoverIDs[0]))
+
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo.ID, leftoverIDs)
+	require.Nil(t, external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByName("idx_g"))
+}
+
+func TestCleanupLeftoverExpressionIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id bigint not null, a int, ct int not null,
+		key idx_e ((a + 1)) global)
+		partition by range (ct) (
+		partition p0 values less than (10),
+		partition pMax values less than (maxvalue))`)
+	tk.MustExec("insert into t values (1, 1, 5), (2, 2, 15), (3, 3, 25)")
+	dbInfo, tblInfo, leftoverIDs := addIndexCopies(t, store, dom, tk, "idx_e", model.StateDeleteOnly)
+	hiddenCol := tblInfo.Columns[tblInfo.FindIndexByName("idx_e").Columns[0].Offset]
+	require.True(t, hiddenCol.Hidden)
+
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo.ID, leftoverIDs)
+	after := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Len(t, after.Columns, len(tblInfo.Columns))
+	require.NotNil(t, model.FindColumnInfo(after.Columns, hiddenCol.Name.L))
+	tk.MustQuery("select count(*) from t use index(idx_e) where a + 1 > 2").Check(testkit.Rows("2"))
 }

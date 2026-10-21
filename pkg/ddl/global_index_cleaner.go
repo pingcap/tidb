@@ -16,7 +16,7 @@ package ddl
 
 import (
 	"context"
-	"slices"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -32,9 +32,9 @@ import (
 
 const leftoverGlobalIndexRetryCnt = 3
 
-// cleanupLeftoverGlobalIndexes drops the global index copies left behind by REORGANIZE PARTITION
-// jobs cancelled on older versions. It runs once when this node becomes the DDL owner and only
-// scans partitioned tables.
+// cleanupLeftoverGlobalIndexes drops the leftover global indexes, e.g. the copies left behind by
+// REORGANIZE PARTITION jobs cancelled on older versions. It runs once when this node becomes the
+// DDL owner, before any job is scheduled, and only scans partitioned tables.
 func (s *jobScheduler) cleanupLeftoverGlobalIndexes() {
 	is := s.infoCache.GetLatest()
 	if is == nil {
@@ -73,17 +73,13 @@ func (s *jobScheduler) cleanupLeftoverGlobalIndexes() {
 	}
 }
 
-// dropLeftoverGlobalIndexes holds the schema version lock while editing the table, so the edit is
-// serialized with the DDL job steps on this owner.
 func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
 	sctx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sctx)
-	s.schemaVerMgr.schemaVersionMu.Lock()
 	indexIDs, ver, err := CleanupLeftoverIndexes(s.schCtx, sctx, dbID, tableID)
-	s.schemaVerMgr.schemaVersionMu.Unlock()
 	if err != nil || len(indexIDs) == 0 {
 		return errors.Trace(err)
 	}
@@ -96,36 +92,28 @@ func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
 }
 
 // leftoverGlobalIndexes returns the non-public global indexes of a table that is not being
-// reorganized and that have a public index with the same name and columns. Such an index is a
-// copy left behind by a cancelled partition reorganization, while an index being added never
-// shares its name with a public one.
+// reorganized. They are leftovers, e.g. copies left behind by a cancelled partition
+// reorganization, only if no DDL job on the table is pending, which the caller must check.
+// DDLChangedIndex is not checked, since a successful REORGANIZE PARTITION keeps it.
 func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	pi := tblInfo.GetPartitionInfo()
-	if pi == nil || pi.DDLState != model.StateNone || len(pi.DDLChangedIndex) > 0 {
+	if pi == nil || pi.DDLState != model.StateNone || len(pi.AddingDefinitions) > 0 || len(pi.DroppingDefinitions) > 0 {
 		return nil
 	}
 	var leftovers []*model.IndexInfo
 	for _, idx := range tblInfo.Indices {
-		if !idx.Global || idx.State == model.StatePublic {
-			continue
-		}
-		if slices.ContainsFunc(tblInfo.Indices, func(other *model.IndexInfo) bool {
-			return other.State == model.StatePublic && other.Name.L == idx.Name.L &&
-				slices.EqualFunc(other.Columns, idx.Columns, func(a, b *model.IndexColumn) bool {
-					return a.Name.L == b.Name.L && a.Length == b.Length
-				})
-		}) {
+		if idx.Global && idx.State != model.StatePublic {
 			leftovers = append(leftovers, idx)
 		}
 	}
 	return leftovers
 }
 
-// CleanupLeftoverIndexes removes the leftover global index copies of a table from its meta and
+// CleanupLeftoverIndexes removes the leftover global indexes of a table from its meta like
+// DROP INDEX does, together with the column flags and hidden columns no other index uses, and
 // queues their data for delete range, in one transaction with a new schema version and schema
-// diff. The copies are never read, and their columns, key flags and hidden columns are shared with
-// the public index, so they are removed directly. It returns the dropped index IDs and the new
-// schema version, or no IDs when the table has no leftovers.
+// diff. It returns the dropped index IDs and the new schema version, or no IDs when the table has
+// no leftovers or has a pending DDL job.
 func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, tableID int64) (indexIDs []int64, schemaVersion int64, err error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	se := sess.NewSession(sctx)
@@ -151,8 +139,22 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 	if len(leftovers) == 0 {
 		return nil, 0, nil
 	}
+	// A DDL job between two steps may leave indexes that look like leftovers. A job submitted
+	// after this snapshot conflicts with this transaction once it writes the table meta.
+	rows, err := se.Execute(ctx, "select job_id from mysql.tidb_ddl_job where find_in_set(%?, table_ids) limit 1",
+		"check_pending_job", strconv.FormatInt(tableID, 10))
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	if len(rows) > 0 {
+		logutil.DDLLogger().Info("skip dropping leftover global indexes, the table has a pending DDL job",
+			zap.Int64("tableID", tableID), zap.Int64("jobID", rows[0].GetInt64(0)))
+		return nil, 0, nil
+	}
 	indexIDs = make([]int64, 0, len(leftovers))
 	for _, idx := range leftovers {
+		DropIndexColumnFlag(tblInfo, idx)
+		RemoveDependentHiddenColumns(tblInfo, idx)
 		removeIndexInfo(tblInfo, idx)
 		indexIDs = append(indexIDs, idx.ID)
 	}
@@ -176,7 +178,7 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 		return nil, 0, errors.Trace(err)
 	}
 	var ea elementIDAlloc
-	if err = doBatchDeleteIndiceRange(ctx, wrapper, delRangeID, tableID, indexIDs, &ea, "leftover global index copies"); err != nil {
+	if err = doBatchDeleteIndiceRange(ctx, wrapper, delRangeID, tableID, indexIDs, &ea, "leftover global indexes"); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if err = se.Commit(ctx); err != nil {

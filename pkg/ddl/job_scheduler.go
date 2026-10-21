@@ -191,7 +191,6 @@ func (s *jobScheduler) start() {
 		s.bgJobWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(backgroundWorker), 20, 20, 0), jobTypeReorg)
 	}
 	s.wg.RunWithLog(s.scheduleLoop)
-	s.wg.RunWithLog(s.cleanupLeftoverGlobalIndexes)
 	s.wg.RunWithLog(func() {
 		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
@@ -278,6 +277,7 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 }
 
 func (s *jobScheduler) scheduleLoop() {
+	s.cleanupLeftoverGlobalIndexes()
 	const retryInterval = 3 * time.Second
 	for {
 		err := s.schedule()
