@@ -1821,9 +1821,89 @@ func buildPrunedRangeAccessPath(ds *logicalop.DataSource, originalPath *util.Acc
 
 // prunedRangeMaxRowsPerSavedSeek bounds how many rows a pruned-range alternative may scan, at
 // its upper-bound row estimate, for each seek it saves compared with the original path. The cost
-// model charges a seek as roughly 30 rows (see indexScanSeekCostVer2), so this allows about three
+// model charges a seek as roughly 30 rows (see rangeSeekCostVer2), so this allows about three
 // times the break-even scan before the alternative is rejected regardless of its estimated cost.
 const prunedRangeMaxRowsPerSavedSeek = 100
+
+// appendPrunedRangeCandidates derives, for each index candidate that survived skyline pruning,
+// alternatives that build ranges on a shorter prefix of its EqOrIn columns. The dropped IN-lists
+// become filters, trading seeks for scanned rows. The derived candidates go through the same task
+// conversion and cost comparison as every other candidate.
+// Eligibility: need a strong equality prefix (EqCondCount > 1) or at least 2 IN-list columns.
+func appendPrunedRangeCandidates(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidates []*candidatePath) []*candidatePath {
+	// Pruned candidates are index scans, which TiFlash and TableSample don't support.
+	if ds.PreferStoreType&h.PreferTiFlash != 0 || ds.SampleInfo != nil {
+		return candidates
+	}
+	for _, candidate := range candidates[:len(candidates):len(candidates)] {
+		path := candidate.path
+		if path.PartialIndexPaths != nil || path.IsTablePath() || path.IsDNFCond ||
+			path.Index == nil || path.Index.MVIndex ||
+			path.EqOrInCondCount <= path.EqCondCount || len(path.Ranges) <= 1 {
+			continue
+		}
+		// Count actual IN-list columns using ConstCols: a column in the EqOrIn prefix that is not
+		// constant (i.e. ConstCols[i] == false) is an IN-list column. This correctly handles cases
+		// like a IN(1,2) AND b = 1 AND c IN(1,2) where EqCondCount = 0 but b is an equality.
+		inListCount := 0
+		for i := range path.EqOrInCondCount {
+			if i < len(path.ConstCols) && !path.ConstCols[i] {
+				inListCount++
+			}
+		}
+		if (path.EqCondCount <= 1 && inListCount < 2) || !indexHasAnalyzedStats(ds, path) {
+			continue
+		}
+		// Full-key ranges on a unique index read at most one row each and can become a
+		// [Batch]PointGet; shortening them saves no meaningful work.
+		if path.Index.Unique && rangesCoverAllIndexColumns(path) {
+			continue
+		}
+		for cutoff := max(1, path.EqCondCount); cutoff < path.EqOrInCondCount; cutoff++ {
+			// The pruned path is only an optional alternative: if building it fails, log it and
+			// skip it, keeping the original path.
+			prunedPath, err := buildPrunedRangeAccessPath(ds, path, cutoff)
+			if err != nil {
+				logSkippedPrunedRangePath(path, cutoff, err)
+				continue
+			}
+			if prunedPath == nil || len(prunedPath.Ranges) >= len(path.Ranges) {
+				continue
+			}
+			// Safeguard: the dropped columns may be selective, and the cost comparison trusts
+			// the row estimate. Reject the alternative if, at its upper-bound estimate, it
+			// scans too many rows for the seeks it saves.
+			savedSeeks := float64(len(path.Ranges) - len(prunedPath.Ranges))
+			if prunedPath.MaxCountAfterAccess > savedSeeks*prunedRangeMaxRowsPerSavedSeek {
+				continue
+			}
+			prunedCandidate := getIndexCandidate(ds, prunedPath, prop)
+			// Skyline pruning guarantees the original path matches a required partial order,
+			// but derived candidates skip skyline pruning, and dropping range columns can break
+			// that match.
+			if prop.PartialOrderInfo != nil && !prunedCandidate.partialOrderMatchResult.Matched {
+				continue
+			}
+			candidates = append(candidates, prunedCandidate)
+		}
+	}
+	return candidates
+}
+
+// rangesCoverAllIndexColumns reports whether every range of path fixes all columns of its index.
+func rangesCoverAllIndexColumns(path *util.AccessPath) bool {
+	for _, ran := range path.Ranges {
+		if len(ran.LowVal) != len(path.Index.Columns) {
+			return false
+		}
+	}
+	return true
+}
+
+// logSkippedPrunedRangePath records why a pruned-range alternative was dropped.
+func logSkippedPrunedRangePath(path *util.AccessPath, cutoff int, err error) {
+	logutil.BgLogger().Debug("skip pruned-range alternative", zap.String("index", path.Index.Name.O), zap.Int("cutoff", cutoff), zap.Error(err))
+}
 
 // indexHasAnalyzedStats reports whether the path's index has analyzed stats. The row estimates
 // that decide between the original and the pruned ranges come from the index histogram, and are
@@ -1834,21 +1914,6 @@ func indexHasAnalyzedStats(ds *logicalop.DataSource, path *util.AccessPath) bool
 	}
 	idx := ds.StatisticTable.GetIdx(path.Index.ID)
 	return idx != nil && idx.IsAnalyzed()
-}
-
-// buildCandidateForPrunedPath creates a candidatePath from a pruned AccessPath, following
-// the same pattern as getIndexCandidate.
-func buildCandidateForPrunedPath(ds *logicalop.DataSource, prunedPath *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
-	candidate := &candidatePath{path: prunedPath}
-	candidate.matchPropResult = matchProperty(ds, prunedPath, prop)
-	if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() && prop.PartialOrderInfo != nil {
-		candidate.partialOrderMatchResult = matchPartialOrderProperty(prunedPath, prop.PartialOrderInfo)
-	}
-	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), prunedPath.AccessConds, prunedPath.IdxCols, prunedPath.IdxColLens)
-	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(prunedPath.AccessConds, prunedPath.IndexFilters...), prunedPath.FullIdxCols, prunedPath.FullIdxColLens)
-	candidate.isFullRange = prunedPath.IsFullScanRange(ds.TableInfo)
-	candidate.eqOrInCount = candidate.equalPredicateCount()
-	return candidate
 }
 
 func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
@@ -2289,6 +2354,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	t = base.InvalidTask
 	candidates := skylinePruning(ds, prop)
 	pruningInfo := getPruningInfo(ds, candidates, prop)
+	candidates = appendPrunedRangeCandidates(ds, prop, candidates)
 	defer func() {
 		if err == nil && t != nil && !t.Invalid() && pruningInfo != "" {
 			warnErr := errors.NewNoStackError(pruningInfo)
@@ -2471,59 +2537,6 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if curIsBetter {
 			t = idxTask
-		}
-
-		// Try pruned-range alternatives that use fewer index columns for range construction.
-		// This reduces the number of ranges (seeks) at the cost of scanning more rows, which can
-		// be beneficial when IN-lists produce many ranges.
-		// Eligibility: need a strong equality prefix (EqCondCount > 1) or at least 2 IN-list columns.
-		// Count actual IN-list columns using ConstCols: a column in the EqOrIn prefix that is not
-		// constant (i.e. ConstCols[i] == false) is an IN-list column. This correctly handles cases
-		// like a IN(1,2) AND b = 1 AND c IN(1,2) where EqCondCount = 0 but b is an equality.
-		inListCount := 0
-		for i := range path.EqOrInCondCount {
-			if i < len(path.ConstCols) && !path.ConstCols[i] {
-				inListCount++
-			}
-		}
-		if !path.IsDNFCond &&
-			path.Index != nil && !path.Index.MVIndex &&
-			path.EqOrInCondCount > path.EqCondCount &&
-			(path.EqCondCount > 1 || inListCount >= 2) &&
-			len(path.Ranges) > 1 &&
-			indexHasAnalyzedStats(ds, path) {
-			for cutoff := max(1, path.EqCondCount); cutoff < path.EqOrInCondCount; cutoff++ {
-				// The pruned path is only an optional alternative: on any error, skip it and
-				// keep the plan already built from the original path.
-				prunedPath, pErr := buildPrunedRangeAccessPath(ds, path, cutoff)
-				if pErr != nil || prunedPath == nil || len(prunedPath.Ranges) >= len(path.Ranges) {
-					continue
-				}
-				// Safeguard: the dropped columns may be selective, and the cost comparison trusts
-				// the row estimate. Reject the alternative if, at its upper-bound estimate, it
-				// scans too many rows for the seeks it saves.
-				savedSeeks := float64(len(path.Ranges) - len(prunedPath.Ranges))
-				if prunedPath.MaxCountAfterAccess > savedSeeks*prunedRangeMaxRowsPerSavedSeek {
-					continue
-				}
-				prunedCandidate := buildCandidateForPrunedPath(ds, prunedPath, prop)
-				// Skyline pruning guarantees the original path matches a required partial order,
-				// but dropping range columns can break that match.
-				if prop.PartialOrderInfo != nil && !prunedCandidate.partialOrderMatchResult.Matched {
-					continue
-				}
-				prunedTask, pErr := convertToIndexScan(ds, prop, prunedCandidate)
-				if pErr != nil {
-					continue
-				}
-				curIsBetter, pErr := compareTaskCost(prunedTask, t)
-				if pErr != nil {
-					continue
-				}
-				if curIsBetter {
-					t = prunedTask
-				}
-			}
 		}
 	}
 

@@ -2717,6 +2717,8 @@ func TestIndexScanSeekCost(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	// Pruning needs fully loaded index stats; don't let a slow sync load fall back to partial stats.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
 	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
 	// Each value of `a` has only 25 rows, so most (a, b, c) point ranges are nearly empty and a
 	// seek per range costs more than scanning and filtering every row under `a`.
@@ -2828,9 +2830,14 @@ func TestIndexScanSeekCost(t *testing.T) {
 	for _, row := range ijRows {
 		if strings.Contains(row[0].(string), "IndexRangeScan") {
 			foundInnerScan = true
-			require.NotContains(t, row[3].(string), "indexSeek")
+			require.NotContains(t, row[3].(string), "rangeSeek")
 		}
 	}
 	require.True(t, foundInnerScan)
-	require.Contains(t, tk.MustQuery("explain format='cost_trace' select * from t3 where a = 1 and b in (1,2,3)").Rows()[1][3].(string), "indexSeek")
+	require.Contains(t, tk.MustQuery("explain format='cost_trace' select * from t3 where a = 1 and b in (1,2,3)").Rows()[1][3].(string), "rangeSeek")
+	// Multi-range table scans are charged the same way, so they don't look cheaper than an
+	// equivalent multi-range index scan.
+	tsRows := tk.MustQuery("explain format='cost_trace' select * from t4 where c in (1,2,3) and d > 5").Rows()
+	require.Contains(t, tsRows[len(tsRows)-1][0].(string), "TableRangeScan")
+	require.Contains(t, tsRows[len(tsRows)-1][3].(string), "rangeSeek")
 }
