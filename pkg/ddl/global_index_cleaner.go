@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -93,8 +92,8 @@ func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
 
 // leftoverGlobalIndexes returns the non-public global indexes of a table that is not being
 // reorganized. They are leftovers, e.g. copies left behind by a cancelled partition
-// reorganization, only if no DDL job on the table is pending, which the caller must check.
-// DDLChangedIndex is not checked, since a successful REORGANIZE PARTITION keeps it.
+// reorganization, only if no DDL job on the table is in progress, which this function does not
+// check. DDLChangedIndex is not checked, since a successful REORGANIZE PARTITION keeps it.
 func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || pi.DDLState != model.StateNone || len(pi.AddingDefinitions) > 0 || len(pi.DroppingDefinitions) > 0 {
@@ -113,7 +112,7 @@ func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 // DROP INDEX does, together with the column flags and hidden columns no other index uses, and
 // queues their data for delete range, in one transaction with a new schema version and schema
 // diff. It returns the dropped index IDs and the new schema version, or no IDs when the table has
-// no leftovers or has a pending DDL job.
+// no leftovers.
 func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, tableID int64) (indexIDs []int64, schemaVersion int64, err error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	se := sess.NewSession(sctx)
@@ -137,18 +136,6 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 	}
 	leftovers := leftoverGlobalIndexes(tblInfo)
 	if len(leftovers) == 0 {
-		return nil, 0, nil
-	}
-	// A DDL job between two steps may leave indexes that look like leftovers. A job submitted
-	// after this snapshot conflicts with this transaction once it writes the table meta.
-	rows, err := se.Execute(ctx, "select job_id from mysql.tidb_ddl_job where find_in_set(%?, table_ids) limit 1",
-		"check_pending_job", strconv.FormatInt(tableID, 10))
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
-	if len(rows) > 0 {
-		logutil.DDLLogger().Info("skip dropping leftover global indexes, the table has a pending DDL job",
-			zap.Int64("tableID", tableID), zap.Int64("jobID", rows[0].GetInt64(0)))
 		return nil, 0, nil
 	}
 	indexIDs = make([]int64, 0, len(leftovers))
