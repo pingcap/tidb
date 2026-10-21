@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,21 +67,25 @@ func createLeftoverGlobalIndexes(t *testing.T, store kv.Storage, dom *domain.Dom
 	}
 	// A non-public global index without a public twin, like one being added, must be kept.
 	addingID = addIndex("idx_adding", model.StateWriteReorganization)
+	updateTableMeta(t, store, dom, dbInfo.ID, tblInfo)
+	require.Len(t, external.GetTableByName(t, tk, "test", "t").Meta().Indices, 5)
+	return dbInfo, tblInfo, leftoverIDs, addingID
+}
+
+func updateTableMeta(t *testing.T, store kv.Storage, dom *domain.Domain, dbID int64, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		if err := m.UpdateTable(dbInfo.ID, tblInfo); err != nil {
+		if err := m.UpdateTable(dbID, tblInfo); err != nil {
 			return err
 		}
 		ver, err := m.GenSchemaVersion()
 		if err != nil {
 			return err
 		}
-		return m.SetSchemaDiff(&model.SchemaDiff{Version: ver, Type: model.ActionAddIndex, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+		return m.SetSchemaDiff(&model.SchemaDiff{Version: ver, Type: model.ActionAddIndex, SchemaID: dbID, TableID: tblInfo.ID})
 	}))
 	require.NoError(t, dom.Reload())
-	require.Len(t, external.GetTableByName(t, tk, "test", "t").Meta().Indices, 5)
-	return dbInfo, tblInfo, leftoverIDs, addingID
 }
 
 func checkLeftoverGlobalIndexesDropped(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo, leftoverIDs []int64, addingID int64) {
@@ -116,4 +122,73 @@ func TestCleanupLeftoverIndexes(t *testing.T) {
 	indexIDs, _, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 	require.Empty(t, indexIDs)
+}
+
+func TestCleanupLeftoverIndexesSkipsPendingJob(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	dbInfo, tblInfo, leftoverIDs, addingID := createLeftoverGlobalIndexes(t, store, dom, tk)
+
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	var once, releaseOnce sync.Once
+	releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
+	// Release the job even if the test fails, or closing the domain waits for it forever.
+	t.Cleanup(releaseJob)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionAddColumn && job.SchemaState == model.StateDeleteOnly {
+			once.Do(func() {
+				close(blocked)
+				<-release
+			})
+		}
+	})
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	alterErr := make(chan error, 1)
+	go func() {
+		alterErr <- tk2.ExecToErr("alter table t add column c2 int")
+	}()
+	<-blocked
+
+	ctx := context.Background()
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.Empty(t, indexIDs)
+	require.NoError(t, dom.Reload())
+	require.Len(t, external.GetTableByName(t, tk, "test", "t").Meta().Indices, 5)
+
+	releaseJob()
+	require.NoError(t, <-alterErr)
+	indexIDs, _, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID)
+}
+
+func TestCleanupLeftoverIndexesAfterReorganizePartition(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// A successful REORGANIZE PARTITION keeps DDLChangedIndex.
+	tk.MustExec("use test")
+	tk.MustExec(`create table t2 (a int, b int, unique key uk_b (b) global)
+		partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))`)
+	tk.MustExec("alter table t2 reorganize partition p0, p1 into (partition p01 values less than (20))")
+	pi := external.GetTableByName(t, tk, "test", "t2").Meta().Partition
+	require.Equal(t, model.StateNone, pi.DDLState)
+	require.Empty(t, pi.AddingDefinitions)
+	require.Empty(t, pi.DroppingDefinitions)
+	require.NotEmpty(t, pi.DDLChangedIndex)
+
+	dbInfo, tblInfo, leftoverIDs, addingID := createLeftoverGlobalIndexes(t, store, dom, tk)
+	tblInfo.Partition.DDLChangedIndex = map[int64]bool{tblInfo.FindIndexByName("idx_g").ID: true}
+	updateTableMeta(t, store, dom, dbInfo.ID, tblInfo)
+
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID)
 }

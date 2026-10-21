@@ -1212,8 +1212,9 @@ type CleanupGlobalIndexesResult struct {
 }
 
 // ServeHTTP handles request of dropping the leftover global index copies of a table. It edits the
-// table meta directly without a DDL job, so it can run on any TiDB. A concurrent DDL job on the
-// same table makes the transaction conflict and fail, and the caller can retry.
+// table meta directly without a DDL job, so it can run on any TiDB. It drops nothing while a DDL
+// job on the table is pending, and a job that starts concurrently makes the transaction conflict
+// and fail, so the caller can retry.
 func (h DDLCleanupGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
