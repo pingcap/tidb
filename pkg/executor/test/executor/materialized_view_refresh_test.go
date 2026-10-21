@@ -577,6 +577,97 @@ func TestMaterializedViewRefreshFastStatementResult(t *testing.T) {
 	tk.MustQuery("select * from mv_refresh_result order by a").Check(testkit.Rows("1 11 1", "3 30 1"))
 }
 
+func TestMaterializedViewRefreshFastWritesMLog(t *testing.T) {
+	testMaterializedViewRefreshWritesMLog(t, "fast")
+}
+
+func TestMaterializedViewRefreshCompleteDeltaApplyWritesMLog(t *testing.T) {
+	testMaterializedViewRefreshWritesMLog(t, "complete delta apply")
+}
+
+func testMaterializedViewRefreshWritesMLog(t *testing.T, refreshMethod string) {
+	t.Helper()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_mlog (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_mlog values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_refresh_mlog (a, b)")
+	tk.MustExec("create materialized view mv_refresh_mlog (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_mlog group by a")
+	tk.MustExec("create materialized view log on mv_refresh_mlog (a, s, cnt)")
+
+	// The three base-table mutations make the parent MV update one group, delete one group,
+	// and insert one group. The parent MLog must retain the corresponding logical operations.
+	tk.MustExec("update t_mv_refresh_mlog set b = 11 where a = 1 and b = 10")
+	tk.MustExec("delete from t_mv_refresh_mlog where a = 2")
+	tk.MustExec("insert into t_mv_refresh_mlog values (3, 4)")
+	tk.MustExec("refresh materialized view mv_refresh_mlog " + refreshMethod)
+
+	tk.MustQuery("select a, s, cnt from mv_refresh_mlog order by a").Check(testkit.Rows(
+		"1 16 2",
+		"3 4 1",
+	))
+	tk.MustQuery("select a, s, cnt, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$mv_refresh_mlog` order by a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`").Check(testkit.Rows(
+		"1 15 2 U -1",
+		"1 16 2 U 1",
+		"2 7 1 D -1",
+		"3 4 1 I 1",
+	))
+
+	// A refresh with no source changes must not append a MLog row.
+	tk.MustExec("refresh materialized view mv_refresh_mlog " + refreshMethod)
+	tk.MustQuery("select count(*) from `$mlog$mv_refresh_mlog`").Check(testkit.Rows("4"))
+}
+
+func TestMaterializedViewRefreshSkipsMLogWhenTrackedColumnsAreUnchanged(t *testing.T) {
+	for _, refreshMethod := range []string{"fast", "complete delta apply"} {
+		t.Run(refreshMethod, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_mv_refresh_mlog_tracked (a int not null, b int not null)")
+			tk.MustExec("insert into t_mv_refresh_mlog_tracked values (1, 10), (1, 5)")
+			tk.MustExec("create materialized view log on t_mv_refresh_mlog_tracked (a, b)")
+			tk.MustExec("create materialized view mv_refresh_mlog_tracked (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_mlog_tracked group by a")
+			tk.MustExec("create materialized view log on mv_refresh_mlog_tracked (a)")
+
+			tk.MustExec("update t_mv_refresh_mlog_tracked set b = 11 where a = 1 and b = 10")
+			tk.MustExec("refresh materialized view mv_refresh_mlog_tracked " + refreshMethod)
+
+			tk.MustQuery("select a, s, cnt from mv_refresh_mlog_tracked").Check(testkit.Rows("1 16 2"))
+			tk.MustQuery("select * from `$mlog$mv_refresh_mlog_tracked`").Check(testkit.Rows())
+		})
+	}
+}
+
+func TestMaterializedViewRefreshMLogWriteFailureRollsBack(t *testing.T) {
+	for _, refreshMethod := range []string{"fast", "complete delta apply"} {
+		t.Run(refreshMethod, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_mv_refresh_mlog_rollback (a int not null, b int not null)")
+			tk.MustExec("insert into t_mv_refresh_mlog_rollback values (1, 10), (1, 5)")
+			tk.MustExec("create materialized view log on t_mv_refresh_mlog_rollback (a, b)")
+			tk.MustExec("create materialized view mv_refresh_mlog_rollback (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_mlog_rollback group by a")
+			tk.MustExec("create materialized view log on mv_refresh_mlog_rollback (a, s, cnt)")
+			tk.MustExec("update t_mv_refresh_mlog_rollback set b = 11 where a = 1 and b = 10")
+
+			const failpointName = "github.com/pingcap/tidb/pkg/table/tables/mockMLogWriteError"
+			require.NoError(t, failpoint.Enable(failpointName, `return("mock mlog write failure")`))
+			defer func() {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}()
+
+			err := tk.ExecToErr("refresh materialized view mv_refresh_mlog_rollback " + refreshMethod)
+			require.ErrorContains(t, err, "mock mlog write failure")
+			tk.MustQuery("select a, s, cnt from mv_refresh_mlog_rollback").Check(testkit.Rows("1 15 2"))
+			tk.MustQuery("select * from `$mlog$mv_refresh_mlog_rollback`").Check(testkit.Rows())
+		})
+	}
+}
+
 func TestMaterializedViewRefreshFastCommitTSOSnapshotMatchesRefreshInfo(t *testing.T) {
 	tk := setupMaterializedViewRefreshStatementResultTest(t)
 	makeMaterializedViewRefreshResultStale(t, tk)
@@ -3436,6 +3527,7 @@ func TestMaterializedViewRefreshCompleteDeltaApplyRollbackOnError(t *testing.T) 
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+	tk.MustExec("create materialized view log on mv (a, s, cnt)")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
 	is := dom.InfoSchema()
@@ -3462,6 +3554,7 @@ func TestMaterializedViewRefreshCompleteDeltaApplyRollbackOnError(t *testing.T) 
 	require.ErrorContains(t, err, "mock refresh data change failure")
 
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+	tk.MustQuery("select * from `$mlog$mv`").Check(testkit.Rows())
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO = %d from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", oldTS, mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).

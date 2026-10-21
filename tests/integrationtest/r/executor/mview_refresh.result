@@ -54,6 +54,36 @@ a	s	cnt
 drop materialized view mv_inc_67017;
 drop materialized view log on t_mv_inc_67017;
 drop table if exists t_mv_inc_67017;
+create table t_mv_mlog_refresh (a int not null, b int not null);
+insert into t_mv_mlog_refresh values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_mlog_refresh (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_mlog_refresh (a, s, cnt) refresh fast as
+select a, sum(b), count(1) from t_mv_mlog_refresh group by a;
+create materialized view log on mv_mlog_refresh (a, s, cnt);
+update t_mv_mlog_refresh set b = 11 where a = 1 and b = 10;
+delete from t_mv_mlog_refresh where a = 2;
+insert into t_mv_mlog_refresh values (3, 4);
+refresh materialized view mv_mlog_refresh fast;
+update t_mv_mlog_refresh set b = 12 where a = 1 and b = 11;
+delete from t_mv_mlog_refresh where a = 3;
+insert into t_mv_mlog_refresh values (4, 8);
+refresh materialized view mv_mlog_refresh complete delta apply;
+select a, s, cnt, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`
+from `$mlog$mv_mlog_refresh`
+order by a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`, s;
+a	s	cnt	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
+1	15	2	U	-1
+1	16	2	U	-1
+1	16	2	U	1
+1	17	2	U	1
+2	7	1	D	-1
+3	4	1	D	-1
+3	4	1	I	1
+4	8	1	I	1
+drop materialized view log on mv_mlog_refresh;
+drop materialized view mv_mlog_refresh;
+drop materialized view log on t_mv_mlog_refresh;
+drop table if exists t_mv_mlog_refresh;
 create table t_mv_ddl_70457 (a int not null, b int not null);
 insert into t_mv_ddl_70457 values (1, 10), (1, 5), (2, 7);
 create materialized view log on t_mv_ddl_70457 (a, b) purge next date_add(now(), interval 1 hour);

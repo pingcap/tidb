@@ -66,8 +66,12 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 	}
 
 	colIDs := make([]int, len(writableCols))
-	for i := range writableCols {
-		colIDs[i] = e.DeltaAggColCount + writableCols[i].Offset
+	// Row buffers and touched flags use writable ordinals as physical column offsets.
+	for i, col := range writableCols {
+		if col.Offset != i {
+			return nil, errors.Errorf("target writable column `%s` offset %d != writable ordinal %d", col.Name.O, col.Offset, i)
+		}
+		colIDs[i] = e.DeltaAggColCount + col.Offset
 	}
 	for i := 0; i < e.TargetHandleCols.NumCols(); i++ {
 		handleInputIdx := e.TargetHandleCols.GetCol(i).Index

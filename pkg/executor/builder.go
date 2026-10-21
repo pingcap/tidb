@@ -1482,6 +1482,10 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 		b.err = err
 		return nil
 	}
+	mviewTable = b.wrapTableWithMLogIfExists(mviewTable, tables.MLogSourceRefresh)
+	if b.err != nil {
+		return nil
+	}
 
 	return &MViewCompleteDeltaApplyExec{
 		BaseExecutor:                  exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
@@ -1518,16 +1522,17 @@ func buildMViewCompleteDeltaWritableInputColIDs(target table.Table, rowInputColI
 	}
 
 	writable := make([]int, 0, len(writableCols))
+	// Row buffers and touched flags use writable ordinals as physical column offsets.
 	for i, col := range writableCols {
 		if col == nil {
 			return nil, errors.Errorf("MViewCompleteDeltaApply target writable column at offset %d is nil", i)
 		}
-		if col.Offset < 0 || col.Offset >= len(rowInputColIDs) {
+		if col.Offset != i {
 			return nil, errors.Errorf(
-				"MViewCompleteDeltaApply target writable column `%s` offset %d out of range [0,%d)",
+				"MViewCompleteDeltaApply target writable column `%s` offset %d != writable ordinal %d",
 				col.Name.O,
 				col.Offset,
-				len(rowInputColIDs),
+				i,
 			)
 		}
 		writable = append(writable, rowInputColIDs[col.Offset])

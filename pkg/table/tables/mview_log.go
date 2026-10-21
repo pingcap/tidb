@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -26,8 +27,7 @@ import (
 
 // MLogSourceStmt indicates which statement kind writes the mlog.
 //
-// It intentionally keeps the source statement type (INSERT/UPDATE/DELETE/REPLACE/LOAD DATA)
-// separate from the `_MLOG$_DML_TYPE` column value (I/U/D).
+// It keeps the source statement type separate from the `_MLOG$_DML_TYPE` column value (I/U/D).
 type MLogSourceStmt int
 
 const (
@@ -41,6 +41,9 @@ const (
 	MLogSourceReplace
 	// MLogSourceLoadData marks rows produced by LOAD DATA statements.
 	MLogSourceLoadData
+	// MLogSourceRefresh marks MV refreshes, whose AddRecord, UpdateRecord, and RemoveRecord
+	// calls each represent a logical insert, update, or delete.
+	MLogSourceRefresh
 )
 
 // MLogDMLType indicates the logical row change kind written to `_MLOG$_DML_TYPE`.
@@ -300,6 +303,8 @@ func (t *mlogTable) shouldLogUpdate(touched []bool) bool {
 
 func (t *mlogTable) addRecordDMLType(opt *table.AddRecordOpt, hadRemovedConflict bool) MLogDMLType {
 	switch t.sourceStmt {
+	case MLogSourceRefresh:
+		return MLogDMLTypeInsert
 	case MLogSourceUpdate:
 		return MLogDMLTypeUpdate
 	case MLogSourceInsert, MLogSourceReplace, MLogSourceLoadData:
@@ -324,7 +329,7 @@ func (t *mlogTable) updateRecordDMLType() MLogDMLType {
 
 func (t *mlogTable) removeRecordDMLType() MLogDMLType {
 	switch t.sourceStmt {
-	case MLogSourceDelete:
+	case MLogSourceDelete, MLogSourceRefresh:
 		return MLogDMLTypeDelete
 	case MLogSourceInsert, MLogSourceUpdate, MLogSourceReplace, MLogSourceLoadData:
 		// For non-DELETE source statements, RemoveRecord is the old-row side of a logical update,
@@ -347,6 +352,13 @@ func (t *mlogTable) writeMLogRow(
 	oldNew int64,
 	opts ...table.AddRecordOption,
 ) error {
+	failpoint.Inject("mockMLogWriteError", func(val failpoint.Value) {
+		if msg, ok := val.(string); ok {
+			failpoint.Return(errors.New(msg))
+		}
+		failpoint.Return(errors.New("mock materialized view log write error"))
+	})
+
 	mlogRow := make([]types.Datum, 0, len(t.trackedBaseOffsets)+2)
 	for _, offset := range t.trackedBaseOffsets {
 		if offset < 0 || offset >= len(baseRow) {

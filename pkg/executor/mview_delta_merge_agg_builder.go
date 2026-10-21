@@ -29,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -130,6 +131,10 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 	minMaxRecompute, err := b.buildMViewDeltaMergeMinMaxRecompute(v, aggMappings)
 	if err != nil {
 		b.err = err
+		return nil
+	}
+	mviewTable = b.wrapTableWithMLogIfExists(mviewTable, tables.MLogSourceRefresh)
+	if b.err != nil {
 		return nil
 	}
 

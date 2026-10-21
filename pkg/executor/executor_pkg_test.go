@@ -134,6 +134,41 @@ func TestValidateMViewCompleteDeltaWritableInputColTypesAllowsNullableInput(t *t
 	require.ErrorContains(t, err, "type mismatch")
 }
 
+func TestBuildMViewCompleteDeltaWritableInputColIDsColumnOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		offsets [2]int
+		err     string
+	}{
+		{name: "dense", offsets: [2]int{0, 1}},
+		{name: "reordered", offsets: [2]int{1, 0}, err: "column `a` offset 1 != writable ordinal 0"},
+		{name: "gapped", offsets: [2]int{0, 2}, err: "column `b` offset 2 != writable ordinal 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tp := types.NewFieldType(mysql.TypeLonglong)
+			target := tables.MockTableFromMeta(&model.TableInfo{
+				ID:    1,
+				Name:  pmodel.NewCIStr("mv"),
+				State: model.StatePublic,
+				Columns: []*model.ColumnInfo{
+					{ID: 1, Name: pmodel.NewCIStr("a"), Offset: tc.offsets[0], FieldType: *tp, State: model.StatePublic},
+					{ID: 2, Name: pmodel.NewCIStr("b"), Offset: tc.offsets[1], FieldType: *tp, State: model.StatePublic},
+				},
+			})
+			require.Len(t, target.Cols(), 2)
+			require.Len(t, target.WritableCols(), 2)
+			mapping, err := buildMViewCompleteDeltaWritableInputColIDs(target, []int{4, 2})
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				require.Nil(t, mapping)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []int{4, 2}, mapping)
+		})
+	}
+}
+
 type mviewCompleteDeltaApplyOpenProbeChild struct {
 	exec.BaseExecutor
 	opened bool
