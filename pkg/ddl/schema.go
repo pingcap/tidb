@@ -494,10 +494,5 @@ func getIDs(tables []*model.TableInfo) []int64 {
 
 func appendPhysicalTableIDs(dst []int64, tblInfo *model.TableInfo) []int64 {
 	dst = append(dst, tblInfo.ID)
-	if partitionInfo := tblInfo.GetPartitionInfo(); partitionInfo != nil {
-		for _, part := range partitionInfo.Definitions {
-			dst = append(dst, part.ID)
-		}
-	}
-	return dst
+	return append(dst, getPartitionIDs(tblInfo)...)
 }
