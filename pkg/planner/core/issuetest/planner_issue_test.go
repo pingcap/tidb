@@ -449,7 +449,7 @@ func TestIssue71480ClusteredPKIndexMergeInSubquery(t *testing.T) {
 	query := `select pk
 from tab2
 where col4 in (
-  select col1
+  select /*+ USE_INDEX_MERGE(tab2, idx_tab2_0, idx_tab2_4) */ col1
   from tab2
   where (col1 > 13.14)
     and (col3 < 54 and col0 = 24)
