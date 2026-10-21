@@ -6,7 +6,7 @@ create table articles (
   body text,
   fulltext index idx_title(title),
   fulltext index idx_title_body(title, body)
-);
+) default charset=utf8mb4 collate=utf8mb4_general_ci;
 insert into articles values
   (1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
   (2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
@@ -18,6 +18,17 @@ set @@tidb_enable_local_match_against=ON;
 
 # Required and prohibited terms.
 select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+
+# Binary collation keeps case-sensitive FULLTEXT matching semantics.
+drop table if exists articles_bin;
+create table articles_bin (
+  id int primary key,
+  title varchar(200),
+  fulltext index idx_title(title)
+) default charset=utf8mb4 collate=utf8mb4_bin;
+insert into articles_bin values (1, 'MySQL Tutorial'), (2, 'MySQL tutorial');
+select id, title from articles_bin where match(title) against('+MySQL -tutorial' in boolean mode);
+drop table if exists articles_bin;
 
 # Word boundaries and prefix matching.
 select id, title from articles where match(title) against('+Optimiz' in boolean mode);
