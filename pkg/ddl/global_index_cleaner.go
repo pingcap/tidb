@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,8 +32,8 @@ import (
 
 const leftoverGlobalIndexRetryCnt = 3
 
-// cleanupLeftoverGlobalIndexes drops the leftover global indexes, e.g. the copies left behind by
-// REORGANIZE PARTITION jobs cancelled on older versions. It runs once when this node becomes the
+// cleanupLeftoverGlobalIndexes drops the global index copies left behind by REORGANIZE PARTITION
+// jobs cancelled on older versions. It runs once when this node becomes the
 // DDL owner, before any job is scheduled, and only scans partitioned tables.
 func (s *jobScheduler) cleanupLeftoverGlobalIndexes() {
 	is := s.infoCache.GetLatest()
@@ -91,9 +92,10 @@ func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
 }
 
 // leftoverGlobalIndexes returns the non-public global indexes of a table that is not being
-// reorganized. They are leftovers, e.g. copies left behind by a cancelled partition
-// reorganization, only if no DDL job on the table is in progress, which this function does not
-// check. DDLChangedIndex is not checked, since a successful REORGANIZE PARTITION keeps it.
+// reorganized and that have a public index with the same name and columns, i.e. the copies left
+// behind by a cancelled partition reorganization. Requiring the public twin keeps an index being
+// added by ADD INDEX ... GLOBAL, which has a new name, from being treated as a leftover.
+// DDLChangedIndex is not checked, since a successful REORGANIZE PARTITION keeps it.
 func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || pi.DDLState != model.StateNone || len(pi.AddingDefinitions) > 0 || len(pi.DroppingDefinitions) > 0 {
@@ -101,18 +103,26 @@ func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	}
 	var leftovers []*model.IndexInfo
 	for _, idx := range tblInfo.Indices {
-		if idx.Global && idx.State != model.StatePublic {
+		if !idx.Global || idx.State == model.StatePublic {
+			continue
+		}
+		if slices.ContainsFunc(tblInfo.Indices, func(other *model.IndexInfo) bool {
+			return other.State == model.StatePublic && other.Name.L == idx.Name.L &&
+				slices.EqualFunc(other.Columns, idx.Columns, func(a, b *model.IndexColumn) bool {
+					return a.Name.L == b.Name.L && a.Length == b.Length
+				})
+		}) {
 			leftovers = append(leftovers, idx)
 		}
 	}
 	return leftovers
 }
 
-// CleanupLeftoverIndexes removes the leftover global indexes of a table from its meta like
-// DROP INDEX does, together with the column flags and hidden columns no other index uses, and
+// CleanupLeftoverIndexes removes the leftover global index copies of a table from its meta and
 // queues their data for delete range, in one transaction with a new schema version and schema
-// diff. It returns the dropped index IDs and the new schema version, or no IDs when the table has
-// no leftovers.
+// diff. The copies are never read, and their columns, key flags and hidden columns are shared with
+// the public index, so they are removed directly. It returns the dropped index IDs and the new
+// schema version, or no IDs when the table has no leftovers.
 func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, tableID int64) (indexIDs []int64, schemaVersion int64, err error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	se := sess.NewSession(sctx)
@@ -140,8 +150,6 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 	}
 	indexIDs = make([]int64, 0, len(leftovers))
 	for _, idx := range leftovers {
-		DropIndexColumnFlag(tblInfo, idx)
-		RemoveDependentHiddenColumns(tblInfo, idx)
 		removeIndexInfo(tblInfo, idx)
 		indexIDs = append(indexIDs, idx.ID)
 	}
@@ -165,7 +173,7 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 		return nil, 0, errors.Trace(err)
 	}
 	var ea elementIDAlloc
-	if err = doBatchDeleteIndiceRange(ctx, wrapper, delRangeID, tableID, indexIDs, &ea, "leftover global indexes"); err != nil {
+	if err = doBatchDeleteIndiceRange(ctx, wrapper, delRangeID, tableID, indexIDs, &ea, "leftover global index copies"); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if err = se.Commit(ctx); err != nil {
