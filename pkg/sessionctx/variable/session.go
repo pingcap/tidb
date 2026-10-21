@@ -1472,6 +1472,9 @@ type SessionVars struct {
 
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
+	// TiCIReadMaxStalenessMS is -1 for legacy, 0 for strict, or a bounded lag.
+	TiCIReadMaxStalenessMS int64
+	TiCIReadWaitMS         uint32
 
 	// cachedStmtCtx is used to optimize the object allocation.
 	cachedStmtCtx [2]stmtctx.StatementContext
@@ -2353,6 +2356,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		IsolationReadEngines:             make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:                  vardef.DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:                 vardef.DefTiDBMetricSchemaStep,
+		TiCIReadMaxStalenessMS:           vardef.DefTiDBTiCIReadMaxStalenessMS,
+		TiCIReadWaitMS:                   vardef.DefTiDBTiCIReadWaitMS,
 		MetricSchemaRangeDuration:        vardef.DefTiDBMetricSchemaRangeDuration,
 		SequenceState:                    NewSequenceState(),
 		WindowingUseHighPrecision:        true,

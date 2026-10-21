@@ -3013,6 +3013,16 @@ var defaultSysVars = []*SysVar{
 			vardef.EnableTiCIEstimate.Store(TiDBOptOn(val))
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTiCIReadMaxStalenessMS, Value: strconv.Itoa(vardef.DefTiDBTiCIReadMaxStalenessMS), Type: vardef.TypeInt, MinValue: -1, MaxValue: vardef.MaxTiDBTiCIReadMaxStalenessMS,
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiCIReadMaxStalenessMS = TidbOptInt64(val, vardef.DefTiDBTiCIReadMaxStalenessMS)
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTiCIReadWaitMS, Value: strconv.Itoa(vardef.DefTiDBTiCIReadWaitMS), Type: vardef.TypeInt, MinValue: 0, MaxValue: vardef.MaxTiDBTiCIReadWaitMS,
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiCIReadWaitMS = uint32(TidbOptInt64(val, vardef.DefTiDBTiCIReadWaitMS))
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBDDLEnableFastReorg, Value: BoolToOnOff(vardef.DefTiDBEnableFastReorg), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableFastReorg.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {

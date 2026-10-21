@@ -19,12 +19,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/pkg/kv"
 )
 
 // buildTiCIShardInfosByAddrFromLocations pre-counts single-candidate shards as
 // fixed load, then assigns shards in loc order. Multi-candidate shards choose the
 // candidate store with the lowest current load from a random scan start.
-func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][]*coprocessor.ShardInfo, error) {
+func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation, freshness kv.TiCIFreshnessRequirement) (map[string][]*coprocessor.ShardInfo, error) {
 	addrLoad := make(map[string]int)
 	for _, loc := range locs {
 		if len(loc.localCacheAddrs) == 0 {
@@ -42,9 +43,12 @@ func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][
 	for _, loc := range locs {
 		addr := selectTiCIShardAddr(loc.localCacheAddrs, addrLoad)
 		storeShard[addr] = append(storeShard[addr], &coprocessor.ShardInfo{
-			ShardId:    loc.ShardID,
-			ShardEpoch: loc.Epoch,
-			Ranges:     loc.Ranges.ToPBRanges(),
+			ShardId:            loc.ShardID,
+			ShardEpoch:         loc.Epoch,
+			Ranges:             loc.Ranges.ToPBRanges(),
+			RequiredResolvedTs: freshness.RequiredResolvedTS,
+			FreshnessMode:      freshness.Mode,
+			MaxWaitMs:          freshness.MaxWaitMS,
 		})
 	}
 	return storeShard, nil

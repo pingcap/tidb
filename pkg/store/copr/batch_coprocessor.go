@@ -64,6 +64,8 @@ type batchCopTask struct {
 	PartitionTableRegions []*coprocessor.TableRegions
 
 	TableShardInfos []*coprocessor.TableShardInfos // table shard infos for each executor
+	// TiCI retries rebuild the whole task to avoid returning a partial shard set.
+	tiCIRetryCount int
 }
 
 type batchCopResponse struct {
@@ -1252,7 +1254,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	} else {
 		if req.StoreType == kv.TiFlash && req.FullText {
 			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-			tasks, err = buildBatchCopTasksForFullText(ctx, c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges)
+			tasks, err = buildBatchCopTasksForFullText(ctx, c.store.kvStore, req.FullTextInfo.TableID, req.FullTextInfo.IndexID, req.FullTextInfo.ExecutorID, ranges, req.FullTextInfo.Freshness)
 		} else {
 			// TODO: merge the if branch.
 			ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
@@ -1406,23 +1408,38 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 }
 
 // Merge all ranges and request again.
-func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+const maxTiCIBatchCopRetries = 6
+
+func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask, invalidateShards bool) ([]*batchCopTask, error) {
 	if batchTask.TableShardInfos != nil {
+		if batchTask.tiCIRetryCount >= maxTiCIBatchCopRetries {
+			return nil, errors.Errorf("tiflash_fts exhausted %d shard task retries", maxTiCIBatchCopRetries)
+		}
 		retryRanges, retryShardIDs := collectFullTextRetryRanges(batchTask.TableShardInfos)
 		if len(retryRanges) == 0 {
 			return nil, errors.New("tiflash_fts retry has no remaining ranges")
 		}
-		for _, shardID := range retryShardIDs {
-			b.store.GetTiCIShardCache().InvalidateCachedShard(shardID)
+		if invalidateShards {
+			for _, shardID := range retryShardIDs {
+				b.store.GetTiCIShardCache().InvalidateCachedShard(shardID)
+			}
 		}
-		return buildBatchCopTasksForFullText(
+		tasks, err := buildBatchCopTasksForFullText(
 			ctx,
 			b.store,
 			b.req.FullTextInfo.TableID,
 			b.req.FullTextInfo.IndexID,
 			b.req.FullTextInfo.ExecutorID,
 			NewKeyRanges(retryRanges),
+			b.req.FullTextInfo.Freshness,
 		)
+		if err != nil {
+			return nil, err
+		}
+		for _, task := range tasks {
+			task.tiCIRetryCount = batchTask.tiCIRetryCount + 1
+		}
+		return tasks, nil
 	}
 	if batchTask.regionInfos != nil {
 		var ranges []kv.KeyRange
@@ -1486,6 +1503,69 @@ func collectFullTextRetryRanges(tableShardInfos []*coprocessor.TableShardInfos) 
 	return retryRanges, retryShardIDs
 }
 
+// validateTiCIShardRetryFeedback rejects feedback for shards outside the task.
+// The whole task is retried, so its original ranges and freshness threshold stay
+// together. Placement-related failures invalidate the shard cache; writer lag
+// and transient Reader failures do not imply a changed shard layout.
+func validateTiCIShardRetryFeedback(task *batchCopTask, resp *coprocessor.BatchResponse) (bool, time.Duration, error) {
+	if otherErr := resp.GetOtherError(); otherErr != "" {
+		return false, 0, errors.Errorf("tiflash_fts retry response has error: %s", otherErr)
+	}
+	if len(resp.RetryRegions) > 0 {
+		return false, 0, errors.New("tiflash_fts retry response mixes shard and region feedback")
+	}
+	shards := make(map[uint64]struct{})
+	for _, table := range task.TableShardInfos {
+		for _, shard := range table.ShardInfos {
+			shards[shard.ShardId] = struct{}{}
+		}
+	}
+	if len(shards) == 0 {
+		return false, 0, errors.New("tiflash_fts retry task has no shards")
+	}
+	invalidate := len(resp.RetryShards) > 0
+	for _, shard := range resp.RetryShards {
+		if _, ok := shards[shard.ShardId]; !ok {
+			return false, 0, errors.Errorf("tiflash_fts returned unknown retry shard %d", shard.ShardId)
+		}
+	}
+	var retryAfterMS uint32
+	for _, feedback := range resp.ShardRetryInfos {
+		if _, ok := shards[feedback.ShardId]; !ok {
+			return false, 0, errors.Errorf("tiflash_fts returned unknown retry shard %d", feedback.ShardId)
+		}
+		switch feedback.Reason {
+		case coprocessor.ShardRetryReason_SHARD_RETRY_MISSING,
+			coprocessor.ShardRetryReason_SHARD_RETRY_EPOCH_MISMATCH:
+			invalidate = true
+		case coprocessor.ShardRetryReason_SHARD_RETRY_READER_BEHIND,
+			coprocessor.ShardRetryReason_SHARD_RETRY_CONTROL_PLANE_UNAVAILABLE,
+			coprocessor.ShardRetryReason_SHARD_RETRY_WRITER_BEHIND,
+			coprocessor.ShardRetryReason_SHARD_RETRY_REFRESH_FAILED,
+			coprocessor.ShardRetryReason_SHARD_RETRY_REFRESH_TIMEOUT,
+			coprocessor.ShardRetryReason_SHARD_RETRY_OVERLOADED:
+			// Keep the placement; backoff gives its Reader a chance to advance.
+		default:
+			return false, 0, errors.Errorf("tiflash_fts returned unknown shard retry reason %d", feedback.Reason)
+		}
+		if feedback.RetryAfterMs > retryAfterMS {
+			retryAfterMS = feedback.RetryAfterMs
+		}
+		logutil.BgLogger().Info("tiflash_fts shard retry",
+			zap.Uint64("shard_id", feedback.ShardId),
+			zap.String("reason", feedback.Reason.String()),
+			zap.Uint64("reader_applied_resolved_ts", feedback.ReaderAppliedResolvedTs),
+			zap.Uint64("meta_persisted_resolved_ts", feedback.MetaPersistedResolvedTs))
+	}
+	// Bound a server hint independently of the query's own deadline.
+	if retryAfterMS > 1000 {
+		retryAfterMS = 1000
+	} else if retryAfterMS == 0 {
+		retryAfterMS = 100
+	}
+	return invalidate, time.Duration(retryAfterMS) * time.Millisecond, nil
+}
+
 // TiFlashReadTimeoutUltraLong represents the max time that tiflash request may take, since it may scan many regions for tiflash.
 const TiFlashReadTimeoutUltraLong = 3600 * time.Second
 
@@ -1497,15 +1577,16 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	}
 
 	copReq := coprocessor.BatchRequest{
-		Tp:              b.req.Tp,
-		StartTs:         b.req.StartTs,
-		Data:            b.req.Data,
-		SchemaVer:       b.req.SchemaVar,
-		Regions:         regionInfos,
-		TableRegions:    task.PartitionTableRegions,
-		ConnectionId:    b.req.ConnID,
-		ConnectionAlias: b.req.ConnAlias,
-		TableShardInfos: task.TableShardInfos,
+		Tp:                      b.req.Tp,
+		StartTs:                 b.req.StartTs,
+		Data:                    b.req.Data,
+		SchemaVer:               b.req.SchemaVar,
+		Regions:                 regionInfos,
+		TableRegions:            task.PartitionTableRegions,
+		ConnectionId:            b.req.ConnID,
+		ConnectionAlias:         b.req.ConnAlias,
+		TableShardInfos:         task.TableShardInfos,
+		SupportsShardRetryInfos: len(task.TableShardInfos) > 0,
 	}
 
 	rgName := b.req.ResourceGroupName
@@ -1532,36 +1613,60 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	resp, retry, cancel, err := sender.SendReqToAddr(bo, task.ctx, task.regionInfos, req, TiFlashReadTimeoutUltraLong)
 	// If there are store errors, we should retry for all regions.
 	if retry {
-		return b.retryBatchCopTask(ctx, bo, task)
+		return b.retryBatchCopTask(ctx, bo, task, true)
 	}
 	if err != nil {
 		err = derr.ToTiDBErr(err)
 		return nil, errors.Trace(err)
 	}
 	defer cancel()
-	return nil, b.handleStreamedBatchCopResponse(bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
+	return b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 
-func (b *batchCopIterator) handleStreamedBatchCopResponse(bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
+func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (retryTasks []*batchCopTask, err error) {
 	defer response.Close()
 	resp := response.BatchResponse
 	if resp == nil {
 		// streaming request returns io.EOF, so the first Response is nil.
-		return
+		return nil, nil
 	}
+	deliveredData := false
 	for {
+		if len(resp.RetryShards) > 0 || len(resp.ShardRetryInfos) > 0 {
+			if task.TableShardInfos == nil {
+				return nil, errors.New("tiflash returned shard retry feedback for a non-TiCI task")
+			}
+			if deliveredData || len(resp.Data) > 0 {
+				return nil, errors.New("tiflash returned shard retry feedback after BatchCop data")
+			}
+			invalidate, retryAfter, feedbackErr := validateTiCIShardRetryFeedback(task, resp)
+			if feedbackErr != nil {
+				return nil, feedbackErr
+			}
+			if retryAfter > 0 {
+				timer := time.NewTimer(retryAfter)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+				}
+			}
+			return b.retryBatchCopTask(ctx, bo, task, invalidate)
+		}
 		err = b.handleBatchCopResponse(bo, resp, task)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
+		deliveredData = deliveredData || len(resp.Data) > 0
 		resp, err = response.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return nil
+				return nil, nil
 			}
 
 			if err1 := bo.Backoff(tikv.BoTiKVRPC(), errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
@@ -1570,7 +1675,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(bo *Backoffer, respons
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return derr.ErrTiFlashServerTimeout
+			return nil, derr.ErrTiFlashServerTimeout
 		}
 	}
 }
@@ -1595,19 +1700,6 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 				logutil.BgLogger().Info("stale regions are too many, so we omit the rest ones")
 				break
 			}
-		}
-		return
-	}
-
-	if len(response.RetryShards) > 0 {
-		logutil.BgLogger().Info("multiple shards are stale and need to be refreshed", zap.Int("shards size", len(response.RetryShards)))
-		for idx, retry := range response.RetryShards {
-			if idx < 10 {
-				logutil.BgLogger().Info("invalid shard because tiflash detected stale shard", zap.Uint64("shard id", retry.ShardId))
-			} else if idx == 10 {
-				logutil.BgLogger().Info("stale shards are too many, so we only print the first 10 stale shards")
-			}
-			b.store.GetTiCIShardCache().InvalidateCachedShard(retry.ShardId)
 		}
 		return
 	}
@@ -1788,7 +1880,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	return res, nil
 }
 
-func buildBatchCopTasksForFullText(ctx context.Context, store *kvStore, tableID int64, indexID int64, executorID string, keyRanges *KeyRanges) ([]*batchCopTask, error) {
+func buildBatchCopTasksForFullText(ctx context.Context, store *kvStore, tableID int64, indexID int64, executorID string, keyRanges *KeyRanges, freshness kv.TiCIFreshnessRequirement) ([]*batchCopTask, error) {
 	cmdType := tikvrpc.CmdBatchCop
 	cache := store.GetTiCIShardCache()
 	tasks := make([]*batchCopTask, 0)
@@ -1800,7 +1892,7 @@ func buildBatchCopTasksForFullText(ctx context.Context, store *kvStore, tableID 
 		return nil, errors.New("No shard info found")
 	}
 
-	storeShard, err := buildTiCIShardInfosByAddrFromLocations(ret)
+	storeShard, err := buildTiCIShardInfosByAddrFromLocations(ret, freshness)
 	if err != nil {
 		return nil, err
 	}

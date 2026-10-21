@@ -61,6 +61,10 @@ type DistSQLContext struct {
 	TiFlashMaxQueryMemoryPerNode         int64
 	TiFlashQuerySpillRatio               float64
 	TiFlashHashJoinVersion               string
+	// TiCI policy is copied from the session when this statement context is made.
+	TiCIFreshnessConfigured bool
+	TiCIReadMaxStalenessMS  int64
+	TiCIReadWaitMS          uint32
 
 	DistSQLConcurrency            int
 	ReplicaReadType               kv.ReplicaReadType

@@ -938,6 +938,11 @@ const (
 
 	// TiDBEnableTiCIEstimate indicates whether to call TiCI to estimate full-text search row counts.
 	TiDBEnableTiCIEstimate = "tidb_enable_tici_estimate"
+	// TiDBTiCIReadMaxStalenessMS controls TiCI read freshness in milliseconds.
+	// -1 is legacy, 0 is strict, and a positive value is bounded staleness.
+	TiDBTiCIReadMaxStalenessMS = "tidb_tici_read_max_staleness_ms"
+	// TiDBTiCIReadWaitMS bounds one TiCI reader admission wait.
+	TiDBTiCIReadWaitMS = "tidb_tici_read_wait_ms"
 
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
@@ -1615,6 +1620,10 @@ const (
 	DefTiDB3StageMultiDistinctAgg                     = false
 	DefTiDBOptExplainEvaledSubquery                   = false
 	DefTiDBReadStaleness                              = 0
+	DefTiDBTiCIReadMaxStalenessMS                     = -1
+	DefTiDBTiCIReadWaitMS                             = 0
+	MaxTiDBTiCIReadMaxStalenessMS                     = 300000
+	MaxTiDBTiCIReadWaitMS                             = 30000
 	DefTiDBGCMaxWaitTime                              = 24 * 60 * 60
 	DefMaxAllowedPacket                        uint64 = 67108864
 	DefTiDBEnableBatchDML                             = false

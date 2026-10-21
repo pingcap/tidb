@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -664,6 +665,36 @@ type Request struct {
 		TableID    int64
 		IndexID    int64
 		ExecutorID string
+		Freshness  TiCIFreshnessRequirement
+	}
+}
+
+// TiCIFreshnessRequirement is fixed when a query's TiCI task is first built.
+// Rebuilt shard tasks must copy it rather than derive a newer threshold.
+type TiCIFreshnessRequirement struct {
+	RequiredResolvedTS uint64
+	Mode               coprocessor.ShardFreshnessMode
+	MaxWaitMS          uint32
+}
+
+// NewTiCIFreshnessRequirement derives a TSO threshold from the query read TS.
+// A negative maxStalenessMS keeps the legacy presence-only behavior. Zero
+// requests strict freshness; positive values allow bounded staleness.
+func NewTiCIFreshnessRequirement(readTS uint64, maxStalenessMS int64, maxWaitMS uint32) TiCIFreshnessRequirement {
+	if maxStalenessMS < 0 {
+		return TiCIFreshnessRequirement{}
+	}
+	if maxStalenessMS == 0 {
+		return TiCIFreshnessRequirement{RequiredResolvedTS: readTS, Mode: coprocessor.ShardFreshnessMode_STRICT_WATERMARK, MaxWaitMS: maxWaitMS}
+	}
+	physical := oracle.ExtractPhysical(readTS)
+	if physical <= maxStalenessMS {
+		return TiCIFreshnessRequirement{Mode: coprocessor.ShardFreshnessMode_BOUNDED_STALE, MaxWaitMS: maxWaitMS}
+	}
+	return TiCIFreshnessRequirement{
+		RequiredResolvedTS: oracle.ComposeTS(physical-maxStalenessMS, oracle.ExtractLogical(readTS)),
+		Mode:               coprocessor.ShardFreshnessMode_BOUNDED_STALE,
+		MaxWaitMS:          maxWaitMS,
 	}
 }
 

@@ -3269,6 +3269,9 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
 			TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
+			TiCIFreshnessConfigured:              true,
+			TiCIReadMaxStalenessMS:               vars.TiCIReadMaxStalenessMS,
+			TiCIReadWaitMS:                       vars.TiCIReadWaitMS,
 
 			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
 			ReplicaReadType:               vars.GetReplicaRead(),

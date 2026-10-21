@@ -246,6 +246,8 @@ type MPPBuildTasksRequest struct {
 	TiCIIndexID int64
 	// TiCIExecutorID is the ExplainID string of the IndexScan executor.
 	TiCIExecutorID string
+	// TiCIFreshness is fixed for this query and copied into every scheduled shard.
+	TiCIFreshness TiCIFreshnessRequirement
 	// TiCIKeyRanges are TiCI index key ranges used to locate shard ownership.
 	TiCIKeyRanges []KeyRange
 	// TiCIPartitionIDAndRanges are TiCI index key ranges grouped by physical partition table ID.
@@ -257,6 +259,12 @@ type MPPBuildTasksRequest struct {
 func (req *MPPBuildTasksRequest) ToString() string {
 	sb := strings.Builder{}
 	if req.TiCI {
+		sb.WriteString("tici_freshness_mode")
+		sb.WriteString(strconv.FormatInt(int64(req.TiCIFreshness.Mode), 10))
+		sb.WriteString("tici_required_resolved_ts")
+		sb.WriteString(strconv.FormatUint(req.TiCIFreshness.RequiredResolvedTS, 10))
+		sb.WriteString("tici_max_wait_ms")
+		sb.WriteString(strconv.FormatUint(uint64(req.TiCIFreshness.MaxWaitMS), 10))
 		sb.WriteString("tici_index_id")
 		sb.WriteString(strconv.FormatInt(req.TiCIIndexID, 10))
 		sb.WriteString("tici_executor_id")

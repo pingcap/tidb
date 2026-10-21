@@ -730,6 +730,11 @@ func (e *mppTaskGenerator) attachTiCIFTSInfoToMPPBuildTaskReq(req *kv.MPPBuildTa
 		})
 	}
 	req.TiCI = true
+	req.TiCIFreshness = kv.NewTiCIFreshnessRequirement(
+		e.startTS,
+		e.ctx.GetSessionVars().TiCIReadMaxStalenessMS,
+		e.ctx.GetSessionVars().TiCIReadWaitMS,
+	)
 	req.TiCIIndexID = is.Index.ID
 	req.TiCIExecutorID = is.ExplainID().String()
 	if len(ticiPartitionIDAndRanges) == 1 {
