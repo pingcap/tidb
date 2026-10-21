@@ -438,12 +438,8 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 				// Revert the non-public state
 				indexInfo.State = model.StatePublic
 			}
-		} else {
-			if pi.DDLState == model.StateDeleteReorganization {
-				indexInfo.State = model.StateWriteOnly
-			} else {
-				indexInfo.State = model.StateDeleteOnly
-			}
+		} else if indexInfo.State != model.StateDeleteOnly {
+			indexInfo.State = model.StateWriteOnly
 		}
 	}
 	if pi.DDLState == model.StateDeleteReorganization {
