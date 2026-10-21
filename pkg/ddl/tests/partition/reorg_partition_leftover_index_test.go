@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,12 +65,13 @@ func TestDropLeftoverReorgPartitionIndexes(t *testing.T) {
 	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 	publicGlobal := tblInfo.FindIndexByName("idx_g")
+	// A delete only copy comes before a writable one, both must pass delete only before removal.
 	var leftoverIDs []int64
-	for range 2 {
+	for _, state := range []model.SchemaState{model.StateDeleteOnly, model.StateWriteReorganization} {
 		leftover := publicGlobal.Clone()
 		tblInfo.MaxIndexID++
 		leftover.ID = tblInfo.MaxIndexID
-		leftover.State = model.StateWriteReorganization
+		leftover.State = state
 		tblInfo.Indices = append(tblInfo.Indices, leftover)
 		leftoverIDs = append(leftoverIDs, leftover.ID)
 	}
@@ -88,6 +90,17 @@ func TestDropLeftoverReorgPartitionIndexes(t *testing.T) {
 	require.NoError(t, dom.Reload())
 	require.Greater(t, countUpdateMutations(t, tk), baseMutations)
 
+	seenDeleteOnly := make(map[int64]bool)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionDropIndex {
+			return
+		}
+		for _, idx := range external.GetTableByName(t, testkit.NewTestKit(t, store), "test", "t").Meta().Indices {
+			if idx.State == model.StateDeleteOnly {
+				seenDeleteOnly[idx.ID] = true
+			}
+		}
+	})
 	// The job query is checked in tests but is empty when called from the status API.
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, dom.DDLExecutor().CleanupGlobalIndexes(tk.Session(), tblInfo.ID))
@@ -100,6 +113,7 @@ func TestDropLeftoverReorgPartitionIndexes(t *testing.T) {
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select count(*) from t use index(idx_g) where a >= 0").Check(testkit.Rows("4"))
 	for _, id := range leftoverIDs {
+		require.True(t, seenDeleteOnly[id], "index %d skipped delete only", id)
 		require.Nil(t, after.FindIndexByID(id))
 		idxPrefix := hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(tblInfo.ID, id))
 		tk.MustQuery(fmt.Sprintf(`select count(*) from (select start_key from mysql.gc_delete_range

@@ -2356,12 +2356,20 @@ func checkDropIndex(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t 
 	}
 	if len(args.IndexArgs) == 1 && args.IndexArgs[0].IndexID == dropNonPublicGlobalIndexesID {
 		// All earlier DDL jobs on this table have finished, so no job owns these indexes.
-		var indexInfos []*model.IndexInfo
+		// onDropIndex moves all indexes by the state of the first one, so put the writable
+		// ones first to make sure none of them skips delete only.
+		var writable, others []*model.IndexInfo
 		for _, idx := range tblInfo.Indices {
-			if idx.Global && idx.State != model.StatePublic {
-				indexInfos = append(indexInfos, idx)
+			if !idx.Global || idx.State == model.StatePublic {
+				continue
+			}
+			if idx.State == model.StateWriteOnly || idx.State == model.StateWriteReorganization {
+				writable = append(writable, idx)
+			} else {
+				others = append(others, idx)
 			}
 		}
+		indexInfos := slices.Concat(writable, others)
 		if len(indexInfos) == 0 {
 			job.State = model.JobStateCancelled
 			return nil, nil, false, dbterror.ErrCantDropFieldOrKey.GenWithStack("table %s has no non-public global index", tblInfo.Name)
