@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
 
@@ -131,6 +132,7 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	e.stats = &slowQueryRuntimeStats{}
 	if e.extractor != nil {
 		e.checker.enableTimeCheck = e.extractor.Enable
+		e.checker.digests = e.extractor.Digests
 		for _, tr := range e.extractor.TimeRanges {
 			startTime := types.NewTime(types.FromGoTime(tr.StartTime.In(sctx.GetSessionVars().Location())), mysql.TypeDatetime, types.MaxFsp)
 			endTime := types.NewTime(types.FromGoTime(tr.EndTime.In(sctx.GetSessionVars().Location())), mysql.TypeDatetime, types.MaxFsp)
@@ -291,6 +293,8 @@ type slowLogChecker struct {
 	// Below fields is used to check slow log time valid.
 	enableTimeCheck bool
 	timeRanges      []*timeRange
+	// Below fields are used to check the slow log digest.
+	digests set.StringSet
 }
 
 type timeRange struct {
@@ -1031,6 +1035,9 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 }
 
 func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
+	if checker != nil && !checker.digests.Empty() && field == variable.SlowLogDigestStr && !checker.digests.Exist(value) {
+		return false
+	}
 	factory := e.columnValueFactoryMap[field]
 	if factory == nil {
 		// Fix issue 34320, when slow log time is not in the output columns, the time filter condition is mistakenly discard.

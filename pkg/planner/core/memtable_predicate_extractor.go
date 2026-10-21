@@ -1514,6 +1514,9 @@ type SlowQueryExtractor struct {
 
 	SkipRequest bool
 	TimeRanges  []*TimeRange
+	// Digests contains the SQL digests used for parse-time filtering.
+	// An empty set means no Digest filter, as in StatementsSummaryExtractor.
+	Digests set.StringSet
 	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
 	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
 	// current slow-log file.
@@ -1552,6 +1555,12 @@ func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
+	// Ignore remained to preserve Digest predicates for Selection and remote
+	// planning, including logs without Digest. Ignore skip because raw-string
+	// intersections may reject compatible comparisons; an empty set disables
+	// this scan hint.
+	_, _, digests := e.extractCol(ctx, schema, names, predicates, "digest", false)
+	e.Digests = digests
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
 	e.setTimeRange(startTime, endTime)
 	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
@@ -1690,14 +1699,18 @@ func (e *SlowQueryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
+	digestInfo := ""
+	if !e.Digests.Empty() {
+		digestInfo = fmt.Sprintf(", digests:[%s]", extractStringFromStringSet(e.Digests))
+	}
 	if !e.Enable {
-		return fmt.Sprintf("only search in the current '%v' file", p.SCtx().GetSessionVars().SlowQueryFile)
+		return fmt.Sprintf("only search in the current '%v' file%s", p.SCtx().GetSessionVars().SlowQueryFile, digestInfo)
 	}
 	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
 	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
-	return fmt.Sprintf("start_time:%v, end_time:%v",
+	return fmt.Sprintf("start_time:%v, end_time:%v%s",
 		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
-		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String(), digestInfo)
 }
 
 // TiFlashSystemTableExtractor is used to extract some predicates of tiflash system table.
