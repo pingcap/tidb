@@ -428,22 +428,25 @@ func TestIssue67534PointUpdateAssignmentCasting(t *testing.T) {
 				(((t0.c1 is false)),
 				((((binary (null ^ true)) not regexp ((binary bit_length((default(t0.c2))) >> 17))) is not true)))`).Check(testkit.Rows())
 	})
+}
 
-	// issue-71480-clustered-pk-index-merge-in-subquery
-	{
-		tk.MustExec("drop table if exists tab2")
-		tk.MustExec(`create table tab2 (
+func TestIssue71480ClusteredPKIndexMergeInSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tab2")
+	tk.MustExec(`create table tab2 (
   pk integer primary key,
   col0 integer,
   col1 float,
   col3 integer,
   col4 float
 )`)
-		tk.MustExec("create index idx_tab2_0 on tab2 (col1, col0)")
-		tk.MustExec("create unique index idx_tab2_1 on tab2 (col4)")
-		tk.MustExec("create index idx_tab2_4 on tab2 (col1 desc, col3 desc)")
-		tk.MustExec("insert into tab2 values (0, 22, 43.96, 0, 80.14)")
-		tk.MustQuery(`select pk
+	tk.MustExec("create index idx_tab2_0 on tab2 (col1, col0)")
+	tk.MustExec("create unique index idx_tab2_1 on tab2 (col4)")
+	tk.MustExec("create index idx_tab2_4 on tab2 (col1 desc, col3 desc)")
+	tk.MustExec("insert into tab2 values (0, 22, 43.96, 0, 80.14)")
+	tk.MustQuery(`select pk
 from tab2
 where col4 in (
   select col1
@@ -459,5 +462,4 @@ where col4 in (
        )
      )
 )`).Check(testkit.Rows())
-	}
 }
