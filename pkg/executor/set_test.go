@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -2038,4 +2039,39 @@ func TestSetVariableWithoutPrivilegeManager(t *testing.T) {
 		privilege.BindPrivilegeManager(tk.Session(), nil)
 		tk.MustExec("set @@" + sysVarName + "=2")
 	})
+}
+
+func TestUserVarWithChunkReuse(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, s varchar(100), d decimal(20, 9))")
+	tk.MustExec("insert into t values (3, 'abcdefghijklmnopqrstuvwxyz', 3.123456789), (1, 'XY', 1.5)")
+
+	// Like clientConn.dispatch, the test kit runs each statement with the
+	// session's chunk allocator and resets the allocator afterwards. The
+	// second statement of each case reuses the chunk that the first one read
+	// the value from.
+	for _, c := range []struct {
+		first, second, userVar, expected string
+	}{
+		{"set @a = (select upper(s) from t where id = 3)", "set @a2 = (select upper(s) from t where id = 1)",
+			"@a", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"},
+		{"set @j = (select json_object('k', s) from t where id = 3)", "set @j2 = (select json_object('k', s) from t where id = 1)",
+			"@j", `{"k": "abcdefghijklmnopqrstuvwxyz"}`},
+		{"select @d := (select d + 0 from t where id = 3)", "select @d2 := (select d + 0 from t where id = 1)",
+			"@d", "3.123456789"},
+		{"select @e := d from t where id = 3", "select @e2 := d from t where id = 1",
+			"@e", "3.123456789"},
+	} {
+		for _, sql := range []string{c.first, c.second} {
+			if strings.HasPrefix(sql, "select") {
+				// MustExec does not read the rows, so the assignment would not run.
+				tk.MustQuery(sql)
+			} else {
+				tk.MustExec(sql)
+			}
+		}
+		tk.MustQuery("select " + c.userVar).Check(testkit.Rows(c.expected))
+	}
 }
