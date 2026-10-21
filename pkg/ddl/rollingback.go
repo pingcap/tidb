@@ -421,6 +421,9 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 				indexInfo.State = model.StatePublic
 			}
 		} else if indexInfo.State != model.StateDeleteOnly {
+			// A copy may be public in delete reorganization, so it keeps taking writes for one more
+			// schema version. rollbackLikeDropPartition then moves it to delete only and removes it.
+			// A copy still in delete only never took writes and stays as is.
 			indexInfo.State = model.StateWriteOnly
 		}
 	}
