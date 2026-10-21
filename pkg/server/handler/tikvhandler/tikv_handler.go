@@ -184,6 +184,17 @@ func NewDDLResignOwnerHandler(store kv.Storage) *DDLResignOwnerHandler {
 	return &DDLResignOwnerHandler{store}
 }
 
+// DDLDropLeftoverGlobalIndexesHandler is the handler for dropping the global index copies left
+// behind by cancelled REORGANIZE PARTITION jobs.
+type DDLDropLeftoverGlobalIndexesHandler struct {
+	store kv.Storage
+}
+
+// NewDDLDropLeftoverGlobalIndexesHandler creates a new DDLDropLeftoverGlobalIndexesHandler.
+func NewDDLDropLeftoverGlobalIndexesHandler(store kv.Storage) *DDLDropLeftoverGlobalIndexesHandler {
+	return &DDLDropLeftoverGlobalIndexesHandler{store}
+}
+
 // NewDDLCheckHandler creates a new DDLCheckHandler.
 func NewDDLCheckHandler(tool *handler.TikvHandlerTool) *DDLCheckHandler {
 	return &DDLCheckHandler{tool}
@@ -1191,6 +1202,65 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	}
 
 	handler.WriteData(w, "success!")
+}
+
+// DropLeftoverGlobalIndexesResult is the result of dropping the leftover global index copies of a table.
+type DropLeftoverGlobalIndexesResult struct {
+	TableID         int64   `json:"table_id"`
+	DroppedIndexIDs []int64 `json:"dropped_index_ids"`
+	SchemaVersion   int64   `json:"schema_version"`
+}
+
+// ServeHTTP handles request of dropping the leftover global index copies of a table. It edits the
+// table meta directly without a DDL job, so it can run on any TiDB. A concurrent DDL job on the
+// same table makes the transaction conflict and fail, and the caller can retry.
+func (h DDLDropLeftoverGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+	tableID, err := strconv.ParseInt(mux.Vars(req)[handler.TableID], 10, 64)
+	if err != nil {
+		handler.WriteError(w, errors.Errorf("Wrong tableID: %v", mux.Vars(req)[handler.TableID]))
+		return
+	}
+	do, err := session.GetDomain(h.store)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	is := do.InfoSchema()
+	tbl, ok := is.TableByID(req.Context(), tableID)
+	if !ok || tbl.Meta().ID != tableID {
+		if partTbl, _, _ := is.FindTableByPartitionID(tableID); partTbl != nil {
+			handler.WriteError(w, errors.Errorf("ID %d is a partition of table %d, use the table ID", tableID, partTbl.Meta().ID))
+			return
+		}
+		handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tableID))
+		return
+	}
+	dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
+	if !ok {
+		handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Can not find the database of the table which ID = %d.", tableID))
+		return
+	}
+	se, err := session.CreateSession(h.store)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	defer se.Close()
+	indexIDs, ver, err := ddl.CleanupLeftoverIndexes(req.Context(), se, dbInfo.ID, tableID)
+	if err != nil {
+		log.Error("failed to drop leftover global indexes", zap.Int64("tableID", tableID), zap.Error(err))
+		handler.WriteError(w, err)
+		return
+	}
+	handler.WriteData(w, DropLeftoverGlobalIndexesResult{
+		TableID:         tableID,
+		DroppedIndexIDs: indexIDs,
+		SchemaVersion:   ver,
+	})
 }
 
 // ServeHTTP handles request of triggering admin check index.

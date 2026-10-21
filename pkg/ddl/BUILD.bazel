@@ -50,6 +50,7 @@ go_library(
         "job_scheduler.go",
         "job_submitter.go",
         "job_worker.go",
+        "leftover_global_index.go",
         "masking_policy.go",
         "materialized_view.go",
         "metabuild.go",
